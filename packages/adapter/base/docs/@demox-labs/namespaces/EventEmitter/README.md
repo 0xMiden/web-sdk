@@ -1,8 +1,8 @@
-[**@demox-labs/miden-wallet-adapter-base**](../../README.md)
+[**@demox-labs/miden-wallet-adapter-base**](../../../README.md)
 
 ***
 
-[@demox-labs/miden-wallet-adapter-base](../../globals.md) / EventEmitter
+[@demox-labs/miden-wallet-adapter-base](../../../README.md) / EventEmitter
 
 # EventEmitter
 
