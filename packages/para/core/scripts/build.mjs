@@ -10,9 +10,6 @@ const entryPoints = await glob('src/**/*.{ts,tsx,js,jsx}');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '../dist');
 
-await fs.mkdir(`${distDir}/cjs`, { recursive: true });
-await fs.writeFile(`${distDir}/cjs/package.json`, JSON.stringify({ type: 'commonjs' }, null, 2));
-
 await fs.mkdir(`${distDir}/esm`, { recursive: true });
 await fs.writeFile(
   `${distDir}/esm/package.json`,
@@ -33,22 +30,6 @@ await esbuild.build({
   allowOverwrite: true,
   splitting: true, // Required for tree shaking
   minify: false,
-  target: ['es2015'],
-  packages: 'external',
-});
-
-await esbuild.build({
-  bundle: false,
-  write: true,
-  format: 'cjs',
-  loader: {
-    '.json': 'text',
-  },
-  platform: 'node',
-  entryPoints,
-  outdir: 'dist/cjs',
-  allowOverwrite: true,
-  minify: false,
-  target: ['es2015'],
+  target: ['es2022'],
   packages: 'external',
 });
