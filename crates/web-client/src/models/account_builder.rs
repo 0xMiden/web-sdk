@@ -99,7 +99,9 @@ impl AccountBuilder {
             .0
             .build()
             .map_err(|err| js_error_with_context(err, "Failed to build account"))?;
-        let seed = account.seed().expect("newly built account should always contain a seed");
+        let seed = account
+            .seed()
+            .expect("newly built account should always contain a seed");
         Ok(AccountBuilderResult {
             account: account.into(),
             seed: seed.into(),
@@ -133,7 +135,9 @@ fn parse_account_type(value: &JsValue) -> Result<AccountType, JsValue> {
             ))),
         }
     } else {
-        Err(JsValue::from_str("accountType must be a number (0–3) or a string variant name"))
+        Err(JsValue::from_str(
+            "accountType must be a number (0–3) or a string variant name",
+        ))
     }
 }
 

@@ -23,7 +23,10 @@ impl WebClient {
     /// Errors are intentionally ignored — account creation should proceed regardless.
     async fn maybe_sync_before_account_creation(&mut self) {
         let should_sync = match self.get_mut_inner() {
-            Some(client) => client.get_sync_height().await.is_ok_and(|h| h == BlockNumber::GENESIS),
+            Some(client) => client
+                .get_sync_height()
+                .await
+                .is_ok_and(|h| h == BlockNumber::GENESIS),
             None => false,
         };
 
@@ -77,7 +80,9 @@ impl WebClient {
     ) -> Result<Account, JsValue> {
         self.maybe_sync_before_account_creation().await;
         if non_fungible {
-            return Err(JsValue::from_str("Non-fungible faucets are not supported yet"));
+            return Err(JsValue::from_str(
+                "Non-fungible faucets are not supported yet",
+            ));
         }
 
         let keystore = self.inner_keystore()?.clone();
@@ -92,14 +97,14 @@ impl WebClient {
             let key_pair = match native_scheme {
                 NativeAuthScheme::Falcon512Poseidon2 => {
                     AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut faucet_rng)
-                },
+                }
                 NativeAuthScheme::EcdsaK256Keccak => {
                     AuthSecretKey::new_ecdsa_k256_keccak_with_rng(&mut faucet_rng)
-                },
+                }
                 _ => {
                     let message = format!("unsupported auth scheme: {native_scheme:?}");
                     return Err(JsValue::from_str(&message));
-                },
+                }
             };
             let auth_component: AccountComponent =
                 AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
@@ -126,7 +131,7 @@ impl WebClient {
                 Err(err) => {
                     let error_message = format!("Failed to create new faucet: {err:?}");
                     return Err(JsValue::from_str(&error_message));
-                },
+                }
             };
 
             keystore
@@ -139,7 +144,7 @@ impl WebClient {
                 Err(err) => {
                     let error_message = format!("Failed to insert new faucet: {err:?}");
                     Err(JsValue::from_str(&error_message))
-                },
+                }
             }
         } else {
             Err(JsValue::from_str("Client not initialized"))

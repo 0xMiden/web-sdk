@@ -26,7 +26,9 @@ impl TransactionStatus {
         let native_cause = DiscardCause::from_string(cause)
             .map_err(|err| JsValue::from_str(&format!("Invalid discard cause: {err}")))?;
 
-        Ok(TransactionStatus(NativeTransactionStatus::Discarded(native_cause)))
+        Ok(TransactionStatus(NativeTransactionStatus::Discarded(
+            native_cause,
+        )))
     }
 
     /// Returns true if the transaction is still pending.
@@ -60,7 +62,9 @@ impl TransactionStatus {
     #[wasm_bindgen(js_name = "getCommitTimestamp")]
     pub fn get_commit_timestamp(&self) -> Option<u64> {
         match self.0 {
-            NativeTransactionStatus::Committed { commit_timestamp, .. } => Some(commit_timestamp),
+            NativeTransactionStatus::Committed {
+                commit_timestamp, ..
+            } => Some(commit_timestamp),
             _ => None,
         }
     }

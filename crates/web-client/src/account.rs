@@ -21,7 +21,10 @@ impl WebClient {
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to get accounts"))?;
 
-            Ok(result.into_iter().map(|(header, _)| header.into()).collect())
+            Ok(result
+                .into_iter()
+                .map(|(header, _)| header.into())
+                .collect())
         } else {
             Err(JsValue::from_str("Client not initialized"))
         }
@@ -119,7 +122,9 @@ impl WebClient {
     /// ```
     #[wasm_bindgen(js_name = "accountReader")]
     pub fn account_reader(&self, account_id: &AccountId) -> Result<AccountReader, JsValue> {
-        Ok(AccountReader::from(self.get_inner()?.account_reader(account_id.into())))
+        Ok(AccountReader::from(
+            self.get_inner()?.account_reader(account_id.into()),
+        ))
     }
 
     #[wasm_bindgen(js_name = "insertAccountAddress")]
@@ -146,9 +151,12 @@ impl WebClient {
         address: &Address,
     ) -> Result<(), JsValue> {
         if let Some(client) = self.get_mut_inner() {
-            client.remove_address(address.into(), account_id.into()).await.map_err(|err| {
-                js_error_with_context(err, "failed to remove address from account")
-            })?;
+            client
+                .remove_address(address.into(), account_id.into())
+                .await
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to remove address from account")
+                })?;
             Ok(())
         } else {
             Err(JsValue::from_str("Client not initialized"))

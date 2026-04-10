@@ -1,19 +1,15 @@
 use miden_client::Word as NativeWord;
 use miden_client::account::component::{
-    AccountComponent as NativeAccountComponent,
-    AccountComponentMetadata,
+    AccountComponent as NativeAccountComponent, AccountComponentMetadata,
 };
 use miden_client::account::{
-    AccountComponentCode as NativeAccountComponentCode,
-    AccountType,
+    AccountComponentCode as NativeAccountComponentCode, AccountType,
     StorageSlot as NativeStorageSlot,
 };
 use miden_client::assembly::{Library as NativeLibrary, MastNodeExt};
 use miden_client::auth::{
-    AuthSchemeId as NativeAuthSchemeId,
-    AuthSecretKey as NativeSecretKey,
-    AuthSingleSig as NativeSingleSig,
-    PublicKeyCommitment,
+    AuthSchemeId as NativeAuthSchemeId, AuthSecretKey as NativeSecretKey,
+    AuthSingleSig as NativeSingleSig, PublicKeyCommitment,
 };
 use miden_client::vm::Package as NativePackage;
 use wasm_bindgen::prelude::*;
@@ -120,7 +116,9 @@ impl AccountComponent {
                 let path_str = export_path.as_ref().as_str();
                 path_str == procedure_name
                     || export_path.as_ref().to_relative().as_str() == procedure_name
-                    || path_str.rsplit_once("::").is_some_and(|(_, local)| local == procedure_name)
+                    || path_str
+                        .rsplit_once("::")
+                        .is_some_and(|(_, local)| local == procedure_name)
             })
             .ok_or_else(|| {
                 JsValue::from_str(&format!(
@@ -134,7 +132,9 @@ impl AccountComponent {
             .mast_forest()
             .get_node_by_id(get_proc_mast_id)
             .ok_or_else(|| {
-                JsValue::from_str(&format!("Mast node for procedure {procedure_name} not found"))
+                JsValue::from_str(&format!(
+                    "Mast node for procedure {procedure_name} not found"
+                ))
             })?
             .digest()
             .to_hex();
@@ -156,11 +156,11 @@ impl AccountComponent {
             AuthScheme::AuthRpoFalcon512 => {
                 let auth = NativeSingleSig::new(commitment, NativeAuthSchemeId::Falcon512Poseidon2);
                 AccountComponent(auth.into())
-            },
+            }
             AuthScheme::AuthEcdsaK256Keccak => {
                 let auth = NativeSingleSig::new(commitment, NativeAuthSchemeId::EcdsaK256Keccak);
                 AccountComponent(auth.into())
-            },
+            }
         }
     }
 
@@ -182,10 +182,13 @@ impl AccountComponent {
                 return Err(JsValue::from_str(
                     "building auth component for this auth scheme is not supported yet",
                 ));
-            },
+            }
         };
 
-        Ok(AccountComponent::create_auth_component(commitment, auth_scheme))
+        Ok(AccountComponent::create_auth_component(
+            commitment,
+            auth_scheme,
+        ))
     }
 
     #[wasm_bindgen(js_name = "createAuthComponentFromCommitment")]

@@ -1,9 +1,7 @@
 use miden_client::Word as NativeWord;
 use miden_client::auth::{
-    AuthMultisig as NativeAuthMultisig,
-    AuthMultisigConfig as NativeAuthMultisigConfig,
-    AuthSchemeId as NativeAuthSchemeId,
-    PublicKeyCommitment,
+    AuthMultisig as NativeAuthMultisig, AuthMultisigConfig as NativeAuthMultisigConfig,
+    AuthSchemeId as NativeAuthSchemeId, PublicKeyCommitment,
 };
 use wasm_bindgen::prelude::*;
 
@@ -22,7 +20,10 @@ pub struct ProcedureThreshold {
 impl ProcedureThreshold {
     #[wasm_bindgen(constructor)]
     pub fn new(proc_root: &Word, threshold: u32) -> ProcedureThreshold {
-        ProcedureThreshold { proc_root: proc_root.clone(), threshold }
+        ProcedureThreshold {
+            proc_root: proc_root.clone(),
+            threshold,
+        }
     }
 
     #[wasm_bindgen(getter, js_name = "procRoot")]
@@ -56,7 +57,10 @@ impl AuthFalcon512RpoMultisigConfig {
             .into_iter()
             .map(|word| {
                 let native_word: NativeWord = word.into();
-                (PublicKeyCommitment::from(native_word), NativeAuthSchemeId::Falcon512Poseidon2)
+                (
+                    PublicKeyCommitment::from(native_word),
+                    NativeAuthSchemeId::Falcon512Poseidon2,
+                )
             })
             .collect();
 

@@ -80,7 +80,7 @@ impl From<NativeFetchedAccount> for FetchedAccount {
                     last_block_num: summary.last_block_num,
                     account: Some(account),
                 }
-            },
+            }
         }
     }
 }

@@ -57,7 +57,7 @@ impl SigningInputs {
         match &self.inner {
             NativeSigningInputs::TransactionSummary(ts) => {
                 Ok(TransactionSummary::from((**ts).clone()))
-            },
+            }
             _ => Err(JsValue::from_str(&format!(
                 "TransactionSummaryPayload requires SigningInputs::TransactionSummary (found {:?})",
                 self.variant_type()
@@ -69,9 +69,12 @@ impl SigningInputs {
     #[wasm_bindgen(js_name = "arbitraryPayload")]
     pub fn arbitrary_payload(&self) -> Result<FeltArray, JsValue> {
         match &self.inner {
-            NativeSigningInputs::Arbitrary(felts) => {
-                Ok(felts.iter().copied().map(Felt::from).collect::<Vec<_>>().into())
-            },
+            NativeSigningInputs::Arbitrary(felts) => Ok(felts
+                .iter()
+                .copied()
+                .map(Felt::from)
+                .collect::<Vec<_>>()
+                .into()),
             _ => Err(JsValue::from_str(&format!(
                 "ArbitraryPayload requires SigningInputs::Arbitrary (found {:?})",
                 self.variant_type()
@@ -110,7 +113,12 @@ impl SigningInputs {
     /// Returns the inputs as field elements.
     #[wasm_bindgen(js_name = "toElements")]
     pub fn to_elements(&self) -> FeltArray {
-        self.inner.to_elements().into_iter().map(Into::into).collect::<Vec<_>>().into()
+        self.inner
+            .to_elements()
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>()
+            .into()
     }
 
     /// Serializes the signing inputs into bytes.
@@ -130,13 +138,17 @@ impl SigningInputs {
 
 impl From<NativeSigningInputs> for SigningInputs {
     fn from(native_signing_inputs: NativeSigningInputs) -> Self {
-        SigningInputs { inner: native_signing_inputs }
+        SigningInputs {
+            inner: native_signing_inputs,
+        }
     }
 }
 
 impl From<&NativeSigningInputs> for SigningInputs {
     fn from(native_signing_inputs: &NativeSigningInputs) -> Self {
-        SigningInputs { inner: native_signing_inputs.clone() }
+        SigningInputs {
+            inner: native_signing_inputs.clone(),
+        }
     }
 }
 

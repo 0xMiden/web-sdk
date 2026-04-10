@@ -1,7 +1,6 @@
 use miden_client::Word as NativeWord;
 use miden_client::note::{
-    NoteRecipient as NativeNoteRecipient,
-    NoteScript as NativeNoteScript,
+    NoteRecipient as NativeNoteRecipient, NoteScript as NativeNoteScript,
     NoteStorage as NativeNoteStorage,
 };
 use wasm_bindgen::prelude::*;
@@ -93,6 +92,10 @@ impl From<&NoteRecipient> for NativeNoteRecipient {
 
 impl From<&RecipientArray> for Vec<NativeNoteRecipient> {
     fn from(recipient_array: &RecipientArray) -> Self {
-        recipient_array.__inner.iter().map(NativeNoteRecipient::from).collect()
+        recipient_array
+            .__inner
+            .iter()
+            .map(NativeNoteRecipient::from)
+            .collect()
     }
 }

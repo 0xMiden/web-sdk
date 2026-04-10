@@ -3,9 +3,7 @@ use core::time::Duration;
 
 use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
-    LocalTransactionProver,
-    ProvingOptions,
-    TransactionProver as TransactionProverTrait,
+    LocalTransactionProver, ProvingOptions, TransactionProver as TransactionProverTrait,
 };
 use wasm_bindgen::prelude::*;
 
@@ -69,7 +67,7 @@ impl TransactionProver {
                 let timeout_ms = u64::try_from(timeout.as_millis())
                     .expect("timeout was created from u64 milliseconds");
                 format!("remote|{ep}|{timeout_ms}")
-            },
+            }
             (Some(ep), None) => format!("remote|{ep}"),
             (None, _) => "local".to_string(),
         }
@@ -98,7 +96,10 @@ impl TransactionProver {
 
                 // Check if the suffix is a valid integer (timeout)
                 if let Ok(timeout_ms) = timeout_str.parse::<u64>() {
-                    return Ok(TransactionProver::new_remote_prover(endpoint, Some(timeout_ms)));
+                    return Ok(TransactionProver::new_remote_prover(
+                        endpoint,
+                        Some(timeout_ms),
+                    ));
                 }
             }
 
@@ -106,7 +107,9 @@ impl TransactionProver {
             return Ok(TransactionProver::new_remote_prover(rest, None));
         }
 
-        Err(JsValue::from_str(&format!("Invalid prover payload: {payload}")))
+        Err(JsValue::from_str(&format!(
+            "Invalid prover payload: {payload}"
+        )))
     }
 
     /// Returns the endpoint if this is a remote prover.
@@ -124,6 +127,10 @@ impl TransactionProver {
 
 impl From<Arc<dyn TransactionProverTrait + Send + Sync>> for TransactionProver {
     fn from(prover: Arc<dyn TransactionProverTrait + Send + Sync>) -> Self {
-        TransactionProver { prover, endpoint: None, timeout: None }
+        TransactionProver {
+            prover,
+            endpoint: None,
+            timeout: None,
+        }
     }
 }

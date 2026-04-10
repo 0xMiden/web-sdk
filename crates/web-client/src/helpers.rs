@@ -31,7 +31,7 @@ pub(crate) async fn generate_wallet(
                 .try_into()
                 .map_err(|_| JsValue::from_str("Seed must be exactly 32 bytes"))?;
             StdRng::from_seed(seed_array)
-        },
+        }
         None => StdRng::from_os_rng(),
     };
 
@@ -39,14 +39,14 @@ pub(crate) async fn generate_wallet(
     let key_pair = match native_scheme {
         NativeAuthScheme::Falcon512Poseidon2 => {
             AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut rng)
-        },
+        }
         NativeAuthScheme::EcdsaK256Keccak => {
             AuthSecretKey::new_ecdsa_k256_keccak_with_rng(&mut rng)
-        },
+        }
         _ => {
             let message = format!("unsupported auth scheme: {native_scheme:?}");
             return Err(JsValue::from_str(&message));
-        },
+        }
     };
     let auth_component: AccountComponent =
         AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
@@ -67,8 +67,9 @@ pub(crate) async fn generate_wallet(
         .build()
         .map_err(|err| js_error_with_context(err, "failed to create new wallet"))?;
 
-    let _account_seed =
-        new_account.seed().expect("newly built wallet should always contain a seed");
+    let _account_seed = new_account
+        .seed()
+        .expect("newly built wallet should always contain a seed");
 
     Ok((new_account, key_pair))
 }

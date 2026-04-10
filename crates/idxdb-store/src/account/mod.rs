@@ -3,40 +3,17 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::account::{
-    Account,
-    AccountCode,
-    AccountHeader,
-    AccountId,
-    AccountIdError,
-    AccountStorage,
-    Address,
-    PartialAccount,
-    PartialStorage,
-    PartialStorageMap,
-    StorageMap,
-    StorageMapKey,
-    StorageSlot,
-    StorageSlotName,
-    StorageSlotType,
+    Account, AccountCode, AccountHeader, AccountId, AccountIdError, AccountStorage, Address,
+    PartialAccount, PartialStorage, PartialStorageMap, StorageMap, StorageMapKey, StorageSlot,
+    StorageSlotName, StorageSlotType,
 };
 use miden_client::asset::{
-    AccountStorageHeader,
-    Asset,
-    AssetVault,
-    AssetVaultKey,
-    AssetWitness,
-    PartialVault,
-    StorageMapWitness,
-    StorageSlotContent,
-    StorageSlotHeader,
+    AccountStorageHeader, Asset, AssetVault, AssetVaultKey, AssetWitness, PartialVault,
+    StorageMapWitness, StorageSlotContent, StorageSlotHeader,
 };
 use miden_client::crypto::MerkleError;
 use miden_client::store::{
-    AccountRecord,
-    AccountRecordData,
-    AccountStatus,
-    AccountStorageFilter,
-    StoreError,
+    AccountRecord, AccountRecordData, AccountStatus, AccountStorageFilter, StoreError,
 };
 use miden_client::utils::Serializable;
 use miden_client::{AccountError, Felt, Word};
@@ -45,48 +22,30 @@ use super::IdxdbStore;
 use crate::account::js_bindings::idxdb_get_account_addresses;
 use crate::account::models::AddressIdxdbObject;
 use crate::account::utils::{
-    insert_account_address,
-    parse_account_address_idxdb_object,
-    remove_account_address,
+    insert_account_address, parse_account_address_idxdb_object, remove_account_address,
 };
 use crate::promise::{await_js, await_js_value};
 
 mod js_bindings;
 pub use js_bindings::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
 use js_bindings::{
-    idxdb_get_account_code,
-    idxdb_get_account_header,
-    idxdb_get_account_header_by_commitment,
-    idxdb_get_account_headers,
-    idxdb_get_account_ids,
-    idxdb_get_account_storage,
-    idxdb_get_account_storage_maps,
-    idxdb_get_account_vault_assets,
-    idxdb_get_foreign_account_code,
-    idxdb_lock_account,
-    idxdb_prune_account_history,
-    idxdb_undo_account_states,
+    idxdb_get_account_code, idxdb_get_account_header, idxdb_get_account_header_by_commitment,
+    idxdb_get_account_headers, idxdb_get_account_ids, idxdb_get_account_storage,
+    idxdb_get_account_storage_maps, idxdb_get_account_vault_assets, idxdb_get_foreign_account_code,
+    idxdb_lock_account, idxdb_prune_account_history, idxdb_undo_account_states,
     idxdb_upsert_foreign_account_code,
 };
 
 mod models;
 use models::{
-    AccountAssetIdxdbObject,
-    AccountCodeIdxdbObject,
-    AccountRecordIdxdbObject,
-    AccountStorageIdxdbObject,
-    ForeignAccountCodeIdxdbObject,
-    StorageMapEntryIdxdbObject,
+    AccountAssetIdxdbObject, AccountCodeIdxdbObject, AccountRecordIdxdbObject,
+    AccountStorageIdxdbObject, ForeignAccountCodeIdxdbObject, StorageMapEntryIdxdbObject,
 };
 
 pub(crate) mod utils;
 use utils::{
-    apply_full_account_state,
-    parse_account_record_idxdb_object,
-    upsert_account_asset_vault,
-    upsert_account_code,
-    upsert_account_record,
-    upsert_account_storage,
+    apply_full_account_state, parse_account_record_idxdb_object, upsert_account_asset_vault,
+    upsert_account_code, upsert_account_record, upsert_account_storage,
 };
 
 impl IdxdbStore {
@@ -133,7 +92,7 @@ impl IdxdbStore {
                     parse_account_record_idxdb_object(account_header_idxdb)?;
 
                 Ok(Some(parsed_account_record))
-            },
+            }
         }
     }
 
@@ -182,9 +141,13 @@ impl IdxdbStore {
             None => return Ok(None),
             Some((account_header, status)) => (account_header, status),
         };
-        let account_code = self.get_account_code(account_header.code_commitment()).await?;
+        let account_code = self
+            .get_account_code(account_header.code_commitment())
+            .await?;
 
-        let account_storage = self.get_storage(account_id, AccountStorageFilter::All).await?;
+        let account_storage = self
+            .get_storage(account_id, AccountStorageFilter::All)
+            .await?;
         let assets = self.get_vault_assets(account_id, vec![]).await?;
         let account_vault = AssetVault::new(&assets)?;
 
@@ -233,7 +196,9 @@ impl IdxdbStore {
         let partial_storage =
             PartialStorage::new(storage_header, maps).map_err(StoreError::AccountError)?;
 
-        let account_code = self.get_account_code(account_header.code_commitment()).await?;
+        let account_code = self
+            .get_account_code(account_header.code_commitment())
+            .await?;
 
         let partial_account = PartialAccount::new(
             account_header.id(),
@@ -322,20 +287,21 @@ impl IdxdbStore {
                     Some(slot) => vec![slot],
                     None => return Err(StoreError::AccountStorageRootNotFound(map_root)),
                 }
-            },
+            }
             AccountStorageFilter::SlotName(name) => {
                 let wanted_name = name.as_str();
-                let slot =
-                    account_storage_idxdb.into_iter().find(|s| s.slot_name.as_str() == wanted_name);
+                let slot = account_storage_idxdb
+                    .into_iter()
+                    .find(|s| s.slot_name.as_str() == wanted_name);
                 match slot {
                     Some(slot) => vec![slot],
                     None => {
                         return Err(StoreError::AccountError(
                             AccountError::StorageSlotNameNotFound { slot_name: name },
                         ));
-                    },
+                    }
                 }
-            },
+            }
         };
 
         let promise = idxdb_get_account_storage_maps(self.db_id(), account_id_str);
@@ -434,9 +400,11 @@ impl IdxdbStore {
         account: &Account,
         initial_address: Address,
     ) -> Result<(), StoreError> {
-        upsert_account_code(self.db_id(), account.code()).await.map_err(|js_error| {
-            StoreError::DatabaseError(format!("failed to insert account code: {js_error:?}"))
-        })?;
+        upsert_account_code(self.db_id(), account.code())
+            .await
+            .map_err(|js_error| {
+                StoreError::DatabaseError(format!("failed to insert account code: {js_error:?}"))
+            })?;
 
         upsert_account_storage(self.db_id(), &account.id(), account.storage())
             .await
@@ -450,9 +418,11 @@ impl IdxdbStore {
                 StoreError::DatabaseError(format!("failed to insert account vault:{js_error:?}"))
             })?;
 
-        upsert_account_record(self.db_id(), account).await.map_err(|js_error| {
-            StoreError::DatabaseError(format!("failed to insert account record: {js_error:?}"))
-        })?;
+        upsert_account_record(self.db_id(), account)
+            .await
+            .map_err(|js_error| {
+                StoreError::DatabaseError(format!("failed to insert account record: {js_error:?}"))
+            })?;
 
         insert_account_address(self.db_id(), &account.id(), initial_address)
             .await
@@ -552,7 +522,10 @@ impl IdxdbStore {
         // TODO: prevent fetching the full storage when we only need one map item
         // https://github.com/0xMiden/miden-client/issues/1746
         let storage = self
-            .get_account_storage(account_id, AccountStorageFilter::SlotName(slot_name.clone()))
+            .get_account_storage(
+                account_id,
+                AccountStorageFilter::SlotName(slot_name.clone()),
+            )
             .await?;
 
         match storage.get(&slot_name).map(StorageSlot::content) {
@@ -563,11 +536,13 @@ impl IdxdbStore {
                 let witness = smt_forest.get_storage_map_item_witness(map.root(), key)?;
 
                 Ok((value, witness))
-            },
-            Some(_) => {
-                Err(StoreError::AccountError(AccountError::other("Storage slot is not a map")))
-            },
-            None => Err(StoreError::AccountError(AccountError::other("Storage slot not found"))),
+            }
+            Some(_) => Err(StoreError::AccountError(AccountError::other(
+                "Storage slot is not a map",
+            ))),
+            None => Err(StoreError::AccountError(AccountError::other(
+                "Storage slot not found",
+            ))),
         }
     }
 
@@ -590,7 +565,10 @@ impl IdxdbStore {
         &self,
         account_ids: Vec<AccountId>,
     ) -> Result<BTreeMap<AccountId, AccountCode>, StoreError> {
-        let account_ids = account_ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let account_ids = account_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         let promise = idxdb_get_foreign_account_code(self.db_id(), account_ids);
         let foreign_account_code_idxdb: Option<Vec<ForeignAccountCodeIdxdbObject>> =
             await_js(promise, "failed to fetch foreign account code").await?;
@@ -615,8 +593,10 @@ impl IdxdbStore {
         &self,
         account_states: &[Word],
     ) -> Result<(), StoreError> {
-        let account_commitments =
-            account_states.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let account_commitments = account_states
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         let promise = idxdb_undo_account_states(self.db_id(), account_commitments);
         await_js_value(promise, "failed to undo account states").await?;
 
@@ -633,7 +613,9 @@ impl IdxdbStore {
         // Mismatched digests may be due to stale network data. If the mismatched digest is
         // tracked in the db and corresponds to the mismatched account, it means we
         // got a past update and shouldn't lock the account.
-        if let Some(account) = self.get_account_header_by_commitment(*mismatched_digest).await?
+        if let Some(account) = self
+            .get_account_header_by_commitment(*mismatched_digest)
+            .await?
             && account.id() == *account_id
         {
             return Ok(());
@@ -663,9 +645,11 @@ impl IdxdbStore {
     }
 
     pub(crate) async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
-        remove_account_address(self.db_id(), address).await.map_err(|js_error| {
-            StoreError::DatabaseError(format!("failed to remove account address: {js_error:?}"))
-        })
+        remove_account_address(self.db_id(), address)
+            .await
+            .map_err(|js_error| {
+                StoreError::DatabaseError(format!("failed to remove account address: {js_error:?}"))
+            })
     }
 
     pub(crate) async fn prune_account_history(

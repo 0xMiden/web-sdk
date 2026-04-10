@@ -48,12 +48,9 @@ impl TransactionRequest {
     pub fn expected_future_notes(&self) -> Result<Vec<NoteDetailsAndTag>, JsValue> {
         self.0
             .expected_future_notes()
-            .cloned()  // This converts &(T, U) to (T, U)
+            .cloned() // This converts &(T, U) to (T, U)
             .map(|(note_details, note_tag)| {
-                Ok(NoteDetailsAndTag::new(
-                    note_details.into(),
-                    note_tag.into()
-                ))
+                Ok(NoteDetailsAndTag::new(note_details.into(), note_tag.into()))
             })
             .collect::<Result<Vec<NoteDetailsAndTag>, _>>()
     }

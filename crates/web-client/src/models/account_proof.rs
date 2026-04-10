@@ -81,7 +81,9 @@ impl AccountProof {
     /// Returns the number of storage slots, if available (public accounts only).
     #[wasm_bindgen(js_name = "numStorageSlots")]
     pub fn num_storage_slots(&self) -> Option<u8> {
-        self.inner.storage_header().map(AccountStorageHeader::num_slots)
+        self.inner
+            .storage_header()
+            .map(AccountStorageHeader::num_slots)
     }
 
     /// Returns storage map entries for a given slot name, if available.
@@ -133,7 +135,10 @@ impl AccountProof {
         let slot_name = StorageSlotName::new(slot_name)
             .map_err(|err| js_error_with_context(err, "invalid slot name"))?;
 
-        Ok(self.inner.find_map_details(&slot_name).map(|d| d.too_many_entries))
+        Ok(self
+            .inner
+            .find_map_details(&slot_name)
+            .map(|d| d.too_many_entries))
     }
 
     /// Returns the names of all storage slots that have map details available.
@@ -142,9 +147,13 @@ impl AccountProof {
     /// Returns `undefined` if the account is private.
     #[wasm_bindgen(js_name = "getStorageMapSlotNames")]
     pub fn get_storage_map_slot_names(&self) -> Option<Vec<String>> {
-        self.inner
-            .storage_details()
-            .map(|details| details.map_details.iter().map(|d| d.slot_name.to_string()).collect())
+        self.inner.storage_details().map(|details| {
+            details
+                .map_details
+                .iter()
+                .map(|d| d.slot_name.to_string())
+                .collect()
+        })
     }
 }
 

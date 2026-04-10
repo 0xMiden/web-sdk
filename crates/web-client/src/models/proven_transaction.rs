@@ -62,7 +62,10 @@ impl ProvenTransaction {
     /// Returns the nullifiers of the consumed input notes.
     #[wasm_bindgen(js_name = "nullifiers")]
     pub fn nullifiers(&self) -> Vec<Word> {
-        self.0.nullifiers().map(|nullifier| Word::from(nullifier.as_word())).collect()
+        self.0
+            .nullifiers()
+            .map(|nullifier| Word::from(nullifier.as_word()))
+            .collect()
     }
 }
 

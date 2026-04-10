@@ -22,11 +22,11 @@ impl WebClient {
         serialized_mock_note_transport_node: Option<Vec<u8>>,
     ) -> Result<JsValue, JsValue> {
         let mock_rpc_api = match serialized_mock_chain {
-            Some(chain) => {
-                Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {
+            Some(chain) => Arc::new(MockRpcApi::new(
+                MockChain::read_from_bytes(&chain).map_err(|err| {
                     js_error_with_context(err, "failed to deserialize mock chain")
-                })?))
-            },
+                })?,
+            )),
             None => Arc::new(MockRpcApi::default()),
         };
 
@@ -36,7 +36,7 @@ impl WebClient {
                     js_error_with_context(err, "failed to deserialize mock note transport node")
                 })?;
                 Arc::new(MockNoteTransportApi::new(Arc::new(RwLock::new(node))))
-            },
+            }
             None => Arc::new(MockNoteTransportApi::default()),
         };
 
@@ -100,7 +100,7 @@ impl WebClient {
             Some(api) => {
                 api.prove_block();
                 Ok(())
-            },
+            }
             None => Err(JsValue::from_str("WebClient does not have a mock chain.")),
         }
     }

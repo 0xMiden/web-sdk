@@ -15,8 +15,9 @@ pub struct TestUtils;
 impl TestUtils {
     #[wasm_bindgen(js_name = "createMockAccountId")]
     pub fn create_mock_account_id() -> AccountId {
-        let native_account_id: NativeAccountId =
-            ACCOUNT_ID_REGULAR_PRIVATE_ACCOUNT_UPDATABLE_CODE.try_into().unwrap();
+        let native_account_id: NativeAccountId = ACCOUNT_ID_REGULAR_PRIVATE_ACCOUNT_UPDATABLE_CODE
+            .try_into()
+            .unwrap();
         native_account_id.into()
     }
 

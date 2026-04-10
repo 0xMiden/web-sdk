@@ -1,8 +1,7 @@
 use alloc::string::String;
 
 use miden_client::account::{
-    StorageMapKey as NativeStorageMapKey,
-    StorageSlotName as NativeStorageSlotName,
+    StorageMapKey as NativeStorageMapKey, StorageSlotName as NativeStorageSlotName,
 };
 use miden_client::rpc::domain::account::AccountStorageRequirements as NativeAccountStorageRequirements;
 use wasm_bindgen::prelude::*;
@@ -22,7 +21,10 @@ impl SlotAndKeys {
     /// Creates a new slot-and-keys entry.
     #[wasm_bindgen(constructor)]
     pub fn new(storage_slot_name: String, storage_map_keys: Vec<Word>) -> SlotAndKeys {
-        SlotAndKeys { storage_slot_name, storage_map_keys }
+        SlotAndKeys {
+            storage_slot_name,
+            storage_map_keys,
+        }
     }
 
     /// Returns the slot name.

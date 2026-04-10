@@ -1,6 +1,5 @@
 use miden_client::rpc::domain::note::{
-    NoteSyncBlock as NativeNoteSyncBlock,
-    NoteSyncInfo as NativeNoteSyncInfo,
+    NoteSyncBlock as NativeNoteSyncBlock, NoteSyncInfo as NativeNoteSyncInfo,
 };
 use wasm_bindgen::prelude::*;
 
@@ -53,13 +52,19 @@ impl NoteSyncInfo {
     /// Returns the first block header associated with matching notes, if any.
     #[wasm_bindgen(js_name = "blockHeader")]
     pub fn block_header(&self) -> Option<BlockHeader> {
-        self.0.blocks.first().map(|block| block.block_header.clone().into())
+        self.0
+            .blocks
+            .first()
+            .map(|block| block.block_header.clone().into())
     }
 
     /// Returns the first block MMR path associated with matching notes, if any.
     #[wasm_bindgen(js_name = "mmrPath")]
     pub fn mmr_path(&self) -> Option<MerklePath> {
-        self.0.blocks.first().map(|block| block.mmr_path.clone().into())
+        self.0
+            .blocks
+            .first()
+            .map(|block| block.mmr_path.clone().into())
     }
 
     /// Returns the committed notes across all matching blocks.
@@ -74,7 +79,11 @@ impl NoteSyncInfo {
 
     /// Returns the blocks containing matching notes.
     pub fn blocks(&self) -> Vec<NoteSyncBlock> {
-        self.0.blocks.iter().map(|b| NoteSyncBlock(b.clone())).collect()
+        self.0
+            .blocks
+            .iter()
+            .map(|b| NoteSyncBlock(b.clone()))
+            .collect()
     }
 }
 

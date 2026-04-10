@@ -1,11 +1,8 @@
 use js_sys::Uint8Array;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::address::{
-    Address as NativeAddress,
-    AddressId,
-    AddressInterface as NativeAddressInterface,
-    NetworkId as NativeNetworkId,
-    RoutingParameters,
+    Address as NativeAddress, AddressId, AddressInterface as NativeAddressInterface,
+    NetworkId as NativeNetworkId, RoutingParameters,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -49,12 +46,12 @@ impl Address {
             Some(interface) if &interface == "BasicWallet" => {
                 let routing_params = RoutingParameters::new(NativeAddressInterface::BasicWallet);
                 NativeAddress::new(native_account_id).with_routing_parameters(routing_params)
-            },
+            }
             Some(other_interface) => {
                 return Err(JsValue::from_str(&format!(
                     "Failed to build address from account id, wrong interface value given: {other_interface}"
                 )));
-            },
+            }
         };
 
         Ok(Self(native_address))

@@ -2,15 +2,8 @@ use alloc::sync::Arc;
 
 use miden_client::account::AccountComponentCode as NativeAccountComponentCode;
 use miden_client::assembly::{
-    Assembler,
-    CodeBuilder as NativeCodeBuilder,
-    Library as NativeLibrary,
-    Module,
-    ModuleKind,
-    Path,
-    PrintDiagnostic,
-    Report,
-    SourceManagerSync,
+    Assembler, CodeBuilder as NativeCodeBuilder, Library as NativeLibrary, Module, ModuleKind,
+    Path, PrintDiagnostic, Report, SourceManagerSync,
 };
 use wasm_bindgen::prelude::*;
 
@@ -39,12 +32,14 @@ impl CodeBuilder {
     /// statically link it for use with scripts to be built with this builder.
     #[wasm_bindgen(js_name = "linkModule")]
     pub fn link_module(&mut self, module_path: &str, module_code: &str) -> Result<(), JsValue> {
-        self.builder.link_module(module_path, module_code).map_err(|e| {
-            js_error_with_context(
-                e,
-                &format!("script builder: failed to link module with path {module_path}"),
-            )
-        })?;
+        self.builder
+            .link_module(module_path, module_code)
+            .map_err(|e| {
+                js_error_with_context(
+                    e,
+                    &format!("script builder: failed to link module with path {module_path}"),
+                )
+            })?;
         Ok(())
     }
 
@@ -132,7 +127,7 @@ impl CodeBuilder {
                 let err_msg =
                     format_assembler_error(&error_report, "error while assembling library");
                 Err(JsValue::from(err_msg))
-            },
+            }
         }
     }
 

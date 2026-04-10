@@ -20,10 +20,10 @@ impl From<AccountType> for NativeAccountType {
             AccountType::NonFungibleFaucet => NativeAccountType::NonFungibleFaucet,
             AccountType::RegularAccountImmutableCode => {
                 NativeAccountType::RegularAccountImmutableCode
-            },
+            }
             AccountType::RegularAccountUpdatableCode => {
                 NativeAccountType::RegularAccountUpdatableCode
-            },
+            }
         }
     }
 }
@@ -35,10 +35,10 @@ impl From<&AccountType> for NativeAccountType {
             AccountType::NonFungibleFaucet => NativeAccountType::NonFungibleFaucet,
             AccountType::RegularAccountImmutableCode => {
                 NativeAccountType::RegularAccountImmutableCode
-            },
+            }
             AccountType::RegularAccountUpdatableCode => {
                 NativeAccountType::RegularAccountUpdatableCode
-            },
+            }
         }
     }
 }

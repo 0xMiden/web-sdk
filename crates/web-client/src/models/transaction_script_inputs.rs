@@ -18,7 +18,10 @@ impl TransactionScriptInputPair {
     /// Creates a new script input pair.
     #[wasm_bindgen(constructor)]
     pub fn new(word: Word, felts: &FeltArray) -> TransactionScriptInputPair {
-        TransactionScriptInputPair { word, felts: felts.clone() }
+        TransactionScriptInputPair {
+            word,
+            felts: felts.clone(),
+        }
     }
 
     /// Returns the word part of the input.
@@ -70,6 +73,10 @@ impl From<TransactionScriptInputPairArray> for Vec<(NativeWord, Vec<NativeFelt>)
 
 impl From<&TransactionScriptInputPairArray> for Vec<(NativeWord, Vec<NativeFelt>)> {
     fn from(transaction_script_input_pair_array: &TransactionScriptInputPairArray) -> Self {
-        transaction_script_input_pair_array.__inner.iter().map(Into::into).collect()
+        transaction_script_input_pair_array
+            .__inner
+            .iter()
+            .map(Into::into)
+            .collect()
     }
 }

@@ -18,7 +18,10 @@ impl NoteFilter {
     /// Creates a new filter for the given type and optional note IDs.
     #[wasm_bindgen(constructor)]
     pub fn new(note_type: NoteFilterTypes, note_ids: Option<Vec<NoteId>>) -> NoteFilter {
-        NoteFilter { note_type, note_ids }
+        NoteFilter {
+            note_type,
+            note_ids,
+        }
     }
 }
 
@@ -48,18 +51,20 @@ impl From<NoteFilter> for NativeNoteFilter {
             NoteFilterTypes::Expected => NativeNoteFilter::Expected,
             NoteFilterTypes::Processing => NativeNoteFilter::Processing,
             NoteFilterTypes::List => {
-                let note_ids =
-                    filter.note_ids.unwrap_or_else(|| panic!("Note IDs required for List filter"));
+                let note_ids = filter
+                    .note_ids
+                    .unwrap_or_else(|| panic!("Note IDs required for List filter"));
                 NativeNoteFilter::List(note_ids.iter().map(Into::into).collect())
-            },
+            }
             NoteFilterTypes::Unique => {
-                let note_ids =
-                    filter.note_ids.unwrap_or_else(|| panic!("Note ID required for Unique filter"));
+                let note_ids = filter
+                    .note_ids
+                    .unwrap_or_else(|| panic!("Note ID required for Unique filter"));
 
                 assert!(note_ids.len() == 1, "Only one Note ID can be provided");
 
                 NativeNoteFilter::Unique(note_ids.first().unwrap().into())
-            },
+            }
             NoteFilterTypes::Nullifiers => NativeNoteFilter::Nullifiers(vec![]),
             NoteFilterTypes::Unverified => NativeNoteFilter::Unverified,
         }
@@ -80,7 +85,7 @@ impl From<&NoteFilter> for NativeNoteFilter {
                     .clone()
                     .unwrap_or_else(|| panic!("Note IDs required for List filter"));
                 NativeNoteFilter::List(note_ids.iter().map(Into::into).collect())
-            },
+            }
             NoteFilterTypes::Unique => {
                 let note_ids = filter
                     .note_ids
@@ -90,7 +95,7 @@ impl From<&NoteFilter> for NativeNoteFilter {
                 assert!(note_ids.len() == 1, "Only one Note ID can be provided");
 
                 NativeNoteFilter::Unique(note_ids.first().unwrap().into())
-            },
+            }
             NoteFilterTypes::Nullifiers => NativeNoteFilter::Nullifiers(vec![]),
             NoteFilterTypes::Unverified => NativeNoteFilter::Unverified,
         }

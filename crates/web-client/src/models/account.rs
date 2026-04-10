@@ -1,8 +1,6 @@
 use miden_client::Word as NativeWord;
 use miden_client::account::{
-    Account as NativeAccount,
-    AccountInterfaceExt,
-    AccountType as NativeAccountType,
+    Account as NativeAccount, AccountInterfaceExt, AccountType as NativeAccountType,
 };
 use miden_client::transaction::AccountInterface;
 use wasm_bindgen::prelude::*;
@@ -85,7 +83,10 @@ impl Account {
     /// Returns true if the account can update its code.
     #[wasm_bindgen(js_name = "isUpdatable")]
     pub fn is_updatable(&self) -> bool {
-        matches!(self.0.account_type(), NativeAccountType::RegularAccountUpdatableCode)
+        matches!(
+            self.0.account_type(),
+            NativeAccountType::RegularAccountUpdatableCode
+        )
     }
 
     /// Returns true if the account exposes public storage.
@@ -133,7 +134,10 @@ impl Account {
             pks.extend(auth.get_public_key_commitments());
         }
 
-        pks.into_iter().map(NativeWord::from).map(Into::into).collect()
+        pks.into_iter()
+            .map(NativeWord::from)
+            .map(Into::into)
+            .collect()
     }
 }
 

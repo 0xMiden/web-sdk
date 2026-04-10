@@ -28,13 +28,13 @@ impl From<NativeNoteState> for InputNoteState {
             NativeNoteState::ProcessingAuthenticated(_) => InputNoteState::ProcessingAuthenticated,
             NativeNoteState::ProcessingUnauthenticated(_) => {
                 InputNoteState::ProcessingUnauthenticated
-            },
+            }
             NativeNoteState::ConsumedAuthenticatedLocal(_) => {
                 InputNoteState::ConsumedAuthenticatedLocal
-            },
+            }
             NativeNoteState::ConsumedUnauthenticatedLocal(_) => {
                 InputNoteState::ConsumedUnauthenticatedLocal
-            },
+            }
             NativeNoteState::ConsumedExternal(_) => InputNoteState::ConsumedExternal,
         }
     }
@@ -50,13 +50,13 @@ impl From<&NativeNoteState> for InputNoteState {
             NativeNoteState::ProcessingAuthenticated(_) => InputNoteState::ProcessingAuthenticated,
             NativeNoteState::ProcessingUnauthenticated(_) => {
                 InputNoteState::ProcessingUnauthenticated
-            },
+            }
             NativeNoteState::ConsumedAuthenticatedLocal(_) => {
                 InputNoteState::ConsumedAuthenticatedLocal
-            },
+            }
             NativeNoteState::ConsumedUnauthenticatedLocal(_) => {
                 InputNoteState::ConsumedUnauthenticatedLocal
-            },
+            }
             NativeNoteState::ConsumedExternal(_) => InputNoteState::ConsumedExternal,
         }
     }

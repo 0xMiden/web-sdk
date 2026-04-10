@@ -7,11 +7,8 @@ use miden_client::note::{BlockNumber, Note as NativeNote};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
-    ForeignAccount as NativeForeignAccount,
-    PaymentNoteDescription,
-    ProvenTransaction as NativeProvenTransaction,
-    SwapTransactionData,
-    TransactionExecutorError,
+    ForeignAccount as NativeForeignAccount, PaymentNoteDescription,
+    ProvenTransaction as NativeProvenTransaction, SwapTransactionData, TransactionExecutorError,
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionStoreUpdate as NativeTransactionStoreUpdate,
@@ -51,15 +48,19 @@ impl WebClient {
         account_id: &AccountId,
         transaction_request: &TransactionRequest,
     ) -> Result<TransactionId, JsValue> {
-        let transaction_result = self.execute_transaction(account_id, transaction_request).await?;
+        let transaction_result = self
+            .execute_transaction(account_id, transaction_request)
+            .await?;
 
         let tx_id = transaction_result.id();
 
         let proven_transaction = self.prove_transaction(&transaction_result, None).await?;
 
-        let submission_height =
-            self.submit_proven_transaction(&proven_transaction, &transaction_result).await?;
-        self.apply_transaction(&transaction_result, submission_height).await?;
+        let submission_height = self
+            .submit_proven_transaction(&proven_transaction, &transaction_result)
+            .await?;
+        self.apply_transaction(&transaction_result, submission_height)
+            .await?;
 
         Ok(tx_id)
     }
@@ -77,16 +78,21 @@ impl WebClient {
         transaction_request: &TransactionRequest,
         prover: &TransactionProver,
     ) -> Result<TransactionId, JsValue> {
-        let transaction_result = self.execute_transaction(account_id, transaction_request).await?;
+        let transaction_result = self
+            .execute_transaction(account_id, transaction_request)
+            .await?;
 
         let tx_id = transaction_result.id();
 
-        let proven_transaction =
-            self.prove_transaction(&transaction_result, Some(prover.clone())).await?;
+        let proven_transaction = self
+            .prove_transaction(&transaction_result, Some(prover.clone()))
+            .await?;
 
-        let submission_height =
-            self.submit_proven_transaction(&proven_transaction, &transaction_result).await?;
-        self.apply_transaction(&transaction_result, submission_height).await?;
+        let submission_height = self
+            .submit_proven_transaction(&proven_transaction, &transaction_result)
+            .await?;
+        self.apply_transaction(&transaction_result, submission_height)
+            .await?;
 
         Ok(tx_id)
     }
@@ -146,7 +152,7 @@ impl WebClient {
                         salt,
                     );
                     Ok(TransactionSummary::from(summary))
-                },
+                }
                 Err(ClientError::TransactionExecutorError(
                     TransactionExecutorError::Unauthorized(summary),
                 )) => Ok(TransactionSummary::from(*summary)),
@@ -213,8 +219,10 @@ impl WebClient {
         }
 
         if let Some(client) = self.get_mut_inner() {
-            let prover_arc =
-                prover.map_or_else(|| client.prover(), |custom_prover| custom_prover.get_prover());
+            let prover_arc = prover.map_or_else(
+                || client.prover(),
+                |custom_prover| custom_prover.get_prover(),
+            );
 
             Box::pin(client.prove_transaction_with(transaction_result.native(), prover_arc))
                 .await
@@ -300,6 +308,7 @@ impl WebClient {
         Ok(mint_transaction_request.into())
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = "newSendTransactionRequest")]
     pub fn new_send_transaction_request(
         &mut self,
@@ -369,6 +378,7 @@ impl WebClient {
         Ok(consume_transaction_request.into())
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = "newSwapTransactionRequest")]
     pub fn new_swap_transaction_request(
         &mut self,

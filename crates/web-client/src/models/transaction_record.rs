@@ -40,7 +40,12 @@ impl TransactionRecord {
     /// Returns the nullifiers of the consumed input notes.
     #[wasm_bindgen(js_name = "inputNoteNullifiers")]
     pub fn input_note_nullifiers(&self) -> Vec<Word> {
-        self.0.details.input_note_nullifiers.iter().map(Into::into).collect()
+        self.0
+            .details
+            .input_note_nullifiers
+            .iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Returns the output notes created by this transaction.

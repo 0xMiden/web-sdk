@@ -19,7 +19,10 @@ impl NoteDetails {
     /// Creates a new set of note details from the given assets and recipient.
     #[wasm_bindgen(constructor)]
     pub fn new(note_assets: &NoteAssets, note_recipient: &NoteRecipient) -> NoteDetails {
-        NoteDetails(NativeNoteDetails::new(note_assets.into(), note_recipient.into()))
+        NoteDetails(NativeNoteDetails::new(
+            note_assets.into(),
+            note_recipient.into(),
+        ))
     }
 
     /// Returns the note identifier derived from these details.
@@ -40,8 +43,10 @@ impl NoteDetails {
     /// Returns the note nullifier as a word.
     pub fn nullifier(&self) -> Word {
         let nullifier = self.0.nullifier();
-        let elements: [miden_client::Felt; 4] =
-            nullifier.as_elements().try_into().expect("nullifier has 4 elements");
+        let elements: [miden_client::Felt; 4] = nullifier
+            .as_elements()
+            .try_into()
+            .expect("nullifier has 4 elements");
         let native_word: NativeWord = NativeWord::from(&elements);
         native_word.into()
     }

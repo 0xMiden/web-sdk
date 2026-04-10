@@ -1,8 +1,6 @@
 use idxdb_store::account::JsStorageMapEntry;
 use miden_client::account::{
-    AccountStorage as NativeAccountStorage,
-    StorageSlotContent,
-    StorageSlotName,
+    AccountStorage as NativeAccountStorage, StorageSlotContent, StorageSlotName,
 };
 use wasm_bindgen::prelude::*;
 
@@ -38,14 +36,22 @@ impl AccountStorage {
     /// Returns the names of all storage slots on this account.
     #[wasm_bindgen(js_name = "getSlotNames")]
     pub fn get_slot_names(&self) -> Vec<String> {
-        self.0.slots().iter().map(|slot| slot.name().as_str().to_string()).collect()
+        self.0
+            .slots()
+            .iter()
+            .map(|slot| slot.name().as_str().to_string())
+            .collect()
     }
 
     /// Returns the value for a key in the map stored at the given slot, if any.
     #[wasm_bindgen(js_name = "getMapItem")]
     pub fn get_map_item(&self, slot_name: &str, key: &Word) -> Option<Word> {
         match StorageSlotName::new(slot_name) {
-            Ok(slot_name) => self.0.get_map_item(&slot_name, key.into()).ok().map(Into::into),
+            Ok(slot_name) => self
+                .0
+                .get_map_item(&slot_name, key.into())
+                .ok()
+                .map(Into::into),
             Err(_) => None,
         }
     }
@@ -55,7 +61,11 @@ impl AccountStorage {
     /// Returns `[]` if the map exists but is empty.
     #[wasm_bindgen(js_name = "getMapEntries")]
     pub fn get_map_entries(&self, slot_name: &str) -> Option<Vec<JsStorageMapEntry>> {
-        let slot = self.0.slots().iter().find(|slot| slot.name().as_str() == slot_name)?;
+        let slot = self
+            .0
+            .slots()
+            .iter()
+            .find(|slot| slot.name().as_str() == slot_name)?;
         let StorageSlotContent::Map(map) = slot.content() else {
             return None;
         };

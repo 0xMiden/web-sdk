@@ -27,7 +27,10 @@ impl NoteId {
     /// Builds a note ID from the recipient and asset commitments.
     #[wasm_bindgen(constructor)]
     pub fn new(recipient_digest: &Word, asset_commitment_digest: &Word) -> NoteId {
-        NoteId(NativeNoteId::new(recipient_digest.into(), asset_commitment_digest.into()))
+        NoteId(NativeNoteId::new(
+            recipient_digest.into(),
+            asset_commitment_digest.into(),
+        ))
     }
 
     /// Parses a note ID from its hex encoding.

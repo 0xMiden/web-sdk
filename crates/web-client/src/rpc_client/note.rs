@@ -1,6 +1,5 @@
 use miden_client::note::{
-    NoteHeader as NativeNoteHeader,
-    NoteInclusionProof as NativeNoteInclusionProof,
+    NoteHeader as NativeNoteHeader, NoteInclusionProof as NativeNoteInclusionProof,
 };
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -39,7 +38,11 @@ impl FetchedNote {
         let native_metadata = metadata.into();
         let native_header = NativeNoteHeader::new(native_note_id, native_metadata);
         let header = native_header.into();
-        FetchedNote { header, inclusion_proof, note }
+        FetchedNote {
+            header,
+            inclusion_proof,
+            note,
+        }
     }
 
     // GETTERS
@@ -99,7 +102,8 @@ impl FetchedNote {
     /// an `InputNote` manually using the inclusion proof and note data obtained elsewhere.
     #[wasm_bindgen(js_name = "asInputNote")]
     pub fn as_input_note(&self) -> Option<InputNote> {
-        self.note().map(|note| InputNote::authenticated(&note, &self.inclusion_proof))
+        self.note()
+            .map(|note| InputNote::authenticated(&note, &self.inclusion_proof))
     }
 }
 

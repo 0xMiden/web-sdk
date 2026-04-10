@@ -1,7 +1,6 @@
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::note::{
-    NetworkAccountTarget as NativeNetworkAccountTarget,
-    NoteAttachment as NativeNoteAttachment,
+    NetworkAccountTarget as NativeNetworkAccountTarget, NoteAttachment as NativeNoteAttachment,
     NoteAttachmentScheme as NativeNoteAttachmentScheme,
 };
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
@@ -131,7 +130,7 @@ impl NoteAttachment {
             NoteAttachmentContent::Array(array) => {
                 let felts: Vec<Felt> = array.as_slice().iter().map(|f| (*f).into()).collect();
                 Some(felts.into())
-            },
+            }
             _ => None,
         }
     }

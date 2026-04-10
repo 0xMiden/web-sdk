@@ -70,7 +70,9 @@ impl NoteFile {
     #[wasm_bindgen(js_name = "afterBlockNum")]
     pub fn after_block_num(&self) -> Option<u32> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { after_block_num, .. } => Some(after_block_num.as_u32()),
+            NativeNoteFile::NoteDetails {
+                after_block_num, ..
+            } => Some(after_block_num.as_u32()),
             _ => None,
         }
     }
@@ -107,7 +109,9 @@ impl NoteFile {
     pub fn deserialize(bytes: &[u8]) -> Result<Self, JsValue> {
         let deserialized = NativeNoteFile::read_from_bytes(bytes)
             .map_err(|err| js_error_with_context(err, "notefile deserialization failed"))?;
-        Ok(Self { inner: deserialized })
+        Ok(Self {
+            inner: deserialized,
+        })
     }
 
     /// Creates a `NoteFile` from an input note, preserving proof when available.
@@ -121,7 +125,9 @@ impl NoteFile {
             let assets = note.note().assets();
             let recipient = note.note().recipient();
             let details = NativeNoteDetails::new(assets.into(), recipient.into());
-            Self { inner: details.into() }
+            Self {
+                inner: details.into(),
+            }
         }
     }
 
@@ -133,9 +139,13 @@ impl NoteFile {
             Some(recipient) => {
                 let assets = native_note.assets();
                 let details = NativeNoteDetails::new(assets.clone(), recipient.clone());
-                Self { inner: details.into() }
+                Self {
+                    inner: details.into(),
+                }
+            }
+            None => Self {
+                inner: native_note.id().into(),
             },
-            None => Self { inner: native_note.id().into() },
         }
     }
 
@@ -170,13 +180,17 @@ impl From<NoteFile> for NativeNoteFile {
 impl From<&NoteDetails> for NoteFile {
     fn from(details: &NoteDetails) -> Self {
         let note_details: NativeNoteDetails = details.into();
-        Self { inner: note_details.into() }
+        Self {
+            inner: note_details.into(),
+        }
     }
 }
 
 impl From<&NoteId> for NoteFile {
     fn from(note_id: &NoteId) -> Self {
         let note_id: NativeNoteId = note_id.into();
-        NoteFile { inner: note_id.into() }
+        NoteFile {
+            inner: note_id.into(),
+        }
     }
 }

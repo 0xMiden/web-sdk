@@ -20,7 +20,10 @@ impl NoteAndArgs {
     /// Creates a new note/args pair for transaction building.
     #[wasm_bindgen(constructor)]
     pub fn new(note: &Note, args: Option<NoteArgs>) -> NoteAndArgs {
-        NoteAndArgs { note: note.clone(), args }
+        NoteAndArgs {
+            note: note.clone(),
+            args,
+        }
     }
 }
 
@@ -42,7 +45,11 @@ impl From<&NoteAndArgs> for (NativeNote, Option<NativeNoteArgs>) {
 
 impl From<NoteAndArgsArray> for Vec<(NativeNote, Option<NativeNoteArgs>)> {
     fn from(note_and_args_array: NoteAndArgsArray) -> Self {
-        note_and_args_array.__inner.into_iter().map(Into::into).collect()
+        note_and_args_array
+            .__inner
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 }
 

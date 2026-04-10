@@ -76,12 +76,12 @@ impl RpcClient {
             .map(|native_note| match native_note {
                 NativeFetchedNote::Private(header, inclusion_proof) => {
                     FetchedNote::from_header(header, None, inclusion_proof)
-                },
+                }
                 NativeFetchedNote::Public(note, inclusion_proof) => {
                     let header =
                         miden_client::note::NoteHeader::new(note.id(), note.metadata().clone());
                     FetchedNote::from_header(header, Some(note.into()), inclusion_proof)
-                },
+                }
             })
             .collect();
 
@@ -113,10 +113,11 @@ impl RpcClient {
         block_num: Option<u32>,
     ) -> Result<BlockHeader, JsValue> {
         let native_block_num = block_num.map(BlockNumber::from);
-        let (header, _proof) =
-            self.inner.get_block_header_by_number(native_block_num, false).await.map_err(
-                |err| js_error_with_context(err, "failed to get block header by number"),
-            )?;
+        let (header, _proof) = self
+            .inner
+            .get_block_header_by_number(native_block_num, false)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to get block header by number"))?;
 
         Ok(header.into())
     }

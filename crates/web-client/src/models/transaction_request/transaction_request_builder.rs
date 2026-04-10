@@ -1,13 +1,10 @@
 use miden_client::Word as NativeWord;
 use miden_client::note::{
-    Note as NativeNote,
-    NoteDetails as NativeNoteDetails,
-    NoteRecipient as NativeNoteRecipient,
+    Note as NativeNote, NoteDetails as NativeNoteDetails, NoteRecipient as NativeNoteRecipient,
     NoteTag as NativeNoteTag,
 };
 use miden_client::transaction::{
-    ForeignAccount as NativeForeignAccount,
-    NoteArgs as NativeNoteArgs,
+    ForeignAccount as NativeForeignAccount, NoteArgs as NativeNoteArgs,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionScript as NativeTransactionScript,
 };
@@ -16,11 +13,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::models::advice_map::AdviceMap;
 use crate::models::miden_arrays::{
-    ForeignAccountArray,
-    NoteAndArgsArray,
-    NoteArray,
-    NoteDetailsAndTagArray,
-    NoteRecipientArray,
+    ForeignAccountArray, NoteAndArgsArray, NoteArray, NoteDetailsAndTagArray, NoteRecipientArray,
 };
 use crate::models::transaction_request::TransactionRequest;
 use crate::models::transaction_script::TransactionScript;
@@ -105,8 +98,11 @@ impl TransactionRequestBuilder {
     /// Registers foreign accounts referenced by the transaction.
     #[wasm_bindgen(js_name = "withForeignAccounts")]
     pub fn with_foreign_accounts(mut self, foreign_accounts: &ForeignAccountArray) -> Self {
-        let native_foreign_accounts: Vec<NativeForeignAccount> =
-            foreign_accounts.__inner.iter().map(|account| account.clone().into()).collect();
+        let native_foreign_accounts: Vec<NativeForeignAccount> = foreign_accounts
+            .__inner
+            .iter()
+            .map(|account| account.clone().into())
+            .collect();
         self.0 = self.0.foreign_accounts(native_foreign_accounts);
         self
     }

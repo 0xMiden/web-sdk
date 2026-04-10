@@ -31,7 +31,9 @@ impl NoteConsumptionStatus {
     /// Constructs a `NoteConsumptionStatus` that is consumable after a specific block height.
     #[wasm_bindgen(js_name = "consumableAfter")]
     pub fn consumable_after(block_height: u32) -> Self {
-        Self(NativeNoteConsumptionStatus::ConsumableAfter(block_height.into()))
+        Self(NativeNoteConsumptionStatus::ConsumableAfter(
+            block_height.into(),
+        ))
     }
 
     /// Constructs a `NoteConsumptionStatus` that is never consumable.
@@ -53,7 +55,7 @@ impl NoteConsumptionStatus {
         match self.0 {
             NativeNoteConsumptionStatus::ConsumableAfter(block_height) => {
                 Some(block_height.as_u32())
-            },
+            }
             _ => None,
         }
     }
@@ -89,7 +91,10 @@ impl NoteConsumability {
         account_id: AccountId,
         consumption_status: NoteConsumptionStatus,
     ) -> NoteConsumability {
-        NoteConsumability { account_id, consumption_status }
+        NoteConsumability {
+            account_id,
+            consumption_status,
+        }
     }
 
     /// Returns the account that can consume the note.
@@ -113,7 +118,10 @@ impl ConsumableNoteRecord {
         input_note_record: InputNoteRecord,
         note_consumability: Vec<NoteConsumability>,
     ) -> ConsumableNoteRecord {
-        ConsumableNoteRecord { input_note_record, note_consumability }
+        ConsumableNoteRecord {
+            input_note_record,
+            note_consumability,
+        }
     }
 
     /// Returns the underlying input note record.

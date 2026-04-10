@@ -27,7 +27,11 @@ impl NoteExecutionHint {
     /// Creates a hint that allows execution in a specific slot of a round.
     #[wasm_bindgen(js_name = "onBlockSlot")]
     pub fn on_block_slot(epoch_len: u8, slot_len: u8, slot_offset: u8) -> NoteExecutionHint {
-        NoteExecutionHint(NativeNoteExecutionHint::on_block_slot(epoch_len, slot_len, slot_offset))
+        NoteExecutionHint(NativeNoteExecutionHint::on_block_slot(
+            epoch_len,
+            slot_len,
+            slot_offset,
+        ))
     }
 
     /// Reconstructs a hint from its encoded tag and payload.

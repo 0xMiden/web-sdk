@@ -76,11 +76,16 @@ impl WebClient {
                     ))
                 })?;
 
-            let key_pairs =
-                keystore.get_keys_for_account(account_id.as_native()).await.map_err(|err| {
+            let key_pairs = keystore
+                .get_keys_for_account(account_id.as_native())
+                .await
+                .map_err(|err| {
                     js_error_with_context(
                         err,
-                        &format!("failed to get keys for account: {}", &account_id.to_string()),
+                        &format!(
+                            "failed to get keys for account: {}",
+                            &account_id.to_string()
+                        ),
                     )
                 })?;
 

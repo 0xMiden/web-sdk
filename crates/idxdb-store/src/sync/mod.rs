@@ -10,8 +10,7 @@ use miden_client::utils::{Deserializable, Serializable};
 
 use super::IdxdbStore;
 use super::chain_data::utils::{
-    SerializedPartialBlockchainNodeData,
-    serialize_partial_blockchain_node,
+    SerializedPartialBlockchainNodeData, serialize_partial_blockchain_node,
 };
 use super::note::utils::{serialize_input_note, serialize_output_note};
 use super::transaction::utils::serialize_transaction_record;
@@ -20,12 +19,8 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::JsAccountUpdate;
 use js_bindings::{
-    JsStateSyncUpdate,
-    idxdb_add_note_tag,
-    idxdb_apply_state_sync,
-    idxdb_get_note_tags,
-    idxdb_get_sync_height,
-    idxdb_remove_note_tag,
+    JsStateSyncUpdate, idxdb_add_note_tag, idxdb_apply_state_sync, idxdb_get_note_tags,
+    idxdb_get_sync_height, idxdb_remove_note_tag,
 };
 
 mod models;
@@ -47,11 +42,15 @@ impl IdxdbStore {
                     (None, None) => NoteTagSource::User,
                     (Some(account_id), None) => {
                         NoteTagSource::Account(AccountId::from_hex(account_id.as_str())?)
-                    },
+                    }
                     (None, Some(note_id)) => {
                         NoteTagSource::Note(NoteId::try_from_hex(note_id.as_str())?)
-                    },
-                    _ => return Err(StoreError::ParsingError("Invalid NoteTagSource".to_string())),
+                    }
+                    _ => {
+                        return Err(StoreError::ParsingError(
+                            "Invalid NoteTagSource".to_string(),
+                        ));
+                    }
                 };
 
                 Ok(NoteTagRecord {
@@ -83,8 +82,12 @@ impl IdxdbStore {
             NoteTagSource::User => (None, None),
         };
 
-        let promise =
-            idxdb_add_note_tag(self.db_id(), tag.tag.to_bytes(), source_note_id, source_account_id);
+        let promise = idxdb_add_note_tag(
+            self.db_id(),
+            tag.tag.to_bytes(),
+            source_note_id,
+            source_account_id,
+        );
         await_js_value(promise, "failed to add note tag").await?;
 
         Ok(true)
@@ -133,7 +136,10 @@ impl IdxdbStore {
             let input_notes = note_updates.updated_input_notes();
             let output_notes = note_updates.updated_output_notes();
             (
-                input_notes.into_iter().map(|note| serialize_input_note(note.inner())).collect(),
+                input_notes
+                    .into_iter()
+                    .map(|note| serialize_input_note(note.inner()))
+                    .collect(),
                 output_notes
                     .into_iter()
                     .map(|note| serialize_output_note(note.inner()))
@@ -148,11 +154,11 @@ impl IdxdbStore {
             .collect();
 
         for (account_id, digest) in account_updates.mismatched_private_accounts() {
-            self.lock_account_on_unexpected_commitment(account_id, digest).await.map_err(
-                |err| {
+            self.lock_account_on_unexpected_commitment(account_id, digest)
+                .await
+                .map_err(|err| {
                     StoreError::DatabaseError(format!("failed to check account mismatch: {err:?}"))
-                },
-            )?;
+                })?;
         }
 
         let account_states_to_rollback = transaction_updates
@@ -161,7 +167,8 @@ impl IdxdbStore {
             .collect::<Vec<_>>();
 
         // Remove the account states and discard their SMT roots from the forest
-        self.rollback_account_states(&account_states_to_rollback).await?;
+        self.rollback_account_states(&account_states_to_rollback)
+            .await?;
 
         // Discard roots for rolled-back accounts
         {
@@ -228,8 +235,14 @@ impl IdxdbStore {
     }
 }
 
-type SerializedBlockData =
-    (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
+type SerializedBlockData = (
+    Vec<Vec<u8>>,
+    Vec<Vec<u8>>,
+    Vec<u32>,
+    Vec<u8>,
+    Vec<String>,
+    Vec<String>,
+);
 
 fn serialize_block_updates(
     block_updates: &BlockUpdates,

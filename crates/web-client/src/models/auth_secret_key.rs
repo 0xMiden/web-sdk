@@ -39,7 +39,7 @@ impl AuthSecretKey {
                     .try_into()
                     .map_err(|_| JsValue::from_str("Seed must be exactly 32 bytes"))?;
                 Ok(StdRng::from_seed(seed_array))
-            },
+            }
             None => Ok(StdRng::from_os_rng()),
         }
     }
@@ -89,7 +89,10 @@ impl AuthSecretKey {
             .map(|a| NativeFelt::new(u64::from(*a)))
             .collect::<Vec<NativeFelt>>();
 
-        Ok(secret_key_as_native_felts.into_iter().map(Into::into).collect())
+        Ok(secret_key_as_native_felts
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     /// Returns the ECDSA k256 Keccak secret key bytes encoded as felts.
@@ -105,7 +108,10 @@ impl AuthSecretKey {
             .map(|a| NativeFelt::new(u64::from(*a)))
             .collect::<Vec<NativeFelt>>();
 
-        Ok(secret_key_as_native_felts.into_iter().map(Into::into).collect())
+        Ok(secret_key_as_native_felts
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 }
 

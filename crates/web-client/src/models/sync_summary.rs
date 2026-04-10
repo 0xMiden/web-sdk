@@ -40,7 +40,11 @@ impl SyncSummary {
     /// Returns transactions that were committed.
     #[wasm_bindgen(js_name = "committedTransactions")]
     pub fn committed_transactions(&self) -> Vec<TransactionId> {
-        self.0.committed_transactions.iter().map(Into::into).collect()
+        self.0
+            .committed_transactions
+            .iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Serializes the sync summary into bytes.

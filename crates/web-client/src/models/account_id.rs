@@ -3,10 +3,7 @@ use alloc::str::FromStr;
 use miden_client::Felt as NativeFelt;
 use miden_client::account::{AccountId as NativeAccountId, NetworkId as NativeNetworkId};
 use miden_client::address::{
-    Address,
-    AddressId,
-    AddressInterface as NativeAccountInterface,
-    CustomNetworkId,
+    Address, AddressId, AddressInterface as NativeAccountInterface, CustomNetworkId,
     RoutingParameters,
 };
 use wasm_bindgen::prelude::*;
@@ -175,13 +172,16 @@ impl AccountId {
         // we can use Address::decode to fetch the account id.
         // Reference: https://github.com/0xMiden/miden-base/blob/150a8066c5a4b4011c4f3e55f9435921ad3835f3/docs/src/account/address.md#structure
         let (_, address) = Address::decode(bech_32_encoded_id).map_err(|err| {
-            js_error_with_context(err, "could not interpret input as a bech32-encoded account id")
+            js_error_with_context(
+                err,
+                "could not interpret input as a bech32-encoded account id",
+            )
         })?;
         match address.id() {
             AddressId::AccountId(account_id) => Ok(account_id.into()),
-            _unsupported => {
-                Err(JsValue::from_str("bech32 string decoded into an unsupported address kind"))
-            },
+            _unsupported => Err(JsValue::from_str(
+                "bech32 string decoded into an unsupported address kind",
+            )),
         }
     }
 
@@ -236,11 +236,12 @@ impl From<NetworkId> for NativeNetworkId {
             NetworkType::Testnet => NativeNetworkId::Testnet,
             NetworkType::Devnet => NativeNetworkId::Devnet,
             NetworkType::Custom => {
-                let custom_prefix =
-                    value.custom.expect("custom network id constructor implies existing prefix");
+                let custom_prefix = value
+                    .custom
+                    .expect("custom network id constructor implies existing prefix");
                 NativeNetworkId::from_str(custom_prefix.as_str())
                     .expect("custom network id constructor implies valid prefix")
-            },
+            }
         }
     }
 }

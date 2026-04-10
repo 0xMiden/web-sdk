@@ -18,7 +18,9 @@ impl WebClient {
     /// which provides proper coordination for concurrent calls.
     #[wasm_bindgen(js_name = "syncStateImpl")]
     pub async fn sync_state_impl(&mut self) -> Result<SyncSummary, JsValue> {
-        let client = self.get_mut_inner().ok_or(JsValue::from_str("Client not initialized"))?;
+        let client = self
+            .get_mut_inner()
+            .ok_or(JsValue::from_str("Client not initialized"))?;
 
         let sync_summary = client
             .sync_state()

@@ -3,8 +3,8 @@ debug/
 target/
 dist/
 
-# Yarn/NPM
-yarn.lock
+# Yarn/NPM (only root-level lockfile; sub-crate yarn.lock files are tracked)
+/yarn.lock
 crates/web-client/**/package-lock.json
 node_modules/
 

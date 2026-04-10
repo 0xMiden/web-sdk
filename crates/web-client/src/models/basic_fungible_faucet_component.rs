@@ -18,7 +18,10 @@ impl BasicFungibleFaucetComponent {
     pub fn from_account(account: Account) -> Result<Self, JsValue> {
         let native_account: NativeAccount = account.into();
         let native_faucet = NativeBasicFungibleFaucet::try_from(native_account).map_err(|e| {
-            js_error_with_context(e, "failed to get basic fungible faucet details from account")
+            js_error_with_context(
+                e,
+                "failed to get basic fungible faucet details from account",
+            )
         })?;
         Ok(native_faucet.into())
     }

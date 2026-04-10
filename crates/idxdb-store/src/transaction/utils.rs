@@ -5,10 +5,7 @@ use miden_client::Word;
 use miden_client::note::{BlockNumber, ToInputNoteCommitments};
 use miden_client::store::StoreError;
 use miden_client::transaction::{
-    ExecutedTransaction,
-    TransactionDetails,
-    TransactionRecord,
-    TransactionScript,
+    ExecutedTransaction, TransactionDetails, TransactionRecord, TransactionScript,
     TransactionStatus,
 };
 use miden_client::utils::Serializable;
@@ -84,8 +81,14 @@ pub(crate) fn serialize_transaction_record(
 ) -> SerializedTransactionData {
     let transaction_id: String = transaction_record.id.as_word().to_hex();
 
-    let script_root = transaction_record.script.as_ref().map(|script| script.root().to_bytes());
-    let tx_script = transaction_record.script.as_ref().map(TransactionScript::to_bytes);
+    let script_root = transaction_record
+        .script
+        .as_ref()
+        .map(|script| script.root().to_bytes());
+    let tx_script = transaction_record
+        .script
+        .as_ref()
+        .map(TransactionScript::to_bytes);
 
     SerializedTransactionData {
         id: transaction_id,

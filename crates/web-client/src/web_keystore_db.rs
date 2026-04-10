@@ -3,13 +3,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use idxdb_store::auth::{
-    idxdb_get_account_auth_by_pub_key_commitment,
-    idxdb_get_account_id_by_key_commitment,
-    idxdb_get_key_commitments_by_account_id,
-    idxdb_insert_account_auth,
-    idxdb_insert_account_key_mapping,
-    idxdb_remove_account_auth,
-    idxdb_remove_all_mappings_for_key,
+    idxdb_get_account_auth_by_pub_key_commitment, idxdb_get_account_id_by_key_commitment,
+    idxdb_get_key_commitments_by_account_id, idxdb_insert_account_auth,
+    idxdb_insert_account_key_mapping, idxdb_remove_account_auth, idxdb_remove_all_mappings_for_key,
 };
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::from_value;
@@ -76,7 +72,9 @@ pub(crate) async fn get_key_commitments_by_account_id(
     let js_commitments = JsFuture::from(promise).await?;
 
     let commitments: Vec<String> = from_value(js_commitments).map_err(|err| {
-        JsValue::from_str(&format!("Error: failed to deserialize key commitments: {err}"))
+        JsValue::from_str(&format!(
+            "Error: failed to deserialize key commitments: {err}"
+        ))
     })?;
 
     Ok(commitments)

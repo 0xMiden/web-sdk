@@ -74,7 +74,9 @@ pub fn setup_logging(log_level: &str) {
     };
 
     if let Some(level) = level {
-        let config = tracing_wasm::WASMLayerConfigBuilder::new().set_max_level(level).build();
+        let config = tracing_wasm::WASMLayerConfigBuilder::new()
+            .set_max_level(level)
+            .build();
         // `set_as_global_default_with_config` panics on double-init, so replicate
         // its logic with `set_global_default` which returns a `Result` instead.
         let _ = tracing::subscriber::set_global_default(
@@ -115,7 +117,9 @@ impl WebClient {
     }
 
     pub(crate) fn get_inner(&self) -> Result<&Client<ClientAuth>, JsValue> {
-        self.inner.as_ref().ok_or_else(|| JsValue::from_str("Client not initialized"))
+        self.inner
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("Client not initialized"))
     }
 
     pub(crate) fn get_mut_inner(&mut self) -> Option<&mut Client<ClientAuth>> {
@@ -177,8 +181,13 @@ impl WebClient {
         );
 
         let rng = create_rng(seed)?;
-        let keystore =
-            Arc::new(WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None));
+        let keystore = Arc::new(WebKeyStore::new_with_callbacks(
+            rng,
+            store_name.clone(),
+            None,
+            None,
+            None,
+        ));
 
         self.setup_client(
             web_rpc_client,
@@ -310,7 +319,9 @@ impl WebClient {
         let Some(client) = &self.inner else {
             return Err("client was not initialized before instancing CodeBuilder".into());
         };
-        Ok(CodeBuilder::from_source_manager(client.code_builder().source_manager().clone()))
+        Ok(CodeBuilder::from_source_manager(
+            client.code_builder().source_manager().clone(),
+        ))
     }
 }
 
@@ -327,7 +338,7 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsValue> {
             } else {
                 return Err(JsValue::from_str("Seed must be exactly 32 bytes"));
             }
-        },
+        }
         None => StdRng::from_os_rng(),
     };
     let coin_seed: [u64; 4] = rng.random();
@@ -352,7 +363,11 @@ where
     let js_error: JsValue = JsError::new(&error_string).into();
 
     if let Some(help) = help {
-        let _ = Reflect::set(&js_error, &JsValue::from_str("help"), &JsValue::from_str(&help));
+        let _ = Reflect::set(
+            &js_error,
+            &JsValue::from_str("help"),
+            &JsValue::from_str(&help),
+        );
     }
 
     js_error
