@@ -84,6 +84,7 @@ impl IdxdbStore {
         transaction_records
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn apply_transaction(
         &self,
         tx_update: TransactionStoreUpdate,
