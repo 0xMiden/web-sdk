@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "skipLibCheck": true
+  },
+  "files": [
+    "./dist/docs-entry.d.ts",
+    "./dist/api-types.d.ts",
+    "./dist/crates/miden_client_web.d.ts"
+  ]
+}

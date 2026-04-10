@@ -1,0 +1,6 @@
+*.md
+*.yml
+*.yaml
+
+# Generated JS (codegen)
+crates/idxdb-store/src/js/**
