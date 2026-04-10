@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+
+members = ["crates/idxdb-store", "crates/web-client"]
+
+[workspace.package]
+authors = ["miden contributors"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/0xMiden/web-sdk"
+rust-version = "1.93"
+version = "0.14.0"
+
+[profile.dev]
+codegen-units = 16
+
+[profile.test-dev]
+inherits = "dev"
+opt-level = 1
+
+[workspace.dependencies]
+# Workspace crates
+idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.14.0" }
+
+# Miden client (from crates.io)
+miden-client = { default-features = false, version = "0.14.0" }
+
+# Miden protocol dependencies
+miden-protocol = { default-features = false, version = "0.14" }
+miden-standards = { default-features = false, version = "0.14" }
+
+# External dependencies
+async-trait = { version = "0.1" }
+chrono = { version = "0.4" }
+hex = { version = "0.4" }
+miette = { features = ["fancy"], version = "7.6" }
+rand = { version = "0.9" }
+serde = { features = ["derive"], version = "1.0" }
+thiserror = { default-features = false, version = "2.0" }
+tracing = { version = "0.1" }
+
+# Lints are set to warn for development, which are promoted to errors in CI.
+[workspace.lints.clippy]
+# Pedantic lints are set to a lower priority which allows lints in the group to be selectively enabled.
+pedantic = { level = "warn", priority = -1 }
+ignored_unit_patterns = "allow"              # Stylistic choice.
+missing_errors_doc = "allow"                 # TODO: fixup and enable this.
+missing_panics_doc = "allow"                 # TODO: fixup and enable this.
+module_name_repetitions = "allow"            # Many triggers, and is a stylistic choice.
+must_use_candidate = "allow"                 # This marks many fn's which isn't helpful.
+should_panic_without_expect = "allow"        # We don't care about the specific panic message.
+# End of pedantic lints.
+
+# Uncomment for local development against a local miden-client checkout:
+# [patch.crates-io]
+# miden-client = { path = "../miden-client/crates/rust-client" }

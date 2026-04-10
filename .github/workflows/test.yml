@@ -1,0 +1,316 @@
+name: Test
+permissions:
+  contents: read
+on:
+  push:
+    branches: [main, next]
+    paths-ignore:
+      - "**.md"
+      - "**.txt"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "**.txt"
+      - "docs/**"
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: true
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+  RUST_CACHE_KEY: rust-cache-2026.02.18
+  # Pin the miden-client version used for test infrastructure
+  MIDEN_CLIENT_REF: v0.14.0
+
+jobs:
+  build-web-client-dist-folder:
+    name: Build Web Client
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust (needed for WASM build)
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install binaryen (wasm-opt)
+        run: |
+          sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-wasm
+          prefix-key: ${{ env.RUST_CACHE_KEY }}
+          save-if: ${{ github.ref == 'refs/heads/next' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: |
+            crates/web-client/yarn.lock
+            crates/idxdb-store/src/yarn.lock
+
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh crates/web-client
+
+      - name: Check TSC output equals committed JS
+        run: |
+          cd ./crates/idxdb-store/src/
+          yarn
+          yarn tsc --outDir ci_test_folder
+          pushd ci_test_folder
+          find . -type f ! -name "*.js" -delete
+          popd
+          diff -bur js ci_test_folder
+
+      - name: Restore cache - dist folder
+        id: dist-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ./crates/web-client/dist
+          key: ${{ runner.os }}-dist-${{ hashFiles('Cargo.lock', 'crates/web-client/package.json', 'crates/web-client/yarn.lock', 'crates/web-client/rollup.config.js', 'crates/web-client/clean.js', 'crates/web-client/js/**/*', 'crates/web-client/src/**/*', 'crates/idxdb-store/src/package.json', 'crates/idxdb-store/src/yarn.lock', 'crates/idxdb-store/src/tsconfig*.json', 'crates/idxdb-store/src/ts/**/*') }}
+          restore-keys: ${{ runner.os }}-dist-
+
+      - name: Build project
+        if: steps.dist-cache.outputs.cache-hit != 'true'
+        run: |
+          cd ./crates/web-client
+          MIDEN_WEB_DEV=true yarn run build
+
+      - name: Save cache - dist folder
+        if: steps.dist-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ./crates/web-client/dist
+          key: ${{ steps.dist-cache.outputs.cache-key }}
+
+      - name: Upload artifacts for matrix jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+
+  test-react-sdk:
+    name: React SDK tests
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+      - name: Run unit tests
+        run: make test-react-sdk
+
+  test-react-sdk-integration:
+    name: React SDK integration tests
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+      - name: Install Playwright browsers
+        run: cd ./packages/react-sdk && yarn playwright install --with-deps
+      - name: Run Playwright tests
+        run: cd ./packages/react-sdk && yarn test:integration
+
+  build-react-sdk:
+    name: Build React SDK
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+      - name: Build React SDK
+        run: cd ./packages/react-sdk && yarn build
+
+  # Build test infrastructure from miden-client repo
+  build-node-builder:
+    name: Build node-builder
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout miden-client for test infra
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/miden-client
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+      - name: Restore node-builder binary
+        id: cache-node-builder
+        uses: actions/cache@v4
+        with:
+          path: target/release/testing-node-builder
+          key: ${{ runner.os }}-node-builder-${{ env.MIDEN_CLIENT_REF }}-${{ hashFiles('Cargo.lock', 'crates/testing/node-builder/**/*') }}
+      - name: Install Rust
+        if: steps.cache-node-builder.outputs.cache-hit != 'true'
+        run: rustup update --no-self-update
+      - name: Build node-builder
+        if: steps.cache-node-builder.outputs.cache-hit != 'true'
+        run: cargo build --release --package node-builder --locked
+      - name: Upload node-builder binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-builder-binary
+          path: target/release/testing-node-builder
+
+  build-remote-prover:
+    name: Build remote-prover
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout miden-client for test infra
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/miden-client
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+      - name: Restore remote-prover binary
+        id: cache-remote-prover
+        uses: actions/cache@v4
+        with:
+          path: target/release/testing-remote-prover
+          key: ${{ runner.os }}-prover-${{ env.MIDEN_CLIENT_REF }}-${{ hashFiles('Cargo.lock', 'crates/testing/prover/**/*') }}
+      - name: Install Rust
+        if: steps.cache-remote-prover.outputs.cache-hit != 'true'
+        run: rustup update --no-self-update
+      - name: Build remote-prover
+        if: steps.cache-remote-prover.outputs.cache-hit != 'true'
+        run: cargo build --release --package testing-remote-prover --locked
+      - name: Upload remote-prover binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-prover-binary
+          path: target/release/testing-remote-prover
+
+  integration-tests-web-client:
+    name: Integration tests for web client
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder, build-node-builder]
+    strategy:
+      matrix:
+        shard_index: [1, 2, 3, 4, 5, 6, 7]
+        shard_total: [7]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch dist folder
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: crates/web-client/yarn.lock
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh crates/web-client
+      - name: Configure setuid sandbox
+        run: . ./scripts/configure-sandbox.sh
+      - name: Download node-builder binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-builder-binary
+          path: ./bin
+      - name: Start test node
+        run: |
+          chmod +x ./bin/testing-node-builder
+          RUST_LOG=none ./bin/testing-node-builder &
+          sleep 4
+          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+      - name: Run web client tests
+        run: |
+          cd ./crates/web-client
+          yarn run test:ci -- --project=chromium $SHARD_PARAMETER
+        env:
+          SHARD_PARAMETER: "--shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}"
+      - name: Stop test node
+        if: always()
+        run: pkill -f testing-node-builder || true
+
+  integration-tests-remote-prover-web-client:
+    name: Integration tests for remote prover
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder, build-node-builder, build-remote-prover]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: crates/web-client/yarn.lock
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh crates/web-client
+
+      - name: Fetch dist folder
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+
+      - name: Configure setuid sandbox
+        run: . ./scripts/configure-sandbox.sh
+      - name: Download node-builder binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-builder-binary
+          path: ./bin
+      - name: Download remote-prover binary
+        uses: actions/download-artifact@v4
+        with:
+          name: remote-prover-binary
+          path: ./bin
+      - name: Start test node
+        run: |
+          chmod +x ./bin/testing-node-builder
+          RUST_LOG=none ./bin/testing-node-builder &
+          sleep 4
+          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+      - name: Start prover
+        run: |
+          chmod +x ./bin/testing-remote-prover
+          RUST_LOG=none ./bin/testing-remote-prover &
+          sleep 4
+          pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
+      - name: Run remote prover tests
+        run: |
+          cd ./crates/web-client
+          yarn run test:ci:remote_prover
+      - name: Stop test node
+        if: always()
+        run: pkill -f testing-node-builder || true
+      - name: Stop miden-prover
+        if: always()
+        run: pkill -f testing-remote-prover || true

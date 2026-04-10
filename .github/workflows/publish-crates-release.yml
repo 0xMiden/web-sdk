@@ -1,0 +1,63 @@
+name: Publish Rust Crates on Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    if: ${{ github.repository_owner == '0xMiden' }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
+
+      - name: Log release info
+        run: |
+          echo "Publishing release ${{ github.event.release.tag_name }}"
+          echo "Commit: $(git rev-parse HEAD)"
+
+      - name: Update Rust toolchain
+        run: |
+          rustup update --no-self-update
+
+      - name: Preflight - publish dry run
+        continue-on-error: true
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/idxdb-store
+          cargo publish --dry-run
+          cd ../web-client
+          cargo publish --dry-run
+
+      - name: Cleanup cargo package artifacts (after dry-run)
+        if: always()
+        run: |
+          rm -rf "$CARGO_TARGET_DIR/package" || true
+
+      - name: Publish idxdb-store
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/idxdb-store
+          cargo publish
+
+      - name: Publish web-client
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/web-client
+          cargo publish
