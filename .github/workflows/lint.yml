@@ -59,6 +59,18 @@ jobs:
       - name: Run sccache
         uses: mozilla-actions/sccache-action@v0.0.6
         continue-on-error: true
+        id: sccache-install
+
+      - name: Probe sccache and enable wrapper if healthy
+        if: steps.sccache-install.outcome == 'success' && env.SCCACHE_PATH != ''
+        shell: bash
+        run: |
+          if "$SCCACHE_PATH" --start-server >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
+            echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
+          else
+            echo "sccache --start-server failed; running without wrapper"
+          fi
       - name: make - clippy-wasm
         run: make clippy-wasm
       - name: Show sccache stats
