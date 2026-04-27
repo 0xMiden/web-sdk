@@ -32,7 +32,7 @@
     "check:standalone-types": "node ./scripts/check-standalone-types.js",
     "test": "yarn playwright install --with-deps && yarn playwright test",
     "test:ci": "yarn playwright install --with-deps chromium && yarn playwright test",
-    "test:ci:remote_prover": "yarn playwright install --with-deps && cross-env TEST_MIDEN_PROVER_URL=localhost yarn playwright test -g 'with remote prover'",
+    "test:ci:remote_prover": "yarn playwright install --with-deps && cross-env TEST_MIDEN_PROVER_URL=localhost yarn playwright test --project=chromium -g 'with remote prover'",
     "test:devnet": "cross-env TEST_MIDEN_NETWORK=devnet yarn test",
     "test:testnet": "cross-env TEST_MIDEN_NETWORK=testnet yarn test",
     "test:remote_prover": "yarn install && yarn playwright install --with-deps && cross-env MIDEN_WEB_DEV=true yarn run build && cross-env TEST_MIDEN_PROVER_URL=localhost yarn playwright test -g 'with remote prover' ",
