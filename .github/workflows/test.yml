@@ -99,6 +99,48 @@ jobs:
           name: web-client-artifacts
           path: ./crates/web-client/dist
 
+  # Reuses the WASM dist artifact from build-web-client-dist-folder rather
+  # than rebuilding WASM (which the standalone web-docs-check.yml previously
+  # did at ~9 min cost on every PR push). The actual docs-check work is
+  # < 30 s once the dist is downloaded; the slow part was the WASM rebuild.
+  docs-check:
+    name: Check that web client documentation is up-to-date
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check for bypass label
+        if: github.event_name == 'pull_request'
+        id: bypass
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            core.setOutput('skip', labels.includes('bypass-sdk-version-bump'));
+      - name: Fetch web client dist
+        if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Setup Node.js
+        if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+          cache-dependency-path: crates/web-client/yarn.lock
+      - name: Install Dependencies
+        if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
+        run: ./scripts/retry-yarn-install.sh crates/web-client
+      - name: Generate Documentation
+        if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
+        working-directory: crates/web-client
+        run: yarn typedoc
+      - name: Verify Documentation is Up-to-date
+        if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
+        run: git diff --exit-code docs/typedoc/web-client
+
   test-react-sdk:
     name: React SDK tests
     runs-on: ubuntu-24.04
@@ -192,6 +234,12 @@ jobs:
   build-remote-prover:
     name: Build remote-prover
     runs-on: ubuntu-24.04
+    # Remote prover tests are slow (~14 min) and rarely affected by typical PR
+    # changes. Skip on PRs unless explicitly opted in via the
+    # 'run-remote-prover' label; always run on push to main/next.
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
@@ -217,13 +265,22 @@ jobs:
           path: target/release/testing-remote-prover
 
   integration-tests-web-client:
-    name: Integration tests for web client
+    # Manually balanced shards via Playwright projects defined in
+    # crates/web-client/playwright.config.ts. The previous N=7
+    # alphabetical `--shard=N/M` had a 20× variance between fastest and
+    # slowest shards (2 min vs 41 min); see the playwright config comment
+    # for the rationale and the per-shard file lists.
+    name: Integration tests (${{ matrix.project }})
     runs-on: ubuntu-24.04
     needs: [build-web-client-dist-folder, build-node-builder]
     strategy:
+      fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4, 5, 6, 7]
-        shard_total: [7]
+        project:
+          - ci-shard-1-tx-flows
+          - ci-shard-2-sync-and-state
+          - ci-shard-3-accounts-and-keys
+          - ci-shard-4-compile-and-misc
     steps:
       - uses: actions/checkout@v6
       - name: Fetch dist folder
@@ -256,9 +313,7 @@ jobs:
       - name: Run web client tests
         run: |
           cd ./crates/web-client
-          yarn run test:ci -- --project=chromium $SHARD_PARAMETER
-        env:
-          SHARD_PARAMETER: "--shard=${{ matrix.shard_index }}/${{ matrix.shard_total }}"
+          yarn run test:ci -- --project=${{ matrix.project }}
       - name: Stop test node
         if: always()
         run: pkill -f testing-node-builder || true
@@ -267,6 +322,11 @@ jobs:
     name: Integration tests for remote prover
     runs-on: ubuntu-24.04
     needs: [build-web-client-dist-folder, build-node-builder, build-remote-prover]
+    # Same opt-in rule as build-remote-prover. The job needs the prover binary,
+    # so it can only run when build-remote-prover ran too.
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
     steps:
       - uses: actions/checkout@v6
       - name: Install Node.js
