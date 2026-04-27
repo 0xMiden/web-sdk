@@ -21,8 +21,12 @@ concurrency:
 env:
   CARGO_PROFILE_DEV_DEBUG: 0
   RUST_CACHE_KEY: rust-cache-2026.02.18
-  # Pin the miden-client version used for test infrastructure
-  MIDEN_CLIENT_REF: v0.14.0
+  # Pin the miden-client version used for test infrastructure.
+  # MUST match the miden-client + miden-protocol versions in Cargo.lock — the
+  # node-builder serves protos using the schema of this ref, and a mismatch
+  # against the client manifests as cryptic 'invalid wire type' decode errors
+  # on the client side (e.g. Digest fields encoded as bytes vs fixed64).
+  MIDEN_CLIENT_REF: v0.14.4
 
 jobs:
   build-web-client-dist-folder:
