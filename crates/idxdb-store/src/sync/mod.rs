@@ -6,11 +6,7 @@ use miden_client::account::{AccountId, StorageMap, StorageSlotType};
 use miden_client::note::{BlockNumber, NoteId, NoteTag};
 use miden_client::store::StoreError;
 use miden_client::sync::{
-    BlockUpdates,
-    NoteTagRecord,
-    NoteTagSource,
-    PublicAccountUpdate,
-    StateSyncUpdate,
+    BlockUpdates, NoteTagRecord, NoteTagSource, PublicAccountUpdate, StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
 
@@ -204,7 +200,7 @@ impl IdxdbStore {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account),
                 PublicAccountUpdate::Delta { new_header, delta } => {
                     delta_updates.push((new_header, delta));
-                },
+                }
             }
         }
 
@@ -233,9 +229,14 @@ impl IdxdbStore {
                 .collect();
             let old_vault_assets = self.get_vault_assets(account_id, vault_keys).await?;
 
-            let map_slot_names: Vec<String> =
-                delta.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
-            let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
+            let map_slot_names: Vec<String> = delta
+                .storage()
+                .maps()
+                .map(|(slot_name, _)| slot_name.to_string())
+                .collect();
+            let old_map_roots = self
+                .get_storage_map_roots(account_id, map_slot_names)
+                .await?;
 
             let (updated_storage_slots, updated_assets, removed_vault_keys) = {
                 let mut smt_forest = self.smt_forest.write();
@@ -253,8 +254,10 @@ impl IdxdbStore {
                 let default_map_root = StorageMap::default().root();
                 for (slot_name, (new_root, slot_type)) in &updated_storage_slots {
                     if *slot_type == StorageSlotType::Map {
-                        let old_root =
-                            old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
+                        let old_root = old_map_roots
+                            .get(slot_name)
+                            .copied()
+                            .unwrap_or(default_map_root);
                         if let Some(root) = final_roots.iter_mut().find(|r| **r == old_root) {
                             *root = *new_root;
                         } else {

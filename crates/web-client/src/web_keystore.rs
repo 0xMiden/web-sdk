@@ -161,11 +161,11 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
                 Ok(sig) => {
                     self.clear_sign_error();
                     return Ok(sig);
-                },
+                }
                 Err(err) => {
                     self.record_sign_error(err.raw);
                     return Err(err.auth_err);
-                },
+                }
             }
         }
         let message = signing_inputs.to_commitment();

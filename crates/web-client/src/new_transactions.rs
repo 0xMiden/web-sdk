@@ -84,8 +84,9 @@ impl WebClient {
 
         let tx_id = transaction_result.id();
 
-        let proven_transaction =
-            self.prove_transaction_with_prover(&transaction_result, prover).await?;
+        let proven_transaction = self
+            .prove_transaction_with_prover(&transaction_result, prover)
+            .await?;
 
         let submission_height = self
             .submit_proven_transaction(&proven_transaction, &transaction_result)
@@ -224,7 +225,8 @@ impl WebClient {
         transaction_result: &TransactionResult,
         prover: &TransactionProver,
     ) -> Result<ProvenTransaction, JsValue> {
-        self.prove_transaction_impl(transaction_result, Some(prover.get_prover())).await
+        self.prove_transaction_impl(transaction_result, Some(prover.get_prover()))
+            .await
     }
 
     async fn prove_transaction_impl(
