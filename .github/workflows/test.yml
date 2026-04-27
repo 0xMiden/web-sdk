@@ -165,6 +165,34 @@ jobs:
         if: always()
         run: sccache --show-stats || true
 
+  # Moved from lint.yml so it can `needs: build-web-client-dist-folder`
+  # and reuse the dist artifact (the previous job in lint.yml downloaded
+  # an artifact uploaded by the now-removed wasm-bindgen-types job over
+  # there).
+  react-sdk-lint:
+    name: React SDK lint and typecheck
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check React SDK version sync
+        run: node scripts/check-react-sdk-sync.js
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+      - name: Run lint
+        run: make react-sdk-lint
+      - name: Run typecheck
+        run: cd ./packages/react-sdk && yarn typecheck
+
   # Reuses the WASM dist artifact from build-web-client-dist-folder. The
   # standalone wasm-bindgen-types job in lint.yml used to do a full WASM
   # rebuild here (~10 min) just to run the type-check scripts. The check
