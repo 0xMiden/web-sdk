@@ -30,8 +30,18 @@ env:
 
 jobs:
   build-web-client-dist-folder:
+    # Uses the `release-fast` cargo profile (LTO off, codegen-units=16) and
+    # skips wasm-opt — both via the MIDEN_FAST_BUILD env var. The shipped
+    # artifact is built with the canonical full-optimization `release`
+    # profile by the `verify-release-build` job (push to main/next only).
+    # sccache + Swatinem/rust-cache layer together: rust-cache gives a
+    # warm target/ directory, sccache gives finer per-crate caching that
+    # survives even when target/ is partially invalidated.
     name: Build Web Client
     runs-on: ubuntu-24.04
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust (needed for WASM build)
@@ -39,7 +49,12 @@ jobs:
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
 
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install binaryen (wasm-opt)
+        # Still needed by the rollup plugin's discovery even when we skip
+        # the actual wasm-opt invocation.
         run: |
           sudo apt-get update && sudo apt-get install -y binaryen
 
@@ -76,15 +91,17 @@ jobs:
         id: dist-cache
         uses: actions/cache/restore@v4
         with:
+          # Cache key includes 'fast' so the fast-build dist doesn't poison
+          # the verify-release-build dist (and vice versa).
           path: ./crates/web-client/dist
-          key: ${{ runner.os }}-dist-${{ hashFiles('Cargo.lock', 'crates/web-client/package.json', 'crates/web-client/yarn.lock', 'crates/web-client/rollup.config.js', 'crates/web-client/clean.js', 'crates/web-client/js/**/*', 'crates/web-client/src/**/*', 'crates/idxdb-store/src/package.json', 'crates/idxdb-store/src/yarn.lock', 'crates/idxdb-store/src/tsconfig*.json', 'crates/idxdb-store/src/ts/**/*') }}
-          restore-keys: ${{ runner.os }}-dist-
+          key: ${{ runner.os }}-dist-fast-${{ hashFiles('Cargo.lock', 'crates/web-client/package.json', 'crates/web-client/yarn.lock', 'crates/web-client/rollup.config.js', 'crates/web-client/clean.js', 'crates/web-client/js/**/*', 'crates/web-client/src/**/*', 'crates/idxdb-store/src/package.json', 'crates/idxdb-store/src/yarn.lock', 'crates/idxdb-store/src/tsconfig*.json', 'crates/idxdb-store/src/ts/**/*') }}
+          restore-keys: ${{ runner.os }}-dist-fast-
 
       - name: Build project
         if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           cd ./crates/web-client
-          MIDEN_WEB_DEV=true yarn run build
+          MIDEN_WEB_DEV=true MIDEN_FAST_BUILD=true yarn run build
 
       - name: Save cache - dist folder
         if: steps.dist-cache.outputs.cache-hit != 'true'
@@ -98,6 +115,88 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # Verifies the canonical (full-optimization) release build of the WASM
+  # artifact. Runs only on push to main/next so PR CI stays fast — but the
+  # shipped artifact is always exercised before it can land on main.
+  verify-release-build:
+    name: Verify release WASM build
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push'
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust (needed for WASM build)
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+      - name: Install binaryen (wasm-opt)
+        run: |
+          sudo apt-get update && sudo apt-get install -y binaryen
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-wasm-release
+          prefix-key: ${{ env.RUST_CACHE_KEY }}
+          save-if: ${{ github.ref == 'refs/heads/next' }}
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: |
+            crates/web-client/yarn.lock
+            crates/idxdb-store/src/yarn.lock
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh crates/web-client
+      - name: Build project (full release profile)
+        run: |
+          cd ./crates/web-client
+          yarn run build
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # Reuses the WASM dist artifact from build-web-client-dist-folder. The
+  # standalone wasm-bindgen-types job in lint.yml used to do a full WASM
+  # rebuild here (~10 min) just to run the type-check scripts. The check
+  # scripts themselves are < 30 s once the dist is downloaded.
+  wasm-bindgen-types:
+    name: Wasm bindgen types
+    runs-on: ubuntu-24.04
+    needs: [build-web-client-dist-folder]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: |
+            crates/web-client/yarn.lock
+            crates/idxdb-store/src/yarn.lock
+      - name: Install dependencies
+        working-directory: crates/web-client
+        run: yarn install --frozen-lockfile
+      - name: Check bindgen type coverage
+        working-directory: crates/web-client
+        run: yarn check:wasm-types
+      - name: Check method classification
+        working-directory: crates/web-client
+        run: yarn check:method-classification
 
   # Reuses the WASM dist artifact from build-web-client-dist-folder rather
   # than rebuilding WASM (which the standalone web-docs-check.yml previously

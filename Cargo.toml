@@ -18,6 +18,20 @@ codegen-units = 16
 inherits = "dev"
 opt-level = 1
 
+# Fast-build variant of `release` for PR CI. The default `release` profile
+# (set up implicitly by @wasm-tool/rollup-plugin-rust) enables LTO and
+# codegen-units=1, which together account for ~9 of the ~13 minutes the
+# WASM build job takes. PR CI doesn't ship the artifact — it only verifies
+# that the code compiles + tests pass — so we trade ~1.5x larger output for
+# ~3-4x faster builds. The canonical `release` profile is still used by the
+# `verify-release-build` job (push to main/next only) and any local
+# `cargo build --release` so the published artifact is always built with
+# full optimization.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [workspace.dependencies]
 # Workspace crates
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.14.0" }

@@ -70,6 +70,9 @@ jobs:
   clippy-wasm:
     name: Clippy WASM
     runs-on: ubuntu-24.04
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust with nightly clippy
@@ -77,8 +80,13 @@ jobs:
           rustup update --no-self-update nightly
           rustup target add --toolchain nightly wasm32-unknown-unknown
           rustup +nightly component add clippy
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
       - name: make - clippy-wasm
         run: make clippy-wasm
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
 
   format:
     name: Format check
@@ -94,37 +102,3 @@ jobs:
       - name: make - format-check
         run: make format-check
 
-  wasm-bindgen-types:
-    name: Wasm bindgen types
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: yarn
-          cache-dependency-path: |
-            crates/web-client/yarn.lock
-            crates/idxdb-store/src/yarn.lock
-      - name: Install Rust with wasm target
-        run: |
-          rustup update --no-self-update
-          rustup target add wasm32-unknown-unknown
-      - name: Install dependencies
-        working-directory: crates/web-client
-        run: yarn install --frozen-lockfile
-      - name: Build web client
-        working-directory: crates/web-client
-        run: yarn build
-      - name: Check bindgen type coverage
-        working-directory: crates/web-client
-        run: yarn check:wasm-types
-      - name: Check method classification
-        working-directory: crates/web-client
-        run: yarn check:method-classification
-      - name: Upload web client dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-client-artifacts
-          path: ./crates/web-client/dist
