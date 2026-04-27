@@ -40,7 +40,12 @@ jobs:
     name: Build Web Client
     runs-on: ubuntu-24.04
     env:
-      RUSTC_WRAPPER: sccache
+      # Tell sccache-action to use the GitHub Actions cache backend. The
+      # action sets RUSTC_WRAPPER=sccache as a step output on success — we
+      # deliberately do NOT set it at job level, so that if sccache-action
+      # fails (e.g. transient GHA cache backend outage), RUSTC_WRAPPER
+      # stays unset and rustc runs directly. Beats killing the whole build
+      # for a cache-only optimization.
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
@@ -51,6 +56,10 @@ jobs:
 
       - name: Run sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+        # Tolerate transient GHA cache backend failures (HTML 503 etc).
+        # If sccache can't start, RUSTC_WRAPPER stays unset and builds
+        # run without the wrapper — slower, but still succeed.
+        continue-on-error: true
 
       - name: Install binaryen (wasm-opt)
         # Still needed by the rollup plugin's discovery even when we skip
@@ -128,7 +137,12 @@ jobs:
     runs-on: ubuntu-24.04
     if: github.event_name == 'push'
     env:
-      RUSTC_WRAPPER: sccache
+      # Tell sccache-action to use the GitHub Actions cache backend. The
+      # action sets RUSTC_WRAPPER=sccache as a step output on success — we
+      # deliberately do NOT set it at job level, so that if sccache-action
+      # fails (e.g. transient GHA cache backend outage), RUSTC_WRAPPER
+      # stays unset and rustc runs directly. Beats killing the whole build
+      # for a cache-only optimization.
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
@@ -138,6 +152,10 @@ jobs:
           rustup target add wasm32-unknown-unknown
       - name: Run sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+        # Tolerate transient GHA cache backend failures (HTML 503 etc).
+        # If sccache can't start, RUSTC_WRAPPER stays unset and builds
+        # run without the wrapper — slower, but still succeed.
+        continue-on-error: true
       - name: Install binaryen (wasm-opt)
         run: |
           sudo apt-get update && sudo apt-get install -y binaryen

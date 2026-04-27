@@ -27,7 +27,7 @@ jobs:
     name: Build Client for Wasm
     runs-on: ubuntu-24.04
     env:
-      RUSTC_WRAPPER: sccache
+      # See test.yml's build-web-client-dist-folder for rationale.
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
@@ -37,6 +37,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Run sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+        continue-on-error: true
       - name: make - build-wasm
         run: make build-wasm
       - name: Show sccache stats
