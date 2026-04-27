@@ -54,8 +54,21 @@ jobs:
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
 
+      # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
+      # mozilla-actions/sccache-action used by default. The new GHA cache
+      # service requires ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN, which
+      # are set in the runner's process env but NOT exported to subsequent
+      # steps unless we forward them ourselves. See sccache docs:
+      # https://github.com/mozilla/sccache/blob/main/docs/GHA.md
+      - name: Configure sccache cache backend (v2)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Run sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
         # Tolerate transient GHA cache backend failures (HTML 503 etc).
         # The probe step below validates sccache works before exposing
         # it as RUSTC_WRAPPER.
@@ -176,8 +189,21 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+      # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
+      # mozilla-actions/sccache-action used by default. The new GHA cache
+      # service requires ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN, which
+      # are set in the runner's process env but NOT exported to subsequent
+      # steps unless we forward them ourselves. See sccache docs:
+      # https://github.com/mozilla/sccache/blob/main/docs/GHA.md
+      - name: Configure sccache cache backend (v2)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Run sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.10
         # Tolerate transient GHA cache backend failures (HTML 503 etc).
         # The probe step below validates sccache works before exposing
         # it as RUSTC_WRAPPER.
