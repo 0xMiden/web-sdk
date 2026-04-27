@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useImportAccount } from "../../hooks/useImportAccount";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import type { AccountFile } from "@miden-sdk/miden-sdk";
+import type { AccountFile } from "@miden-sdk/miden-sdk/lazy";
 import {
   createMockAccount,
   createMockAccountFile,
@@ -169,7 +169,7 @@ describe("useImportAccount", () => {
           type: "seed",
           seed: new Uint8Array([1, 2, 3]),
           mutable: true,
-          authScheme: 2 as unknown as import("../../types").AuthScheme,
+          authScheme: "falcon",
         });
       });
 

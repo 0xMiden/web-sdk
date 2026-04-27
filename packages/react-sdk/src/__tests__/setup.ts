@@ -2,7 +2,7 @@ import { vi, beforeEach, afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
 // Mock the entire @miden-sdk/miden-sdk module before any imports
-vi.mock("@miden-sdk/miden-sdk", () => {
+vi.mock("@miden-sdk/miden-sdk/lazy", () => {
   const createMockAccountId = (id: string = "0x1234567890abcdef") => ({
     toString: vi.fn(() => id),
     toHex: vi.fn(() => id),
@@ -40,6 +40,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       .mockResolvedValue({ toString: vi.fn(() => "0xtx") }),
     executeTransaction: vi.fn().mockResolvedValue({}),
     proveTransaction: vi.fn().mockResolvedValue({}),
+    proveTransactionWithProver: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
     sendPrivateNote: vi.fn().mockResolvedValue(undefined),
@@ -86,9 +87,14 @@ vi.mock("@miden-sdk/miden-sdk", () => {
 
   return {
     AuthScheme: {
-      AuthRpoFalcon512: 2,
-      AuthEcdsaK256Keccak: 1,
+      Falcon: "falcon",
+      ECDSA: "ecdsa",
     },
+    resolveAuthScheme: vi.fn((scheme?: string) => {
+      if (scheme === "ecdsa") return 1;
+      if (scheme === "falcon" || scheme == null) return 2;
+      throw new Error(`Unknown scheme: ${scheme}`);
+    }),
     WebClient,
     WasmWebClient: WebClient,
     AccountId: {
@@ -200,8 +206,11 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     }),
     NoteArray: class NoteArray {
       notes: unknown[];
-      constructor(notes: unknown[]) {
-        this.notes = notes;
+      constructor(notes?: unknown[]) {
+        this.notes = notes ?? [];
+      }
+      push(note: unknown) {
+        this.notes.push(note);
       }
     },
     NoteAndArgs: class NoteAndArgs {

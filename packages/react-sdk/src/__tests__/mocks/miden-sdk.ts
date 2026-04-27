@@ -246,8 +246,11 @@ export const MockNoteAttachment = class NoteAttachment {};
 
 export const MockNoteArray = class NoteArray {
   notes: unknown[];
-  constructor(notes: unknown[]) {
-    this.notes = notes;
+  constructor(notes?: unknown[]) {
+    this.notes = notes ?? [];
+  }
+  push(note: unknown) {
+    this.notes.push(note);
   }
 };
 
@@ -367,6 +370,7 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionResult()),
     proveTransaction: vi.fn().mockResolvedValue({}),
+    proveTransactionWithProver: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
     sendPrivateNote: vi.fn().mockResolvedValue(undefined),
@@ -419,6 +423,7 @@ export type MockWebClientType = {
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
+  proveTransactionWithProver: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;
   applyTransaction: ReturnType<typeof vi.fn>;
   sendPrivateNote: ReturnType<typeof vi.fn>;

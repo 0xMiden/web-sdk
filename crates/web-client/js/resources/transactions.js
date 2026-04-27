@@ -43,10 +43,12 @@ export class TransactionsResource {
         new wasm.NoteAttachment()
       );
 
+      // NoteArray constructor consumes its elements; use push(&note) to keep
+      // `note` valid so we can return it to the caller below.
+      const ownOutputs = new wasm.NoteArray();
+      ownOutputs.push(note);
       const request = new wasm.TransactionRequestBuilder()
-        .withOwnOutputNotes(
-          new wasm.OutputNoteArray([wasm.OutputNote.full(note)])
-        )
+        .withOwnOutputNotes(ownOutputs)
         .build();
 
       const { txId, result } = await this.#submitOrSubmitWithProver(
@@ -197,6 +199,11 @@ export class TransactionsResource {
       }
       case "swap": {
         ({ accountId, request } = await this.#buildSwapRequest(opts, wasm));
+        break;
+      }
+      case "custom": {
+        accountId = resolveAccountRef(opts.account, wasm);
+        request = opts.request;
         break;
       }
       default:
@@ -515,8 +522,13 @@ export class TransactionsResource {
   async #submitOrSubmitWithProver(accountId, request, perCallProver) {
     const result = await this.#inner.executeTransaction(accountId, request);
     const prover = perCallProver ?? this.#client.defaultProver;
+    // Use proveTransactionWithProver (by-reference) when a prover is
+    // provided, so the JS-side handle is NOT consumed by wasm-bindgen.
+    // Passing the prover by value would transfer ownership and invalidate
+    // the JS object after one call, causing silent fallback to local
+    // proving on reuse.
     const proven = prover
-      ? await this.#inner.proveTransaction(result, prover)
+      ? await this.#inner.proveTransactionWithProver(result, prover)
       : await this.#inner.proveTransaction(result);
     const txId = result.id();
     const height = await this.#inner.submitProvenTransaction(proven, result);

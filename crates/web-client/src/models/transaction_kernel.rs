@@ -1,3 +1,5 @@
+// TODO: this file is not imported on `crates/web-client/src/models/mod.rs`
+// Remove this file when updating `main` into `next`
 use miden_client::transaction::TransactionKernel as NativeTransactionKernel;
 use wasm_bindgen::prelude::*;
 

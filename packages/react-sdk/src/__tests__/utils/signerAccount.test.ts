@@ -30,8 +30,8 @@ const mockCommitmentWord = {
 };
 
 // Mock the SDK module
-vi.mock("@miden-sdk/miden-sdk", async () => {
-  const actual = await vi.importActual("@miden-sdk/miden-sdk");
+vi.mock("@miden-sdk/miden-sdk/lazy", async () => {
+  const actual = await vi.importActual("@miden-sdk/miden-sdk/lazy");
   return {
     ...actual,
     AccountBuilder: vi.fn(() => mockBuilder),
@@ -39,9 +39,14 @@ vi.mock("@miden-sdk/miden-sdk", async () => {
       createAuthComponentFromCommitment: vi.fn(() => "mockAuthComponent"),
     },
     AuthScheme: {
-      AuthRpoFalcon512: 2,
-      AuthEcdsaK256Keccak: 1,
+      Falcon: "falcon",
+      ECDSA: "ecdsa",
     },
+    resolveAuthScheme: vi.fn((scheme?: string) => {
+      if (scheme === "ecdsa") return 1;
+      if (scheme === "falcon" || scheme == null) return 2;
+      throw new Error(`Unknown scheme: ${scheme}`);
+    }),
     Word: {
       deserialize: vi.fn(() => mockCommitmentWord),
     },
@@ -55,7 +60,11 @@ vi.mock("@miden-sdk/miden-sdk", async () => {
 });
 
 // Import mocked modules for assertions
-import { AccountBuilder, AccountComponent, Word } from "@miden-sdk/miden-sdk";
+import {
+  AccountBuilder,
+  AccountComponent,
+  Word,
+} from "@miden-sdk/miden-sdk/lazy";
 
 describe("initializeSignerAccount", () => {
   let mockClient: any;
