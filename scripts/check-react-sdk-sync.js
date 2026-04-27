@@ -48,9 +48,14 @@ const major = Number(versionMatch[1]);
 const minor = Number(versionMatch[2]);
 const patch = Number(versionMatch[3]);
 const prerelease = versionMatch[4] || "";
+// Pin the peer range to the exact patch version, not the major.minor.0
+// baseline. The 0.14.x line publishes on every PR-merge (not at fixed
+// release points), so consumers should always see the latest patch — the
+// .0 baseline would silently allow publishing react-sdk against a stale
+// peer.
 const expectedRange = prerelease
   ? `^${major}.${minor}.${patch}${prerelease}`
-  : `^${major}.${minor}.0`;
+  : `^${major}.${minor}.${patch}`;
 
 const peerDeps = reactSdkPkg.peerDependencies || {};
 const actualRange = peerDeps["@miden-sdk/miden-sdk"];
