@@ -70,11 +70,14 @@ jobs:
           # NOT set RUSTC_WRAPPER. Probe by starting the sccache server,
           # which validates GHA cache backend connectivity. Only then
           # expose RUSTC_WRAPPER so cargo uses sccache as a compile cache.
-          if "$SCCACHE_PATH" --start-server >/dev/null 2>&1; then
+          # Capture stderr so we can see WHY a probe failed.
+          probe_out=$("$SCCACHE_PATH" --start-server 2>&1) && rc=0 || rc=$?
+          echo "$probe_out"
+          if [ $rc -eq 0 ]; then
             echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
             echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
           else
-            echo "sccache --start-server failed; running without wrapper"
+            echo "sccache --start-server failed (rc=$rc); running without wrapper"
           fi
 
       - name: Install binaryen (wasm-opt)
@@ -189,11 +192,14 @@ jobs:
           # NOT set RUSTC_WRAPPER. Probe by starting the sccache server,
           # which validates GHA cache backend connectivity. Only then
           # expose RUSTC_WRAPPER so cargo uses sccache as a compile cache.
-          if "$SCCACHE_PATH" --start-server >/dev/null 2>&1; then
+          # Capture stderr so we can see WHY a probe failed.
+          probe_out=$("$SCCACHE_PATH" --start-server 2>&1) && rc=0 || rc=$?
+          echo "$probe_out"
+          if [ $rc -eq 0 ]; then
             echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
             echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
           else
-            echo "sccache --start-server failed; running without wrapper"
+            echo "sccache --start-server failed (rc=$rc); running without wrapper"
           fi
       - name: Install binaryen (wasm-opt)
         run: |

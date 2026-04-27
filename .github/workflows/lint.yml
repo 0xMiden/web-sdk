@@ -65,11 +65,13 @@ jobs:
         if: steps.sccache-install.outcome == 'success' && env.SCCACHE_PATH != ''
         shell: bash
         run: |
-          if "$SCCACHE_PATH" --start-server >/dev/null 2>&1; then
+          probe_out=$("$SCCACHE_PATH" --start-server 2>&1) && rc=0 || rc=$?
+          echo "$probe_out"
+          if [ $rc -eq 0 ]; then
             echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
             echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
           else
-            echo "sccache --start-server failed; running without wrapper"
+            echo "sccache --start-server failed (rc=$rc); running without wrapper"
           fi
       - name: make - clippy-wasm
         run: make clippy-wasm
