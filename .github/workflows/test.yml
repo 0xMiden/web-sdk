@@ -104,7 +104,13 @@ jobs:
         with:
           shared-key: rust-wasm
           prefix-key: ${{ env.RUST_CACHE_KEY }}
-          save-if: ${{ github.ref == 'refs/heads/next' }}
+          # Save the rust-cache on push to either long-lived branch so PR
+          # restores hit warm caches regardless of base. main is the default
+          # branch (cache visible to all PRs via GHA fallback) and next is
+          # the integration branch where most pre-release churn happens —
+          # both worth caching independently so PRs against either don't
+          # cold-build.
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -235,7 +241,13 @@ jobs:
         with:
           shared-key: rust-wasm-release
           prefix-key: ${{ env.RUST_CACHE_KEY }}
-          save-if: ${{ github.ref == 'refs/heads/next' }}
+          # Save the rust-cache on push to either long-lived branch so PR
+          # restores hit warm caches regardless of base. main is the default
+          # branch (cache visible to all PRs via GHA fallback) and next is
+          # the integration branch where most pre-release churn happens —
+          # both worth caching independently so PRs against either don't
+          # cold-build.
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
