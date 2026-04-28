@@ -112,23 +112,24 @@ jobs:
           # cold-build.
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-          cache-dependency-path: |
-            crates/web-client/yarn.lock
-            crates/idxdb-store/src/yarn.lock
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh crates/web-client
+        run: pnpm install --frozen-lockfile
 
       - name: Check TSC output equals committed JS
         run: |
           cd ./crates/idxdb-store/src/
-          yarn
-          yarn tsc --outDir ci_test_folder
+          pnpm exec tsc --outDir ci_test_folder
           pushd ci_test_folder
           find . -type f ! -name "*.js" -delete
           popd
@@ -141,7 +142,7 @@ jobs:
           # Cache key includes 'fast' so the fast-build dist doesn't poison
           # the verify-release-build dist (and vice versa).
           path: ./crates/web-client/dist
-          key: ${{ runner.os }}-dist-fast-${{ hashFiles('Cargo.lock', 'crates/web-client/package.json', 'crates/web-client/yarn.lock', 'crates/web-client/rollup.config.js', 'crates/web-client/clean.js', 'crates/web-client/js/**/*', 'crates/web-client/src/**/*', 'crates/idxdb-store/src/package.json', 'crates/idxdb-store/src/yarn.lock', 'crates/idxdb-store/src/tsconfig*.json', 'crates/idxdb-store/src/ts/**/*') }}
+          key: ${{ runner.os }}-dist-fast-${{ hashFiles('Cargo.lock', 'pnpm-lock.yaml', 'crates/web-client/package.json', 'crates/web-client/rollup.config.js', 'crates/web-client/clean.js', 'crates/web-client/js/**/*', 'crates/web-client/src/**/*', 'crates/idxdb-store/src/package.json', 'crates/idxdb-store/src/tsconfig*.json', 'crates/idxdb-store/src/ts/**/*') }}
           restore-keys: ${{ runner.os }}-dist-fast-
 
       - name: Build project
@@ -153,9 +154,7 @@ jobs:
         # MIDEN_FAST_BUILD does the rest (LTO off, codegen-units=16, no
         # wasm-opt). PR CI doesn't ship the artifact — verify-release-build
         # uses the canonical full profile on push to main/next.
-        run: |
-          cd ./crates/web-client
-          MIDEN_FAST_BUILD=true yarn run build
+        run: MIDEN_FAST_BUILD=true pnpm --filter @miden-sdk/miden-sdk run build
 
       - name: Save cache - dist folder
         if: steps.dist-cache.outputs.cache-hit != 'true'

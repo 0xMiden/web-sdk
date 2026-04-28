@@ -1,0 +1,15 @@
+# pnpm workspace declaration. Single root install populates every
+# package below; cross-package deps use `workspace:*` to resolve to
+# the local copy at install time.
+#
+# `packages/react-sdk/examples/wallet` is intentionally NOT a
+# workspace member — it has file: deps that point OUTSIDE this repo
+# (sibling miden-para, miden-turnkey, miden-wallet-adapter), and
+# treating it as a workspace would entangle those external paths
+# with the SDK's install graph. The example has its own pnpm-lock
+# and runs `pnpm install` independently when exercised.
+packages:
+  - 'packages/react-sdk'
+  - 'packages/vite-plugin'
+  - 'crates/web-client'
+  - 'crates/idxdb-store/src'
