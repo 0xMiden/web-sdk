@@ -21,16 +21,18 @@
     "vite",
   ],
   "ignoreDependencies": [
-    // `prettier` is invoked from the repo Makefile (`make format` /
-    // `make format-check`) via `pnpm exec prettier .`. Knip only scans
-    // *.{js,ts,json,yml} for binary references, not Makefile rules, so
-    // it appears unused even though CI's lint job depends on it.
-    "prettier",
     // `dexie` is bundled into the web-client test page via rollup at
     // test runtime — `page.evaluate(...)` blocks load the rolled-up
     // bundle from http://localhost:8080, which transitively imports
     // dexie. Knip's static scan can't see across the build boundary.
     "dexie",
+    // `publint` and `@arethetypeswrong/cli` are invoked by the
+    // `check:publint` / `check:attw` scripts in root package.json via
+    // `pnpm exec publint` / `pnpm exec attw`. Knip flags them as unused
+    // because it only follows ESM/CJS imports in source, not script
+    // strings.
+    "publint",
+    "@arethetypeswrong/cli",
   ],
   "rules": {
     // Three intentional dual-export patterns in this repo:
@@ -55,7 +57,7 @@
       "entry": [
         "src/__tests__/**/*.test.{ts,tsx}",
         "test/**/*.test.ts",
-        "test/serve-tests.js",
+        "test/serve-tests.cjs",
         "test/test-app/**/*.{js,html}",
       ],
     },
