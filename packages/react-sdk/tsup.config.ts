@@ -4,18 +4,18 @@ import { join } from "path";
 
 /**
  * Post-build rewrite: swap every `@miden-sdk/miden-sdk/lazy` import in the
- * eager bundles (`index.{js,mjs}`) to `@miden-sdk/miden-sdk` (the default
- * entry). Consumer bundlers resolve the rewritten string to the SDK's eager
- * variant, which initializes WASM via TLA on import.
+ * eager bundle (`index.mjs`) to `@miden-sdk/miden-sdk` (the default entry).
+ * Consumer bundlers resolve the rewritten string to the SDK's eager variant,
+ * which initializes WASM via TLA on import.
  *
  * The React SDK's source tree always imports from the `/lazy` subpath, so the
- * lazy build (`lazy.{js,mjs}`) ships unchanged. We rewrite only the eager
- * bundles at the emitted-file level, which is more reliable than an esbuild
+ * lazy build (`lazy.mjs`) ships unchanged. We rewrite only the eager bundle
+ * at the emitted-file level, which is more reliable than an esbuild
  * `onResolve` hook — tsup's default externalization from `peerDependencies`
  * happens before our plugin gets a chance to change the import path.
  */
 function rewriteEagerBundles(distDir: string): void {
-  for (const file of ["index.js", "index.mjs"]) {
+  for (const file of ["index.mjs"]) {
     const path = join(distDir, file);
     const before = readFileSync(path, "utf8");
     const after = before.replace(
@@ -33,9 +33,19 @@ export default defineConfig([
   // Source imports `@miden-sdk/miden-sdk/lazy`; `onSuccess` rewrites those
   // to `@miden-sdk/miden-sdk` after emit, so consumer bundlers resolve
   // against the SDK's eager default.
+  //
+  // ESM-only: `@miden-sdk/miden-sdk` is `"type": "module"` and exports only
+  // `import` conditions, so a CJS variant of this package would crash with
+  // `ERR_REQUIRE_ESM` at runtime under Node-CJS. Modern targets (Vite,
+  // webpack 5, Next.js 13+, Remix 2+) all handle ESM natively.
+  //
+  // We force the `.mjs` extension explicitly via `outExtension` so the
+  // emitted file name stays stable regardless of the package.json `type`
+  // field (tsup defaults to `.js` for ESM under `"type": "module"`).
   {
     entry: { index: "src/index.ts" },
-    format: ["cjs", "esm"],
+    format: ["esm"],
+    outExtension: () => ({ js: ".mjs" }),
     dts: true,
     clean: true,
     onSuccess: async () => {
@@ -50,7 +60,8 @@ export default defineConfig([
   // can't tolerate top-level await at SDK module evaluation.
   {
     entry: { lazy: "src/index.ts" },
-    format: ["cjs", "esm"],
+    format: ["esm"],
+    outExtension: () => ({ js: ".mjs" }),
     dts: true,
     clean: false,
   },
