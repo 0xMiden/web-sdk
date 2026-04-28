@@ -59,7 +59,14 @@ export const Linking = Object.freeze({
 export { MidenClient };
 export { CompilerResource };
 export { createP2IDNote, createP2IDENote, buildSwapTag };
+<<<<<<< ours
 export { StorageView, StorageResult, wordToBigInt };
+=======
+export {
+  isPasskeyPrfSupported,
+  createPasskeyKeystore,
+} from "./passkey-keystore.js";
+>>>>>>> theirs
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
 export {
