@@ -1,11 +1,7 @@
-# Verifies that PRs touch a changelog file. Inspired by miden-client's
+# Verifies that PRs touch CHANGELOG.md. Inspired by miden-client's
 # changelog gate, in turn inspired by tarides/changelog-check-action.
 #
-# Pass condition: at least ONE of these files differs from the PR base —
-#   - CHANGELOG.md                       (web-client / WASM SDK)
-#   - packages/react-sdk/CHANGELOG.md    (React SDK)
-#   - packages/vite-plugin/CHANGELOG.md  (Vite plugin)
-#
+# Pass condition: root CHANGELOG.md differs from the PR base.
 # Override: apply the "no changelog" label on the PR. Trivial changes
 # (typos, internal refactors, CI-only edits) carry the label and skip.
 
@@ -14,6 +10,9 @@ name: changelog
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
 
 jobs:
   changelog:
