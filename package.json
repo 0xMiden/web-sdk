@@ -1,6 +1,13 @@
 {
+  "name": "@miden-sdk/web-sdk-monorepo",
+  "private": true,
   "scripts": {
-    "check:sync:react-sdk": "node scripts/check-react-sdk-sync.js"
+    "check:sync:react-sdk": "node scripts/check-react-sdk-sync.js",
+    "build:web-client": "pnpm --filter @miden-sdk/miden-sdk run build",
+    "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
+    "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
+    "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
+    "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage"
   },
   "dependencies": {
     "prettier": "^3.8.1"
@@ -11,5 +18,25 @@
     "eslint": "^9.30.1",
     "typescript": "^5.5.4"
   },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "pnpm": {
+    "overrides": {
+      "@isaacs/brace-expansion": ">=5.0.1",
+      "basic-ftp": ">=5.2.0",
+      "esbuild": ">=0.25.0",
+      "minimatch": ">=10.2.1",
+      "qs": ">=6.15.0",
+      "rollup": ">=4.59.0",
+      "tar": ">=7.5.8",
+      "test-exclude>minimatch": "^9.0.0",
+      "eslint": "9.33.0",
+      "@typescript-eslint/eslint-plugin": "8.39.1",
+      "@typescript-eslint/parser": "8.39.1",
+      "typescript-eslint": "8.39.1"
+    }
+  }
 }

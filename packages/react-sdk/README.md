@@ -21,7 +21,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 ```bash
 npm install @miden-sdk/react @miden-sdk/miden-sdk
 # or
-yarn add @miden-sdk/react @miden-sdk/miden-sdk
+pnpm add @miden-sdk/react @miden-sdk/miden-sdk
 # or
 pnpm add @miden-sdk/react @miden-sdk/miden-sdk
 ```
@@ -32,14 +32,14 @@ From `packages/react-sdk`:
 
 ```bash
 # Unit tests
-yarn test:unit
+pnpm test:unit
 
 # Integration tests (Playwright) in test/
 # Build the web-client dist first:
-cd ../../crates/web-client && yarn build
+cd ../../crates/web-client && pnpm build
 cd ../../packages/react-sdk
-yarn playwright install --with-deps
-yarn test:integration
+pnpm exec playwright install --with-deps
+pnpm test:integration
 ```
 
 ## Quick Start
@@ -1616,8 +1616,8 @@ One runnable Vite example lives in `examples/`:
 
 ```bash
 cd examples/wallet
-yarn install
-yarn dev
+pnpm install
+pnpm dev
 ```
 
 ## Requirements

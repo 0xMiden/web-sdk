@@ -4,7 +4,7 @@ When debugging WASM, it can be tricky to trace the origin of an error since stac
 To better trace these errors, a build with debug symbols can be generated. This doc explains how to set it up.
 
 ## Requirements
-    - yarn
+    - pnpm (>=9)
     - Compatible Rust version
     - Chrome browser
     - [wasm-debugging-extension](https://goo.gle/wasm-debugging-extension).
@@ -30,16 +30,16 @@ Once you have both the debug WASM and the Chrome extension, we need to link
 the dependency to the JS app we're debugging.
 
 1. Once you have the web client built with debug symbols, we have to use it as a dependency,
-for that we'll use [yarn link](https://classic.yarnpkg.com/lang/en/docs/cli/link/), 
+for that we'll use [pnpm link --global](https://pnpm.io/cli/link), 
 run this in your local copy of miden-client:
 ```
 make link-web-client-dep
 ```
 2. Then, run this command in the root of the project that needs to be debugged:
 ```
-yarn link "@miden-sdk/miden-sdk"
+pnpm link --global @miden-sdk/miden-sdk
 ```
-Essentially,`yarn link` makes the project use the local modified version of the sdk instead of the NPM hosted one. Now, when you open the devtools with chrome, you will see an output like this:
+Essentially,`pnpm link --global` makes the project use the local modified version of the sdk instead of the NPM hosted one. Now, when you open the devtools with chrome, you will see an output like this:
 
 
 ![dev-tools-output](./devtools-output.png).

@@ -23,9 +23,9 @@ This repo packages everything you need to interact with Miden from a browser, a 
 
 | Package | Purpose | Install | Docs |
 |---|---|---|---|
-| **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `yarn add @miden-sdk/miden-sdk` | [Web Client docs ↗](https://docs.miden.xyz/builder/tools/clients/web-client/) |
-| **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `yarn add @miden-sdk/react` | [React SDK docs ↗](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
-| **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `yarn add -D @miden-sdk/vite-plugin` | — |
+| **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `pnpm add @miden-sdk/miden-sdk` | [Web Client docs ↗](https://docs.miden.xyz/builder/tools/clients/web-client/) |
+| **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `pnpm add @miden-sdk/react` | [React SDK docs ↗](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
+| **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | — |
 | **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
 
 Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client).
@@ -181,9 +181,15 @@ flowchart TB
 Run locally:
 
 ```bash
+# From the repo root: install workspace + build the React SDK.
+pnpm install
+pnpm --filter @miden-sdk/react run build
+
+# The example is intentionally OUTSIDE the workspace; --ignore-workspace
+# tells pnpm to treat it as a standalone project.
 cd packages/react-sdk/examples/wallet
-yarn install
-yarn dev
+pnpm install --ignore-workspace
+pnpm dev
 ```
 
 ---
@@ -217,22 +223,22 @@ A repo-wide `scripts/check-react-sdk-sync.js` enforces that React peer ranges an
 ```bash
 # Once
 rustup target add wasm32-unknown-unknown
-yarn install
+npm install -g pnpm@9     # or: corepack enable && corepack prepare pnpm@9 --activate
+pnpm install              # installs the entire workspace
 
 # Build everything
-make build-wasm                          # WASM client only
-cd crates/web-client && yarn build       # WASM + JS bindings + dist
-cd packages/react-sdk && yarn build      # React layer
+make build-wasm                                    # WASM client only
+make build-web-client                              # WASM + JS bindings + dist
+make build-react-sdk                               # WASM + React layer
 
 # Lint + format
-make clippy-wasm                         # Rust lints (WASM target)
-make format                              # Cargo fmt + prettier
-make typos-check                         # Spellcheck
+make clippy-wasm                                   # Rust lints (WASM target)
+make format                                        # Cargo fmt + prettier
+make typos-check                                   # Spellcheck
 
 # Test
-make test                                # Workspace tests
-cd crates/web-client && yarn test        # Playwright integration tests
-cd packages/react-sdk && yarn test       # Vitest unit tests + Playwright integration
+make test-react-sdk                                # Vitest unit tests
+make integration-test-web-client                   # Playwright integration (chromium)
 ```
 
 The CI workflow runs all of the above on every PR; pushes to `main` and `next` additionally save build caches (sccache + Swatinem/rust-cache) so subsequent PRs warm-start.

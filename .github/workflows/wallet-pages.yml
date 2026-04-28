@@ -13,25 +13,33 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+      # The workspace (root) uses pnpm. The example app at
+      # packages/react-sdk/examples/wallet is intentionally OUTSIDE the
+      # workspace (its file: deps to sibling miden-* repos would otherwise
+      # bleed into the SDK install graph), so it keeps its own yarn.lock.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-          cache-dependency-path: |
-            packages/react-sdk/yarn.lock
-            packages/react-sdk/examples/wallet/yarn.lock
-      - name: Install root dependencies
-        run: yarn install --frozen-lockfile
+          cache: 'pnpm'
+      - name: Install workspace dependencies
+        run: pnpm install --no-frozen-lockfile
       - name: Build react sdk
-        working-directory: packages/react-sdk
-        run: yarn build
-      - name: Install wallet dependencies
+        run: pnpm --filter @miden-sdk/react run build
+      - name: Install wallet example dependencies (pnpm, ignore-workspace)
+        # The example is intentionally OUTSIDE the workspace (not listed in
+        # pnpm-workspace.yaml). --ignore-workspace tells pnpm to treat this
+        # subdir as a standalone project so its file: deps to sibling miden-*
+        # repos don't bleed into the SDK install graph.
         working-directory: packages/react-sdk/examples/wallet
-        run: yarn install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --ignore-workspace
       - name: Build wallet example
         working-directory: packages/react-sdk/examples/wallet
-        run: yarn build --base=/${{ github.event.repository.name }}/wallet-react-example/ --outDir=dist/wallet-react-example
+        run: pnpm exec vite build --base=/${{ github.event.repository.name }}/wallet-react-example/ --outDir=dist/wallet-react-example
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

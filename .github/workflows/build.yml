@@ -35,6 +35,20 @@ jobs:
         run: rustup update --no-self-update
       - name: Add wasm32-unknown-unknown target
         run: rustup target add wasm32-unknown-unknown
+      # `make build-wasm` invokes `pnpm --filter web_store run build` for
+      # the idxdb-store TS bindings before the Rust WASM build runs. Need
+      # pnpm + node + a populated workspace install in scope.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
       # See test.yml for rationale (GHA cache v1 -> v2 endpoint).
       - name: Configure sccache cache backend (v2)
         uses: actions/github-script@v7

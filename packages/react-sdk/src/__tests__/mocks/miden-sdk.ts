@@ -147,6 +147,7 @@ const createMockWord = (hex: string = "0xword") => ({
   serialize: vi.fn(() => new Uint8Array()),
   toU64s: vi.fn(() => new BigUint64Array()),
   toFelts: vi.fn(() => []),
+  [Symbol.dispose]: vi.fn(),
 });
 
 export const createMockTransactionId = (id: string = "0xtx123") => ({
@@ -156,6 +157,7 @@ export const createMockTransactionId = (id: string = "0xtx123") => ({
   asBytes: vi.fn(() => new Uint8Array()),
   inner: vi.fn(() => createMockWord(id)),
   free: vi.fn(),
+  [Symbol.dispose]: vi.fn(),
 });
 
 // Mock TransactionRecord
@@ -178,6 +180,7 @@ export const createMockTransactionRequest = () => ({
   authArg: vi.fn(() => undefined),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
+  [Symbol.dispose]: vi.fn(),
 });
 
 // Mock NoteFilter

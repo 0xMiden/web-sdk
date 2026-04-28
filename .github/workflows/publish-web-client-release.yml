@@ -17,10 +17,16 @@ jobs:
           fetch-depth: 0
           ref: refs/tags/${{ github.event.release.tag_name }}
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org/'
 
       - name: Set up Rust and wasm target
@@ -43,9 +49,8 @@ jobs:
       - name: Install & build web-client
         if: steps.check_version.outputs.should_publish == 'true'
         run: |
-          cd crates/web-client
-          yarn install --frozen-lockfile
-          yarn build
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @miden-sdk/miden-sdk run build
 
       - name: Verify WASM is optimized
         if: steps.check_version.outputs.should_publish == 'true'
@@ -63,9 +68,11 @@ jobs:
         if: steps.check_version.outputs.should_publish == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_WEBCLIENT_TOKEN }}
-        run: |
-          cd crates/web-client
-          npm publish
+        # `pnpm publish` automatically replaces `workspace:*` specifiers
+        # with the resolved version from the workspace package.json
+        # before publishing, so the published artifact is consumable
+        # outside the monorepo.
+        run: pnpm --filter @miden-sdk/miden-sdk publish --no-git-checks
 
       - name: Done
         if: steps.check_version.outputs.should_publish == 'true'

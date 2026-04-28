@@ -29,7 +29,8 @@
     "typecheck": "tsc --noEmit",
     "test": "VITE_CJS_IGNORE_WARNING=1 vitest run",
     "test:unit": "VITE_CJS_IGNORE_WARNING=1 vitest run",
-    "test:integration": "yarn build && playwright test",
+    "test:coverage": "VITE_CJS_IGNORE_WARNING=1 vitest run --coverage",
+    "test:integration": "pnpm build && playwright test",
     "test:all": "VITE_CJS_IGNORE_WARNING=1 vitest run && playwright test"
   },
   "peerDependencies": {
@@ -40,12 +41,13 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@miden-sdk/miden-sdk": "file:../../crates/web-client",
+    "@miden-sdk/miden-sdk": "workspace:*",
     "@playwright/test": "^1.55.0",
     "@testing-library/react": "^14.0.0",
     "@types/react": "^18.2.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
     "eslint": "^8.0.0",
     "http-server": "^14.1.1",
     "jsdom": "^24.0.0",
@@ -71,12 +73,5 @@
   },
   "bugs": {
     "url": "https://github.com/0xMiden/web-sdk/issues"
-  },
-  "resolutions": {
-    "@isaacs/brace-expansion": ">=5.0.1",
-    "esbuild": ">=0.25.0",
-    "minimatch": ">=10.2.1",
-    "rollup": ">=4.59.0",
-    "qs": ">=6.15.0"
   }
 }

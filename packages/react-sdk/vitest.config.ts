@@ -24,7 +24,10 @@ export default defineConfig({
     include: ["src/__tests__/**/*.test.{ts,tsx}"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "json", "html"],
+      // json-summary writes coverage/coverage-summary.json with the
+      // aggregate { total: { lines: { pct, ... }, ... } } that the
+      // CI badge job parses to publish a shields.io endpoint JSON.
+      reporter: ["text", "json", "json-summary", "html"],
       include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/__tests__/**", "src/index.ts"],
     },
