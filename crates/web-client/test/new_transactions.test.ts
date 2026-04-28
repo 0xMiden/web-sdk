@@ -405,7 +405,8 @@ test.describe("custom transaction tests", () => {
         use miden::protocol::active_note
         use miden::standards::wallets::basic->basic_wallet
         use miden::core::mem
-        begin
+        @note_script
+        pub proc main
             adv.push_mapval
             push.${memAddress}
             push.2
