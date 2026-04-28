@@ -34,6 +34,28 @@ vi.mock("@miden-sdk/miden-sdk/lazy", async () => {
   const actual = await vi.importActual("@miden-sdk/miden-sdk/lazy");
   return {
     ...actual,
+    AccountId: {
+      fromHex: vi.fn((hex: string) => ({
+        toString: vi.fn(() => hex),
+        toHex: vi.fn(() => hex),
+        free: vi.fn(),
+      })),
+      fromBech32: vi.fn((b32: string) => ({
+        toString: vi.fn(() => b32),
+        toHex: vi.fn(() => b32),
+        free: vi.fn(),
+      })),
+    },
+    Address: {
+      fromBech32: vi.fn((b32: string) => ({
+        accountId: vi.fn(() => ({ toString: () => b32, toHex: () => b32 })),
+        toString: vi.fn(() => b32),
+      })),
+      fromAccountId: vi.fn((id: any) => ({
+        accountId: vi.fn(() => id),
+        toString: vi.fn(() => (id ? id.toString() : "")),
+      })),
+    },
     AccountBuilder: vi.fn(() => mockBuilder),
     AccountComponent: {
       createAuthComponentFromCommitment: vi.fn(() => "mockAuthComponent"),
@@ -379,6 +401,66 @@ describe("initializeSignerAccount", () => {
 
       expect(result).toBe("0xaccount123");
       expect(typeof result).toBe("string");
+    });
+  });
+
+  describe("unknown account type fallback (line 29)", () => {
+    it("should use RegularAccountImmutableCode fallback for unknown accountType", async () => {
+      const config = createMockSignerAccountConfig({
+        accountType: "UnknownType" as any,
+        storageMode: { toString: () => "private" } as any,
+      });
+      mockClient.getAccount.mockRejectedValue(new Error("Not found"));
+
+      // Should not throw — falls back to WASM_ACCOUNT_TYPE.RegularAccountImmutableCode
+      const result = await initializeSignerAccount(mockClient, config);
+      expect(result).toBe("0xaccount123");
+      expect(mockBuilder.accountType).toHaveBeenCalled();
+    });
+  });
+
+  describe("importAccountId fast path (lines 77-89)", () => {
+    it("should use importAccountById fast path when importAccountId is set", async () => {
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0ximportme",
+      });
+      mockClient.importAccountById.mockResolvedValue(undefined);
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(mockClient.importAccountById).toHaveBeenCalled();
+      expect(result).toBe("0ximportme");
+      expect(mockClient.syncState).toHaveBeenCalled();
+      // Should NOT have built an account locally
+      expect(AccountBuilder).not.toHaveBeenCalled();
+    });
+
+    it("should silently ignore 'already being tracked' error (line 83-85)", async () => {
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xalreadytracked",
+      });
+      mockClient.importAccountById.mockRejectedValue(
+        new Error("account is already being tracked in the store")
+      );
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(result).toBe("0xalreadytracked");
+      // syncState should still be called after the ignored error
+      expect(mockClient.syncState).toHaveBeenCalled();
+    });
+
+    it("should re-throw non-tracked errors in importAccountId path", async () => {
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xbadimport",
+      });
+      mockClient.importAccountById.mockRejectedValue(
+        new Error("network error")
+      );
+
+      await expect(
+        initializeSignerAccount(mockClient, config)
+      ).rejects.toThrow("network error");
     });
   });
 

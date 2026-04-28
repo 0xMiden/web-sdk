@@ -464,4 +464,75 @@ describe("useTransaction", () => {
       expect(result.current.stage).toBe("idle");
     });
   });
+
+  describe("reset", () => {
+    it("should reset all state (lines 179-182)", async () => {
+      const mockTxResult = createMockTransactionResult("0xreset_tx");
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        proveTransaction: vi.fn().mockResolvedValue({}),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        applyTransaction: vi.fn().mockResolvedValue({}),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      expect(result.current.result).not.toBeNull();
+      expect(result.current.stage).toBe("complete");
+
+      act(() => {
+        result.current.reset();
+      });
+
+      expect(result.current.result).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.stage).toBe("idle");
+      expect(result.current.error).toBeNull();
+    });
+  });
+
+  describe("prover path", () => {
+    it("should use proveTransactionWithProver when store config has prover (line 129)", async () => {
+      const mockTxResult = createMockTransactionResult("0xtx_withprover");
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        proveTransactionWithProver: vi.fn().mockResolvedValue({}),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        applyTransaction: vi.fn().mockResolvedValue({}),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      useMidenStore.getState().setConfig({ rpcUrl: "testnet", prover: "local" });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      expect(mockClient.proveTransactionWithProver).toHaveBeenCalled();
+      expect(result.current.stage).toBe("complete");
+    });
+  });
 });

@@ -173,3 +173,48 @@ describe("proveWithFallback", () => {
     expect(proveFn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("resolveTransactionProver — additional branches", () => {
+  it("throws when object prover has empty url (lines 105-106)", () => {
+    // createRemoteProver throws when url is falsy
+    expect(() =>
+      resolveTransactionProver({ prover: { url: "" } })
+    ).toThrow("Remote prover requires a URL");
+  });
+
+  it("resolves with null timeout when proverTimeoutMs is null (lines 120-121)", () => {
+    // normalizeTimeout returns null when value is null
+    const prover = resolveTransactionProver({
+      prover: "devnet",
+      proverTimeoutMs: null as any,
+    });
+    expect(prover).not.toBeNull();
+  });
+
+  it("resolves with bigint timeout when proverTimeoutMs is a number", () => {
+    const prover = resolveTransactionProver({
+      prover: "devnet",
+      proverTimeoutMs: 5000,
+    });
+    expect(prover).not.toBeNull();
+  });
+
+  it("resolves with bigint timeout when proverTimeoutMs is already bigint", () => {
+    const prover = resolveTransactionProver({
+      prover: "devnet",
+      proverTimeoutMs: 5000n,
+    });
+    expect(prover).not.toBeNull();
+  });
+
+  it("resolves localhost alias as local prover", () => {
+    const prover = resolveTransactionProver({ prover: "localhost" });
+    expect(prover).not.toBeNull();
+  });
+
+  it("resolves LOCALHOST case-insensitively", () => {
+    const prover = resolveTransactionProver({ prover: "LOCALHOST" });
+    expect(prover).not.toBeNull();
+  });
+
+});

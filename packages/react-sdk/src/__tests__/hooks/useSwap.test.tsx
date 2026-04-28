@@ -534,4 +534,79 @@ describe("useSwap", () => {
       );
     });
   });
+
+  describe("non-Error catch branch (lines 119-123)", () => {
+    it("should wrap non-Error thrown values in an Error", async () => {
+      const mockClient = createMockWebClient({
+        newSwapTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransactionWithProver: vi.fn().mockRejectedValue("string swap error"),
+        submitNewTransaction: vi.fn().mockRejectedValue("string swap error"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useSwap());
+
+      await act(async () => {
+        await expect(
+          result.current.swap({
+            accountId: "0x1",
+            offeredFaucetId: "0xA",
+            offeredAmount: 100n,
+            requestedFaucetId: "0xB",
+            requestedAmount: 200n,
+          })
+        ).rejects.toThrow("string swap error");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error?.message).toBe("string swap error");
+      });
+    });
+  });
+
+  describe("prover path", () => {
+    it("should use submitNewTransactionWithProver when prover is set (lines 102-106)", async () => {
+      const mockTxId = createMockTransactionId("0xtxswapprover");
+      const mockProver = { type: "local" };
+      const mockClient = createMockWebClient({
+        newSwapTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransactionWithProver: vi.fn().mockResolvedValue(mockTxId),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+        prover: mockProver,
+      });
+
+      const { result } = renderHook(() => useSwap());
+
+      await act(async () => {
+        await result.current.swap({
+          accountId: "0x1",
+          offeredFaucetId: "0xA",
+          offeredAmount: 100n,
+          requestedFaucetId: "0xB",
+          requestedAmount: 200n,
+        });
+      });
+
+      expect(mockClient.submitNewTransactionWithProver).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        mockProver
+      );
+      expect(result.current.stage).toBe("complete");
+    });
+  });
 });

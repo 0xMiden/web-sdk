@@ -668,4 +668,314 @@ describe("useSend", () => {
       });
     });
   });
+
+  describe("send option validation branches (lines 134-148)", () => {
+    it("should throw when no assetId or faucetId provided (line 136)", async () => {
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0x1",
+            to: "0x2",
+            amount: 100n,
+            // assetId and faucetId both absent
+          } as any)
+        ).rejects.toThrow("Asset ID is required");
+      });
+    });
+
+    it("should throw when attachment provided with recallHeight (lines 146-149)", async () => {
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0x1",
+            to: "0x2",
+            assetId: "0x3",
+            amount: 100n,
+            attachment: { kind: "none" } as any,
+            recallHeight: 1000,
+          })
+        ).rejects.toThrow(
+          "recallHeight and timelockHeight are not supported when attachment is provided"
+        );
+      });
+    });
+
+    it("should use proveTransactionWithProver when store config has prover (line 247)", async () => {
+      const mockTxResult = createMockTransactionResult("0xtxstoreprover");
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        proveTransactionWithProver: vi.fn().mockResolvedValue({}),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        applyTransaction: vi.fn().mockResolvedValue({}),
+        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      // Set store config with a prover so proveWithFallback uses proveTransactionWithProver
+      useMidenStore.getState().setConfig({ rpcUrl: "testnet", prover: "local" });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await result.current.send({
+          from: "0x1",
+          to: "0x2",
+          assetId: "0x3",
+          amount: 100n,
+          noteType: "public",
+        });
+      });
+
+      expect(mockClient.proveTransactionWithProver).toHaveBeenCalled();
+      expect(result.current.stage).toBe("complete");
+    });
+  });
+
+  describe("private note branch coverage", () => {
+    it("should throw Missing full note when extractFullNote returns null (lines 276-277)", async () => {
+      // Return a txResult whose executedTransaction throws so extractFullNote catches and returns null
+      const brokenTxResult = {
+        id: vi.fn(() => ({
+          toHex: vi.fn(() => "0xtxbad"),
+          toString: vi.fn(() => "0xtxbad"),
+        })),
+        executedTransaction: vi.fn(() => {
+          throw new Error("no output notes");
+        }),
+      };
+
+      const record = {
+        id: vi.fn(() => ({ toHex: () => "0xtxbad" })),
+        transactionStatus: vi.fn(() => ({
+          isPending: vi.fn(() => false),
+          isCommitted: vi.fn(() => true),
+          isDiscarded: vi.fn(() => false),
+        })),
+      };
+
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi.fn().mockResolvedValue(brokenTxResult),
+        proveTransaction: vi.fn().mockResolvedValue({}),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        applyTransaction: vi.fn().mockResolvedValue({}),
+        getTransactions: vi.fn().mockResolvedValue([record]),
+        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0x1",
+            to: "0x2",
+            assetId: "0x3",
+            amount: 100n,
+            noteType: "private",
+          })
+        ).rejects.toThrow("Missing full note for private send");
+      });
+    });
+
+    it("should use submitNewTransactionWithProver in returnNote path (line 183)", async () => {
+      const mockSync = vi.fn().mockResolvedValue(undefined);
+      const mockTxId = { toString: vi.fn(() => "0xtxprover456") };
+      const mockProver = { type: "local" };
+      const mockClient = createMockWebClient({
+        submitNewTransactionWithProver: vi.fn().mockResolvedValue(mockTxId),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: mockSync,
+        prover: mockProver,
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      let txResult: any;
+      await act(async () => {
+        txResult = await result.current.send({
+          from: "0xsender",
+          to: "0xrecipient",
+          assetId: "0xfaucet",
+          amount: 100n,
+          returnNote: true,
+        });
+      });
+
+      expect(txResult.txId).toBe("0xtxprover456");
+      expect(mockClient.submitNewTransactionWithProver).toHaveBeenCalled();
+    });
+
+    it("should build P2ID note with attachment (lines 209-222)", async () => {
+      const mockTxResult = createMockTransactionResult("0xtxattach");
+      const mockSync = vi.fn().mockResolvedValue(undefined);
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        proveTransaction: vi.fn().mockResolvedValue({}),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        applyTransaction: vi.fn().mockResolvedValue({}),
+        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: mockSync,
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await result.current.send({
+          from: "0x1",
+          to: "0x2",
+          assetId: "0x3",
+          amount: 100n,
+          noteType: "public",
+          // attachment triggers the hasAttachment path
+          attachment: { kind: "none" } as any,
+        });
+      });
+
+      // executeTransaction called (not submitNewTransaction) — attachment path
+      expect(mockClient.executeTransaction).toHaveBeenCalled();
+      expect(result.current.stage).toBe("complete");
+    });
+
+    it("should send private note when fullNote is available (lines 279-291)", async () => {
+      const txResult = createMockTransactionResult("0xtxprivate");
+      const record = {
+        id: vi.fn(() => ({ toHex: () => "0xtxprivate" })),
+        transactionStatus: vi.fn(() => ({
+          isPending: vi.fn(() => false),
+          isCommitted: vi.fn(() => true),
+          isDiscarded: vi.fn(() => false),
+        })),
+      };
+
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi.fn().mockResolvedValue(txResult),
+        proveTransaction: vi.fn().mockResolvedValue({}),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        applyTransaction: vi.fn().mockResolvedValue({}),
+        getTransactions: vi.fn().mockResolvedValue([record]),
+        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        syncState: vi.fn().mockResolvedValue({}),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await result.current.send({
+          from: "0x1",
+          to: "0x2",
+          assetId: "0x3",
+          amount: 100n,
+          noteType: "private",
+        });
+      });
+
+      expect(mockClient.sendPrivateNote).toHaveBeenCalledTimes(1);
+      expect(result.current.stage).toBe("complete");
+    });
+  });
+
+  describe("sendAll balance edge cases", () => {
+    it("should throw when vault getBalance returns null (lines 113-115)", async () => {
+      const mockAccount = {
+        vault: vi.fn(() => ({
+          getBalance: vi.fn(() => null),
+        })),
+      };
+
+      const mockClient = createMockWebClient({
+        getAccount: vi.fn().mockResolvedValue(mockAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0x1",
+            to: "0x2",
+            assetId: "0x3",
+            sendAll: true,
+          })
+        ).rejects.toThrow("Could not query account balance");
+      });
+    });
+
+    it("should throw when amount is undefined and sendAll is false (lines 125-127)", async () => {
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0x1",
+            to: "0x2",
+            assetId: "0x3",
+            // amount is undefined, sendAll is false
+          } as any)
+        ).rejects.toThrow("Amount is required");
+      });
+    });
+  });
 });

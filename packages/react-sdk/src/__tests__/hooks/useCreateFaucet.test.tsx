@@ -371,4 +371,40 @@ describe("useCreateFaucet", () => {
       );
     });
   });
+
+  describe("storage mode default branch", () => {
+    it("should fall back to private when an unknown storageMode is passed (line 136)", async () => {
+      const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
+      const mockClient = createMockWebClient({
+        newFaucet: vi.fn().mockResolvedValue(mockFaucet),
+        getAccounts: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useCreateFaucet());
+
+      await act(async () => {
+        await result.current.createFaucet({
+          tokenSymbol: "TEST",
+          maxSupply: 1000000n,
+          // storageMode: cast unknown value through the type to hit the default branch
+          storageMode: "unknown" as any,
+        });
+      });
+
+      // getStorageMode default branch returns AccountStorageMode.private()
+      expect(mockClient.newFaucet).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "private" }),
+        false,
+        "TEST",
+        8,
+        expect.any(BigInt),
+        2
+      );
+    });
+  });
 });

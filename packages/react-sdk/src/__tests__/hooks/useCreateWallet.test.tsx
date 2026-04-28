@@ -346,4 +346,35 @@ describe("useCreateWallet", () => {
       expect(result.current.wallet).toBe(mockWallet2);
     });
   });
+
+  describe("storage mode default branch", () => {
+    it("should fall back to private when an unknown storageMode is passed (line 135)", async () => {
+      const mockWallet = createMockAccount();
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getAccounts: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useCreateWallet());
+
+      await act(async () => {
+        await result.current.createWallet({
+          storageMode: "unknown" as any,
+        });
+      });
+
+      // getStorageMode default branch returns AccountStorageMode.private()
+      expect(mockClient.newWallet).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "private" }),
+        expect.anything(),
+        expect.anything(),
+        undefined
+      );
+    });
+  });
 });

@@ -174,6 +174,33 @@ describe("useImportStore", () => {
     });
   });
 
+  describe("non-Error catch branch", () => {
+    it("should wrap non-Error thrown values in an Error", async () => {
+      const mockClient = createMockWebClient();
+      const runExclusive = vi.fn((fn: () => unknown) => fn());
+      mockSdkImportStore.mockRejectedValue("string import store error");
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        runExclusive,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useImportStore());
+
+      await act(async () => {
+        await expect(
+          result.current.importStore("{}", "Store")
+        ).rejects.toThrow("string import store error");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error?.message).toBe("string import store error");
+      });
+    });
+  });
+
   describe("reset", () => {
     it("should reset error state", async () => {
       const mockClient = createMockWebClient();

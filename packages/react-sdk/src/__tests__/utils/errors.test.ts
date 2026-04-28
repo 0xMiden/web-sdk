@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MidenError, wrapWasmError } from "../../utils/errors";
+import { MidenError, wrapWasmError, assertSignerConnected } from "../../utils/errors";
 
 describe("MidenError", () => {
   it("should create error with default code UNKNOWN", () => {
@@ -108,5 +108,24 @@ describe("wrapWasmError", () => {
   it("should handle null/undefined", () => {
     expect(wrapWasmError(null).message).toBe("null");
     expect(wrapWasmError(undefined).message).toBe("undefined");
+  });
+});
+
+describe("assertSignerConnected", () => {
+  it("should be a no-op when signerConnected is true", () => {
+    expect(() => assertSignerConnected(true)).not.toThrow();
+  });
+
+  it("should be a no-op when signerConnected is null (no signer provider)", () => {
+    expect(() => assertSignerConnected(null)).not.toThrow();
+  });
+
+  it("should throw when signerConnected is false (disconnected)", () => {
+    expect(() => assertSignerConnected(false)).toThrow(
+      "Signer is disconnected"
+    );
+    expect(() => assertSignerConnected(false)).toThrow(
+      "Reconnect your wallet"
+    );
   });
 });
