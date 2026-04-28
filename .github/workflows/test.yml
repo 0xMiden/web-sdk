@@ -560,8 +560,15 @@ jobs:
           RUST_LOG=none ./bin/testing-node-builder &
           sleep 4
           pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+      # Install Playwright separately from the test run. Inlining the install
+      # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
+      # forwarding: pnpm appends `-- --project=X` to the LAST command, but
+      # playwright then sees `-- --project=X` and treats `--project=X` as a
+      # positional file regex, yielding "No tests found".
+      - name: Install Playwright browsers
+        run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run web client tests
-        run: pnpm --filter @miden-sdk/miden-sdk run test:ci -- --project=${{ matrix.project }}
+        run: pnpm --filter @miden-sdk/miden-sdk run test:ci --project=${{ matrix.project }}
       - name: Stop test node
         if: always()
         run: pkill -f testing-node-builder || true
@@ -619,6 +626,10 @@ jobs:
           RUST_LOG=none ./bin/testing-remote-prover &
           sleep 4
           pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
+      # See integration-tests-web-client for rationale on splitting the
+      # Playwright install from the test invocation.
+      - name: Install Playwright browsers
+        run: pnpm --filter @miden-sdk/miden-sdk run test:install
       - name: Run remote prover tests
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci:remote_prover
       - name: Stop test node

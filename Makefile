@@ -74,16 +74,27 @@ test-react-sdk: ## Run React SDK unit tests
 
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""
+# Local "clean" run: ensure deps are installed, do a debug WASM build, install
+# Playwright browsers, then run the test shard. Inlining all of this into a
+# single npm script (yarn-style chained `&&`) breaks pnpm's arg forwarding —
+# `pnpm run script -- --project=X` appends to the LAST command in the chain,
+# making playwright see `-- --project=X` and treat `--project=X` as a
+# positional file regex. Splitting the steps in Make keeps args clean.
 integration-test-web-client: ## Run integration tests for the web client (with a chromium browser)
-	pnpm --filter @miden-sdk/miden-sdk run test:clean -- --project=chromium $(SHARD_PARAMETER)
+	pnpm install --no-frozen-lockfile
+	cross-env MIDEN_WEB_DEV=true pnpm --filter @miden-sdk/miden-sdk run build
+	pnpm --filter @miden-sdk/miden-sdk run test:install
+	pnpm --filter @miden-sdk/miden-sdk run test:clean --project=chromium $(SHARD_PARAMETER)
 
 .PHONY: integration-test-web-client-webkit
 integration-test-web-client-webkit: ## Run web client tests (webkit)
-	pnpm --filter @miden-sdk/miden-sdk run test -- --project=webkit
+	pnpm --filter @miden-sdk/miden-sdk run test:install
+	pnpm --filter @miden-sdk/miden-sdk run test --project=webkit
 
 .PHONY: integration-test-remote-prover-web-client
 integration-test-remote-prover-web-client: ## Run integration tests for the web client with remote prover
-	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover -- --project=chromium
+	pnpm --filter @miden-sdk/miden-sdk run test:install
+	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover --project=chromium
 
 # --- Building ------------------------------------------------------------------------------------
 
