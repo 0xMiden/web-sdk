@@ -1,0 +1,23 @@
+# Lefthook config — local dev hygiene hooks.
+# Docs: https://lefthook.dev/configuration/
+#
+# Install: `pnpm install` triggers `prepare` → `lefthook install`.
+# Manual:  `npx lefthook install`
+
+pre-commit:
+  parallel: true
+  commands:
+    lint-staged:
+      run: npx lint-staged
+      stage_fixed: true
+    typecheck-staged:
+      glob: "*.{ts,tsx}"
+      run: npx tsc --noEmit --skipLibCheck {staged_files}
+
+# commit-msg:
+#   commands:
+#     commitlint:
+#       # Placeholder for future conventional-commit linting.
+#       # When enabling, add `@commitlint/cli` + `@commitlint/config-conventional`
+#       # to root devDependencies and uncomment this block.
+#       run: npx commitlint --edit {1}
