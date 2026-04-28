@@ -98,7 +98,6 @@ export function useNoteStream(
       const fetched = await client.getInputNotes(filter);
       setNotesIfChanged(fetched);
     } catch (err) {
-      /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setIsLoading(false);

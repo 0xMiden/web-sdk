@@ -71,6 +71,47 @@ describe("useSessionAccount", () => {
     });
   });
 
+  describe("non-Error rejection path", () => {
+    it("wraps non-Error rejection from fund callback in an Error instance", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xsession_wallet"),
+          toHex: vi.fn(() => "0xsession_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockRejectedValueOnce("plain-string-rejection"),
+          assetId: "0xfaucet",
+        })
+      );
+
+      await act(async () => {
+        await expect(result.current.initialize()).rejects.toThrow(
+          "plain-string-rejection"
+        );
+      });
+
+      expect(result.current.error).toBeInstanceOf(Error);
+      expect(result.current.error?.message).toBe("plain-string-rejection");
+    });
+  });
+
   describe("initialize", () => {
     it("should throw when client is not ready", async () => {
       mockUseMiden.mockReturnValue({

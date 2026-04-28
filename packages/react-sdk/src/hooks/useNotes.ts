@@ -86,7 +86,6 @@ export function useNotes(options?: NotesFilter): NotesResult {
       setNotesIfChanged(fetchedNotes);
       setConsumableNotesIfChanged(fetchedConsumable);
     } catch (err) {
-      /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setLoadingNotes(false);

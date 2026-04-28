@@ -148,7 +148,6 @@ export function MidenProvider({
     } catch (error) {
       setSyncState({
         isSyncing: false,
-        /* v8 ignore next 1 — non-Error rejection path; in tests all thrown values are Error instances */
         error: error instanceof Error ? error : new Error(String(error)),
       });
     }
@@ -346,7 +345,6 @@ export function MidenProvider({
         } catch (error) {
           if (!cancelled) {
             setInitError(
-              /* v8 ignore next 1 — non-Error rejection path; in tests all thrown values are Error instances */
               error instanceof Error ? error : new Error(String(error))
             );
           }

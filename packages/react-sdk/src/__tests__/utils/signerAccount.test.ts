@@ -450,6 +450,22 @@ describe("initializeSignerAccount", () => {
       expect(mockClient.syncState).toHaveBeenCalled();
     });
 
+    it("wraps non-Error rejection from importAccountById in a string message", async () => {
+      // This exercises the `const msg = e instanceof Error ? e.message : String(e)` branch
+      // where the rejection is not an Error instance.
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xstringrejection",
+      });
+      mockClient.importAccountById.mockRejectedValue(
+        "already being tracked string"
+      );
+
+      // The string "already being tracked" is checked via msg.includes("already being tracked")
+      // so this should be swallowed (msg = "already being tracked string")
+      const result = await initializeSignerAccount(mockClient, config);
+      expect(result).toBe("0xstringrejection");
+    });
+
     it("should re-throw non-tracked errors in importAccountId path", async () => {
       const config = createMockSignerAccountConfig({
         importAccountId: "0xbadimport",

@@ -103,7 +103,6 @@ export function useImportAccount(): UseImportAccountResult {
               try {
                 await client.importAccountFile(accountFile);
               } catch (err) {
-                /* v8 ignore next 2 — non-Error rejection in importAccountFile; tests always throw Error instances */
                 const message =
                   err instanceof Error ? err.message : String(err);
                 if (!message.includes("already being tracked")) {
@@ -177,7 +176,6 @@ export function useImportAccount(): UseImportAccountResult {
 
         return imported;
       } catch (err) {
-        /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         throw error;

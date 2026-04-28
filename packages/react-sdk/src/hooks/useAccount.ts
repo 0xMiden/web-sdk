@@ -71,7 +71,6 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
         setAccountDetails(accountIdStr, fetchedAccount);
       }
     } catch (err) {
-      /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setIsLoading(false);

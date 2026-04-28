@@ -224,6 +224,31 @@ describe("useNotes", () => {
     });
   });
 
+  describe("non-Error rejection path", () => {
+    it("wraps non-Error rejection from getInputNotes in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockRejectedValueOnce("plain-string-rejection"),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      // The hook auto-fetches on mount when notes is empty;
+      // the rejection propagates to the error state via the catch handler.
+      const { result } = renderHook(() => useNotes());
+
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("plain-string-rejection");
+      });
+    });
+  });
+
   describe("refetch", () => {
     it("should refetch notes when called", async () => {
       const initialNotes = [createMockInputNoteRecord("0xnote1")];

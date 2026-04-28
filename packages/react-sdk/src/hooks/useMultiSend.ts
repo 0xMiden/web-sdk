@@ -200,7 +200,6 @@ export function useMultiSend(): UseMultiSendResult {
 
         return txSummary;
       } catch (err) {
-        /* v8 ignore next 1 — non-Error rejection path; in tests all thrown values are Error instances */
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStage("idle");

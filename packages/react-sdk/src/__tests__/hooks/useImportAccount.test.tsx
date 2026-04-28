@@ -510,4 +510,70 @@ describe("useImportAccount", () => {
       expect(imported).toBe(innerAccount);
     });
   });
+
+  describe("non-Error rejection paths", () => {
+    it("wraps non-Error rejection in importAccount (outer catch) in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        importAccountById: vi
+          .fn()
+          .mockRejectedValueOnce("plain-string-rejection"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        signerConnected: null,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      await act(async () => {
+        await expect(
+          result.current.importAccount({
+            type: "id",
+            accountId: "0xaccount",
+          })
+        ).rejects.toThrow("plain-string-rejection");
+      });
+
+      expect(result.current.error).toBeInstanceOf(Error);
+      expect(result.current.error?.message).toBe("plain-string-rejection");
+    });
+
+    it("wraps non-Error rejection in importAccountFile inner catch (already-tracked path) in string", async () => {
+      const mockAccount = createMockAccount();
+      const mockAccountFile = createMockAccountFile(mockAccount);
+
+      const mockClient = createMockWebClient({
+        importAccountFile: vi
+          .fn()
+          .mockRejectedValueOnce("already being tracked - string form"),
+        getAccounts: vi
+          .fn()
+          .mockResolvedValue([
+            { id: vi.fn(() => createMockAccountId("0xnewaccount")) },
+          ]),
+        getAccount: vi.fn().mockResolvedValue(mockAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        signerConnected: null,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      // Should NOT throw because "already being tracked" is swallowed
+      let imported: any;
+      await act(async () => {
+        imported = await result.current.importAccount({
+          type: "file",
+          file: mockAccountFile as any,
+        });
+      });
+
+      expect(imported).toBeDefined();
+    });
+  });
 });

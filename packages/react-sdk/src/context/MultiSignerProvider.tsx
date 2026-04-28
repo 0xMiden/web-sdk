@@ -181,7 +181,6 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
       // Disconnect old signer (fire-and-forget)
       if (currentSigner?.isConnected) {
         currentSigner.disconnect().catch((err) => {
-          /* v8 ignore next 1 — disconnect().catch fires only if the mock rejects; not tested */
           console.warn("Failed to disconnect previous signer:", err);
         });
       }
@@ -213,7 +212,6 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
 
     if (signer?.isConnected) {
       signer.disconnect().catch((err) => {
-        /* v8 ignore next 1 — disconnect().catch fires only if the mock rejects; not tested */
         console.warn("Failed to disconnect signer:", err);
       });
     }

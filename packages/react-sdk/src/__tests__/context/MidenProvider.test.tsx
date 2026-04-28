@@ -275,6 +275,34 @@ describe("MidenProvider sync function", () => {
     expect(syncStore.error?.message).toBe("Sync error");
   });
 
+  it("wraps non-Error rejection from syncState in an Error instance", async () => {
+    const mockClient = await vi.mocked(WebClient.createClient)();
+
+    const { result } = renderHook(() => useMiden(), {
+      wrapper: ({ children }: { children: React.ReactNode }) => (
+        <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+          {children}
+        </MidenProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isReady).toBe(true);
+    });
+
+    (
+      mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }
+    ).syncState.mockRejectedValueOnce("plain-string-sync-error");
+
+    await act(async () => {
+      await result.current.sync();
+    });
+
+    const { sync: syncStore } = useMidenStore.getState();
+    expect(syncStore.error).toBeInstanceOf(Error);
+    expect(syncStore.error?.message).toBe("plain-string-sync-error");
+  });
+
   it("should skip sync when already syncing (isSyncing guard)", async () => {
     const mockClient = await vi.mocked(WebClient.createClient)();
 
@@ -308,6 +336,33 @@ describe("MidenProvider sync function", () => {
       (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> })
         .syncState
     ).not.toHaveBeenCalled();
+  });
+});
+
+describe("MidenProvider non-Error rejection paths", () => {
+  it("wraps non-Error rejection from createClient in an Error instance", async () => {
+    vi.mocked(WebClient.createClient).mockRejectedValueOnce(
+      "plain-string-init-error"
+    );
+
+    render(
+      <MidenProvider
+        config={{ rpcUrl: "testnet" }}
+        errorComponent={(err: Error) => (
+          <div data-testid="error-msg">{err.message}</div>
+        )}
+      >
+        <div />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("error-msg")).not.toBeNull();
+    });
+
+    expect(screen.getByTestId("error-msg").textContent).toBe(
+      "plain-string-init-error"
+    );
   });
 });
 

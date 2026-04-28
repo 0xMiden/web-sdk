@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useMultiSend } from "../../hooks/useMultiSend";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -464,6 +464,40 @@ describe("useMultiSend", () => {
 
       expect(mockClient.executeTransaction).toHaveBeenCalled();
       expect(result.current.stage).toBe("complete");
+    });
+  });
+
+  describe("non-Error rejection path", () => {
+    it("wraps non-Error rejection in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        executeTransaction: vi
+          .fn()
+          .mockRejectedValueOnce("plain-string-rejection"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+        signerConnected: null,
+      });
+
+      const { result } = renderHook(() => useMultiSend());
+
+      await act(async () => {
+        await expect(
+          result.current.sendMany({
+            from: "0x1",
+            assetId: "0x3",
+            recipients: [{ to: "0x2", amount: 100n }],
+          })
+        ).rejects.toThrow("plain-string-rejection");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("plain-string-rejection");
+      });
     });
   });
 });

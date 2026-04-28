@@ -165,8 +165,7 @@ export function useSessionAccount(
       await sync();
     } catch (err) {
       if (!cancelledRef.current) {
-        /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
-        const error = err instanceof Error ? err : new Error(String(err));
+          const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStep("idle");
         throw error;

@@ -959,6 +959,41 @@ describe("useSend", () => {
       });
     });
 
+    it("wraps non-Error rejection in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi
+          .fn()
+          .mockRejectedValueOnce("plain-string-rejection"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+
+      await act(async () => {
+        await expect(
+          result.current.send({
+            from: "0x1",
+            to: "0x2",
+            assetId: "0x3",
+            amount: 100n,
+          })
+        ).rejects.toThrow("plain-string-rejection");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("plain-string-rejection");
+      });
+    });
+
     it("should throw when amount is undefined and sendAll is false (lines 125-127)", async () => {
       mockUseMiden.mockReturnValue({
         client: createMockWebClient(),

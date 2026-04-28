@@ -371,6 +371,58 @@ describe("MultiSignerProvider", () => {
     });
   });
 
+  describe("connectSigner disconnect-on-switch rejection path", () => {
+    it("swallows rejection from old signer disconnect() when switching signers", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const paraDisconnect = vi
+        .fn()
+        .mockRejectedValueOnce("old-disconnect-failed");
+      const para = createMockSignerContext({
+        name: "Para",
+        storeName: "para_1",
+        isConnected: true,
+        disconnect: paraDisconnect,
+      });
+      const turnkey = createMockSignerContext({
+        name: "Turnkey",
+        storeName: "turnkey_1",
+        isConnected: false,
+      });
+
+      let multiRef: ReturnType<typeof useMultiSigner>;
+      function Capture() {
+        multiRef = useMultiSigner();
+        return null;
+      }
+
+      render(
+        <MultiSignerProvider>
+          <MockSignerProvider value={para} />
+          <MockSignerProvider value={turnkey} />
+          <Capture />
+          <TestConsumer />
+        </MultiSignerProvider>
+      );
+
+      // Connect Para first
+      await act(async () => {
+        await multiRef!.connectSigner("Para");
+      });
+
+      expect(screen.getByTestId("active-name").textContent).toBe("Para");
+
+      // Switch to Turnkey — Para's disconnect() will reject (fire-and-forget)
+      await act(async () => {
+        await multiRef!.connectSigner("Turnkey");
+      });
+
+      // Should have switched successfully despite Para's disconnect failing
+      expect(screen.getByTestId("active-name").textContent).toBe("Turnkey");
+      warnSpy.mockRestore();
+    });
+  });
+
   describe("disconnectSigner", () => {
     it("calls disconnect on active signer and clears activeSigner", async () => {
       const disconnect = vi.fn().mockResolvedValue(undefined);
@@ -407,6 +459,45 @@ describe("MultiSignerProvider", () => {
 
       expect(disconnect).toHaveBeenCalled();
       expect(screen.getByTestId("active-name").textContent).toBe("none");
+    });
+
+    it("swallows non-Error rejection from disconnect and logs a warning", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const disconnect = vi.fn().mockRejectedValueOnce("disconnect-failed");
+      const para = createMockSignerContext({
+        name: "Para",
+        storeName: "para_1",
+        isConnected: true,
+        disconnect,
+      });
+
+      let multiRef: ReturnType<typeof useMultiSigner>;
+      function Capture() {
+        multiRef = useMultiSigner();
+        return null;
+      }
+
+      render(
+        <MultiSignerProvider>
+          <MockSignerProvider value={para} />
+          <Capture />
+          <TestConsumer />
+        </MultiSignerProvider>
+      );
+
+      await act(async () => {
+        await multiRef!.connectSigner("Para");
+      });
+
+      // disconnectSigner internally calls disconnect() which rejects;
+      // the .catch() should swallow it and call console.warn
+      await act(async () => {
+        await multiRef!.disconnectSigner();
+      });
+
+      // No throw, but warn was called (or the catch was hit)
+      expect(screen.getByTestId("active-name").textContent).toBe("none");
+      warnSpy.mockRestore();
     });
 
     it("no-op when no active signer", async () => {

@@ -215,6 +215,30 @@ describe("useNoteStream", () => {
       });
     });
 
+    it("wraps non-Error rejection from getInputNotes in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        getInputNotes: vi
+          .fn()
+          .mockRejectedValueOnce("plain-string-rejection"),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      // The hook auto-fetches on mount when isReady is true;
+      // the rejection propagates to the error state.
+      const { result } = renderHook(() => useNoteStream());
+
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("plain-string-rejection");
+      });
+    });
+  });
+
+  describe("sender filtering", () => {
     it("should return empty when sender is null", async () => {
       const notes = [createStreamableNote("0xnote1")];
       const mockClient = createMockWebClient({

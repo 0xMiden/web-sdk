@@ -504,6 +504,36 @@ describe("useTransaction", () => {
     });
   });
 
+  describe("non-Error rejection path", () => {
+    it("wraps non-Error rejection in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockRejectedValueOnce("plain-string-error"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await expect(
+          result.current.execute({
+            accountId: "0x1",
+            request: createMockTransactionRequest(),
+          })
+        ).rejects.toThrow("plain-string-error");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("plain-string-error");
+      });
+    });
+  });
+
   describe("prover path", () => {
     it("should use proveTransactionWithProver when store config has prover (line 129)", async () => {
       const mockTxResult = createMockTransactionResult("0xtx_withprover");
