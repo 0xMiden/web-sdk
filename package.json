@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "check:sync:react-sdk": "node scripts/check-react-sdk-sync.js",
-    "check:knip": "knip --no-exit-code",
+    "check:knip": "knip",
     "build:web-client": "pnpm --filter @miden-sdk/miden-sdk run build",
     "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
