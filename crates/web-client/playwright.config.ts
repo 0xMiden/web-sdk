@@ -105,7 +105,6 @@ const ciShardProjects = process.env.CI
           "test/miden_array.test.ts",
           "test/miden_client_api.test.ts",
           "test/address.test.ts",
-          "test/eager_entry.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
