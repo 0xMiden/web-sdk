@@ -32,8 +32,7 @@ export default defineConfig({
         "src/types/**",
         "src/**/*.d.ts",
       ],
-      // Phase 0: measurement-mode. Restored to 95 in Phase 4.
-      thresholds: { lines: 0, branches: 0, functions: 0, statements: 0 },
+      thresholds: { lines: 95, branches: 95, functions: 95, statements: 95 },
     },
   },
 });
