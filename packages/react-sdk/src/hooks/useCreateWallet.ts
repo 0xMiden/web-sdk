@@ -1,11 +1,8 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
-import {
-  AccountStorageMode,
-  resolveAuthScheme,
-} from "@miden-sdk/miden-sdk/lazy";
-import type { Account } from "@miden-sdk/miden-sdk/lazy";
+import { AccountStorageMode } from "@miden-sdk/miden-sdk";
+import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateWalletOptions } from "../types";
 import { DEFAULTS } from "../types";
 import { runExclusiveDirect } from "../utils/runExclusive";
@@ -75,9 +72,7 @@ export function useCreateWallet(): UseCreateWalletResult {
           options.storageMode ?? DEFAULTS.STORAGE_MODE
         );
         const mutable = options.mutable ?? DEFAULTS.WALLET_MUTABLE;
-        const authScheme = resolveAuthScheme(
-          options.authScheme ?? DEFAULTS.AUTH_SCHEME
-        );
+        const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newWallet = await runExclusiveSafe(async () => {
           const createdWallet = await client.newWallet(
@@ -99,7 +94,6 @@ export function useCreateWallet(): UseCreateWalletResult {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsCreating(false);
       }

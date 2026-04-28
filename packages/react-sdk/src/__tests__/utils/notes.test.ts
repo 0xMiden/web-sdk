@@ -1,194 +1,181 @@
 import { describe, it, expect, vi } from "vitest";
 import { getNoteSummary, formatNoteSummary } from "../../utils/notes";
-import type { NoteSummary, NoteAsset } from "../../types";
+import type { NoteSummary } from "../../types";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-const makeInputNoteRecord = ({
-  id = "0xnote1",
-  assets = [] as Array<{ faucetId: string; amount: bigint }>,
-  sender = undefined as string | undefined,
-} = {}) => ({
-  id: vi.fn(() => ({ toString: () => id })),
-  details: vi.fn(() => ({
-    assets: vi.fn(() => ({
-      fungibleAssets: vi.fn(() =>
-        assets.map((a) => ({
-          faucetId: vi.fn(() => ({ toString: () => a.faucetId })),
-          amount: vi.fn(() => a.amount),
-        }))
-      ),
-    })),
-  })),
-  metadata: vi.fn(() =>
-    sender
-      ? {
-          sender: vi.fn(() => ({ toString: vi.fn(() => sender) })),
-        }
-      : {}
-  ),
+const makeAsset = (faucetHex: string, amount: bigint) => ({
+  faucetId: vi.fn(() => ({ toString: () => faucetHex })),
+  amount: vi.fn(() => amount),
 });
 
-const makeConsumableNoteRecord = (
-  inner: ReturnType<typeof makeInputNoteRecord>
-) => ({
-  inputNoteRecord: vi.fn(() => inner),
-});
-
-// ---------------------------------------------------------------------------
-// getNoteSummary
-// ---------------------------------------------------------------------------
+const makeInputNoteRecord = (opts: {
+  id?: string;
+  assets?: Array<{ faucetHex: string; amount: bigint }>;
+  senderHex?: string;
+  detailsThrows?: boolean;
+}) => {
+  const { id = "0xnote1", assets = [], senderHex, detailsThrows } = opts;
+  return {
+    id: vi.fn(() => ({ toString: () => id })),
+    details: vi.fn(() => {
+      if (detailsThrows) throw new Error("details unavailable");
+      return {
+        assets: () => ({
+          fungibleAssets: () =>
+            assets.map((a) => makeAsset(a.faucetHex, a.amount)),
+        }),
+      };
+    }),
+    metadata: senderHex
+      ? vi.fn(() => ({ sender: () => ({ toString: () => senderHex }) }))
+      : undefined,
+  };
+};
 
 describe("getNoteSummary", () => {
-  it("should return a summary with id and empty assets for bare note", () => {
-    const note = makeInputNoteRecord({ id: "0xabc" });
-    const summary = getNoteSummary(note as any);
-    expect(summary).not.toBeNull();
-    expect(summary!.id).toBe("0xabc");
-    expect(summary!.assets).toEqual([]);
+  it("returns null when reading id() throws", () => {
+    const note = {
+      id: () => {
+        throw new Error("boom");
+      },
+    } as never;
+    expect(getNoteSummary(note)).toBeNull();
   });
 
-  it("should unwrap ConsumableNoteRecord via inputNoteRecord()", () => {
-    const inner = makeInputNoteRecord({ id: "0xinner" });
-    const consumable = makeConsumableNoteRecord(inner);
-    const summary = getNoteSummary(consumable as any);
-    expect(summary!.id).toBe("0xinner");
+  it("unwraps a ConsumableNoteRecord via inputNoteRecord()", () => {
+    const inner = makeInputNoteRecord({ id: "0xinner", assets: [] });
+    const consumable = {
+      inputNoteRecord: vi.fn(() => inner),
+    } as never;
+    const summary = getNoteSummary(consumable);
+    expect(summary?.id).toBe("0xinner");
   });
 
-  it("should collect fungible assets with metadata", () => {
-    const note = makeInputNoteRecord({
-      id: "0xnote",
-      assets: [{ faucetId: "0xfaucet", amount: 100n }],
+  it("returns id with empty assets list when no fungible assets", () => {
+    const note = makeInputNoteRecord({ id: "0xnote_empty", assets: [] });
+    const summary = getNoteSummary(note as never);
+    expect(summary).toEqual({
+      id: "0xnote_empty",
+      assets: [],
+      sender: undefined,
     });
-    const getAssetMetadata = vi.fn(() => ({
-      symbol: "TKN",
-      decimals: 8,
-    }));
-    const summary = getNoteSummary(note as any, getAssetMetadata as any);
-    expect(summary!.assets).toHaveLength(1);
-    expect(summary!.assets[0]).toMatchObject({
-      assetId: "0xfaucet",
+  });
+
+  it("populates assets from details().assets().fungibleAssets()", () => {
+    const note = makeInputNoteRecord({
+      id: "0xnote_with_assets",
+      assets: [{ faucetHex: "0xfaucet1", amount: 100n }],
+    });
+    const summary = getNoteSummary(note as never);
+    expect(summary?.assets).toHaveLength(1);
+    expect(summary?.assets[0]).toMatchObject({
+      assetId: "0xfaucet1",
       amount: 100n,
-      symbol: "TKN",
-      decimals: 8,
     });
   });
 
-  it("should collect assets without metadata (symbol/decimals undefined)", () => {
+  it("annotates assets with metadata when getAssetMetadata returns a match", () => {
     const note = makeInputNoteRecord({
-      assets: [{ faucetId: "0xfaucet2", amount: 50n }],
+      id: "0xnote_meta",
+      assets: [{ faucetHex: "0xfaucet1", amount: 100n }],
     });
-    const summary = getNoteSummary(note as any);
-    expect(summary!.assets[0].symbol).toBeUndefined();
-    expect(summary!.assets[0].decimals).toBeUndefined();
+    const lookup = vi.fn((id: string) =>
+      id === "0xfaucet1"
+        ? { assetId: "0xfaucet1", symbol: "TKN", decimals: 6 }
+        : undefined
+    );
+    const summary = getNoteSummary(note as never, lookup);
+    expect(summary?.assets[0]).toMatchObject({
+      symbol: "TKN",
+      decimals: 6,
+    });
   });
 
-  it("should include sender from metadata", () => {
-    const note = makeInputNoteRecord({ sender: "0xsender123" });
-    const summary = getNoteSummary(note as any);
-    // sender goes through toBech32AccountId which returns the string on error
-    expect(summary!.sender).toBeDefined();
+  it("leaves assets empty when details() throws", () => {
+    const note = makeInputNoteRecord({
+      id: "0xnote_no_details",
+      detailsThrows: true,
+    });
+    const summary = getNoteSummary(note as never);
+    expect(summary?.id).toBe("0xnote_no_details");
+    expect(summary?.assets).toEqual([]);
   });
 
-  it("should return null when note.id throws", () => {
-    const badNote = {
-      id: vi.fn(() => {
-        throw new Error("bad id");
-      }),
-      details: vi.fn(() => ({})),
-      metadata: vi.fn(() => ({})),
-    };
-    expect(getNoteSummary(badNote as any)).toBeNull();
+  it("extracts sender from metadata().sender()", () => {
+    const note = makeInputNoteRecord({
+      id: "0xnote_with_sender",
+      senderHex: "0xsender_hex",
+    });
+    const summary = getNoteSummary(note as never);
+    expect(summary?.sender).toBeDefined();
+    expect(typeof summary?.sender).toBe("string");
   });
 
-  it("should handle details throwing — keep assets empty", () => {
-    const note = {
-      id: vi.fn(() => ({ toString: () => "0xid" })),
-      details: vi.fn(() => {
-        throw new Error("details error");
-      }),
-      metadata: vi.fn(() => ({})),
-    };
-    const summary = getNoteSummary(note as any);
-    expect(summary).not.toBeNull();
-    expect(summary!.assets).toEqual([]);
-  });
-
-  it("should handle missing metadata gracefully", () => {
-    const note = {
-      id: vi.fn(() => ({ toString: () => "0xid" })),
-      details: vi.fn(() => ({
-        assets: vi.fn(() => ({
-          fungibleAssets: vi.fn(() => []),
-        })),
-      })),
-      metadata: undefined,
-    };
-    const summary = getNoteSummary(note as any);
-    expect(summary!.sender).toBeUndefined();
+  it("leaves sender undefined when metadata() is missing", () => {
+    const note = makeInputNoteRecord({ id: "0xnote_no_meta" });
+    const summary = getNoteSummary(note as never);
+    expect(summary?.sender).toBeUndefined();
   });
 });
 
-// ---------------------------------------------------------------------------
-// formatNoteSummary
-// ---------------------------------------------------------------------------
-
 describe("formatNoteSummary", () => {
-  it("should return the id when there are no assets", () => {
-    const summary: NoteSummary = { id: "0xnote1", assets: [] };
-    expect(formatNoteSummary(summary)).toBe("0xnote1");
+  const baseSummary: NoteSummary = {
+    id: "0xnote",
+    assets: [],
+    sender: undefined,
+  };
+
+  it("returns just the id when there are no assets", () => {
+    expect(formatNoteSummary(baseSummary)).toBe("0xnote");
   });
 
-  it("should format single asset with symbol", () => {
-    const asset: NoteAsset = {
-      assetId: "0xfaucet",
-      amount: 150_000_000n,
-      symbol: "TKN",
-      decimals: 8,
-    };
-    const summary: NoteSummary = { id: "0xnote1", assets: [asset] };
-    // formatAssetAmount(150_000_000n, 8) === "1.5"
-    expect(formatNoteSummary(summary)).toBe("1.5 TKN");
-  });
-
-  it("should fall back to assetId when no symbol", () => {
-    const asset: NoteAsset = {
-      assetId: "0xfaucetXYZ",
-      amount: 100n,
-    };
-    const summary: NoteSummary = { id: "0xnote1", assets: [asset] };
-    expect(formatNoteSummary(summary)).toBe("100 0xfaucetXYZ");
-  });
-
-  it("should append sender when present", () => {
-    const asset: NoteAsset = {
-      assetId: "0xfaucet",
-      amount: 100n,
-      symbol: "TKN",
-    };
+  it("uses the default formatter for a single asset (with symbol)", () => {
     const summary: NoteSummary = {
-      id: "0xnote1",
-      assets: [asset],
-      sender: "miden1sender",
+      id: "0xnote",
+      assets: [
+        { assetId: "0xfaucet", amount: 100n, symbol: "TKN", decimals: 0 },
+      ],
+      sender: undefined,
     };
-    expect(formatNoteSummary(summary)).toBe("100 TKN from miden1sender");
+    expect(formatNoteSummary(summary)).toBe("100 TKN");
   });
 
-  it("should join multiple assets with +", () => {
-    const assets: NoteAsset[] = [
-      { assetId: "0xf1", amount: 50n, symbol: "AAA" },
-      { assetId: "0xf2", amount: 25n, symbol: "BBB" },
-    ];
-    const summary: NoteSummary = { id: "0xnote1", assets };
-    expect(formatNoteSummary(summary)).toBe("50 AAA + 25 BBB");
+  it("falls back to assetId when symbol is missing", () => {
+    const summary: NoteSummary = {
+      id: "0xnote",
+      assets: [{ assetId: "0xfaucet_only", amount: 100n }],
+      sender: undefined,
+    };
+    expect(formatNoteSummary(summary)).toBe("100 0xfaucet_only");
   });
 
-  it("should use custom formatAsset when provided", () => {
-    const asset: NoteAsset = { assetId: "0xfaucet", amount: 100n };
-    const summary: NoteSummary = { id: "0xnote1", assets: [asset] };
-    const custom = (a: NoteAsset) => `custom:${a.amount.toString()}`;
-    expect(formatNoteSummary(summary, custom)).toBe("custom:100");
+  it("joins multiple assets with ' + '", () => {
+    const summary: NoteSummary = {
+      id: "0xnote",
+      assets: [
+        { assetId: "0xfaucet1", amount: 1n, symbol: "A", decimals: 0 },
+        { assetId: "0xfaucet2", amount: 2n, symbol: "B", decimals: 0 },
+      ],
+      sender: undefined,
+    };
+    expect(formatNoteSummary(summary)).toBe("1 A + 2 B");
+  });
+
+  it("appends sender when present", () => {
+    const summary: NoteSummary = {
+      id: "0xnote",
+      assets: [{ assetId: "0xfaucet", amount: 1n, symbol: "A", decimals: 0 }],
+      sender: "mid:abc",
+    };
+    expect(formatNoteSummary(summary)).toBe("1 A from mid:abc");
+  });
+
+  it("uses a custom formatter when provided", () => {
+    const summary: NoteSummary = {
+      id: "0xnote",
+      assets: [{ assetId: "0xfaucet", amount: 5n }],
+      sender: undefined,
+    };
+    const out = formatNoteSummary(summary, (a) => `<${a.amount}>`);
+    expect(out).toBe("<5>");
   });
 });

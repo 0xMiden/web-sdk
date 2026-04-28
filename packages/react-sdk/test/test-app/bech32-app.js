@@ -7,7 +7,7 @@ import {
   installAccountBech32,
   ensureAccountBech32,
 } from "@miden-sdk/react";
-import { WebClient, MockWebClient } from "@miden-sdk/miden-sdk";
+import { WasmWebClient, MockWebClient } from "@miden-sdk/miden-sdk";
 
 // -- Initial status flags (polled by the test) --------------------------------
 window.testAppError = null;
@@ -33,11 +33,21 @@ window.addEventListener("unhandledrejection", (event) => {
   });
 });
 
-// -- Patch WebClient to use the in-memory mock --------------------------------
+// -- Patch WasmWebClient to use the in-memory mock ----------------------------
+// We must patch the JS-level wrapper (`WasmWebClient`) — the one MidenProvider
+// imports as `WasmWebClient as WebClient`. The bare `WebClient` export is the
+// wasm-bindgen low-level class and only has an INSTANCE createClient, so
+// patching that one is a no-op and lets MidenProvider hit a real RPC call.
+//
+// We deliberately drop all args because `MockWebClient.createClient` has a
+// different signature (`(serializedMockChain, ..., seed, logLevel)`) than
+// `WasmWebClient.createClient` (`(rpcUrl, noteTransportUrl, seed, ...)`).
+// Passing the rpcUrl through would feed it into `serializedMockChain` which
+// expects a Uint8Array — wasm-bindgen would crash. The tests don't need the
+// real rpcUrl on the client; they exercise inferNetworkId() via the store's
+// config.rpcUrl which MidenProvider sets independently of createClient.
 const patchWebClient = () => {
-  if (typeof WebClient?.createClient === "function") {
-    WebClient.createClient = MockWebClient.createClient.bind(MockWebClient);
-  }
+  WasmWebClient.createClient = () => MockWebClient.createClient();
 };
 
 // -- Load full WASM SDK exports onto window -----------------------------------
@@ -47,6 +57,12 @@ const initSdk = async () => {
     for (const [key, value] of Object.entries(sdkExports)) {
       window[key] = value;
     }
+    // Restore the WASM AuthScheme enum (the JS API shadows it with a
+    // simplified "falcon"/"ecdsa" string map that wasm-bindgen rejects with
+    // "invalid enum value passed"). Mirrors the workaround in
+    // crates/web-client/test/test-setup.ts and the equivalent in index.html.
+    const wasm = await window.getWasmOrThrow();
+    window.AuthScheme = wasm.AuthScheme;
     window.sdkLoaded = true;
   } catch (err) {
     window.sdkLoadError = err?.message ?? String(err);

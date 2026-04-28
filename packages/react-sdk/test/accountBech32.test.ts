@@ -122,7 +122,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = wallet.id().toHex();
+      const hexId = wallet.id().toString();
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 
@@ -153,7 +153,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         BigInt(1_000_000),
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = faucet.id().toHex();
+      const hexId = faucet.id().toString();
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 
@@ -182,7 +182,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = wallet.id().toHex();
+      const hexId = wallet.id().toString();
       // First: hex → bech32
       const bech32 = (window as any).__bech32.toBech32AccountId(hexId);
       // Second: bech32 → bech32 (round-trip)
@@ -234,7 +234,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = wallet.id().toHex();
+      const hexId = wallet.id().toString();
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 
@@ -263,7 +263,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = wallet.id().toHex();
+      const hexId = wallet.id().toString();
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 
@@ -290,7 +290,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = wallet.id().toHex();
+      const hexId = wallet.id().toString();
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 
@@ -317,7 +317,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
-      const hexId = wallet.id().toHex();
+      const hexId = wallet.id().toString();
       return (window as any).__bech32.toBech32AccountId(hexId);
     });
 

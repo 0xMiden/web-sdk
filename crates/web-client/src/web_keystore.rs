@@ -1,28 +1,37 @@
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
-use core::cell::RefCell;
 
 use miden_client::account::AccountId;
 use miden_client::auth::{
-    AuthSecretKey, PublicKey, PublicKeyCommitment, Signature, SigningInputs,
+    AuthSecretKey,
+    PublicKey,
+    PublicKeyCommitment,
+    Signature,
+    SigningInputs,
     TransactionAuthenticator,
 };
 use miden_client::keystore::{KeyStoreError, Keystore};
 use miden_client::utils::{RwLock, Serializable};
 use miden_client::{AuthenticationError, Word as NativeWord};
 use rand::Rng;
-use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::Function;
 
 use crate::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
 use crate::web_keystore_callbacks::{
-    GetKeyCallback, InsertKeyCallback, SignCallback, decode_secret_key_from_bytes,
+    GetKeyCallback,
+    InsertKeyCallback,
+    SignCallback,
+    decode_secret_key_from_bytes,
 };
 use crate::web_keystore_db::{
-    get_account_auth_by_pub_key_commitment, get_account_id_by_key_commitment,
-    get_key_commitments_by_account_id, insert_account_auth, insert_account_key_mapping,
-    remove_account_auth, remove_all_mappings_for_key,
+    get_account_auth_by_pub_key_commitment,
+    get_account_id_by_key_commitment,
+    get_key_commitments_by_account_id,
+    insert_account_auth,
+    insert_account_key_mapping,
+    remove_account_auth,
+    remove_all_mappings_for_key,
 };
 
 /// A web-based keystore that stores keys in [browser's local storage](https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API)
@@ -40,19 +49,10 @@ struct JsCallbacks {
     get_key: Option<GetKeyCallback>,
     insert_key: Option<InsertKeyCallback>,
     sign: Option<SignCallback>,
-    /// The raw [`JsValue`] that the JS sign callback most recently threw, or
-    /// [`JsValue::NULL`] if the last sign call succeeded (or no call has
-    /// happened yet). Consumers read this from [`WebClient::last_auth_error`]
-    /// to recover structured info the thrown JS error carried (e.g. a
-    /// `reason` property indicating the wallet was locked). Single-writer,
-    /// single-reader in practice: all mutating `WebClient` calls are serialized
-    /// through `_serializeWasmCall`, so no race.
-    last_sign_error: RefCell<JsValue>,
 }
 
-// Since Function / JsValue are not Send/Sync, we need to explicitly mark
-// our struct as Send + Sync. This is safe in WASM because it's
-// single-threaded; RefCell's !Sync nature is also absorbed here.
+// Since Function is not Send/Sync, we need to explicitly mark our struct as Send + Sync
+// This is safe in WASM because it's single-threaded
 unsafe impl Send for JsCallbacks {}
 unsafe impl Sync for JsCallbacks {}
 
@@ -65,7 +65,6 @@ impl<R: Rng> WebKeyStore<R> {
                 get_key: None,
                 insert_key: None,
                 sign: None,
-                last_sign_error: RefCell::new(JsValue::NULL),
             }),
             db_id,
         }
@@ -86,33 +85,9 @@ impl<R: Rng> WebKeyStore<R> {
                 get_key: get_key.map(GetKeyCallback),
                 insert_key: insert_key.map(InsertKeyCallback),
                 sign: sign.map(SignCallback),
-                last_sign_error: RefCell::new(JsValue::NULL),
             }),
             db_id,
         }
-    }
-
-    /// Returns the raw [`JsValue`] that the JS sign callback most recently
-    /// threw. Returns [`JsValue::NULL`] if the last sign call succeeded or
-    /// no sign call has happened yet.
-    ///
-    /// Exposed publicly so [`crate::WebClient`] can surface it to JS
-    /// consumers.
-    pub fn last_sign_error(&self) -> JsValue {
-        self.callbacks.last_sign_error.borrow().clone()
-    }
-
-    /// Records the raw [`JsValue`] thrown by the JS sign callback, or clears
-    /// it on success. Called internally by [`WebKeyStore::get_signature`]
-    /// around invocations of the sign callback.
-    fn record_sign_error(&self, err: JsValue) {
-        *self.callbacks.last_sign_error.borrow_mut() = err;
-    }
-
-    /// Clears any previously recorded sign error (call before a successful
-    /// sign completes so consumers don't see stale data).
-    fn clear_sign_error(&self) {
-        *self.callbacks.last_sign_error.borrow_mut() = JsValue::NULL;
     }
 
     /// Adds a secret key to the keystore without updating account mappings.
@@ -152,21 +127,8 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
         signing_inputs: &SigningInputs,
     ) -> Result<Signature, AuthenticationError> {
         // If a JavaScript signing callback is provided, use it directly.
-        // On success, clear any previously-recorded sign error; on failure,
-        // capture the raw JsValue thrown so consumers can recover structured
-        // info (e.g. a `reason` property indicating the wallet was locked)
-        // via [`WebClient::last_auth_error`].
         if let Some(sign_cb) = &self.callbacks.as_ref().sign {
-            match sign_cb.sign(pub_key.into(), signing_inputs).await {
-                Ok(sig) => {
-                    self.clear_sign_error();
-                    return Ok(sig);
-                }
-                Err(err) => {
-                    self.record_sign_error(err.raw);
-                    return Err(err.auth_err);
-                }
-            }
+            return sign_cb.sign(pub_key.into(), signing_inputs).await;
         }
         let message = signing_inputs.to_commitment();
 
@@ -180,7 +142,7 @@ impl<R: Rng> TransactionAuthenticator for WebKeyStore<R> {
         let signature = match secret_key {
             Some(AuthSecretKey::Falcon512Poseidon2(k)) => {
                 Signature::Falcon512Poseidon2(k.sign_with_rng(message, &mut rng))
-            }
+            },
             Some(AuthSecretKey::EcdsaK256Keccak(k)) => Signature::EcdsaK256Keccak(k.sign(message)),
             Some(other_k) => other_k.sign(message),
             None => return Err(AuthenticationError::UnknownPublicKey(pub_key)),
@@ -242,11 +204,9 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
             })?;
 
         // Remove the key itself
-        remove_account_auth(&self.db_id, pub_key_hex)
-            .await
-            .map_err(|_| {
-                KeyStoreError::StorageError("Failed to remove key from IndexedDB".to_string())
-            })?;
+        remove_account_auth(&self.db_id, pub_key_hex).await.map_err(|_| {
+            KeyStoreError::StorageError("Failed to remove key from IndexedDB".to_string())
+        })?;
 
         Ok(())
     }
@@ -287,9 +247,8 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
     ) -> Result<Option<AccountId>, KeyStoreError> {
         let pub_key_hex = NativeWord::from(pub_key_commitment).to_hex();
 
-        let account_id_hex = get_account_id_by_key_commitment(&self.db_id, pub_key_hex)
-            .await
-            .map_err(|_| {
+        let account_id_hex =
+            get_account_id_by_key_commitment(&self.db_id, pub_key_hex).await.map_err(|_| {
                 KeyStoreError::StorageError(
                     "Failed to get account id by key commitment from IndexedDB".to_string(),
                 )
@@ -301,7 +260,7 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
                     KeyStoreError::DecodingError(format!("error decoding account id hex: {err:?}"))
                 })?;
                 Ok(Some(id))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -323,9 +282,7 @@ impl<R: Rng> Keystore for WebKeyStore<R> {
         let commitments = commitment_hexes
             .into_iter()
             .filter_map(|hex| {
-                NativeWord::try_from(hex.as_str())
-                    .ok()
-                    .map(PublicKeyCommitment::from)
+                NativeWord::try_from(hex.as_str()).ok().map(PublicKeyCommitment::from)
             })
             .collect();
 

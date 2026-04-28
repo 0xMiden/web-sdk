@@ -114,6 +114,15 @@ test.describe("MockWebClient Integration", () => {
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
+      // The browser MockWebClient routes operations through a worker that
+      // has a mock-chain serialization bug ("failed to deserialize mock
+      // chain: unexpected EOF"). Terminating the worker forces operations
+      // onto the main thread. Mirrors the workaround in
+      // crates/web-client/test/test-setup.ts.
+      if (client.worker) {
+        client.worker.terminate();
+        client.worker = null;
+      }
       await client.syncState();
 
       const wallet = await client.newWallet(
@@ -141,6 +150,15 @@ test.describe("MockWebClient Integration", () => {
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
+      // The browser MockWebClient routes operations through a worker that has
+      // a mock-chain serialization bug ("failed to deserialize mock chain:
+      // unexpected EOF"). Terminating the worker forces operations onto the
+      // main thread, which hits the WASM client directly. Mirrors the
+      // workaround in crates/web-client/test/test-setup.ts.
+      if (client.worker) {
+        client.worker.terminate();
+        client.worker = null;
+      }
       await client.syncState();
 
       const faucet = await client.newFaucet(
@@ -171,6 +189,15 @@ test.describe("MockWebClient Integration", () => {
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
+      // The browser MockWebClient routes operations through a worker that has
+      // a mock-chain serialization bug ("failed to deserialize mock chain:
+      // unexpected EOF"). Terminating the worker forces operations onto the
+      // main thread, which hits the WASM client directly. Mirrors the
+      // workaround in crates/web-client/test/test-setup.ts.
+      if (client.worker) {
+        client.worker.terminate();
+        client.worker = null;
+      }
       await client.syncState();
 
       // Create a wallet
@@ -203,6 +230,15 @@ test.describe("MockWebClient Integration", () => {
 
     const finalBalance = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
+      // The browser MockWebClient routes operations through a worker that has
+      // a mock-chain serialization bug ("failed to deserialize mock chain:
+      // unexpected EOF"). Terminating the worker forces operations onto the
+      // main thread, which hits the WASM client directly. Mirrors the
+      // workaround in crates/web-client/test/test-setup.ts.
+      if (client.worker) {
+        client.worker.terminate();
+        client.worker = null;
+      }
       await client.syncState();
 
       // Create wallet and faucet
@@ -281,6 +317,15 @@ test.describe("MockWebClient Integration", () => {
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
+      // The browser MockWebClient routes operations through a worker that has
+      // a mock-chain serialization bug ("failed to deserialize mock chain:
+      // unexpected EOF"). Terminating the worker forces operations onto the
+      // main thread, which hits the WASM client directly. Mirrors the
+      // workaround in crates/web-client/test/test-setup.ts.
+      if (client.worker) {
+        client.worker.terminate();
+        client.worker = null;
+      }
       await client.syncState();
 
       // Create sender, receiver, and faucet
@@ -395,6 +440,15 @@ test.describe("MockWebClient Integration", () => {
 
     const result = await page.evaluate(async () => {
       const client = await (window as any).MockWebClient.createClient();
+      // The browser MockWebClient routes operations through a worker that has
+      // a mock-chain serialization bug ("failed to deserialize mock chain:
+      // unexpected EOF"). Terminating the worker forces operations onto the
+      // main thread, which hits the WASM client directly. Mirrors the
+      // workaround in crates/web-client/test/test-setup.ts.
+      if (client.worker) {
+        client.worker.terminate();
+        client.worker = null;
+      }
 
       // First sync
       const syncResult1 = await client.syncState();

@@ -88,7 +88,7 @@ export function useSwap(): UseSwapResult {
 
         setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
-          const txRequest = client.newSwapTransactionRequest(
+          const txRequest = await client.newSwapTransactionRequest(
             accountIdObj,
             offeredFaucetIdObj,
             BigInt(options.offeredAmount),
@@ -120,7 +120,6 @@ export function useSwap(): UseSwapResult {
         setError(error);
         setStage("idle");
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
       }

@@ -1,5 +1,7 @@
-# This workflow publishes the web-client and react-sdk packages to npm if a patch release
-# label is applied to the PR and the corresponding package.json version is bumped.
+# Publishes the web-client (incl. per-platform Node.js native binaries),
+# react-sdk and node-sdk-* packages to npm under the `next` dist-tag when a
+# PR with the `patch release` label is merged into next AND the
+# corresponding package.json version is bumped.
 
 name: Publish Web Client SDK to NPM on Next
 
@@ -14,10 +16,84 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  check-version:
     if: >
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'patch release')
+    runs-on: ubuntu-24.04
+    outputs:
+      should_publish_web: ${{ steps.check_web_version.outputs.should_publish }}
+      web_version: ${{ steps.check_web_version.outputs.current_version }}
+      should_publish_react: ${{ steps.check_react_version.outputs.should_publish }}
+      react_version: ${{ steps.check_react_version.outputs.current_version }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: next
+
+      - name: Verify web-client version bump against next
+        id: check_web_version
+        run: ./scripts/check-web-client-version-pr.sh "${{ github.event.pull_request.base.sha }}"
+
+      - name: Verify react-sdk version bump against next
+        id: check_react_version
+        run: ./scripts/check-react-sdk-version-pr.sh "${{ github.event.pull_request.base.sha }}"
+
+  # Build native Node.js (napi-rs) binaries on each target platform.
+  # Each runner uploads its `miden_client_web.node` artifact; the publish
+  # job downloads them and bundles into the per-platform npm packages.
+  build-native-nodejs:
+    needs: check-version
+    if: needs.check-version.outputs.should_publish_web == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: macos-26
+            platform-package: node-sdk-darwin-arm64
+          - os: macos-26-intel
+            platform-package: node-sdk-darwin-x64
+          - os: ubuntu-24.04
+            platform-package: node-sdk-linux-x64-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          ref: next
+
+      - name: Install Rust
+        run: rustup update --no-self-update
+
+      - name: Build napi binary
+        run: cargo build -p miden-client-web --no-default-features --features nodejs --release
+
+      - name: Prepare .node binary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXT="dylib"
+          else
+            EXT="so"
+          fi
+          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "::error::napi binary not found"
+            exit 1
+          fi
+          cp "$BINARY" "packages/${{ matrix.platform-package }}/miden_client_web.node"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform-package }}
+          path: packages/${{ matrix.platform-package }}/miden_client_web.node
+
+  publish:
+    needs: [check-version, build-native-nodejs]
+    if: >
+      !cancelled() &&
+      needs.check-version.result == 'success'
     runs-on: ubuntu-24.04
 
     steps:
@@ -52,22 +128,38 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y binaryen
 
-      - name: Verify web-client version bump against next
-        id: check_web_version
-        run: ./scripts/check-web-client-version-pr.sh "${{ github.event.pull_request.base.sha }}"
+      # ── Publish Node.js platform packages ──
+      - name: Download native binary artifacts
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-      - name: Verify react-sdk version bump against next
-        id: check_react_version
-        run: ./scripts/check-react-sdk-version-pr.sh "${{ github.event.pull_request.base.sha }}"
+      - name: Sync platform package versions and publish
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_WEBCLIENT_TOKEN }}
+        run: |
+          WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
+          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+            cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
+            jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
+            mv /tmp/pkg.json "packages/${pkg}/package.json"
+            echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION}..."
+            cd "packages/${pkg}"
+            npm publish --tag next --access public
+            cd ../..
+          done
 
+      # ── Build and publish web-client ──
       - name: Install & build web-client
-        if: steps.check_web_version.outputs.should_publish == 'true' || steps.check_react_version.outputs.should_publish == 'true'
+        if: needs.check-version.outputs.should_publish_web == 'true' || needs.check-version.outputs.should_publish_react == 'true'
         run: |
           pnpm install --no-frozen-lockfile
           pnpm --filter @miden-sdk/miden-sdk run build
 
       - name: Verify WASM is optimized
-        if: steps.check_web_version.outputs.should_publish == 'true'
+        if: needs.check-version.outputs.should_publish_web == 'true'
         run: |
           wasm_file=$(find crates/web-client/dist/assets -name '*.wasm' | head -1)
           size=$(stat --format=%s "$wasm_file")
@@ -78,8 +170,24 @@ jobs:
             exit 1
           fi
 
+      - name: Inject Node.js optionalDependencies before publish
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        run: |
+          cd crates/web-client
+          node -e "
+            const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf8'));
+            const v = pkg.version;
+            pkg.optionalDependencies = {
+              '@miden-sdk/node-darwin-arm64': v,
+              '@miden-sdk/node-darwin-x64': v,
+              '@miden-sdk/node-linux-x64-gnu': v,
+            };
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            console.log('Injected optionalDependencies with version ' + v);
+          "
+
       - name: Publish web-client to npm
-        if: steps.check_web_version.outputs.should_publish == 'true'
+        if: needs.check-version.outputs.should_publish_web == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_WEBCLIENT_TOKEN }}
         # `pnpm publish` automatically replaces `workspace:*` specifiers
@@ -88,33 +196,35 @@ jobs:
         # outside the monorepo.
         run: pnpm --filter @miden-sdk/miden-sdk publish --tag next --no-git-checks
 
+      # ── Build and publish react-sdk ──
       - name: Install & build react-sdk
-        if: steps.check_react_version.outputs.should_publish == 'true'
+        if: needs.check-version.outputs.should_publish_react == 'true'
         run: pnpm --filter @miden-sdk/react run build
 
       - name: Publish react-sdk to npm
-        if: steps.check_react_version.outputs.should_publish == 'true'
+        if: needs.check-version.outputs.should_publish_react == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_WEBCLIENT_TOKEN }}
         run: pnpm --filter @miden-sdk/react publish --tag next --no-git-checks
 
-      - name: Done
-        if: steps.check_web_version.outputs.should_publish == 'true'
+      # ── Status ──
+      - name: Done (web-client)
+        if: needs.check-version.outputs.should_publish_web == 'true'
         env:
-          CURRENT_VERSION: ${{ steps.check_web_version.outputs.current_version }}
-        run: echo "✅ Web-client published version $CURRENT_VERSION."
+          CURRENT_VERSION: ${{ needs.check-version.outputs.web_version }}
+        run: echo "✅ Web-client published version $CURRENT_VERSION (with Node.js platform binaries)."
 
       - name: Done (react-sdk)
-        if: steps.check_react_version.outputs.should_publish == 'true'
+        if: needs.check-version.outputs.should_publish_react == 'true'
         env:
-          CURRENT_VERSION: ${{ steps.check_react_version.outputs.current_version }}
+          CURRENT_VERSION: ${{ needs.check-version.outputs.react_version }}
         run: echo "✅ React SDK published version $CURRENT_VERSION."
 
-      - name: Skipped publish
-        if: steps.check_web_version.outputs.should_publish != 'true'
+      - name: Skipped publish (web-client)
+        if: needs.check-version.outputs.should_publish_web != 'true'
         env:
-          SHOULD_PUBLISH: ${{ steps.check_web_version.outputs.should_publish }}
-          CURRENT_VERSION: ${{ steps.check_web_version.outputs.current_version }}
+          SHOULD_PUBLISH: ${{ needs.check-version.outputs.should_publish_web }}
+          CURRENT_VERSION: ${{ needs.check-version.outputs.web_version }}
         run: |
           echo "ℹ️ Web-client publish skipped; should_publish=$SHOULD_PUBLISH"
           if [ -n "$CURRENT_VERSION" ]; then
@@ -122,13 +232,12 @@ jobs:
           fi
 
       - name: Skipped publish (react-sdk)
-        if: steps.check_react_version.outputs.should_publish != 'true'
+        if: needs.check-version.outputs.should_publish_react != 'true'
         env:
-          SHOULD_PUBLISH: ${{ steps.check_react_version.outputs.should_publish }}
-          CURRENT_VERSION: ${{ steps.check_react_version.outputs.current_version }}
+          SHOULD_PUBLISH: ${{ needs.check-version.outputs.should_publish_react }}
+          CURRENT_VERSION: ${{ needs.check-version.outputs.react_version }}
         run: |
           echo "ℹ️ React SDK publish skipped; should_publish=$SHOULD_PUBLISH"
           if [ -n "$CURRENT_VERSION" ]; then
             echo "Current version: $CURRENT_VERSION"
           fi
-

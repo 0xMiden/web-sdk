@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   getNoteFilterType,
+  getNoteType,
   waitForTransactionCommit,
 } from "../../utils/noteFilters";
-import { NoteFilterTypes } from "@miden-sdk/miden-sdk/lazy";
+import { NoteFilterTypes, NoteType } from "@miden-sdk/miden-sdk";
 
 describe("getNoteFilterType", () => {
   it("should return All for undefined status", () => {
@@ -28,6 +29,24 @@ describe("getNoteFilterType", () => {
 
   it("should return Processing for 'processing' status", () => {
     expect(getNoteFilterType("processing")).toBe(NoteFilterTypes.Processing);
+  });
+});
+
+describe("getNoteType", () => {
+  it("returns NoteType.Private for 'private'", () => {
+    expect(getNoteType("private")).toBe(NoteType.Private);
+  });
+
+  it("returns NoteType.Public for 'public'", () => {
+    expect(getNoteType("public")).toBe(NoteType.Public);
+  });
+
+  it("falls back to NoteType.Private for an unknown runtime value", () => {
+    // The TS type only allows "private" | "public", but runtime callers
+    // (older third-party code) might pass other strings. Default branch.
+    expect(getNoteType("encrypted" as unknown as "private" | "public")).toBe(
+      NoteType.Private
+    );
   });
 });
 

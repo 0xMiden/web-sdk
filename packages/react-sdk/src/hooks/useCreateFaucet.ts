@@ -1,11 +1,8 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
-import {
-  AccountStorageMode,
-  resolveAuthScheme,
-} from "@miden-sdk/miden-sdk/lazy";
-import type { Account } from "@miden-sdk/miden-sdk/lazy";
+import { AccountStorageMode } from "@miden-sdk/miden-sdk";
+import type { Account } from "@miden-sdk/miden-sdk";
 import type { CreateFaucetOptions } from "../types";
 import { DEFAULTS } from "../types";
 import { runExclusiveDirect } from "../utils/runExclusive";
@@ -75,9 +72,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
           options.storageMode ?? DEFAULTS.STORAGE_MODE
         );
         const decimals = options.decimals ?? DEFAULTS.FAUCET_DECIMALS;
-        const authScheme = resolveAuthScheme(
-          options.authScheme ?? DEFAULTS.AUTH_SCHEME
-        );
+        const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newFaucet = await runExclusiveSafe(async () => {
           const createdFaucet = await client.newFaucet(
@@ -100,7 +95,6 @@ export function useCreateFaucet(): UseCreateFaucetResult {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsCreating(false);
       }

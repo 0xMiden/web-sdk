@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { importStore as sdkImportStore } from "@miden-sdk/miden-sdk/lazy";
+import { importStore as sdkImportStore } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 
 export interface ImportStoreOptions {

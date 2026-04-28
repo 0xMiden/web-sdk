@@ -3,8 +3,8 @@ import {
   NoteAttachmentKind,
   NoteAttachmentScheme,
   Word,
-} from "@miden-sdk/miden-sdk/lazy";
-import type { InputNoteRecord } from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
+import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 
 export interface NoteAttachmentData {
   values: bigint[];
@@ -37,7 +37,6 @@ export function readNoteAttachment(
     const kind = attachment.kind?.();
     if (!kind) return null;
 
-    /* v8 ignore next 1 — NoteAttachmentKind.None == 0 which is already caught by !kind above */
     if (kind === NoteAttachmentKind.None) return null;
 
     if (kind === NoteAttachmentKind.Word) {

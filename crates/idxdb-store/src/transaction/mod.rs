@@ -5,14 +5,21 @@ use miden_client::Word;
 use miden_client::account::{Account, StorageMap, StorageSlotType};
 use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::transaction::{
-    TransactionDetails, TransactionId, TransactionRecord, TransactionScript, TransactionStatus,
+    TransactionDetails,
+    TransactionId,
+    TransactionRecord,
+    TransactionScript,
+    TransactionStatus,
     TransactionStoreUpdate,
 };
 use miden_client::utils::Deserializable;
 
 use super::IdxdbStore;
 use super::account::utils::{
-    apply_full_account_state, apply_transaction_delta, compute_storage_delta, compute_vault_delta,
+    apply_full_account_state,
+    apply_transaction_delta,
+    compute_storage_delta,
+    compute_vault_delta,
 };
 use super::note::utils::apply_note_updates_tx;
 use crate::promise::await_js;
@@ -35,16 +42,13 @@ impl IdxdbStore {
             TransactionFilter::All => "All",
             TransactionFilter::Uncommitted => "Uncommitted",
             TransactionFilter::Ids(ids) => &{
-                let ids_str = ids
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>()
-                    .join(",");
+                let ids_str =
+                    ids.iter().map(ToString::to_string).collect::<Vec<String>>().join(",");
                 format!("Ids:{ids_str}")
             },
             TransactionFilter::ExpiredBefore(block_number) => {
                 &format!("ExpiredPending:{block_number}")
-            }
+            },
         };
 
         let promise = idxdb_get_transactions(self.db_id(), filter_as_str.to_string());
@@ -84,7 +88,6 @@ impl IdxdbStore {
         transaction_records
     }
 
-    #[allow(clippy::too_many_lines)]
     pub async fn apply_transaction(
         &self,
         tx_update: TransactionStoreUpdate,
@@ -100,16 +103,11 @@ impl IdxdbStore {
 
         if delta.is_full_state() {
             // Full-state path: the delta contains the complete account state.
-            let account: Account = delta
-                .try_into()
-                .expect("casting account from full state delta should not fail");
-            apply_full_account_state(self.db_id(), &account)
-                .await
-                .map_err(|err| {
-                    StoreError::DatabaseError(format!(
-                        "failed to apply full account state: {err:?}"
-                    ))
-                })?;
+            let account: Account =
+                delta.try_into().expect("casting account from full state delta should not fail");
+            apply_full_account_state(self.db_id(), &account).await.map_err(|err| {
+                StoreError::DatabaseError(format!("failed to apply full account state: {err:?}"))
+            })?;
 
             let mut smt_forest = self.smt_forest.write();
             smt_forest.insert_and_stage_account_state(
@@ -126,14 +124,9 @@ impl IdxdbStore {
                 .map(|(vault_key, _)| vault_key.to_string())
                 .collect();
             let old_vault_assets = self.get_vault_assets(account_id, vault_keys).await?;
-            let map_slot_names: Vec<String> = delta
-                .storage()
-                .maps()
-                .map(|(slot_name, _)| slot_name.to_string())
-                .collect();
-            let old_map_roots = self
-                .get_storage_map_roots(account_id, map_slot_names)
-                .await?;
+            let map_slot_names: Vec<String> =
+                delta.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
+            let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
 
             let final_header = executed_tx.final_account();
 
@@ -155,10 +148,8 @@ impl IdxdbStore {
                 let default_map_root = StorageMap::default().root();
                 for (slot_name, (new_root, slot_type)) in &updated_storage_slots {
                     if *slot_type == StorageSlotType::Map {
-                        let old_root = old_map_roots
-                            .get(slot_name)
-                            .copied()
-                            .unwrap_or(default_map_root);
+                        let old_root =
+                            old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
                         if let Some(root) = final_roots.iter_mut().find(|r| **r == old_root) {
                             *root = *new_root;
                         } else {

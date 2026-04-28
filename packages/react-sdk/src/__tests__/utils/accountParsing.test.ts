@@ -1,174 +1,187 @@
 import { describe, it, expect, vi } from "vitest";
+import { AccountId, Address } from "@miden-sdk/miden-sdk";
 import {
   parseAccountId,
-  isFaucetId,
   parseAddress,
+  isFaucetId,
 } from "../../utils/accountParsing";
 
-// The @miden-sdk/miden-sdk/lazy module is mocked via setup.ts.
-// AccountId.fromHex / AccountId.fromBech32 / Address.fromBech32 / Address.fromAccountId
-// are all mock functions.
-
-// ---------------------------------------------------------------------------
-// parseAccountId
-// ---------------------------------------------------------------------------
-
 describe("parseAccountId", () => {
-  it("should parse a 0x-prefixed hex string", () => {
-    const result = parseAccountId("0xabcdef1234567890");
-    expect(result.toString()).toBe("0xabcdef1234567890");
+  it("strips the 'miden:' URI prefix from a string input", () => {
+    parseAccountId("miden:0xabc");
+    // Last call should be without the prefix.
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0xabc");
   });
 
-  it("should add 0x prefix to bare hex string", () => {
-    const result = parseAccountId("abcdef1234567890");
-    // normalizeHexInput prepends 0x
-    expect(result.toString()).toBe("0xabcdef1234567890");
+  it("trims surrounding whitespace from string input", () => {
+    parseAccountId("   0xabc   ");
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0xabc");
   });
 
-  it("should parse a bech32 string starting with 'm'", () => {
-    // isBech32Input returns true for strings starting with 'm'
-    const result = parseAccountId("miden1qy35...");
-    expect(result).toBeDefined();
+  it("normalizes hex without 0x prefix", () => {
+    parseAccountId("abc123");
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0xabc123");
   });
 
-  it("should fall back to AccountId.fromBech32 when Address.fromBech32 throws (lines 25-26)", async () => {
-    const { Address } = await import("@miden-sdk/miden-sdk/lazy");
+  it("preserves an existing 0x prefix", () => {
+    parseAccountId("0xdeadbeef");
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0xdeadbeef");
+  });
+
+  it("preserves an existing 0X prefix (case-insensitive)", () => {
+    parseAccountId("0Xdeadbeef");
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0Xdeadbeef");
+  });
+
+  it("dispatches to Address.fromBech32 for inputs starting with 'm'", () => {
+    parseAccountId("mxabc123def");
+    expect(vi.mocked(Address.fromBech32)).toHaveBeenCalledWith("mxabc123def");
+  });
+
+  it("dispatches to Address.fromBech32 for inputs starting with 'M'", () => {
+    parseAccountId("Mxabc123def");
+    expect(vi.mocked(Address.fromBech32)).toHaveBeenCalledWith("Mxabc123def");
+  });
+
+  it("falls back to AccountId.fromBech32 when Address.fromBech32 throws", () => {
     vi.mocked(Address.fromBech32).mockImplementationOnce(() => {
-      throw new Error("bad bech32");
+      throw new Error("not an address");
     });
-    // With Address.fromBech32 throwing, falls back to AccountId.fromBech32
-    const result = parseAccountId("miden1fallback");
-    expect(result).toBeDefined();
+    parseAccountId("mxinvalidaddress");
+    expect(vi.mocked(AccountId.fromBech32)).toHaveBeenCalledWith(
+      "mxinvalidaddress"
+    );
   });
 
-  it("should strip miden: prefix from bech32", () => {
-    // normalizeAccountIdInput strips 'miden:' prefix (case-insensitive)
-    const result = parseAccountId("miden:miden1test");
-    expect(result).toBeDefined();
+  it("returns the input directly for an Account-like object with id() method", () => {
+    const idMock = { toHex: () => "0xfoo", toString: () => "0xfoo" } as never;
+    const account = { id: vi.fn(() => idMock) };
+    const out = parseAccountId(account as never);
+    expect(account.id).toHaveBeenCalled();
+    expect(out).toBe(idMock);
   });
 
-  it("should parse an Account-like object with .id() method", () => {
-    const mockAccountId = {
-      toString: () => "0xfromaccount",
-      toHex: () => "0xfromaccount",
-    };
-    const accountLike = { id: vi.fn(() => mockAccountId) };
-    const result = parseAccountId(accountLike as any);
-    expect(result).toBe(mockAccountId);
-    expect(accountLike.id).toHaveBeenCalled();
-  });
-
-  it("should return the value itself when it has no .id() method and is not a string", () => {
-    // Already an AccountId — no id() function, not a string
-    const accountId = {
-      toString: () => "0xdirect",
-      toHex: () => "0xdirect",
-    };
-    const result = parseAccountId(accountId as any);
-    expect(result).toBe(accountId);
+  it("returns the input as-is when it is not a string and has no id()", () => {
+    const accountId = { toHex: () => "0xfoo" } as never;
+    const out = parseAccountId(accountId);
+    expect(out).toBe(accountId);
   });
 });
 
-// ---------------------------------------------------------------------------
-// isFaucetId
-// ---------------------------------------------------------------------------
+describe("parseAddress", () => {
+  it("calls Address.fromAccountId for non-string AccountId-like input", () => {
+    const accountId = { toHex: () => "0xfoo" } as never;
+    parseAddress(accountId);
+    expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalledWith(
+      accountId,
+      "BasicWallet"
+    );
+  });
+
+  it("uses the explicit accountId override for a non-string input", () => {
+    const account = { id: vi.fn() };
+    const override = { toHex: () => "0xoverride" } as never;
+    parseAddress(account as never, override);
+    // Should NOT have called account.id() since we passed an override.
+    expect(account.id).not.toHaveBeenCalled();
+    expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalledWith(
+      override,
+      "BasicWallet"
+    );
+  });
+
+  it("dispatches a bech32 string to Address.fromBech32", () => {
+    parseAddress("mxabc123");
+    expect(vi.mocked(Address.fromBech32)).toHaveBeenCalledWith("mxabc123");
+  });
+
+  it("falls back to fromAccountId when Address.fromBech32 throws", () => {
+    vi.mocked(Address.fromBech32).mockImplementationOnce(() => {
+      throw new Error("not an address");
+    });
+    parseAddress("mxbadbech32");
+    // Should resolve via AccountId.fromBech32 → Address.fromAccountId.
+    expect(vi.mocked(AccountId.fromBech32)).toHaveBeenCalledWith("mxbadbech32");
+    expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalled();
+  });
+
+  it("uses the explicit accountId override for a bech32 string fallback", () => {
+    vi.mocked(Address.fromBech32).mockImplementationOnce(() => {
+      throw new Error("not an address");
+    });
+    const override = { toHex: () => "0xoverride" } as never;
+    parseAddress("mxbadbech32", override);
+    expect(vi.mocked(AccountId.fromBech32)).not.toHaveBeenCalled();
+    expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalledWith(
+      override,
+      "BasicWallet"
+    );
+  });
+
+  it("dispatches a hex string to AccountId.fromHex + Address.fromAccountId", () => {
+    parseAddress("0xabc");
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0xabc");
+    expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalled();
+  });
+
+  it("normalizes a bare-hex (no 0x prefix) string", () => {
+    parseAddress("deadbeef");
+    expect(vi.mocked(AccountId.fromHex)).toHaveBeenCalledWith("0xdeadbeef");
+  });
+
+  it("uses the explicit accountId override for a hex string", () => {
+    const override = { toHex: () => "0xoverride" } as never;
+    parseAddress("0xabc", override);
+    expect(vi.mocked(AccountId.fromHex)).not.toHaveBeenCalled();
+    expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalledWith(
+      override,
+      "BasicWallet"
+    );
+  });
+});
 
 describe("isFaucetId", () => {
-  it("should return false for non-faucet account type (0b00 = regular off-chain)", () => {
-    // Bits 61-60 = 0b00 → account type 0 → regular account
-    // First nibble must encode bits 63-60. For type=0b00: first byte = 0x0X
-    expect(isFaucetId({ toHex: () => "0x0000000000000000" })).toBe(false);
+  // Account-type bits live in nibble (4..7) of the first hex byte:
+  //   0b00 = Regular off-chain      (e.g. 0x0...)
+  //   0b01 = Regular on-chain       (e.g. 0x1...)
+  //   0b10 = Fungible faucet        (e.g. 0x2..., 0xa...)
+  //   0b11 = Non-fungible faucet    (e.g. 0x3..., 0xb...)
+  // (The shift is `(byte >> 4) & 0b11`, so it keys off the high nibble.)
+  it("identifies a fungible faucet from hex", () => {
+    expect(isFaucetId({ toHex: () => "0x20abcdef" })).toBe(true);
   });
 
-  it("should return false for regular on-chain account (0b01)", () => {
-    // First nibble = 0x1 → type = 0b01
-    expect(isFaucetId({ toHex: () => "0x1000000000000000" })).toBe(false);
+  it("identifies a non-fungible faucet from hex", () => {
+    expect(isFaucetId({ toHex: () => "0x30abcdef" })).toBe(true);
   });
 
-  it("should return true for fungible faucet (0b10)", () => {
-    // First nibble = 0x2 → type = 0b10
-    expect(isFaucetId({ toHex: () => "0x2000000000000000" })).toBe(true);
+  it("rejects a regular off-chain account", () => {
+    expect(isFaucetId({ toHex: () => "0x00abcdef" })).toBe(false);
   });
 
-  it("should return true for non-fungible faucet (0b11)", () => {
-    // First nibble = 0x3 → type = 0b11
-    expect(isFaucetId({ toHex: () => "0x3000000000000000" })).toBe(true);
+  it("rejects a regular on-chain account", () => {
+    expect(isFaucetId({ toHex: () => "0x10abcdef" })).toBe(false);
   });
 
-  it("should strip 0x prefix before parsing", () => {
-    expect(isFaucetId({ toHex: () => "0x2abc" })).toBe(true);
+  it("accepts an upper-case 0X prefix", () => {
+    expect(isFaucetId({ toHex: () => "0X20abcdef" })).toBe(true);
   });
 
-  it("should handle hex without 0x prefix via String()", () => {
-    // If toHex is not a function, falls back to String()
-    expect(isFaucetId("2000000000000000")).toBe(true);
+  it("accepts a hex string without an 0x prefix (via String() fallback)", () => {
+    expect(isFaucetId("20abcdef")).toBe(true);
   });
 
-  it("should return false on thrown error", () => {
+  it("returns false when toHex throws", () => {
     expect(
       isFaucetId({
         toHex: () => {
-          throw new Error("bad");
+          throw new Error("boom");
         },
       })
     ).toBe(false);
   });
 
-  it("should return false for invalid hex", () => {
-    expect(isFaucetId("not-hex-at-all")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// parseAddress
-// ---------------------------------------------------------------------------
-
-describe("parseAddress", () => {
-  it("should parse a bech32 string directly via Address.fromBech32", () => {
-    const addr = parseAddress("miden1test");
-    expect(addr).toBeDefined();
-  });
-
-  it("should fall back to Address.fromAccountId when fromBech32 throws", () => {
-    // The mock Address.fromBech32 succeeds normally, but we can verify it is called
-    const addr = parseAddress("mtst1someaddress");
-    expect(addr).toBeDefined();
-  });
-
-  it("should parse hex string via AccountId.fromHex and wrap in Address", () => {
-    const addr = parseAddress("0xabcdef");
-    expect(addr).toBeDefined();
-  });
-
-  it("should parse a bare hex string (no 0x prefix)", () => {
-    const addr = parseAddress("abcdef1234");
-    expect(addr).toBeDefined();
-  });
-
-  it("should handle non-string Account-like with provided accountId", () => {
-    const mockAccount = {
-      id: vi.fn(() => ({ toString: () => "0xacc", toHex: () => "0xacc" })),
-    };
-    const mockId = { toString: () => "0xacc", toHex: () => "0xacc" };
-    const addr = parseAddress(mockAccount as any, mockId as any);
-    expect(addr).toBeDefined();
-  });
-
-  it("should handle non-string Account-like without provided accountId", () => {
-    const mockAccount = {
-      id: vi.fn(() => ({ toString: () => "0xacc", toHex: () => "0xacc" })),
-    };
-    const addr = parseAddress(mockAccount as any);
-    expect(addr).toBeDefined();
-  });
-
-  it("should fall back when Address.fromBech32 throws in parseAddress (lines 89-91)", async () => {
-    const { Address } = await import("@miden-sdk/miden-sdk/lazy");
-    vi.mocked(Address.fromBech32).mockImplementationOnce(() => {
-      throw new Error("fromBech32 fail");
-    });
-    // Falls back: AccountId.fromBech32 → Address.fromAccountId
-    const addr = parseAddress("miden1parseaddress");
-    expect(addr).toBeDefined();
+  it("returns false when input has no toHex (and stringifies to non-hex)", () => {
+    expect(isFaucetId({ unrelated: 1 } as never)).toBe(false);
   });
 });

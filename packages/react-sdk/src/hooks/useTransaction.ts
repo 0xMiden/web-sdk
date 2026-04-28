@@ -3,7 +3,7 @@ import { useMiden } from "../context/MidenProvider";
 import type {
   TransactionRequest,
   WasmWebClient as WebClient,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 import type {
   TransactionStage,
   TransactionResult,
@@ -125,9 +125,7 @@ export function useTransaction(): UseTransactionResult {
         const provenTransaction = await proveWithFallback(
           (resolvedProver) =>
             runExclusiveSafe(() =>
-              resolvedProver
-                ? client.proveTransactionWithProver(txResult, resolvedProver)
-                : client.proveTransaction(txResult)
+              client.proveTransaction(txResult, resolvedProver)
             ),
           proverConfig
         );
@@ -167,7 +165,6 @@ export function useTransaction(): UseTransactionResult {
         setError(error);
         setStage("idle");
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
         isBusyRef.current = false;

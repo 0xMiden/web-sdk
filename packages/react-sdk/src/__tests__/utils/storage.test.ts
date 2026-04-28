@@ -227,82 +227,85 @@ describe("clearMidenStorage", () => {
     await expect(clearMidenStorage()).resolves.toBeUndefined();
   });
 
-  it("should resolve when db.name is null/undefined in the list", async () => {
-    // Line 56-58: branch where db.name is falsy → resolve immediately
+  // Coverage gap: db.name === undefined and the onblocked path.
+  it("skips databases with undefined name", async () => {
+    const deleteDb = vi.fn();
     vi.stubGlobal("indexedDB", {
       databases: vi.fn().mockResolvedValue([{ name: undefined }]),
-      deleteDatabase: vi.fn(),
-    });
-    await expect(clearMidenStorage()).resolves.toBeUndefined();
-  });
-
-  it("should handle deleteDatabase onerror", async () => {
-    // Line 62: onerror branch — reject path
-    const deleteDb = vi.fn().mockImplementation(() => {
-      const req: any = {
-        onsuccess: null,
-        onerror: null,
-        onblocked: null,
-        error: new Error("delete failed"),
-      };
-      setTimeout(() => req.onerror?.(), 0);
-      return req;
-    });
-    vi.stubGlobal("indexedDB", {
-      databases: vi.fn().mockResolvedValue([{ name: "miden-test-db" }]),
       deleteDatabase: deleteDb,
     });
-    // clearMidenStorage wraps in try/catch, so it resolves even on inner rejection
-    await expect(clearMidenStorage()).resolves.toBeUndefined();
+    await clearMidenStorage();
+    expect(deleteDb).not.toHaveBeenCalled();
   });
 
-  it("should handle deleteDatabase onblocked (lines 63-67)", async () => {
-    // Line 63-67: onblocked → console.warn + resolve
+  it("logs and resolves when delete is blocked (onblocked)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const deleteDb = vi.fn().mockImplementation(() => {
-      const req: any = { onsuccess: null, onerror: null, onblocked: null };
-      setTimeout(() => req.onblocked?.(), 0);
-      return req;
+    const deleteDb = vi.fn(() => {
+      const req: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        onblocked?: () => void;
+        error?: unknown;
+      } = {};
+      // Schedule the blocked callback on the microtask queue so the request
+      // shape matches the spec (handlers attached AFTER the call).
+      queueMicrotask(() => req.onblocked?.());
+      return req as unknown as IDBOpenDBRequest;
     });
     vi.stubGlobal("indexedDB", {
-      databases: vi.fn().mockResolvedValue([{ name: "miden-blocked-db" }]),
+      databases: vi.fn().mockResolvedValue([{ name: "miden-blocked" }]),
       deleteDatabase: deleteDb,
     });
-    await expect(clearMidenStorage()).resolves.toBeUndefined();
+    await clearMidenStorage();
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("miden-blocked-db")
+      expect.stringContaining("delete was blocked")
     );
     warnSpy.mockRestore();
   });
+
+  it("rejects when delete request errors", async () => {
+    const deleteDb = vi.fn(() => {
+      const req: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        error?: unknown;
+      } = {
+        error: new Error("delete failed"),
+      };
+      queueMicrotask(() => req.onerror?.());
+      return req as unknown as IDBOpenDBRequest;
+    });
+    vi.stubGlobal("indexedDB", {
+      databases: vi.fn().mockResolvedValue([{ name: "miden-bad" }]),
+      deleteDatabase: deleteDb,
+    });
+    // The catch block at clearMidenStorage's top-level swallows the rejection.
+    await expect(clearMidenStorage()).resolves.toBeUndefined();
+  });
 });
 
-describe("createMidenStorage - error path", () => {
+describe("createMidenStorage — set() error path", () => {
+  let mock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
-    vi.clearAllMocks();
+    mock = vi.fn();
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("should warn on localStorage.setItem failure (lines 97-99)", () => {
+  it("logs a warning when localStorage.setItem throws (e.g. quota exceeded)", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("localStorage", {
-      ...localStorageMock,
-      setItem: vi.fn().mockImplementation(() => {
-        throw new Error("QuotaExceededError");
+      ...localStorage,
+      setItem: vi.fn(() => {
+        throw new Error("QuotaExceeded");
       }),
-      getItem: vi.fn(() => null),
-      removeItem: vi.fn(),
-      key: vi.fn(() => null),
+      getItem: mock,
+      removeItem: mock,
+      key: mock,
       length: 0,
     });
-
     const storage = createMidenStorage("test");
-    // Should not throw
-    expect(() => storage.set("key", { x: 1 })).not.toThrow();
+    expect(() => storage.set("k", { a: 1 })).not.toThrow();
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("test:key"),
+      expect.stringContaining("Failed to write localStorage key"),
       expect.any(Error)
     );
     warnSpy.mockRestore();

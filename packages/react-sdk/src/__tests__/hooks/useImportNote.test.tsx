@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useImportNote } from "../../hooks/useImportNote";
 import { useMiden } from "../../context/MidenProvider";
-import { NoteFile } from "@miden-sdk/miden-sdk/lazy";
+import { NoteFile } from "@miden-sdk/miden-sdk";
 import { createMockWebClient } from "../mocks/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
@@ -132,34 +132,6 @@ describe("useImportNote", () => {
         expect(result.current.error?.message).toBe("Invalid note bytes");
       });
       expect(result.current.isImporting).toBe(false);
-    });
-  });
-
-  describe("non-Error catch branch", () => {
-    it("should wrap non-Error thrown values in an Error", async () => {
-      const mockClient = createMockWebClient({
-        importNoteFile: vi.fn().mockRejectedValue("string import error"),
-      });
-      const runExclusive = vi.fn((fn: () => unknown) => fn());
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        runExclusive,
-        sync: vi.fn(),
-      });
-
-      const { result } = renderHook(() => useImportNote());
-
-      await act(async () => {
-        await expect(
-          result.current.importNote(new Uint8Array([1]))
-        ).rejects.toThrow("string import error");
-      });
-
-      await waitFor(() => {
-        expect(result.current.error?.message).toBe("string import error");
-      });
     });
   });
 

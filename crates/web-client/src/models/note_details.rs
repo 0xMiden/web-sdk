@@ -1,6 +1,6 @@
+use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::note::NoteDetails as NativeNoteDetails;
-use wasm_bindgen::prelude::*;
 
 use super::note_assets::NoteAssets;
 use super::note_id::NoteId;
@@ -11,18 +11,15 @@ use super::word::Word;
 ///
 /// See the {@link Note} type for more details.
 #[derive(Clone)]
-#[wasm_bindgen]
+#[js_export]
 pub struct NoteDetails(NativeNoteDetails);
 
-#[wasm_bindgen]
+#[js_export]
 impl NoteDetails {
     /// Creates a new set of note details from the given assets and recipient.
-    #[wasm_bindgen(constructor)]
+    #[js_export(constructor)]
     pub fn new(note_assets: &NoteAssets, note_recipient: &NoteRecipient) -> NoteDetails {
-        NoteDetails(NativeNoteDetails::new(
-            note_assets.into(),
-            note_recipient.into(),
-        ))
+        NoteDetails(NativeNoteDetails::new(note_assets.into(), note_recipient.into()))
     }
 
     /// Returns the note identifier derived from these details.
@@ -43,10 +40,8 @@ impl NoteDetails {
     /// Returns the note nullifier as a word.
     pub fn nullifier(&self) -> Word {
         let nullifier = self.0.nullifier();
-        let elements: [miden_client::Felt; 4] = nullifier
-            .as_elements()
-            .try_into()
-            .expect("nullifier has 4 elements");
+        let elements: [miden_client::Felt; 4] =
+            nullifier.as_elements().try_into().expect("nullifier has 4 elements");
         let native_word: NativeWord = NativeWord::from(&elements);
         native_word.into()
     }
@@ -75,3 +70,5 @@ impl From<&NativeNoteDetails> for NoteDetails {
         NoteDetails(note_details.clone())
     }
 }
+
+impl_napi_from_value!(NoteDetails);

@@ -1,4 +1,4 @@
-import type { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk/lazy";
+import type { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import type {
   SignerAccountConfig,
   SignerAccountType,
@@ -34,7 +34,7 @@ function getAccountType(accountType: SignerAccountType): number {
  * Checks if the storage mode represents a private account.
  */
 function isPrivateStorageMode(
-  storageMode: import("@miden-sdk/miden-sdk/lazy").AccountStorageMode
+  storageMode: import("@miden-sdk/miden-sdk").AccountStorageMode
 ): boolean {
   // AccountStorageMode.toString() returns "private", "public", or "network"
   return storageMode.toString() === "private";
@@ -62,13 +62,8 @@ export async function initializeSignerAccount(
   client: WebClient,
   config: SignerAccountConfig
 ): Promise<string> {
-  const {
-    AccountBuilder,
-    AccountComponent,
-    AuthScheme,
-    Word,
-    resolveAuthScheme,
-  } = await import("@miden-sdk/miden-sdk/lazy");
+  const { AccountBuilder, AccountComponent, AuthScheme, Word } =
+    await import("@miden-sdk/miden-sdk");
 
   // Sync first to get latest state
   await client.syncState();
@@ -99,7 +94,7 @@ export async function initializeSignerAccount(
     .withAuthComponent(
       AccountComponent.createAuthComponentFromCommitment(
         commitmentWord,
-        resolveAuthScheme(AuthScheme.ECDSA)
+        AuthScheme.AuthEcdsaK256Keccak
       )
     )
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK type mismatch between JS wrapper AccountType and WASM enum AccountType

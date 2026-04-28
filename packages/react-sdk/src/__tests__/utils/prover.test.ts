@@ -174,46 +174,33 @@ describe("proveWithFallback", () => {
   });
 });
 
-describe("resolveTransactionProver — additional branches", () => {
-  it("throws when object prover has empty url (lines 105-106)", () => {
-    // createRemoteProver throws when url is falsy
-    expect(() => resolveTransactionProver({ prover: { url: "" } })).toThrow(
-      "Remote prover requires a URL"
-    );
+describe("resolveTransactionProver — edge cases (branches)", () => {
+  it("throws when remote prover object has no URL", () => {
+    expect(() =>
+      resolveTransactionProver({
+        prover: { url: "" },
+      })
+    ).toThrow(/Remote prover requires a URL/);
   });
 
-  it("resolves with null timeout when proverTimeoutMs is null (lines 120-121)", () => {
-    // normalizeTimeout returns null when value is null
+  it("accepts a bigint timeoutMs and forwards it to the SDK", () => {
+    // bigint goes through the `typeof timeoutMs === 'bigint'` branch in
+    // normalizeTimeout (line 122).
     const prover = resolveTransactionProver({
-      prover: "devnet",
-      proverTimeoutMs: null as any,
+      prover: { url: "https://prover.example.com", timeoutMs: 7000n },
     });
     expect(prover).not.toBeNull();
   });
 
-  it("resolves with bigint timeout when proverTimeoutMs is a number", () => {
+  it("normalizes a `null` config.proverTimeoutMs to null when resolving a string target", () => {
+    // resolveProverTarget for a custom URL string calls normalizeTimeout
+    // directly with config.proverTimeoutMs. Setting it to `null` exercises
+    // line 120-121 (return null branch) of normalizeTimeout.
     const prover = resolveTransactionProver({
-      prover: "devnet",
-      proverTimeoutMs: 5000,
+      prover: "https://prover.example.com",
+      // @ts-expect-error — runtime guard for null
+      proverTimeoutMs: null,
     });
-    expect(prover).not.toBeNull();
-  });
-
-  it("resolves with bigint timeout when proverTimeoutMs is already bigint", () => {
-    const prover = resolveTransactionProver({
-      prover: "devnet",
-      proverTimeoutMs: 5000n,
-    });
-    expect(prover).not.toBeNull();
-  });
-
-  it("resolves localhost alias as local prover", () => {
-    const prover = resolveTransactionProver({ prover: "localhost" });
-    expect(prover).not.toBeNull();
-  });
-
-  it("resolves LOCALHOST case-insensitively", () => {
-    const prover = resolveTransactionProver({ prover: "LOCALHOST" });
     expect(prover).not.toBeNull();
   });
 });

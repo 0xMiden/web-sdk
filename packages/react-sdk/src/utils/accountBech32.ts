@@ -4,7 +4,7 @@ import {
   AccountInterface,
   Address,
   NetworkId,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
 import { parseAccountId } from "./accountParsing";
 
@@ -98,8 +98,6 @@ export const ensureAccountBech32 = (account?: Account | null) => {
   }
 
   const proto = Object.getPrototypeOf(account) as AccountPrototype | null;
-  // If proto has bech32id, account.bech32id would already be truthy via the
-  // prototype chain, so this branch is unreachable after the check at line 102.
   if (proto?.bech32id) {
     return;
   }
@@ -108,9 +106,6 @@ export const ensureAccountBech32 = (account?: Account | null) => {
     return;
   }
 
-  // Only reached when proto is null OR Object.defineProperty on proto throws.
-  // Object.defineProperty on null-prototype objects is possible in theory but
-  // cannot be reproduced in the jsdom environment with WASM mocks.
   defineBech32(account as unknown as AccountPrototype);
 };
 

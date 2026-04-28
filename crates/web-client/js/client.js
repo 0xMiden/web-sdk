@@ -76,14 +76,16 @@ export class MidenClient {
         options?.storeName,
         options.keystore.getKey,
         options.keystore.insertKey,
-        options.keystore.sign
+        options.keystore.sign,
+        options?.debugMode
       );
     } else {
       inner = await WebClientClass.createClient(
         rpcUrl,
         noteTransportUrl,
         seed,
-        options?.storeName
+        options?.storeName,
+        options?.debugMode
       );
     }
 
@@ -138,32 +140,6 @@ export class MidenClient {
       autoSync: true,
       ...options,
     });
-  }
-
-  /**
-   * Resolves once the WASM module is initialized and safe to use.
-   *
-   * Idempotent and shared across callers: the underlying loader memoizes the
-   * in-flight promise, so concurrent `ready()` calls await the same
-   * initialization and post-init callers resolve immediately from a cached
-   * module. Safe to call from `MidenProvider`, tutorial helpers, and any
-   * other consumer simultaneously.
-   *
-   * Useful on the `/lazy` entry (e.g. Next.js / Capacitor), where no
-   * top-level await runs at import time. On the default (eager) entry this
-   * is redundant — importing the module already awaits WASM — but calling it
-   * is still harmless.
-   *
-   * @returns {Promise<void>} Resolves when WASM is initialized.
-   */
-  static async ready() {
-    const getWasm = MidenClient._getWasmOrThrow;
-    if (!getWasm) {
-      throw new Error(
-        "MidenClient not initialized. Import from the SDK package entry point."
-      );
-    }
-    await getWasm();
   }
 
   /**
@@ -223,54 +199,6 @@ export class MidenClient {
   }
 
   /**
-   * Resolves once every serialized WASM call that was already on the
-   * internal `_serializeWasmCall` chain when `waitForIdle()` was called
-   * (execute, submit, prove, apply, sync, or account creation) has
-   * settled. Use this from callers that need to perform a non-WASM-side
-   * action — e.g. clearing an in-memory auth key on wallet lock — after
-   * the kernel finishes, so its auth callback doesn't race with the key
-   * being cleared.
-   *
-   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
-   * intentional, so a caller can drain and proceed without being blocked
-   * indefinitely by concurrent workload.
-   *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits the sync lock
-   * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
-   * call onto the chain, so a `syncState` that is queued on the sync
-   * lock — but has not yet begun its WASM phase — is not visible to
-   * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
-   * `executeTransaction`, etc.) route through the chain synchronously
-   * on call and are always observed.
-   *
-   * Safe to call at any time; returns immediately if nothing was in
-   * flight.
-   *
-   * @returns {Promise<void>}
-   */
-  async waitForIdle() {
-    this.assertNotTerminated();
-    await this.#inner.waitForIdle();
-  }
-
-  /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet).
-   *
-   * Useful for recovering structured metadata (e.g. a `reason: 'locked'`
-   * property) that the kernel-level `auth::request` diagnostic would
-   * otherwise erase. Call immediately after catching a failed
-   * `transactions.submit` / `transactions.send` / `transactions.consume`.
-   *
-   * @returns {any} The raw thrown value, or `null`.
-   */
-  lastAuthError() {
-    this.assertNotTerminated();
-    return this.#inner.lastAuthError();
-  }
-
-  /**
    * Terminates the underlying Web Worker. After this, all method calls will throw.
    */
   terminate() {
@@ -291,9 +219,9 @@ export class MidenClient {
    *
    * @returns {string} The store identifier.
    */
-  storeIdentifier() {
+  async storeIdentifier() {
     this.assertNotTerminated();
-    return this.#inner.storeIdentifier();
+    return await this.#inner.storeIdentifier();
   }
 
   // ── Mock-only methods ──

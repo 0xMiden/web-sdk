@@ -147,7 +147,6 @@ const createMockWord = (hex: string = "0xword") => ({
   serialize: vi.fn(() => new Uint8Array()),
   toU64s: vi.fn(() => new BigUint64Array()),
   toFelts: vi.fn(() => []),
-  [Symbol.dispose]: vi.fn(),
 });
 
 export const createMockTransactionId = (id: string = "0xtx123") => ({
@@ -157,6 +156,8 @@ export const createMockTransactionId = (id: string = "0xtx123") => ({
   asBytes: vi.fn(() => new Uint8Array()),
   inner: vi.fn(() => createMockWord(id)),
   free: vi.fn(),
+  // TS 5.2+ ships [Symbol.dispose] on Disposable WASM bindings; tsc requires
+  // mocks to expose it even if tests never invoke it.
   [Symbol.dispose]: vi.fn(),
 });
 
@@ -373,7 +374,6 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionResult()),
     proveTransaction: vi.fn().mockResolvedValue({}),
-    proveTransactionWithProver: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
     sendPrivateNote: vi.fn().mockResolvedValue(undefined),
@@ -426,7 +426,6 @@ export type MockWebClientType = {
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
-  proveTransactionWithProver: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;
   applyTransaction: ReturnType<typeof vi.fn>;
   sendPrivateNote: ReturnType<typeof vi.fn>;

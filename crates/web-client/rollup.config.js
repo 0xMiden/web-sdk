@@ -58,7 +58,7 @@ const wasmOptArgs = [
 // Base cargo arguments
 const baseCargoArgs = [
   "--features",
-  "testing",
+  "browser,testing",
   "--config",
   `build.rustflags=["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals", "-C", "link-arg=--max-memory=4294967296", "-C", "panic=abort"]`,
   "--no-default-features",
@@ -98,7 +98,7 @@ const baseCargoArgs = [
  */
 export default [
   {
-    input: ["./js/wasm.js", "./js/index.js", "./js/eager.js"],
+    input: ["./js/wasm.js", "./js/index.js"],
     output: {
       dir: `dist`,
       format: "es",

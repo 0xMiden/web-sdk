@@ -2,50 +2,52 @@ import { describe, it, expect } from "vitest";
 import { resolveRpcUrl } from "../../utils/network";
 
 describe("resolveRpcUrl", () => {
-  it("should return undefined when no rpcUrl given", () => {
+  it("returns undefined when input is undefined", () => {
     expect(resolveRpcUrl(undefined)).toBeUndefined();
   });
 
-  it("should resolve 'testnet' to testnet URL", () => {
+  it("returns undefined when input is empty string", () => {
+    // empty string is falsy → undefined branch
+    expect(resolveRpcUrl("" as never)).toBeUndefined();
+  });
+
+  it('maps "testnet" to the canonical testnet URL', () => {
     expect(resolveRpcUrl("testnet")).toBe("https://rpc.testnet.miden.io");
   });
 
-  it("should resolve 'TESTNET' case-insensitively", () => {
-    expect(resolveRpcUrl("TESTNET")).toBe("https://rpc.testnet.miden.io");
-  });
-
-  it("should resolve 'devnet' to devnet URL", () => {
+  it('maps "devnet" to the canonical devnet URL', () => {
     expect(resolveRpcUrl("devnet")).toBe("https://rpc.devnet.miden.io");
   });
 
-  it("should resolve 'DEVNET' case-insensitively", () => {
-    expect(resolveRpcUrl("DEVNET")).toBe("https://rpc.devnet.miden.io");
-  });
-
-  it("should resolve 'localhost' to localhost URL", () => {
+  it('maps "localhost" to the local RPC port', () => {
     expect(resolveRpcUrl("localhost")).toBe("http://localhost:57291");
   });
 
-  it("should resolve 'local' to localhost URL", () => {
+  it('maps "local" to the local RPC port', () => {
     expect(resolveRpcUrl("local")).toBe("http://localhost:57291");
   });
 
-  it("should resolve 'LOCAL' case-insensitively", () => {
-    expect(resolveRpcUrl("LOCAL")).toBe("http://localhost:57291");
+  it("is case-insensitive for shortcuts", () => {
+    expect(resolveRpcUrl("TestNet")).toBe("https://rpc.testnet.miden.io");
+    expect(resolveRpcUrl("DEVNET")).toBe("https://rpc.devnet.miden.io");
+    expect(resolveRpcUrl("LOCALHOST")).toBe("http://localhost:57291");
   });
 
-  it("should return custom URL as-is", () => {
-    const custom = "https://my-custom-rpc.example.com";
-    expect(resolveRpcUrl(custom)).toBe(custom);
-  });
-
-  it("should return http URL as-is", () => {
-    const url = "http://10.0.0.1:1234";
-    expect(resolveRpcUrl(url)).toBe(url);
-  });
-
-  it("should trim and normalize when comparing", () => {
-    // Leading/trailing whitespace is trimmed before comparison
+  it("trims whitespace before matching shortcuts", () => {
     expect(resolveRpcUrl("  testnet  ")).toBe("https://rpc.testnet.miden.io");
+  });
+
+  it("passes a custom URL through unchanged", () => {
+    expect(resolveRpcUrl("https://custom.example.com")).toBe(
+      "https://custom.example.com"
+    );
+  });
+
+  it("does not lower-case a custom URL", () => {
+    // When the input doesn't match any shortcut, it's returned verbatim
+    // (not the lower-cased version).
+    expect(resolveRpcUrl("https://CUSTOM.example.com")).toBe(
+      "https://CUSTOM.example.com"
+    );
   });
 });

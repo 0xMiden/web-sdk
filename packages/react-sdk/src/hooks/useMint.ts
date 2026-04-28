@@ -82,7 +82,7 @@ export function useMint(): UseMintResult {
 
         setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
-          const txRequest = client.newMintTransactionRequest(
+          const txRequest = await client.newMintTransactionRequest(
             targetAccountIdObj,
             faucetIdObj,
             noteType,
@@ -111,7 +111,6 @@ export function useMint(): UseMintResult {
         setError(error);
         setStage("idle");
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
       }
