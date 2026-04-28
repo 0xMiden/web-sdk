@@ -46,12 +46,14 @@ jobs:
     name: Build Client for Wasm
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     env:
       # See test.yml's build-web-client-dist-folder for rationale.
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust toolchain
         run: rustup update --no-self-update
       - name: Add wasm32-unknown-unknown target

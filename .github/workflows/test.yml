@@ -47,13 +47,13 @@ jobs:
     # skips wasm-opt — both via the MIDEN_FAST_BUILD env var. The shipped
     # artifact is built with the canonical full-optimization `release`
     # profile by the `verify-release-build` job (push to main/next only).
-    # sccache + Swatinem/rust-cache layer together: rust-cache gives a
+    # sccache + WarpBuilds/rust-cache layer together: rust-cache gives a
     # warm target/ directory, sccache gives finer per-crate caching that
     # survives even when target/ is partially invalidated.
     name: Build Web Client
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
       # action sets RUSTC_WRAPPER=sccache as a step output on success — we
@@ -64,6 +64,8 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
         run: |
           rustup update --no-self-update
@@ -115,7 +117,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y binaryen
 
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
           shared-key: rust-wasm
           prefix-key: ${{ env.RUST_CACHE_KEY }}
@@ -125,7 +127,7 @@ jobs:
           # the integration branch where most pre-release churn happens —
           # both worth caching independently so PRs against either don't
           # cold-build.
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -193,7 +195,7 @@ jobs:
   # shipped artifact is always exercised before it can land on main.
   verify-release-build:
     name: Verify release WASM build
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes]
     if: github.event_name == 'push' && needs.changes.outputs.non_docs == 'true'
     env:
@@ -206,6 +208,8 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
         run: |
           rustup update --no-self-update
@@ -252,7 +256,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y binaryen
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
           shared-key: rust-wasm-release
           prefix-key: ${{ env.RUST_CACHE_KEY }}
@@ -262,7 +266,7 @@ jobs:
           # the integration branch where most pre-release churn happens —
           # both worth caching independently so PRs against either don't
           # cold-build.
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') }}
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
@@ -562,7 +566,7 @@ jobs:
   # Build test infrastructure from miden-client repo
   build-node-builder:
     name: Build node-builder
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
     steps:
@@ -571,6 +575,8 @@ jobs:
         with:
           repository: 0xMiden/miden-client
           ref: ${{ env.MIDEN_CLIENT_REF }}
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Restore node-builder binary
         id: cache-node-builder
         uses: actions/cache@v4
@@ -591,7 +597,7 @@ jobs:
 
   build-remote-prover:
     name: Build remote-prover
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes]
     # Remote prover tests are slow (~14 min) and rarely affected by typical PR
     # changes. Skip on PRs unless explicitly opted in via the
@@ -608,6 +614,8 @@ jobs:
         with:
           repository: 0xMiden/miden-client
           ref: ${{ env.MIDEN_CLIENT_REF }}
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Restore remote-prover binary
         id: cache-remote-prover
         uses: actions/cache@v4
@@ -633,7 +641,7 @@ jobs:
     # slowest shards (2 min vs 41 min); see the playwright config comment
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes, build-web-client-dist-folder, build-node-builder]
     if: needs.changes.outputs.non_docs == 'true'
     strategy:
@@ -646,6 +654,8 @@ jobs:
           - ci-shard-4-compile-and-misc
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Fetch dist folder
         uses: actions/download-artifact@v4
         with:
@@ -698,7 +708,7 @@ jobs:
 
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes, build-web-client-dist-folder, build-node-builder, build-remote-prover]
     # Same opt-in rule as build-remote-prover. The job needs the prover binary,
     # so it can only run when build-remote-prover ran too.
@@ -709,6 +719,8 @@ jobs:
       )
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
