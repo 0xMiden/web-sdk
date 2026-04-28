@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  WorkerAction,
-  CallbackType,
-  MethodName,
-} from "../constants.js";
+import { WorkerAction, CallbackType, MethodName } from "../constants.js";
 
 describe("WorkerAction", () => {
   it("has expected constant values", () => {

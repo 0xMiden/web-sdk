@@ -75,7 +75,9 @@ function makeInner(overrides = {}) {
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     getTransactions: vi.fn().mockResolvedValue([]),
-    getInputNote: vi.fn().mockResolvedValue({ toNote: vi.fn().mockReturnValue("noteFromRecord") }),
+    getInputNote: vi
+      .fn()
+      .mockResolvedValue({ toNote: vi.fn().mockReturnValue("noteFromRecord") }),
     getConsumableNotes: vi.fn().mockResolvedValue([]),
     executeForSummary: vi.fn().mockResolvedValue("summary"),
     executeProgram: vi.fn().mockResolvedValue("programResult"),
@@ -95,7 +97,11 @@ function makeClient(overrides = {}) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function makeResource(innerOverrides = {}, clientOverrides = {}, wasmOverrides = {}) {
+function makeResource(
+  innerOverrides = {},
+  clientOverrides = {},
+  wasmOverrides = {}
+) {
   const inner = makeInner(innerOverrides);
   const client = makeClient(clientOverrides);
   const wasm = makeWasm(wasmOverrides);
@@ -128,7 +134,10 @@ describe("TransactionsResource", () => {
 
     it("waits for confirmation when waitForConfirmation=true", async () => {
       const { resource, inner } = makeResource();
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       inner.getTransactions.mockResolvedValue([tx]);
       const result = await resource.send({
@@ -333,7 +342,9 @@ describe("TransactionsResource", () => {
         account: "0xaccHex",
         notes: [unknownNote],
       });
-      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([unknownNote]);
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([
+        unknownNote,
+      ]);
     });
   });
 
@@ -355,13 +366,24 @@ describe("TransactionsResource", () => {
     });
 
     it("consumes all notes and returns count", async () => {
-      const note1 = { inputNoteRecord: vi.fn().mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }) };
-      const note2 = { inputNoteRecord: vi.fn().mockReturnValue({ toNote: vi.fn().mockReturnValue("n2") }) };
+      const note1 = {
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+      };
+      const note2 = {
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n2") }),
+      };
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note1, note2]),
       });
       const result = await resource.consumeAll({ account: "0xaccHex" });
-      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(["n1", "n2"]);
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([
+        "n1",
+        "n2",
+      ]);
       expect(result.consumed).toBe(2);
       expect(result.remaining).toBe(0);
       expect(result.txId).toBeDefined();
@@ -369,24 +391,36 @@ describe("TransactionsResource", () => {
 
     it("respects maxNotes option", async () => {
       const notes = Array.from({ length: 5 }, (_, i) => ({
-        inputNoteRecord: vi.fn().mockReturnValue({ toNote: vi.fn().mockReturnValue(`n${i}`) }),
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue(`n${i}`) }),
       }));
       const { resource } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue(notes),
       });
-      const result = await resource.consumeAll({ account: "0xaccHex", maxNotes: 3 });
+      const result = await resource.consumeAll({
+        account: "0xaccHex",
+        maxNotes: 3,
+      });
       expect(result.consumed).toBe(3);
       expect(result.remaining).toBe(2);
     });
 
     it("returns early when maxNotes=0 reduces toConsume to empty", async () => {
       const notes = [
-        { inputNoteRecord: vi.fn().mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }) },
+        {
+          inputNoteRecord: vi
+            .fn()
+            .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+        },
       ];
       const { resource } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue(notes),
       });
-      const result = await resource.consumeAll({ account: "0xaccHex", maxNotes: 0 });
+      const result = await resource.consumeAll({
+        account: "0xaccHex",
+        maxNotes: 0,
+      });
       expect(result).toEqual({ txId: null, consumed: 0, remaining: 1 });
     });
   });
@@ -501,9 +535,9 @@ describe("TransactionsResource", () => {
 
     it("throws on unknown operation", async () => {
       const { resource } = makeResource();
-      await expect(
-        resource.preview({ operation: "unknown" })
-      ).rejects.toThrow("Unknown preview operation: unknown");
+      await expect(resource.preview({ operation: "unknown" })).rejects.toThrow(
+        "Unknown preview operation: unknown"
+      );
     });
   });
 
@@ -534,7 +568,9 @@ describe("TransactionsResource", () => {
 
     it("attaches foreign accounts from WASM Account objects (has .id() method)", async () => {
       const { resource, wasm } = makeResource();
-      const wasmAccount = { id: vi.fn().mockReturnValue({ toString: () => "0xwasmId" }) };
+      const wasmAccount = {
+        id: vi.fn().mockReturnValue({ toString: () => "0xwasmId" }),
+      };
       await resource.execute({
         account: "0xaccHex",
         script: "script",
@@ -556,14 +592,16 @@ describe("TransactionsResource", () => {
         expect.anything(),
         "program",
         expect.anything(), // AdviceInputs instance (new wasm.AdviceInputs())
-        expect.anything()  // ForeignAccountArray instance (new wasm.ForeignAccountArray())
+        expect.anything() // ForeignAccountArray instance (new wasm.ForeignAccountArray())
       );
       expect(result).toBe("programResult");
     });
 
     it("handles foreign accounts in executeProgram", async () => {
       const { resource, inner, wasm } = makeResource();
-      const wasmAccount = { id: vi.fn().mockReturnValue({ toString: () => "0xid" }) };
+      const wasmAccount = {
+        id: vi.fn().mockReturnValue({ toString: () => "0xid" }),
+      };
       await resource.executeProgram({
         account: "0xaccHex",
         script: "program",
@@ -677,7 +715,9 @@ describe("TransactionsResource", () => {
         isCommitted: vi.fn().mockReturnValue(true),
         isDiscarded: vi.fn().mockReturnValue(false),
       };
-      const tx = { transactionStatus: vi.fn().mockReturnValue(committedStatus) };
+      const tx = {
+        transactionStatus: vi.fn().mockReturnValue(committedStatus),
+      };
       const { resource } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
       });
@@ -691,7 +731,9 @@ describe("TransactionsResource", () => {
         isCommitted: vi.fn().mockReturnValue(true),
         isDiscarded: vi.fn().mockReturnValue(false),
       };
-      const tx = { transactionStatus: vi.fn().mockReturnValue(committedStatus) };
+      const tx = {
+        transactionStatus: vi.fn().mockReturnValue(committedStatus),
+      };
       const { resource } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
       });
@@ -704,12 +746,18 @@ describe("TransactionsResource", () => {
         isCommitted: vi.fn().mockReturnValue(true),
         isDiscarded: vi.fn().mockReturnValue(false),
       };
-      const tx = { transactionStatus: vi.fn().mockReturnValue(committedStatus) };
+      const tx = {
+        transactionStatus: vi.fn().mockReturnValue(committedStatus),
+      };
       const { resource, inner } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
       });
       const onProgress = vi.fn();
-      await resource.waitFor("0xtxHex", { timeout: 5000, interval: 10, onProgress });
+      await resource.waitFor("0xtxHex", {
+        timeout: 5000,
+        interval: 10,
+        onProgress,
+      });
       expect(onProgress).toHaveBeenCalledWith("committed");
     });
 
@@ -718,7 +766,9 @@ describe("TransactionsResource", () => {
         isCommitted: vi.fn().mockReturnValue(false),
         isDiscarded: vi.fn().mockReturnValue(true),
       };
-      const tx = { transactionStatus: vi.fn().mockReturnValue(discardedStatus) };
+      const tx = {
+        transactionStatus: vi.fn().mockReturnValue(discardedStatus),
+      };
       const { resource } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
       });
@@ -729,17 +779,24 @@ describe("TransactionsResource", () => {
 
     it("calls onProgress with 'pending' when no txs returned", async () => {
       const { resource, inner } = makeResource({
-        getTransactions: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([
-          {
-            transactionStatus: () => ({
-              isCommitted: () => true,
-              isDiscarded: () => false,
-            }),
-          },
-        ]),
+        getTransactions: vi
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([
+            {
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            },
+          ]),
       });
       const onProgress = vi.fn();
-      await resource.waitFor("0xtxHex", { timeout: 5000, interval: 0, onProgress });
+      await resource.waitFor("0xtxHex", {
+        timeout: 5000,
+        interval: 0,
+        onProgress,
+      });
       expect(onProgress).toHaveBeenCalledWith("pending");
       expect(onProgress).toHaveBeenCalledWith("committed");
     });
@@ -750,13 +807,31 @@ describe("TransactionsResource", () => {
         getTransactions: vi.fn().mockImplementation(() => {
           pollCount++;
           if (pollCount === 1) {
-            return Promise.resolve([{ transactionStatus: () => ({ isCommitted: () => false, isDiscarded: () => false }) }]);
+            return Promise.resolve([
+              {
+                transactionStatus: () => ({
+                  isCommitted: () => false,
+                  isDiscarded: () => false,
+                }),
+              },
+            ]);
           }
-          return Promise.resolve([{ transactionStatus: () => ({ isCommitted: () => true, isDiscarded: () => false }) }]);
+          return Promise.resolve([
+            {
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            },
+          ]);
         }),
       });
       const onProgress = vi.fn();
-      await resource.waitFor("0xtxHex", { timeout: 5000, interval: 0, onProgress });
+      await resource.waitFor("0xtxHex", {
+        timeout: 5000,
+        interval: 0,
+        onProgress,
+      });
       expect(onProgress).toHaveBeenCalledWith("submitted");
     });
 
@@ -775,17 +850,30 @@ describe("TransactionsResource", () => {
       const { resource } = makeResource({
         getTransactions: vi.fn().mockImplementation(() => {
           count++;
-          if (count < 2) return Promise.resolve([{ transactionStatus: undefined }]);
-          return Promise.resolve([{ transactionStatus: () => ({ isCommitted: () => true, isDiscarded: () => false }) }]);
+          if (count < 2)
+            return Promise.resolve([{ transactionStatus: undefined }]);
+          return Promise.resolve([
+            {
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            },
+          ]);
         }),
       });
       await resource.waitFor("0xtxHex", { timeout: 5000, interval: 0 });
     });
 
     it("resolves TransactionId objects via .toHex()", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const { resource } = makeResource({
-        getTransactions: vi.fn().mockResolvedValue([{ transactionStatus: () => committedStatus }]),
+        getTransactions: vi
+          .fn()
+          .mockResolvedValue([{ transactionStatus: () => committedStatus }]),
       });
       const txIdObj = { toHex: vi.fn().mockReturnValue("0xtxHex") };
       await resource.waitFor(txIdObj, { timeout: 5000, interval: 0 });
@@ -793,14 +881,19 @@ describe("TransactionsResource", () => {
     });
 
     it("continues polling when syncStateWithTimeout throws", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       let syncCount = 0;
       const { resource } = makeResource({
         syncStateWithTimeout: vi.fn().mockImplementation(() => {
           if (syncCount++ === 0) throw new Error("sync fail");
           return Promise.resolve();
         }),
-        getTransactions: vi.fn().mockResolvedValue([{ transactionStatus: () => committedStatus }]),
+        getTransactions: vi
+          .fn()
+          .mockResolvedValue([{ transactionStatus: () => committedStatus }]),
       });
       await resource.waitFor("0xtxHex", { timeout: 5000, interval: 0 });
     });
@@ -811,7 +904,14 @@ describe("TransactionsResource", () => {
         getTransactions: vi.fn().mockImplementation(() => {
           pollCount++;
           if (pollCount >= 2) {
-            return Promise.resolve([{ transactionStatus: () => ({ isCommitted: () => true, isDiscarded: () => false }) }]);
+            return Promise.resolve([
+              {
+                transactionStatus: () => ({
+                  isCommitted: () => true,
+                  isDiscarded: () => false,
+                }),
+              },
+            ]);
           }
           return Promise.resolve([]);
         }),
@@ -825,7 +925,10 @@ describe("TransactionsResource", () => {
 
   describe("send — returnNote + waitForConfirmation branch", () => {
     it("calls waitFor after returnNote send when waitForConfirmation=true", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       const { resource, inner } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
@@ -847,7 +950,10 @@ describe("TransactionsResource", () => {
 
   describe("mint — waitForConfirmation branch", () => {
     it("waits for confirmation after mint when waitForConfirmation=true", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       const { resource, inner } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
@@ -867,7 +973,10 @@ describe("TransactionsResource", () => {
 
   describe("consume — waitForConfirmation branch", () => {
     it("waits for confirmation after consume when waitForConfirmation=true", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       const { resource, inner } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
@@ -885,10 +994,15 @@ describe("TransactionsResource", () => {
 
   describe("consumeAll — waitForConfirmation branch", () => {
     it("waits for confirmation after consumeAll when waitForConfirmation=true", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       const note1 = {
-        inputNoteRecord: vi.fn().mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
       };
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note1]),
@@ -906,7 +1020,10 @@ describe("TransactionsResource", () => {
 
   describe("swap — waitForConfirmation branch", () => {
     it("waits for confirmation after swap when waitForConfirmation=true", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       const { resource, inner } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),
@@ -925,7 +1042,10 @@ describe("TransactionsResource", () => {
 
   describe("execute — waitForConfirmation branch", () => {
     it("calls waitFor after execute when waitForConfirmation=true", async () => {
-      const committedStatus = { isCommitted: () => true, isDiscarded: () => false };
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
       const tx = { transactionStatus: () => committedStatus };
       const { resource, inner } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([tx]),

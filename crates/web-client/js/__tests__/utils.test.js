@@ -137,7 +137,10 @@ describe("resolveAddress", () => {
   it("wraps plain AccountId (no id() method) in Address", () => {
     const accountId = { _type: "AccountId" };
     const result = resolveAddress(accountId, wasm);
-    expect(wasm.Address.fromAccountId).toHaveBeenCalledWith(accountId, undefined);
+    expect(wasm.Address.fromAccountId).toHaveBeenCalledWith(
+      accountId,
+      undefined
+    );
     expect(result._type).toBe("Address");
   });
 });

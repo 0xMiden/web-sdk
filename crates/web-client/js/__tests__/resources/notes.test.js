@@ -123,10 +123,7 @@ describe("NotesResource", () => {
       const resource = makeResource();
       await resource.list({ ids: ["0xabc", "0xdef"] });
       expect(wasm.NoteId.fromHex).toHaveBeenCalledTimes(2);
-      expect(wasm.NoteFilter).toHaveBeenCalledWith(
-        "List",
-        expect.any(Array)
-      );
+      expect(wasm.NoteFilter).toHaveBeenCalledWith("List", expect.any(Array));
     });
 
     it("falls back to All when empty query object", async () => {

@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AccountsResource } from "../../resources/accounts.js";
 
 function makeWasm(overrides = {}) {
-  const accountTypeEnum = { RegularAccountImmutableCode: 0, RegularAccountUpdatableCode: 1 };
+  const accountTypeEnum = {
+    RegularAccountImmutableCode: 0,
+    RegularAccountUpdatableCode: 1,
+  };
   const fakeBuilderInstance = {
     accountType: vi.fn().mockReturnThis(),
     storageMode: vi.fn().mockReturnThis(),
@@ -203,20 +206,35 @@ describe("AccountsResource", () => {
     it("creates a mutable wallet by default (no type)", async () => {
       const resource = makeResource();
       const result = await resource.create({});
-      expect(inner.newWallet).toHaveBeenCalledWith("private", true, 2, undefined);
+      expect(inner.newWallet).toHaveBeenCalledWith(
+        "private",
+        true,
+        2,
+        undefined
+      );
       expect(result).toBe("newWalletResult");
     });
 
     it("creates a mutable wallet when type='MutableWallet'", async () => {
       const resource = makeResource();
       await resource.create({ type: "MutableWallet" });
-      expect(inner.newWallet).toHaveBeenCalledWith("private", true, 2, undefined);
+      expect(inner.newWallet).toHaveBeenCalledWith(
+        "private",
+        true,
+        2,
+        undefined
+      );
     });
 
     it("creates an immutable wallet when type='ImmutableWallet'", async () => {
       const resource = makeResource();
       await resource.create({ type: "ImmutableWallet" });
-      expect(inner.newWallet).toHaveBeenCalledWith("private", false, 2, undefined);
+      expect(inner.newWallet).toHaveBeenCalledWith(
+        "private",
+        false,
+        2,
+        undefined
+      );
     });
 
     it("hashes string seed and passes it to newWallet", async () => {
@@ -239,19 +257,34 @@ describe("AccountsResource", () => {
       const resource = makeResource();
       await resource.create({ storage: "public" });
       expect(wasm.AccountStorageMode.public).toHaveBeenCalled();
-      expect(inner.newWallet).toHaveBeenCalledWith("public", true, 2, undefined);
+      expect(inner.newWallet).toHaveBeenCalledWith(
+        "public",
+        true,
+        2,
+        undefined
+      );
     });
 
     it("creates mutable wallet when type=3", async () => {
       const resource = makeResource();
       await resource.create({ type: 3 });
-      expect(inner.newWallet).toHaveBeenCalledWith("private", true, 2, undefined);
+      expect(inner.newWallet).toHaveBeenCalledWith(
+        "private",
+        true,
+        2,
+        undefined
+      );
     });
 
     it("creates immutable wallet when type=2", async () => {
       const resource = makeResource();
       await resource.create({ type: 2 });
-      expect(inner.newWallet).toHaveBeenCalledWith("private", false, 2, undefined);
+      expect(inner.newWallet).toHaveBeenCalledWith(
+        "private",
+        false,
+        2,
+        undefined
+      );
     });
   });
 
@@ -287,7 +320,9 @@ describe("AccountsResource", () => {
         auth: "authKey",
         components: [],
       });
-      expect(wasm.AccountComponent.createAuthComponentFromSecretKey).toHaveBeenCalledWith("authKey");
+      expect(
+        wasm.AccountComponent.createAuthComponentFromSecretKey
+      ).toHaveBeenCalledWith("authKey");
       expect(wasm.AccountBuilder).toHaveBeenCalledWith(seed);
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
       expect(builderInstance.accountType).toHaveBeenCalledWith(0); // ImmutableCode

@@ -59,7 +59,10 @@ describe("CompilerResource", () => {
       expect(builder.compileAccountComponentCode).toHaveBeenCalledWith(
         "some code"
       );
-      expect(wasm.AccountComponent.compile).toHaveBeenCalledWith("compiled", []);
+      expect(wasm.AccountComponent.compile).toHaveBeenCalledWith(
+        "compiled",
+        []
+      );
       expect(component.withSupportsAllTypes).toHaveBeenCalledOnce();
       expect(result).toBe(component);
     });
@@ -82,7 +85,10 @@ describe("CompilerResource", () => {
       builder.compileAccountComponentCode.mockReturnValue("compiled");
       const resource = new CompilerResource(inner, getWasm, client);
       await resource.component({ code: "code" });
-      expect(wasm.AccountComponent.compile).toHaveBeenCalledWith("compiled", []);
+      expect(wasm.AccountComponent.compile).toHaveBeenCalledWith(
+        "compiled",
+        []
+      );
     });
 
     it("passes slots to AccountComponent.compile", async () => {

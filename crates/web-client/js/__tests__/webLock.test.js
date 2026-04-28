@@ -73,7 +73,9 @@ describe("withWriteLock — Web Locks path (no timeout)", () => {
   });
 
   it("uses default store name when storeName is falsy", async () => {
-    const request = vi.fn().mockImplementation(async (_name, _opts, fn) => fn());
+    const request = vi
+      .fn()
+      .mockImplementation(async (_name, _opts, fn) => fn());
     setNavigatorLocks(request);
 
     await withWriteLock("", () => "result");
@@ -85,7 +87,9 @@ describe("withWriteLock — Web Locks path (no timeout)", () => {
   });
 
   it("propagates error thrown from fn via lock", async () => {
-    const request = vi.fn().mockImplementation(async (_name, _opts, fn) => fn());
+    const request = vi
+      .fn()
+      .mockImplementation(async (_name, _opts, fn) => fn());
     setNavigatorLocks(request);
 
     await expect(
