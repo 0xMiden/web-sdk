@@ -59,10 +59,7 @@ pub fn serialize_partial_blockchain_node(
     })?;
     let id_as_str = id.to_string();
     let node = node.to_string();
-    Ok(SerializedPartialBlockchainNodeData {
-        id: id_as_str,
-        node,
-    })
+    Ok(SerializedPartialBlockchainNodeData { id: id_as_str, node })
 }
 
 /// Deserializes partial blockchain nodes from a JS value.

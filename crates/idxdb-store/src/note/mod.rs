@@ -5,7 +5,12 @@ use miden_client::Word;
 use miden_client::account::AccountId;
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
-    InputNoteRecord, InputNoteState, NoteFilter, OutputNoteRecord, OutputNoteState, StoreError,
+    InputNoteRecord,
+    InputNoteState,
+    NoteFilter,
+    OutputNoteRecord,
+    OutputNoteState,
+    StoreError,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::{Array, Promise};
@@ -16,9 +21,14 @@ use crate::promise::await_js;
 
 mod js_bindings;
 use js_bindings::{
-    idxdb_get_input_note_by_offset, idxdb_get_input_notes, idxdb_get_input_notes_from_ids,
-    idxdb_get_input_notes_from_nullifiers, idxdb_get_note_script, idxdb_get_output_notes,
-    idxdb_get_output_notes_from_ids, idxdb_get_output_notes_from_nullifiers,
+    idxdb_get_input_note_by_offset,
+    idxdb_get_input_notes,
+    idxdb_get_input_notes_from_ids,
+    idxdb_get_input_notes_from_nullifiers,
+    idxdb_get_note_script,
+    idxdb_get_output_notes,
+    idxdb_get_output_notes_from_ids,
+    idxdb_get_output_notes_from_nullifiers,
     idxdb_get_unspent_input_note_nullifiers,
 };
 
@@ -27,7 +37,9 @@ use models::{InputNoteIdxdbObject, NoteScriptIdxdbObject, OutputNoteIdxdbObject}
 
 pub(crate) mod utils;
 use utils::{
-    parse_input_note_idxdb_object, parse_note_script_idxdb_object, parse_output_note_idxdb_object,
+    parse_input_note_idxdb_object,
+    parse_note_script_idxdb_object,
+    parse_output_note_idxdb_object,
     upsert_input_note_tx,
 };
 
@@ -36,11 +48,9 @@ impl IdxdbStore {
         &self,
         filter: NoteFilter,
     ) -> Result<Vec<InputNoteRecord>, StoreError> {
-        let input_notes_idxdb: Vec<InputNoteIdxdbObject> = await_js(
-            filter.to_input_notes_promise(self.db_id()),
-            "failed to get input notes",
-        )
-        .await?;
+        let input_notes_idxdb: Vec<InputNoteIdxdbObject> =
+            await_js(filter.to_input_notes_promise(self.db_id()), "failed to get input notes")
+                .await?;
 
         input_notes_idxdb
             .into_iter()
@@ -52,11 +62,9 @@ impl IdxdbStore {
         &self,
         filter: NoteFilter,
     ) -> Result<Vec<OutputNoteRecord>, StoreError> {
-        let output_notes_idxdb: Vec<OutputNoteIdxdbObject> = await_js(
-            filter.to_output_note_promise(self.db_id()),
-            "failed to get output notes",
-        )
-        .await?;
+        let output_notes_idxdb: Vec<OutputNoteIdxdbObject> =
+            await_js(filter.to_output_note_promise(self.db_id()), "failed to get output notes")
+                .await?;
 
         output_notes_idxdb
             .into_iter()
@@ -85,11 +93,7 @@ impl IdxdbStore {
 
         nullifiers_as_str
             .into_iter()
-            .map(|s| {
-                Word::try_from(s)
-                    .map(Nullifier::from_raw)
-                    .map_err(StoreError::WordError)
-            })
+            .map(|s| Word::try_from(s).map(Nullifier::from_raw).map_err(StoreError::WordError))
             .collect::<Result<Vec<Nullifier>, _>>()
     }
 
@@ -119,11 +123,7 @@ impl IdxdbStore {
         let notes: Vec<InputNoteIdxdbObject> =
             await_js(promise, "failed to get input note by offset").await?;
 
-        notes
-            .into_iter()
-            .next()
-            .map(parse_input_note_idxdb_object)
-            .transpose()
+        notes.into_iter().next().map(parse_input_note_idxdb_object).transpose()
     }
 
     pub(crate) async fn upsert_input_notes(
@@ -196,25 +196,23 @@ impl NoteFilterExt for NoteFilter {
                 let states = input_note_state_discriminants(self)
                     .expect("state-based filters always return Some");
                 idxdb_get_input_notes(db_id, states)
-            }
+            },
             NoteFilter::List(ids) => {
                 let note_ids_as_str: Vec<String> =
                     ids.iter().map(|id| id.as_word().to_string()).collect();
                 idxdb_get_input_notes_from_ids(db_id, note_ids_as_str)
-            }
+            },
             NoteFilter::Unique(id) => {
                 let note_id_as_str = id.as_word().to_string();
                 let note_ids = vec![note_id_as_str];
                 idxdb_get_input_notes_from_ids(db_id, note_ids)
-            }
+            },
             NoteFilter::Nullifiers(nullifiers) => {
-                let nullifiers_as_str = nullifiers
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>();
+                let nullifiers_as_str =
+                    nullifiers.iter().map(ToString::to_string).collect::<Vec<String>>();
 
                 idxdb_get_input_notes_from_nullifiers(db_id, nullifiers_as_str)
-            }
+            },
         }
     }
 
@@ -246,28 +244,26 @@ impl NoteFilterExt for NoteFilter {
                 };
 
                 idxdb_get_output_notes(db_id, states)
-            }
+            },
             NoteFilter::Processing | NoteFilter::Unverified => {
                 Promise::resolve(&JsValue::from(Array::new()))
-            }
+            },
             NoteFilter::List(ids) => {
                 let note_ids_as_str: Vec<String> =
                     ids.iter().map(|id| id.as_word().to_string()).collect();
                 idxdb_get_output_notes_from_ids(db_id, note_ids_as_str)
-            }
+            },
             NoteFilter::Unique(id) => {
                 let note_id_as_str = id.as_word().to_string();
                 let note_ids = vec![note_id_as_str];
                 idxdb_get_output_notes_from_ids(db_id, note_ids)
-            }
+            },
             NoteFilter::Nullifiers(nullifiers) => {
-                let nullifiers_as_str = nullifiers
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<String>>();
+                let nullifiers_as_str =
+                    nullifiers.iter().map(ToString::to_string).collect::<Vec<String>>();
 
                 idxdb_get_output_notes_from_nullifiers(db_id, nullifiers_as_str)
-            }
+            },
         }
     }
 }

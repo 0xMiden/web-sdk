@@ -1,4 +1,4 @@
-import { AuthScheme } from "@miden-sdk/miden-sdk/lazy";
+import { AuthScheme } from "@miden-sdk/miden-sdk";
 import type { AccountRef } from "../utils/accountParsing";
 import type {
   WasmWebClient as WebClient,
@@ -21,7 +21,7 @@ import type {
   Note,
   NoteVisibility,
   StorageMode,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 
 // Re-export SDK types for convenience
 export { AuthScheme };
@@ -249,7 +249,7 @@ export interface CreateWalletOptions {
   storageMode?: StorageMode;
   /** Whether code can be updated. Default: true */
   mutable?: boolean;
-  /** Auth scheme. Default: `AuthScheme.Falcon` */
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
   /** Initial seed for deterministic account ID */
   initSeed?: Uint8Array;
@@ -265,7 +265,7 @@ export interface CreateFaucetOptions {
   maxSupply: bigint | number;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: `AuthScheme.Falcon` */
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
 }
 
@@ -541,7 +541,7 @@ export const DEFAULTS = {
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
   WALLET_MUTABLE: true,
-  AUTH_SCHEME: AuthScheme.Falcon,
+  AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,
 } as const;

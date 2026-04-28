@@ -5,7 +5,7 @@ import type {
   AccountHeader,
   InputNoteRecord,
   ConsumableNoteRecord,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 import type { SyncState, MidenConfig, AssetMetadata } from "../types";
 
 interface MidenStoreState {
@@ -188,7 +188,6 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
           const id = note.id().toString();
           // Preserve existing timestamp or record new one
           newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
-          /* v8 ignore next 3 — note.id() throwing requires a malformed note; mocks always return valid IDs */
         } catch {
           // Skip
         }

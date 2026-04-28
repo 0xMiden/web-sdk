@@ -7,18 +7,6 @@ import copy from "rollup-plugin-copy";
 // If true, wasm-opt is not applied.
 const devMode = process.env.MIDEN_WEB_DEV === "true";
 
-// Flag that opts into the fast PR-CI build profile. When set, we override
-// the implicit `release` profile flags that @wasm-tool/rollup-plugin-rust
-// passes (lto=true, codegen-units=1) to instead use the lighter
-// `release-fast` settings defined in the workspace Cargo.toml. We also skip
-// the wasm-opt -O3 pass entirely, since post-link optimization adds another
-// 1-2 minutes for output that PR CI doesn't ship. Trade is ~1.5x larger
-// WASM and slightly slower runtime — fine for verification, not for the
-// published artifact. The `verify-release-build` CI job continues to run
-// without this flag so the canonical artifact is always exercised before
-// release.
-const fastBuild = process.env.MIDEN_FAST_BUILD === "true";
-
 // Arguments to tell cargo to add full debug symbols
 // to the generated .wasm file (dev mode only).
 // Note: strip='none' is already set by cargoArgsLineTablesDebug.
@@ -31,17 +19,6 @@ const cargoArgsLineTablesDebug = [
   "profile.release.debug='line-tables-only'",
   "--config",
   "profile.release.strip='none'",
-];
-
-// Override the lto/codegen-units flags that the plugin sets for `--release`.
-// Cargo --config is last-wins, so these win over the plugin's defaults when
-// MIDEN_FAST_BUILD is set. The values match `[profile.release-fast]` in the
-// workspace Cargo.toml so the two stay in sync.
-const cargoArgsFastBuild = [
-  "--config",
-  "profile.release.lto=false",
-  "--config",
-  "profile.release.codegen-units=16",
 ];
 
 const wasmOptArgs = [
@@ -58,7 +35,7 @@ const wasmOptArgs = [
 // Base cargo arguments
 const baseCargoArgs = [
   "--features",
-  "testing",
+  "browser,testing",
   "--config",
   `build.rustflags=["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals", "-C", "link-arg=--max-memory=4294967296", "-C", "panic=abort"]`,
   "--no-default-features",
@@ -67,11 +44,7 @@ const baseCargoArgs = [
   // In dev mode, append full debug symbols AFTER line-tables-only.
   // Cargo uses last-wins semantics for repeated --config keys,
   // so debug='full' overrides debug='line-tables-only'.
-]
-  .concat(devMode ? cargoArgsUseDebugSymbols : [])
-  // Fast-build overrides come LAST so they win the last-wins race against
-  // both the plugin's defaults and any earlier --config entries.
-  .concat(fastBuild ? cargoArgsFastBuild : []);
+].concat(devMode ? cargoArgsUseDebugSymbols : []);
 
 /**
  * Rollup configuration file for building a Cargo project and creating a WebAssembly (WASM) module,
@@ -98,7 +71,7 @@ const baseCargoArgs = [
  */
 export default [
   {
-    input: ["./js/wasm.js", "./js/index.js", "./js/eager.js"],
+    input: ["./js/wasm.js", "./js/index.js"],
     output: {
       dir: `dist`,
       format: "es",
@@ -110,11 +83,7 @@ export default [
         verbose: true,
         extraArgs: {
           cargo: [...baseCargoArgs],
-          // Skip wasm-opt entirely in fast mode — it's the post-link
-          // optimization pass and accounts for ~1-2 min on its own. Empty
-          // args array tells the plugin to bypass it. dev mode keeps -O0
-          // for the same reason.
-          wasmOpt: fastBuild ? [] : wasmOptArgs,
+          wasmOpt: wasmOptArgs,
           wasmBindgen: ["--keep-debug"],
         },
         experimental: {

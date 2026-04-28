@@ -3,11 +3,24 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::account::{
-    Account, AccountCode, AccountDelta, AccountHeader, AccountId, AccountStorage, Address,
-    StorageMap, StorageSlotContent, StorageSlotName, StorageSlotType,
+    Account,
+    AccountCode,
+    AccountDelta,
+    AccountHeader,
+    AccountId,
+    AccountStorage,
+    Address,
+    StorageMap,
+    StorageSlotContent,
+    StorageSlotName,
+    StorageSlotType,
 };
 use miden_client::asset::{
-    Asset, AssetVault, AssetVaultKey, FungibleAsset, NonFungibleDeltaAction,
+    Asset,
+    AssetVault,
+    AssetVaultKey,
+    FungibleAsset,
+    NonFungibleDeltaAction,
 };
 use miden_client::store::{AccountSmtForest, AccountStatus, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
@@ -16,9 +29,16 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
 use super::js_bindings::{
-    JsStorageMapEntry, JsStorageSlot, JsVaultAsset, idxdb_apply_full_account_state,
-    idxdb_apply_transaction_delta, idxdb_upsert_account_code, idxdb_upsert_account_record,
-    idxdb_upsert_account_storage, idxdb_upsert_storage_map_entries, idxdb_upsert_vault_assets,
+    JsStorageMapEntry,
+    JsStorageSlot,
+    JsVaultAsset,
+    idxdb_apply_full_account_state,
+    idxdb_apply_transaction_delta,
+    idxdb_upsert_account_code,
+    idxdb_upsert_account_record,
+    idxdb_upsert_account_storage,
+    idxdb_upsert_storage_map_entries,
+    idxdb_upsert_vault_assets,
 };
 use crate::account::js_bindings::idxdb_insert_account_address;
 use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
@@ -49,18 +69,8 @@ pub async fn upsert_account_storage(
     }
 
     let account_id_str = account_id.to_string();
-    JsFuture::from(idxdb_upsert_account_storage(
-        db_id,
-        account_id_str.clone(),
-        slots,
-    ))
-    .await?;
-    JsFuture::from(idxdb_upsert_storage_map_entries(
-        db_id,
-        account_id_str,
-        maps,
-    ))
-    .await?;
+    JsFuture::from(idxdb_upsert_account_storage(db_id, account_id_str.clone(), slots)).await?;
+    JsFuture::from(idxdb_upsert_storage_map_entries(db_id, account_id_str, maps)).await?;
 
     Ok(())
 }
@@ -70,10 +80,8 @@ pub async fn upsert_account_asset_vault(
     account_id: &AccountId,
     asset_vault: &AssetVault,
 ) -> Result<(), JsValue> {
-    let js_assets: Vec<JsVaultAsset> = asset_vault
-        .assets()
-        .map(|asset| JsVaultAsset::from_asset(&asset))
-        .collect();
+    let js_assets: Vec<JsVaultAsset> =
+        asset_vault.assets().map(|asset| JsVaultAsset::from_asset(&asset)).collect();
 
     let promise = idxdb_upsert_vault_assets(db_id, account_id.to_string(), js_assets);
     JsFuture::from(promise).await?;
@@ -189,16 +197,10 @@ pub fn compute_storage_delta(
     let default_map_root = StorageMap::default().root();
 
     for (slot_name, map_delta) in delta.storage().maps() {
-        let old_root = old_map_roots
-            .get(slot_name)
-            .copied()
-            .unwrap_or(default_map_root);
+        let old_root = old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
         let new_root = smt_forest.update_storage_map_nodes(
             old_root,
-            map_delta
-                .entries()
-                .iter()
-                .map(|(key, value)| (*key, *value)),
+            map_delta.entries().iter().map(|(key, value)| (*key, *value)),
         )?;
         updated_slots.insert(slot_name.clone(), (new_root, StorageSlotType::Map));
     }
@@ -238,7 +240,7 @@ pub fn compute_vault_delta(
                 } else {
                     existing.sub(delta_asset)?
                 }
-            }
+            },
             None => delta_asset,
         };
 
@@ -254,10 +256,10 @@ pub fn compute_vault_delta(
         match action {
             NonFungibleDeltaAction::Add => {
                 updated_assets.push(Asset::NonFungible(*nft));
-            }
+            },
             NonFungibleDeltaAction::Remove => {
                 removed_vault_keys.push(nft.vault_key());
-            }
+            },
         }
     }
 
@@ -309,10 +311,8 @@ pub async fn apply_transaction_delta(
     }
 
     // Build changed assets: updated assets + removal markers
-    let mut changed_assets: Vec<JsVaultAsset> = updated_assets
-        .iter()
-        .map(JsVaultAsset::from_asset)
-        .collect();
+    let mut changed_assets: Vec<JsVaultAsset> =
+        updated_assets.iter().map(JsVaultAsset::from_asset).collect();
 
     for vault_key in removed_vault_keys {
         changed_assets.push(JsVaultAsset {

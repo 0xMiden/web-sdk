@@ -49,6 +49,5 @@ export const parseAssetAmount = (input: string, decimals?: number): bigint => {
   const paddedFraction = fractionText.padEnd(decimals, "0");
   const factor = 10n ** BigInt(decimals);
 
-  /* v8 ignore next 1 — paddedFraction is always non-empty after padEnd; the || "0" fallback is unreachable */
   return BigInt(normalizedWhole) * factor + BigInt(paddedFraction || "0");
 };

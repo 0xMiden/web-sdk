@@ -1,9 +1,9 @@
-import { AccountId, Address } from "@miden-sdk/miden-sdk/lazy";
+import { AccountId, Address } from "@miden-sdk/miden-sdk";
 import type {
   AccountId as AccountIdType,
   Account,
   AccountHeader,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 
 /** Account reference — any account ID form accepted by the React SDK hooks. */
 export type AccountRef = string | AccountIdType | Account | AccountHeader;

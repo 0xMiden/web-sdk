@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { NoteFilter, NoteFilterTypes, NoteId } from "@miden-sdk/miden-sdk/lazy";
-import type { Note, InputNoteRecord } from "@miden-sdk/miden-sdk/lazy";
+import { NoteFilter, NoteFilterTypes, NoteId } from "@miden-sdk/miden-sdk";
+import type { Note, InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   ConsumeOptions,
   TransactionStage,
@@ -139,15 +139,10 @@ export function useConsume(): UseConsumeResult {
 
           const notes = resolved;
 
-          // options.notes.length === 0 is already rejected at line 71, so
-          // notes.length === 0 here is a defensive guard that cannot be reached.
-          /* v8 ignore next 3 */
           if (notes.length === 0) {
             throw new Error("No notes found for provided IDs");
           }
 
-          /* v8 ignore next 4 — resolved is pre-sized to options.notes.length; this
-           * invariant check cannot fail unless the loop logic has a bug. */
           if (notes.length !== options.notes.length) {
             throw new Error("Some notes could not be found for provided IDs");
           }
@@ -174,7 +169,6 @@ export function useConsume(): UseConsumeResult {
         setError(error);
         setStage("idle");
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
       }

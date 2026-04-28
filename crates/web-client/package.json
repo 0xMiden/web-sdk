@@ -1,26 +1,29 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.14.5",
+  "version": "0.14.3",
   "description": "Miden Wasm SDK",
   "collaborators": [
     "Miden"
   ],
   "type": "module",
-  "main": "./dist/eager.js",
-  "browser": "./dist/eager.js",
+  "main": "./dist/index.js",
+  "browser": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/eager.js"
-    },
-    "./lazy": {
-      "types": "./dist/index.d.ts",
+      "browser": "./dist/index.js",
+      "node": "./js/node-index.js",
       "default": "./dist/index.js"
     }
   },
   "files": [
     "dist",
+    "js/node-index.js",
+    "js/node",
+    "js/client.js",
+    "js/standalone.js",
+    "js/utils.js",
+    "js/resources",
     "../LICENSE.md"
   ],
   "scripts": {
@@ -42,6 +45,7 @@
     "test:remote_prover:testnet": "cross-env TEST_MIDEN_NETWORK=testnet TEST_MIDEN_PROVER_URL=testnet pnpm exec playwright test -g 'with remote prover'",
     "test:clean": "pnpm exec playwright test",
     "test:clean:opt": "pnpm exec playwright test",
+    "test:node": "vitest run",
     "test:unit": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typedoc": "typedoc"
@@ -49,9 +53,9 @@
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@rollup/plugin-commonjs": "^25.0.7",
-    "@vitest/coverage-v8": "^3.0.0",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@types/node": "^24.9.2",
+    "@vitest/coverage-v8": "^3.0.0",
     "@wasm-tool/rollup-plugin-rust": "^3.0.3",
     "binaryen": "^129.0.0",
     "chai": "^5.1.1",

@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk/lazy";
+import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { useMidenStore } from "../store/MidenStore";
 import type { MidenConfig } from "../types";
 import { DEFAULTS } from "../types";
@@ -87,33 +87,20 @@ export function MidenProvider({
     }),
     [config]
   );
-  const [defaultProver, setDefaultProver] =
-    useState<ReturnType<typeof resolveTransactionProver>>(null);
-
-  // Defer prover construction until WASM is ready — resolveTransactionProver
-  // calls TransactionProver.newLocalProver() / newRemoteProver() which touch
-  // the WASM module. Running this synchronously in useMemo before the module
-  // is initialized causes a crash on first render (wasm.__wbindgen_malloc).
-  useEffect(() => {
-    if (!isReady) {
-      setDefaultProver(null);
-      return;
-    }
-    setDefaultProver(resolveTransactionProver(resolvedConfig));
-  }, [
-    isReady,
-    resolvedConfig.prover,
-    resolvedConfig.proverTimeoutMs,
-    /* v8 ignore next 2 — optional chain on proverUrls; tests don't pass proverUrls config */
-    resolvedConfig.proverUrls?.devnet,
-    resolvedConfig.proverUrls?.testnet,
-  ]);
+  const defaultProver = useMemo(
+    () => resolveTransactionProver(resolvedConfig),
+    [
+      resolvedConfig.prover,
+      resolvedConfig.proverTimeoutMs,
+      resolvedConfig.proverUrls?.devnet,
+      resolvedConfig.proverUrls?.testnet,
+    ]
+  );
 
   // Exposed for advanced consumers who need to serialize custom multi-step
   // operations against the client. Built-in hooks no longer use this since
   // the WebClient handles concurrency internally via Layers 1-3.
   const runExclusive = useCallback(
-    /* v8 ignore next 3 — runExclusive callback body; only called by advanced consumers, not directly in tests */
     async <T,>(fn: () => Promise<T>): Promise<T> =>
       clientLockRef.current.runExclusive(fn),
     []
@@ -123,7 +110,6 @@ export function MidenProvider({
   // Locks) now handle concurrency internally, so we no longer wrap in
   // runExclusive here.
   const sync = useCallback(async () => {
-    /* v8 ignore next 1 — guard fires only when client is null before ready; tests always call sync post-ready */
     if (!client || !isReady) return;
 
     const store = useMidenStore.getState();
@@ -173,8 +159,6 @@ export function MidenProvider({
   // Wrapped signCb that reads through the ref — this is passed to WebClient
   // so the callback can be hot-swapped without recreating the client.
   const wrappedSignCb = useCallback(
-    /* v8 ignore next 11 — wrappedSignCb body is only called during external signer operations;
-     * tests don't exercise the full signing flow through MidenProvider directly. */
     async (
       pubKey: Uint8Array,
       signingInputs: Uint8Array
@@ -191,7 +175,6 @@ export function MidenProvider({
   // Initialize client
   useEffect(() => {
     // For local keystore mode (no signer), only initialize once
-    /* v8 ignore next 1 — re-initialization guard; isInitializedRef is true after first init; StrictMode double-invoke hits this */
     if (signerIsConnected === null && isInitializedRef.current) return;
 
     // Signer exists but not connected — mark disconnected, keep client alive
@@ -254,7 +237,6 @@ export function MidenProvider({
           let webClient: WebClient;
           let didSignerInit = false;
 
-          /* v8 ignore next 30 — external keystore / signer path; standard tests don't provide a signer context */
           if (signerContext && signerIsConnected === true) {
             // External keystore mode - signer provider is present and connected
             const storeName = `MidenClientDB_${signerContext.storeName}`;
@@ -294,7 +276,6 @@ export function MidenProvider({
               resolvedConfig.noteTransportUrl,
               seed
             );
-            /* v8 ignore next 1 — post-signer-init cancellation check; timing the cancel() during init is not deterministic */
             if (cancelled) return;
           }
 
@@ -305,13 +286,11 @@ export function MidenProvider({
           if (!didSignerInit) {
             try {
               const summary = await webClient.syncState();
-              /* v8 ignore next 1 — post-syncState cancellation check; not deterministically testable */
               if (cancelled) return;
               setSyncState({
                 syncHeight: summary.blockNum(),
                 lastSyncTime: Date.now(),
               });
-              /* v8 ignore next 3 — initial sync failure is non-fatal; mocks don't throw syncState */
             } catch {
               // Initial sync failure is non-fatal
             }
@@ -321,10 +300,8 @@ export function MidenProvider({
           if (!cancelled) {
             try {
               const accounts = await webClient.getAccounts();
-              /* v8 ignore next 1 — post-getAccounts cancellation check; not deterministically testable */
               if (cancelled) return;
               useMidenStore.getState().setAccounts(accounts);
-              /* v8 ignore next 3 — getAccounts failure during init is non-fatal; mocks don't throw */
             } catch {
               // Non-fatal
             }
@@ -388,8 +365,6 @@ export function MidenProvider({
     const interval = config.autoSyncInterval ?? DEFAULTS.AUTO_SYNC_INTERVAL;
     if (interval <= 0) return;
 
-    /* v8 ignore next 5 — setInterval callback fires asynchronously; testing it requires
-     * fake timers that interact poorly with the React + WASM init flow in jsdom. */
     syncIntervalRef.current = setInterval(() => {
       if (!useMidenStore.getState().syncPaused) {
         sync();
@@ -413,8 +388,6 @@ export function MidenProvider({
     if (!isReady || !client) return;
 
     // The WebClient exposes onStateChanged when BroadcastChannel is available.
-    /* v8 ignore next 12 — onStateChanged callback fires on cross-tab BroadcastChannel events;
-     * requires a real multi-tab browser environment, not testable in jsdom. */
     const unsubscribe = client.onStateChanged?.(async () => {
       try {
         const accounts = await client.getAccounts();
@@ -426,7 +399,6 @@ export function MidenProvider({
     });
 
     return () => {
-      /* v8 ignore next 1 — unsubscribe?.() optional call; unsubscribe is always defined when cleanup runs */
       unsubscribe?.();
     };
   }, [isReady, client, setSyncState]);

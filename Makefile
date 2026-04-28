@@ -87,6 +87,11 @@ test-web-client-unit: ## Run web-client unit tests with coverage
 .PHONY: test-coverage
 test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-unit ## Run all coverage gates
 
+.PHONY: test-web-client-nodejs
+test-web-client-nodejs: ## Run web client tests on Node.js (mock chain, no browser needed)
+	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
+	cd ./crates/web-client && pnpm exec playwright test --project=nodejs --workers=1
+
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""
 # Local "clean" run: ensure deps are installed, do a debug WASM build, install

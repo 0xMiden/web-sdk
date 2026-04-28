@@ -1,5 +1,7 @@
 use miden_client::auth::{
-    AuthSecretKey, PublicKeyCommitment, Signature as NativeSignature,
+    AuthSecretKey,
+    PublicKeyCommitment,
+    Signature as NativeSignature,
     SigningInputs as NativeSigningInputs,
 };
 use miden_client::keystore::KeyStoreError;
@@ -82,69 +84,16 @@ impl InsertKeyCallback {
 }
 
 /// Wrapper for the JavaScript `sign` callback.
-///
 /// Expected JS signature: `(pubKeyCommitment: Uint8Array, commitment: Uint8Array) =>
 /// Promise<number[] | string[]> | number[] | string[]`.
-///
-/// # Typed error convention
-///
-/// When the callback throws, consumers can attach a `reason` (string) and
-/// optional `code` (string) property to the thrown `Error`. The raw thrown
-/// value is captured and surfaced via [`crate::WebClient::last_auth_error`]
-/// so a caller can distinguish (e.g.) "wallet locked" from "user rejected"
-/// from "keystore unavailable" and retry or surface accordingly.
-///
-/// ```js
-/// signCallback: async (pubKey, signingInputs) => {
-///   if (vault.isLocked()) {
-///     throw Object.assign(new Error("wallet locked"), { reason: "locked" });
-///   }
-///   return await sign(pubKey, signingInputs);
-/// }
-/// ```
 pub(crate) struct SignCallback(pub(crate) Function);
-
-/// Error returned by [`SignCallback::sign`]. Carries both the typed
-/// [`AuthenticationError`] expected by miden-tx and the raw [`JsValue`]
-/// thrown by the JS callback (when any), so callers can record it for
-/// later inspection via [`WebClient::last_auth_error`].
-pub(crate) struct SignCallbackError {
-    pub(crate) auth_err: AuthenticationError,
-    /// Raw `JsValue` thrown by the callback, or [`JsValue::NULL`] if the
-    /// failure didn't originate from a JS throw (e.g. result type was
-    /// wrong).
-    pub(crate) raw: JsValue,
-}
-
-impl SignCallbackError {
-    fn from_js(raw: JsValue, context: &str) -> Self {
-        Self {
-            auth_err: AuthenticationError::other(format!("{context}: {raw:?}")),
-            raw,
-        }
-    }
-
-    fn from_str(msg: &'static str) -> Self {
-        Self {
-            auth_err: AuthenticationError::other(msg),
-            raw: JsValue::NULL,
-        }
-    }
-
-    fn from_msg(msg: String) -> Self {
-        Self {
-            auth_err: AuthenticationError::other(msg),
-            raw: JsValue::NULL,
-        }
-    }
-}
 
 impl SignCallback {
     pub(crate) async fn sign(
         &self,
         pub_key_commitment: NativeWord,
         signing_inputs: &NativeSigningInputs,
-    ) -> Result<NativeSignature, SignCallbackError> {
+    ) -> Result<NativeSignature, AuthenticationError> {
         let signing_inputs_array = SigningInputs::from(signing_inputs).serialize();
         let pub_key_commitment_array = pub_key_commitment.as_bytes().to_vec();
 
@@ -155,22 +104,22 @@ impl SignCallback {
                 &JsValue::from(pub_key_commitment_array),
                 &JsValue::from(signing_inputs_array),
             )
-            .map_err(|err| SignCallbackError::from_js(err, "JS sign threw"))?;
+            .map_err(|err| AuthenticationError::other(format!("JS sign threw: {err:?}")))?;
 
         let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
-            JsFuture::from(promise.clone())
-                .await
-                .map_err(|err| SignCallbackError::from_js(err, "sign callback promise rejected"))?
+            JsFuture::from(promise.clone()).await.map_err(|err| {
+                AuthenticationError::other(format!("Failed to sign via callback: {err:?}"))
+            })?
         } else {
             call_result
         };
 
         let bytes = resolved
             .dyn_ref::<Uint8Array>()
-            .ok_or_else(|| SignCallbackError::from_str("sign callback must return a Uint8Array"))?;
+            .ok_or_else(|| AuthenticationError::other("sign callback must return a Uint8Array"))?;
 
-        let signature = Signature::deserialize(bytes).map_err(|err| {
-            SignCallbackError::from_msg(format!("Failed to decode callback signature: {err:?}"))
+        let signature = Signature::deserialize(bytes.clone()).map_err(|err| {
+            AuthenticationError::other(format!("Failed to sign via callback: {err:?}"))
         })?;
         Ok(signature.into())
     }

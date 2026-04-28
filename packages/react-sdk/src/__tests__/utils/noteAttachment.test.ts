@@ -3,7 +3,7 @@ import {
   readNoteAttachment,
   createNoteAttachment,
 } from "../../utils/noteAttachment";
-import { NoteAttachmentKind, NoteAttachment } from "@miden-sdk/miden-sdk/lazy";
+import { NoteAttachmentKind, NoteAttachment } from "@miden-sdk/miden-sdk";
 
 describe("readNoteAttachment", () => {
   it("should return null when note has no metadata", () => {
@@ -69,18 +69,6 @@ describe("readNoteAttachment", () => {
     });
   });
 
-  it("should return null when asArray returns null (line 54)", () => {
-    const note = {
-      metadata: vi.fn(() => ({
-        attachment: vi.fn(() => ({
-          kind: vi.fn(() => NoteAttachmentKind.Array),
-          asArray: vi.fn(() => null),
-        })),
-      })),
-    } as any;
-    expect(readNoteAttachment(note)).toBeNull();
-  });
-
   it("should return null when asWord returns null", () => {
     const note = {
       metadata: vi.fn(() => ({
@@ -98,19 +86,6 @@ describe("readNoteAttachment", () => {
       metadata: vi.fn(() => {
         throw new Error("boom");
       }),
-    } as any;
-    expect(readNoteAttachment(note)).toBeNull();
-  });
-
-  it("should return null for unknown attachment kind (line 62)", () => {
-    // A kind value that is not None, Word, or Array
-    const UNKNOWN_KIND = 99;
-    const note = {
-      metadata: vi.fn(() => ({
-        attachment: vi.fn(() => ({
-          kind: vi.fn(() => UNKNOWN_KIND),
-        })),
-      })),
     } as any;
     expect(readNoteAttachment(note)).toBeNull();
   });
@@ -173,22 +148,5 @@ describe("createNoteAttachment", () => {
     expect(() =>
       createNoteAttachment([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n])
     ).not.toThrow();
-  });
-
-  it("should throw when NoteAttachment.newArray is not available (lines 117-120)", () => {
-    // Temporarily remove the newArray function from NoteAttachment mock
-    const original = (NoteAttachment as any).newArray;
-    delete (NoteAttachment as any).newArray;
-
-    try {
-      expect(() => createNoteAttachment([1n, 2n, 3n, 4n, 5n])).toThrow(
-        "NoteAttachment.newArray is not available"
-      );
-    } finally {
-      // Restore
-      if (original !== undefined) {
-        (NoteAttachment as any).newArray = original;
-      }
-    }
   });
 });

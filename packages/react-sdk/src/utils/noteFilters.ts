@@ -2,7 +2,7 @@ import {
   NoteFilterTypes,
   NoteType,
   TransactionFilter,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 
 /**
  * Map a status string to the corresponding NoteFilterTypes enum value.
@@ -36,7 +36,6 @@ export function getNoteType(type: "private" | "public"): NoteType {
       return NoteType.Private;
     case "public":
       return NoteType.Public;
-    /* v8 ignore next 2 — TypeScript type ensures only "private"|"public"; default is unreachable */
     default:
       return NoteType.Private;
   }

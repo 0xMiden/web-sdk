@@ -3,7 +3,7 @@ import {
   getNoteFilterType,
   waitForTransactionCommit,
 } from "../../utils/noteFilters";
-import { NoteFilterTypes } from "@miden-sdk/miden-sdk/lazy";
+import { NoteFilterTypes } from "@miden-sdk/miden-sdk";
 
 describe("getNoteFilterType", () => {
   it("should return All for undefined status", () => {

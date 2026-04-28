@@ -3,13 +3,13 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useImportStore } from "../../hooks/useImportStore";
 import { useMiden } from "../../context/MidenProvider";
 import { createMockWebClient } from "../mocks/miden-sdk";
-import { importStore as sdkImportStore } from "@miden-sdk/miden-sdk/lazy";
+import { importStore as sdkImportStore } from "@miden-sdk/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
 }));
 
-vi.mock("@miden-sdk/miden-sdk/lazy", () => ({
+vi.mock("@miden-sdk/miden-sdk", () => ({
   importStore: vi.fn(),
 }));
 
@@ -171,33 +171,6 @@ describe("useImportStore", () => {
       });
 
       expect(mockSync).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("non-Error catch branch", () => {
-    it("should wrap non-Error thrown values in an Error", async () => {
-      const mockClient = createMockWebClient();
-      const runExclusive = vi.fn((fn: () => unknown) => fn());
-      mockSdkImportStore.mockRejectedValue("string import store error");
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        runExclusive,
-        sync: vi.fn(),
-      });
-
-      const { result } = renderHook(() => useImportStore());
-
-      await act(async () => {
-        await expect(result.current.importStore("{}", "Store")).rejects.toThrow(
-          "string import store error"
-        );
-      });
-
-      await waitFor(() => {
-        expect(result.current.error?.message).toBe("string import store error");
-      });
     });
   });
 

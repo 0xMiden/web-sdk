@@ -90,7 +90,7 @@ describe("useCreateFaucet", () => {
         "TEST",
         8, // decimals (default)
         1000000n,
-        2 // authScheme — default `AuthScheme.Falcon` resolves to 2 (RpoFalcon512)
+        2 // authScheme (default: AuthRpoFalcon512)
       );
     });
 
@@ -114,7 +114,7 @@ describe("useCreateFaucet", () => {
           maxSupply: 10000000000n,
           decimals: 6,
           storageMode: "public",
-          authScheme: "ecdsa",
+          authScheme: 1,
         });
       });
 
@@ -124,7 +124,7 @@ describe("useCreateFaucet", () => {
         "USDC",
         6,
         10000000000n,
-        1 // authScheme — "ecdsa" resolves to 1 (AuthEcdsaK256Keccak)
+        1
       );
     });
 
@@ -367,42 +367,6 @@ describe("useCreateFaucet", () => {
         "BIG",
         8,
         largeSupply,
-        2
-      );
-    });
-  });
-
-  describe("storage mode default branch", () => {
-    it("should fall back to private when an unknown storageMode is passed (line 136)", async () => {
-      const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
-      const mockClient = createMockWebClient({
-        newFaucet: vi.fn().mockResolvedValue(mockFaucet),
-        getAccounts: vi.fn().mockResolvedValue([]),
-      });
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-      });
-
-      const { result } = renderHook(() => useCreateFaucet());
-
-      await act(async () => {
-        await result.current.createFaucet({
-          tokenSymbol: "TEST",
-          maxSupply: 1000000n,
-          // storageMode: cast unknown value through the type to hit the default branch
-          storageMode: "unknown" as any,
-        });
-      });
-
-      // getStorageMode default branch returns AccountStorageMode.private()
-      expect(mockClient.newFaucet).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "private" }),
-        false,
-        "TEST",
-        8,
-        expect.any(BigInt),
         2
       );
     });

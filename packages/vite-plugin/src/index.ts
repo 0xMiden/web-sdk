@@ -59,15 +59,6 @@ export function midenVitePlugin(options?: MidenVitePluginOptions): Plugin {
       // any existing aliases the user may have configured.
       // Use require.resolve for portable resolution in pnpm/Yarn Plug'n'Play setups.
       const esmRequire = createRequire(`file://${root}/`);
-      // Exact-match regex alias (not prefix match). Vite's default string-form
-      // alias matches prefixes, which rewrites subpath imports (e.g.
-      // `@miden-sdk/miden-sdk/lazy`) to file-path lookups and bypasses the
-      // package's `exports` map. Using `^<pkg>$` keeps the alias scoped to the
-      // root specifier; subpath imports fall through to Vite's standard ESM
-      // resolution, which honors `exports`. Package-level deduplication is
-      // handled separately via `resolve.dedupe` (see below).
-      const escapeRegExp = (s: string) =>
-        s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const alias = wasmPackages.map((pkg) => {
         let replacement: string;
         try {
@@ -75,7 +66,7 @@ export function midenVitePlugin(options?: MidenVitePluginOptions): Plugin {
         } catch {
           replacement = path.resolve(root, "node_modules", pkg);
         }
-        return { find: new RegExp(`^${escapeRegExp(pkg)}$`), replacement };
+        return { find: pkg, replacement };
       });
 
       const serverConfig: Record<string, unknown> = {};

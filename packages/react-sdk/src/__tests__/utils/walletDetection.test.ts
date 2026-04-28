@@ -134,39 +134,4 @@ describe("waitForWalletDetection", () => {
     const adapter = createMockAdapter("Installed");
     await waitForWalletDetection(adapter, 0);
   });
-
-  it("double-settle guard: settle() called twice does not resolve twice (line 30)", async () => {
-    // Simulates a race where the re-check in the Promise constructor AND the
-    // event listener both call settle() — only the first should take effect.
-    const adapter = createMockAdapter("NotDetected");
-    const listeners: Array<(s: string) => void> = [];
-
-    const originalOn = adapter.on.bind(adapter);
-    adapter.on = (event: "readyStateChange", cb: (state: string) => void) => {
-      originalOn(event, cb);
-      listeners.push(cb);
-      // Set readyState to Installed synchronously after registering listener
-      // The Promise constructor's re-check (line 55) then also calls settle()
-      adapter.readyState = "Installed";
-      // Fire the listener manually to simulate the event also arriving
-      cb("Installed");
-    };
-
-    // Should resolve without hanging
-    await waitForWalletDetection(adapter);
-  });
-
-  it("double-settle guard in timer: timeout fires after already settled (line 38)", async () => {
-    const adapter = createMockAdapter("NotDetected");
-    const promise = waitForWalletDetection(adapter, 100);
-
-    // Emit Installed to settle the promise
-    adapter.emit("Installed");
-    await promise;
-
-    // Advance timer past the timeout — the timer callback's `if (settled) return`
-    // guard (line 38) should prevent a second rejection
-    vi.advanceTimersByTime(200);
-    // If line 38 guard is missing, this would throw; confirm no unhandled rejection
-  });
 });

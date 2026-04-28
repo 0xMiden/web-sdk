@@ -84,25 +84,9 @@ export declare const AuthScheme: {
 };
 
 /**
- * Union of all string values in the AuthScheme const. Merges with the
- * `AuthScheme` value so `authScheme?: AuthScheme` resolves to
- * `"falcon" | "ecdsa"` in type position while `AuthScheme.Falcon` /
- * `AuthScheme.ECDSA` still work in value position.
+ * Union of all values in the AuthScheme const.
  */
-export type AuthScheme = (typeof AuthScheme)[keyof typeof AuthScheme];
-
-/** @deprecated Alias for `AuthScheme` (the string union). */
-export type AuthSchemeType = AuthScheme;
-
-/**
- * Resolves an `AuthScheme` string to the numeric value expected by low-level
- * wasm-bindgen methods such as
- * `AccountComponent.createAuthComponentFromCommitment(commitment, scheme)`.
- *
- * @param scheme - `AuthScheme.Falcon` or `AuthScheme.ECDSA`. Defaults to `"falcon"`.
- * @returns The numeric AuthScheme enum value.
- */
-export declare function resolveAuthScheme(scheme?: AuthScheme): number;
+export type AuthSchemeType = (typeof AuthScheme)[keyof typeof AuthScheme];
 
 /**
  * User-friendly note visibility constants.
@@ -203,6 +187,8 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
+  /** Enable debug mode for transaction execution (default: false). */
+  debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
     getKey: GetKeyCallback;
@@ -452,11 +438,18 @@ export interface PreviewSwapOptions {
   paybackType?: NoteVisibility;
 }
 
+export interface PreviewCustomOptions {
+  operation: "custom";
+  account: AccountRef;
+  request: TransactionRequest;
+}
+
 export type PreviewOptions =
   | PreviewSendOptions
   | PreviewMintOptions
   | PreviewConsumeOptions
-  | PreviewSwapOptions;
+  | PreviewSwapOptions
+  | PreviewCustomOptions;
 
 /** Status values reported during waitFor polling. */
 export type WaitStatus = "pending" | "submitted" | "committed";
@@ -534,12 +527,6 @@ export interface MockOptions {
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
-}
-
-/** Versioned store snapshot for backup/restore. */
-export interface StoreSnapshot {
-  version: number;
-  data: unknown;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -937,15 +924,6 @@ export declare class MidenClient {
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
   static createMock(options?: MockOptions): Promise<MidenClient>;
-  /**
-   * Resolves once the WASM module is initialized and safe to use.
-   *
-   * Idempotent and shared across callers — concurrent invocations await the
-   * same in-flight promise, and post-init callers resolve immediately.
-   * Primarily useful on the `/lazy` entry (Next.js / Capacitor) where no
-   * top-level await runs at import time; harmless on the eager entry.
-   */
-  static ready(): Promise<void>;
 
   readonly accounts: AccountsResource;
   readonly transactions: TransactionsResource;
@@ -959,46 +937,22 @@ export declare class MidenClient {
   sync(options?: { timeout?: number }): Promise<SyncSummary>;
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
-  /**
-   * Resolves once every serialized WASM call that was already on the
-   * internal call chain when `waitForIdle()` was called (execute, submit,
-   * prove, apply, sync, or account creation) has settled. Use this from
-   * callers that need to perform a non-WASM-side action — e.g. clearing
-   * an in-memory auth key on wallet lock — after the kernel finishes, so
-   * its auth callback doesn't race with the key being cleared. Does NOT
-   * wait for calls enqueued after `waitForIdle()` returns.
-   *
-   * Caveat for `sync`: a `syncState` blocked on its sync lock (Web
-   * Locks) has not yet reached the internal chain, so `waitForIdle`
-   * does not await it. Other serialized methods are always observed.
-   *
-   * Returns immediately if nothing was in flight.
-   */
-  waitForIdle(): Promise<void>;
-  /**
-   * Returns the raw JS value that the most recent sign-callback invocation
-   * threw, or `null` if the last sign call succeeded (or no call has
-   * happened yet). Useful for recovering structured metadata (e.g. a
-   * `reason: 'locked'` property) that the kernel-level `auth::request`
-   * diagnostic would otherwise erase.
-   */
-  lastAuthError(): unknown;
   /** Returns the client-level default prover. */
   readonly defaultProver: TransactionProver | null;
   /** Terminates the underlying Web Worker. After this, all method calls throw. */
   terminate(): void;
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
-  storeIdentifier(): string;
+  storeIdentifier(): Promise<string>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
-  proveBlock(): void;
+  proveBlock(): Promise<void>;
   /** Returns true if this client uses a mock chain. */
   usesMockChain(): boolean;
   /** Serializes the mock chain state for snapshot/restore in tests. */
-  serializeMockChain(): Uint8Array;
+  serializeMockChain(): Promise<Uint8Array>;
   /** Serializes the mock note transport node state. */
-  serializeMockNoteTransportNode(): Uint8Array;
+  serializeMockNoteTransportNode(): Promise<Uint8Array>;
 
   [Symbol.dispose](): void;
   [Symbol.asyncDispose](): Promise<void>;

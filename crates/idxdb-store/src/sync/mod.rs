@@ -6,14 +6,19 @@ use miden_client::account::{AccountId, StorageMap, StorageSlotType};
 use miden_client::note::{BlockNumber, NoteId, NoteTag};
 use miden_client::store::StoreError;
 use miden_client::sync::{
-    BlockUpdates, NoteTagRecord, NoteTagSource, PublicAccountUpdate, StateSyncUpdate,
+    BlockUpdates,
+    NoteTagRecord,
+    NoteTagSource,
+    PublicAccountUpdate,
+    StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
 
 use super::IdxdbStore;
 use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
 use super::chain_data::utils::{
-    SerializedPartialBlockchainNodeData, serialize_partial_blockchain_node,
+    SerializedPartialBlockchainNodeData,
+    serialize_partial_blockchain_node,
 };
 use super::note::utils::{serialize_input_note, serialize_output_note};
 use super::transaction::utils::serialize_transaction_record;
@@ -22,8 +27,12 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::JsAccountUpdate;
 use js_bindings::{
-    JsStateSyncUpdate, idxdb_add_note_tag, idxdb_apply_state_sync, idxdb_get_note_tags,
-    idxdb_get_sync_height, idxdb_remove_note_tag,
+    JsStateSyncUpdate,
+    idxdb_add_note_tag,
+    idxdb_apply_state_sync,
+    idxdb_get_note_tags,
+    idxdb_get_sync_height,
+    idxdb_remove_note_tag,
 };
 
 mod models;
@@ -45,15 +54,11 @@ impl IdxdbStore {
                     (None, None) => NoteTagSource::User,
                     (Some(account_id), None) => {
                         NoteTagSource::Account(AccountId::from_hex(account_id.as_str())?)
-                    }
+                    },
                     (None, Some(note_id)) => {
                         NoteTagSource::Note(NoteId::try_from_hex(note_id.as_str())?)
-                    }
-                    _ => {
-                        return Err(StoreError::ParsingError(
-                            "Invalid NoteTagSource".to_string(),
-                        ));
-                    }
+                    },
+                    _ => return Err(StoreError::ParsingError("Invalid NoteTagSource".to_string())),
                 };
 
                 Ok(NoteTagRecord {
@@ -85,12 +90,8 @@ impl IdxdbStore {
             NoteTagSource::User => (None, None),
         };
 
-        let promise = idxdb_add_note_tag(
-            self.db_id(),
-            tag.tag.to_bytes(),
-            source_note_id,
-            source_account_id,
-        );
+        let promise =
+            idxdb_add_note_tag(self.db_id(), tag.tag.to_bytes(), source_note_id, source_account_id);
         await_js_value(promise, "failed to add note tag").await?;
 
         Ok(true)
@@ -140,10 +141,7 @@ impl IdxdbStore {
             let input_notes = note_updates.updated_input_notes();
             let output_notes = note_updates.updated_output_notes();
             (
-                input_notes
-                    .into_iter()
-                    .map(|note| serialize_input_note(note.inner()))
-                    .collect(),
+                input_notes.into_iter().map(|note| serialize_input_note(note.inner())).collect(),
                 output_notes
                     .into_iter()
                     .map(|note| serialize_output_note(note.inner()))
@@ -158,11 +156,11 @@ impl IdxdbStore {
             .collect();
 
         for (account_id, digest) in account_updates.mismatched_private_accounts() {
-            self.lock_account_on_unexpected_commitment(account_id, digest)
-                .await
-                .map_err(|err| {
+            self.lock_account_on_unexpected_commitment(account_id, digest).await.map_err(
+                |err| {
                     StoreError::DatabaseError(format!("failed to check account mismatch: {err:?}"))
-                })?;
+                },
+            )?;
         }
 
         let account_states_to_rollback = transaction_updates
@@ -171,8 +169,7 @@ impl IdxdbStore {
             .collect::<Vec<_>>();
 
         // Remove the account states and discard their SMT roots from the forest
-        self.rollback_account_states(&account_states_to_rollback)
-            .await?;
+        self.rollback_account_states(&account_states_to_rollback).await?;
 
         // Discard roots for rolled-back accounts
         {
@@ -200,7 +197,7 @@ impl IdxdbStore {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account),
                 PublicAccountUpdate::Delta { new_header, delta } => {
                     delta_updates.push((new_header, delta));
-                }
+                },
             }
         }
 
@@ -229,14 +226,9 @@ impl IdxdbStore {
                 .collect();
             let old_vault_assets = self.get_vault_assets(account_id, vault_keys).await?;
 
-            let map_slot_names: Vec<String> = delta
-                .storage()
-                .maps()
-                .map(|(slot_name, _)| slot_name.to_string())
-                .collect();
-            let old_map_roots = self
-                .get_storage_map_roots(account_id, map_slot_names)
-                .await?;
+            let map_slot_names: Vec<String> =
+                delta.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
+            let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
 
             let (updated_storage_slots, updated_assets, removed_vault_keys) = {
                 let mut smt_forest = self.smt_forest.write();
@@ -254,10 +246,8 @@ impl IdxdbStore {
                 let default_map_root = StorageMap::default().root();
                 for (slot_name, (new_root, slot_type)) in &updated_storage_slots {
                     if *slot_type == StorageSlotType::Map {
-                        let old_root = old_map_roots
-                            .get(slot_name)
-                            .copied()
-                            .unwrap_or(default_map_root);
+                        let old_root =
+                            old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
                         if let Some(root) = final_roots.iter_mut().find(|r| **r == old_root) {
                             *root = *new_root;
                         } else {
@@ -332,14 +322,8 @@ impl IdxdbStore {
     }
 }
 
-type SerializedBlockData = (
-    Vec<Vec<u8>>,
-    Vec<Vec<u8>>,
-    Vec<u32>,
-    Vec<u8>,
-    Vec<String>,
-    Vec<String>,
-);
+type SerializedBlockData =
+    (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
 
 fn serialize_block_updates(
     block_updates: &BlockUpdates,

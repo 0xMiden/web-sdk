@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import { useMidenStore } from "../store/MidenStore";
-import {
-  AccountStorageMode,
-  resolveAuthScheme,
-} from "@miden-sdk/miden-sdk/lazy";
+import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 import type {
   UseSessionAccountOptions,
   UseSessionAccountReturn,
@@ -63,9 +60,7 @@ export function useSessionAccount(
   // Destructure walletOptions primitives so useCallback deps are stable
   const storageMode = options.walletOptions?.storageMode ?? "public";
   const mutable = options.walletOptions?.mutable ?? DEFAULTS.WALLET_MUTABLE;
-  const authScheme = resolveAuthScheme(
-    options.walletOptions?.authScheme ?? DEFAULTS.AUTH_SCHEME
-  );
+  const authScheme = options.walletOptions?.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
   // Store fund in a ref so the callback identity doesn't change when the
   // caller passes an inline function (the common case).
@@ -127,7 +122,6 @@ export function useSessionAccount(
         const accounts = await client.getAccounts();
         setAccounts(accounts);
 
-        /* v8 ignore next 1 — mid-setup cancellation check; timing the cancel() to land here is not deterministic */
         if (cancelledRef.current) return;
 
         walletId = wallet.id().toString();
@@ -135,13 +129,9 @@ export function useSessionAccount(
         localStorage.setItem(`${storagePrefix}:accountId`, walletId);
       }
 
-      // walletId is guaranteed non-null here: either it was truthy on entry
-      // (the if block was skipped) or it was assigned wallet.id().toString() above.
-      const resolvedWalletId = walletId as string;
-
       // Step 2: Fund the session wallet
       setStep("funding");
-      await fundRef.current(resolvedWalletId);
+      await fundRef.current(walletId);
 
       if (cancelledRef.current) return;
 
@@ -149,13 +139,12 @@ export function useSessionAccount(
       setStep("consuming");
       await waitAndConsume(
         client as unknown as WaitAndConsumeClient,
-        resolvedWalletId,
+        walletId,
         pollIntervalMs,
         maxWaitMs,
         cancelledRef
       );
 
-      /* v8 ignore next 1 — post-waitAndConsume cancellation check; requires timing the cancel() to land during the async wait loop */
       if (cancelledRef.current) return;
 
       // Done
@@ -242,12 +231,10 @@ async function waitAndConsume(
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
-    /* v8 ignore next 1 — mid-loop cancellation check; deterministic cancellation timing is not testable */
     if (cancelledRef.current) return;
 
     await (client as { syncState: () => Promise<unknown> }).syncState();
 
-    /* v8 ignore next 1 — post-syncState cancellation check; same determinism constraint */
     if (cancelledRef.current) return;
 
     const accountIdObj = parseAccountId(walletId);

@@ -205,14 +205,12 @@ const methodHandlers = {
 
     const prover = proverPayload
       ? wasm.TransactionProver.deserialize(proverPayload)
-      : null;
+      : undefined;
 
-    const proven = prover
-      ? await wasmWebClient.proveTransactionWithProver(
-          transactionResult,
-          prover
-        )
-      : await wasmWebClient.proveTransaction(transactionResult);
+    const proven = await wasmWebClient.proveTransaction(
+      transactionResult,
+      prover
+    );
     const serializedProven = proven.serialize();
     return serializedProven.buffer;
   },
@@ -265,7 +263,7 @@ const methodHandlers = {
     // Deserialize the prover from the serialized payload
     const prover = proverPayload
       ? wasm.TransactionProver.deserialize(proverPayload)
-      : null;
+      : undefined;
 
     const result = await wasmWebClient.executeTransaction(
       accountId,
@@ -274,9 +272,7 @@ const methodHandlers = {
 
     const transactionId = result.id().toHex();
 
-    const proven = prover
-      ? await wasmWebClient.proveTransactionWithProver(result, prover)
-      : await wasmWebClient.proveTransaction(result);
+    const proven = await wasmWebClient.proveTransaction(result, prover);
     const submissionHeight = await wasmWebClient.submitProvenTransaction(
       proven,
       result
@@ -329,14 +325,18 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
 
   const result = await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION](args);
 
+  const updatedMockChain = (await wasmWebClient.serializeMockChain()).buffer;
+  const updatedMockNoteTransportNode = (
+    await wasmWebClient.serializeMockNoteTransportNode()
+  ).buffer;
+
   return {
     transactionId: result.transactionId,
     submissionHeight: result.submissionHeight,
     serializedTransactionResult: result.serializedTransactionResult,
     serializedTransactionUpdate: result.serializedTransactionUpdate,
-    serializedMockChain: wasmWebClient.serializeMockChain().buffer,
-    serializedMockNoteTransportNode:
-      wasmWebClient.serializeMockNoteTransportNode().buffer,
+    serializedMockChain: updatedMockChain,
+    serializedMockNoteTransportNode: updatedMockNoteTransportNode,
   };
 };
 
@@ -361,14 +361,18 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
   const result =
     await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER](args);
 
+  const updatedMockChain = (await wasmWebClient.serializeMockChain()).buffer;
+  const updatedMockNoteTransportNode = (
+    await wasmWebClient.serializeMockNoteTransportNode()
+  ).buffer;
+
   return {
     transactionId: result.transactionId,
     submissionHeight: result.submissionHeight,
     serializedTransactionResult: result.serializedTransactionResult,
     serializedTransactionUpdate: result.serializedTransactionUpdate,
-    serializedMockChain: wasmWebClient.serializeMockChain().buffer,
-    serializedMockNoteTransportNode:
-      wasmWebClient.serializeMockNoteTransportNode().buffer,
+    serializedMockChain: updatedMockChain,
+    serializedMockNoteTransportNode: updatedMockNoteTransportNode,
   };
 };
 

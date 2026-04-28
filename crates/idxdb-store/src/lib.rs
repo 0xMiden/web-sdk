@@ -15,7 +15,13 @@ use alloc::vec::Vec;
 use base64::Engine;
 use base64::engine::general_purpose;
 use miden_client::account::{
-    Account, AccountCode, AccountHeader, AccountId, AccountStorage, Address, StorageMapKey,
+    Account,
+    AccountCode,
+    AccountHeader,
+    AccountId,
+    AccountStorage,
+    Address,
+    StorageMapKey,
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetVault, AssetVaultKey, AssetWitness, StorageMapWitness};
@@ -23,8 +29,17 @@ use miden_client::block::BlockHeader;
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
-    AccountRecord, AccountSmtForest, AccountStatus, AccountStorageFilter, BlockRelevance,
-    InputNoteRecord, NoteFilter, OutputNoteRecord, PartialBlockchainFilter, Store, StoreError,
+    AccountRecord,
+    AccountSmtForest,
+    AccountStatus,
+    AccountStorageFilter,
+    BlockRelevance,
+    InputNoteRecord,
+    NoteFilter,
+    OutputNoteRecord,
+    PartialBlockchainFilter,
+    Store,
+    StoreError,
     TransactionFilter,
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
@@ -102,9 +117,7 @@ impl IdxdbStore {
 
         for account_id in account_ids {
             let vault = self.get_account_vault(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to get vault for account {account_id}: {e:?}"
-                ))
+                JsValue::from_str(&format!("Failed to get vault for account {account_id}: {e:?}"))
             })?;
 
             let storage = self
@@ -268,12 +281,15 @@ impl Store for IdxdbStore {
         &self,
         block_num: BlockNumber,
     ) -> Result<MmrPeaks, StoreError> {
-        self.get_partial_blockchain_peaks_by_block_num(block_num)
-            .await
+        self.get_partial_blockchain_peaks_by_block_num(block_num).await
     }
 
-    async fn prune_irrelevant_blocks(&self) -> Result<(), StoreError> {
-        self.prune_irrelevant_blocks().await
+    async fn untrack_and_prune_irrelevant_blocks(
+        &self,
+        blocks_to_untrack: &[BlockNumber],
+        node_indices_to_remove: &[InOrderIndex],
+    ) -> Result<(), StoreError> {
+        self.prune_irrelevant_blocks(blocks_to_untrack, node_indices_to_remove).await
     }
 
     async fn prune_account_history(
@@ -318,8 +334,7 @@ impl Store for IdxdbStore {
         &self,
         account_commitment: Word,
     ) -> Result<Option<AccountHeader>, StoreError> {
-        self.get_account_header_by_commitment(account_commitment)
-            .await
+        self.get_account_header_by_commitment(account_commitment).await
     }
 
     async fn get_account(
@@ -410,9 +425,7 @@ impl Store for IdxdbStore {
         let note_tag_record = NoteTagRecord::with_account_source(derived_note_tag, account_id);
         let success = self.add_note_tag(note_tag_record).await?;
         if !success {
-            return Err(StoreError::NoteTagAlreadyTracked(u64::from(
-                derived_note_tag.as_u32(),
-            )));
+            return Err(StoreError::NoteTagAlreadyTracked(u64::from(derived_note_tag.as_u32())));
         }
         self.insert_address(address, &account_id).await
     }
