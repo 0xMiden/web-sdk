@@ -158,8 +158,58 @@ jobs:
           node-version: "20"
       - name: Install dependencies
         run: ./scripts/retry-yarn-install.sh packages/react-sdk
-      - name: Run unit tests
-        run: make test-react-sdk
+      - name: Run unit tests with coverage
+        run: cd packages/react-sdk && yarn test:unit --coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-react-sdk
+          path: packages/react-sdk/coverage
+
+  test-idxdb-store:
+    name: idxdb-store unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: crates/idxdb-store/src/yarn.lock
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh crates/idxdb-store/src
+      - name: Run unit tests with coverage
+        run: cd crates/idxdb-store/src && yarn test --coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-idxdb-store
+          path: crates/idxdb-store/src/coverage
+
+  test-vite-plugin:
+    name: vite-plugin unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: packages/vite-plugin/yarn.lock
+      - name: Install dependencies
+        run: ./scripts/retry-yarn-install.sh packages/vite-plugin
+      - name: Run unit tests with coverage
+        run: cd packages/vite-plugin && yarn test --coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-vite-plugin
+          path: packages/vite-plugin/coverage
 
   test-react-sdk-integration:
     name: React SDK integration tests
