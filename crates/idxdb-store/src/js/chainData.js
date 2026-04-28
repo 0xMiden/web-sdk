@@ -1,25 +1,20 @@
 import { getDatabase } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
-export async function insertBlockHeader(dbId, blockNum, header, partialBlockchainPeaks, hasClientNotes) {
+export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes) {
     try {
         const db = getDatabase(dbId);
         const data = {
             blockNum: blockNum,
             header,
-            partialBlockchainPeaks,
             hasClientNotes: hasClientNotes.toString(),
         };
-        // Mirror SQLite's `insert_block_header_tx`: do an INSERT OR IGNORE on the
+        // Mirror SQLite's `insert_block_header_tx`: INSERT OR IGNORE on the
         // row, then explicitly upgrade `has_client_notes` to true if the caller
         // says so. Two callers hit this:
         //   - Genesis flow — no existing row; the add succeeds.
         //   - `get_and_store_authenticated_block` for a past block — a row
-        //     written by `applyStateSync` typically already exists. Overwriting
-        //     it would clobber the correct historical peaks (popcount ==
-        //     block_num) with peaks from the caller's current `PartialMmr`
-        //     forest (popcount == current sync height). Later reads of those
-        //     peaks trip `MmrPeaks::new`'s InvalidPeaks validation and wedge
-        //     sync for the rest of the session.
+        //     written by `applyStateSync` typically already exists, so the add
+        //     is ignored.
         //
         // The `has_client_notes` upgrade is load-bearing: `get_tracked_block_
         // header_numbers` filters by this flag to seed `tracked_leaves`, which
@@ -72,11 +67,9 @@ export async function getBlockHeaders(dbId, blockNumbers) {
             }
             else {
                 const headerBase64 = uint8ArrayToBase64(result.header);
-                const partialBlockchainPeaksBase64 = uint8ArrayToBase64(result.partialBlockchainPeaks);
                 return {
                     blockNum: result.blockNum,
                     header: headerBase64,
-                    partialBlockchainPeaks: partialBlockchainPeaksBase64,
                     hasClientNotes: result.hasClientNotes === "true",
                 };
             }
@@ -96,11 +89,9 @@ export async function getTrackedBlockHeaders(dbId) {
             .toArray();
         const processedRecords = await Promise.all(allMatchingRecords.map((record) => {
             const headerBase64 = uint8ArrayToBase64(record.header);
-            const partialBlockchainPeaksBase64 = uint8ArrayToBase64(record.partialBlockchainPeaks);
             return {
                 blockNum: record.blockNum,
                 header: headerBase64,
-                partialBlockchainPeaks: partialBlockchainPeaksBase64,
                 hasClientNotes: record.hasClientNotes === "true",
             };
         }));
@@ -121,24 +112,6 @@ export async function getTrackedBlockHeaderNumbers(dbId) {
     }
     catch (err) {
         logWebStoreError(err, "Failed to get tracked block header numbers");
-    }
-}
-export async function getPartialBlockchainPeaksByBlockNum(dbId, blockNum) {
-    try {
-        const db = getDatabase(dbId);
-        const blockHeader = await db.blockHeaders.get(blockNum);
-        if (blockHeader == undefined) {
-            return {
-                peaks: undefined,
-            };
-        }
-        const partialBlockchainPeaksBase64 = uint8ArrayToBase64(blockHeader.partialBlockchainPeaks);
-        return {
-            peaks: partialBlockchainPeaksBase64,
-        };
-    }
-    catch (err) {
-        logWebStoreError(err, "Failed to get partial blockchain peaks");
     }
 }
 export async function getPartialBlockchainNodesAll(dbId) {
@@ -182,9 +155,9 @@ export async function pruneIrrelevantBlocks(dbId, blocksToUntrack, nodeIdsToRemo
     try {
         const db = getDatabase(dbId);
         const numericNodeIds = nodeIdsToRemove.map(Number);
-        const syncHeight = await db.stateSync.get(1);
+        const syncHeight = await db.blockchainCheckpoint.get(1);
         if (syncHeight == undefined) {
-            throw Error("SyncHeight is undefined -- is the state sync table empty?");
+            throw Error("SyncHeight is undefined -- is the blockchain_checkpoint table empty?");
         }
         await db.dexie.transaction("rw", db.blockHeaders, db.partialBlockchainNodes, async () => {
             // 1. Delete stale MMR authentication nodes.

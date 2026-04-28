@@ -3,12 +3,13 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::{AccountId, StorageMap, StorageSlotType};
+use miden_client::crypto::{Forest, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteId, NoteTag};
 use miden_client::store::StoreError;
 use miden_client::sync::{
-    BlockUpdates,
     NoteTagRecord,
     NoteTagSource,
+    PartialBlockchainUpdates,
     PublicAccountUpdate,
     StateSyncUpdate,
 };
@@ -30,13 +31,14 @@ use js_bindings::{
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
+    idxdb_get_current_blockchain_checkpoint,
     idxdb_get_note_tags,
     idxdb_get_sync_height,
     idxdb_remove_note_tag,
 };
 
 mod models;
-use models::{NoteTagIdxdbObject, SyncHeightIdxdbObject};
+use models::{NoteTagIdxdbObject, PartialBlockchainPeaksIdxdbObject, SyncHeightIdxdbObject};
 
 mod flattened_vec;
 use flattened_vec::flatten_nested_u8_vec;
@@ -77,6 +79,25 @@ impl IdxdbStore {
             await_js(promise, "failed to get sync height").await?;
 
         Ok(block_num_idxdb.block_num.into())
+    }
+
+    pub(crate) async fn get_current_blockchain_checkpoint(
+        &self,
+    ) -> Result<(BlockNumber, MmrPeaks), StoreError> {
+        let promise = idxdb_get_current_blockchain_checkpoint(self.db_id());
+        let checkpoint: PartialBlockchainPeaksIdxdbObject =
+            await_js(promise, "failed to get current blockchain checkpoint").await?;
+
+        let block_num = BlockNumber::from(checkpoint.block_num);
+
+        if checkpoint.peaks.is_empty() {
+            return Ok((block_num, MmrPeaks::new(Forest::empty(), Vec::new())?));
+        }
+
+        let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&checkpoint.peaks)?;
+        let peaks = MmrPeaks::new(Forest::new(block_num.as_usize()), mmr_peaks_nodes)
+            .map_err(StoreError::MmrError)?;
+        Ok((block_num, peaks))
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {
@@ -122,7 +143,7 @@ impl IdxdbStore {
     ) -> Result<(), StoreError> {
         let StateSyncUpdate {
             block_num,
-            block_updates,
+            partial_blockchain_updates,
             note_updates,
             transaction_updates,
             account_updates,
@@ -130,12 +151,13 @@ impl IdxdbStore {
 
         let (
             block_headers_as_bytes,
-            new_mmr_peaks_as_bytes,
             block_nums,
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
-        ) = serialize_block_updates(&block_updates)?;
+        ) = serialize_partial_blockchain_updates(&partial_blockchain_updates)?;
+
+        let new_peaks_bytes = partial_blockchain_updates.new_peaks.peaks().to_vec().to_bytes();
 
         let (serialized_input_notes, serialized_output_notes): (Vec<_>, Vec<_>) = {
             let input_notes = note_updates.updated_input_notes();
@@ -292,7 +314,7 @@ impl IdxdbStore {
             block_num: block_num.as_u32(),
             flattened_new_block_headers: flatten_nested_u8_vec(block_headers_as_bytes),
             new_block_nums: block_nums,
-            flattened_partial_blockchain_peaks: flatten_nested_u8_vec(new_mmr_peaks_as_bytes),
+            new_peaks: new_peaks_bytes,
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
@@ -322,28 +344,25 @@ impl IdxdbStore {
     }
 }
 
-type SerializedBlockData =
-    (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
+type SerializedBlockData = (Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
 
-fn serialize_block_updates(
-    block_updates: &BlockUpdates,
+fn serialize_partial_blockchain_updates(
+    partial_blockchain_updates: &PartialBlockchainUpdates,
 ) -> Result<SerializedBlockData, StoreError> {
     let mut block_headers_as_bytes = Vec::new();
-    let mut new_mmr_peaks_as_bytes = Vec::new();
     let mut block_nums = Vec::new();
     let mut block_has_relevant_notes = Vec::new();
 
-    for (block_header, has_client_notes, mmr_peaks) in block_updates.block_headers() {
+    for (block_header, has_client_notes) in partial_blockchain_updates.block_headers() {
         block_headers_as_bytes.push(block_header.to_bytes());
-        new_mmr_peaks_as_bytes.push(mmr_peaks.peaks().to_vec().to_bytes());
         block_nums.push(block_header.block_num().as_u32());
         block_has_relevant_notes.push(u8::from(*has_client_notes));
     }
 
-    let auth_nodes_len = block_updates.new_authentication_nodes().len();
+    let auth_nodes_len = partial_blockchain_updates.new_authentication_nodes().len();
     let mut serialized_node_ids = Vec::with_capacity(auth_nodes_len);
     let mut serialized_nodes = Vec::with_capacity(auth_nodes_len);
-    for (id, node) in block_updates.new_authentication_nodes() {
+    for (id, node) in partial_blockchain_updates.new_authentication_nodes() {
         let SerializedPartialBlockchainNodeData { id, node } =
             serialize_partial_blockchain_node(*id, *node)?;
         serialized_node_ids.push(id);
@@ -352,7 +371,6 @@ fn serialize_block_updates(
 
     Ok((
         block_headers_as_bytes,
-        new_mmr_peaks_as_bytes,
         block_nums,
         block_has_relevant_notes,
         serialized_node_ids,
