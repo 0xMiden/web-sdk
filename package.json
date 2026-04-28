@@ -7,7 +7,8 @@
     "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
-    "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage"
+    "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
+    "prepare": "lefthook install || true"
   },
   "dependencies": {
     "prettier": "^3.8.1"
@@ -16,7 +17,18 @@
     "@typescript-eslint/eslint-plugin": "^8.25.0",
     "@typescript-eslint/parser": "^8.25.0",
     "eslint": "^9.30.1",
+    "lefthook": "^1.13.6",
+    "lint-staged": "^16.4.0",
     "typescript": "^5.5.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css}": [
+      "prettier --write"
+    ]
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {
