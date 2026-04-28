@@ -87,6 +87,9 @@ importers:
 
   crates/web-client:
     dependencies:
+      dexie:
+        specifier: ^4.0.1
+        version: 4.4.2
       glob:
         specifier: ^11.0.0
         version: 11.1.0

@@ -306,4 +306,3 @@ type MockWebClientType = {
   executeProgram: ReturnType<typeof vi.fn>;
   free: ReturnType<typeof vi.fn>;
 };
-

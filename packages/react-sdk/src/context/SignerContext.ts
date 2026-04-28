@@ -36,10 +36,7 @@ type GetKeyCallback = (pubKey: Uint8Array) => Promise<Uint8Array>;
  * @param pubKey - Public key commitment bytes
  * @param secretKey - Secret key bytes to store
  */
-type InsertKeyCallback = (
-  pubKey: Uint8Array,
-  secretKey: Uint8Array
-) => void;
+type InsertKeyCallback = (pubKey: Uint8Array, secretKey: Uint8Array) => void;
 
 /**
  * Account type for signer accounts.

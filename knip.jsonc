@@ -18,14 +18,19 @@
     // Used in .github/workflows/wallet-pages.yml via `pnpm exec vite
     // build` from the wallet example workspace (which has its own
     // package.json + lockfile, hidden from this monorepo's graph).
-    "vite"
+    "vite",
   ],
   "ignoreDependencies": [
     // `prettier` is invoked from the repo Makefile (`make format` /
     // `make format-check`) via `pnpm exec prettier .`. Knip only scans
     // *.{js,ts,json,yml} for binary references, not Makefile rules, so
     // it appears unused even though CI's lint job depends on it.
-    "prettier"
+    "prettier",
+    // `dexie` is bundled into the web-client test page via rollup at
+    // test runtime — `page.evaluate(...)` blocks load the rolled-up
+    // bundle from http://localhost:8080, which transitively imports
+    // dexie. Knip's static scan can't see across the build boundary.
+    "dexie",
   ],
   "rules": {
     // Three intentional dual-export patterns in this repo:
@@ -40,22 +45,22 @@
     //   `jsxs`, `jsxDEV` are all aliased to the same function because
     //   the React JSX transform looks for whichever name matches the
     //   classic/automatic runtime.
-    "duplicates": "off"
+    "duplicates": "off",
   },
   "workspaces": {
     ".": {
-      "entry": ["scripts/**/*.{js,ts}"]
+      "entry": ["scripts/**/*.{js,ts}"],
     },
     "packages/react-sdk": {
       "entry": [
         "src/__tests__/**/*.test.{ts,tsx}",
         "test/**/*.test.ts",
         "test/serve-tests.js",
-        "test/test-app/**/*.{js,html}"
-      ]
+        "test/test-app/**/*.{js,html}",
+      ],
     },
     "packages/vite-plugin": {
-      "entry": ["src/__tests__/**/*.test.ts"]
+      "entry": ["src/__tests__/**/*.test.ts"],
     },
     "crates/web-client": {
       // Hand-rolled JS in `js/` is the published surface (bundled via
@@ -84,7 +89,7 @@
         "test/**/*.test.ts",
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
-        "scripts/**/*.js"
+        "scripts/**/*.js",
       ],
       // The `./eager.js` and `./index.js` strings inside
       // `page.evaluate(...)` blocks are dynamic imports executed in the
@@ -97,8 +102,8 @@
       "ignoreUnresolved": [
         "./eager.js",
         "./index.js",
-        "./crates/miden_client_web"
-      ]
+        "./crates/miden_client_web",
+      ],
     },
     "crates/idxdb-store/src": {
       // Each `ts/*.ts` is independently tsc-compiled into `js/` and
@@ -116,12 +121,9 @@
         "ts/transactions.ts",
         "ts/utils.ts",
         "ts/test-utils.ts",
-        "ts/**/*.test.ts"
-      ]
-    }
+        "ts/**/*.test.ts",
+      ],
+    },
   },
-  "ignore": [
-    "packages/react-sdk/examples/**",
-    "crates/idxdb-store/src/js/**"
-  ]
+  "ignore": ["packages/react-sdk/examples/**", "crates/idxdb-store/src/js/**"],
 }
