@@ -33,13 +33,19 @@ import { defineConfig, devices } from "@playwright/test";
 // in `chromium`, once in a shard project).
 const ciShardProjects = process.env.CI
   ? [
+      // Heuristic rebalance from PR #10 timings: shard-1 ran 27m (3 files,
+      // 19 tests, all heavy E2E tx flows) while shard-3 and shard-4 ran in
+      // ~14.7m. Moving transactions.test.ts (2 heavy E2E cases) from shard-1
+      // to shard-4 evens the wall-clock. Moving store_isolation.test.ts
+      // (7 tests, medium) from shard-2 to shard-3 lightens shard-2 (was 19m40s).
+      // The JSON reporter on the next CI run will produce per-test timings
+      // for an evidence-based pass.
       {
         name: "ci-shard-1-tx-flows",
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
           "test/new_transactions.test.ts",
           "test/swap_transactions.test.ts",
-          "test/transactions.test.ts",
         ],
       },
       {
@@ -48,7 +54,6 @@ const ciShardProjects = process.env.CI
         testMatch: [
           "test/sync_lock.test.ts",
           "test/tags.test.ts",
-          "test/store_isolation.test.ts",
           "test/notes.test.ts",
           "test/note_transport.test.ts",
         ],
@@ -67,6 +72,7 @@ const ciShardProjects = process.env.CI
           "test/remote_keystore.test.ts",
           "test/import_export.test.ts",
           "test/import.test.ts",
+          "test/store_isolation.test.ts",
         ],
       },
       {
@@ -85,6 +91,7 @@ const ciShardProjects = process.env.CI
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
+          "test/transactions.test.ts",
         ],
       },
     ]
@@ -102,7 +109,15 @@ export default defineConfig({
   /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 2 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: "html",
+  // On CI: also emit a JSON report so per-test timings can be extracted
+  // from artifacts (used for evidence-based shard rebalancing). The JSON
+  // file lands at playwright-report/results.json.
+  reporter: process.env.CI
+    ? [
+        ["html", { open: "never" }],
+        ["json", { outputFile: "playwright-report/results.json" }],
+      ]
+    : "html",
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */

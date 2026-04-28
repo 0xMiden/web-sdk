@@ -403,6 +403,13 @@ jobs:
         with:
           name: coverage-react-sdk
           path: packages/react-sdk/coverage
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: packages/react-sdk/coverage/lcov.info
+          flags: react-sdk
+          fail_ci_if_error: false
 
   test-idxdb-store:
     name: idxdb-store unit tests
@@ -428,6 +435,13 @@ jobs:
         with:
           name: coverage-idxdb-store
           path: crates/idxdb-store/src/coverage
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: crates/idxdb-store/src/coverage/lcov.info
+          flags: idxdb-store
+          fail_ci_if_error: false
 
   test-vite-plugin:
     name: vite-plugin unit tests
@@ -453,6 +467,13 @@ jobs:
         with:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: packages/vite-plugin/coverage/lcov.info
+          flags: vite-plugin
+          fail_ci_if_error: false
 
   test-web-client-unit:
     name: web-client unit tests
@@ -478,6 +499,13 @@ jobs:
         with:
           name: coverage-web-client
           path: crates/web-client/coverage
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: crates/web-client/coverage/lcov.info
+          flags: web-client
+          fail_ci_if_error: false
 
   test-react-sdk-integration:
     name: React SDK integration tests
@@ -650,6 +678,13 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run web client tests
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci --project=${{ matrix.project }}
+      - name: Upload Playwright JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: crates/web-client/playwright-report/results.json
+          if-no-files-found: ignore
       - name: Stop test node
         if: always()
         run: pkill -f testing-node-builder || true
