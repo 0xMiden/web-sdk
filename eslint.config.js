@@ -1,3 +1,5 @@
+const prettierConfig = require("eslint-config-prettier");
+
 module.exports = [
   {
     // Ignore patterns
@@ -24,34 +26,6 @@ module.exports = [
     },
     rules: {
       camelcase: ["error", { properties: "always" }],
-      semi: ["error", "always"],
-      "keyword-spacing": [
-        "error",
-        {
-          before: true,
-          after: true,
-        },
-      ],
-      "comma-dangle": [
-        "error",
-        {
-          arrays: "always-multiline",
-          objects: "always-multiline",
-          imports: "always-multiline",
-          exports: "always-multiline",
-          functions: "never",
-        },
-      ],
-      "eol-last": ["error", "always"],
-      "space-before-blocks": ["error", "always"],
-      "no-multiple-empty-lines": [
-        "error",
-        {
-          max: 1,
-          maxBOF: 0,
-          maxEOF: 0,
-        },
-      ],
     },
   },
   {
@@ -67,34 +41,8 @@ module.exports = [
     },
     rules: {
       camelcase: ["error", { properties: "always" }],
-      semi: ["error", "always"],
-      "keyword-spacing": [
-        "error",
-        {
-          before: true,
-          after: true,
-        },
-      ],
-      "comma-dangle": [
-        "error",
-        {
-          arrays: "always-multiline",
-          objects: "always-multiline",
-          imports: "always-multiline",
-          exports: "always-multiline",
-          functions: "never",
-        },
-      ],
-      "eol-last": ["error", "always"],
-      "space-before-blocks": ["error", "always"],
-      "no-multiple-empty-lines": [
-        "error",
-        {
-          max: 1,
-          maxBOF: 0,
-          maxEOF: 0,
-        },
-      ],
     },
   },
+  // Must be last: disables any stylistic rules that conflict with Prettier.
+  prettierConfig,
 ];
