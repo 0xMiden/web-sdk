@@ -40,11 +40,18 @@ const ciShardProjects = process.env.CI
       // (7 tests, medium) from shard-2 to shard-3 lightens shard-2 (was 19m40s).
       // The JSON reporter on the next CI run will produce per-test timings
       // for an evidence-based pass.
+      //
+      // PR #11 split new_transactions.test.ts (16 tests, ~1601 lines) into
+      // two roughly equal halves so shard-1's 2 workers can parallelize them:
+      //   new_transactions_send_and_custom.test.ts  (~6 tests, ~801 lines)
+      //   new_transactions_mint_and_misc.test.ts    (~10 tests, ~800 lines)
+      // Estimated shard-1 wall clock: 28m → ~16m (-43%).
       {
         name: "ci-shard-1-tx-flows",
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
-          "test/new_transactions.test.ts",
+          "test/new_transactions_send_and_custom.test.ts",
+          "test/new_transactions_mint_and_misc.test.ts",
           "test/swap_transactions.test.ts",
         ],
       },
