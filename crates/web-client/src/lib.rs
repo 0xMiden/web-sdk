@@ -406,7 +406,11 @@ where
     // text is load-bearing — see `error_code_from_client_error` for the
     // list of codes and their contract.
     if let Some(code) = code {
-        let _ = Reflect::set(&js_error, &JsValue::from_str("errorCode"), &JsValue::from_str(code));
+        let _ = Reflect::set(
+            &js_error,
+            &JsValue::from_str("errorCode"),
+            &JsValue::from_str(code),
+        );
     }
 
     js_error
@@ -441,7 +445,7 @@ fn error_code_from_client_error(err: &ClientError) -> Option<&'static str> {
     match err {
         ClientError::ApplyTransactionAfterSubmitFailed { .. } => {
             Some("ApplyTransactionAfterSubmitFailed")
-        },
+        }
         ClientError::AccountLocked(_) => Some("AccountLocked"),
         ClientError::NoteNotFoundOnChain(_) => Some("NoteNotFoundOnChain"),
         ClientError::RpcError(_) => Some("RpcError"),
