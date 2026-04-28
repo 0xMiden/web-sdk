@@ -111,12 +111,36 @@ export default defineConfig({
 
 ## Eager vs lazy entry points
 
-The SDK ships with two parallel entry points so you can trade WASM init time against bundle reach:
+The SDK ships with two parallel entry points with an identical public API. They differ only in **when** the WASM module is initialized:
 
 | Specifier | When it loads WASM | Use this when |
 |---|---|---|
-| `@miden-sdk/miden-sdk` | At import (top-level await) | Server-rendered apps where the user will definitely use the SDK |
-| `@miden-sdk/miden-sdk/lazy` | Deferred until first method call | Apps where most users never touch crypto (multi-megabyte WASM stays uncached until needed) |
+| `@miden-sdk/miden-sdk` | At import (top-level `await`) | Plain browser apps with a synchronous bundler (Vite, CRA, esbuild, Webpack client bundles). After `import` resolves, every wasm-bindgen constructor (`new Felt(…)`, `AccountId.fromHex(…)`, `TransactionProver.newLocalProver()`, etc.) is safe to call synchronously — no `await MidenClient.ready()` needed. |
+| `@miden-sdk/miden-sdk/lazy` | Only when you ask — via `await MidenClient.ready()`, or implicitly the first time you `await` an SDK method that needs WASM | Anywhere top-level `await` is unsafe or you want to control when to pay the WASM-init cost: **server-side rendering** (Next.js, Remix, SvelteKit), **Capacitor WKWebView hosts** (the iOS/Android scheme handler hangs on TLA), and any code path where you want to defer the multi-megabyte WASM download until the user actually performs a crypto-touching action. |
+
+### Using the lazy entry: `await MidenClient.ready()` first
+
+The lazy entry runs no top-level `await`, so **until you await initialization, every wasm-bindgen type is just a stub**. Calling `new Felt(…)` or `AccountId.fromHex(…)` before WASM is ready throws `TypeError: Cannot read properties of undefined`.
+
+The contract is:
+
+```typescript
+import { MidenClient, AccountId, Felt } from "@miden-sdk/miden-sdk/lazy";
+
+// Stubs — DO NOT touch wasm-bindgen types here:
+//   const id = AccountId.fromHex("0x…"); // ❌ throws
+
+// Initialize WASM exactly once (idempotent + concurrency-safe):
+await MidenClient.ready();
+
+// Now everything is real and synchronous:
+const id = AccountId.fromHex("0x…"); // ✓
+const felt = new Felt(42n); // ✓
+```
+
+`MidenClient.ready()` is idempotent: concurrent callers share the same in-flight promise, and post-init callers resolve immediately from cache. Call it from `MidenProvider`, route loaders, button handlers — wherever the first WASM use is guarded.
+
+You only need to call it explicitly when you're constructing wasm-bindgen types yourself. **Async SDK methods** (`client.accounts.create()`, `client.transactions.send()`, `MidenClient.createTestnet()`, etc.) await initialization internally, so importing them and calling them is enough — the first call transparently triggers WASM load.
 
 The same split applies to `@miden-sdk/react`. The choice cascades: if you use `@miden-sdk/react/lazy`, it pulls `@miden-sdk/miden-sdk/lazy` automatically; the eager variant pulls eager.
 
