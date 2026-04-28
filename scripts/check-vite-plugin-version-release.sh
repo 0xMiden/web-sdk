@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Check if web-client package.json version has been bumped relative to what's
+# Check if vite-plugin package.json version has been bumped relative to what's
 # currently published on npm. Publishes only if the local version is NOT yet on
 # the registry, regardless of which commit introduced the bump.
 #
-# Usage: check-web-client-version-release.sh <RELEASE_SHA>
+# Usage: check-vite-plugin-version-release.sh <RELEASE_SHA>
 #
 # Outputs to $GITHUB_OUTPUT:
 #   - should_publish: true/false
@@ -15,8 +15,8 @@ set -euo pipefail
 # call site. Version is read from the checked-out tree.
 RELEASE_SHA="${1:-}"
 
-PKG_NAME="@miden-sdk/miden-sdk"
-PKG_PATH="crates/web-client/package.json"
+PKG_NAME="@miden-sdk/vite-plugin"
+PKG_PATH="packages/vite-plugin/package.json"
 
 write_skip_and_exit() {
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -37,7 +37,6 @@ if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "null" ]; then
   write_skip_and_exit
 fi
 
-# `npm view <pkg>@<version> version` prints the version if published, empty otherwise.
 PUBLISHED_VERSION=$(npm view "${PKG_NAME}@${CURRENT_VERSION}" version 2>/dev/null || echo "")
 
 if [ "$CURRENT_VERSION" = "$PUBLISHED_VERSION" ]; then
