@@ -32,11 +32,6 @@ export default defineConfig({
         // drifted from the napi-binding sync (PR #13) enough that the tests
         // need review before they apply. Tracked for a follow-up PR. Once
         // each gains a test file in js/__tests__/, drop it from this list.
-        "js/utils.js",
-        "js/resources/accounts.js",
-        "js/resources/compiler.js",
-        "js/resources/keystore.js",
-        "js/resources/transactions.js",
       ],
       thresholds: {
         lines: 95,
