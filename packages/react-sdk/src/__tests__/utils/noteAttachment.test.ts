@@ -149,4 +149,46 @@ describe("createNoteAttachment", () => {
       createNoteAttachment([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n])
     ).not.toThrow();
   });
+
+  it("throws when NoteAttachment.newArray is unavailable (older SDK guard)", () => {
+    // The hook guards against a missing static — simulate that by stashing
+    // the mocked `newArray` and replacing it with `undefined` for the call.
+    // Then restore it so subsequent tests still see the function.
+    const NA = NoteAttachment as unknown as Record<string, unknown>;
+    const original = NA.newArray;
+    try {
+      NA.newArray = undefined;
+      expect(() => createNoteAttachment([1n, 2n, 3n, 4n, 5n])).toThrow(
+        /NoteAttachment\.newArray is not available/
+      );
+    } finally {
+      NA.newArray = original;
+    }
+  });
+});
+
+describe("readNoteAttachment — unrecognized kind", () => {
+  it("returns null when attachment.kind is neither None nor Word nor Array", () => {
+    // Some sentinel that doesn't match any of the enum values 0/1/2.
+    const note = {
+      metadata: vi.fn(() => ({
+        attachment: vi.fn(() => ({
+          kind: vi.fn(() => 999),
+        })),
+      })),
+    } as unknown as Parameters<typeof readNoteAttachment>[0];
+    expect(readNoteAttachment(note)).toBeNull();
+  });
+
+  it("returns null when asArray returns null on an Array-kind attachment", () => {
+    const note = {
+      metadata: vi.fn(() => ({
+        attachment: vi.fn(() => ({
+          kind: vi.fn(() => NoteAttachmentKind.Array),
+          asArray: vi.fn(() => null),
+        })),
+      })),
+    } as unknown as Parameters<typeof readNoteAttachment>[0];
+    expect(readNoteAttachment(note)).toBeNull();
+  });
 });

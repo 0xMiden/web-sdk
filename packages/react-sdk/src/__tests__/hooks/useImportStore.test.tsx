@@ -202,5 +202,32 @@ describe("useImportStore", () => {
       expect(result.current.error).toBeNull();
       expect(result.current.isImporting).toBe(false);
     });
+
+    it("wraps a string rejection in a new Error (instanceof catch branch)", async () => {
+      mockSdkImportStore.mockRejectedValueOnce("import-store-string-fail");
+      const mockClient = createMockWebClient({
+        storeIdentifier: vi.fn().mockReturnValue("S"),
+      });
+      const runExclusive = vi.fn((fn: () => unknown) => fn());
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        runExclusive,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useImportStore());
+
+      await act(async () => {
+        await expect(result.current.importStore("{}", "S")).rejects.toThrow(
+          "import-store-string-fail"
+        );
+      });
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("import-store-string-fail");
+      });
+    });
   });
 });

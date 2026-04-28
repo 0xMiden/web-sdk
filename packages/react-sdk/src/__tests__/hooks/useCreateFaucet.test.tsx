@@ -370,5 +370,30 @@ describe("useCreateFaucet", () => {
         2
       );
     });
+
+    it("falls back to private storage mode when storageMode is unknown (default branch)", async () => {
+      const mockClient = createMockWebClient({
+        newFaucet: vi.fn().mockResolvedValue(createMockAccount()),
+        getAccounts: vi.fn().mockResolvedValue([createMockAccountHeader()]),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        runExclusive: <T,>(fn: () => Promise<T>) => fn(),
+      });
+
+      const { result } = renderHook(() => useCreateFaucet());
+
+      await act(async () => {
+        await result.current.createFaucet({
+          tokenSymbol: "DEF",
+          maxSupply: 100n,
+          // Cast through unknown to bypass the type — the default case
+          // returns AccountStorageMode.private().
+          storageMode: "unknown" as unknown as "public",
+        });
+      });
+      expect(mockClient.newFaucet).toHaveBeenCalled();
+    });
   });
 });

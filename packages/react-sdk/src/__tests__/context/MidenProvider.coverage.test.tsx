@@ -245,4 +245,136 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
     unmount();
     expect(unsub).toHaveBeenCalled();
   });
+
+  it("swallows errors from the initial syncState (init catch branch)", async () => {
+    // syncState throws synchronously during init; the inner try/catch must
+    // swallow it so getAccounts and setClient can still run. We assert
+    // the children eventually render — proving the provider didn't bail.
+    const stub = {
+      getAccounts: vi.fn().mockResolvedValue([]),
+      syncState: vi.fn().mockRejectedValue(new Error("syncState boom")),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn(() => () => {}),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <div data-testid="post-init">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("post-init")).toBeDefined();
+    });
+    // getAccounts ran AFTER syncState threw — proves the catch swallowed.
+    expect(stub.getAccounts).toHaveBeenCalled();
+  });
+
+  it("swallows errors from getAccounts during init (getAccounts catch branch)", async () => {
+    const stub = {
+      getAccounts: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("getAccounts boom"))
+        // Subsequent calls (auto-sync, etc.) should resolve.
+        .mockResolvedValue([]),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn(() => () => {}),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <div data-testid="post-init-2">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("post-init-2")).toBeDefined();
+    });
+  });
+
+  it("swallows errors from getAccounts inside the onStateChanged listener", async () => {
+    let registeredCb: (() => Promise<void>) | null = null;
+    const stub = {
+      getAccounts: vi.fn().mockResolvedValueOnce([]),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn((cb: () => Promise<void>) => {
+        registeredCb = cb;
+        return () => {};
+      }),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <div data-testid="state-changed-ready">ok</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(stub.onStateChanged).toHaveBeenCalled();
+      expect(registeredCb).toBeTypeOf("function");
+    });
+
+    // Make the next getAccounts inside the listener throw — the catch
+    // should swallow it without crashing the provider.
+    stub.getAccounts.mockRejectedValueOnce(new Error("listener boom"));
+    await registeredCb!();
+    // No throw escaped — the listener catch did its job.
+    expect(screen.getByTestId("state-changed-ready")).toBeDefined();
+  });
+
+  it("invokes the success path of the onStateChanged listener (setAccounts + setSyncState)", async () => {
+    // Companion to the catch-path test above: this one lets getAccounts
+    // resolve inside the listener so lines 394-395 (setAccounts + setSyncState)
+    // execute on the happy path.
+    let registeredCb: (() => Promise<void>) | null = null;
+    const stub = {
+      getAccounts: vi.fn().mockResolvedValue([]),
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn((cb: () => Promise<void>) => {
+        registeredCb = cb;
+        return () => {};
+      }),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <div data-testid="state-changed-success">ok</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(registeredCb).toBeTypeOf("function");
+    });
+
+    // Reset the call counter so we observe getAccounts ONLY from the listener.
+    stub.getAccounts.mockClear();
+    await registeredCb!();
+    // The listener invoked getAccounts again (success path), proving lines
+    // 393-395 ran. setSyncState was called too, but lastSyncTime defaults to
+    // undefined in the initial store state, so we just assert getAccounts ran
+    // a second time (the catch path test confirmed the error branch).
+    expect(stub.getAccounts).toHaveBeenCalledTimes(1);
+    // lastSyncTime is nested under sync.lastSyncTime; the listener bumps it
+    // via setSyncState, so it should now be a number.
+    expect(typeof useMidenStore.getState().sync.lastSyncTime).toBe("number");
+  });
 });

@@ -421,5 +421,21 @@ describe("useAccount", () => {
         expect(result.current.isLoading).toBe(false);
       });
     });
+
+    it("captures a non-Error rejection from getAccount and wraps it in a new Error", async () => {
+      const mockClient = createMockWebClient({
+        getAccount: vi.fn().mockRejectedValue("account-string-fail"),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useAccount("0xacc"));
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("account-string-fail");
+      });
+    });
   });
 });

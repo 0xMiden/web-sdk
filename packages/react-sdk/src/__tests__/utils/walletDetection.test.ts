@@ -134,4 +134,31 @@ describe("waitForWalletDetection", () => {
     const adapter = createMockAdapter("Installed");
     await waitForWalletDetection(adapter, 0);
   });
+
+  it("ignores subsequent emits after the first Installed (settled-guard branch in onReady)", async () => {
+    const adapter = createMockAdapter("NotDetected");
+    const promise = waitForWalletDetection(adapter, 1000);
+
+    // First Installed emit settles the promise.
+    adapter.emit("Installed");
+    await promise;
+
+    // Subsequent emits go through the readyStateChange listener but the
+    // listener was unregistered in settle() — still, run the timer to
+    // confirm no late rejection escapes.
+    vi.advanceTimersByTime(1000);
+  });
+
+  it("ignores Installed emits that arrive after the timeout already settled", async () => {
+    const adapter = createMockAdapter("NotDetected");
+    const promise = waitForWalletDetection(adapter, 50);
+
+    // Let the timeout fire first — this rejects the promise.
+    vi.advanceTimersByTime(50);
+    await expect(promise).rejects.toThrow(/not detected/);
+
+    // A late Installed emit should not blow up — the listener was already
+    // removed and the settled flag short-circuits any leftover handlers.
+    adapter.emit("Installed");
+  });
 });

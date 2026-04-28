@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { MidenError, wrapWasmError } from "../../utils/errors";
+import {
+  MidenError,
+  wrapWasmError,
+  assertSignerConnected,
+} from "../../utils/errors";
 
 describe("MidenError", () => {
   it("should create error with default code UNKNOWN", () => {
@@ -108,5 +112,21 @@ describe("wrapWasmError", () => {
   it("should handle null/undefined", () => {
     expect(wrapWasmError(null).message).toBe("null");
     expect(wrapWasmError(undefined).message).toBe("undefined");
+  });
+});
+
+describe("assertSignerConnected", () => {
+  it("throws when signerConnected is explicitly false", () => {
+    expect(() => assertSignerConnected(false)).toThrow(
+      /Signer is disconnected/
+    );
+  });
+
+  it("does not throw when signerConnected is true", () => {
+    expect(() => assertSignerConnected(true)).not.toThrow();
+  });
+
+  it("does not throw when signerConnected is null (no signer provider)", () => {
+    expect(() => assertSignerConnected(null)).not.toThrow();
   });
 });

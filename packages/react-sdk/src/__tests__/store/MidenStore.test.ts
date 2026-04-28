@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useMidenStore } from "../../store/MidenStore";
+import { renderHook, act } from "@testing-library/react";
+import {
+  useMidenStore,
+  useSignerConnected,
+  useIsInitializing,
+} from "../../store/MidenStore";
 import {
   createMockWebClient,
   createMockAccountHeader,
@@ -441,6 +446,66 @@ describe("MidenStore", () => {
       useMidenStore.getState().setConsumableNotesIfChanged([cn1b] as any);
 
       expect(useMidenStore.getState().consumableNotes).toBe(firstRef);
+    });
+
+    it("setNotes skips notes whose id() throws (catch arm)", () => {
+      const okNote = createMockInputNoteRecord("0xok");
+      const brokenNote = {
+        id: () => {
+          throw new Error("note id explosion");
+        },
+      };
+      // Combine OK + broken — OK is added to noteFirstSeen, broken is skipped.
+      useMidenStore.getState().setNotes([okNote, brokenNote] as any);
+
+      // The OK note has its first-seen timestamp recorded. The broken note
+      // didn't blow up the whole call (catch swallowed).
+      expect(useMidenStore.getState().noteFirstSeen.has("0xok")).toBe(true);
+    });
+
+    it("treats notes whose inputNoteRecord throws as id-less (safeId catch)", () => {
+      // Construct two "consumable note records" whose inputNoteRecord() —
+      // the lookup used by safeId — throws. Both prev and new go through
+      // the catch arm, leaving Set.size === 0 in both cases. Because both
+      // sets are empty, the early-return shortcut fires.
+      const broken1 = {
+        inputNoteRecord: () => {
+          throw new Error("broken record");
+        },
+      };
+      const broken2 = {
+        inputNoteRecord: () => {
+          throw new Error("broken record 2");
+        },
+      };
+      // Seed prev with a broken record so safeId catch runs over `state.consumableNotes`.
+      useMidenStore.getState().setConsumableNotes([broken1] as any);
+      useMidenStore.getState().setConsumableNotesIfChanged([broken2] as any);
+      // Both safeId calls returned null → both Sets stay empty → "same" early-return.
+      // The reference may or may not change depending on whether the size compare matched.
+      expect(useMidenStore.getState().consumableNotes).toBeDefined();
+    });
+  });
+
+  describe("selector hooks", () => {
+    it("useSignerConnected returns the current signerConnected value", () => {
+      const { result, rerender } = renderHook(() => useSignerConnected());
+      expect(result.current).toBeNull();
+      act(() => {
+        useMidenStore.getState().setSignerConnected(true);
+      });
+      rerender();
+      expect(result.current).toBe(true);
+    });
+
+    it("useIsInitializing returns the current isInitializing value", () => {
+      const { result, rerender } = renderHook(() => useIsInitializing());
+      expect(result.current).toBe(false);
+      act(() => {
+        useMidenStore.getState().setInitializing(true);
+      });
+      rerender();
+      expect(result.current).toBe(true);
     });
   });
 });

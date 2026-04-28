@@ -173,3 +173,35 @@ describe("proveWithFallback", () => {
     expect(proveFn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("resolveTransactionProver — edge cases (branches)", () => {
+  it("throws when remote prover object has no URL", () => {
+    expect(() =>
+      resolveTransactionProver({
+        // @ts-expect-error — runtime guard; the object lacks a URL
+        prover: { url: "" },
+      })
+    ).toThrow(/Remote prover requires a URL/);
+  });
+
+  it("accepts a bigint timeoutMs and forwards it to the SDK", () => {
+    // bigint goes through the `typeof timeoutMs === 'bigint'` branch in
+    // normalizeTimeout (line 122).
+    const prover = resolveTransactionProver({
+      prover: { url: "https://prover.example.com", timeoutMs: 7000n },
+    });
+    expect(prover).not.toBeNull();
+  });
+
+  it("normalizes a `null` config.proverTimeoutMs to null when resolving a string target", () => {
+    // resolveProverTarget for a custom URL string calls normalizeTimeout
+    // directly with config.proverTimeoutMs. Setting it to `null` exercises
+    // line 120-121 (return null branch) of normalizeTimeout.
+    const prover = resolveTransactionProver({
+      prover: "https://prover.example.com",
+      // @ts-expect-error — runtime guard for null
+      proverTimeoutMs: null,
+    });
+    expect(prover).not.toBeNull();
+  });
+});

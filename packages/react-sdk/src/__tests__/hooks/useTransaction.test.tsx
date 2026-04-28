@@ -464,4 +464,70 @@ describe("useTransaction", () => {
       expect(result.current.stage).toBe("idle");
     });
   });
+
+  describe("non-Error rejection branch", () => {
+    it("wraps a string rejection in a new Error", async () => {
+      const mockClient = createMockWebClient({
+        executeTransaction: vi
+          .fn()
+          .mockRejectedValue("transaction-string-fail"),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+        runExclusive: <T,>(fn: () => Promise<T>) => fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+      await act(async () => {
+        await expect(
+          result.current.execute({
+            accountId: "0x1",
+            request: createMockTransactionRequest(),
+          })
+        ).rejects.toThrow("transaction-string-fail");
+      });
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("transaction-string-fail");
+      });
+    });
+  });
+
+  describe("reset", () => {
+    it("clears result/loading/stage/error state", async () => {
+      const mockClient = createMockWebClient({
+        executeTransaction: vi
+          .fn()
+          .mockRejectedValue(new Error("execute fail")),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+        runExclusive: <T,>(fn: () => Promise<T>) => fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current
+          .execute({
+            accountId: "0x1",
+            request: createMockTransactionRequest(),
+          })
+          .catch(() => {});
+      });
+
+      expect(result.current.error).not.toBeNull();
+      act(() => {
+        result.current.reset();
+      });
+      expect(result.current.result).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.stage).toBe("idle");
+      expect(result.current.error).toBeNull();
+    });
+  });
 });
