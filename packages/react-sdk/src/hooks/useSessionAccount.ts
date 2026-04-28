@@ -165,7 +165,7 @@ export function useSessionAccount(
       await sync();
     } catch (err) {
       if (!cancelledRef.current) {
-          const error = err instanceof Error ? err : new Error(String(err));
+        const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStep("idle");
         throw error;

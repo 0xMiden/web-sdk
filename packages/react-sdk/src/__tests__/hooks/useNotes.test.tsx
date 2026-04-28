@@ -227,9 +227,7 @@ describe("useNotes", () => {
   describe("non-Error rejection path", () => {
     it("wraps non-Error rejection from getInputNotes in an Error instance", async () => {
       const mockClient = createMockWebClient({
-        getInputNotes: vi
-          .fn()
-          .mockRejectedValueOnce("plain-string-rejection"),
+        getInputNotes: vi.fn().mockRejectedValueOnce("plain-string-rejection"),
         getConsumableNotes: vi.fn().mockResolvedValue([]),
       });
 
@@ -486,9 +484,7 @@ describe("useNotes", () => {
       });
 
       // Pass a sender filter — note has empty sender so it's excluded
-      const { result } = renderHook(() =>
-        useNotes({ sender: "0xanysender" })
-      );
+      const { result } = renderHook(() => useNotes({ sender: "0xanysender" }));
 
       await act(async () => {
         await result.current.refetch();

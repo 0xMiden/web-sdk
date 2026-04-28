@@ -207,9 +207,7 @@ describe("useNoteStream", () => {
     });
 
     it("should filter out notes older than since timestamp", async () => {
-      const notes = [
-        createStreamableNote("0xnote_old", "0xsender", 100n),
-      ];
+      const notes = [createStreamableNote("0xnote_old", "0xsender", 100n)];
 
       const mockClient = createMockWebClient({
         getInputNotes: vi.fn().mockResolvedValue(notes),
@@ -263,9 +261,7 @@ describe("useNoteStream", () => {
 
     it("wraps non-Error rejection from getInputNotes in an Error instance", async () => {
       const mockClient = createMockWebClient({
-        getInputNotes: vi
-          .fn()
-          .mockRejectedValueOnce("plain-string-rejection"),
+        getInputNotes: vi.fn().mockRejectedValueOnce("plain-string-rejection"),
       });
       mockUseMiden.mockReturnValue({
         client: mockClient,
