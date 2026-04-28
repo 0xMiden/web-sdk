@@ -344,8 +344,7 @@ describe("useMultiSend", () => {
           from: "0xsender",
           assetId: "0xfaucet",
           noteType: "public",
-          attachment: { kind: "none" } as any,
-          recipients: [{ to: "0xrecipient", amount: 100n }],
+          recipients: [{ to: "0xrecipient", amount: 100n, attachment: [0n] }],
         });
       });
 

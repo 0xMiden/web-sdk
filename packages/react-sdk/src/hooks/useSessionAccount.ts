@@ -135,9 +135,13 @@ export function useSessionAccount(
         localStorage.setItem(`${storagePrefix}:accountId`, walletId);
       }
 
+      // walletId is guaranteed non-null here: either it was truthy on entry
+      // (the if block was skipped) or it was assigned wallet.id().toString() above.
+      const resolvedWalletId = walletId as string;
+
       // Step 2: Fund the session wallet
       setStep("funding");
-      await fundRef.current(walletId);
+      await fundRef.current(resolvedWalletId);
 
       if (cancelledRef.current) return;
 
@@ -145,7 +149,7 @@ export function useSessionAccount(
       setStep("consuming");
       await waitAndConsume(
         client as unknown as WaitAndConsumeClient,
-        walletId,
+        resolvedWalletId,
         pollIntervalMs,
         maxWaitMs,
         cancelledRef

@@ -89,7 +89,7 @@ describe("MidenProvider WASM readiness ordering", () => {
     let wasmReady = false;
 
     vi.mocked(TransactionProver.newRemoteProver).mockImplementation(
-      (url, timeout) => {
+      (url: string, timeout?: bigint | null) => {
         if (!wasmReady) {
           throw new Error("wasm.__wbindgen_malloc is undefined");
         }
@@ -234,7 +234,7 @@ describe("MidenProvider sync function", () => {
 
     // Reset mock call counts from the init phase
     (
-      mockClient as { syncState: ReturnType<typeof vi.fn> }
+      mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }
     ).syncState.mockClear();
 
     await act(async () => {
@@ -242,7 +242,7 @@ describe("MidenProvider sync function", () => {
     });
 
     expect(
-      (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState
+      (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }).syncState
     ).toHaveBeenCalled();
   });
 
@@ -262,7 +262,7 @@ describe("MidenProvider sync function", () => {
     });
 
     (
-      mockClient as { syncState: ReturnType<typeof vi.fn> }
+      mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }
     ).syncState.mockRejectedValueOnce(new Error("Sync error"));
 
     await act(async () => {
@@ -290,7 +290,7 @@ describe("MidenProvider sync function", () => {
     });
 
     (
-      mockClient as { syncState: ReturnType<typeof vi.fn> }
+      mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }
     ).syncState.mockClear();
 
     // Set isSyncing = true to trigger the guard
@@ -304,7 +304,7 @@ describe("MidenProvider sync function", () => {
 
     // syncState should NOT have been called due to isSyncing guard
     expect(
-      (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState
+      (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }).syncState
     ).not.toHaveBeenCalled();
   });
 });
@@ -318,7 +318,7 @@ describe("useMidenClient", () => {
     // useMidenClient is a hook — test the error path by checking it throws
     // without a ready client
     expect(() => {
-      const { result } = renderHook(
+      renderHook(
         () => {
           try {
             return useMidenClient();

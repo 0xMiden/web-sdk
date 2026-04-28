@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   installAccountBech32,
   ensureAccountBech32,
@@ -111,7 +111,7 @@ describe("ensureAccountBech32", () => {
     // bech32id should be reachable through prototype or own property
     expect(
       typeof (account as any).bech32id === "function" ||
-        typeof proto.bech32id === "function"
+        typeof (proto as any).bech32id === "function"
     ).toBe(true);
   });
 });

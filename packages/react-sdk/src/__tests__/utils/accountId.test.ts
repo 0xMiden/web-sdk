@@ -81,13 +81,16 @@ describe("accountIdsEqual", () => {
   it("should fall back to string comparison when second parse also throws (line 25)", () => {
     // Make first call succeed, second call throw — still enters finally
     vi.mocked(AccountId.fromHex)
-      .mockImplementationOnce((hex: string) => ({
-        toString: vi.fn(() => hex),
-        toHex: vi.fn(() => hex),
-        isFaucet: vi.fn(() => false),
-        isRegularAccount: vi.fn(() => true),
-        free: vi.fn(),
-      }))
+      .mockImplementationOnce(
+        (hex: string) =>
+          ({
+            toString: vi.fn(() => hex),
+            toHex: vi.fn(() => hex),
+            isFaucet: vi.fn(() => false),
+            isRegularAccount: vi.fn(() => true),
+            free: vi.fn(),
+          }) as unknown as AccountId
+      )
       .mockImplementationOnce(() => {
         throw new Error("second parse failed");
       });

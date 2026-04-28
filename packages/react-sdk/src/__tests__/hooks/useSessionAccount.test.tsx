@@ -535,9 +535,8 @@ describe("useSessionAccount", () => {
       );
 
       // Start first initialize (it will be stuck waiting for fund)
-      let firstInit: Promise<any>;
       act(() => {
-        firstInit = result.current.initialize().catch(() => {});
+        void result.current.initialize().catch(() => {});
       });
 
       // Wait a tick so isBusyRef.current = true

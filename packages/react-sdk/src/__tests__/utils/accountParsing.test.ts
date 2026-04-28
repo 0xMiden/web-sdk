@@ -32,7 +32,7 @@ describe("parseAccountId", () => {
   });
 
   it("should fall back to AccountId.fromBech32 when Address.fromBech32 throws (lines 25-26)", async () => {
-    const { Address, AccountId } = await import("@miden-sdk/miden-sdk/lazy");
+    const { Address } = await import("@miden-sdk/miden-sdk/lazy");
     vi.mocked(Address.fromBech32).mockImplementationOnce(() => {
       throw new Error("bad bech32");
     });
