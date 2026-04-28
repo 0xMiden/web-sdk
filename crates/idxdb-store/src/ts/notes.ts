@@ -163,6 +163,7 @@ export async function upsertInputNote(
       };
 
       await t.notesScripts.put(noteScriptData);
+    /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${noteId}`);
     }
@@ -258,6 +259,7 @@ export async function upsertOutputNote(
       };
 
       await t.outputNotes.put(data);
+    /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${noteId}`);
     }
@@ -338,6 +340,7 @@ export async function upsertNoteScript(
         };
 
         await tx.notesScripts.put(noteScriptData);
+      /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
       } catch (error) {
         logWebStoreError(error, `Error inserting note script: ${scriptRoot}`);
       }
