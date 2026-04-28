@@ -6,7 +6,7 @@ export default defineConfig({
     setupFiles: ["fake-indexeddb/auto"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "json", "html", "lcov"],
+      reporter: ["text", "json", "json-summary", "html", "lcov"],
       include: ["ts/**/*.ts"],
       exclude: ["ts/**/*.test.ts", "ts/test-utils.ts"],
       thresholds: { lines: 95, branches: 95, functions: 95, statements: 95 },

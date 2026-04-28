@@ -7,7 +7,7 @@
 WASM-powered client, React hooks, and Vite tooling — sign, send, and prove transactions from a tab.
 
 [![CI](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml)
-[![Coverage](https://codecov.io/gh/0xMiden/web-sdk/branch/main/graph/badge.svg)](https://codecov.io/gh/0xMiden/web-sdk)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xMiden/web-sdk/badges/coverage.json)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml?query=branch%3Amain)
 [![npm: @miden-sdk/miden-sdk](https://img.shields.io/npm/v/@miden-sdk/miden-sdk?label=%40miden-sdk%2Fmiden-sdk&color=cb3837)](https://www.npmjs.com/package/@miden-sdk/miden-sdk)
 [![npm: @miden-sdk/react](https://img.shields.io/npm/v/@miden-sdk/react?label=%40miden-sdk%2Freact&color=61dafb)](https://www.npmjs.com/package/@miden-sdk/react)
 [![Rust 1.93](https://img.shields.io/badge/rust-1.93-orange?logo=rust)](rust-toolchain.toml)

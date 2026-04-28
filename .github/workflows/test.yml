@@ -403,13 +403,6 @@ jobs:
         with:
           name: coverage-react-sdk
           path: packages/react-sdk/coverage
-      - name: Upload coverage to Codecov
-        if: always()
-        uses: codecov/codecov-action@v5
-        with:
-          files: packages/react-sdk/coverage/lcov.info
-          flags: react-sdk
-          fail_ci_if_error: false
 
   test-idxdb-store:
     name: idxdb-store unit tests
@@ -435,13 +428,6 @@ jobs:
         with:
           name: coverage-idxdb-store
           path: crates/idxdb-store/src/coverage
-      - name: Upload coverage to Codecov
-        if: always()
-        uses: codecov/codecov-action@v5
-        with:
-          files: crates/idxdb-store/src/coverage/lcov.info
-          flags: idxdb-store
-          fail_ci_if_error: false
 
   test-vite-plugin:
     name: vite-plugin unit tests
@@ -467,13 +453,6 @@ jobs:
         with:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
-      - name: Upload coverage to Codecov
-        if: always()
-        uses: codecov/codecov-action@v5
-        with:
-          files: packages/vite-plugin/coverage/lcov.info
-          flags: vite-plugin
-          fail_ci_if_error: false
 
   test-web-client-unit:
     name: web-client unit tests
@@ -499,13 +478,6 @@ jobs:
         with:
           name: coverage-web-client
           path: crates/web-client/coverage
-      - name: Upload coverage to Codecov
-        if: always()
-        uses: codecov/codecov-action@v5
-        with:
-          files: crates/web-client/coverage/lcov.info
-          flags: web-client
-          fail_ci_if_error: false
 
   test-react-sdk-integration:
     name: React SDK integration tests
@@ -754,3 +726,91 @@ jobs:
       - name: Stop miden-prover
         if: always()
         run: pkill -f testing-remote-prover || true
+
+  # Publishes the aggregate Vitest line-coverage % to a JSON file on the
+  # `badges` branch so shields.io can render a live badge in README.md.
+  # Only runs after a green push to main. The badges branch is an orphan,
+  # containing only the endpoint JSON — nothing merges back into main.
+  # No external service login required: shields.io reads the JSON directly
+  # from raw.githubusercontent.com.
+  coverage-badge:
+    name: Publish coverage badge
+    needs: [test-react-sdk, test-idxdb-store, test-vite-plugin, test-web-client-unit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download react-sdk coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-react-sdk
+          path: cov/react-sdk
+      - name: Download idxdb-store coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-idxdb-store
+          path: cov/idxdb-store
+      - name: Download vite-plugin coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-vite-plugin
+          path: cov/vite-plugin
+      - name: Download web-client coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-web-client
+          path: cov/web-client
+      - name: Compose shields.io endpoint JSON
+        id: badge
+        run: |
+          set -euo pipefail
+          # Aggregate by summing total + covered across all four packages,
+          # then computing pct. This weights packages by their absolute line
+          # count so a small package can't skew the aggregate.
+          read total covered <<< "$(node -e '
+            const fs = require("fs");
+            const paths = [
+              "cov/react-sdk/coverage-summary.json",
+              "cov/idxdb-store/coverage-summary.json",
+              "cov/vite-plugin/coverage-summary.json",
+              "cov/web-client/coverage-summary.json",
+            ];
+            let total = 0, covered = 0;
+            for (const p of paths) {
+              const j = JSON.parse(fs.readFileSync(p, "utf8")).total.lines;
+              total += j.total;
+              covered += j.covered;
+            }
+            console.log(total, covered);
+          ')"
+          pct=$(awk -v c="$covered" -v t="$total" 'BEGIN { printf "%.1f", (t == 0 ? 0 : 100 * c / t) }')
+          int=$(printf '%.0f' "$pct")
+          color=red
+          if [ "$int" -ge 80 ]; then color=yellow; fi
+          if [ "$int" -ge 90 ]; then color=brightgreen; fi
+          if [ "$int" -ge 95 ]; then color=green; fi
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > /tmp/coverage.json
+          echo "Aggregate line coverage: ${pct}% (covered=${covered} total=${total})"
+          echo "pct=${pct}" >> "$GITHUB_OUTPUT"
+      - name: Publish to `badges` branch
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin badges > /dev/null 2>&1; then
+            git fetch origin badges
+            git checkout badges
+          else
+            git checkout --orphan badges
+            git rm -rf . > /dev/null 2>&1 || true
+          fi
+          cp /tmp/coverage.json coverage.json
+          git add coverage.json
+          if git diff --cached --quiet; then
+            echo "Badge JSON unchanged"
+          else
+            git commit -m "chore: coverage badge → ${{ steps.badge.outputs.pct }}%"
+            git push origin badges
+          fi
