@@ -1,33 +1,26 @@
 #!/bin/bash
 set -uo pipefail
 
-# Pass if any of these changelog files differs from the PR base ref.
-# A PR that updates none of them must carry the "no changelog" label.
-CHANGELOG_FILES=(
-  "CHANGELOG.md"
-  "packages/react-sdk/CHANGELOG.md"
-  "packages/vite-plugin/CHANGELOG.md"
-)
+# Pass if the root CHANGELOG.md differs from the PR base ref.
+# Override: apply the "no changelog" label on the PR.
+
+CHANGELOG_FILE="CHANGELOG.md"
 
 if [ "${NO_CHANGELOG_LABEL}" = "true" ]; then
   echo "\"no changelog\" label is set — skipping changelog check."
   exit 0
 fi
 
-for file in "${CHANGELOG_FILES[@]}"; do
-  if ! git diff --exit-code "origin/${BASE_REF}" -- "${file}" > /dev/null 2>&1; then
-    echo "Changelog updated: ${file}"
-    exit 0
-  fi
-done
+if ! git diff --exit-code "origin/${BASE_REF}" -- "${CHANGELOG_FILE}" > /dev/null 2>&1; then
+  echo "Changelog updated: ${CHANGELOG_FILE}"
+  exit 0
+fi
 
 >&2 cat <<EOF
-No changelog file was updated. Add an entry to one of:
-  - CHANGELOG.md                       (changes to @miden-sdk/miden-sdk / WASM)
-  - packages/react-sdk/CHANGELOG.md    (changes to @miden-sdk/react)
-  - packages/vite-plugin/CHANGELOG.md  (changes to @miden-sdk/vite-plugin)
+No CHANGELOG.md change detected.
 
-Trivial changes (typos, internal refactors, CI-only edits) can apply the
-"no changelog" label on the PR to skip this check.
+Add an entry to ${CHANGELOG_FILE} describing the user-visible change,
+or apply the "no changelog" label to the PR for trivial / non-user-
+visible changes (typos, internal refactors, CI-only edits).
 EOF
 exit 1
