@@ -72,6 +72,7 @@ impl WebClient {
     }
 
     #[js_export(js_name = "newSendTransactionRequest")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_send_transaction_request(
         &self,
         sender_account_id: &AccountId,
@@ -117,6 +118,7 @@ impl WebClient {
     }
 
     #[js_export(js_name = "newSwapTransactionRequest")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_swap_transaction_request(
         &self,
         sender_account_id: &AccountId,

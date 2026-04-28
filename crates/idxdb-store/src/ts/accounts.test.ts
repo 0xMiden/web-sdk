@@ -116,12 +116,14 @@ describe("Account delta and undo operations", () => {
     expect(latestAssets).toHaveLength(1);
     expect(latestAssets[0].asset).toBe(ASSET_N1);
 
-    // Historical headers should only have nonce "1" left
+    // Historical headers should be empty: undoAccountStates consumes the
+    // nonce-1 historical entry when restoring it back to the latest table.
+    // (Pre-next behavior was to retain the historical row alongside the
+    // restored latest; the next-branch logic moves rather than copies.)
     const historicalHeaders = await db.historicalAccountHeaders
       .where("id")
       .equals(ACCOUNT_ID)
       .toArray();
-    expect(historicalHeaders).toHaveLength(1);
-    expect(historicalHeaders[0].nonce).toBe("1");
+    expect(historicalHeaders).toHaveLength(0);
   });
 });

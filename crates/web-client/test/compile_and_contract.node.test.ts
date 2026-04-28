@@ -210,10 +210,13 @@ test.describe("compile.txScript()", () => {
 // ════════════════════════════════════════════════════════════════
 
 // Minimal valid note script — exercises the compile path without depending
-// on runtime note-script semantics.
+// on runtime note-script semantics. Note scripts now require a single
+// public procedure annotated with @note_script (miden-standards 0.14.5+),
+// not the bare begin/end form previously accepted.
 const RECEIVE_NOTE_SCRIPT = `
   use miden::core::sys
-  begin
+  @note_script
+  pub proc main
     exec.sys::truncate_stack
   end
 `;
@@ -242,7 +245,8 @@ test.describe("compile.noteScript()", () => {
       code: `
         use external_contract::counter_contract
         use miden::core::sys
-        begin
+        @note_script
+        pub proc main
           call.counter_contract::increment_count
           exec.sys::truncate_stack
         end
@@ -266,7 +270,8 @@ test.describe("compile.noteScript()", () => {
       code: `
         use external_contract::counter_contract
         use miden::core::sys
-        begin
+        @note_script
+        pub proc main
           call.counter_contract::increment_count
           exec.sys::truncate_stack
         end
@@ -284,7 +289,8 @@ test.describe("compile.noteScript()", () => {
       code: `
         use external_contract::counter_contract
         use miden::core::sys
-        begin
+        @note_script
+        pub proc main
           call.counter_contract::increment_count
           exec.sys::truncate_stack
         end
@@ -314,7 +320,8 @@ test.describe("compile.noteScript()", () => {
       code: `
         use external_contract::counter_contract
         use miden::core::sys
-        begin
+        @note_script
+        pub proc main
           call.counter_contract::increment_count
           exec.sys::truncate_stack
         end

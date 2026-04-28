@@ -4,18 +4,18 @@ resolver = "2"
 members = ["crates/idxdb-store", "crates/js-export-macro", "crates/web-client"]
 
 [workspace.package]
-authors = ["miden contributors"]
-edition = "2024"
-license = "MIT"
-repository = "https://github.com/0xMiden/web-sdk"
+authors      = ["miden contributors"]
+edition      = "2024"
+license      = "MIT"
+repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.93"
-version = "0.15.0"
+version      = "0.15.0"
 
 [profile.dev]
 codegen-units = 16
 
 [profile.test-dev]
-inherits = "dev"
+inherits  = "dev"
 opt-level = 1
 
 # Fast-build variant of `release` for PR CI. The default `release` profile
@@ -28,8 +28,8 @@ opt-level = 1
 # `cargo build --release` so the published artifact is always built with
 # full optimization.
 [profile.release-fast]
-inherits = "release"
-lto = false
+inherits      = "release"
+lto           = false
 codegen-units = 16
 
 [workspace.dependencies]
@@ -40,39 +40,39 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 # The 0.15.x API isn't on crates.io yet, so we track miden-client via
 # git+branch=next here; once miden-client publishes 0.15.0 we can switch
 # back to versioned crates.io deps.
-miden-client = { default-features = false, branch = "next", git = "https://github.com/0xMiden/miden-client.git" }
-miden-client-sqlite-store = { default-features = false, branch = "next", git = "https://github.com/0xMiden/miden-client.git" }
+miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
 # Miden protocol dependencies
-miden-protocol = { default-features = false, version = "0.14" }
+miden-protocol  = { default-features = false, version = "0.14" }
 miden-standards = { default-features = false, version = "0.14" }
 
 # External dependencies
 async-trait = { version = "0.1" }
-chrono = { version = "0.4" }
-hex = { version = "0.4" }
-miette = { features = ["fancy"], version = "7.6" }
+chrono      = { version = "0.4" }
+hex         = { version = "0.4" }
+miette      = { features = ["fancy"], version = "7.6" }
 # napi-rs powers the Node.js binding of the web-client crate. Matches the
 # version pin in miden-client `next`.
-napi = { default-features = false, features = ["async", "napi8"], version = "3" }
-napi-build = { version = "2" }
+napi        = { default-features = false, features = ["async", "napi8"], version = "3" }
+napi-build  = { version = "2" }
 napi-derive = { default-features = false, version = "3" }
-rand = { version = "0.9" }
-serde = { features = ["derive"], version = "1.0" }
-thiserror = { default-features = false, version = "2.0" }
-tokio = { features = ["macros", "rt-multi-thread"], version = "1.48" }
-tracing = { version = "0.1" }
+rand        = { version = "0.9" }
+serde       = { features = ["derive"], version = "1.0" }
+thiserror   = { default-features = false, version = "2.0" }
+tokio       = { features = ["macros", "rt-multi-thread"], version = "1.48" }
+tracing     = { version = "0.1" }
 
 # Lints are set to warn for development, which are promoted to errors in CI.
 [workspace.lints.clippy]
 # Pedantic lints are set to a lower priority which allows lints in the group to be selectively enabled.
-pedantic = { level = "warn", priority = -1 }
-ignored_unit_patterns = "allow"              # Stylistic choice.
-missing_errors_doc = "allow"                 # TODO: fixup and enable this.
-missing_panics_doc = "allow"                 # TODO: fixup and enable this.
-module_name_repetitions = "allow"            # Many triggers, and is a stylistic choice.
-must_use_candidate = "allow"                 # This marks many fn's which isn't helpful.
-should_panic_without_expect = "allow"        # We don't care about the specific panic message.
+pedantic                    = { level = "warn", priority = -1 }
+ignored_unit_patterns       = "allow"                           # Stylistic choice.
+missing_errors_doc          = "allow"                           # TODO: fixup and enable this.
+missing_panics_doc          = "allow"                           # TODO: fixup and enable this.
+module_name_repetitions     = "allow"                           # Many triggers, and is a stylistic choice.
+must_use_candidate          = "allow"                           # This marks many fn's which isn't helpful.
+should_panic_without_expect = "allow"                           # We don't care about the specific panic message.
 # End of pedantic lints.
 
 # Uncomment for local development against a local miden-client checkout:
