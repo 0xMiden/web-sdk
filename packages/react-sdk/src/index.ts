@@ -128,7 +128,11 @@ export type {
 export { DEFAULTS, AuthScheme } from "./types";
 
 // Utilities
-export { toBech32AccountId } from "./utils/accountBech32";
+export {
+  toBech32AccountId,
+  installAccountBech32,
+  ensureAccountBech32,
+} from "./utils/accountBech32";
 export { formatAssetAmount, parseAssetAmount } from "./utils/amounts";
 export { getNoteSummary, formatNoteSummary } from "./utils/notes";
 export { normalizeAccountId, accountIdsEqual } from "./utils/accountId";
