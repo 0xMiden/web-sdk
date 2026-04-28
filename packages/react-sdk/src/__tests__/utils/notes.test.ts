@@ -79,7 +79,9 @@ describe("getNoteSummary", () => {
       assets: [{ faucetHex: "0xfaucet1", amount: 100n }],
     });
     const lookup = vi.fn((id: string) =>
-      id === "0xfaucet1" ? { symbol: "TKN", decimals: 6 } : undefined
+      id === "0xfaucet1"
+        ? { assetId: "0xfaucet1", symbol: "TKN", decimals: 6 }
+        : undefined
     );
     const summary = getNoteSummary(note as never, lookup);
     expect(summary?.assets[0]).toMatchObject({

@@ -156,6 +156,9 @@ export const createMockTransactionId = (id: string = "0xtx123") => ({
   asBytes: vi.fn(() => new Uint8Array()),
   inner: vi.fn(() => createMockWord(id)),
   free: vi.fn(),
+  // TS 5.2+ ships [Symbol.dispose] on Disposable WASM bindings; tsc requires
+  // mocks to expose it even if tests never invoke it.
+  [Symbol.dispose]: vi.fn(),
 });
 
 // Mock TransactionRecord
@@ -178,6 +181,7 @@ export const createMockTransactionRequest = () => ({
   authArg: vi.fn(() => undefined),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
+  [Symbol.dispose]: vi.fn(),
 });
 
 // Mock NoteFilter

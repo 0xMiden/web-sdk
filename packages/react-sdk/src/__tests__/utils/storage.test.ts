@@ -250,7 +250,7 @@ describe("clearMidenStorage", () => {
       // Schedule the blocked callback on the microtask queue so the request
       // shape matches the spec (handlers attached AFTER the call).
       queueMicrotask(() => req.onblocked?.());
-      return req as IDBOpenDBRequest;
+      return req as unknown as IDBOpenDBRequest;
     });
     vi.stubGlobal("indexedDB", {
       databases: vi.fn().mockResolvedValue([{ name: "miden-blocked" }]),
@@ -273,7 +273,7 @@ describe("clearMidenStorage", () => {
         error: new Error("delete failed"),
       };
       queueMicrotask(() => req.onerror?.());
-      return req as IDBOpenDBRequest;
+      return req as unknown as IDBOpenDBRequest;
     });
     vi.stubGlobal("indexedDB", {
       databases: vi.fn().mockResolvedValue([{ name: "miden-bad" }]),

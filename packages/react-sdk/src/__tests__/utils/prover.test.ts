@@ -178,7 +178,6 @@ describe("resolveTransactionProver — edge cases (branches)", () => {
   it("throws when remote prover object has no URL", () => {
     expect(() =>
       resolveTransactionProver({
-        // @ts-expect-error — runtime guard; the object lacks a URL
         prover: { url: "" },
       })
     ).toThrow(/Remote prover requires a URL/);

@@ -55,8 +55,8 @@ describe("parseAccountId", () => {
 
   it("returns the input directly for an Account-like object with id() method", () => {
     const idMock = { toHex: () => "0xfoo", toString: () => "0xfoo" } as never;
-    const account = { id: vi.fn(() => idMock) } as never;
-    const out = parseAccountId(account);
+    const account = { id: vi.fn(() => idMock) };
+    const out = parseAccountId(account as never);
     expect(account.id).toHaveBeenCalled();
     expect(out).toBe(idMock);
   });
@@ -79,9 +79,9 @@ describe("parseAddress", () => {
   });
 
   it("uses the explicit accountId override for a non-string input", () => {
-    const account = { id: vi.fn() } as never;
+    const account = { id: vi.fn() };
     const override = { toHex: () => "0xoverride" } as never;
-    parseAddress(account, override);
+    parseAddress(account as never, override);
     // Should NOT have called account.id() since we passed an override.
     expect(account.id).not.toHaveBeenCalled();
     expect(vi.mocked(Address.fromAccountId)).toHaveBeenCalledWith(

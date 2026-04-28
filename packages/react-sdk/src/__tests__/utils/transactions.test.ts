@@ -74,11 +74,17 @@ describe("waitForTransactionCommit", () => {
 
   it("calls runExclusiveSafe for sync + getTransactions on every tick", async () => {
     const client = makeClient("committed");
-    const exclusive = vi.fn(<T>(fn: () => Promise<T>) => fn());
+    const exclusiveMock = vi.fn((fn: () => Promise<unknown>) => fn());
+    // vi.fn() can't preserve a generic signature on a single overload, so we
+    // cast a separate reference for the runExclusive parameter while keeping
+    // the Mock typing for the assertion below.
+    const exclusive = exclusiveMock as unknown as <T>(
+      fn: () => Promise<T>
+    ) => Promise<T>;
     const txId = { toHex: () => "0xtx" } as never;
     await waitForTransactionCommit(client, exclusive, txId, 50, 10);
     // One sync + one getTransactions per tick; one tick suffices.
-    expect(exclusive).toHaveBeenCalledTimes(2);
+    expect(exclusiveMock).toHaveBeenCalledTimes(2);
   });
 });
 

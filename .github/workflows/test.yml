@@ -25,8 +25,12 @@ env:
   # MUST match the miden-client + miden-protocol versions in Cargo.lock — the
   # node-builder serves protos using the schema of this ref, and a mismatch
   # against the client manifests as cryptic 'invalid wire type' decode errors
-  # on the client side (e.g. Digest fields encoded as bytes vs fixed64).
-  MIDEN_CLIENT_REF: v0.14.4
+  # on the client side (e.g. Digest fields encoded as bytes vs fixed64), or
+  # 'accept header validation failed' if the protocol version differs.
+  # The web-sdk's `next` branch tracks miden-client's `next` (0.15.0 series,
+  # no tagged release yet), so we pin to the exact commit pinned in Cargo.lock
+  # rather than a moving branch ref so cache keys stay stable.
+  MIDEN_CLIENT_REF: dab6cf7b3549b57515aa305e64d3d9561bf8e5ca
 
 jobs:
   build-web-client-dist-folder:
