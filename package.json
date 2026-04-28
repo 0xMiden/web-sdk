@@ -8,17 +8,22 @@
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
     "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
-    "prepare": "lefthook install || true"
+    "prepare": "lefthook install || true",
+    "check:publint": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --workspace-concurrency=1 exec publint",
+    "check:attw": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --workspace-concurrency=1 exec attw --pack .",
+    "check:publish": "pnpm run build:web-client && pnpm run build:react-sdk && pnpm run build:vite-plugin && pnpm run check:publint && pnpm run check:attw"
   },
   "dependencies": {
     "prettier": "^3.8.1"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
     "@typescript-eslint/eslint-plugin": "^8.25.0",
     "@typescript-eslint/parser": "^8.25.0",
     "eslint": "^9.30.1",
     "lefthook": "^1.13.6",
     "lint-staged": "^16.4.0",
+    "publint": "^0.3.18",
     "typescript": "^5.5.4"
   },
   "lint-staged": {
