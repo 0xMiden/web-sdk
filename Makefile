@@ -23,14 +23,14 @@ fix-wasm: ## Run Fix for the WASM packages (web client and idxdb store)
 .PHONY: format
 format: ## Run format using nightly toolchain
 	cargo +nightly fmt --all
-	pnpm exec --silent prettier . --write --log-level silent
-	pnpm exec --silent eslint . --fix
+	pnpm --silent exec prettier . --write --log-level silent
+	pnpm --silent exec eslint . --fix
 
 .PHONY: format-check
 format-check: ## Run format using nightly toolchain but only in check mode
 	cargo +nightly fmt --all --check
-	pnpm exec --silent prettier . --check
-	pnpm exec --silent eslint .
+	pnpm --silent exec prettier . --check
+	pnpm --silent exec eslint .
 
 .PHONY: lint
 lint: fix-wasm format clippy-wasm typos-check rust-client-ts-lint web-client-check-methods ## Run all linting tasks at once
