@@ -43,7 +43,7 @@ impl WebClient {
         Ok(native_note_tag.into())
     }
 
-    /// Internal implementation of `sync_state`.
+    /// Internal implementation of `sync_state` (combined NTL + chain sync).
     ///
     /// This method performs the actual sync operation. Concurrent call coordination
     /// is handled at the JavaScript layer using the Web Locks API.
@@ -60,6 +60,32 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to sync state"))?;
 
         Ok(sync_summary.into())
+    }
+
+    /// Internal implementation of `sync_chain` (on-chain-only sync). Use `syncChain()` from JS.
+    #[js_export(js_name = "syncChainImpl")]
+    pub async fn sync_chain_impl(&self) -> Result<SyncSummary, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let sync_summary = maybe_wrap_send(client.sync_chain())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to sync chain"))?;
+
+        Ok(sync_summary.into())
+    }
+
+    /// Internal implementation of `sync_note_transport`. Use `syncNoteTransport()` from JS.
+    #[js_export(js_name = "syncNoteTransportImpl")]
+    pub async fn sync_note_transport_impl(&self) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        maybe_wrap_send(client.sync_note_transport())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to sync note transport"))?;
+
+        Ok(())
     }
 
     #[js_export(js_name = "getSyncHeight")]

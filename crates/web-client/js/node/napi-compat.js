@@ -61,7 +61,8 @@ export function wrapClass(Cls) {
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
  * - syncState() -> syncStateImpl() (no browser lock coordination needed)
- * - syncStateWithTimeout() -> syncStateImpl() (timeout not applicable)
+ * - syncChain() -> syncChainImpl()
+ * - syncNoteTransport() -> syncNoteTransportImpl()
  * - null -> undefined for Option<T> returns
  * - BigInt/Uint8Array args normalized
  */
@@ -71,8 +72,11 @@ export function wrapClient(rawClient, storeName) {
       if (prop === "syncState") {
         return (...args) => target.syncStateImpl(...args);
       }
-      if (prop === "syncStateWithTimeout") {
-        return (_timeoutMs) => target.syncStateImpl();
+      if (prop === "syncChain") {
+        return () => target.syncChainImpl();
+      }
+      if (prop === "syncNoteTransport") {
+        return () => target.syncNoteTransportImpl();
       }
       if (prop === "storeName") {
         return storeName || "default";
