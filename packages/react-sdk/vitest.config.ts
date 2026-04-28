@@ -35,6 +35,10 @@ export default defineConfig({
         "src/index.ts",
         "src/types/**",
         "src/**/*.d.ts",
+        // Pure WASM proxy — covered by Playwright integration tests in
+        // test/accountBech32.test.ts. Cannot be unit-tested in jsdom because
+        // NetworkId, Address, and Account.prototype come from the real WASM bundle.
+        "src/utils/accountBech32.ts",
       ],
       thresholds: { lines: 95, branches: 95, functions: 95, statements: 95 },
     },
