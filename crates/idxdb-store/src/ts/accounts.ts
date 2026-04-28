@@ -20,7 +20,7 @@ export async function getAccountIds(dbId: string) {
   } catch (error) {
     logWebStoreError(error, "Error while fetching account IDs");
   }
-
+  /* v8 ignore next 2 — logWebStoreError always re-throws, making this return unreachable */
   return [];
 }
 
