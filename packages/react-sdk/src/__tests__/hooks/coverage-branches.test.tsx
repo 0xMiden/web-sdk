@@ -161,9 +161,9 @@ describe("hook guards — client not ready", () => {
   it("useImportStore throws when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
     const { result } = renderHook(() => useImportStore());
-    await expect(result.current.importStore("dump", "TestStore")).rejects.toThrow(
-      /Miden client is not ready/
-    );
+    await expect(
+      result.current.importStore("dump", "TestStore")
+    ).rejects.toThrow(/Miden client is not ready/);
   });
 
   it("useTransactionHistory returns idle initial state when client is not ready", () => {
