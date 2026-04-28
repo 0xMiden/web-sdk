@@ -116,12 +116,13 @@ describe("Account delta and undo operations", () => {
     expect(latestAssets).toHaveLength(1);
     expect(latestAssets[0].asset).toBe(ASSET_N1);
 
-    // Historical headers should only have nonce "1" left
+    // After undoing nonce "2", the historical record that was created when nonce "2"
+    // was applied (archiving the nonce "1" state) is consumed by the undo and deleted.
+    // historicalAccountHeaders is therefore empty — nonce "1" is now in latestAccountHeaders.
     const historicalHeaders = await db.historicalAccountHeaders
       .where("id")
       .equals(ACCOUNT_ID)
       .toArray();
-    expect(historicalHeaders).toHaveLength(1);
-    expect(historicalHeaders[0].nonce).toBe("1");
+    expect(historicalHeaders).toHaveLength(0);
   });
 });
