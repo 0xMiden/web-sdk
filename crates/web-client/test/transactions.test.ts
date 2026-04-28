@@ -351,8 +351,13 @@ export const compileTxScript = async (
 
 test.describe("compile_tx_script tests", () => {
   test("compile_tx_script compiles script successfully", async ({ page }) => {
+    // The compileTxScript helper above actually invokes compileNoteScript
+    // (despite the name), so the script source must follow the note-script
+    // form required by miden-standards 0.14.5+: a single public procedure
+    // annotated with @note_script.
     const script = `
-            begin
+            @note_script
+            pub proc main
                 push.0 push.0
                 # => [0, 0]
                 assert_eq

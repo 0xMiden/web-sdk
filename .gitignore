@@ -3,10 +3,13 @@ debug/
 target/
 dist/
 
-# Yarn/NPM (only root-level lockfile; sub-crate yarn.lock files are tracked)
-/yarn.lock
-crates/web-client/**/package-lock.json
+# pnpm + npm
 node_modules/
+crates/web-client/**/package-lock.json
+.pnpm-store/
+
+# Vitest coverage output
+coverage/
 
 # Rust
 **/*.rs.bk

@@ -23,14 +23,14 @@ fix-wasm: ## Run Fix for the WASM packages (web client and idxdb store)
 .PHONY: format
 format: ## Run format using nightly toolchain
 	cargo +nightly fmt --all
-	yarn --silent prettier . --write --log-level silent
-	yarn --silent eslint . --fix
+	pnpm --silent exec prettier . --write --log-level silent
+	pnpm --silent exec eslint . --fix
 
 .PHONY: format-check
 format-check: ## Run format using nightly toolchain but only in check mode
 	cargo +nightly fmt --all --check
-	yarn --silent prettier . --check
-	yarn --silent eslint .
+	pnpm --silent exec prettier . --check
+	pnpm --silent exec eslint .
 
 .PHONY: lint
 lint: fix-wasm format clippy-wasm typos-check rust-client-ts-lint web-client-check-methods ## Run all linting tasks at once
@@ -49,53 +49,63 @@ typos-check: ## Run typos to check for spelling mistakes
 
 .PHONY: rust-client-ts-lint
 rust-client-ts-lint:
-	cd crates/idxdb-store/src && yarn && yarn lint
+	pnpm --filter web_store run lint
 
 .PHONY: web-client-check-methods
 web-client-check-methods: ## Check that all WASM methods are classified in the web client proxy
-	cd $(WEB_CLIENT_DIR) && yarn check:method-classification
+	pnpm --filter @miden-sdk/miden-sdk run check:method-classification
 
 .PHONY: react-sdk-lint
 react-sdk-lint: ## Run lint for the React SDK
-	cd packages/react-sdk && yarn && yarn lint
+	pnpm --filter @miden-sdk/react run lint
 
 # --- Documentation -------------------------------------------------------------------------------
 
 .PHONY: typedoc
 typedoc: rust-client-ts-build ## Generate web client package documentation.
-	@cd crates/web-client && \
-	npm run build-dev && \
-	yarn typedoc
+	pnpm --filter @miden-sdk/miden-sdk run build-dev
+	pnpm --filter @miden-sdk/miden-sdk exec typedoc
 
 # --- Testing -------------------------------------------------------------------------------------
 
 .PHONY: test-react-sdk
 test-react-sdk: ## Run React SDK unit tests with coverage
-	cd packages/react-sdk && yarn && yarn test:unit --coverage
+	pnpm --filter @miden-sdk/react run test:coverage
 
 .PHONY: test-idxdb-store
 test-idxdb-store: ## Run idxdb-store unit tests with coverage
-	cd crates/idxdb-store/src && yarn && yarn test --coverage
+	pnpm --filter web_store exec vitest run --coverage
 
 .PHONY: test-vite-plugin
 test-vite-plugin: ## Run vite-plugin unit tests with coverage
-	cd packages/vite-plugin && yarn && yarn test --coverage
+	pnpm --filter @miden-sdk/vite-plugin exec vitest run --coverage
 
 .PHONY: test-coverage
 test-coverage: test-react-sdk test-idxdb-store test-vite-plugin ## Run all coverage gates
 
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""
+# Local "clean" run: ensure deps are installed, do a debug WASM build, install
+# Playwright browsers, then run the test shard. Inlining all of this into a
+# single npm script (yarn-style chained `&&`) breaks pnpm's arg forwarding —
+# `pnpm run script -- --project=X` appends to the LAST command in the chain,
+# making playwright see `-- --project=X` and treat `--project=X` as a
+# positional file regex. Splitting the steps in Make keeps args clean.
 integration-test-web-client: ## Run integration tests for the web client (with a chromium browser)
-	cd ./crates/web-client && yarn run test:clean -- --project=chromium $(SHARD_PARAMETER)
+	pnpm install --no-frozen-lockfile
+	cross-env MIDEN_WEB_DEV=true pnpm --filter @miden-sdk/miden-sdk run build
+	pnpm --filter @miden-sdk/miden-sdk run test:install
+	pnpm --filter @miden-sdk/miden-sdk run test:clean --project=chromium $(SHARD_PARAMETER)
 
 .PHONY: integration-test-web-client-webkit
 integration-test-web-client-webkit: ## Run web client tests (webkit)
-	cd ./crates/web-client && yarn run test -- --project=webkit
+	pnpm --filter @miden-sdk/miden-sdk run test:install
+	pnpm --filter @miden-sdk/miden-sdk run test --project=webkit
 
 .PHONY: integration-test-remote-prover-web-client
 integration-test-remote-prover-web-client: ## Run integration tests for the web client with remote prover
-	cd ./crates/web-client && yarn run test:remote_prover -- --project=chromium
+	pnpm --filter @miden-sdk/miden-sdk run test:install
+	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover --project=chromium
 
 # --- Building ------------------------------------------------------------------------------------
 
@@ -105,16 +115,16 @@ build-wasm: rust-client-ts-build ## Build the WASM packages (web client and idxd
 
 .PHONY: rust-client-ts-build
 rust-client-ts-build:
-	cd crates/idxdb-store/src && yarn && yarn build
+	pnpm --filter web_store run build
 
 .PHONY: build-web-client
 build-web-client: rust-client-ts-build ## Build web client npm package
-	cd $(WEB_CLIENT_DIR) && yarn && yarn build
+	pnpm --filter @miden-sdk/miden-sdk run build
 
 .PHONY: build-react-sdk
 build-react-sdk: ## Build the React SDK package
-	cd crates/web-client && yarn && yarn build
-	cd packages/react-sdk && yarn && yarn build
+	pnpm --filter @miden-sdk/miden-sdk run build
+	pnpm --filter @miden-sdk/react run build
 
 # --- Check ---------------------------------------------------------------------------------------
 
@@ -127,11 +137,11 @@ check-wasm: ## Check the WASM packages (web client and idxdb store)
 
 .PHONY: build-web-client-debug
 build-web-client-debug: ## Build the web client with debug symbols for the WASM-generated rust code
-	cd crates/web-client && yarn build-dev
+	pnpm --filter @miden-sdk/miden-sdk run build-dev
 
 .PHONY: link-web-client-dep
 link-web-client-dep: ## Link the local web-client for debugging JS applications
-	cd crates/web-client && yarn link
+	cd $(WEB_CLIENT_DIR) && pnpm link --global
 
 ## --- Setup --------------------------------------------------------------------------------------
 
@@ -154,8 +164,6 @@ install-tools: ## Install development tools
 			sudo apt-get update && sudo apt-get install -y binaryen; \
 		fi; \
 	}
-	command -v yarn >/dev/null 2>&1 || npm install -g yarn
-	yarn --cwd $(WEB_CLIENT_DIR) --silent
-	yarn --cwd crates/idxdb-store/src --silent
-	yarn --silent
+	command -v pnpm >/dev/null 2>&1 || npm install -g pnpm@9
+	pnpm install --no-frozen-lockfile
 	@echo "Development tools installation complete!"

@@ -5,7 +5,7 @@
 ```bash
 npm install @miden-sdk/react @miden-sdk/miden-sdk
 # or
-yarn add @miden-sdk/react @miden-sdk/miden-sdk
+pnpm add @miden-sdk/react @miden-sdk/miden-sdk
 ```
 
 ## Getting Started

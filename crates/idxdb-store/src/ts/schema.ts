@@ -422,7 +422,7 @@ export class MidenDatabase {
     //      Only list tables whose indexes changed; Dexie carries forward the rest.
     //   2. Update TypeScript interfaces and the Table enum if needed.
     //   3. Add a migration test in schema.test.ts.
-    //   4. Run `yarn build` and `yarn test`.
+    //   4. Run `pnpm build` and `pnpm test`.
     //
     // The version number is a simple incrementing integer, not the client semver.
     // Use a comment to note which client version introduced the change.

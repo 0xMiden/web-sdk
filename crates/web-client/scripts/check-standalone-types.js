@@ -194,7 +194,7 @@ try {
   await readFile(wasmTypesPath);
 } catch {
   console.error(
-    "Standalone type check failed: expected type files are missing. Run `yarn build` first."
+    "Standalone type check failed: expected type files are missing. Run `pnpm build` first."
   );
   process.exit(1);
 }

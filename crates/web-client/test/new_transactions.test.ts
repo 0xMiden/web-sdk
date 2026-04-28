@@ -1,4 +1,4 @@
-import test from "./playwright.global.setup";
+import test, { getProverUrl } from "./playwright.global.setup";
 import { expect, Page } from "@playwright/test";
 import {
   consumeTransaction,
@@ -13,6 +13,14 @@ import {
   TransactionRecord,
   Note,
 } from "../dist/crates/miden_client_web";
+
+// Used to gate "with remote prover" test variants. When no prover URL is
+// configured (the default for the regular `Integration tests` shards),
+// these variants would silently fall back to local proving and duplicate
+// their non-remote siblings — burning 5+ minutes per duplicate. The
+// dedicated `Integration tests for remote prover` job exercises them
+// properly with the actual remote prover.
+const hasRemoteProver = !!getProverUrl();
 
 // NEW_MINT_TRANSACTION TESTS
 // =======================================================================================================
@@ -145,6 +153,7 @@ test.describe("mint transaction tests", () => {
 
   testCases.forEach(({ flag, description }) => {
     test(description, async ({ page }) => {
+      test.skip(flag && !hasRemoteProver, "no remote prover configured");
       test.slow();
       // This test was added in #995 to reproduce an issue in the web wallet.
       // It is useful because most tests consume the note right on the latest client block,
@@ -177,6 +186,7 @@ test.describe("consume transaction tests", () => {
 
   testCases.forEach(({ flag, description }) => {
     test(description, async ({ page }) => {
+      test.skip(flag && !hasRemoteProver, "no remote prover configured");
       const { faucetId, accountId } = await setupWalletAndFaucet(page);
       const { consumeResult: result } = await mintAndConsumeTransaction(
         page,
@@ -250,6 +260,7 @@ test.describe("send transaction tests", () => {
 
   testCases.forEach(({ flag, description }) => {
     test(description, async ({ page }) => {
+      test.skip(flag && !hasRemoteProver, "no remote prover configured");
       test.setTimeout(900000);
       const { accountId: senderAccountId, faucetId } =
         await setupWalletAndFaucet(page);
@@ -367,7 +378,8 @@ export const customTransaction = async (
             use miden::protocol::active_note
             use miden::standards::wallets::basic->basic_wallet
             use miden::core::mem
-            begin
+            @note_script
+            pub proc main
                 # push data from the advice map into the advice stack
                 adv.push_mapval
                 # => [NOTE_ARG]
@@ -685,6 +697,7 @@ test.describe("custom transaction tests", () => {
   test("custom transaction with remote prover completes successfully", async ({
     page,
   }) => {
+    test.skip(!hasRemoteProver, "no remote prover configured");
     // TODO: hotfix CI failure, we should investigate slow prover tests further.
     test.slow();
     await expect(customTransaction(page, "0", true)).resolves.toBeUndefined();
@@ -1171,9 +1184,19 @@ export const counterAccountComponent = async (
             # => []
         end
       `;
-    const scriptCode = `
+    const txScriptCode = `
         use external_contract::counter_contract
         begin
+            call.counter_contract::increment_count
+        end
+      `;
+    // miden-standards 0.14.5+ requires note scripts to use a single public
+    // procedure annotated with @note_script (compileTxScript still accepts
+    // the legacy begin/end form).
+    const noteScriptCode = `
+        use external_contract::counter_contract
+        @note_script
+        pub proc main
             call.counter_contract::increment_count
         end
       `;
@@ -1215,7 +1238,7 @@ export const counterAccountComponent = async (
       accountCode
     );
     builder.linkDynamicLibrary(accountComponentLib);
-    let txScript = builder.compileTxScript(scriptCode);
+    let txScript = builder.compileTxScript(txScriptCode);
 
     let txIncrementRequest = new window.TransactionRequestBuilder()
       .withCustomScript(txScript)
@@ -1230,7 +1253,7 @@ export const counterAccountComponent = async (
     );
 
     // Create transaction with network note
-    let compiledNoteScript = await builder.compileNoteScript(scriptCode);
+    let compiledNoteScript = await builder.compileNoteScript(noteScriptCode);
 
     let noteStorage = new window.NoteStorage(
       new window.MidenArrays.FeltArray([])
