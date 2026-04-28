@@ -23,6 +23,7 @@
     "@arethetypeswrong/cli": "^0.18.2",
     "@typescript-eslint/parser": "^8.25.0",
     "eslint": "^9.30.1",
+    "eslint-config-prettier": "^10.1.8",
     "knip": "^6.7.0",
     "lefthook": "^1.13.6",
     "lint-staged": "^16.4.0",
