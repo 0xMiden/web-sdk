@@ -165,6 +165,19 @@ describe("AccountsResource", () => {
       );
     });
 
+    it("defaults storage to 'public' when not specified for faucet", async () => {
+      const resource = makeResource();
+      await resource.create({
+        type: 0,
+        auth: "falcon",
+        symbol: "T",
+        decimals: 0,
+        maxSupply: 1,
+        // no storage specified — should default to "public"
+      });
+      expect(wasm.AccountStorageMode.public).toHaveBeenCalled();
+    });
+
     it("uses ecdsa auth scheme when auth='ecdsa'", async () => {
       const resource = makeResource();
       await resource.create({
@@ -304,6 +317,19 @@ describe("AccountsResource", () => {
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
       expect(builderInstance.withComponent).toHaveBeenCalledWith("comp1");
+    });
+
+    it("defaults opts.components to [] when not specified", async () => {
+      const resource = makeResource();
+      // ImmutableContract with no components — tests the `opts.components ?? []` branch
+      await resource.create({
+        type: "ImmutableContract",
+        seed: new Uint8Array(32),
+        auth: "authKey",
+        // no components specified
+      });
+      const builderInstance = wasm.AccountBuilder.mock.results[0].value;
+      expect(builderInstance.withComponent).not.toHaveBeenCalled();
     });
   });
 

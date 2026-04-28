@@ -14,6 +14,14 @@ export default defineConfig({
         // Web Worker code: tested separately by Playwright integration tests
         // since the worker pattern doesn't unit-test cleanly in node.
         "js/workers/**",
+        // WASM-dependent files: these import from ../Cargo.toml (the wasm-bindgen
+        // output) which is a binary WASM module not available in the node test
+        // environment. Covered by Playwright integration tests.
+        "js/wasm.js",
+        "js/safe-arrays.js",
+        "js/eager.js",
+        "js/index.js",
+        "js/client.js",
       ],
       thresholds: {
         lines: 0,
