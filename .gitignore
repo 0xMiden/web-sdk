@@ -28,10 +28,17 @@ coverage/
 !packages/react-sdk/
 !packages/react-sdk/**
 packages/react-sdk/dist/
+packages/react-sdk/coverage/
+packages/react-sdk/node_modules/
 !packages/vite-plugin/
 !packages/vite-plugin/**
 packages/vite-plugin/dist/
+packages/vite-plugin/coverage/
 packages/vite-plugin/node_modules/
+
+# Per-package coverage (re-listed to override the package un-ignores above)
+crates/web-client/coverage/
+crates/idxdb-store/src/coverage/
 
 # Playwright
 crates/web-client/test-results
