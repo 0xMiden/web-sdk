@@ -21,14 +21,23 @@ WASM-powered client, React hooks, and Vite tooling — sign, send, and prove tra
 
 This repo packages everything you need to interact with Miden from a browser, a Web Worker, or a React app:
 
-| Package | Purpose | Install |
-|---|---|---|
-| **`@miden-sdk/miden-sdk`** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `yarn add @miden-sdk/miden-sdk` |
-| **`@miden-sdk/react`** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `yarn add @miden-sdk/react` |
-| **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `yarn add -D @miden-sdk/vite-plugin` |
-| **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` |
+| Package | Purpose | Install | Docs |
+|---|---|---|---|
+| **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `yarn add @miden-sdk/miden-sdk` | [Web Client docs ↗](https://docs.miden.xyz/builder/tools/clients/web-client/) |
+| **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `yarn add @miden-sdk/react` | [React SDK docs ↗](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
+| **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `yarn add -D @miden-sdk/vite-plugin` | — |
+| **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
 
 Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client).
+
+---
+
+## Documentation
+
+- **[Web Client](https://docs.miden.xyz/builder/tools/clients/web-client/)** — full API reference for `@miden-sdk/miden-sdk`: `MidenClient`, accounts, notes, transactions, sync, prover.
+- **[React SDK](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** — every hook, with prop tables, return shapes, and copy-pasteable examples.
+- **[`miden-client` crate](https://docs.rs/miden-client)** — the upstream Rust client these bind to.
+- **[Network docs](https://docs.miden.xyz)** — protocol, accounts model, note semantics, mainnet/testnet endpoints.
 
 ---
 
@@ -116,16 +125,45 @@ The same split applies to `@miden-sdk/react`. The choice cascades: if you use `@
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph Browser["Browser tab / Web Worker"]
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor':'#0f172a',
+  'primaryTextColor':'#f8fafc',
+  'primaryBorderColor':'#334155',
+  'lineColor':'#64748b',
+  'secondaryColor':'#1e293b',
+  'tertiaryColor':'#0b1220',
+  'fontFamily':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
+  'fontSize':'14px'
+}}}%%
+flowchart TB
+  classDef app      fill:#1e293b,stroke:#475569,stroke-width:2px,color:#f8fafc
+  classDef hooks    fill:#7c3aed,stroke:#a78bfa,stroke-width:2px,color:#f8fafc
+  classDef wasm     fill:#db2777,stroke:#f472b6,stroke-width:2px,color:#f8fafc
+  classDef store    fill:#0d9488,stroke:#5eead4,stroke-width:2px,color:#f8fafc
+  classDef network  fill:#0284c7,stroke:#7dd3fc,stroke-width:2px,color:#f8fafc
+  classDef chain    fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#f8fafc,stroke-dasharray:5 3
+
+  subgraph Browser[" Browser tab &nbsp;·&nbsp; Web Worker "]
     direction TB
-    App[Your app] --> ReactSDK["@miden-sdk/react<br/>(hooks)"]
-    ReactSDK --> WasmSDK["@miden-sdk/miden-sdk<br/>(WASM client)"]
-    WasmSDK --> IDB["miden-idxdb-store<br/>(IndexedDB)"]
-    WasmSDK --> RPC[gRPC-web RPC]
+    App["Your dApp"]:::app
+    ReactSDK["<b>@miden-sdk/react</b><br/><span style='font-size:11px;opacity:0.85'>useAccount · useNotes · useSend · useConsume</span>"]:::hooks
+    WasmSDK["<b>@miden-sdk/miden-sdk</b><br/><span style='font-size:11px;opacity:0.85'>WASM · accounts · notes · proving · sync</span>"]:::wasm
+    IDB[("<b>miden-idxdb-store</b><br/><span style='font-size:11px;opacity:0.85'>IndexedDB persistence</span>")]:::store
+
+    App --> ReactSDK
+    ReactSDK --> WasmSDK
+    WasmSDK <--> IDB
   end
-  RPC --> Node["Miden node"]
-  Node --> Chain[(Miden chain)]
+
+  RPC["gRPC-web"]:::network
+  Node["<b>Miden node</b><br/><span style='font-size:11px;opacity:0.85'>RPC · prover · sync</span>"]:::network
+  Chain[("Miden chain")]:::chain
+
+  WasmSDK -- "submit · sync" --> RPC
+  RPC --> Node
+  Node --> Chain
+
+  style Browser fill:#0b1220,stroke:#1e293b,stroke-width:2px,color:#f8fafc
 ```
 
 - **`miden-idxdb-store`** persists everything the client needs to survive a tab reload — accounts, notes, the partial MMR, sync state, key material.
