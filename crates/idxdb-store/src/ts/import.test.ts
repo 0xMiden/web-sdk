@@ -239,6 +239,42 @@ describe("forceImportStore", () => {
     await expect(forceImportStore(dbId, payload)).rejects.toThrow();
   });
 
+  it("warn+skip guard: covers lines 86-90 by mocking dexie.table not to throw for unknown names", async () => {
+    // The warn+skip guard in import.ts (lines 85-90) is normally dead code because
+    // db.dexie.table() throws InvalidTableError for unknown tables before the guard is reached.
+    // We mock the table accessor to make it return a fake table object for unknown names,
+    // allowing execution to reach the guard and exercise the console.warn + continue path.
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    const origTable = db.dexie.table.bind(db.dexie);
+    const fakeBulkPut = vi.fn().mockResolvedValue(undefined);
+    const fakeTableStub = { bulkPut: fakeBulkPut };
+
+    vi.spyOn(db.dexie, "table").mockImplementation((name: string) => {
+      // For unknown table names, return a stub instead of throwing.
+      // For known tables, delegate to the real implementation.
+      try {
+        return origTable(name);
+      } catch {
+        return fakeTableStub as any;
+      }
+    });
+
+    const payload = JSON.stringify({ unknownTable: [{ id: 1 }] });
+
+    // Should resolve without error (unknown table is warned and skipped)
+    await forceImportStore(dbId, payload);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("unknownTable")
+    );
+    // The stub's bulkPut should NOT have been called (we skipped it)
+    expect(fakeBulkPut).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
   it("throws for a db that was never opened", async () => {
     await expect(
       forceImportStore("never-opened", JSON.stringify({ someTable: [] }))
