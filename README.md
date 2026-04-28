@@ -144,6 +144,43 @@ You only need to call it explicitly when you're constructing wasm-bindgen types 
 
 The same split applies to `@miden-sdk/react`. The choice cascades: if you use `@miden-sdk/react/lazy`, it pulls `@miden-sdk/miden-sdk/lazy` automatically; the eager variant pulls eager.
 
+### React: gating on `isReady` from `useMiden()`
+
+The React SDK hides the `MidenClient.ready()` plumbing behind `MidenProvider` — you don't call `ready()` yourself. Instead, the provider initializes WASM (lazily on the `/lazy` entry, eagerly on the default), and exposes the readiness state through `useMiden()`:
+
+```tsx
+import { MidenProvider, useMiden } from "@miden-sdk/react/lazy";
+
+function App() {
+  return (
+    <MidenProvider config={{ rpcUrl: "testnet" }}>
+      <Wallet />
+    </MidenProvider>
+  );
+}
+
+function Wallet() {
+  const { isReady, isInitializing, error } = useMiden();
+  if (error) return <div>Failed to load: {error.message}</div>;
+  if (!isReady) return <div>Loading wallet…</div>;
+  // SDK is initialized — safe to call hooks that touch WASM
+  return <Dashboard />;
+}
+```
+
+`useMiden()` returns:
+
+| Field            | Type              | Meaning                                                                |
+| ---------------- | ----------------- | ---------------------------------------------------------------------- |
+| `isInitializing` | `boolean`         | WASM and client are being loaded. Show a loading UI.                   |
+| `isReady`        | `boolean`         | Client is ready. SDK hooks (`useAccount`, `useSend`, …) are safe to use. |
+| `error`          | `Error \| null`   | Initialization failed (network, WASM load, etc.). Show an error UI.    |
+| `client`         | `WebClient \| null` | The underlying client, populated once `isReady === true`.            |
+
+For zero-glue UI, pass `loadingComponent` and `errorComponent` (or `(err) => ReactNode`) props to `MidenProvider` — the provider renders them in place of children until the SDK is ready, and you can drop the `isReady` check in consumer hooks.
+
+The other SDK hooks (`useCreateWallet`, `useSend`, `useNotes`, etc.) all gate on `isReady` internally and return their own `isLoading` / `error` states, so you don't need to chain readiness checks through every component once you've gated at the top.
+
 ---
 
 ## Architecture
