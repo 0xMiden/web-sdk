@@ -1,4 +1,4 @@
-import { Page } from "puppeteer";
+import { Page } from "@playwright/test";
 import { WebClient as WasmWebClient } from "../dist/crates/miden_client_web";
 import {
   Account,
