@@ -99,15 +99,23 @@ impl From<&OutputNote> for NativeRawOutputNote {
 
 impl From<OutputNoteArray> for Vec<NativeRawOutputNote> {
     fn from(output_notes_array: OutputNoteArray) -> Self {
+<<<<<<< ours
         let items: Vec<OutputNote> = output_notes_array.into();
         items.into_iter().map(Into::into).collect()
+=======
+        output_notes_array.into_iter().map(Into::into).collect()
+>>>>>>> theirs
     }
 }
 
 impl From<&OutputNoteArray> for Vec<NativeRawOutputNote> {
     fn from(output_notes_array: &OutputNoteArray) -> Self {
+<<<<<<< ours
         let items: Vec<OutputNote> = output_notes_array.into();
         items.into_iter().map(Into::into).collect()
+=======
+        output_notes_array.iter().cloned().map(Into::into).collect()
+>>>>>>> theirs
     }
 }
 
