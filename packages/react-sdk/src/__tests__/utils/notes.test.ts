@@ -20,7 +20,8 @@ const makeInputNoteRecord = (opts: {
       if (detailsThrows) throw new Error("details unavailable");
       return {
         assets: () => ({
-          fungibleAssets: () => assets.map((a) => makeAsset(a.faucetHex, a.amount)),
+          fungibleAssets: () =>
+            assets.map((a) => makeAsset(a.faucetHex, a.amount)),
         }),
       };
     }),
@@ -52,7 +53,11 @@ describe("getNoteSummary", () => {
   it("returns id with empty assets list when no fungible assets", () => {
     const note = makeInputNoteRecord({ id: "0xnote_empty", assets: [] });
     const summary = getNoteSummary(note as never);
-    expect(summary).toEqual({ id: "0xnote_empty", assets: [], sender: undefined });
+    expect(summary).toEqual({
+      id: "0xnote_empty",
+      assets: [],
+      sender: undefined,
+    });
   });
 
   it("populates assets from details().assets().fungibleAssets()", () => {

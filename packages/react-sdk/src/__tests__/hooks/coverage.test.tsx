@@ -96,7 +96,8 @@ describe("useImportAccount — file-input variants", () => {
       // exportAccountFile returns serialized bytes; only the matching header's
       // bytes equal fileBytes.
       exportAccountFile: vi.fn().mockImplementation(async (id: unknown) => {
-        const matches = (id as { toString: () => string }).toString() === "0xmatch";
+        const matches =
+          (id as { toString: () => string }).toString() === "0xmatch";
         return {
           serialize: () =>
             matches ? new Uint8Array([7, 7, 7]) : new Uint8Array([0, 0, 0]),
@@ -328,9 +329,7 @@ describe("useNotes — sender + excludeIds filters on consumableNotes", () => {
     // Both noteSummaries and consumableNoteSummaries should be filtered.
     expect(Array.isArray(result.current.consumableNoteSummaries)).toBe(true);
     expect(
-      result.current.consumableNoteSummaries.every(
-        (s) => s.id !== "0xexclude"
-      )
+      result.current.consumableNoteSummaries.every((s) => s.id !== "0xexclude")
     ).toBe(true);
   });
 });
@@ -557,4 +556,3 @@ describe("useNotes — normalize fallback paths", () => {
     expect(result.current.error).toBeNull();
   });
 });
-

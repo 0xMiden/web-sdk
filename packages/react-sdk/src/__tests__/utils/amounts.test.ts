@@ -73,11 +73,15 @@ describe("parseAssetAmount", () => {
   });
 
   it("rejects more than one decimal point", () => {
-    expect(() => parseAssetAmount("1.2.3", 2)).toThrow("too many decimal points");
+    expect(() => parseAssetAmount("1.2.3", 2)).toThrow(
+      "too many decimal points"
+    );
   });
 
   it("rejects fractional with too many decimals", () => {
-    expect(() => parseAssetAmount("1.234", 2)).toThrow("too many decimal places");
+    expect(() => parseAssetAmount("1.234", 2)).toThrow(
+      "too many decimal places"
+    );
   });
 
   it("parses whole-only with explicit decimals", () => {

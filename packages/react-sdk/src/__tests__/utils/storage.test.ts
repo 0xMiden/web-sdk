@@ -241,7 +241,12 @@ describe("clearMidenStorage", () => {
   it("logs and resolves when delete is blocked (onblocked)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const deleteDb = vi.fn(() => {
-      const req: { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void; error?: unknown } = {};
+      const req: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        onblocked?: () => void;
+        error?: unknown;
+      } = {};
       // Schedule the blocked callback on the microtask queue so the request
       // shape matches the spec (handlers attached AFTER the call).
       queueMicrotask(() => req.onblocked?.());
@@ -260,7 +265,11 @@ describe("clearMidenStorage", () => {
 
   it("rejects when delete request errors", async () => {
     const deleteDb = vi.fn(() => {
-      const req: { onsuccess?: () => void; onerror?: () => void; error?: unknown } = {
+      const req: {
+        onsuccess?: () => void;
+        onerror?: () => void;
+        error?: unknown;
+      } = {
         error: new Error("delete failed"),
       };
       queueMicrotask(() => req.onerror?.());

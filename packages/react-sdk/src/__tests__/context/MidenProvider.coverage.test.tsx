@@ -30,7 +30,9 @@ describe("MidenProvider — custom loading + error rendering", () => {
     render(
       <MidenProvider
         config={{ rpcUrl: "https://rpc.testnet.miden.io" }}
-        loadingComponent={<div data-testid="custom-loading">Custom loading…</div>}
+        loadingComponent={
+          <div data-testid="custom-loading">Custom loading…</div>
+        }
       >
         <div data-testid="children">should not render yet</div>
       </MidenProvider>

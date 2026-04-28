@@ -445,9 +445,9 @@ describe("initializeSignerAccount", () => {
         importAccountId: "0xboom",
       });
 
-      await expect(
-        initializeSignerAccount(mockClient, config)
-      ).rejects.toThrow("permission denied");
+      await expect(initializeSignerAccount(mockClient, config)).rejects.toThrow(
+        "permission denied"
+      );
     });
   });
 });
