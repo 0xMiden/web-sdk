@@ -39,6 +39,7 @@ export async function openDatabase(
 ): Promise<string> {
   const db = new MidenDatabase(network);
   const success = await db.open(clientVersion);
+  /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
   if (!success) {
     throw new Error(`Failed to open IndexedDB database: ${network}`);
   }
@@ -521,6 +522,7 @@ export class MidenDatabase {
     this.dexie.on("populate", () => {
       this.stateSync
         .put({ id: 1, blockNum: 0 } as IStateSync)
+        /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
@@ -536,6 +538,7 @@ export class MidenDatabase {
       await this.ensureClientVersion(clientVersion);
       console.log("Database opened successfully");
       return true;
+    /* v8 ignore next 4 — logWebStoreError always re-throws, so `return false` and this catch block are unreachable */
     } catch (err) {
       logWebStoreError(err, "Failed to open database");
       return false;
