@@ -57,17 +57,30 @@ import { MidenProvider, useAccount, useSend } from "@miden-sdk/react";
 function App() {
   return (
     <MidenProvider config={{ endpoint: "https://rpc.testnet.miden.xyz" }}>
-      <Wallet />
+      <Wallet senderId="mtst1q...sender" />
     </MidenProvider>
   );
 }
 
-function Wallet() {
-  const { account } = useAccount();
-  const send = useSend();
+function Wallet({ senderId }: { senderId: string }) {
+  const { account, isLoading } = useAccount(senderId);
+  const { send, isLoading: sending, stage, error } = useSend();
+
+  const handleSend = async () => {
+    const result = await send({
+      from: senderId,
+      to: "mtst1q...recipient",
+      assetId: "mtst1q...faucet",
+      amount: 100n,
+    });
+    console.log("Tx:", result.transactionId);
+  };
+
+  if (isLoading || !account) return <p>Loading…</p>;
   return (
-    <button onClick={() => send.mutate({ to: "mtst1q...", amount: 100n })}>
-      Send from {account?.id().toBech32()}
+    <button onClick={handleSend} disabled={sending}>
+      {sending ? stage : `Send from ${account.id().toBech32()}`}
+      {error && <span> — {error.message}</span>}
     </button>
   );
 }
