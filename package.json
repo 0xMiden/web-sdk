@@ -6,6 +6,8 @@
     "build:web-client": "pnpm --filter @miden-sdk/miden-sdk run build",
     "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
     "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
     "prepare": "lefthook install || true",
@@ -24,7 +26,8 @@
     "lefthook": "^1.13.6",
     "lint-staged": "^16.4.0",
     "publint": "^0.3.18",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^3.0.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
