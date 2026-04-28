@@ -110,32 +110,36 @@ describe("hook guards — client not ready", () => {
     await expect(
       result.current.execute({
         accountId: "0xacc",
-        script: "begin push.0 end",
+        // The hook bails on the not-ready guard before touching `script`,
+        // so the script object's shape doesn't matter here — cast to satisfy
+        // the parameter type.
+        script: {} as never,
       })
     ).rejects.toThrow(/Miden client is not ready/);
   });
 
-  it("useWaitForCommit returns null when client is not ready", async () => {
+  it("useWaitForCommit's waitForCommit() rejects when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
-    const { result } = renderHook(() => useWaitForCommit("0xtx"));
-    // Status starts as pending; with no client it never advances.
-    expect(["pending", "idle", null, undefined]).toContain(
-      result.current.status
+    const { result } = renderHook(() => useWaitForCommit());
+    await expect(result.current.waitForCommit("0xtx")).rejects.toThrow(
+      /Miden client is not ready/
     );
   });
 
-  it("useWaitForNotes returns null when client is not ready", async () => {
+  it("useWaitForNotes's waitForConsumableNotes() rejects when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
-    const { result } = renderHook(() => useWaitForNotes(["0xnote"]));
-    expect(result.current).toBeDefined();
+    const { result } = renderHook(() => useWaitForNotes());
+    await expect(
+      result.current.waitForConsumableNotes({ accountId: "0xacc" })
+    ).rejects.toThrow(/Miden client is not ready/);
   });
 
   it("useExportNote throws when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
     const { result } = renderHook(() => useExportNote());
-    await expect(
-      result.current.exportNote({ noteId: "0xnote" })
-    ).rejects.toThrow(/Miden client is not ready/);
+    await expect(result.current.exportNote("0xnote")).rejects.toThrow(
+      /Miden client is not ready/
+    );
   });
 
   it("useExportStore throws when client is not ready", async () => {
@@ -149,17 +153,17 @@ describe("hook guards — client not ready", () => {
   it("useImportNote throws when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
     const { result } = renderHook(() => useImportNote());
-    await expect(
-      result.current.importNote({ bytes: new Uint8Array() })
-    ).rejects.toThrow(/Miden client is not ready/);
+    await expect(result.current.importNote(new Uint8Array())).rejects.toThrow(
+      /Miden client is not ready/
+    );
   });
 
   it("useImportStore throws when client is not ready", async () => {
     mockUseMiden.mockReturnValue(notReady());
     const { result } = renderHook(() => useImportStore());
-    await expect(
-      result.current.importStore({ bytes: new Uint8Array() })
-    ).rejects.toThrow(/Miden client is not ready/);
+    await expect(result.current.importStore("dump", "TestStore")).rejects.toThrow(
+      /Miden client is not ready/
+    );
   });
 
   it("useTransactionHistory returns idle initial state when client is not ready", () => {
@@ -176,13 +180,15 @@ describe("hook guards — client not ready", () => {
     expect(result.current.notes).toEqual([]);
   });
 
-  it("useSessionAccount initial state has no account when client is not ready", () => {
+  it("useSessionAccount initial state has no resolved sessionAccountId when client is not ready", () => {
     mockUseMiden.mockReturnValue(notReady());
     const { result } = renderHook(() =>
-      useSessionAccount({ storagePrefix: "test" })
+      useSessionAccount({
+        fund: vi.fn().mockResolvedValue(undefined),
+        storagePrefix: "test",
+      })
     );
-    // session hook returns the current state; with no client it has no resolved account.
-    expect(result.current.account).toBeFalsy();
+    expect(result.current.sessionAccountId).toBeNull();
   });
 });
 
@@ -205,9 +211,9 @@ describe("hook error-state propagation", () => {
 
     const { result } = renderHook(() => useExportNote());
     await act(async () => {
-      await expect(
-        result.current.exportNote({ noteId: "0xnote" })
-      ).rejects.toThrow("export failed");
+      await expect(result.current.exportNote("0xnote")).rejects.toThrow(
+        "export failed"
+      );
     });
     await waitFor(() => {
       expect(result.current.error?.message).toBe("export failed");
@@ -228,7 +234,7 @@ describe("hook error-state propagation", () => {
     const { result } = renderHook(() => useImportNote());
     await act(async () => {
       await expect(
-        result.current.importNote({ bytes: new Uint8Array([1, 2, 3]) })
+        result.current.importNote(new Uint8Array([1, 2, 3]))
       ).rejects.toThrow("import failed");
     });
     await waitFor(() => {

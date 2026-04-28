@@ -120,7 +120,7 @@ describe("useExecuteProgram — foreign-account string branch", () => {
     await act(async () => {
       await result.current.execute({
         accountId: "0xacc",
-        script: "begin push.0 end",
+        script: {} as never,
         foreignAccounts: ["0xforeign1", "0xforeign2"] as never,
         skipSync: true,
       });
@@ -144,7 +144,7 @@ describe("useExecuteProgram — foreign-account string branch", () => {
       await expect(
         result.current.execute({
           accountId: "0xacc",
-          script: "begin push.0 end",
+          script: {} as never,
           skipSync: true,
         })
       ).rejects.toThrow("exec-string-fail");
@@ -218,7 +218,7 @@ describe("MultiSignerProvider — stable closures after disconnect", () => {
       isConnected: false,
     });
 
-    let signerRef: ReturnType<typeof useSigner>;
+    let signerRef: ReturnType<typeof useSigner> | undefined;
     function Capture() {
       signerRef = useSigner();
       return null;

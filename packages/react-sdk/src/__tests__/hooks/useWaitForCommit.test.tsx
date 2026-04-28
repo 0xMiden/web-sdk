@@ -90,13 +90,13 @@ describe("useWaitForCommit", () => {
 
     const { result } = renderHook(() => useWaitForCommit());
 
-    await result.current.waitForCommit(txId, {
+    await result.current.waitForCommit(txId as never, {
       timeoutMs: 20,
       intervalMs: 1,
     });
 
     expect(mockClient.getTransactions).toHaveBeenCalledWith(
-      TransactionFilter.ids([txId])
+      TransactionFilter.ids([txId as never])
     );
   });
 
