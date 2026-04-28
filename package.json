@@ -8,7 +8,7 @@
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
     "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install || true"
   },
   "dependencies": {
     "prettier": "^3.8.1"
