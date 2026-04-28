@@ -242,7 +242,8 @@ describe("MidenProvider sync function", () => {
     });
 
     expect(
-      (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }).syncState
+      (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> })
+        .syncState
     ).toHaveBeenCalled();
   });
 
@@ -304,7 +305,8 @@ describe("MidenProvider sync function", () => {
 
     // syncState should NOT have been called due to isSyncing guard
     expect(
-      (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> }).syncState
+      (mockClient as unknown as { syncState: ReturnType<typeof vi.fn> })
+        .syncState
     ).not.toHaveBeenCalled();
   });
 });

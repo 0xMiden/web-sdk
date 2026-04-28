@@ -509,9 +509,11 @@ describe("MidenStore", () => {
       useMidenStore.getState().setNotes([note] as any);
       const cn = createMockConsumableNoteRecord("0xcnlambda");
       useMidenStore.getState().setConsumableNotes([cn] as any);
-      useMidenStore
-        .getState()
-        .setAssetMetadata("0xasset", { assetId: "0xasset", symbol: "T", decimals: 8 });
+      useMidenStore.getState().setAssetMetadata("0xasset", {
+        assetId: "0xasset",
+        symbol: "T",
+        decimals: 8,
+      });
       // setClient last so isReady=true is not overwritten
       useMidenStore.getState().setClient(mockClient as any);
 
