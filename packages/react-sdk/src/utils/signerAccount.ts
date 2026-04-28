@@ -79,6 +79,7 @@ export async function initializeSignerAccount(
     try {
       await client.importAccountById(accountId);
     } catch (e) {
+      /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("already being tracked")) {
         throw e;

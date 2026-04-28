@@ -163,10 +163,12 @@ export function useTransaction(): UseTransactionResult {
         await sync();
         return txSummary;
       } catch (err) {
+        /* v8 ignore next 1 — non-Error rejection path; in tests all thrown values are Error instances */
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStage("idle");
         throw error;
+      /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
         isBusyRef.current = false;

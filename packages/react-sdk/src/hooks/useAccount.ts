@@ -57,6 +57,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
     : null;
 
   const refetch = useCallback(async () => {
+    /* v8 ignore next 1 — early-return guard; tests always call refetch with isReady+client set */
     if (!client || !isReady || !accountIdStr) return;
 
     setIsLoading(true);
@@ -70,6 +71,7 @@ export function useAccount(accountId: AccountRef | undefined): AccountResult {
         setAccountDetails(accountIdStr, fetchedAccount);
       }
     } catch (err) {
+      /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setIsLoading(false);

@@ -37,6 +37,7 @@ export function readNoteAttachment(
     const kind = attachment.kind?.();
     if (!kind) return null;
 
+    /* v8 ignore next 1 — NoteAttachmentKind.None == 0 which is already caught by !kind above */
     if (kind === NoteAttachmentKind.None) return null;
 
     if (kind === NoteAttachmentKind.Word) {

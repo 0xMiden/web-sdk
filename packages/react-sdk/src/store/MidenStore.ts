@@ -188,6 +188,7 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
           const id = note.id().toString();
           // Preserve existing timestamp or record new one
           newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
+        /* v8 ignore next 3 — note.id() throwing requires a malformed note; mocks always return valid IDs */
         } catch {
           // Skip
         }

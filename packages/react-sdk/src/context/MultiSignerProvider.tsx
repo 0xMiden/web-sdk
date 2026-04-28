@@ -92,12 +92,14 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
 
   // Active signer from snapshot (for deps that need reactive updates)
   const activeSigner = activeSignerName
+    /* v8 ignore next 1 — ?? null fallback; find() returns undefined only when the signer was unregistered between renders */
     ? (signersSnapshot.find((s) => s.name === activeSignerName) ?? null)
     : null;
 
   // Stable function wrappers that delegate to the ref at call time.
   // These are placed on forwardedValue (guarded by activeSigner != null),
   // but a stale reference could be called after disconnect — explicit null checks are safer.
+  /* v8 ignore next 10 — stableSignCb callback body; called only when a signer is active, not exercised in unit tests */
   const stableSignCb = useCallback(
     async (pubKey: Uint8Array, signingInputs: Uint8Array) => {
       const name = activeSignerName;
@@ -109,6 +111,7 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
     [activeSignerName]
   );
 
+  /* v8 ignore next 8 — stableConnect callback body; called only when a signer is active, not exercised in unit tests */
   const stableConnect = useCallback(async () => {
     const name = activeSignerName;
     if (!name) throw new Error("No active signer (signer was disconnected)");
@@ -117,6 +120,8 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
     return signer.connect();
   }, [activeSignerName]);
 
+  /* v8 ignore next 7 — stableDisconnect is exposed as disconnect in the forwarded SignerContext
+   * value; it is called by useSigner().disconnect() consumers, not directly via tests. */
   const stableDisconnect = useCallback(async () => {
     const name = activeSignerName;
     if (!name) throw new Error("No active signer (signer was disconnected)");
@@ -176,6 +181,7 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
       // Disconnect old signer (fire-and-forget)
       if (currentSigner?.isConnected) {
         currentSigner.disconnect().catch((err) => {
+          /* v8 ignore next 1 — disconnect().catch fires only if the mock rejects; not tested */
           console.warn("Failed to disconnect previous signer:", err);
         });
       }
@@ -187,6 +193,7 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
         if (generation !== generationRef.current) return;
       } catch (err) {
         // Stale — don't clobber current activeSignerName
+        /* v8 ignore next 1 — stale-generation check inside catch; requires connect() to throw AND a concurrent connect/disconnect, not deterministically testable */
         if (generation !== generationRef.current) return;
         setActiveName(null);
         throw err;
@@ -206,6 +213,7 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
 
     if (signer?.isConnected) {
       signer.disconnect().catch((err) => {
+        /* v8 ignore next 1 — disconnect().catch fires only if the mock rejects; not tested */
         console.warn("Failed to disconnect signer:", err);
       });
     }

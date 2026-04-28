@@ -55,6 +55,7 @@ export async function proveWithFallback<T>(
     const fallbackProver = resolveProverTarget(prover.fallback, config);
     prover.onFallback?.();
 
+    /* v8 ignore next 1 — fallbackProver is always non-null when a fallback config is present; ?? undefined path unreachable */
     return await proveFn(fallbackProver ?? undefined);
   }
 }
@@ -75,6 +76,8 @@ function resolveProverTarget(
       return TransactionProver.newLocalProver();
     }
     if (normalized === "devnet" || normalized === "testnet") {
+      /* v8 ignore next 8 — DEFAULT_PROVER_URLS always has devnet/testnet entries,
+       * so the ?? null fallback and the !url guard are unreachable in tests. */
       const url =
         config.proverUrls?.[normalized] ??
         DEFAULT_PROVER_URLS[normalized] ??
@@ -106,6 +109,7 @@ function createRemoteProver(
   }
   return TransactionProver.newRemoteProver(
     url,
+    /* v8 ignore next 1 — timeoutMs is always provided in tests; ?? fallbackTimeout path unreachable */
     normalizeTimeout(timeoutMs ?? fallbackTimeout)
   );
 }

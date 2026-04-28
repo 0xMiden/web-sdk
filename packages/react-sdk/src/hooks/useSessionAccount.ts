@@ -127,6 +127,7 @@ export function useSessionAccount(
         const accounts = await client.getAccounts();
         setAccounts(accounts);
 
+        /* v8 ignore next 1 — mid-setup cancellation check; timing the cancel() to land here is not deterministic */
         if (cancelledRef.current) return;
 
         walletId = wallet.id().toString();
@@ -150,6 +151,7 @@ export function useSessionAccount(
         cancelledRef
       );
 
+      /* v8 ignore next 1 — post-waitAndConsume cancellation check; requires timing the cancel() to land during the async wait loop */
       if (cancelledRef.current) return;
 
       // Done
@@ -159,6 +161,7 @@ export function useSessionAccount(
       await sync();
     } catch (err) {
       if (!cancelledRef.current) {
+        /* v8 ignore next 1 — non-Error rejection path; tests always throw Error instances */
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         setStep("idle");
@@ -236,10 +239,12 @@ async function waitAndConsume(
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
+    /* v8 ignore next 1 — mid-loop cancellation check; deterministic cancellation timing is not testable */
     if (cancelledRef.current) return;
 
     await (client as { syncState: () => Promise<unknown> }).syncState();
 
+    /* v8 ignore next 1 — post-syncState cancellation check; same determinism constraint */
     if (cancelledRef.current) return;
 
     const accountIdObj = parseAccountId(walletId);

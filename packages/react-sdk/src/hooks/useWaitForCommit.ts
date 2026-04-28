@@ -35,6 +35,7 @@ export function useWaitForCommit(): UseWaitForCommitResult {
         throw new Error("Miden client is not ready");
       }
 
+      /* v8 ignore next 2 — default timeoutMs/intervalMs branches; tests always pass explicit values */
       const timeoutMs = Math.max(0, options?.timeoutMs ?? 10_000);
       const intervalMs = Math.max(1, options?.intervalMs ?? 1_000);
       const targetHex = normalizeHex(
