@@ -38,7 +38,7 @@ export async function getSyncHeight(dbId) {
         logWebStoreError(error, "Error fetching sync height");
     }
 }
-export async function getCurrentBlockchainCheckpoint(dbId) {
+export async function getCurrentBlockchainPeaks(dbId) {
     try {
         const db = getDatabase(dbId);
         const record = await db.blockchainCheckpoint.get(1);
@@ -54,7 +54,7 @@ export async function getCurrentBlockchainCheckpoint(dbId) {
         };
     }
     catch (error) {
-        logWebStoreError(error, "Error fetching current blockchain checkpoint");
+        logWebStoreError(error, "Error fetching current blockchain peaks");
     }
 }
 export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {

@@ -31,7 +31,7 @@ use js_bindings::{
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
-    idxdb_get_current_blockchain_checkpoint,
+    idxdb_get_current_blockchain_peaks,
     idxdb_get_note_tags,
     idxdb_get_sync_height,
     idxdb_remove_note_tag,
@@ -81,23 +81,18 @@ impl IdxdbStore {
         Ok(block_num_idxdb.block_num.into())
     }
 
-    pub(crate) async fn get_current_blockchain_checkpoint(
-        &self,
-    ) -> Result<(BlockNumber, MmrPeaks), StoreError> {
-        let promise = idxdb_get_current_blockchain_checkpoint(self.db_id());
-        let checkpoint: PartialBlockchainPeaksIdxdbObject =
-            await_js(promise, "failed to get current blockchain checkpoint").await?;
+    pub(crate) async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
+        let promise = idxdb_get_current_blockchain_peaks(self.db_id());
+        let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
+            await_js(promise, "failed to get current blockchain peaks").await?;
 
-        let block_num = BlockNumber::from(checkpoint.block_num);
-
-        if checkpoint.peaks.is_empty() {
-            return Ok((block_num, MmrPeaks::new(Forest::empty(), Vec::new())?));
+        if peaks_idxdb.peaks.is_empty() {
+            return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
         }
 
-        let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&checkpoint.peaks)?;
-        let peaks = MmrPeaks::new(Forest::new(block_num.as_usize()), mmr_peaks_nodes)
-            .map_err(StoreError::MmrError)?;
-        Ok((block_num, peaks))
+        let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks_idxdb.peaks)?;
+        MmrPeaks::new(Forest::new(peaks_idxdb.block_num as usize), mmr_peaks_nodes)
+            .map_err(StoreError::MmrError)
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {

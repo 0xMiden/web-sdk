@@ -55,7 +55,7 @@ export async function getSyncHeight(dbId: string) {
   }
 }
 
-export async function getCurrentBlockchainCheckpoint(dbId: string) {
+export async function getCurrentBlockchainPeaks(dbId: string) {
   try {
     const db = getDatabase(dbId);
     const record = await db.blockchainCheckpoint.get(1);
@@ -70,7 +70,7 @@ export async function getCurrentBlockchainCheckpoint(dbId: string) {
       peaks: uint8ArrayToBase64(record.partialBlockchainPeaks),
     };
   } catch (error) {
-    logWebStoreError(error, "Error fetching current blockchain checkpoint");
+    logWebStoreError(error, "Error fetching current blockchain peaks");
   }
 }
 

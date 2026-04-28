@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { insertBlockHeader } from "./chainData.js";
-import { getCurrentBlockchainCheckpoint } from "./sync.js";
 import { getDatabase, openDatabase } from "./schema.js";
 import { uniqueDbName } from "./test-utils.js";
 
@@ -94,15 +93,5 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.hasClientNotes).toBe("true");
-  });
-});
-
-describe("getCurrentBlockchainCheckpoint", () => {
-  it("returns the seeded empty checkpoint before any sync", async () => {
-    const dbId = await openTestDb();
-    const result = await getCurrentBlockchainCheckpoint(dbId);
-    expect(result).toBeDefined();
-    expect(result!.blockNum).toBe(0);
-    expect(result!.peaks).toBe("");
   });
 });

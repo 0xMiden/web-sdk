@@ -275,10 +275,8 @@ impl Store for IdxdbStore {
         self.insert_partial_blockchain_nodes(nodes).await
     }
 
-    async fn get_current_blockchain_checkpoint(
-        &self,
-    ) -> Result<(BlockNumber, MmrPeaks), StoreError> {
-        self.get_current_blockchain_checkpoint().await
+    async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
+        self.get_current_blockchain_peaks().await
     }
 
     async fn untrack_and_prune_irrelevant_blocks(

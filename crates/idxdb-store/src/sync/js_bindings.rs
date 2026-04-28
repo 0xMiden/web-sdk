@@ -21,8 +21,8 @@ extern "C" {
     #[wasm_bindgen(js_name = getSyncHeight)]
     pub fn idxdb_get_sync_height(db_id: &str) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = getCurrentBlockchainCheckpoint)]
-    pub fn idxdb_get_current_blockchain_checkpoint(db_id: &str) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
+    pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getNoteTags)]
     pub fn idxdb_get_note_tags(db_id: &str) -> js_sys::Promise;
