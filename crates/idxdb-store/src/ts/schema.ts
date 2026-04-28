@@ -538,7 +538,7 @@ export class MidenDatabase {
       await this.ensureClientVersion(clientVersion);
       console.log("Database opened successfully");
       return true;
-    /* v8 ignore next 4 — logWebStoreError always re-throws, so `return false` and this catch block are unreachable */
+      /* v8 ignore next 4 — logWebStoreError always re-throws, so `return false` and this catch block are unreachable */
     } catch (err) {
       logWebStoreError(err, "Failed to open database");
       return false;

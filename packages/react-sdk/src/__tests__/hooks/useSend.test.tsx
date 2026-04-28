@@ -736,7 +736,9 @@ describe("useSend", () => {
       });
 
       // Set store config with a prover so proveWithFallback uses proveTransactionWithProver
-      useMidenStore.getState().setConfig({ rpcUrl: "testnet", prover: "local" });
+      useMidenStore
+        .getState()
+        .setConfig({ rpcUrl: "testnet", prover: "local" });
 
       const { result } = renderHook(() => useSend());
 

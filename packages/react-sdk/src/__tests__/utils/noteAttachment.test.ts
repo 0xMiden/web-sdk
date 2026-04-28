@@ -181,9 +181,9 @@ describe("createNoteAttachment", () => {
     delete (NoteAttachment as any).newArray;
 
     try {
-      expect(() =>
-        createNoteAttachment([1n, 2n, 3n, 4n, 5n])
-      ).toThrow("NoteAttachment.newArray is not available");
+      expect(() => createNoteAttachment([1n, 2n, 3n, 4n, 5n])).toThrow(
+        "NoteAttachment.newArray is not available"
+      );
     } finally {
       // Restore
       if (original !== undefined) {

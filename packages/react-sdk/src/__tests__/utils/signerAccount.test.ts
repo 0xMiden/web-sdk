@@ -458,9 +458,9 @@ describe("initializeSignerAccount", () => {
         new Error("network error")
       );
 
-      await expect(
-        initializeSignerAccount(mockClient, config)
-      ).rejects.toThrow("network error");
+      await expect(initializeSignerAccount(mockClient, config)).rejects.toThrow(
+        "network error"
+      );
     });
   });
 

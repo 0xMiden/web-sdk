@@ -12,6 +12,7 @@ export async function getAccountIds(dbId) {
     catch (error) {
         logWebStoreError(error, "Error while fetching account IDs");
     }
+    /* v8 ignore next 2 — logWebStoreError always re-throws, making this return unreachable */
     return [];
 }
 export async function getAllAccountHeaders(dbId) {

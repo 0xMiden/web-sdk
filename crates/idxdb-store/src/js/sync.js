@@ -161,6 +161,7 @@ async function updateBlockHeader(tx, blockNum, blockHeader, partialBlockchainPea
         }
     }
     catch (err) {
+        /* v8 ignore next 2 -- IDB errors inside a Dexie tx abort the whole tx; this catch is unreachable */
         logWebStoreError(err, "Failed to insert block header");
     }
 }
@@ -194,6 +195,7 @@ async function updateCommittedNoteTags(tx, inputNoteIds) {
         }
     }
     catch (error) {
+        /* v8 ignore next 2 -- IDB errors inside a Dexie tx abort the whole tx; this catch is unreachable */
         logWebStoreError(error, "Failed to update committed note tags");
     }
 }

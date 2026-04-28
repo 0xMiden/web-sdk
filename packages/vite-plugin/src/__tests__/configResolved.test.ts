@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { midenVitePlugin } from "../index.js";
 
-function callConfigResolved(plugin: ReturnType<typeof midenVitePlugin>, config: any) {
+function callConfigResolved(
+  plugin: ReturnType<typeof midenVitePlugin>,
+  config: any
+) {
   const fn = plugin.configResolved;
   if (typeof fn !== "function") throw new Error("configResolved hook missing");
   return fn(config);
@@ -20,7 +23,9 @@ describe("configResolved() hook", () => {
     const config = { optimizeDeps: {}, resolve: { dedupe: [] } } as any;
     callConfigResolved(midenVitePlugin(), config);
     expect(config.optimizeDeps.esbuildOptions).toBeDefined();
-    expect(Array.isArray(config.optimizeDeps.esbuildOptions.plugins)).toBe(true);
+    expect(Array.isArray(config.optimizeDeps.esbuildOptions.plugins)).toBe(
+      true
+    );
   });
 
   it("creates esbuildOptions.plugins array when missing", () => {
@@ -33,7 +38,9 @@ describe("configResolved() hook", () => {
     const config = makeBaseConfig();
     callConfigResolved(midenVitePlugin(), config);
     const plugins = config.optimizeDeps.esbuildOptions.plugins;
-    expect(plugins.some((p: any) => p.name === "externalize-miden-react")).toBe(true);
+    expect(plugins.some((p: any) => p.name === "externalize-miden-react")).toBe(
+      true
+    );
   });
 
   it("does not duplicate externalizeMidenReact when already present", () => {
@@ -87,7 +94,9 @@ describe("configResolved() hook", () => {
   it("does not duplicate already-present dedupe entries", () => {
     const config = makeBaseConfig({ resolve: { dedupe: ["react"] } });
     callConfigResolved(midenVitePlugin(), config);
-    const reactEntries = config.resolve.dedupe.filter((d: string) => d === "react");
+    const reactEntries = config.resolve.dedupe.filter(
+      (d: string) => d === "react"
+    );
     expect(reactEntries.length).toBe(1);
   });
 });

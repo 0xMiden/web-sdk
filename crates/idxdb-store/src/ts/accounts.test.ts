@@ -477,19 +477,31 @@ describe("applyTransactionDelta", () => {
       COMMITMENT
     );
 
-    const header = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(header?.nonce).toBe("1");
     expect(header?.storageRoot).toBe(STORAGE_ROOT);
 
-    const slots = await db.latestAccountStorages.where("accountId").equals(ACC).toArray();
+    const slots = await db.latestAccountStorages
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(slots).toHaveLength(1);
     expect(slots[0].slotValue).toBe("0xval1");
 
-    const maps = await db.latestStorageMapEntries.where("accountId").equals(ACC).toArray();
+    const maps = await db.latestStorageMapEntries
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(maps).toHaveLength(1);
     expect(maps[0].value).toBe("v1");
 
-    const assets = await db.latestAccountAssets.where("accountId").equals(ACC).toArray();
+    const assets = await db.latestAccountAssets
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(assets).toHaveLength(1);
     expect(assets[0].asset).toBe("0xasset1");
   });
@@ -500,40 +512,67 @@ describe("applyTransactionDelta", () => {
 
     // First delta: initial state
     await applyTransactionDelta(
-      dbId, ACC, "1",
+      dbId,
+      ACC,
+      "1",
       [{ slotName: "slot1", slotValue: "0xval1", slotType: 0 }],
       [{ slotName: "map1", key: "k1", value: "v1" }],
       [{ vaultKey: "vk1", asset: "0xasset1" }],
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, false, COMMITMENT
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      COMMITMENT
     );
 
     // Second delta: update
     await applyTransactionDelta(
-      dbId, ACC, "2",
+      dbId,
+      ACC,
+      "2",
       [{ slotName: "slot1", slotValue: "0xval2", slotType: 0 }],
       [{ slotName: "map1", key: "k1", value: "" }], // empty string = removal
       [{ vaultKey: "vk1", asset: "" }], // empty string = removal
-      CODE_ROOT, "0xsroot2", "0xvroot2", false, "0xcommit2"
+      CODE_ROOT,
+      "0xsroot2",
+      "0xvroot2",
+      false,
+      "0xcommit2"
     );
 
     // Latest should reflect nonce 2
-    const header = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(header?.nonce).toBe("2");
 
     // Storage updated
-    const slots = await db.latestAccountStorages.where("accountId").equals(ACC).toArray();
+    const slots = await db.latestAccountStorages
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(slots[0].slotValue).toBe("0xval2");
 
     // Map entry removed (empty string = deletion)
-    const maps = await db.latestStorageMapEntries.where("accountId").equals(ACC).toArray();
+    const maps = await db.latestStorageMapEntries
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(maps).toHaveLength(0);
 
     // Asset removed
-    const assets = await db.latestAccountAssets.where("accountId").equals(ACC).toArray();
+    const assets = await db.latestAccountAssets
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(assets).toHaveLength(0);
 
     // Historical should have the old state
-    const histHeaders = await db.historicalAccountHeaders.where("id").equals(ACC).toArray();
+    const histHeaders = await db.historicalAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .toArray();
     expect(histHeaders.length).toBeGreaterThan(0);
   });
 });
@@ -573,17 +612,29 @@ describe("applyFullAccountState", () => {
       accountSeed: undefined,
     });
 
-    const header = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(header?.nonce).toBe("2");
     expect(header?.committed).toBe(true);
 
-    const slots = await db.latestAccountStorages.where("accountId").equals(ACC).toArray();
+    const slots = await db.latestAccountStorages
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(slots[0].slotValue).toBe("0xnew");
 
-    const maps = await db.latestStorageMapEntries.where("accountId").equals(ACC).toArray();
+    const maps = await db.latestStorageMapEntries
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(maps[0].value).toBe("vnew");
 
-    const assets = await db.latestAccountAssets.where("accountId").equals(ACC).toArray();
+    const assets = await db.latestAccountAssets
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(assets[0].asset).toBe("0xnewasset");
   });
 
@@ -606,7 +657,10 @@ describe("applyFullAccountState", () => {
       accountSeed: new Uint8Array([5, 6, 7]),
     });
 
-    const header = await db.latestAccountHeaders.where("id").equals("0xbrand-new").first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals("0xbrand-new")
+      .first();
     expect(header?.nonce).toBe("1");
   });
 
@@ -620,7 +674,9 @@ describe("applyFullAccountState", () => {
     await applyFullAccountState(dbId, {
       accountId: ACC,
       nonce: "2",
-      storageSlots: [{ slotName: "brand-new-slot", slotValue: "0xv", slotType: 0 }],
+      storageSlots: [
+        { slotName: "brand-new-slot", slotValue: "0xv", slotType: 0 },
+      ],
       storageMapEntries: [{ slotName: "brand-new-map", key: "k", value: "v" }],
       assets: [{ vaultKey: "brand-new-key", asset: "0xa" }],
       codeRoot: CODE_ROOT,
@@ -680,7 +736,10 @@ describe("getForeignAccountCode", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
     // Insert foreign account reference without actual code record
-    await db.foreignAccountCode.put({ accountId: "0xbroken", codeRoot: "0xmissingcode" });
+    await db.foreignAccountCode.put({
+      accountId: "0xbroken",
+      codeRoot: "0xmissingcode",
+    });
     const result = await getForeignAccountCode(dbId, ["0xbroken"]);
     // Should return empty array (undefined entries filtered)
     expect(result).toBeDefined();
@@ -697,7 +756,10 @@ describe("lockAccount", () => {
     const db = getDatabase(dbId);
     await seedAccount(dbId);
 
-    const before = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const before = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(before?.locked).toBe(false);
 
     await lockAccount(dbId, ACC);
@@ -727,7 +789,10 @@ describe("lockAccount", () => {
 
     await lockAccount(dbId, ACC);
 
-    const histHeaders = await db.historicalAccountHeaders.where("id").equals(ACC).toArray();
+    const histHeaders = await db.historicalAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .toArray();
     expect(histHeaders.every((h) => h.locked === true)).toBe(true);
   });
 });
@@ -749,22 +814,43 @@ describe("pruneAccountHistory", () => {
 
     // Build up history via applyTransactionDelta (nonce 1 → 2 → 3)
     await applyTransactionDelta(
-      dbId, ACC, "1",
+      dbId,
+      ACC,
+      "1",
       [{ slotName: "s1", slotValue: "v1", slotType: 0 }],
-      [], [],
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, false, "0xc1"
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xc1"
     );
     await applyTransactionDelta(
-      dbId, ACC, "2",
+      dbId,
+      ACC,
+      "2",
       [{ slotName: "s1", slotValue: "v2", slotType: 0 }],
-      [], [],
-      CODE_ROOT, "0xsr2", VAULT_ROOT, false, "0xc2"
+      [],
+      [],
+      CODE_ROOT,
+      "0xsr2",
+      VAULT_ROOT,
+      false,
+      "0xc2"
     );
     await applyTransactionDelta(
-      dbId, ACC, "3",
+      dbId,
+      ACC,
+      "3",
       [{ slotName: "s1", slotValue: "v3", slotType: 0 }],
-      [], [],
-      CODE_ROOT, "0xsr3", VAULT_ROOT, false, "0xc3"
+      [],
+      [],
+      CODE_ROOT,
+      "0xsr3",
+      VAULT_ROOT,
+      false,
+      "0xc3"
     );
 
     // Prune up to and including nonce 2
@@ -772,7 +858,10 @@ describe("pruneAccountHistory", () => {
     expect(deleted).toBeGreaterThan(0);
 
     // Historical headers at nonce <= 2 should be gone
-    const remaining = await db.historicalAccountHeaders.where("id").equals(ACC).toArray();
+    const remaining = await db.historicalAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .toArray();
     const remainingNonces = remaining.map((h) => Number(h.replacedAtNonce));
     expect(remainingNonces.every((n) => n > 2)).toBe(true);
   });
@@ -803,7 +892,17 @@ describe("pruneAccountHistory", () => {
     });
 
     // Latest account uses NEW_CODE
-    await upsertAccountRecord(dbId, ACC, NEW_CODE, STORAGE_ROOT, VAULT_ROOT, "2", false, "0xc2", undefined);
+    await upsertAccountRecord(
+      dbId,
+      ACC,
+      NEW_CODE,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      "2",
+      false,
+      "0xc2",
+      undefined
+    );
 
     // Prune up to nonce "1" — removes the historical header (replacedAtNonce=1),
     // leaving OLD_CODE unreferenced → should delete it from accountCodes.
@@ -829,34 +928,58 @@ describe("undoAccountStates", () => {
     const db = getDatabase(dbId);
 
     await applyTransactionDelta(
-      dbId, ACC, "1",
+      dbId,
+      ACC,
+      "1",
       [{ slotName: "slot1", slotValue: "0xval1", slotType: 0 }],
       [{ slotName: "map1", key: "k1", value: "v1" }],
       [{ vaultKey: "vk1", asset: "0xasset1" }],
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, false, COMMITMENT
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      COMMITMENT
     );
 
     await applyTransactionDelta(
-      dbId, ACC, "2",
+      dbId,
+      ACC,
+      "2",
       [{ slotName: "slot1", slotValue: "0xval2", slotType: 0 }],
       [{ slotName: "map1", key: "k1", value: "v2" }],
       [{ vaultKey: "vk1", asset: "0xasset2" }],
-      CODE_ROOT, "0xsroot2", "0xvroot2", false, "0xcommit2"
+      CODE_ROOT,
+      "0xsroot2",
+      "0xvroot2",
+      false,
+      "0xcommit2"
     );
 
     await undoAccountStates(dbId, ["0xcommit2"]);
 
-    const header = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(header?.nonce).toBe("1");
     expect(header?.storageRoot).toBe(STORAGE_ROOT);
 
-    const slots = await db.latestAccountStorages.where("accountId").equals(ACC).toArray();
+    const slots = await db.latestAccountStorages
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(slots[0].slotValue).toBe("0xval1");
 
-    const maps = await db.latestStorageMapEntries.where("accountId").equals(ACC).toArray();
+    const maps = await db.latestStorageMapEntries
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(maps[0].value).toBe("v1");
 
-    const assets = await db.latestAccountAssets.where("accountId").equals(ACC).toArray();
+    const assets = await db.latestAccountAssets
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(assets[0].asset).toBe("0xasset1");
   });
 
@@ -866,9 +989,15 @@ describe("undoAccountStates", () => {
 
     // Insert account directly (no prior history)
     await upsertAccountRecord(
-      dbId, "0xnewaccount",
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, "1",
-      false, "0xcommitNew", undefined
+      dbId,
+      "0xnewaccount",
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      "1",
+      false,
+      "0xcommitNew",
+      undefined
     );
     await upsertAccountStorage(dbId, "0xnewaccount", [
       { slotName: "slot1", slotValue: "0xval1", slotType: 0 },
@@ -878,7 +1007,10 @@ describe("undoAccountStates", () => {
     await undoAccountStates(dbId, ["0xcommitNew"]);
 
     // Account should be deleted from latest (commitment found in latest header)
-    const header = await db.latestAccountHeaders.where("id").equals("0xnewaccount").first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals("0xnewaccount")
+      .first();
     expect(header).toBeUndefined();
   });
 
@@ -887,14 +1019,30 @@ describe("undoAccountStates", () => {
     const db = getDatabase(dbId);
 
     await applyTransactionDelta(
-      dbId, ACC, "1",
-      [], [], [],
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, false, "0xc1"
+      dbId,
+      ACC,
+      "1",
+      [],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xc1"
     );
     await applyTransactionDelta(
-      dbId, ACC, "2",
-      [], [], [],
-      CODE_ROOT, "0xsr2", VAULT_ROOT, false, "0xc2"
+      dbId,
+      ACC,
+      "2",
+      [],
+      [],
+      [],
+      CODE_ROOT,
+      "0xsr2",
+      VAULT_ROOT,
+      false,
+      "0xc2"
     );
 
     // "0xc1" is now in historical (archived when nonce 2 applied)
@@ -903,7 +1051,10 @@ describe("undoAccountStates", () => {
 
     // Latest header should now be at nonce "0" (before nonce "1" was applied)
     // — no prior historical means account deleted
-    const header = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(header).toBeUndefined();
   });
 
@@ -913,10 +1064,15 @@ describe("undoAccountStates", () => {
     await seedAccount(dbId);
 
     // Should not throw
-    await expect(undoAccountStates(dbId, ["0xnonexistent"])).resolves.not.toThrow();
+    await expect(
+      undoAccountStates(dbId, ["0xnonexistent"])
+    ).resolves.not.toThrow();
 
     // Account should still be there
-    const header = await db.latestAccountHeaders.where("id").equals(ACC).first();
+    const header = await db.latestAccountHeaders
+      .where("id")
+      .equals(ACC)
+      .first();
     expect(header).toBeDefined();
   });
 
@@ -926,11 +1082,17 @@ describe("undoAccountStates", () => {
 
     // Apply nonce "1" adding a brand-new slot/map/asset (no prior state)
     await applyTransactionDelta(
-      dbId, ACC, "1",
+      dbId,
+      ACC,
+      "1",
       [{ slotName: "newslot", slotValue: "0xv", slotType: 0 }],
       [{ slotName: "newmap", key: "k", value: "v" }],
       [{ vaultKey: "newkey", asset: "0xa" }],
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, false, COMMITMENT
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      COMMITMENT
     );
 
     // Historical entries for nonce "1" have null old values (brand-new)
@@ -943,13 +1105,22 @@ describe("undoAccountStates", () => {
     // Undo nonce "1" — null old values should cause deletion from latest
     await undoAccountStates(dbId, [COMMITMENT]);
 
-    const slots = await db.latestAccountStorages.where("accountId").equals(ACC).toArray();
+    const slots = await db.latestAccountStorages
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(slots).toHaveLength(0);
 
-    const maps = await db.latestStorageMapEntries.where("accountId").equals(ACC).toArray();
+    const maps = await db.latestStorageMapEntries
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(maps).toHaveLength(0);
 
-    const assets = await db.latestAccountAssets.where("accountId").equals(ACC).toArray();
+    const assets = await db.latestAccountAssets
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(assets).toHaveLength(0);
   });
 });
@@ -975,7 +1146,9 @@ describe("error paths: unregistered dbId re-throws", () => {
   });
 
   it("getAccountHeaderByCommitment rejects on bad dbId", async () => {
-    await expect(getAccountHeaderByCommitment(BAD_DB, "0xcommit")).rejects.toThrow();
+    await expect(
+      getAccountHeaderByCommitment(BAD_DB, "0xcommit")
+    ).rejects.toThrow();
   });
 
   it("getAccountCode rejects on bad dbId", async () => {
@@ -999,7 +1172,9 @@ describe("error paths: unregistered dbId re-throws", () => {
   });
 
   it("upsertAccountCode rejects on bad dbId", async () => {
-    await expect(upsertAccountCode(BAD_DB, "0xroot", new Uint8Array([1]))).rejects.toThrow();
+    await expect(
+      upsertAccountCode(BAD_DB, "0xroot", new Uint8Array([1]))
+    ).rejects.toThrow();
   });
 
   it("upsertAccountStorage rejects on bad dbId", async () => {
@@ -1007,7 +1182,9 @@ describe("error paths: unregistered dbId re-throws", () => {
   });
 
   it("upsertStorageMapEntries rejects on bad dbId", async () => {
-    await expect(upsertStorageMapEntries(BAD_DB, "0xacc", [])).rejects.toThrow();
+    await expect(
+      upsertStorageMapEntries(BAD_DB, "0xacc", [])
+    ).rejects.toThrow();
   });
 
   it("upsertVaultAssets rejects on bad dbId", async () => {
@@ -1016,20 +1193,36 @@ describe("error paths: unregistered dbId re-throws", () => {
 
   it("upsertAccountRecord rejects on bad dbId", async () => {
     await expect(
-      upsertAccountRecord(BAD_DB, "0xacc", "0xcode", "0xsroot", "0xvroot", "1", false, "0xcommit", undefined)
+      upsertAccountRecord(
+        BAD_DB,
+        "0xacc",
+        "0xcode",
+        "0xsroot",
+        "0xvroot",
+        "1",
+        false,
+        "0xcommit",
+        undefined
+      )
     ).rejects.toThrow();
   });
 
   it("insertAccountAddress rejects on bad dbId", async () => {
-    await expect(insertAccountAddress(BAD_DB, "0xacc", new Uint8Array([1]))).rejects.toThrow();
+    await expect(
+      insertAccountAddress(BAD_DB, "0xacc", new Uint8Array([1]))
+    ).rejects.toThrow();
   });
 
   it("removeAccountAddress rejects on bad dbId", async () => {
-    await expect(removeAccountAddress(BAD_DB, new Uint8Array([1]))).rejects.toThrow();
+    await expect(
+      removeAccountAddress(BAD_DB, new Uint8Array([1]))
+    ).rejects.toThrow();
   });
 
   it("upsertForeignAccountCode rejects on bad dbId", async () => {
-    await expect(upsertForeignAccountCode(BAD_DB, "0xacc", new Uint8Array([1]), "0xroot")).rejects.toThrow();
+    await expect(
+      upsertForeignAccountCode(BAD_DB, "0xacc", new Uint8Array([1]), "0xroot")
+    ).rejects.toThrow();
   });
 
   it("getForeignAccountCode rejects on bad dbId", async () => {
@@ -1042,7 +1235,19 @@ describe("error paths: unregistered dbId re-throws", () => {
 
   it("applyTransactionDelta rejects on bad dbId", async () => {
     await expect(
-      applyTransactionDelta(BAD_DB, "0xacc", "1", [], [], [], "0xcode", "0xsr", "0xvr", false, "0xcommit")
+      applyTransactionDelta(
+        BAD_DB,
+        "0xacc",
+        "1",
+        [],
+        [],
+        [],
+        "0xcode",
+        "0xsr",
+        "0xvr",
+        false,
+        "0xcommit"
+      )
     ).rejects.toThrow();
   });
 
@@ -1083,19 +1288,43 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
 
     // Build 3 deltas for the same account to exercise the sort comparator at 1119
     await applyTransactionDelta(
-      dbId, ACC, "1",
-      [{ slotName: "slot1", slotValue: "0xv1", slotType: 0 }], [], [],
-      CODE_ROOT, STORAGE_ROOT, VAULT_ROOT, false, "0xc1"
+      dbId,
+      ACC,
+      "1",
+      [{ slotName: "slot1", slotValue: "0xv1", slotType: 0 }],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xc1"
     );
     await applyTransactionDelta(
-      dbId, ACC, "2",
-      [{ slotName: "slot1", slotValue: "0xv2", slotType: 0 }], [], [],
-      CODE_ROOT, "0xsr2", VAULT_ROOT, false, "0xc2"
+      dbId,
+      ACC,
+      "2",
+      [{ slotName: "slot1", slotValue: "0xv2", slotType: 0 }],
+      [],
+      [],
+      CODE_ROOT,
+      "0xsr2",
+      VAULT_ROOT,
+      false,
+      "0xc2"
     );
     await applyTransactionDelta(
-      dbId, ACC, "3",
-      [{ slotName: "slot1", slotValue: "0xv3", slotType: 0 }], [], [],
-      CODE_ROOT, "0xsr3", VAULT_ROOT, false, "0xc3"
+      dbId,
+      ACC,
+      "3",
+      [{ slotName: "slot1", slotValue: "0xv3", slotType: 0 }],
+      [],
+      [],
+      CODE_ROOT,
+      "0xsr3",
+      VAULT_ROOT,
+      false,
+      "0xc3"
     );
 
     // Undo both nonce 2 and 3 at once — they have the same accountId,
@@ -1103,7 +1332,10 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
     await undoAccountStates(dbId, ["0xc2", "0xc3"]);
 
     // After undoing nonces 2 and 3, the slot value should be back to nonce "1" state
-    const slots = await db.latestAccountStorages.where("accountId").equals(ACC).toArray();
+    const slots = await db.latestAccountStorages
+      .where("accountId")
+      .equals(ACC)
+      .toArray();
     expect(slots[0].slotValue).toBe("0xv1");
   });
 });

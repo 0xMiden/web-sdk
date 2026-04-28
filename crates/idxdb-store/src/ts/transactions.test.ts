@@ -264,7 +264,10 @@ describe("transactions", () => {
 
   it("Ids filter returns empty array when none of the ids exist", async () => {
     const dbId = await openTestDb();
-    const results = await getTransactions(dbId, "Ids:nonexistent-1,nonexistent-2");
+    const results = await getTransactions(
+      dbId,
+      "Ids:nonexistent-1,nonexistent-2"
+    );
     expect(results).toEqual([]);
   });
 
@@ -392,9 +395,7 @@ describe("transactions", () => {
   // -------------------------------------------------------------------------
 
   it("getTransactions throws when db is not opened", async () => {
-    await expect(
-      getTransactions("never-opened", "All")
-    ).rejects.toThrow();
+    await expect(getTransactions("never-opened", "All")).rejects.toThrow();
   });
 
   it("upsertTransactionRecord throws when db is not opened", async () => {
@@ -456,6 +457,8 @@ describe("transactions", () => {
     const results = await getTransactions(dbId, "All");
     expect(results).toHaveLength(3);
     const ids = results!.map((r) => r.id);
-    expect(ids).toEqual(expect.arrayContaining(["multi-1", "multi-2", "multi-3"]));
+    expect(ids).toEqual(
+      expect.arrayContaining(["multi-1", "multi-2", "multi-3"])
+    );
   });
 });

@@ -39,7 +39,9 @@ describe("config() hook", () => {
     const alias = result.resolve.alias;
     expect(Array.isArray(alias)).toBe(true);
     expect(alias.length).toBe(1);
-    expect(alias[0].replacement).toMatch(/node_modules.+definitely-not-installed-xyz$/);
+    expect(alias[0].replacement).toMatch(
+      /node_modules.+definitely-not-installed-xyz$/
+    );
     expect(existsSync(alias[0].replacement)).toBe(false);
   });
 
@@ -82,10 +84,14 @@ describe("config() hook", () => {
   });
 
   it("configures the gRPC-web proxy on serve with default target/path", () => {
-    const result = callConfig(midenVitePlugin(), {}, {
-      command: "serve",
-      mode: "development",
-    });
+    const result = callConfig(
+      midenVitePlugin(),
+      {},
+      {
+        command: "serve",
+        mode: "development",
+      }
+    );
     expect(result.server.proxy).toEqual({
       "/rpc.Api": {
         target: "https://rpc.testnet.miden.io",
@@ -112,10 +118,14 @@ describe("config() hook", () => {
   });
 
   it("skips proxy config when env.command !== 'serve'", () => {
-    const result = callConfig(midenVitePlugin(), {}, {
-      command: "build",
-      mode: "production",
-    });
+    const result = callConfig(
+      midenVitePlugin(),
+      {},
+      {
+        command: "build",
+        mode: "production",
+      }
+    );
     expect(result.server.proxy).toBeUndefined();
   });
 

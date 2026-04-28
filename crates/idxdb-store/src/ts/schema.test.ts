@@ -144,7 +144,10 @@ describe("ensureClientVersion: same version already stored", () => {
     openMidenDbs.push(db1);
 
     // Insert a sentinel row that should survive if the DB is NOT nuked
-    await db1.settings.put({ key: "sentinel", value: new TextEncoder().encode("alive") });
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("alive"),
+    });
 
     // Close and re-open with the same version
     db1.dexie.close();
@@ -169,7 +172,10 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     await openDatabase(name, "1.2.0");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({ key: "sentinel", value: new TextEncoder().encode("safe") });
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("safe"),
+    });
     db1.dexie.close();
 
     // Patch bump: 1.2.0 → 1.2.5
@@ -196,7 +202,10 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     await openDatabase(name, "2.0.0");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({ key: "sentinel", value: new TextEncoder().encode("present") });
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("present"),
+    });
     db1.dexie.close();
 
     // Open with an older version (1.9.0 < 2.0.0)
@@ -219,7 +228,10 @@ describe("ensureClientVersion: major version bump triggers nuke", () => {
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
     // Insert a sentinel row that should be GONE after nuke
-    await db1.settings.put({ key: "sentinel", value: new TextEncoder().encode("gone-after-nuke") });
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("gone-after-nuke"),
+    });
     db1.dexie.close();
 
     // Open with a new major version (2.0.0 > 1.0.0, different minor)
@@ -247,7 +259,10 @@ describe("ensureClientVersion: invalid semver strings", () => {
     await openDatabase(name, "not-a-version");
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
-    await db1.settings.put({ key: "sentinel", value: new TextEncoder().encode("will-be-nuked") });
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("will-be-nuked"),
+    });
     db1.dexie.close();
 
     // Re-open with a different non-semver string — triggers the else branch

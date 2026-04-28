@@ -63,7 +63,9 @@ function singleFlattenedVec(chunk: Uint8Array) {
 }
 
 /** Build a minimal JsStateSyncUpdate that performs only what the test needs. */
-function minimalStateUpdate(overrides: Partial<Parameters<typeof applyStateSync>[1]> = {}): Parameters<typeof applyStateSync>[1] {
+function minimalStateUpdate(
+  overrides: Partial<Parameters<typeof applyStateSync>[1]> = {}
+): Parameters<typeof applyStateSync>[1] {
   return {
     blockNum: 5,
     flattenedNewBlockHeaders: emptyFlattenedVec(),
@@ -160,7 +162,11 @@ describe("sync", () => {
       const dbId = await openTestDb();
       // addNoteTag stores "" when sourceNoteId is falsy; getNoteTags should normalise it back
       const db = getDatabase(dbId);
-      await db.tags.add({ tag: toBase64(new Uint8Array([0x0a])), sourceNoteId: "", sourceAccountId: "" });
+      await db.tags.add({
+        tag: toBase64(new Uint8Array([0x0a])),
+        sourceNoteId: "",
+        sourceAccountId: "",
+      });
       const tags = await getNoteTags(dbId);
       expect(tags).toHaveLength(1);
       expect(tags![0].sourceNoteId).toBeUndefined();
@@ -210,7 +216,9 @@ describe("sync", () => {
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
-      await expect(addNoteTag("never-opened-sync", new Uint8Array([1]), "n", "a")).rejects.toThrow();
+      await expect(
+        addNoteTag("never-opened-sync", new Uint8Array([1]), "n", "a")
+      ).rejects.toThrow();
       expect(errorSpy).toHaveBeenCalled();
     });
   });
@@ -234,7 +242,11 @@ describe("sync", () => {
 
     it("returns 0 when no matching tag exists", async () => {
       const dbId = await openTestDb();
-      const deleted = await removeNoteTag(dbId, new Uint8Array([0xff]), "no-such-note");
+      const deleted = await removeNoteTag(
+        dbId,
+        new Uint8Array([0xff]),
+        "no-such-note"
+      );
       expect(deleted).toBe(0);
     });
 
@@ -256,12 +268,19 @@ describe("sync", () => {
       // Add tag with empty sourceNoteId/sourceAccountId
       await addNoteTag(dbId, new Uint8Array([0x05]), "", "");
       // Remove using undefined — internally converts to ""
-      const deleted = await removeNoteTag(dbId, new Uint8Array([0x05]), undefined, undefined);
+      const deleted = await removeNoteTag(
+        dbId,
+        new Uint8Array([0x05]),
+        undefined,
+        undefined
+      );
       expect(deleted).toBe(1);
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
-      await expect(removeNoteTag("never-opened-sync", new Uint8Array([1]))).rejects.toThrow();
+      await expect(
+        removeNoteTag("never-opened-sync", new Uint8Array([1]))
+      ).rejects.toThrow();
       expect(errorSpy).toHaveBeenCalled();
     });
   });
@@ -275,9 +294,27 @@ describe("sync", () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
       const status = new Uint8Array([0]);
-      await db.transactions.put({ id: "tx-1", details: new Uint8Array([1]), blockNum: 1, statusVariant: 0, status });
-      await db.transactions.put({ id: "tx-2", details: new Uint8Array([2]), blockNum: 2, statusVariant: 0, status });
-      await db.transactions.put({ id: "tx-3", details: new Uint8Array([3]), blockNum: 3, statusVariant: 0, status });
+      await db.transactions.put({
+        id: "tx-1",
+        details: new Uint8Array([1]),
+        blockNum: 1,
+        statusVariant: 0,
+        status,
+      });
+      await db.transactions.put({
+        id: "tx-2",
+        details: new Uint8Array([2]),
+        blockNum: 2,
+        statusVariant: 0,
+        status,
+      });
+      await db.transactions.put({
+        id: "tx-3",
+        details: new Uint8Array([3]),
+        blockNum: 3,
+        statusVariant: 0,
+        status,
+      });
 
       await discardTransactions(dbId, ["tx-1", "tx-3"]);
 
@@ -290,7 +327,13 @@ describe("sync", () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
       const status = new Uint8Array([0]);
-      await db.transactions.put({ id: "tx-keep", details: new Uint8Array([1]), blockNum: 1, statusVariant: 0, status });
+      await db.transactions.put({
+        id: "tx-keep",
+        details: new Uint8Array([1]),
+        blockNum: 1,
+        statusVariant: 0,
+        status,
+      });
 
       await discardTransactions(dbId, []);
 
@@ -301,7 +344,13 @@ describe("sync", () => {
     it("is a no-op when none of the ids exist", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      await db.transactions.put({ id: "tx-1", details: new Uint8Array([1]), blockNum: 1, statusVariant: 0, status: new Uint8Array([0]) });
+      await db.transactions.put({
+        id: "tx-1",
+        details: new Uint8Array([1]),
+        blockNum: 1,
+        statusVariant: 0,
+        status: new Uint8Array([0]),
+      });
 
       await discardTransactions(dbId, ["nonexistent"]);
       const remaining = await db.transactions.toArray();
@@ -309,7 +358,9 @@ describe("sync", () => {
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
-      await expect(discardTransactions("never-opened-sync", ["tx-1"])).rejects.toThrow();
+      await expect(
+        discardTransactions("never-opened-sync", ["tx-1"])
+      ).rejects.toThrow();
       expect(errorSpy).toHaveBeenCalled();
     });
   });
@@ -355,13 +406,16 @@ describe("sync", () => {
       const headerBytes = new Uint8Array([0x10, 0x20]);
       const peaksBytes = new Uint8Array([0x30, 0x40]);
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 7,
-        newBlockNums: [7],
-        blockHasRelevantNotes: new Uint8Array([0]),
-        flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-        flattenedPartialBlockChainPeaks: singleFlattenedVec(peaksBytes),
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 7,
+          newBlockNums: [7],
+          blockHasRelevantNotes: new Uint8Array([0]),
+          flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
+          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaksBytes),
+        })
+      );
 
       const db = getDatabase(dbId);
       const header = await db.blockHeaders.get(7);
@@ -375,13 +429,16 @@ describe("sync", () => {
       const headerBytes = new Uint8Array([0xaa]);
       const peaksBytes = new Uint8Array([0xbb]);
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 15,
-        newBlockNums: [15],
-        blockHasRelevantNotes: new Uint8Array([1]),
-        flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-        flattenedPartialBlockChainPeaks: singleFlattenedVec(peaksBytes),
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 15,
+          newBlockNums: [15],
+          blockHasRelevantNotes: new Uint8Array([1]),
+          flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
+          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaksBytes),
+        })
+      );
 
       const db = getDatabase(dbId);
       const header = await db.blockHeaders.get(15);
@@ -395,22 +452,28 @@ describe("sync", () => {
       const peaks = new Uint8Array([0x00]);
 
       // Insert block header 5 first time
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        newBlockNums: [5],
-        blockHasRelevantNotes: new Uint8Array([0]),
-        flattenedNewBlockHeaders: singleFlattenedVec(original),
-        flattenedPartialBlockChainPeaks: singleFlattenedVec(peaks),
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 5,
+          newBlockNums: [5],
+          blockHasRelevantNotes: new Uint8Array([0]),
+          flattenedNewBlockHeaders: singleFlattenedVec(original),
+          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaks),
+        })
+      );
 
       // Try to insert same block num with different data — should be skipped
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 6,
-        newBlockNums: [5],
-        blockHasRelevantNotes: new Uint8Array([0]),
-        flattenedNewBlockHeaders: singleFlattenedVec(replacement),
-        flattenedPartialBlockChainPeaks: singleFlattenedVec(peaks),
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 6,
+          newBlockNums: [5],
+          blockHasRelevantNotes: new Uint8Array([0]),
+          flattenedNewBlockHeaders: singleFlattenedVec(replacement),
+          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaks),
+        })
+      );
 
       const db = getDatabase(dbId);
       const header = await db.blockHeaders.get(5);
@@ -433,11 +496,14 @@ describe("sync", () => {
   describe("applyStateSync — partial blockchain nodes", () => {
     it("inserts partial blockchain nodes", async () => {
       const dbId = await openTestDb();
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 1,
-        serializedNodeIds: ["42"],
-        serializedNodes: ["node-data-42"],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["42"],
+          serializedNodes: ["node-data-42"],
+        })
+      );
 
       const db = getDatabase(dbId);
       const node = await db.partialBlockchainNodes.get(42);
@@ -448,16 +514,22 @@ describe("sync", () => {
     it("overwrites an existing partial blockchain node (bulkPut)", async () => {
       const dbId = await openTestDb();
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 1,
-        serializedNodeIds: ["10"],
-        serializedNodes: ["first-data"],
-      }));
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 2,
-        serializedNodeIds: ["10"],
-        serializedNodes: ["second-data"],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["first-data"],
+        })
+      );
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 2,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["second-data"],
+        })
+      );
 
       const db = getDatabase(dbId);
       const node = await db.partialBlockchainNodes.get(10);
@@ -467,7 +539,14 @@ describe("sync", () => {
     it("is a no-op when serializedNodeIds is empty", async () => {
       const dbId = await openTestDb();
       // Should complete without error
-      await applyStateSync(dbId, minimalStateUpdate({ blockNum: 1, serializedNodeIds: [], serializedNodes: [] }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: [],
+          serializedNodes: [],
+        })
+      );
       const db = getDatabase(dbId);
       expect(await db.partialBlockchainNodes.count()).toBe(0);
     });
@@ -476,12 +555,17 @@ describe("sync", () => {
       const dbId = await openTestDb();
       // Mismatched arrays — error thrown inside Dexie transaction, aborts tx and rejects
       await expect(
-        applyStateSync(dbId, minimalStateUpdate({
-          blockNum: 1,
-          serializedNodeIds: ["1", "2"],
-          serializedNodes: ["only-one"],
-        }))
-      ).rejects.toThrow("nodeIndexes and nodes arrays must be of the same length");
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 1,
+            serializedNodeIds: ["1", "2"],
+            serializedNodes: ["only-one"],
+          })
+        )
+      ).rejects.toThrow(
+        "nodeIndexes and nodes arrays must be of the same length"
+      );
     });
   });
 
@@ -497,10 +581,13 @@ describe("sync", () => {
       // Add a tag associated with note-B (should survive)
       await addNoteTag(dbId, new Uint8Array([0x02]), "note-B", "acct-2");
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 1,
-        committedNoteIds: ["note-A"],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          committedNoteIds: ["note-A"],
+        })
+      );
 
       const tags = await getNoteTags(dbId);
       expect(tags).toHaveLength(1);
@@ -511,10 +598,13 @@ describe("sync", () => {
       const dbId = await openTestDb();
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 1,
-        committedNoteIds: [],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          committedNoteIds: [],
+        })
+      );
 
       const tags = await getNoteTags(dbId);
       expect(tags).toHaveLength(1);
@@ -526,10 +616,13 @@ describe("sync", () => {
       await addNoteTag(dbId, new Uint8Array([0x02]), "note-B", "acct-2");
       await addNoteTag(dbId, new Uint8Array([0x03]), "note-C", "acct-3");
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 1,
-        committedNoteIds: ["note-A", "note-B"],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          committedNoteIds: ["note-A", "note-B"],
+        })
+      );
 
       const tags = await getNoteTags(dbId);
       expect(tags).toHaveLength(1);
@@ -544,18 +637,23 @@ describe("sync", () => {
   describe("applyStateSync — transaction updates", () => {
     it("upserts a transaction record without a script", async () => {
       const dbId = await openTestDb();
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        transactionUpdates: [{
-          id: "tx-sync-1",
-          details: new Uint8Array([1, 2, 3]),
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
           blockNum: 5,
-          statusVariant: 1,
-          status: new Uint8Array([4, 5, 6]),
-          scriptRoot: undefined,
-          txScript: undefined,
-        }],
-      }));
+          transactionUpdates: [
+            {
+              id: "tx-sync-1",
+              details: new Uint8Array([1, 2, 3]),
+              blockNum: 5,
+              statusVariant: 1,
+              status: new Uint8Array([4, 5, 6]),
+              scriptRoot: undefined,
+              txScript: undefined,
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
       const tx = await db.transactions.where("id").equals("tx-sync-1").first();
@@ -569,21 +667,29 @@ describe("sync", () => {
       const scriptRootBytes = new Uint8Array([0xca, 0xfe]);
       const txScriptBytes = new Uint8Array([0xba, 0xbe]);
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        transactionUpdates: [{
-          id: "tx-with-script",
-          details: new Uint8Array([1]),
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
           blockNum: 5,
-          statusVariant: 1,
-          status: new Uint8Array([0]),
-          scriptRoot: scriptRootBytes,
-          txScript: txScriptBytes,
-        }],
-      }));
+          transactionUpdates: [
+            {
+              id: "tx-with-script",
+              details: new Uint8Array([1]),
+              blockNum: 5,
+              statusVariant: 1,
+              status: new Uint8Array([0]),
+              scriptRoot: scriptRootBytes,
+              txScript: txScriptBytes,
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
-      const script = await db.transactionScripts.where("scriptRoot").equals(toBase64(scriptRootBytes)).first();
+      const script = await db.transactionScripts
+        .where("scriptRoot")
+        .equals(toBase64(scriptRootBytes))
+        .first();
       expect(script).toBeDefined();
       expect(script!.txScript).toEqual(txScriptBytes);
     });
@@ -592,18 +698,23 @@ describe("sync", () => {
       const dbId = await openTestDb();
       const scriptRootBytes = new Uint8Array([0x11]);
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        transactionUpdates: [{
-          id: "tx-script-root-only",
-          details: new Uint8Array([1]),
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
           blockNum: 5,
-          statusVariant: 1,
-          status: new Uint8Array([0]),
-          scriptRoot: scriptRootBytes,
-          txScript: undefined,
-        }],
-      }));
+          transactionUpdates: [
+            {
+              id: "tx-script-root-only",
+              details: new Uint8Array([1]),
+              blockNum: 5,
+              statusVariant: 1,
+              status: new Uint8Array([0]),
+              scriptRoot: scriptRootBytes,
+              txScript: undefined,
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
       // Script should not exist since txScript was absent
@@ -620,22 +731,30 @@ describe("sync", () => {
     it("upserts an output note during sync", async () => {
       const dbId = await openTestDb();
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        serializedOutputNotes: [{
-          noteId: "out-note-1",
-          noteAssets: new Uint8Array([0x01, 0x02]),
-          recipientDigest: "recipient-digest-abc",
-          metadata: new Uint8Array([0x03, 0x04]),
-          nullifier: undefined,
-          expectedHeight: 100,
-          stateDiscriminant: 1,
-          state: new Uint8Array([0x05]),
-        }],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 5,
+          serializedOutputNotes: [
+            {
+              noteId: "out-note-1",
+              noteAssets: new Uint8Array([0x01, 0x02]),
+              recipientDigest: "recipient-digest-abc",
+              metadata: new Uint8Array([0x03, 0x04]),
+              nullifier: undefined,
+              expectedHeight: 100,
+              stateDiscriminant: 1,
+              state: new Uint8Array([0x05]),
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
-      const note = await db.outputNotes.where("noteId").equals("out-note-1").first();
+      const note = await db.outputNotes
+        .where("noteId")
+        .equals("out-note-1")
+        .first();
       expect(note).toBeDefined();
       expect(note!.recipientDigest).toBe("recipient-digest-abc");
       expect(note!.expectedHeight).toBe(100);
@@ -645,31 +764,34 @@ describe("sync", () => {
     it("upserts multiple output notes in one sync call", async () => {
       const dbId = await openTestDb();
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        serializedOutputNotes: [
-          {
-            noteId: "out-a",
-            noteAssets: new Uint8Array([0x01]),
-            recipientDigest: "digest-a",
-            metadata: new Uint8Array([0x02]),
-            nullifier: "null-a",
-            expectedHeight: 10,
-            stateDiscriminant: 2,
-            state: new Uint8Array([0x03]),
-          },
-          {
-            noteId: "out-b",
-            noteAssets: new Uint8Array([0x04]),
-            recipientDigest: "digest-b",
-            metadata: new Uint8Array([0x05]),
-            nullifier: undefined,
-            expectedHeight: 20,
-            stateDiscriminant: 3,
-            state: new Uint8Array([0x06]),
-          },
-        ],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 5,
+          serializedOutputNotes: [
+            {
+              noteId: "out-a",
+              noteAssets: new Uint8Array([0x01]),
+              recipientDigest: "digest-a",
+              metadata: new Uint8Array([0x02]),
+              nullifier: "null-a",
+              expectedHeight: 10,
+              stateDiscriminant: 2,
+              state: new Uint8Array([0x03]),
+            },
+            {
+              noteId: "out-b",
+              noteAssets: new Uint8Array([0x04]),
+              recipientDigest: "digest-b",
+              metadata: new Uint8Array([0x05]),
+              nullifier: undefined,
+              expectedHeight: 20,
+              stateDiscriminant: 3,
+              state: new Uint8Array([0x06]),
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
       const notes = await db.outputNotes.toArray();
@@ -685,27 +807,35 @@ describe("sync", () => {
     it("upserts an input note during sync", async () => {
       const dbId = await openTestDb();
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        serializedInputNotes: [{
-          noteId: "in-note-1",
-          noteAssets: new Uint8Array([0x0a]),
-          serialNumber: new Uint8Array([0x0b]),
-          inputs: new Uint8Array([0x0c]),
-          noteScriptRoot: "script-root-in",
-          noteScript: new Uint8Array([0x0d]),
-          nullifier: "nullifier-in-1",
-          createdAt: "100",
-          stateDiscriminant: 2,
-          state: new Uint8Array([0x0e]),
-          consumedBlockHeight: undefined,
-          consumedTxOrder: undefined,
-          consumerAccountId: undefined,
-        }],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 5,
+          serializedInputNotes: [
+            {
+              noteId: "in-note-1",
+              noteAssets: new Uint8Array([0x0a]),
+              serialNumber: new Uint8Array([0x0b]),
+              inputs: new Uint8Array([0x0c]),
+              noteScriptRoot: "script-root-in",
+              noteScript: new Uint8Array([0x0d]),
+              nullifier: "nullifier-in-1",
+              createdAt: "100",
+              stateDiscriminant: 2,
+              state: new Uint8Array([0x0e]),
+              consumedBlockHeight: undefined,
+              consumedTxOrder: undefined,
+              consumerAccountId: undefined,
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
-      const note = await db.inputNotes.where("noteId").equals("in-note-1").first();
+      const note = await db.inputNotes
+        .where("noteId")
+        .equals("in-note-1")
+        .first();
       expect(note).toBeDefined();
       expect(note!.nullifier).toBe("nullifier-in-1");
       expect(note!.stateDiscriminant).toBe(2);
@@ -720,25 +850,33 @@ describe("sync", () => {
     it("applies a full account state during sync", async () => {
       const dbId = await openTestDb();
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        accountUpdates: [{
-          accountId: "acct-sync-1",
-          nonce: "1",
-          storageRoot: "storage-root-1",
-          storageSlots: [],
-          storageMapEntries: [],
-          vaultRoot: "vault-root-1",
-          assets: [],
-          codeRoot: "code-root-1",
-          committed: true,
-          accountCommitment: "commitment-1",
-          accountSeed: undefined,
-        }],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 5,
+          accountUpdates: [
+            {
+              accountId: "acct-sync-1",
+              nonce: "1",
+              storageRoot: "storage-root-1",
+              storageSlots: [],
+              storageMapEntries: [],
+              vaultRoot: "vault-root-1",
+              assets: [],
+              codeRoot: "code-root-1",
+              committed: true,
+              accountCommitment: "commitment-1",
+              accountSeed: undefined,
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
-      const account = await db.latestAccountHeaders.where("id").equals("acct-sync-1").first();
+      const account = await db.latestAccountHeaders
+        .where("id")
+        .equals("acct-sync-1")
+        .first();
       expect(account).toBeDefined();
       expect(account!.nonce).toBe("1");
       expect(account!.committed).toBe(true);
@@ -748,37 +886,40 @@ describe("sync", () => {
     it("applies multiple account updates in one sync call", async () => {
       const dbId = await openTestDb();
 
-      await applyStateSync(dbId, minimalStateUpdate({
-        blockNum: 5,
-        accountUpdates: [
-          {
-            accountId: "acct-sync-A",
-            nonce: "1",
-            storageRoot: "sr-A",
-            storageSlots: [],
-            storageMapEntries: [],
-            vaultRoot: "vr-A",
-            assets: [],
-            codeRoot: "cr-A",
-            committed: true,
-            accountCommitment: "com-A",
-            accountSeed: undefined,
-          },
-          {
-            accountId: "acct-sync-B",
-            nonce: "2",
-            storageRoot: "sr-B",
-            storageSlots: [],
-            storageMapEntries: [],
-            vaultRoot: "vr-B",
-            assets: [],
-            codeRoot: "cr-B",
-            committed: false,
-            accountCommitment: "com-B",
-            accountSeed: new Uint8Array([0xca, 0xfe]),
-          },
-        ],
-      }));
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 5,
+          accountUpdates: [
+            {
+              accountId: "acct-sync-A",
+              nonce: "1",
+              storageRoot: "sr-A",
+              storageSlots: [],
+              storageMapEntries: [],
+              vaultRoot: "vr-A",
+              assets: [],
+              codeRoot: "cr-A",
+              committed: true,
+              accountCommitment: "com-A",
+              accountSeed: undefined,
+            },
+            {
+              accountId: "acct-sync-B",
+              nonce: "2",
+              storageRoot: "sr-B",
+              storageSlots: [],
+              storageMapEntries: [],
+              vaultRoot: "vr-B",
+              assets: [],
+              codeRoot: "cr-B",
+              committed: false,
+              accountCommitment: "com-B",
+              accountSeed: new Uint8Array([0xca, 0xfe]),
+            },
+          ],
+        })
+      );
 
       const db = getDatabase(dbId);
       const all = await db.latestAccountHeaders.toArray();

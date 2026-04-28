@@ -48,7 +48,10 @@ describe("parseAccountId", () => {
   });
 
   it("should parse an Account-like object with .id() method", () => {
-    const mockAccountId = { toString: () => "0xfromaccount", toHex: () => "0xfromaccount" };
+    const mockAccountId = {
+      toString: () => "0xfromaccount",
+      toHex: () => "0xfromaccount",
+    };
     const accountLike = { id: vi.fn(() => mockAccountId) };
     const result = parseAccountId(accountLike as any);
     expect(result).toBe(mockAccountId);

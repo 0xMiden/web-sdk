@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
-import { openDatabase, getDatabase, CLIENT_VERSION_SETTING_KEY } from "./schema.js";
+import {
+  openDatabase,
+  getDatabase,
+  CLIENT_VERSION_SETTING_KEY,
+} from "./schema.js";
 import {
   getSetting,
   insertSetting,
@@ -83,11 +87,7 @@ describe("settings", () => {
     const dbId = await openTestDb();
     await insertSetting(dbId, "user-a", new Uint8Array([1]));
     await insertSetting(dbId, "user-b", new Uint8Array([2]));
-    await insertSetting(
-      dbId,
-      CLIENT_VERSION_SETTING_KEY,
-      new Uint8Array([3])
-    );
+    await insertSetting(dbId, CLIENT_VERSION_SETTING_KEY, new Uint8Array([3]));
     const keys = await listSettingKeys(dbId);
     expect(keys).toEqual(expect.arrayContaining(["user-a", "user-b"]));
     expect(keys).not.toContain(CLIENT_VERSION_SETTING_KEY);

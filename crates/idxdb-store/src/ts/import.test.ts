@@ -44,7 +44,10 @@ describe("transformForImport", () => {
 
   it("converts a tagged Uint8Array object back to Uint8Array", async () => {
     const original = new Uint8Array([1, 2, 3]);
-    const encoded = { __type: "Uint8Array", data: uint8ArrayToBase64(original) };
+    const encoded = {
+      __type: "Uint8Array",
+      data: uint8ArrayToBase64(original),
+    };
     const result = await transformForImport(encoded);
     expect(result).toBeInstanceOf(Uint8Array);
     expect(result).toEqual(original);
@@ -200,7 +203,10 @@ describe("forceImportStore", () => {
     const dbB = getDatabase(dbIdB);
 
     // Pre-populate DB-B with a row that should be wiped
-    await dbB.accountCodes.put({ root: "root-b-old", code: new Uint8Array([9]) });
+    await dbB.accountCodes.put({
+      root: "root-b-old",
+      code: new Uint8Array([9]),
+    });
     expect(await dbB.accountCodes.count()).toBe(1);
 
     await forceImportStore(dbIdB, jsonStr);
@@ -283,8 +289,6 @@ describe("forceImportStore", () => {
 
   it("throws on malformed JSON payload", async () => {
     const dbId = await openTestDb();
-    await expect(
-      forceImportStore(dbId, "not-valid-json{{")
-    ).rejects.toThrow();
+    await expect(forceImportStore(dbId, "not-valid-json{{")).rejects.toThrow();
   });
 });

@@ -331,7 +331,13 @@ describe("getInputNoteByOffset unordered-filter branches", () => {
       // no consumedBlockHeight — null
     });
 
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, undefined, 3, undefined);
+    const ids = await collectAllNoteIds(
+      dbId,
+      CONSUMED_STATES,
+      undefined,
+      3,
+      undefined
+    );
     expect(ids).toContain("note-ordered-b5");
     expect(ids).not.toContain("note-unordered-no-height");
   });
@@ -349,7 +355,13 @@ describe("getInputNoteByOffset unordered-filter branches", () => {
       // no consumedBlockHeight — null
     });
 
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, undefined, undefined, 10);
+    const ids = await collectAllNoteIds(
+      dbId,
+      CONSUMED_STATES,
+      undefined,
+      undefined,
+      10
+    );
     expect(ids).toContain("note-ordered-b5");
     expect(ids).not.toContain("note-unordered-no-height-2");
   });
@@ -414,7 +426,10 @@ describe("getInputNoteByOffset state filtering", () => {
 describe("getInputNotes", () => {
   it("returns all notes when states is empty", async () => {
     const dbId = await openTestDb();
-    await insertNote(dbId, "n1", { stateDiscriminant: STATE_CONSUMED_EXTERNAL, consumedBlockHeight: 1 });
+    await insertNote(dbId, "n1", {
+      stateDiscriminant: STATE_CONSUMED_EXTERNAL,
+      consumedBlockHeight: 1,
+    });
     await insertNote(dbId, "n2", { stateDiscriminant: STATE_EXPECTED });
     const result = await getInputNotes(dbId, new Uint8Array([]));
     expect(result).toHaveLength(2);
@@ -422,9 +437,15 @@ describe("getInputNotes", () => {
 
   it("filters by state discriminants when non-empty", async () => {
     const dbId = await openTestDb();
-    await insertNote(dbId, "n-consumed", { stateDiscriminant: STATE_CONSUMED_EXTERNAL, consumedBlockHeight: 1 });
+    await insertNote(dbId, "n-consumed", {
+      stateDiscriminant: STATE_CONSUMED_EXTERNAL,
+      consumedBlockHeight: 1,
+    });
     await insertNote(dbId, "n-expected", { stateDiscriminant: STATE_EXPECTED });
-    const result = await getInputNotes(dbId, new Uint8Array([STATE_CONSUMED_EXTERNAL]));
+    const result = await getInputNotes(
+      dbId,
+      new Uint8Array([STATE_CONSUMED_EXTERNAL])
+    );
     expect(result).toHaveLength(1);
     // createdAt holds the noteId
     expect(result![0].createdAt).toBe("n-consumed");
@@ -444,7 +465,10 @@ describe("getInputNotes", () => {
       consumedBlockHeight: 1,
       scriptRoot: SCRIPT_ROOT,
     });
-    const result = await getInputNotes(dbId, new Uint8Array([STATE_CONSUMED_EXTERNAL]));
+    const result = await getInputNotes(
+      dbId,
+      new Uint8Array([STATE_CONSUMED_EXTERNAL])
+    );
     expect(result).toHaveLength(1);
     // Script was inserted via upsertInputNote → notesScripts table
     expect(result![0].serializedNoteScript).toBeDefined();
@@ -457,16 +481,23 @@ describe("getInputNotes", () => {
     await upsertInputNote(
       dbId,
       "note-no-script",
-      DUMMY_BYTES, DUMMY_BYTES, DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
       "", // empty script root
       DUMMY_BYTES,
       "null-nullifier",
       "note-no-script",
       STATE_CONSUMED_EXTERNAL,
       DUMMY_BYTES,
-      1, 0, undefined
+      1,
+      0,
+      undefined
     );
-    const result = await getInputNotes(dbId, new Uint8Array([STATE_CONSUMED_EXTERNAL]));
+    const result = await getInputNotes(
+      dbId,
+      new Uint8Array([STATE_CONSUMED_EXTERNAL])
+    );
     expect(result).toHaveLength(1);
     expect(result![0].serializedNoteScript).toBeUndefined();
   });
@@ -479,8 +510,14 @@ describe("getInputNotes", () => {
 describe("getInputNotesFromIds", () => {
   it("returns notes matching the given IDs", async () => {
     const dbId = await openTestDb();
-    await insertNote(dbId, "id-note-1", { stateDiscriminant: STATE_CONSUMED_EXTERNAL, consumedBlockHeight: 1 });
-    await insertNote(dbId, "id-note-2", { stateDiscriminant: STATE_CONSUMED_EXTERNAL, consumedBlockHeight: 2 });
+    await insertNote(dbId, "id-note-1", {
+      stateDiscriminant: STATE_CONSUMED_EXTERNAL,
+      consumedBlockHeight: 1,
+    });
+    await insertNote(dbId, "id-note-2", {
+      stateDiscriminant: STATE_CONSUMED_EXTERNAL,
+      consumedBlockHeight: 2,
+    });
     await insertNote(dbId, "id-note-3", { stateDiscriminant: STATE_EXPECTED });
 
     const result = await getInputNotesFromIds(dbId, ["id-note-1", "id-note-2"]);
@@ -608,16 +645,56 @@ describe("upsertNoteScript", () => {
 describe("getOutputNotes", () => {
   it("returns all output notes when states is empty", async () => {
     const dbId = await openTestDb();
-    await upsertOutputNote(dbId, "out-1", DUMMY_BYTES, "recipient1", DUMMY_BYTES, "0xnull1", 100, 3, DUMMY_BYTES);
-    await upsertOutputNote(dbId, "out-2", DUMMY_BYTES, "recipient2", DUMMY_BYTES, undefined, 200, 4, DUMMY_BYTES);
+    await upsertOutputNote(
+      dbId,
+      "out-1",
+      DUMMY_BYTES,
+      "recipient1",
+      DUMMY_BYTES,
+      "0xnull1",
+      100,
+      3,
+      DUMMY_BYTES
+    );
+    await upsertOutputNote(
+      dbId,
+      "out-2",
+      DUMMY_BYTES,
+      "recipient2",
+      DUMMY_BYTES,
+      undefined,
+      200,
+      4,
+      DUMMY_BYTES
+    );
     const result = await getOutputNotes(dbId, new Uint8Array([]));
     expect(result).toHaveLength(2);
   });
 
   it("filters output notes by state discriminant", async () => {
     const dbId = await openTestDb();
-    await upsertOutputNote(dbId, "out-state3", DUMMY_BYTES, "r1", DUMMY_BYTES, "0xn1", 100, 3, DUMMY_BYTES);
-    await upsertOutputNote(dbId, "out-state4", DUMMY_BYTES, "r2", DUMMY_BYTES, "0xn2", 200, 4, DUMMY_BYTES);
+    await upsertOutputNote(
+      dbId,
+      "out-state3",
+      DUMMY_BYTES,
+      "r1",
+      DUMMY_BYTES,
+      "0xn1",
+      100,
+      3,
+      DUMMY_BYTES
+    );
+    await upsertOutputNote(
+      dbId,
+      "out-state4",
+      DUMMY_BYTES,
+      "r2",
+      DUMMY_BYTES,
+      "0xn2",
+      200,
+      4,
+      DUMMY_BYTES
+    );
 
     const result = await getOutputNotes(dbId, new Uint8Array([3]));
     expect(result).toHaveLength(1);
@@ -625,7 +702,17 @@ describe("getOutputNotes", () => {
 
   it("returns processed output note with base64 fields", async () => {
     const dbId = await openTestDb();
-    await upsertOutputNote(dbId, "out-processed", DUMMY_BYTES, "recipient-x", DUMMY_BYTES, "0xnull-x", 50, 3, DUMMY_BYTES);
+    await upsertOutputNote(
+      dbId,
+      "out-processed",
+      DUMMY_BYTES,
+      "recipient-x",
+      DUMMY_BYTES,
+      "0xnull-x",
+      50,
+      3,
+      DUMMY_BYTES
+    );
     const result = await getOutputNotes(dbId, new Uint8Array([]));
     expect(result).toHaveLength(1);
     const note = result![0];
@@ -649,8 +736,28 @@ describe("getOutputNotes", () => {
 describe("getOutputNotesFromIds", () => {
   it("returns output notes matching the given IDs", async () => {
     const dbId = await openTestDb();
-    await upsertOutputNote(dbId, "out-id-1", DUMMY_BYTES, "r1", DUMMY_BYTES, "0xn1", 100, 3, DUMMY_BYTES);
-    await upsertOutputNote(dbId, "out-id-2", DUMMY_BYTES, "r2", DUMMY_BYTES, "0xn2", 200, 4, DUMMY_BYTES);
+    await upsertOutputNote(
+      dbId,
+      "out-id-1",
+      DUMMY_BYTES,
+      "r1",
+      DUMMY_BYTES,
+      "0xn1",
+      100,
+      3,
+      DUMMY_BYTES
+    );
+    await upsertOutputNote(
+      dbId,
+      "out-id-2",
+      DUMMY_BYTES,
+      "r2",
+      DUMMY_BYTES,
+      "0xn2",
+      200,
+      4,
+      DUMMY_BYTES
+    );
 
     const result = await getOutputNotesFromIds(dbId, ["out-id-1"]);
     expect(result).toHaveLength(1);
@@ -671,8 +778,28 @@ describe("getOutputNotesFromIds", () => {
 describe("getOutputNotesFromNullifiers", () => {
   it("returns output notes matching the given nullifiers", async () => {
     const dbId = await openTestDb();
-    await upsertOutputNote(dbId, "out-null-1", DUMMY_BYTES, "r1", DUMMY_BYTES, "0xoutnull1", 100, 3, DUMMY_BYTES);
-    await upsertOutputNote(dbId, "out-null-2", DUMMY_BYTES, "r2", DUMMY_BYTES, "0xoutnull2", 200, 4, DUMMY_BYTES);
+    await upsertOutputNote(
+      dbId,
+      "out-null-1",
+      DUMMY_BYTES,
+      "r1",
+      DUMMY_BYTES,
+      "0xoutnull1",
+      100,
+      3,
+      DUMMY_BYTES
+    );
+    await upsertOutputNote(
+      dbId,
+      "out-null-2",
+      DUMMY_BYTES,
+      "r2",
+      DUMMY_BYTES,
+      "0xoutnull2",
+      200,
+      4,
+      DUMMY_BYTES
+    );
 
     const result = await getOutputNotesFromNullifiers(dbId, ["0xoutnull1"]);
     expect(result).toHaveLength(1);
@@ -696,21 +823,30 @@ describe("upsertInputNote with external transaction", () => {
     const db = getDatabase(dbId);
 
     // Pass a transaction object to upsertInputNote (the `tx` code path)
-    await db.dexie.transaction("rw", db.inputNotes, db.notesScripts, async (tx) => {
-      await upsertInputNote(
-        dbId,
-        "tx-note-1",
-        DUMMY_BYTES, DUMMY_BYTES, DUMMY_BYTES,
-        "tx-script-root",
-        DUMMY_BYTES,
-        "tx-nullifier",
-        "tx-note-1",
-        STATE_CONSUMED_EXTERNAL,
-        DUMMY_BYTES,
-        10, 0, undefined,
-        tx
-      );
-    });
+    await db.dexie.transaction(
+      "rw",
+      db.inputNotes,
+      db.notesScripts,
+      async (tx) => {
+        await upsertInputNote(
+          dbId,
+          "tx-note-1",
+          DUMMY_BYTES,
+          DUMMY_BYTES,
+          DUMMY_BYTES,
+          "tx-script-root",
+          DUMMY_BYTES,
+          "tx-nullifier",
+          "tx-note-1",
+          STATE_CONSUMED_EXTERNAL,
+          DUMMY_BYTES,
+          10,
+          0,
+          undefined,
+          tx
+        );
+      }
+    );
 
     const result = await getInputNotesFromIds(dbId, ["tx-note-1"]);
     expect(result).toHaveLength(1);
@@ -726,15 +862,25 @@ describe("upsertOutputNote with external transaction", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    await db.dexie.transaction("rw", db.outputNotes, db.notesScripts, async (tx) => {
-      await upsertOutputNote(
-        dbId,
-        "out-tx-1",
-        DUMMY_BYTES, "recipient-tx", DUMMY_BYTES,
-        "0xtxnull", 999, 3, DUMMY_BYTES,
-        tx
-      );
-    });
+    await db.dexie.transaction(
+      "rw",
+      db.outputNotes,
+      db.notesScripts,
+      async (tx) => {
+        await upsertOutputNote(
+          dbId,
+          "out-tx-1",
+          DUMMY_BYTES,
+          "recipient-tx",
+          DUMMY_BYTES,
+          "0xtxnull",
+          999,
+          3,
+          DUMMY_BYTES,
+          tx
+        );
+      }
+    );
 
     const result = await getOutputNotesFromIds(dbId, ["out-tx-1"]);
     expect(result).toHaveLength(1);
@@ -762,11 +908,15 @@ describe("error paths: unregistered dbId re-throws", () => {
   });
 
   it("getInputNotesFromNullifiers rejects on bad dbId", async () => {
-    await expect(getInputNotesFromNullifiers(BAD_DB, ["null1"])).rejects.toThrow();
+    await expect(
+      getInputNotesFromNullifiers(BAD_DB, ["null1"])
+    ).rejects.toThrow();
   });
 
   it("getOutputNotesFromNullifiers rejects on bad dbId", async () => {
-    await expect(getOutputNotesFromNullifiers(BAD_DB, ["null1"])).rejects.toThrow();
+    await expect(
+      getOutputNotesFromNullifiers(BAD_DB, ["null1"])
+    ).rejects.toThrow();
   });
 
   it("getOutputNotesFromIds rejects on bad dbId", async () => {
@@ -783,19 +933,34 @@ describe("error paths: unregistered dbId re-throws", () => {
 
   it("getInputNoteByOffset rejects on bad dbId", async () => {
     await expect(
-      getInputNoteByOffset(BAD_DB, new Uint8Array([]), undefined, undefined, undefined, 0)
+      getInputNoteByOffset(
+        BAD_DB,
+        new Uint8Array([]),
+        undefined,
+        undefined,
+        undefined,
+        0
+      )
     ).rejects.toThrow();
   });
 
   it("upsertInputNote rejects on bad dbId (no tx, bad db)", async () => {
     await expect(
       upsertInputNote(
-        BAD_DB, "note-1",
-        DUMMY_BYTES, DUMMY_BYTES, DUMMY_BYTES,
-        "root", DUMMY_BYTES,
-        "null-1", "note-1",
-        0, DUMMY_BYTES,
-        undefined, undefined, undefined
+        BAD_DB,
+        "note-1",
+        DUMMY_BYTES,
+        DUMMY_BYTES,
+        DUMMY_BYTES,
+        "root",
+        DUMMY_BYTES,
+        "null-1",
+        "note-1",
+        0,
+        DUMMY_BYTES,
+        undefined,
+        undefined,
+        undefined
       )
     ).rejects.toThrow();
   });

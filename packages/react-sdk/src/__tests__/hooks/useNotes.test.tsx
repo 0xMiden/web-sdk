@@ -425,7 +425,10 @@ describe("useNotes", () => {
     it("should filter noteSummaries by sender using filterBySender (lines 158-168)", async () => {
       // Create a note with explicit sender metadata so getNoteSummary returns a sender
       const noteWithSender = {
-        id: vi.fn(() => ({ toString: () => "0xnote_with_sender", toHex: () => "0xnote_with_sender" })),
+        id: vi.fn(() => ({
+          toString: () => "0xnote_with_sender",
+          toHex: () => "0xnote_with_sender",
+        })),
         metadata: vi.fn(() => ({
           sender: vi.fn(() => ({ toString: () => "0xspecificsender" })),
         })),
@@ -471,7 +474,10 @@ describe("useNotes", () => {
 
     it("should exclude notes matching excludeIds (line 186)", async () => {
       const noteWithSender = {
-        id: vi.fn(() => ({ toString: () => "0xexcludeme", toHex: () => "0xexcludeme" })),
+        id: vi.fn(() => ({
+          toString: () => "0xexcludeme",
+          toHex: () => "0xexcludeme",
+        })),
         metadata: vi.fn(() => ({
           sender: vi.fn(() => ({ toString: () => "0xsender1" })),
         })),
@@ -511,7 +517,9 @@ describe("useNotes", () => {
       });
 
       // Note should be filtered out
-      expect(result.current.noteSummaries.filter(s => s.id === "0xexcludeme")).toHaveLength(0);
+      expect(
+        result.current.noteSummaries.filter((s) => s.id === "0xexcludeme")
+      ).toHaveLength(0);
     });
 
     it("should handle normalizeAccountId error in sender normalization (line 141-143)", async () => {
@@ -531,9 +539,7 @@ describe("useNotes", () => {
 
       // Pass a sender value that may cause normalizeAccountId to throw
       // (empty string or invalid). The hook falls back gracefully.
-      const { result } = renderHook(() =>
-        useNotes({ sender: "" })
-      );
+      const { result } = renderHook(() => useNotes({ sender: "" }));
 
       await act(async () => {
         await result.current.refetch();

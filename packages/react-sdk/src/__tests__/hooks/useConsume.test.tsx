@@ -519,7 +519,6 @@ describe("useConsume", () => {
       });
     });
 
-
     it("should throw when resolved notes count differs from input (line 147-148)", async () => {
       // Return only 1 record when 2 IDs were requested — triggers length mismatch
       const noteRecords = createNoteRecords(["0xnote1"]);
@@ -592,7 +591,9 @@ describe("useConsume", () => {
         newConsumeTransactionRequest: vi
           .fn()
           .mockReturnValue(createMockTransactionRequest()),
-        submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId()),
       });
 
       mockUseMiden.mockReturnValue({
@@ -624,7 +625,9 @@ describe("useConsume", () => {
         newConsumeTransactionRequest: vi
           .fn()
           .mockReturnValue(createMockTransactionRequest()),
-        submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId()),
       });
 
       mockUseMiden.mockReturnValue({
@@ -655,7 +658,9 @@ describe("useConsume", () => {
         newConsumeTransactionRequest: vi
           .fn()
           .mockReturnValue(createMockTransactionRequest()),
-        submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId()),
       });
 
       mockUseMiden.mockReturnValue({

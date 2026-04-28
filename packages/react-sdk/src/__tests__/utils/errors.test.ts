@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { MidenError, wrapWasmError, assertSignerConnected } from "../../utils/errors";
+import {
+  MidenError,
+  wrapWasmError,
+  assertSignerConnected,
+} from "../../utils/errors";
 
 describe("MidenError", () => {
   it("should create error with default code UNKNOWN", () => {
@@ -124,8 +128,6 @@ describe("assertSignerConnected", () => {
     expect(() => assertSignerConnected(false)).toThrow(
       "Signer is disconnected"
     );
-    expect(() => assertSignerConnected(false)).toThrow(
-      "Reconnect your wallet"
-    );
+    expect(() => assertSignerConnected(false)).toThrow("Reconnect your wallet");
   });
 });

@@ -177,9 +177,9 @@ describe("proveWithFallback", () => {
 describe("resolveTransactionProver — additional branches", () => {
   it("throws when object prover has empty url (lines 105-106)", () => {
     // createRemoteProver throws when url is falsy
-    expect(() =>
-      resolveTransactionProver({ prover: { url: "" } })
-    ).toThrow("Remote prover requires a URL");
+    expect(() => resolveTransactionProver({ prover: { url: "" } })).toThrow(
+      "Remote prover requires a URL"
+    );
   });
 
   it("resolves with null timeout when proverTimeoutMs is null (lines 120-121)", () => {
@@ -216,5 +216,4 @@ describe("resolveTransactionProver — additional branches", () => {
     const prover = resolveTransactionProver({ prover: "LOCALHOST" });
     expect(prover).not.toBeNull();
   });
-
 });

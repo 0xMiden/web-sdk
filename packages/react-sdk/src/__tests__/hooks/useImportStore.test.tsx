@@ -190,9 +190,9 @@ describe("useImportStore", () => {
       const { result } = renderHook(() => useImportStore());
 
       await act(async () => {
-        await expect(
-          result.current.importStore("{}", "Store")
-        ).rejects.toThrow("string import store error");
+        await expect(result.current.importStore("{}", "Store")).rejects.toThrow(
+          "string import store error"
+        );
       });
 
       await waitFor(() => {

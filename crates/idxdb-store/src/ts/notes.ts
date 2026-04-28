@@ -163,7 +163,7 @@ export async function upsertInputNote(
       };
 
       await t.notesScripts.put(noteScriptData);
-    /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
+      /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${noteId}`);
     }
@@ -215,9 +215,16 @@ export async function getInputNoteByOffset(
           if (states.length > 0 && !states.includes(n.stateDiscriminant))
             return false;
           if (n.consumerAccountId !== consumerAccountId) return false;
-          if (blockStart != null && (n.consumedBlockHeight == null || n.consumedBlockHeight < blockStart))
+          if (
+            blockStart != null &&
+            (n.consumedBlockHeight == null ||
+              n.consumedBlockHeight < blockStart)
+          )
             return false;
-          if (blockEnd != null && (n.consumedBlockHeight == null || n.consumedBlockHeight > blockEnd))
+          if (
+            blockEnd != null &&
+            (n.consumedBlockHeight == null || n.consumedBlockHeight > blockEnd)
+          )
             return false;
           return true;
         })
@@ -259,7 +266,7 @@ export async function upsertOutputNote(
       };
 
       await t.outputNotes.put(data);
-    /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
+      /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${noteId}`);
     }
@@ -340,7 +347,7 @@ export async function upsertNoteScript(
         };
 
         await tx.notesScripts.put(noteScriptData);
-      /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
+        /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
       } catch (error) {
         logWebStoreError(error, `Error inserting note script: ${scriptRoot}`);
       }

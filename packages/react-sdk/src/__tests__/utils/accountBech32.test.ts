@@ -25,9 +25,11 @@ describe("toBech32AccountId", () => {
   it("should return the original string when parseAccountId throws", async () => {
     // Force an error path by importing the mocked AccountId and making fromHex throw
     const { AccountId } = await import("@miden-sdk/miden-sdk/lazy");
-    const original = vi.spyOn(AccountId, "fromHex").mockImplementationOnce(() => {
-      throw new Error("invalid hex");
-    });
+    const original = vi
+      .spyOn(AccountId, "fromHex")
+      .mockImplementationOnce(() => {
+        throw new Error("invalid hex");
+      });
 
     const result = toBech32AccountId("notahex");
     expect(result).toBe("notahex");

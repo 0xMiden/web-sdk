@@ -94,9 +94,7 @@ describe("transformForExport", () => {
     const result = await transformForExport(input);
     expect(result).toEqual({
       outer: {
-        inner: [
-          { __type: "Uint8Array", data: uint8ArrayToBase64(bytes) },
-        ],
+        inner: [{ __type: "Uint8Array", data: uint8ArrayToBase64(bytes) }],
       },
     });
   });
@@ -140,10 +138,10 @@ describe("exportStore", () => {
     // Everything else should be empty.
     const db = getDatabase(dbId);
     const tableNames = db.dexie.tables.map((t) => t.name);
-    const nonEmptyTables = tableNames.filter(
-      (name) => parsed[name].length > 0
+    const nonEmptyTables = tableNames.filter((name) => parsed[name].length > 0);
+    expect(nonEmptyTables).toEqual(
+      expect.arrayContaining(["stateSync", "settings"])
     );
-    expect(nonEmptyTables).toEqual(expect.arrayContaining(["stateSync", "settings"]));
     // tables other than these two must be empty
     const otherNonEmpty = nonEmptyTables.filter(
       (n) => n !== "stateSync" && n !== "settings"

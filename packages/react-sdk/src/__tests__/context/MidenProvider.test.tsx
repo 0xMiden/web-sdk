@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, renderHook, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  renderHook,
+  act,
+} from "@testing-library/react";
 import React from "react";
 import {
   WasmWebClient as WebClient,
   TransactionProver,
 } from "@miden-sdk/miden-sdk/lazy";
-import { MidenProvider, useMiden, useMidenClient } from "../../context/MidenProvider";
+import {
+  MidenProvider,
+  useMiden,
+  useMidenClient,
+} from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 
 beforeEach(() => {
@@ -157,7 +167,10 @@ describe("MidenProvider loading and error components", () => {
     });
 
     // Resolve init to let it finish
-    resolveInit!({ syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }), getAccounts: vi.fn().mockResolvedValue([]) });
+    resolveInit!({
+      syncState: vi.fn().mockResolvedValue({ blockNum: () => 100 }),
+      getAccounts: vi.fn().mockResolvedValue([]),
+    });
   });
 
   it("should render errorComponent (ReactNode) on init failure", async () => {
@@ -189,10 +202,7 @@ describe("MidenProvider loading and error components", () => {
     ));
 
     render(
-      <MidenProvider
-        config={{ rpcUrl: "testnet" }}
-        errorComponent={errorFn}
-      >
+      <MidenProvider config={{ rpcUrl: "testnet" }} errorComponent={errorFn}>
         <div data-testid="children">children</div>
       </MidenProvider>
     );
@@ -204,7 +214,6 @@ describe("MidenProvider loading and error components", () => {
     expect(errorFn).toHaveBeenCalled();
   });
 });
-
 
 describe("MidenProvider sync function", () => {
   it("should call client.syncState when sync() is invoked after ready", async () => {
@@ -224,13 +233,17 @@ describe("MidenProvider sync function", () => {
     });
 
     // Reset mock call counts from the init phase
-    (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState.mockClear();
+    (
+      mockClient as { syncState: ReturnType<typeof vi.fn> }
+    ).syncState.mockClear();
 
     await act(async () => {
       await result.current.sync();
     });
 
-    expect((mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState).toHaveBeenCalled();
+    expect(
+      (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState
+    ).toHaveBeenCalled();
   });
 
   it("should set error state when syncState throws", async () => {
@@ -248,7 +261,9 @@ describe("MidenProvider sync function", () => {
       expect(result.current.isReady).toBe(true);
     });
 
-    (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState.mockRejectedValueOnce(new Error("Sync error"));
+    (
+      mockClient as { syncState: ReturnType<typeof vi.fn> }
+    ).syncState.mockRejectedValueOnce(new Error("Sync error"));
 
     await act(async () => {
       await result.current.sync();
@@ -274,7 +289,9 @@ describe("MidenProvider sync function", () => {
       expect(result.current.isReady).toBe(true);
     });
 
-    (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState.mockClear();
+    (
+      mockClient as { syncState: ReturnType<typeof vi.fn> }
+    ).syncState.mockClear();
 
     // Set isSyncing = true to trigger the guard
     act(() => {
@@ -286,18 +303,16 @@ describe("MidenProvider sync function", () => {
     });
 
     // syncState should NOT have been called due to isSyncing guard
-    expect((mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState).not.toHaveBeenCalled();
+    expect(
+      (mockClient as { syncState: ReturnType<typeof vi.fn> }).syncState
+    ).not.toHaveBeenCalled();
   });
 });
 
 describe("useMidenClient", () => {
   it("should throw when client is not ready (line 459-464)", () => {
     function Wrapper({ children }: { children: React.ReactNode }) {
-      return (
-        <MidenProvider config={{}}>
-          {children}
-        </MidenProvider>
-      );
+      return <MidenProvider config={{}}>{children}</MidenProvider>;
     }
 
     // useMidenClient is a hook — test the error path by checking it throws

@@ -347,9 +347,7 @@ describe("useSessionAccount", () => {
         await result.current.initialize();
       });
 
-      expect(
-        vi.mocked(AccountStorageMode.private)
-      ).toHaveBeenCalled();
+      expect(vi.mocked(AccountStorageMode.private)).toHaveBeenCalled();
     });
 
     it("should timeout in waitAndConsume when funding note never arrives (lines 258-259)", async () => {
@@ -470,7 +468,10 @@ describe("useSessionAccount", () => {
       // the mock normally accepts any string.
       const { AccountId } = await import("@miden-sdk/miden-sdk/lazy");
       const fromHexSpy = vi
-        .spyOn(AccountId as unknown as { fromHex: (...args: unknown[]) => unknown }, "fromHex")
+        .spyOn(
+          AccountId as unknown as { fromHex: (...args: unknown[]) => unknown },
+          "fromHex"
+        )
         .mockImplementationOnce(() => {
           throw new Error("Invalid account ID format");
         });
@@ -570,9 +571,7 @@ describe("useSessionAccount", () => {
       };
 
       // Make getConsumableNotes return a note on first call
-      mockClient.getConsumableNotes = vi
-        .fn()
-        .mockResolvedValue([resolvedNote]);
+      mockClient.getConsumableNotes = vi.fn().mockResolvedValue([resolvedNote]);
       mockClient.newConsumeTransactionRequest = vi.fn().mockReturnValue({});
       mockClient.submitNewTransaction = vi
         .fn()

@@ -520,7 +520,9 @@ describe("useTransaction", () => {
         sync: vi.fn().mockResolvedValue(undefined),
       });
 
-      useMidenStore.getState().setConfig({ rpcUrl: "testnet", prover: "local" });
+      useMidenStore
+        .getState()
+        .setConfig({ rpcUrl: "testnet", prover: "local" });
 
       const { result } = renderHook(() => useTransaction());
 

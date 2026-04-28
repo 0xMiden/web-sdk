@@ -146,7 +146,11 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
 describe("insertPartialBlockchainNodes", () => {
   it("inserts nodes and retrieves them", async () => {
     const dbId = await openTestDb();
-    await insertPartialBlockchainNodes(dbId, ["1", "2", "3"], ["0xnode1", "0xnode2", "0xnode3"]);
+    await insertPartialBlockchainNodes(
+      dbId,
+      ["1", "2", "3"],
+      ["0xnode1", "0xnode2", "0xnode3"]
+    );
     const db = getDatabase(dbId);
     const all = await db.partialBlockchainNodes.toArray();
     expect(all).toHaveLength(3);
@@ -278,7 +282,9 @@ describe("getPartialBlockchainPeaksByBlockNum", () => {
     await insertBlockHeader(dbId, 50, HEADER_V1, PEAKS_FROM_SYNC, false);
     const result = await getPartialBlockchainPeaksByBlockNum(dbId, 50);
     expect(result!.peaks).toBeDefined();
-    const decoded = Uint8Array.from(atob(result!.peaks!), (c) => c.charCodeAt(0));
+    const decoded = Uint8Array.from(atob(result!.peaks!), (c) =>
+      c.charCodeAt(0)
+    );
     expect(decoded).toEqual(PEAKS_FROM_SYNC);
   });
 });
@@ -307,7 +313,11 @@ describe("getPartialBlockchainNodesAll", () => {
 describe("getPartialBlockchainNodes", () => {
   it("returns nodes for the given ids, filtering undefined for missing", async () => {
     const dbId = await openTestDb();
-    await insertPartialBlockchainNodes(dbId, ["1", "3"], ["0xnode1", "0xnode3"]);
+    await insertPartialBlockchainNodes(
+      dbId,
+      ["1", "3"],
+      ["0xnode1", "0xnode3"]
+    );
     const result = await getPartialBlockchainNodes(dbId, ["1", "2", "3"]);
     // id 2 is missing → filtered out
     expect(result).toHaveLength(2);
@@ -364,8 +374,8 @@ describe("pruneIrrelevantBlocks", () => {
 
     // Block 0 (genesis), block 5 (irrelevant), block 10 (sync height), block 20 (tracked)
     await insertBlockHeader(dbId, 0, HEADER_V1, PEAKS_FROM_SYNC, false);
-    await insertBlockHeader(dbId, 5, HEADER_V1, PEAKS_FROM_SYNC, false);   // should be pruned
-    await insertBlockHeader(dbId, 10, HEADER_V1, PEAKS_FROM_SYNC, false);  // sync height, keep
+    await insertBlockHeader(dbId, 5, HEADER_V1, PEAKS_FROM_SYNC, false); // should be pruned
+    await insertBlockHeader(dbId, 10, HEADER_V1, PEAKS_FROM_SYNC, false); // sync height, keep
     await insertBlockHeader(dbId, 20, HEADER_V2, PEAKS_FROM_BACKFILL, true); // tracked, keep
 
     await pruneIrrelevantBlocks(dbId);
@@ -401,7 +411,13 @@ const BAD_DB = "does-not-exist-chaindata";
 describe("error paths: unregistered dbId re-throws", () => {
   it("insertBlockHeader rejects on bad dbId", async () => {
     await expect(
-      insertBlockHeader(BAD_DB, 1, new Uint8Array([1]), new Uint8Array([2]), false)
+      insertBlockHeader(
+        BAD_DB,
+        1,
+        new Uint8Array([1]),
+        new Uint8Array([2]),
+        false
+      )
     ).rejects.toThrow();
   });
 
@@ -425,7 +441,9 @@ describe("error paths: unregistered dbId re-throws", () => {
   });
 
   it("getPartialBlockchainPeaksByBlockNum rejects on bad dbId", async () => {
-    await expect(getPartialBlockchainPeaksByBlockNum(BAD_DB, 1)).rejects.toThrow();
+    await expect(
+      getPartialBlockchainPeaksByBlockNum(BAD_DB, 1)
+    ).rejects.toThrow();
   });
 
   it("getPartialBlockchainNodesAll rejects on bad dbId", async () => {
@@ -437,7 +455,9 @@ describe("error paths: unregistered dbId re-throws", () => {
   });
 
   it("getPartialBlockchainNodesUpToInOrderIndex rejects on bad dbId", async () => {
-    await expect(getPartialBlockchainNodesUpToInOrderIndex(BAD_DB, "5")).rejects.toThrow();
+    await expect(
+      getPartialBlockchainNodesUpToInOrderIndex(BAD_DB, "5")
+    ).rejects.toThrow();
   });
 
   it("pruneIrrelevantBlocks rejects on bad dbId", async () => {

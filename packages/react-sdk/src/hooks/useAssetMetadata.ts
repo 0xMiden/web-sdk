@@ -22,7 +22,7 @@ const getRpcClient = (rpcUrl?: string): RpcClient | null => {
     const client = new RpcClient(endpoint);
     rpcClients.set(key, client);
     return client;
-  /* v8 ignore next 3 — RpcClient/Endpoint construction never throws in jsdom with WASM mocks */
+    /* v8 ignore next 3 — RpcClient/Endpoint construction never throws in jsdom with WASM mocks */
   } catch {
     return null;
   }

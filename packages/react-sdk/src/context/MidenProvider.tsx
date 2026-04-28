@@ -312,7 +312,7 @@ export function MidenProvider({
                 syncHeight: summary.blockNum(),
                 lastSyncTime: Date.now(),
               });
-            /* v8 ignore next 3 — initial sync failure is non-fatal; mocks don't throw syncState */
+              /* v8 ignore next 3 — initial sync failure is non-fatal; mocks don't throw syncState */
             } catch {
               // Initial sync failure is non-fatal
             }
@@ -325,7 +325,7 @@ export function MidenProvider({
               /* v8 ignore next 1 — post-getAccounts cancellation check; not deterministically testable */
               if (cancelled) return;
               useMidenStore.getState().setAccounts(accounts);
-            /* v8 ignore next 3 — getAccounts failure during init is non-fatal; mocks don't throw */
+              /* v8 ignore next 3 — getAccounts failure during init is non-fatal; mocks don't throw */
             } catch {
               // Non-fatal
             }

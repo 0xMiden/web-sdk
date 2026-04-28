@@ -92,8 +92,8 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
 
   // Active signer from snapshot (for deps that need reactive updates)
   const activeSigner = activeSignerName
-    /* v8 ignore next 1 — ?? null fallback; find() returns undefined only when the signer was unregistered between renders */
-    ? (signersSnapshot.find((s) => s.name === activeSignerName) ?? null)
+    ? /* v8 ignore next 1 — ?? null fallback; find() returns undefined only when the signer was unregistered between renders */
+      (signersSnapshot.find((s) => s.name === activeSignerName) ?? null)
     : null;
 
   // Stable function wrappers that delegate to the ref at call time.

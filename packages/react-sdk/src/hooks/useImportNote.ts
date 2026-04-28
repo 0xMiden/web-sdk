@@ -62,7 +62,7 @@ export function useImportNote(): UseImportNoteResult {
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         throw error;
-      /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
+        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsImporting(false);
       }

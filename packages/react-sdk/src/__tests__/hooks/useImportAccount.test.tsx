@@ -258,12 +258,15 @@ describe("useImportAccount", () => {
         free: vi.fn(),
       };
 
-      const accountId0 = { id: vi.fn(() => createMockAccountId("0xexisting")), free: vi.fn() };
+      const accountId0 = {
+        id: vi.fn(() => createMockAccountId("0xexisting")),
+        free: vi.fn(),
+      };
 
       const mockClient = createMockWebClient({
         getAccounts: vi
           .fn()
-          .mockResolvedValueOnce([accountId0])  // before
+          .mockResolvedValueOnce([accountId0]) // before
           .mockResolvedValueOnce([accountId0]), // after
         importAccountFile: vi.fn().mockResolvedValue("Imported"),
         exportAccountFile: vi.fn().mockResolvedValue(matchingExportedFile),
@@ -300,7 +303,10 @@ describe("useImportAccount", () => {
         free: vi.fn(),
       };
 
-      const accountId0 = { id: vi.fn(() => createMockAccountId("0xold")), free: vi.fn() };
+      const accountId0 = {
+        id: vi.fn(() => createMockAccountId("0xold")),
+        free: vi.fn(),
+      };
 
       const mockClient = createMockWebClient({
         getAccounts: vi

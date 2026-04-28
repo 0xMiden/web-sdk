@@ -541,7 +541,9 @@ describe("useSwap", () => {
         newSwapTransactionRequest: vi
           .fn()
           .mockReturnValue(createMockTransactionRequest()),
-        submitNewTransactionWithProver: vi.fn().mockRejectedValue("string swap error"),
+        submitNewTransactionWithProver: vi
+          .fn()
+          .mockRejectedValue("string swap error"),
         submitNewTransaction: vi.fn().mockRejectedValue("string swap error"),
       });
 

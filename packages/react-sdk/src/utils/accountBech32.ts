@@ -80,8 +80,8 @@ const defineBech32 = (target: AccountPrototype | Account): boolean => {
       },
     });
     return true;
-  /* v8 ignore next 4 — Object.defineProperty throws only on sealed/frozen objects;
-   * not reproducible with WASM mock objects in jsdom. */
+    /* v8 ignore next 4 — Object.defineProperty throws only on sealed/frozen objects;
+     * not reproducible with WASM mock objects in jsdom. */
   } catch {
     return false;
   }

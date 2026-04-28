@@ -258,9 +258,7 @@ describe("useMultiSend", () => {
   describe("branch coverage gaps", () => {
     it("should set error and re-throw on failure (lines 203-206)", async () => {
       const mockClient = createMockWebClient({
-        executeTransaction: vi
-          .fn()
-          .mockRejectedValue(new Error("TX failed")),
+        executeTransaction: vi.fn().mockRejectedValue(new Error("TX failed")),
       });
 
       mockUseMiden.mockReturnValue({
@@ -370,7 +368,9 @@ describe("useMultiSend", () => {
         sync: vi.fn().mockResolvedValue(undefined),
       });
 
-      useMidenStore.getState().setConfig({ rpcUrl: "testnet", prover: "local" });
+      useMidenStore
+        .getState()
+        .setConfig({ rpcUrl: "testnet", prover: "local" });
 
       const { result } = renderHook(() => useMultiSend());
 
