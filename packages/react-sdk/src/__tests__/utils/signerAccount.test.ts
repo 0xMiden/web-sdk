@@ -51,6 +51,24 @@ vi.mock("@miden-sdk/miden-sdk", async () => {
       FungibleFaucet: "FungibleFaucet",
       NonFungibleFaucet: "NonFungibleFaucet",
     },
+    // Needed by the importAccountId fast-path tests below — the fast path
+    // resolves a string id via parseAccountId → AccountId.fromHex.
+    AccountId: {
+      fromHex: vi.fn((id: string) => ({
+        toString: () => id,
+        toHex: () => id,
+      })),
+      fromBech32: vi.fn((id: string) => ({
+        toString: () => id,
+        toHex: () => id,
+      })),
+    },
+    Address: {
+      fromBech32: vi.fn((id: string) => ({
+        accountId: () => ({ toString: () => id, toHex: () => id }),
+      })),
+      fromAccountId: vi.fn(),
+    },
   };
 });
 
@@ -385,6 +403,51 @@ describe("initializeSignerAccount", () => {
 
       // Initial sync + sync after newAccount
       expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // Coverage gap: importAccountId fast path (lines 73-84).
+  describe("importAccountId fast path", () => {
+    it("imports the account by id and skips the build/derive flow", async () => {
+      mockClient.importAccountById.mockResolvedValueOnce(undefined);
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xprovided",
+      });
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(result).toBe("0xprovided");
+      // AccountBuilder should NOT have been used in the fast path.
+      expect(AccountBuilder).not.toHaveBeenCalled();
+      // syncState fires twice: once at the top, once after import.
+      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+    });
+
+    it("swallows 'already being tracked' on import in the fast path", async () => {
+      mockClient.importAccountById.mockRejectedValueOnce(
+        new Error("account 0x123 is already being tracked")
+      );
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xalreadytracked",
+      });
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(result).toBe("0xalreadytracked");
+      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+    });
+
+    it("rethrows non-'already tracked' errors in the fast path", async () => {
+      mockClient.importAccountById.mockRejectedValueOnce(
+        new Error("permission denied")
+      );
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xboom",
+      });
+
+      await expect(
+        initializeSignerAccount(mockClient, config)
+      ).rejects.toThrow("permission denied");
     });
   });
 });
