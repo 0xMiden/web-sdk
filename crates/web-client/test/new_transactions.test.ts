@@ -1,4 +1,4 @@
-import test from "./playwright.global.setup";
+import test, { getProverUrl } from "./playwright.global.setup";
 import { expect, Page } from "@playwright/test";
 import {
   consumeTransaction,
@@ -13,6 +13,14 @@ import {
   TransactionRecord,
   Note,
 } from "../dist/crates/miden_client_web";
+
+// Used to gate "with remote prover" test variants. When no prover URL is
+// configured (the default for the regular `Integration tests` shards),
+// these variants would silently fall back to local proving and duplicate
+// their non-remote siblings — burning 5+ minutes per duplicate. The
+// dedicated `Integration tests for remote prover` job exercises them
+// properly with the actual remote prover.
+const hasRemoteProver = !!getProverUrl();
 
 // NEW_MINT_TRANSACTION TESTS
 // =======================================================================================================
@@ -145,6 +153,7 @@ test.describe("mint transaction tests", () => {
 
   testCases.forEach(({ flag, description }) => {
     test(description, async ({ page }) => {
+      test.skip(flag && !hasRemoteProver, "no remote prover configured");
       test.slow();
       // This test was added in #995 to reproduce an issue in the web wallet.
       // It is useful because most tests consume the note right on the latest client block,
@@ -177,6 +186,7 @@ test.describe("consume transaction tests", () => {
 
   testCases.forEach(({ flag, description }) => {
     test(description, async ({ page }) => {
+      test.skip(flag && !hasRemoteProver, "no remote prover configured");
       const { faucetId, accountId } = await setupWalletAndFaucet(page);
       const { consumeResult: result } = await mintAndConsumeTransaction(
         page,
@@ -250,6 +260,7 @@ test.describe("send transaction tests", () => {
 
   testCases.forEach(({ flag, description }) => {
     test(description, async ({ page }) => {
+      test.skip(flag && !hasRemoteProver, "no remote prover configured");
       test.setTimeout(900000);
       const { accountId: senderAccountId, faucetId } =
         await setupWalletAndFaucet(page);
@@ -685,6 +696,7 @@ test.describe("custom transaction tests", () => {
   test("custom transaction with remote prover completes successfully", async ({
     page,
   }) => {
+    test.skip(!hasRemoteProver, "no remote prover configured");
     // TODO: hotfix CI failure, we should investigate slow prover tests further.
     test.slow();
     await expect(customTransaction(page, "0", true)).resolves.toBeUndefined();
