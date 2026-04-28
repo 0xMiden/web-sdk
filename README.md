@@ -126,29 +126,28 @@ The same split applies to `@miden-sdk/react`. The choice cascades: if you use `@
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': {
-  'primaryColor':'#0f172a',
+  'primaryColor':'#1e293b',
   'primaryTextColor':'#f8fafc',
-  'primaryBorderColor':'#334155',
-  'lineColor':'#64748b',
+  'primaryBorderColor':'#475569',
+  'lineColor':'#94a3b8',
   'secondaryColor':'#1e293b',
   'tertiaryColor':'#0b1220',
-  'fontFamily':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
-  'fontSize':'14px'
+  'fontSize':'15px'
 }}}%%
 flowchart TB
-  classDef app      fill:#1e293b,stroke:#475569,stroke-width:2px,color:#f8fafc
+  classDef app      fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#f8fafc
   classDef hooks    fill:#7c3aed,stroke:#a78bfa,stroke-width:2px,color:#f8fafc
   classDef wasm     fill:#db2777,stroke:#f472b6,stroke-width:2px,color:#f8fafc
   classDef store    fill:#0d9488,stroke:#5eead4,stroke-width:2px,color:#f8fafc
   classDef network  fill:#0284c7,stroke:#7dd3fc,stroke-width:2px,color:#f8fafc
-  classDef chain    fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#f8fafc,stroke-dasharray:5 3
+  classDef chain    fill:#475569,stroke:#cbd5e1,stroke-width:2px,color:#f8fafc,stroke-dasharray:6 4
 
-  subgraph Browser[" Browser tab &nbsp;·&nbsp; Web Worker "]
+  subgraph Browser["Browser tab / Web Worker"]
     direction TB
     App["Your dApp"]:::app
-    ReactSDK["<b>@miden-sdk/react</b><br/><span style='font-size:11px;opacity:0.85'>useAccount · useNotes · useSend · useConsume</span>"]:::hooks
-    WasmSDK["<b>@miden-sdk/miden-sdk</b><br/><span style='font-size:11px;opacity:0.85'>WASM · accounts · notes · proving · sync</span>"]:::wasm
-    IDB[("<b>miden-idxdb-store</b><br/><span style='font-size:11px;opacity:0.85'>IndexedDB persistence</span>")]:::store
+    ReactSDK["@miden-sdk/react"]:::hooks
+    WasmSDK["@miden-sdk/miden-sdk<br/>(WASM client + prover)"]:::wasm
+    IDB[("miden-idxdb-store<br/>(IndexedDB)")]:::store
 
     App --> ReactSDK
     ReactSDK --> WasmSDK
@@ -156,10 +155,10 @@ flowchart TB
   end
 
   RPC["gRPC-web"]:::network
-  Node["<b>Miden node</b><br/><span style='font-size:11px;opacity:0.85'>RPC · prover · sync</span>"]:::network
+  Node["Miden node"]:::network
   Chain[("Miden chain")]:::chain
 
-  WasmSDK -- "submit · sync" --> RPC
+  WasmSDK -- "submit / sync" --> RPC
   RPC --> Node
   Node --> Chain
 
