@@ -1,7 +1,7 @@
 import { NoteType, TransactionFilter } from "@miden-sdk/miden-sdk/lazy";
 import type { Note, TransactionId } from "@miden-sdk/miden-sdk/lazy";
 
-export type ClientWithTransactions = {
+type ClientWithTransactions = {
   syncState: () => Promise<unknown>;
   getTransactions: (filter: TransactionFilter) => Promise<
     Array<{

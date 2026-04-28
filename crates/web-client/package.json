@@ -62,7 +62,6 @@
     "binaryen": "^129.0.0",
     "cpr": "^3.0.1",
     "cross-env": "^7.0.3",
-    "http-server": "^14.1.1",
     "rimraf": "^6.0.1",
     "rollup": "^4.59.0",
     "rollup-plugin-copy": "^3.5.0",
@@ -72,7 +71,6 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "@rollup/plugin-typescript": "^12.3.0",
     "dexie": "^4.0.1",
     "glob": "^11.0.0"
   }
