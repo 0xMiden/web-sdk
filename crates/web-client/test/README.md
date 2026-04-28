@@ -10,16 +10,16 @@ within the context of the web page.
 
 - Node Version >= v20.16.0
 
-1. These instructions utilize [yarn](https://classic.yarnpkg.com/lang/en/docs/install) but can also be executed with npm
+1. These instructions utilize [pnpm](https://pnpm.io/installation) but can also be executed with npm
 
 ## Running tests
 
-1. Install dependencies via `yarn`
-2. Ensure the .wasm is built by running `yarn build` (use `yarn build-dev` for a shorter build time)
-3. In crates/web-client run `yarn test` to run all tests
-   - Can alternatively run `yarn test:clean` to run the .wasm build process prior to testing. We provide both paths as the build process can take some time.
+1. Install dependencies via `pnpm install`
+2. Ensure the .wasm is built by running `pnpm build` (use `pnpm run build-dev` for a shorter build time)
+3. In crates/web-client run `pnpm test` to run all tests
+   - Can alternatively run `pnpm test:clean` to run the .wasm build process prior to testing. We provide both paths as the build process can take some time.
 
-4. To run an individual test by name run `yarn test test/name_of_test_file.ts`.
+4. To run an individual test by name run `pnpm test test/name_of_test_file.ts`.
 
 ## Writing tests
 
@@ -69,5 +69,5 @@ This will forward logs from the server to your terminal logs
 ## Troubleshooting
 
 1. When trying to run the tests, if you receive an error about missing browsers,
-   install them with: `yarn playwright install` and then run the tests again.
-2. Playwright provides a UI to run tests and debug them, you can use it with: `yarn playwright test --ui`
+   install them with: `pnpm exec playwright install` and then run the tests again.
+2. Playwright provides a UI to run tests and debug them, you can use it with: `pnpm exec playwright test --ui`

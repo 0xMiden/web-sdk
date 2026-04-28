@@ -46,7 +46,7 @@ npm i @miden-sdk/miden-sdk
 Or using Yarn:
 
 ```javascript
-yarn add @miden-sdk/miden-sdk
+pnpm add @miden-sdk/miden-sdk
 ```
 
 ### Pre-release ("next") Version
@@ -60,7 +60,7 @@ npm i @miden-sdk/miden-sdk@next
 Or with Yarn:
 
 ```javascript
-yarn add @miden-sdk/miden-sdk@next
+pnpm add @miden-sdk/miden-sdk@next
 ```
 
 > **Note:** The `next` version of the SDK must be used in conjunction with a locally running Miden node built from the `next` branch of the `miden-node` repository. This is necessary because the public testnet runs the stable `main` branch, which may not be compatible with the latest development features in `next`. Instructions to run a local node can be found [here](https://github.com/0xMiden/miden-node/tree/next) on the `next` branch of the `miden-node` repository. Additionally, if you plan to leverage delegated proving in your application, you may need to run a local prover (see [Remote prover instructions](https://github.com/0xMiden/miden-node/tree/next/bin/remote-prover)).
@@ -156,8 +156,8 @@ Use `/lazy` from anywhere inside a Capacitor iOS/Android host (the main WKWebVie
 If you're interested in contributing to the web client and need to build it locally, you can do so via:
 
 ```
-yarn install
-yarn build
+pnpm install
+pnpm build
 ```
 
 This will:
@@ -170,7 +170,7 @@ This will:
 To run integration tests after building, use:
 
 ```
-yarn test
+pnpm test
 ```
 
 This runs a suite of integration tests to verify the SDK’s functionality in a web context.
@@ -184,12 +184,12 @@ Follow the steps below to produce the contents that get published to npm (`dist/
    - Install Node.js ≥18 and Yarn.
 2. **Install dependencies**
    ```bash
-   yarn install
+   pnpm install
    ```
    This installs both the JavaScript tooling and the `@wasm-tool/rollup-plugin-rust` dependency that compiles the Rust crate.
 3. **Build the package**
    ```bash
-   yarn build
+   pnpm build
    ```
    The `build` script (see `package.json`) performs the following:
    - Removes the previous `dist/` directory (`rimraf dist`).
@@ -202,14 +202,14 @@ Follow the steps below to produce the contents that get published to npm (`dist/
    - `dist/index.d.ts` and the rest of the `.d.ts` files provide the TypeScript surface.
    Use `npm pack` if you want to preview the exact tarball that would be published.
 
-> Tip: during development you can set `MIDEN_WEB_DEV=true` before running `yarn build` (or run `npm run build-dev`) to skip the clean step and keep extra debugging metadata in the bundled output. This debugging metadata also includes debug symbols for the generated wasm binary
+> Tip: during development you can set `MIDEN_WEB_DEV=true` before running `pnpm build` (or run `npm run build-dev`) to skip the clean step and keep extra debugging metadata in the bundled output. This debugging metadata also includes debug symbols for the generated wasm binary
 
 ### Checking the generated TypeScript bindings
 
 The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that every type exported by the generated wasm bindings (`dist/crates/miden_client_web.d.ts`) is re-exported from the public declarations (`js/types/index.d.ts`). Run it after a build with:
 
 ```
-yarn check:wasm-types
+pnpm check:wasm-types
 ```
 
 `WebClient` is intentionally excluded because the wrapper defines its own implementation. If the check reports missing exports, update `js/types/index.d.ts` so consumers get the full generated surface.

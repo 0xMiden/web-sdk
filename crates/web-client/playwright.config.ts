@@ -29,7 +29,7 @@ import { defineConfig, devices } from "@playwright/test";
 // To rebalance after observing new runs: move file paths between the
 // testMatch arrays. No CI workflow changes needed.
 //
-// Gated on `CI` so local `yarn test` doesn't run every test twice (once
+// Gated on `CI` so local `pnpm test` doesn't run every test twice (once
 // in `chromium`, once in a shard project).
 const ciShardProjects = process.env.CI
   ? [
@@ -115,7 +115,7 @@ export default defineConfig({
   /* Configure projects for major browsers */
   projects: [
     // Default chromium project — runs all .test.ts files. Used by local
-    // `yarn test` and any CI invocation that doesn't pass `--project`.
+    // `pnpm test` and any CI invocation that doesn't pass `--project`.
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },

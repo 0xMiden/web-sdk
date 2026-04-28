@@ -124,7 +124,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Check TSC output equals committed JS
         run: |
@@ -247,20 +247,19 @@ jobs:
           # both worth caching independently so PRs against either don't
           # cold-build.
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-          cache-dependency-path: |
-            crates/web-client/yarn.lock
-            crates/idxdb-store/src/yarn.lock
+          cache: 'pnpm'
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh crates/web-client
+        run: pnpm install --no-frozen-lockfile
       - name: Build project (full release profile)
-        run: |
-          cd ./crates/web-client
-          yarn run build
+        run: pnpm --filter @miden-sdk/miden-sdk run build
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -280,18 +279,23 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: 'pnpm'
       - name: Check React SDK version sync
         run: node scripts/check-react-sdk-sync.js
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+        run: pnpm install --no-frozen-lockfile
       - name: Run lint
         run: make react-sdk-lint
       - name: Run typecheck
-        run: cd ./packages/react-sdk && yarn typecheck
+        run: pnpm --filter @miden-sdk/react run typecheck
 
   # Reuses the WASM dist artifact from build-web-client-dist-folder. The
   # standalone wasm-bindgen-types job in lint.yml used to do a full WASM
@@ -308,23 +312,21 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
-          cache-dependency-path: |
-            crates/web-client/yarn.lock
-            crates/idxdb-store/src/yarn.lock
+          cache: 'pnpm'
       - name: Install dependencies
-        working-directory: crates/web-client
-        run: yarn install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: Check bindgen type coverage
-        working-directory: crates/web-client
-        run: yarn check:wasm-types
+        run: pnpm --filter @miden-sdk/miden-sdk run check:wasm-types
       - name: Check method classification
-        working-directory: crates/web-client
-        run: yarn check:method-classification
+        run: pnpm --filter @miden-sdk/miden-sdk run check:method-classification
 
   # Reuses the WASM dist artifact from build-web-client-dist-folder rather
   # than rebuilding WASM (which the standalone web-docs-check.yml previously
@@ -350,20 +352,23 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+      - name: Install pnpm
+        if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Setup Node.js
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: yarn
-          cache-dependency-path: crates/web-client/yarn.lock
+          cache: 'pnpm'
       - name: Install Dependencies
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
-        run: ./scripts/retry-yarn-install.sh crates/web-client
+        run: pnpm install --no-frozen-lockfile
       - name: Generate Documentation
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
-        working-directory: crates/web-client
-        run: yarn typedoc
+        run: pnpm --filter @miden-sdk/miden-sdk run typedoc
       - name: Verify Documentation is Up-to-date
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
         run: git diff --exit-code docs/typedoc/web-client
@@ -379,12 +384,17 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: 'pnpm'
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+        run: pnpm install --no-frozen-lockfile
       - name: Run unit tests
         run: make test-react-sdk
 
@@ -399,16 +409,21 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: 'pnpm'
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+        run: pnpm install --no-frozen-lockfile
       - name: Install Playwright browsers
-        run: cd ./packages/react-sdk && yarn playwright install --with-deps
+        run: pnpm --filter @miden-sdk/react exec playwright install --with-deps
       - name: Run Playwright tests
-        run: cd ./packages/react-sdk && yarn test:integration
+        run: pnpm --filter @miden-sdk/react run test:integration
 
   build-react-sdk:
     name: Build React SDK
@@ -421,14 +436,19 @@ jobs:
         with:
           name: web-client-artifacts
           path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: 'pnpm'
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh packages/react-sdk
+        run: pnpm install --no-frozen-lockfile
       - name: Build React SDK
-        run: cd ./packages/react-sdk && yarn build
+        run: pnpm --filter @miden-sdk/react run build
 
   # Build test infrastructure from miden-client repo
   build-node-builder:
@@ -516,14 +536,17 @@ jobs:
           name: web-client-artifacts
           path: ./crates/web-client/dist
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-          cache-dependency-path: crates/web-client/yarn.lock
+          cache: 'pnpm'
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh crates/web-client
+        run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
       - name: Download node-builder binary
@@ -538,9 +561,7 @@ jobs:
           sleep 4
           pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
       - name: Run web client tests
-        run: |
-          cd ./crates/web-client
-          yarn run test:ci -- --project=${{ matrix.project }}
+        run: pnpm --filter @miden-sdk/miden-sdk run test:ci -- --project=${{ matrix.project }}
       - name: Stop test node
         if: always()
         run: pkill -f testing-node-builder || true
@@ -556,14 +577,17 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
     steps:
       - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-          cache-dependency-path: crates/web-client/yarn.lock
+          cache: 'pnpm'
       - name: Install dependencies
-        run: ./scripts/retry-yarn-install.sh crates/web-client
+        run: pnpm install --no-frozen-lockfile
 
       - name: Fetch dist folder
         uses: actions/download-artifact@v4
@@ -596,9 +620,7 @@ jobs:
           sleep 4
           pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
       - name: Run remote prover tests
-        run: |
-          cd ./crates/web-client
-          yarn run test:ci:remote_prover
+        run: pnpm --filter @miden-sdk/miden-sdk run test:ci:remote_prover
       - name: Stop test node
         if: always()
         run: pkill -f testing-node-builder || true

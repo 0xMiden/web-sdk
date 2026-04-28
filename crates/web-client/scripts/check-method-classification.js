@@ -38,7 +38,7 @@ for (const filePath of requiredFiles) {
 
 if (missingFiles.length > 0) {
   console.error(
-    "Method classification check failed because expected files are missing. Run `yarn build` first."
+    "Method classification check failed because expected files are missing. Run `pnpm build` first."
   );
   for (const filePath of missingFiles) {
     console.error(`- ${filePath}`);

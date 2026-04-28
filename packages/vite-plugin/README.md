@@ -7,7 +7,7 @@ Vite plugin for Miden dApps. Automates WASM deduplication, cross-origin isolatio
 ```bash
 npm install @miden-sdk/vite-plugin --save-dev
 # or
-yarn add @miden-sdk/vite-plugin --dev
+pnpm add @miden-sdk/vite-plugin --dev
 ```
 
 ## Usage
