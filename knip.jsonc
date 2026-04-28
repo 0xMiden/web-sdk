@@ -1,0 +1,83 @@
+// Knip — unused-exports / unused-deps / unused-files detector.
+//
+// Baseline mode: package.json#scripts.check:knip is `knip --no-exit-code`
+// so CI does not go red on day-one findings. Once the baseline backlog
+// (unused files / exports / deps / devDeps) is cleared, drop the
+// `--no-exit-code` flag to enforce strict mode.
+//
+// Workspace layout: pnpm 9 monorepo with three published TS packages
+// plus a small TS-bundled crate. Each `entry` pattern enumerates real
+// runtime entry points (package main/exports + tests + bundler-emitted
+// entries) so knip can trace from there. Build-tool configs (tsup,
+// rollup, vitest, playwright, eslint) are auto-detected by the
+// matching knip plugins; only entries knip can't infer are listed.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.{js,ts}"]
+    },
+    "packages/react-sdk": {
+      "entry": [
+        "src/index.ts",
+        "src/__tests__/**/*.test.{ts,tsx}",
+        "test/**/*.test.ts",
+        "test/serve-tests.js",
+        "test/test-app/**/*.{js,html}"
+      ]
+    },
+    "packages/vite-plugin": {
+      "entry": ["src/index.ts", "src/__tests__/**/*.test.ts"]
+    },
+    "crates/web-client": {
+      // Hand-rolled JS in `js/` is the published surface (bundled via
+      // rollup). Each top-level file is an entry, plus the worker bundle,
+      // the JS unit tests, and the Playwright TS tests in `test/`.
+      "entry": [
+        "js/index.js",
+        "js/eager.js",
+        "js/wasm.js",
+        "js/standalone.js",
+        "js/client.js",
+        "js/asyncLock.js",
+        "js/syncLock.js",
+        "js/webLock.js",
+        "js/safe-arrays.js",
+        "js/utils.js",
+        "js/constants.js",
+        "js/workers/**/*.js",
+        "js/__tests__/**/*.test.js",
+        "test/**/*.test.ts",
+        "test/webClientTestUtils.ts",
+        "test/playwright.global.setup.ts",
+        "scripts/**/*.js",
+        "clean.js"
+      ]
+    },
+    "crates/idxdb-store/src": {
+      // Each `ts/*.ts` is independently tsc-compiled into `js/` and
+      // consumed by the Rust crate, so each file is its own entry point.
+      "entry": [
+        "ts/accounts.ts",
+        "ts/auth.ts",
+        "ts/chainData.ts",
+        "ts/export.ts",
+        "ts/import.ts",
+        "ts/notes.ts",
+        "ts/schema.ts",
+        "ts/settings.ts",
+        "ts/sync.ts",
+        "ts/transactions.ts",
+        "ts/utils.ts",
+        "ts/test-utils.ts",
+        "ts/**/*.test.ts"
+      ]
+    }
+  },
+  "ignore": [
+    "packages/react-sdk/examples/**",
+    "crates/web-client/docs/**",
+    "crates/idxdb-store/src/js/**",
+    "docs/**"
+  ]
+}

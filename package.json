@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "check:sync:react-sdk": "node scripts/check-react-sdk-sync.js",
+    "check:knip": "knip --no-exit-code",
     "build:web-client": "pnpm --filter @miden-sdk/miden-sdk run build",
     "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
@@ -21,6 +22,7 @@
     "@typescript-eslint/eslint-plugin": "^8.25.0",
     "@typescript-eslint/parser": "^8.25.0",
     "eslint": "^9.30.1",
+    "knip": "^6.7.0",
     "lefthook": "^1.13.6",
     "lint-staged": "^16.4.0",
     "publint": "^0.3.18",
