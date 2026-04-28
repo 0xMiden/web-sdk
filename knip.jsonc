@@ -1,25 +1,53 @@
 // Knip — unused-exports / unused-deps / unused-files detector.
 //
-// Baseline mode: package.json#scripts.check:knip is `knip --no-exit-code`
-// so CI does not go red on day-one findings. Once the baseline backlog
-// (unused files / exports / deps / devDeps) is cleared, drop the
-// `--no-exit-code` flag to enforce strict mode.
+// Strict mode: package.json#scripts.check:knip runs `knip` with no
+// `--no-exit-code` flag, so any finding fails CI. The allowlists below
+// each carry a comment naming the consumer that knip cannot statically
+// see (browser-resolved imports, makefile targets, GitHub workflows,
+// post-build copy, etc.) — touch them only if that consumer changes.
 //
 // Workspace layout: pnpm 9 monorepo with three published TS packages
-// plus a small TS-bundled crate. Each `entry` pattern enumerates real
-// runtime entry points (package main/exports + tests + bundler-emitted
-// entries) so knip can trace from there. Build-tool configs (tsup,
-// rollup, vitest, playwright, eslint) are auto-detected by the
-// matching knip plugins; only entries knip can't infer are listed.
+// plus a small TS-bundled crate. `entry` patterns are reserved for files
+// knip can't infer from a plugin (e.g. rollup configs, tsup configs,
+// vitest configs, eslint configs are all picked up automatically).
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Top-level binaries that show up in CI workflows / Makefiles but
+  // aren't pulled in by any source file.
+  "ignoreBinaries": [
+    // Used in .github/workflows/wallet-pages.yml via `pnpm exec vite
+    // build` from the wallet example workspace (which has its own
+    // package.json + lockfile, hidden from this monorepo's graph).
+    "vite"
+  ],
+  "ignoreDependencies": [
+    // `prettier` is invoked from the repo Makefile (`make format` /
+    // `make format-check`) via `pnpm exec prettier .`. Knip only scans
+    // *.{js,ts,json,yml} for binary references, not Makefile rules, so
+    // it appears unused even though CI's lint job depends on it.
+    "prettier"
+  ],
+  "rules": {
+    // Three intentional dual-export patterns in this repo:
+    // - packages/vite-plugin/src/index.ts: `export function midenVitePlugin`
+    //   + `export default midenVitePlugin` — both forms are documented
+    //   public API; consumers use either named or default import.
+    // - crates/web-client/test/playwright.global.setup.ts: `export const
+    //   test` + `export default test` — fixture re-exports used by both
+    //   `import test from ...` and `import { test as base } from ...`
+    //   patterns across ~50 test files.
+    // - packages/react-sdk/test/test-app/react-jsx-runtime.js: `jsx`,
+    //   `jsxs`, `jsxDEV` are all aliased to the same function because
+    //   the React JSX transform looks for whichever name matches the
+    //   classic/automatic runtime.
+    "duplicates": "off"
+  },
   "workspaces": {
     ".": {
       "entry": ["scripts/**/*.{js,ts}"]
     },
     "packages/react-sdk": {
       "entry": [
-        "src/index.ts",
         "src/__tests__/**/*.test.{ts,tsx}",
         "test/**/*.test.ts",
         "test/serve-tests.js",
@@ -27,16 +55,14 @@
       ]
     },
     "packages/vite-plugin": {
-      "entry": ["src/index.ts", "src/__tests__/**/*.test.ts"]
+      "entry": ["src/__tests__/**/*.test.ts"]
     },
     "crates/web-client": {
       // Hand-rolled JS in `js/` is the published surface (bundled via
-      // rollup). Each top-level file is an entry, plus the worker bundle,
-      // the JS unit tests, and the Playwright TS tests in `test/`.
+      // rollup). Files not picked up by the rollup plugin entry trace
+      // (worker bundles, JS unit tests, helper modules, Playwright TS
+      // tests, build scripts) are listed explicitly here.
       "entry": [
-        "js/index.js",
-        "js/eager.js",
-        "js/wasm.js",
         "js/standalone.js",
         "js/client.js",
         "js/asyncLock.js",
@@ -47,11 +73,31 @@
         "js/constants.js",
         "js/workers/**/*.js",
         "js/__tests__/**/*.test.js",
+        // The .d.ts files in js/types/ ship as the package's published
+        // type surface — `pnpm run build` runs `cpr js/types dist` after
+        // rollup, so dist/index.d.ts (the package's `types` field) is a
+        // copy of js/types/index.d.ts. Knip can't see the post-build
+        // copy step, so we register the source files as entry points.
+        "js/types/index.d.ts",
+        "js/types/api-types.d.ts",
+        "js/types/docs-entry.d.ts",
         "test/**/*.test.ts",
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
-        "scripts/**/*.js",
-        "clean.js"
+        "scripts/**/*.js"
+      ],
+      // The `./eager.js` and `./index.js` strings inside
+      // `page.evaluate(...)` blocks are dynamic imports executed in the
+      // *browser* against http://localhost:8080 — they resolve to files
+      // in dist/ at test runtime, not relative to the Playwright test
+      // file. `./crates/miden_client_web` is the wasm-bindgen module
+      // emitted into dist/ by the rollup rust plugin; the .d.ts files
+      // in js/types/ reference it but it doesn't exist until after
+      // build. Knip can't follow either of these dynamic targets.
+      "ignoreUnresolved": [
+        "./eager.js",
+        "./index.js",
+        "./crates/miden_client_web"
       ]
     },
     "crates/idxdb-store/src": {
@@ -76,8 +122,6 @@
   },
   "ignore": [
     "packages/react-sdk/examples/**",
-    "crates/web-client/docs/**",
-    "crates/idxdb-store/src/js/**",
-    "docs/**"
+    "crates/idxdb-store/src/js/**"
   ]
 }
