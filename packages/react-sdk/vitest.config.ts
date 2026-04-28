@@ -24,9 +24,16 @@ export default defineConfig({
     include: ["src/__tests__/**/*.test.{ts,tsx}"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "json", "html"],
+      reporter: ["text", "json", "html", "lcov"],
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/__tests__/**", "src/index.ts"],
+      exclude: [
+        "src/__tests__/**",
+        "src/index.ts",
+        "src/types/**",
+        "src/**/*.d.ts",
+      ],
+      // Phase 0: measurement-mode. Restored to 95 in Phase 4.
+      thresholds: { lines: 0, branches: 0, functions: 0, statements: 0 },
     },
   },
 });
