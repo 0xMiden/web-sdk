@@ -11,7 +11,10 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "node": "./js/node-index.js",
+      "node": {
+        "types": "./dist/index.d.ts",
+        "default": "./js/node-index.js"
+      },
       "import": {
         "types": "./dist/index.d.ts",
         "default": "./dist/eager.js"
@@ -64,23 +67,16 @@
     "@types/node": "^24.9.2",
     "@wasm-tool/rollup-plugin-rust": "^3.0.3",
     "binaryen": "^129.0.0",
-    "chai": "^5.1.1",
     "cpr": "^3.0.1",
     "cross-env": "^7.0.3",
-    "esm": "^3.2.25",
-    "http-server": "^14.1.1",
-    "mocha": "^10.7.3",
-    "puppeteer": "^23.1.0",
     "rimraf": "^6.0.1",
     "rollup": "^4.59.0",
     "rollup-plugin-copy": "^3.5.0",
-    "ts-node": "^10.9.2",
     "typedoc": "^0.28.1",
     "typedoc-plugin-markdown": "^4.8.1",
     "typescript": "^5.5.4"
   },
   "dependencies": {
-    "@rollup/plugin-typescript": "^12.3.0",
     "dexie": "^4.0.1",
     "glob": "^11.0.0"
   }

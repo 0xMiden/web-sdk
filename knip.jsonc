@@ -75,11 +75,15 @@
         "js/asyncLock.js",
         "js/syncLock.js",
         "js/webLock.js",
-        "js/safe-arrays.js",
         "js/utils.js",
         "js/constants.js",
+        "js/storageView.js",
+        // js/node-index.js is auto-detected from the package.json `node`
+        // exports condition; only the rest of js/node/ needs to be listed
+        // explicitly here (helpers loaded via dynamic require / wrapper
+        // factories that knip can't statically follow).
+        "js/node/**/*.js",
         "js/workers/**/*.js",
-        "js/__tests__/**/*.test.js",
         // The .d.ts files in js/types/ ship as the package's published
         // type surface — `pnpm run build` runs `cpr js/types dist` after
         // rollup, so dist/index.d.ts (the package's `types` field) is a
@@ -93,19 +97,15 @@
         "test/playwright.global.setup.ts",
         "scripts/**/*.js",
       ],
-      // The `./eager.js` and `./index.js` strings inside
-      // `page.evaluate(...)` blocks are dynamic imports executed in the
-      // *browser* against http://localhost:8080 — they resolve to files
-      // in dist/ at test runtime, not relative to the Playwright test
-      // file. `./crates/miden_client_web` is the wasm-bindgen module
-      // emitted into dist/ by the rollup rust plugin; the .d.ts files
-      // in js/types/ reference it but it doesn't exist until after
-      // build. Knip can't follow either of these dynamic targets.
-      "ignoreUnresolved": [
-        "./eager.js",
-        "./index.js",
-        "./crates/miden_client_web",
-      ],
+      // The `./index.js` strings inside `page.evaluate(...)` blocks are
+      // dynamic imports executed in the *browser* against
+      // http://localhost:8080 — they resolve to files in dist/ at test
+      // runtime, not relative to the Playwright test file.
+      // `./crates/miden_client_web` is the wasm-bindgen module emitted
+      // into dist/ by the rollup rust plugin; the .d.ts files in
+      // js/types/ reference it but it doesn't exist until after build.
+      // Knip can't follow either of these dynamic targets.
+      "ignoreUnresolved": ["./index.js", "./crates/miden_client_web"],
     },
     "crates/idxdb-store/src": {
       // Each `ts/*.ts` is independently tsc-compiled into `js/` and
