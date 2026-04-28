@@ -11,21 +11,27 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/eager.js"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/eager.js"
+      }
     },
     "./lazy": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "lazy",
     "../LICENSE.md"
   ],
   "scripts": {
     "build-rust-client-js": "pnpm --filter web_store run build",
-    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js",
+    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js && node ./scripts/post-build.js",
     "build-dev": "pnpm install && MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",
