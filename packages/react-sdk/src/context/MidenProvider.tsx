@@ -385,9 +385,7 @@ export function MidenProvider({
   useEffect(() => {
     if (!isReady || !client) return;
 
-    /* v8 ignore next 1 — default autoSyncInterval fallback; tests always rely on DEFAULTS value */
     const interval = config.autoSyncInterval ?? DEFAULTS.AUTO_SYNC_INTERVAL;
-    /* v8 ignore next 1 — early-return for disabled auto-sync; tests never set interval to ≤0 */
     if (interval <= 0) return;
 
     /* v8 ignore next 5 — setInterval callback fires asynchronously; testing it requires

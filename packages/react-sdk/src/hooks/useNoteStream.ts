@@ -86,7 +86,6 @@ export function useNoteStream(
 
   // Fetch notes from client
   const refetch = useCallback(async () => {
-    /* v8 ignore next 1 — guard in refetch; useEffect only calls refetch when isReady is true */
     if (!client || !isReady) return;
 
     setIsLoading(true);
@@ -144,7 +143,6 @@ export function useNoteStream(
       if (normalizedSender && note.sender !== normalizedSender) continue;
 
       // Filter: since timestamp
-      /* v8 ignore next 1 — since filter; no tests exercise the since option */
       if (since !== undefined && note.firstSeenAt < since) continue;
 
       // Filter: amount (read from ref to avoid unstable function dep)

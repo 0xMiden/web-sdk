@@ -158,7 +158,6 @@ export function useNotes(options?: NotesFilter): NotesResult {
     (summaries: NoteSummary[], target: string): NoteSummary[] => {
       const cache = new Map<string, string>();
       return summaries.filter((s) => {
-        /* v8 ignore next 1 — notes with no sender are excluded; mocks always have a sender */
         if (!s.sender) return false;
         let normalized = cache.get(s.sender);
         if (normalized === undefined) {

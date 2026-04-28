@@ -59,7 +59,6 @@ export function useTransactionHistory(
   const refreshOnSync = options.refreshOnSync !== false;
 
   const refetch = useCallback(async () => {
-    /* v8 ignore next 1 — early-return guard; tests always call with ready client */
     if (!client || !isReady) return;
 
     setIsLoading(true);
@@ -78,7 +77,6 @@ export function useTransactionHistory(
           )
         : fetched;
       setRecords(filtered);
-      /* v8 ignore next 3 — catch block not exercised in tests; all thrown values are Error instances */
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -87,7 +85,6 @@ export function useTransactionHistory(
   }, [client, isReady, filter, rawIds, idsHex]);
 
   useEffect(() => {
-    /* v8 ignore next 1 — effect fires when not ready; tests always start in ready state */
     if (!isReady) return;
     refetch();
   }, [isReady, refetch]);
@@ -110,7 +107,6 @@ export function useTransactionHistory(
     const current = record.transactionStatus();
     if (current.isCommitted()) return "committed";
     if (current.isDiscarded()) return "discarded";
-    /* v8 ignore next 2 — pending status requires a transaction in pending state; tests cover committed/discarded */
     if (current.isPending()) return "pending";
     return null;
   }, [record]);

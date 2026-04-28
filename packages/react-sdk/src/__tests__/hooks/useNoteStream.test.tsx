@@ -66,6 +66,24 @@ describe("useNoteStream", () => {
       expect(result.current.latest).toBeNull();
       expect(result.current.error).toBeNull();
     });
+
+    it("does not fetch when isReady is true but client is null (guard in refetch)", async () => {
+      // isReady=true causes the effect to call refetch(), but client is null
+      // so the guard `if (!client || !isReady) return` fires immediately.
+      const getInputNotesMock = vi.fn().mockResolvedValue([]);
+      mockUseMiden.mockReturnValue({
+        client: null,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useNoteStream());
+
+      // Wait briefly to confirm no error and no notes fetched
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current.error).toBeNull();
+      expect(getInputNotesMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("note fetching", () => {
@@ -186,6 +204,34 @@ describe("useNoteStream", () => {
       });
 
       expect(result.current.notes[0].id).toBe("0xnote2");
+    });
+
+    it("should filter out notes older than since timestamp", async () => {
+      const notes = [
+        createStreamableNote("0xnote_old", "0xsender", 100n),
+      ];
+
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(notes),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      useMidenStore.getState().setNotes(notes as any);
+
+      // since is far in the future — all existing notes have firstSeenAt < since,
+      // so they are filtered out by the `continue` branch at line 146.
+      const { result } = renderHook(() =>
+        useNoteStream({ since: Date.now() + 100_000 })
+      );
+
+      await waitFor(() => {
+        // All notes should be filtered out (firstSeenAt < since → continue)
+        expect(result.current.notes).toHaveLength(0);
+      });
     });
 
     it("should filter by amountFilter", async () => {

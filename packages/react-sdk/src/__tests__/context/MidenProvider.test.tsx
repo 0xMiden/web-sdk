@@ -366,6 +366,37 @@ describe("MidenProvider non-Error rejection paths", () => {
   });
 });
 
+describe("MidenProvider auto-sync interval", () => {
+  it("uses DEFAULTS.AUTO_SYNC_INTERVAL when autoSyncInterval is not provided", async () => {
+    // Omitting autoSyncInterval exercises the ?? DEFAULTS.AUTO_SYNC_INTERVAL branch.
+    // We just verify the provider becomes ready without error.
+    render(
+      <MidenProvider config={{ rpcUrl: "testnet" }}>
+        <StatusDisplay />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("true");
+    });
+  });
+
+  it("skips setInterval when autoSyncInterval is 0 (disabled)", async () => {
+    // autoSyncInterval: 0 exercises the `interval <= 0` early-return branch.
+    render(
+      <MidenProvider config={{ rpcUrl: "testnet", autoSyncInterval: 0 }}>
+        <StatusDisplay />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("true");
+    });
+    // No interval fires — just verify no error
+    expect(screen.getByTestId("error").textContent).toBe("none");
+  });
+});
+
 describe("useMidenClient", () => {
   it("should throw when client is not ready (line 459-464)", () => {
     function Wrapper({ children }: { children: React.ReactNode }) {

@@ -446,6 +446,61 @@ describe("useNotes", () => {
     });
   });
 
+  describe("filterBySender with empty sender (line 161)", () => {
+    it("excludes notes with empty sender when filtering by sender", async () => {
+      // Note with metadata that returns empty string as sender
+      const noteWithEmptySender = {
+        id: vi.fn(() => ({
+          toString: () => "0xnosender",
+          toHex: () => "0xnosender",
+        })),
+        metadata: vi.fn(() => ({
+          // Returns empty string — falsy sender
+          sender: vi.fn(() => ({ toString: () => "" })),
+        })),
+        details: vi.fn(() => null),
+        state: vi.fn(() => "committed"),
+        commitment: vi.fn(() => ({ toString: () => "0xcommitment" })),
+        inclusionProof: vi.fn(() => null),
+        consumerTransactionId: vi.fn(() => null),
+        nullifier: vi.fn(() => "0xnullifier"),
+        isAuthenticated: vi.fn(() => true),
+        isConsumed: vi.fn(() => false),
+        isProcessing: vi.fn(() => false),
+        toNote: vi.fn(() => ({})),
+        free: vi.fn(),
+      };
+
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([noteWithEmptySender]),
+        getConsumableNotes: vi.fn().mockResolvedValue([]),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      // Pass a sender filter — note has empty sender so it's excluded
+      const { result } = renderHook(() =>
+        useNotes({ sender: "0xanysender" })
+      );
+
+      await act(async () => {
+        await result.current.refetch();
+      });
+
+      // Note with empty sender should be excluded by filterBySender
+      expect(
+        result.current.noteSummaries.filter((s) => s.id === "0xnosender")
+      ).toHaveLength(0);
+    });
+  });
+
   describe("sender and excludeIds filtering (lines 197-204)", () => {
     it("should filter noteSummaries by sender using filterBySender (lines 158-168)", async () => {
       // Create a note with explicit sender metadata so getNoteSummary returns a sender

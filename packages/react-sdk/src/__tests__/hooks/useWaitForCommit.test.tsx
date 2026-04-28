@@ -22,6 +22,37 @@ beforeEach(() => {
 });
 
 describe("useWaitForCommit", () => {
+  it("uses default timeoutMs and intervalMs when options are omitted", async () => {
+    // No timeoutMs or intervalMs passed — exercises the ?? fallback branches.
+    // We make the transaction immediately committed so it resolves before the
+    // 10s default timeout.
+    const record = {
+      id: vi.fn(() => ({ toHex: () => "0xdefaulttx" })),
+      transactionStatus: vi.fn(() => ({
+        isPending: vi.fn(() => false),
+        isCommitted: vi.fn(() => true),
+        isDiscarded: vi.fn(() => false),
+      })),
+    };
+
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue({}),
+      getTransactions: vi.fn().mockResolvedValue([record]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForCommit());
+
+    // Omit options entirely — hits the ?? 10_000 and ?? 1_000 defaults
+    await result.current.waitForCommit("0xdefaulttx");
+
+    expect(mockClient.getTransactions).toHaveBeenCalled();
+  });
+
   it("should throw when client is not ready", async () => {
     mockUseMiden.mockReturnValue({
       client: null,
