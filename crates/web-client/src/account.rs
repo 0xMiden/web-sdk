@@ -20,8 +20,8 @@ use crate::{WebClient, js_error_with_context};
 impl WebClient {
     #[js_export(js_name = "getAccounts")]
     pub async fn get_accounts(&self) -> Result<Vec<AccountHeader>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let result = client
             .get_account_headers()
             .await
@@ -35,8 +35,8 @@ impl WebClient {
     /// This method loads the complete account state including vault, storage, and code.
     #[js_export(js_name = "getAccount")]
     pub async fn get_account(&self, account_id: &AccountId) -> Result<Option<Account>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         client
             .get_account(account_id.into())
             .await
@@ -49,8 +49,8 @@ impl WebClient {
     /// To check the balance for a single asset, use `accountReader` instead.
     #[js_export(js_name = "getAccountVault")]
     pub async fn get_account_vault(&self, account_id: &AccountId) -> Result<AssetVault, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         client
             .get_account_vault(account_id.into())
             .await
@@ -66,8 +66,8 @@ impl WebClient {
         &self,
         account_id: &AccountId,
     ) -> Result<AccountStorage, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         client
             .get_account_storage(account_id.into())
             .await
@@ -83,8 +83,8 @@ impl WebClient {
         &self,
         account_id: &AccountId,
     ) -> Result<Option<AccountCode>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         client
             .get_account_code(account_id.into())
             .await
@@ -108,7 +108,7 @@ impl WebClient {
     /// ```
     #[js_export(js_name = "accountReader")]
     pub async fn account_reader(&self, account_id: &AccountId) -> Result<AccountReader, JsErr> {
-        let guard = self.inner.lock().await;
+        let guard = self.get_inner().await;
         let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(AccountReader::from(client.account_reader(account_id.into())))
     }

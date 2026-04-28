@@ -14,8 +14,8 @@ use crate::{WebClient, js_error_with_context};
 impl WebClient {
     #[js_export(js_name = "getInputNotes")]
     pub async fn get_input_notes(&self, filter: NoteFilter) -> Result<Vec<InputNoteRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let result = client
             .get_input_notes(filter.into())
             .await
@@ -25,8 +25,8 @@ impl WebClient {
 
     #[js_export(js_name = "getInputNote")]
     pub async fn get_input_note(&self, note_id: String) -> Result<Option<InputNoteRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let note_id: NoteId = NoteId::from_raw(
             Word::try_from(note_id)
                 .map_err(|err| js_error_with_context(err, "failed to parse input note id"))?,
@@ -44,8 +44,8 @@ impl WebClient {
         &self,
         filter: NoteFilter,
     ) -> Result<Vec<OutputNoteRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let notes = client
             .get_output_notes(filter.into())
             .await
@@ -55,8 +55,8 @@ impl WebClient {
 
     #[js_export(js_name = "getOutputNote")]
     pub async fn get_output_note(&self, note_id: String) -> Result<OutputNoteRecord, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let note_id: NoteId = NoteId::from_raw(
             Word::try_from(note_id)
                 .map_err(|err| js_error_with_context(err, "failed to parse output note id"))?,
@@ -75,8 +75,8 @@ impl WebClient {
         &self,
         account_id: Option<AccountId>,
     ) -> Result<Vec<ConsumableNoteRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let native_account_id = account_id.map(Into::into);
         let result = Box::pin(client.get_consumable_notes(native_account_id))
             .await

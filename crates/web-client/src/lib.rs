@@ -239,14 +239,14 @@ impl WebClient {
     /// Returns the identifier of the underlying store (e.g. `IndexedDB` database name, file path).
     #[js_export(js_name = "storeIdentifier")]
     pub async fn store_identifier(&self) -> Result<String, JsErr> {
-        let guard = self.inner.lock().await;
+        let guard = self.inner.lock_shared().await;
         let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(client.store_identifier().to_string())
     }
 
     #[js_export(js_name = "createCodeBuilder")]
     pub async fn create_code_builder(&self) -> Result<CodeBuilder, JsErr> {
-        let guard = self.inner.lock().await;
+        let guard = self.inner.lock_shared().await;
         let client = guard.as_ref().ok_or_else(|| {
             from_str_err("client was not initialized before instancing CodeBuilder")
         })?;
@@ -262,8 +262,20 @@ impl WebClient {
         self.inner.lock().await
     }
 
+    /// Shared-borrow counterpart of [`Self::get_mut_inner`] for read-only
+    /// (`&self`-on-the-client) methods, so concurrent reads can hold the
+    /// guard across awaits without colliding.
+    pub(crate) async fn get_inner(
+        &self,
+    ) -> impl core::ops::Deref<Target = Option<Client<ClientAuth>>> + '_ {
+        self.inner.lock_shared().await
+    }
+
     pub(crate) async fn get_keystore(&self) -> Result<Arc<ClientAuth>, JsErr> {
-        let guard = self.inner.lock().await;
+        // Shared borrow: this is called from read-classified methods that may
+        // run in parallel with other reads holding a shared guard across an
+        // await — an exclusive borrow here would panic on the browser build.
+        let guard = self.inner.lock_shared().await;
         guard
             .as_ref()
             .and_then(|c| c.authenticator())
