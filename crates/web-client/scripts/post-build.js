@@ -51,7 +51,9 @@ function rewriteDtsImports(dir) {
 
     if (updated !== original) {
       fs.writeFileSync(full, updated);
-      console.log(`[post-build] Rewrote relative imports in ${path.relative(distDir, full)}`);
+      console.log(
+        `[post-build] Rewrote relative imports in ${path.relative(distDir, full)}`
+      );
     }
   }
 }
