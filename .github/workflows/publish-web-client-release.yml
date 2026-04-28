@@ -95,13 +95,16 @@ jobs:
         needs.check-version.outputs.react_should_publish == 'true' ||
         needs.check-version.outputs.vite_should_publish == 'true'
       )
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     steps:
       - name: Check out code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: refs/tags/${{ github.event.release.tag_name }}
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
