@@ -247,7 +247,9 @@ test.describe("accountBech32 utilities (Playwright)", () => {
     page,
   }) => {
     // inferNetworkId branch: url.includes("mainnet") → NetworkId.mainnet()
-    const ready = await loadBech32Page(page, { rpcUrl: "https://rpc.mainnet.miden.io" });
+    const ready = await loadBech32Page(page, {
+      rpcUrl: "https://rpc.mainnet.miden.io",
+    });
     if (!ready) {
       test.skip();
       return;
@@ -439,8 +441,10 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       // Object.create so it has a prototype but no own bech32id.
       const plain: any = { id: () => wallet.id() };
       (window as any).__bech32.ensureAccountBech32(plain);
-      return typeof plain.bech32id === "function" ||
-        typeof Object.getPrototypeOf(plain)?.bech32id === "function";
+      return (
+        typeof plain.bech32id === "function" ||
+        typeof Object.getPrototypeOf(plain)?.bech32id === "function"
+      );
     });
 
     expect(result).toBe(true);
