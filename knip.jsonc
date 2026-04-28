@@ -125,6 +125,11 @@
         "ts/test-utils.ts",
         "ts/**/*.test.ts",
       ],
+      "ignoreDependencies": [
+        // Loaded dynamically by `vitest --coverage` at runtime; knip's
+        // static scan can't see the dependency.
+        "@vitest/coverage-v8",
+      ],
     },
   },
   "ignore": ["packages/react-sdk/examples/**", "crates/idxdb-store/src/js/**"],
