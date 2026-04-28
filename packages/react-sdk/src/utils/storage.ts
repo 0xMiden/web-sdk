@@ -17,6 +17,7 @@ export interface MigrateStorageOptions {
 export async function migrateStorage(
   options: MigrateStorageOptions
 ): Promise<boolean> {
+  /* v8 ignore next 1 — server-side (no window) path; tests always run in jsdom */
   if (typeof window === "undefined") return false;
 
   const versionKey = options.versionKey ?? "miden:storageVersion";
@@ -53,6 +54,10 @@ export async function clearMidenStorage(): Promise<void> {
       midenDbs.map(
         (db) =>
           new Promise<void>((resolve, reject) => {
+            // db.name is always truthy here because the filter above ensures
+            // only DBs whose name includes "miden" reach this point;
+            // the guard is a defensive safety net.
+            /* v8 ignore next 4 */
             if (!db.name) {
               resolve();
               return;

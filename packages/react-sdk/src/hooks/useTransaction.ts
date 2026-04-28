@@ -167,6 +167,7 @@ export function useTransaction(): UseTransactionResult {
         setError(error);
         setStage("idle");
         throw error;
+        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
         isBusyRef.current = false;

@@ -69,8 +69,23 @@ typedoc: rust-client-ts-build ## Generate web client package documentation.
 # --- Testing -------------------------------------------------------------------------------------
 
 .PHONY: test-react-sdk
-test-react-sdk: ## Run React SDK unit tests
-	pnpm --filter @miden-sdk/react run test:unit
+test-react-sdk: ## Run React SDK unit tests with coverage
+	pnpm --filter @miden-sdk/react run test:coverage
+
+.PHONY: test-idxdb-store
+test-idxdb-store: ## Run idxdb-store unit tests with coverage
+	pnpm --filter web_store exec vitest run --coverage
+
+.PHONY: test-vite-plugin
+test-vite-plugin: ## Run vite-plugin unit tests with coverage
+	pnpm --filter @miden-sdk/vite-plugin exec vitest run --coverage
+
+.PHONY: test-web-client-unit
+test-web-client-unit: ## Run web-client unit tests with coverage
+	pnpm --filter @miden-sdk/miden-sdk run test:coverage
+
+.PHONY: test-coverage
+test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-unit ## Run all coverage gates
 
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""

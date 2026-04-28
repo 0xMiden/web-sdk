@@ -145,6 +145,34 @@ describe("useExportStore", () => {
     });
   });
 
+  describe("non-Error catch branch", () => {
+    it("should wrap non-Error thrown values in an Error", async () => {
+      const mockClient = createMockWebClient({
+        storeIdentifier: vi.fn().mockReturnValue("MyStore"),
+      });
+      const runExclusive = vi.fn((fn: () => unknown) => fn());
+      mockSdkExportStore.mockRejectedValue("string export error");
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        runExclusive,
+      });
+
+      const { result } = renderHook(() => useExportStore());
+
+      await act(async () => {
+        await expect(result.current.exportStore()).rejects.toThrow(
+          "string export error"
+        );
+      });
+
+      await waitFor(() => {
+        expect(result.current.error?.message).toBe("string export error");
+      });
+    });
+  });
+
   describe("reset", () => {
     it("should reset error state", async () => {
       const mockClient = createMockWebClient({

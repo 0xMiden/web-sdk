@@ -27,9 +27,25 @@ export default defineConfig({
       // json-summary writes coverage/coverage-summary.json with the
       // aggregate { total: { lines: { pct, ... }, ... } } that the
       // CI badge job parses to publish a shields.io endpoint JSON.
-      reporter: ["text", "json", "json-summary", "html"],
+      // lcov is consumed by codecov-style integrations.
+      reporter: ["text", "json", "json-summary", "html", "lcov"],
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/__tests__/**", "src/index.ts"],
+      exclude: [
+        "src/__tests__/**",
+        "src/index.ts",
+        "src/types/**",
+        "src/**/*.d.ts",
+        // Pure WASM proxy — covered by Playwright integration tests in
+        // test/accountBech32.test.ts. Cannot be unit-tested in jsdom because
+        // NetworkId, Address, and Account.prototype come from the real WASM bundle.
+        "src/utils/accountBech32.ts",
+        // WASM-dependent hook — covered by Playwright integration tests in
+        // test/useAssetMetadata.test.ts. Cannot be unit-tested in jsdom because
+        // RpcClient, Endpoint, and BasicFungibleFaucetComponent come from the
+        // real WASM bundle and don't behave like the mocked SDK in jsdom.
+        "src/hooks/useAssetMetadata.ts",
+      ],
+      thresholds: { lines: 95, branches: 95, functions: 95, statements: 95 },
     },
   },
 });

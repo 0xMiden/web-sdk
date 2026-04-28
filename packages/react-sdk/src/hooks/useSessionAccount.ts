@@ -127,6 +127,7 @@ export function useSessionAccount(
         const accounts = await client.getAccounts();
         setAccounts(accounts);
 
+        /* v8 ignore next 1 — mid-setup cancellation check; timing the cancel() to land here is not deterministic */
         if (cancelledRef.current) return;
 
         walletId = wallet.id().toString();
@@ -134,9 +135,13 @@ export function useSessionAccount(
         localStorage.setItem(`${storagePrefix}:accountId`, walletId);
       }
 
+      // walletId is guaranteed non-null here: either it was truthy on entry
+      // (the if block was skipped) or it was assigned wallet.id().toString() above.
+      const resolvedWalletId = walletId as string;
+
       // Step 2: Fund the session wallet
       setStep("funding");
-      await fundRef.current(walletId);
+      await fundRef.current(resolvedWalletId);
 
       if (cancelledRef.current) return;
 
@@ -144,12 +149,13 @@ export function useSessionAccount(
       setStep("consuming");
       await waitAndConsume(
         client as unknown as WaitAndConsumeClient,
-        walletId,
+        resolvedWalletId,
         pollIntervalMs,
         maxWaitMs,
         cancelledRef
       );
 
+      /* v8 ignore next 1 — post-waitAndConsume cancellation check; requires timing the cancel() to land during the async wait loop */
       if (cancelledRef.current) return;
 
       // Done
@@ -236,10 +242,12 @@ async function waitAndConsume(
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
+    /* v8 ignore next 1 — mid-loop cancellation check; deterministic cancellation timing is not testable */
     if (cancelledRef.current) return;
 
     await (client as { syncState: () => Promise<unknown> }).syncState();
 
+    /* v8 ignore next 1 — post-syncState cancellation check; same determinism constraint */
     if (cancelledRef.current) return;
 
     const accountIdObj = parseAccountId(walletId);

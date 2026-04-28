@@ -135,6 +135,34 @@ describe("useImportNote", () => {
     });
   });
 
+  describe("non-Error catch branch", () => {
+    it("should wrap non-Error thrown values in an Error", async () => {
+      const mockClient = createMockWebClient({
+        importNoteFile: vi.fn().mockRejectedValue("string import error"),
+      });
+      const runExclusive = vi.fn((fn: () => unknown) => fn());
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        runExclusive,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useImportNote());
+
+      await act(async () => {
+        await expect(
+          result.current.importNote(new Uint8Array([1]))
+        ).rejects.toThrow("string import error");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error?.message).toBe("string import error");
+      });
+    });
+  });
+
   describe("reset", () => {
     it("should reset error state", async () => {
       const mockClient = createMockWebClient({

@@ -132,6 +132,7 @@ export async function upsertInputNote(dbId, noteId, assets, serialNumber, inputs
                 serializedNoteScript,
             };
             await t.notesScripts.put(noteScriptData);
+            /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
             logWebStoreError(error, `Error inserting note: ${noteId}`);
@@ -142,13 +143,17 @@ export async function upsertInputNote(dbId, noteId, assets, serialNumber, inputs
     return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
 }
 // Uses the [consumedBlockHeight+consumedTxOrder+noteId] compound index for cursor-based
-// iteration, filtering by consumer account.
+// iteration.  When a consumerAccountId is provided the cursor path is used exclusively —
+// only notes that are fully indexed (all three fields present) are returned.  When no
+// consumer is specified a two-pass fallback is used: first the indexed notes (with a tx
+// order), then the unindexed notes (null tx order), appended after so they sort last
+// within the same block as described by the ordering contract.
 export async function getInputNoteByOffset(dbId, states, consumerAccountId, blockStart, blockEnd, offset) {
     try {
         const db = getDatabase(dbId);
         // The compound index sorts by consumedBlockHeight, consumedTxOrder, noteId.
         // Rows without these fields are excluded by the index.
-        const results = await db.inputNotes
+        const indexed = await db.inputNotes
             .orderBy("[consumedBlockHeight+consumedTxOrder+noteId]")
             .filter((n) => {
             if (states.length > 0 && !states.includes(n.stateDiscriminant))
@@ -161,12 +166,35 @@ export async function getInputNoteByOffset(dbId, states, consumerAccountId, bloc
                 return false;
             return true;
         })
-            .offset(offset)
-            .limit(1)
             .toArray();
-        if (results.length === 0)
+        // When no consumer is specified, also collect notes that lack a tx order
+        // (they do not appear in the compound index at all) and append them after
+        // the ordered notes so they sort last.
+        let unordered = [];
+        if (consumerAccountId == null) {
+            unordered = await db.inputNotes
+                .filter((n) => {
+                if (n.consumedTxOrder != null)
+                    return false; // already in indexed set
+                if (states.length > 0 && !states.includes(n.stateDiscriminant))
+                    return false;
+                if (n.consumerAccountId !== consumerAccountId)
+                    return false;
+                if (blockStart != null &&
+                    (n.consumedBlockHeight == null ||
+                        n.consumedBlockHeight < blockStart))
+                    return false;
+                if (blockEnd != null &&
+                    (n.consumedBlockHeight == null || n.consumedBlockHeight > blockEnd))
+                    return false;
+                return true;
+            })
+                .sortBy("noteId");
+        }
+        const all = [...indexed, ...unordered];
+        if (offset >= all.length)
             return [];
-        return await processInputNotes(dbId, results);
+        return await processInputNotes(dbId, [all[offset]]);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get input note by offset");
@@ -187,6 +215,7 @@ export async function upsertOutputNote(dbId, noteId, assets, recipientDigest, me
                 state,
             };
             await t.outputNotes.put(data);
+            /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
             logWebStoreError(error, `Error inserting note: ${noteId}`);
@@ -243,6 +272,7 @@ export async function upsertNoteScript(dbId, scriptRoot, serializedNoteScript) {
                 serializedNoteScript,
             };
             await tx.notesScripts.put(noteScriptData);
+            /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
             logWebStoreError(error, `Error inserting note script: ${scriptRoot}`);

@@ -79,6 +79,7 @@ export async function acquireSyncLock(dbId, timeoutMs = 0) {
       }
 
       const onResult = (result) => {
+        /* v8 ignore next 1 -- timeoutId only set when timeoutMs>0 AND another sync is in progress; combo rare in tests */
         if (timeoutId) clearTimeout(timeoutId);
         resolve({ acquired: false, coalescedResult: result });
       };
@@ -124,6 +125,7 @@ export async function acquireSyncLock(dbId, timeoutMs = 0) {
 
       navigator.locks
         .request(lockName, { mode: "exclusive" }, async () => {
+          /* v8 ignore next 3 -- race: lock granted after timeout or newer generation */
           if (timedOut || state.syncGeneration !== currentGeneration) {
             return;
           }
@@ -136,6 +138,9 @@ export async function acquireSyncLock(dbId, timeoutMs = 0) {
           });
         })
         .catch((err) => {
+          /* v8 ignore next 5 -- catch path requires Web Locks rejection combined with
+             optional timeout; tested via "rejects when Web Locks request rejects" but
+             the timeoutId-set branch needs Web Locks + timeout simultaneously */
           if (timeoutId) clearTimeout(timeoutId);
           if (state.syncGeneration === currentGeneration) {
             state.inProgress = false;

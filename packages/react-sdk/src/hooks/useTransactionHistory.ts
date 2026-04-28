@@ -148,6 +148,7 @@ function buildFilter(
 
   return {
     filter: TransactionFilter.all(),
+    /* v8 ignore next 1 — idsHex is always non-null when ids is non-empty; ?? [] is a safety net */
     localFilterHexes: idsHex ?? [],
   };
 }

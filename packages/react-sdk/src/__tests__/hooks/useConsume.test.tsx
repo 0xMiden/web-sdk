@@ -462,4 +462,253 @@ describe("useConsume", () => {
       expect(mockSync).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("non-Error catch branch", () => {
+    it("should wrap non-Error thrown values in an Error", async () => {
+      const noteRecords = createNoteRecords(["0xnote1"]);
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(noteRecords),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransaction: vi.fn().mockRejectedValue("string consume error"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await expect(
+          result.current.consume({
+            accountId: "0x1",
+            notes: ["0xnote1"],
+          })
+        ).rejects.toThrow("string consume error");
+      });
+
+      await waitFor(() => {
+        expect(result.current.error?.message).toBe("string consume error");
+      });
+    });
+  });
+
+  describe("branch coverage gaps", () => {
+    it("should throw when notes array is empty (line 71-72)", async () => {
+      const mockClient = createMockWebClient({});
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await expect(
+          result.current.consume({
+            accountId: "0x1",
+            notes: [],
+          })
+        ).rejects.toThrow("No notes provided");
+      });
+    });
+
+    it("should throw when resolved notes count differs from input (line 147-148)", async () => {
+      // Return only 1 record when 2 IDs were requested — triggers length mismatch
+      const noteRecords = createNoteRecords(["0xnote1"]);
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(noteRecords),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await expect(
+          result.current.consume({
+            accountId: "0x1",
+            notes: ["0xnote1", "0xnote2"],
+          })
+        ).rejects.toThrow("Some notes could not be found for provided IDs");
+      });
+    });
+
+    it("should use submitNewTransactionWithProver when prover is provided (lines 152-156)", async () => {
+      const mockTxId = createMockTransactionId("0xtxprover");
+      const noteRecords = createNoteRecords(["0xnote1"]);
+      const mockProver = { type: "local" };
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(noteRecords),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransactionWithProver: vi.fn().mockResolvedValue(mockTxId),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+        prover: mockProver,
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await result.current.consume({
+          accountId: "0x1",
+          notes: ["0xnote1"],
+        });
+      });
+
+      expect(mockClient.submitNewTransactionWithProver).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        mockProver
+      );
+    });
+
+    it("should handle NoteId object input (line 112-113)", async () => {
+      // Pass a NoteId-like object (not string, not InputNoteRecord, not Note)
+      const noteId = { toString: vi.fn(() => "0xnote1") };
+      const noteRecords = createNoteRecords(["0xnote1"]);
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(noteRecords),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId()),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await result.current.consume({
+          accountId: "0x1",
+          notes: [noteId as any],
+        });
+      });
+
+      expect(mockClient.getInputNotes).toHaveBeenCalled();
+    });
+
+    it("should call toNote() when item is an InputNoteRecord with toNote method (line 104)", async () => {
+      // Pass an InputNoteRecord directly — its toNote() should be called
+      const mockNote = { id: vi.fn(() => ({ toString: () => "0xnote1" })) };
+      const mockRecord = createMockInputNoteRecord("0xnote1");
+      // Override toNote to return our mock note
+      (mockRecord.toNote as ReturnType<typeof vi.fn>).mockReturnValue(mockNote);
+
+      const mockClient = createMockWebClient({
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId()),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await result.current.consume({
+          accountId: "0x1",
+          notes: [mockRecord as any], // InputNoteRecord with toNote()
+        });
+      });
+
+      expect(mockRecord.toNote).toHaveBeenCalled();
+      expect(mockClient.newConsumeTransactionRequest).toHaveBeenCalled();
+    });
+
+    it("should use Note object directly when it has id() but no toNote() (lines 105-110)", async () => {
+      // Pass a Note-like object directly
+      const noteObj = {
+        id: vi.fn(() => ({ toString: () => "0xnote1" })),
+      };
+      const mockClient = createMockWebClient({
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        submitNewTransaction: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionId()),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await result.current.consume({
+          accountId: "0x1",
+          notes: [noteObj as any],
+        });
+      });
+
+      // Note was passed directly, no lookup needed
+      expect(mockClient.getInputNotes).not.toHaveBeenCalled();
+    });
+
+    it("should throw when ID lookup map does not contain requested ID (lines 132-135)", async () => {
+      // Return 2 records both with the same ID so the count check passes (2===2)
+      // but the map lookup for the second requested ID fails.
+      const dupRecords = [
+        createMockInputNoteRecord("0xnote1"),
+        createMockInputNoteRecord("0xnote1"), // same ID — map has only one entry
+      ];
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue(dupRecords),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useConsume());
+
+      await act(async () => {
+        await expect(
+          result.current.consume({
+            accountId: "0x1",
+            notes: ["0xnote1", "0xnote2"], // 0xnote2 won't be in the map
+          })
+        ).rejects.toThrow("Some notes could not be found for provided IDs");
+      });
+    });
+  });
 });

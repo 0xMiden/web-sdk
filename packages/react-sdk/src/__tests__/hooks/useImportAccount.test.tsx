@@ -238,4 +238,342 @@ describe("useImportAccount", () => {
       expect(result.current.error).toBeNull();
     });
   });
+
+  describe("branch coverage gaps", () => {
+    it("should fall back to bytesEqual scan when accountFromFile is null and no new header (lines 228-241)", async () => {
+      const mockAccount = createMockAccount({
+        id: vi.fn(() => createMockAccountId("0xexisting")),
+      });
+
+      // Create an account file that has no .account() method
+      const mockFileNoAccount = {
+        free: vi.fn(),
+        serialize: vi.fn(() => new Uint8Array([9, 8, 7])),
+        // No account() or accountId() method — drives accountFromFile = null
+      } as unknown as AccountFile;
+
+      // exportAccountFile returns a file whose bytes match the imported file
+      const matchingExportedFile = {
+        serialize: vi.fn(() => new Uint8Array([9, 8, 7])),
+        free: vi.fn(),
+      };
+
+      const accountId0 = {
+        id: vi.fn(() => createMockAccountId("0xexisting")),
+        free: vi.fn(),
+      };
+
+      const mockClient = createMockWebClient({
+        getAccounts: vi
+          .fn()
+          .mockResolvedValueOnce([accountId0]) // before
+          .mockResolvedValueOnce([accountId0]), // after
+        importAccountFile: vi.fn().mockResolvedValue("Imported"),
+        exportAccountFile: vi.fn().mockResolvedValue(matchingExportedFile),
+        getAccount: vi.fn().mockResolvedValue(mockAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      let imported;
+      await act(async () => {
+        imported = await result.current.importAccount({
+          type: "file",
+          file: mockFileNoAccount,
+        });
+      });
+
+      expect(imported).toBe(mockAccount);
+    });
+
+    it("should throw Account not found when all fallbacks fail (line ~146)", async () => {
+      // account file with no .account() and serialize returns non-matching bytes
+      const mockFileNoAccount = {
+        free: vi.fn(),
+        serialize: vi.fn(() => new Uint8Array([1, 2, 3])),
+      } as unknown as AccountFile;
+
+      const nonMatchingExport = {
+        serialize: vi.fn(() => new Uint8Array([9, 9, 9])), // different bytes
+        free: vi.fn(),
+      };
+
+      const accountId0 = {
+        id: vi.fn(() => createMockAccountId("0xold")),
+        free: vi.fn(),
+      };
+
+      const mockClient = createMockWebClient({
+        getAccounts: vi
+          .fn()
+          .mockResolvedValueOnce([accountId0])
+          .mockResolvedValueOnce([accountId0]),
+        importAccountFile: vi.fn().mockResolvedValue("Imported"),
+        exportAccountFile: vi.fn().mockResolvedValue(nonMatchingExport),
+        getAccount: vi.fn().mockResolvedValue(null),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      await act(async () => {
+        await expect(
+          result.current.importAccount({
+            type: "file",
+            file: mockFileNoAccount,
+          })
+        ).rejects.toThrow("Account not found after import");
+      });
+    });
+
+    it("should propagate file import errors that are not 'already being tracked' (line 109)", async () => {
+      const mockAccount = createMockAccount();
+      const mockAccountFile = createMockAccountFile(mockAccount);
+      const mockClient = createMockWebClient({
+        importAccountFile: vi
+          .fn()
+          .mockRejectedValue(new Error("Some other error")),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      await act(async () => {
+        await expect(
+          result.current.importAccount({
+            type: "file",
+            file: mockAccountFile as unknown as AccountFile,
+          })
+        ).rejects.toThrow("Some other error");
+      });
+    });
+
+    it("should throw Account not found when getAccount returns null for id type (line 152-154)", async () => {
+      const mockClient = createMockWebClient({
+        importAccountById: vi.fn().mockResolvedValue(undefined),
+        getAccount: vi.fn().mockResolvedValue(null),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      await act(async () => {
+        await expect(
+          result.current.importAccount({
+            type: "id",
+            accountId: "0xmissing",
+          })
+        ).rejects.toThrow("Account not found after import");
+      });
+    });
+
+    it("should use default mutable when not provided for seed type (line 158)", async () => {
+      const mockAccount = createMockAccount();
+      const mockClient = createMockWebClient({
+        importPublicAccountFromSeed: vi.fn().mockResolvedValue(mockAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      await act(async () => {
+        await result.current.importAccount({
+          type: "seed",
+          seed: new Uint8Array([1, 2, 3]),
+          // mutable not provided - uses DEFAULTS.WALLET_MUTABLE
+        });
+      });
+
+      expect(mockClient.importPublicAccountFromSeed).toHaveBeenCalled();
+    });
+
+    it("should resolve account via accountIdFromFile when file has accountId() method (lines 127-131)", async () => {
+      const targetAccount = createMockAccount({
+        id: vi.fn(() => createMockAccountId("0xtarget")),
+      });
+
+      // File with no account() but has accountId() — drives accountIdFromFile branch
+      const mockFileWithAccountId = {
+        free: vi.fn(),
+        serialize: vi.fn(() => new Uint8Array([1, 2, 3])),
+        accountId: vi.fn(() => createMockAccountId("0xtarget")),
+      } as unknown as AccountFile;
+
+      const mockClient = createMockWebClient({
+        getAccounts: vi.fn().mockResolvedValue([]),
+        importAccountFile: vi.fn().mockResolvedValue("Imported"),
+        getAccount: vi.fn().mockResolvedValue(targetAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      let imported;
+      await act(async () => {
+        imported = await result.current.importAccount({
+          type: "file",
+          file: mockFileWithAccountId,
+        });
+      });
+
+      expect(imported).toBe(targetAccount);
+    });
+
+    it("should accept Uint8Array file input (getAccountFileBytes Uint8Array path)", async () => {
+      const innerAccount = createMockAccount({
+        id: vi.fn(() => createMockAccountId("0xbytesfile")),
+      });
+
+      const mockClient = createMockWebClient({
+        getAccounts: vi.fn().mockResolvedValue([]),
+        importAccountFile: vi.fn().mockResolvedValue("Imported"),
+        getAccount: vi.fn().mockResolvedValue(innerAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      let imported;
+      await act(async () => {
+        imported = await result.current.importAccount({
+          type: "file",
+          file: new Uint8Array([1, 2, 3]) as unknown as AccountFile,
+        });
+      });
+
+      // AccountFile.deserialize is called from mock, so it returns a mock AccountFile
+      // and the import proceeds normally
+      expect(imported).toBeTruthy();
+    });
+
+    it("should return accountFromFile when account() method exists on file (lines 115-116)", async () => {
+      const innerAccount = createMockAccount({
+        id: vi.fn(() => createMockAccountId("0xinnerfile")),
+      });
+
+      // Mock account file object with account() returning our account
+      const mockFileWithAccount = {
+        free: vi.fn(),
+        serialize: vi.fn(() => new Uint8Array([1, 2])),
+        account: vi.fn(() => innerAccount),
+      } as unknown as AccountFile;
+
+      const mockClient = createMockWebClient({
+        getAccounts: vi.fn().mockResolvedValue([]),
+        importAccountFile: vi.fn().mockResolvedValue("Imported"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      let imported;
+      await act(async () => {
+        imported = await result.current.importAccount({
+          type: "file",
+          file: mockFileWithAccount,
+        });
+      });
+
+      expect(imported).toBe(innerAccount);
+    });
+  });
+
+  describe("non-Error rejection paths", () => {
+    it("wraps non-Error rejection in importAccount (outer catch) in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        importAccountById: vi
+          .fn()
+          .mockRejectedValueOnce("plain-string-rejection"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        signerConnected: null,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      await act(async () => {
+        await expect(
+          result.current.importAccount({
+            type: "id",
+            accountId: "0xaccount",
+          })
+        ).rejects.toThrow("plain-string-rejection");
+      });
+
+      expect(result.current.error).toBeInstanceOf(Error);
+      expect(result.current.error?.message).toBe("plain-string-rejection");
+    });
+
+    it("wraps non-Error rejection in importAccountFile inner catch (already-tracked path) in string", async () => {
+      const mockAccount = createMockAccount();
+      const mockAccountFile = createMockAccountFile(mockAccount);
+
+      const mockClient = createMockWebClient({
+        importAccountFile: vi
+          .fn()
+          .mockRejectedValueOnce("already being tracked - string form"),
+        getAccounts: vi
+          .fn()
+          .mockResolvedValue([
+            { id: vi.fn(() => createMockAccountId("0xnewaccount")) },
+          ]),
+        getAccount: vi.fn().mockResolvedValue(mockAccount),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        signerConnected: null,
+      });
+
+      const { result } = renderHook(() => useImportAccount());
+
+      // Should NOT throw because "already being tracked" is swallowed
+      let imported: any;
+      await act(async () => {
+        imported = await result.current.importAccount({
+          type: "file",
+          file: mockAccountFile as any,
+        });
+      });
+
+      expect(imported).toBeDefined();
+    });
+  });
 });

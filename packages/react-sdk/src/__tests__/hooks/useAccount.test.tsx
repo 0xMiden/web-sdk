@@ -422,4 +422,45 @@ describe("useAccount", () => {
       });
     });
   });
+
+  describe("early-return guard in refetch", () => {
+    it("returns early without fetching when client is not ready", async () => {
+      const mockClient = createMockWebClient({
+        getAccount: vi.fn().mockResolvedValue(null),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: null,
+        isReady: false,
+      });
+
+      const { result } = renderHook(() => useAccount("0x1234"));
+
+      await act(async () => {
+        await result.current.refetch();
+      });
+
+      expect(mockClient.getAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("non-Error rejection path", () => {
+    it("wraps non-Error rejection from getAccount in an Error instance", async () => {
+      const mockClient = createMockWebClient({
+        getAccount: vi.fn().mockRejectedValueOnce("plain-string-rejection"),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+      });
+
+      const { result } = renderHook(() => useAccount("0x1234"));
+
+      await waitFor(() => {
+        expect(result.current.error).toBeInstanceOf(Error);
+        expect(result.current.error?.message).toBe("plain-string-rejection");
+      });
+    });
+  });
 });
