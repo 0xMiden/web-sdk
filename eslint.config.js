@@ -10,6 +10,7 @@ module.exports = [
       "crates/idxdb-store/src/**",
       "packages/react-sdk/**",
       "packages/vite-plugin/**",
+      "vitest.config.ts",
     ],
   },
   {
