@@ -76,12 +76,7 @@ function resolveProverTarget(
     }
     if (normalized === "devnet" || normalized === "testnet") {
       const url =
-        config.proverUrls?.[normalized] ??
-        DEFAULT_PROVER_URLS[normalized] ??
-        null;
-      if (!url) {
-        throw new Error(`Missing ${normalized} prover URL`);
-      }
+        config.proverUrls?.[normalized] ?? DEFAULT_PROVER_URLS[normalized];
       return TransactionProver.newRemoteProver(
         url,
         normalizeTimeout(config.proverTimeoutMs)

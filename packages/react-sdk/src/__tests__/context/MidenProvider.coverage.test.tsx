@@ -336,6 +336,49 @@ describe("MidenProvider — auto-sync + state-change listener", () => {
     expect(screen.getByTestId("state-changed-ready")).toBeDefined();
   });
 
+  it("captures errors from the explicit sync() call into store.sync.error", async () => {
+    // Hits the catch at MidenProvider.tsx ~134-138: the user-facing sync()
+    // function (returned via useMiden().sync) catches syncState failures and
+    // writes them to the store's sync.error field. Existing tests cover only
+    // the init-time and listener-time catches.
+    const stub = {
+      getAccounts: vi.fn().mockResolvedValue([]),
+      // First call (init) succeeds; later sync() calls reject so we hit the
+      // explicit-sync catch branch.
+      syncState: vi
+        .fn()
+        .mockResolvedValueOnce({ blockNum: () => 100 })
+        .mockRejectedValue(new Error("explicit sync boom")),
+      getSyncHeight: vi.fn().mockResolvedValue(100),
+      onStateChanged: vi.fn(() => () => {}),
+      free: vi.fn(),
+    };
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(
+      stub as unknown as WebClient
+    );
+
+    let midenRef: ReturnType<typeof useMiden>;
+    function Capture() {
+      midenRef = useMiden();
+      return null;
+    }
+
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <Capture />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(midenRef?.isReady).toBe(true);
+    });
+
+    await midenRef!.sync();
+    expect(useMidenStore.getState().sync.error?.message).toBe(
+      "explicit sync boom"
+    );
+  });
+
   it("invokes the success path of the onStateChanged listener (setAccounts + setSyncState)", async () => {
     // Companion to the catch-path test above: this one lets getAccounts
     // resolve inside the listener so lines 394-395 (setAccounts + setSyncState)

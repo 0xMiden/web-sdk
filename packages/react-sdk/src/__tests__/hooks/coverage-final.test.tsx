@@ -291,6 +291,55 @@ describe("MultiSignerProvider — disconnect rejection swallow", () => {
     warnSpy.mockRestore();
   });
 
+  it("stableConnect throws when the active signer has been unregistered", async () => {
+    // Race: register signer, connect, then unmount its provider so the registry
+    // no longer holds it. Calling the captured stableConnect closure now hits
+    // the `if (!signer) throw` branch in MultiSignerProvider (line ~116).
+    const para = createMockSignerContext({
+      name: "Para",
+      storeName: "para_1",
+      isConnected: true,
+    });
+
+    let multiRef: ReturnType<typeof useMultiSigner>;
+    let signerRef: ReturnType<typeof useSigner>;
+    function CaptureMulti() {
+      multiRef = useMultiSigner();
+      return null;
+    }
+    function CaptureSigner() {
+      signerRef = useSigner();
+      return null;
+    }
+
+    const { rerender } = render(
+      <MultiSignerProvider>
+        <MockSignerProvider value={para} />
+        <CaptureMulti />
+        <CaptureSigner />
+      </MultiSignerProvider>
+    );
+
+    await act(async () => {
+      await multiRef!.connectSigner("Para");
+    });
+    const capturedConnect = signerRef!.connect;
+    const capturedDisconnect = signerRef!.disconnect;
+
+    // Re-render WITHOUT MockSignerProvider — the SignerSlot effect tears
+    // down its registration in the multi-signer registry. activeSignerName
+    // is still "Para" but the registry no longer contains it.
+    rerender(
+      <MultiSignerProvider>
+        <CaptureMulti />
+        <CaptureSigner />
+      </MultiSignerProvider>
+    );
+
+    await expect(capturedConnect()).rejects.toThrow(/not found in registry/);
+    await expect(capturedDisconnect()).rejects.toThrow(/not found in registry/);
+  });
+
   it("disconnectSigner swallows current signer's disconnect rejection (line 209)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const paraDisconnect = vi.fn().mockRejectedValue(new Error("bye fail"));

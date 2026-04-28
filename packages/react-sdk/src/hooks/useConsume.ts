@@ -139,14 +139,6 @@ export function useConsume(): UseConsumeResult {
 
           const notes = resolved;
 
-          if (notes.length === 0) {
-            throw new Error("No notes found for provided IDs");
-          }
-
-          if (notes.length !== options.notes.length) {
-            throw new Error("Some notes could not be found for provided IDs");
-          }
-
           const txRequest = client.newConsumeTransactionRequest(notes);
           const txId = prover
             ? await client.submitNewTransactionWithProver(
