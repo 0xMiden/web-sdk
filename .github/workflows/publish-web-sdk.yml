@@ -1,0 +1,347 @@
+# Single publish workflow for the entire web-sdk monorepo.
+#
+# Replaces the previous two-workflow setup (publish-web-client-release.yml
+# + publish-web-client-next.yml) with one file. The motivation is npm's
+# trusted-publishing constraint: trust is keyed on (package, repo) — only
+# ONE workflow filename per package can be the trusted publisher. To use
+# trusted publishing for both the GitHub-release flow AND the next-channel
+# patch-release flow, both must come from the same workflow file.
+#
+# Auth model:
+# - id-token: write at the workflow level → GitHub mints the OIDC token
+#   that npm exchanges for a short-lived publish credential.
+# - npm CLI 11.5+ auto-detects the OIDC environment and skips token-based
+#   auth. We do NOT set NODE_AUTH_TOKEN.
+# - --provenance is added to every npm publish for the signed attestation.
+#
+# Branching:
+# - `release: published` → publishes to the `latest` dist-tag, gated by
+#   the `check-*-version-release.sh` scripts.
+# - `pull_request: closed` (against next, with the `patch release` label)
+#   → publishes to the `next` dist-tag, gated by `check-*-version-pr.sh`.
+# - The vite-plugin ships only on release events (no -pr.sh script for it).
+
+name: Publish Web SDK
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    branches:
+      - next
+    types:
+      - closed
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check-version:
+    if: |
+      github.event_name == 'release' ||
+      (github.event.pull_request.merged == true &&
+       contains(github.event.pull_request.labels.*.name, 'patch release'))
+    runs-on: ubuntu-24.04
+    outputs:
+      should_publish_web: ${{ steps.check_web.outputs.should_publish }}
+      web_version: ${{ steps.check_web.outputs.current_version }}
+      should_publish_react: ${{ steps.check_react.outputs.should_publish }}
+      react_version: ${{ steps.check_react.outputs.current_version }}
+      should_publish_vite: ${{ steps.check_vite.outputs.should_publish }}
+      vite_version: ${{ steps.check_vite.outputs.current_version }}
+      dist_tag: ${{ steps.event.outputs.dist_tag }}
+      checkout_ref: ${{ steps.event.outputs.checkout_ref }}
+    steps:
+      - name: Resolve event-specific config
+        id: event
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "checkout_ref=refs/tags/${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+            echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+            echo "checkout_ref=next" >> "$GITHUB_OUTPUT"
+            echo "version_check_arg=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.event.outputs.checkout_ref }}
+
+      - name: Check web-client version bump
+        id: check_web
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            ./scripts/check-web-client-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
+          else
+            ./scripts/check-web-client-version-pr.sh "${{ steps.event.outputs.version_check_arg }}"
+          fi
+
+      - name: Check react-sdk version bump
+        id: check_react
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            ./scripts/check-react-sdk-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
+          else
+            ./scripts/check-react-sdk-version-pr.sh "${{ steps.event.outputs.version_check_arg }}"
+          fi
+
+      - name: Check vite-plugin version bump (release only)
+        id: check_vite
+        if: github.event_name == 'release'
+        run: ./scripts/check-vite-plugin-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
+
+  build-native-nodejs:
+    needs: check-version
+    if: needs.check-version.outputs.should_publish_web == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: macos-26
+            platform-package: node-sdk-darwin-arm64
+          - os: macos-26-intel
+            platform-package: node-sdk-darwin-x64
+          - os: ubuntu-24.04
+            platform-package: node-sdk-linux-x64-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check-version.outputs.checkout_ref }}
+
+      - name: Install Rust
+        run: rustup update --no-self-update
+
+      - name: Build napi binary
+        run: cargo build -p miden-client-web --no-default-features --features nodejs --release
+
+      - name: Prepare .node binary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXT="dylib"
+          else
+            EXT="so"
+          fi
+          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "::error::napi binary not found"
+            exit 1
+          fi
+          cp "$BINARY" "packages/${{ matrix.platform-package }}/miden_client_web.node"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform-package }}
+          path: packages/${{ matrix.platform-package }}/miden_client_web.node
+
+  publish:
+    needs: [check-version, build-native-nodejs]
+    if: >
+      !cancelled() &&
+      needs.check-version.result == 'success' &&
+      (
+        needs.check-version.outputs.should_publish_web == 'true' ||
+        needs.check-version.outputs.should_publish_react == 'true' ||
+        needs.check-version.outputs.should_publish_vite == 'true'
+      )
+    runs-on: warp-ubuntu-latest-x64-8x
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.check-version.outputs.checkout_ref }}
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Ensure npm CLI supports trusted publishing
+        # Trusted publishing (OIDC) needs npm CLI ≥ 11.5. node-version: '24'
+        # ships npm 11.x as of 2026-Q2, but a force-update keeps the workflow
+        # robust to runner image drift. Pinned to the 11.x major: a future
+        # npm 12 could land breaking changes to --provenance / OIDC and this
+        # workflow would silently break with a floating @latest.
+        run: npm install -g 'npm@^11.5'
+
+      - name: Set up Rust and wasm target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Install binaryen (wasm-opt)
+        run: |
+          sudo apt-get update && sudo apt-get install -y binaryen
+
+      # Single workspace install — used for web-client build (when needed),
+      # react-sdk build (which consumes the WASM dist), and vite-plugin build.
+      - name: Install workspace dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      # ── Web-client (WASM) ─────────────────────────────────────────────
+      # The WASM dist also feeds the react-sdk build, so we run the build
+      # whenever EITHER web-client or react-sdk needs to publish.
+
+      - name: Build web-client
+        if: >
+          needs.check-version.outputs.should_publish_web == 'true' ||
+          needs.check-version.outputs.should_publish_react == 'true'
+        run: pnpm --filter @miden-sdk/miden-sdk run build
+
+      - name: Verify WASM is optimized
+        if: needs.check-version.outputs.should_publish_web == 'true'
+        run: |
+          wasm_file=$(find crates/web-client/dist/assets -name '*.wasm' | head -1)
+          size=$(stat --format=%s "$wasm_file")
+          max_size=$((25 * 1024 * 1024))
+          echo "WASM size: $((size / 1024 / 1024))MB ($size bytes)"
+          if [ "$size" -gt "$max_size" ]; then
+            echo "::error::WASM is $((size / 1024 / 1024))MB — exceeds 25MB limit. wasm-opt likely failed silently."
+            exit 1
+          fi
+
+      # ── Node.js platform packages ─────────────────────────────────────
+      # Tied to the web-client publish; ship only when web-client itself
+      # ships, so the optionalDependencies versions on web-client's
+      # package.json always match a real published platform-binary version.
+
+      - name: Download native binary artifacts
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Sync platform package versions and publish
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        run: |
+          WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
+          DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
+          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+            cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
+            jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
+            mv /tmp/pkg.json "packages/${pkg}/package.json"
+            echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
+            cd "packages/${pkg}"
+            npm publish --tag "$DIST_TAG" --access public --provenance
+            cd ../..
+          done
+
+      - name: Inject Node.js optionalDependencies before web-client publish
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        run: |
+          cd crates/web-client
+          node -e "
+            const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf8'));
+            const v = pkg.version;
+            pkg.optionalDependencies = {
+              '@miden-sdk/node-darwin-arm64': v,
+              '@miden-sdk/node-darwin-x64': v,
+              '@miden-sdk/node-linux-x64-gnu': v,
+            };
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            console.log('Injected optionalDependencies with version ' + v);
+          "
+
+      - name: Publish web-client to npm
+        if: needs.check-version.outputs.should_publish_web == 'true'
+        # `pnpm publish` automatically replaces `workspace:*` specifiers
+        # with the resolved version from the workspace package.json
+        # before publishing, so the published artifact is consumable
+        # outside the monorepo.
+        run: pnpm --filter @miden-sdk/miden-sdk publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
+
+      # ── React SDK ─────────────────────────────────────────────────────
+
+      - name: Build react-sdk
+        if: needs.check-version.outputs.should_publish_react == 'true'
+        run: pnpm --filter @miden-sdk/react run build
+
+      - name: Publish react-sdk to npm
+        if: needs.check-version.outputs.should_publish_react == 'true'
+        run: pnpm --filter @miden-sdk/react publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
+
+      # ── Vite plugin (release event only) ──────────────────────────────
+
+      - name: Build vite-plugin
+        if: needs.check-version.outputs.should_publish_vite == 'true'
+        run: pnpm --filter @miden-sdk/vite-plugin run build
+
+      - name: Publish vite-plugin to npm
+        if: needs.check-version.outputs.should_publish_vite == 'true'
+        run: pnpm --filter @miden-sdk/vite-plugin publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
+
+      # ── Reporting ─────────────────────────────────────────────────────
+
+      - name: Done (web-client)
+        if: needs.check-version.outputs.should_publish_web == 'true'
+        env:
+          CURRENT_VERSION: ${{ needs.check-version.outputs.web_version }}
+          DIST_TAG: ${{ needs.check-version.outputs.dist_tag }}
+        run: echo "✅ Web-client published $CURRENT_VERSION (--tag $DIST_TAG, with Node.js platform binaries)."
+
+      - name: Done (react-sdk)
+        if: needs.check-version.outputs.should_publish_react == 'true'
+        env:
+          CURRENT_VERSION: ${{ needs.check-version.outputs.react_version }}
+          DIST_TAG: ${{ needs.check-version.outputs.dist_tag }}
+        run: echo "✅ React SDK published $CURRENT_VERSION (--tag $DIST_TAG)."
+
+      - name: Done (vite-plugin)
+        if: needs.check-version.outputs.should_publish_vite == 'true'
+        env:
+          CURRENT_VERSION: ${{ needs.check-version.outputs.vite_version }}
+          DIST_TAG: ${{ needs.check-version.outputs.dist_tag }}
+        run: echo "✅ Vite plugin published $CURRENT_VERSION (--tag $DIST_TAG)."
+
+  skipped:
+    needs: check-version
+    # Only run when check-version actually evaluated. If its top-level
+    # `if:` rejected the event (e.g. PR merged to next without the
+    # `patch release` label), all `should_publish_*` outputs are empty
+    # strings, the `!= 'true'` checks below would all evaluate true,
+    # and this job would print a misleading "all gates failed" message.
+    # The `result == 'success'` guard prevents that.
+    if: >
+      needs.check-version.result == 'success' &&
+      needs.check-version.outputs.should_publish_web != 'true' &&
+      needs.check-version.outputs.should_publish_react != 'true' &&
+      needs.check-version.outputs.should_publish_vite != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Skipped publish (all packages)
+        env:
+          WEB_PUBLISH: ${{ needs.check-version.outputs.should_publish_web }}
+          WEB_VERSION: ${{ needs.check-version.outputs.web_version }}
+          REACT_PUBLISH: ${{ needs.check-version.outputs.should_publish_react }}
+          REACT_VERSION: ${{ needs.check-version.outputs.react_version }}
+          VITE_PUBLISH: ${{ needs.check-version.outputs.should_publish_vite }}
+          VITE_VERSION: ${{ needs.check-version.outputs.vite_version }}
+        run: |
+          echo "ℹ️ All publish gates failed:"
+          echo "  web-client    should_publish=$WEB_PUBLISH    current_version=$WEB_VERSION"
+          echo "  react-sdk     should_publish=$REACT_PUBLISH  current_version=$REACT_VERSION"
+          echo "  vite-plugin   should_publish=$VITE_PUBLISH   current_version=$VITE_VERSION"
