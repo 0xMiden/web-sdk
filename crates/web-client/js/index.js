@@ -62,6 +62,7 @@ export {
   WebClient as WasmWebClient,
   MockWebClient as MockWasmWebClient,
   MockWebClient,
+  withSyncLock,
 };
 
 // Method classification sets — used by scripts/check-method-classification.js to ensure

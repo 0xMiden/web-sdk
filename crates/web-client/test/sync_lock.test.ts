@@ -89,27 +89,53 @@ test.describe("Sync Lock Tests", () => {
   });
 
   test.describe("Error Handling", () => {
-    test("sync after failed sync works correctly", async ({ page }) => {
-      // This test ensures that the lock is properly released after an error
+    test("withSyncLock cleans up inFlight after fn rejects", async ({
+      page,
+    }) => {
+      // After fn rejects, the in-flight entry must be cleared so that a later
+      // call with the same (dbId, methodId) starts a fresh execution. Without
+      // this, a single failure would permanently coalesce all subsequent
+      // callers onto the rejected promise and no further sync could run.
       const result = await page.evaluate(async () => {
-        const client = window.client;
+        const dbId = "withSyncLock-cleanup-test";
+        const methodId = "syncTest";
 
-        // First successful sync
-        const result1 = await client.syncState();
+        let firstRan = 0;
+        let secondRan = 0;
 
-        // Another successful sync (verifies lock was released)
-        const result2 = await client.syncState();
+        let firstError: Error | null = null;
+        try {
+          await window.withSyncLock(dbId, methodId, async () => {
+            firstRan++;
+            throw new Error("forced failure");
+          });
+        } catch (err) {
+          firstError = err as Error;
+        }
+
+        const secondResult = await window.withSyncLock(
+          dbId,
+          methodId,
+          async () => {
+            secondRan++;
+            return "second-success";
+          }
+        );
 
         return {
-          blockNum1: result1.blockNum(),
-          blockNum2: result2.blockNum(),
+          firstErrorMessage: firstError?.message,
+          firstRan,
+          secondRan,
+          secondResult,
         };
       });
 
-      expect(typeof result.blockNum1).toBe("number");
-      expect(typeof result.blockNum2).toBe("number");
-      // Block numbers should be monotonically non-decreasing
-      expect(result.blockNum2).toBeGreaterThanOrEqual(result.blockNum1);
+      expect(result.firstErrorMessage).toBe("forced failure");
+      expect(result.firstRan).toBe(1);
+      // The second fn must actually execute — proves the in-flight entry was
+      // cleared after the first rejection rather than coalescing onto it.
+      expect(result.secondRan).toBe(1);
+      expect(result.secondResult).toBe("second-success");
     });
   });
 
