@@ -684,8 +684,17 @@ jobs:
         run: |
           chmod +x ./bin/testing-node-builder
           RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+          # Wait up to 30s for the gRPC port (57291) to actually accept
+          # connections — the previous `sleep 4 && pgrep` only checked
+          # process liveness, not that the listener had bound, so slower
+          # CI runners occasionally raced the test start and surfaced
+          # `TypeError: Failed to fetch` from the in-browser gRPC client.
+          timeout 30 bash -c 'until (echo > /dev/tcp/127.0.0.1/57291) 2>/dev/null; do sleep 0.5; done' || {
+            echo "::error::node-builder did not become reachable on :57291 within 30s"
+            pgrep -f testing-node-builder || echo "node-builder process is not running"
+            exit 1
+          }
+          echo "node-builder reachable on :57291"
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -755,14 +764,30 @@ jobs:
         run: |
           chmod +x ./bin/testing-node-builder
           RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+          # Wait up to 30s for the gRPC port (57291) to actually accept
+          # connections — the previous `sleep 4 && pgrep` only checked
+          # process liveness, not that the listener had bound, so slower
+          # CI runners occasionally raced the test start and surfaced
+          # `TypeError: Failed to fetch` from the in-browser gRPC client.
+          timeout 30 bash -c 'until (echo > /dev/tcp/127.0.0.1/57291) 2>/dev/null; do sleep 0.5; done' || {
+            echo "::error::node-builder did not become reachable on :57291 within 30s"
+            pgrep -f testing-node-builder || echo "node-builder process is not running"
+            exit 1
+          }
+          echo "node-builder reachable on :57291"
       - name: Start prover
         run: |
           chmod +x ./bin/testing-remote-prover
           RUST_LOG=none ./bin/testing-remote-prover &
-          sleep 4
-          pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
+          # Wait up to 30s for the prover gRPC port (50051) to accept
+          # connections — same flake-prevention pattern as `Start test
+          # node`. Process-liveness alone is not enough.
+          timeout 30 bash -c 'until (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null; do sleep 0.5; done' || {
+            echo "::error::testing-remote-prover did not become reachable on :50051 within 30s"
+            pgrep -f testing-remote-prover || echo "prover process is not running"
+            exit 1
+          }
+          echo "testing-remote-prover reachable on :50051"
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
