@@ -123,8 +123,13 @@ export default defineConfig({
   fullyParallel: process.env.TEST_MIDEN_PROVER_URL ? false : true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  /* Retry on CI only */
-  retries: 0,
+  /* Retry once on CI to mask intermittent infra flakes (browser-side
+   * `TypeError: Failed to fetch` against the in-process gRPC mock node).
+   * The previous root-cause attempts (TCP probe, stdout-grep readiness)
+   * either didn't help or interacted badly with stdout buffering on
+   * WarpBuild runners. The flake hits at low single-digit %, so a single
+   * retry is enough to keep CI reliable without doubling cost. */
+  retries: process.env.CI ? 1 : 0,
   /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 2 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
