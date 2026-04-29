@@ -677,7 +677,7 @@ jobs:
           # the explicit "Node started successfully with PID" stdout
           # line printed AFTER start().await returns (see miden-client
           # crates/testing/node-builder/src/main.rs).
-          RUST_LOG=none ./bin/testing-node-builder >/tmp/node-builder.log 2>&1 &
+          RUST_LOG=none stdbuf -oL ./bin/testing-node-builder >/tmp/node-builder.log 2>&1 &
           timeout 60 bash -c 'until grep -q "Node started successfully" /tmp/node-builder.log 2>/dev/null; do sleep 0.5; done' || {
             echo "::error::node-builder did not print readiness signal within 60s"
             echo "--- node-builder.log tail ---"
@@ -769,7 +769,7 @@ jobs:
           # the explicit "Node started successfully with PID" stdout
           # line printed AFTER start().await returns (see miden-client
           # crates/testing/node-builder/src/main.rs).
-          RUST_LOG=none ./bin/testing-node-builder >/tmp/node-builder.log 2>&1 &
+          RUST_LOG=none stdbuf -oL ./bin/testing-node-builder >/tmp/node-builder.log 2>&1 &
           timeout 60 bash -c 'until grep -q "Node started successfully" /tmp/node-builder.log 2>/dev/null; do sleep 0.5; done' || {
             echo "::error::node-builder did not print readiness signal within 60s"
             echo "--- node-builder.log tail ---"
@@ -854,7 +854,7 @@ jobs:
           # the explicit "Node started successfully with PID" stdout
           # line printed AFTER start().await returns (see miden-client
           # crates/testing/node-builder/src/main.rs).
-          RUST_LOG=none ./bin/testing-node-builder >/tmp/node-builder.log 2>&1 &
+          RUST_LOG=none stdbuf -oL ./bin/testing-node-builder >/tmp/node-builder.log 2>&1 &
           timeout 60 bash -c 'until grep -q "Node started successfully" /tmp/node-builder.log 2>/dev/null; do sleep 0.5; done' || {
             echo "::error::node-builder did not print readiness signal within 60s"
             echo "--- node-builder.log tail ---"
@@ -871,7 +871,7 @@ jobs:
           # TCP probe. (The prover prints "Remote prover listening on
           # <addr>" right after binding — see miden-client
           # crates/testing/prover/src/main.rs:87.)
-          RUST_LOG=none ./bin/testing-remote-prover >/tmp/remote-prover.log 2>&1 &
+          RUST_LOG=none stdbuf -oL ./bin/testing-remote-prover >/tmp/remote-prover.log 2>&1 &
           timeout 60 bash -c 'until grep -q "Remote prover listening" /tmp/remote-prover.log 2>/dev/null; do sleep 0.5; done' || {
             echo "::error::testing-remote-prover did not print readiness signal within 60s"
             echo "--- remote-prover.log tail ---"
