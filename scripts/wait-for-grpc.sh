@@ -24,14 +24,16 @@ set -uo pipefail
 # moment (1) is reached, well before (2) actually dispatches anything.
 # That window is the source of the `TypeError: Failed to fetch` flake.
 #
-# Probing with `curl -m 5` cuts through this:
-#   - During (1)→(2) gap: TCP handshake completes, curl writes the HTTP
-#     bytes, but no one reads them. After 5s curl times out → http_code=000.
-#   - After (2): tonic accepts, routes, returns SOME http status (200,
-#     404, 415, etc.). Any non-000 status proves the dispatcher is live.
+# Probe with a plain GET via curl. Tonic doesn't route GET to its gRPC
+# handlers, so it'll respond with 404/405/415 — but ANY HTTP response is
+# proof the dispatcher is wired up. While the gap (1)→(2) is open, the
+# connection stalls and curl times out (returns http_code "000").
 #
-# We don't care WHICH status comes back — even a 404/415 from a path the
-# server doesn't recognize is positive proof the server is dispatching.
+# Validation: the success check requires http_code to be exactly three
+# digits in [1-5][0-9][0-9]. An earlier version used `[ "$code" != "000" ]`
+# and false-positived on a curl edge case that emitted "000000" (likely
+# an internal connection retry concatenating two failure codes). The
+# regex form is the strict version.
 
 BINARY="${1:?usage: $0 <binary> <port> [log-file] [timeout-seconds]}"
 PORT="${2:?usage: $0 <binary> <port> [log-file] [timeout-seconds]}"
@@ -48,21 +50,19 @@ deadline=$((SECONDS + TIMEOUT))
 attempt=0
 while true; do
   attempt=$((attempt + 1))
-  # POST a minimal gRPC-web framed body to root. tonic responds with an
-  # HTTP status for any reachable router; we only need to see ANY status.
-  http_code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
-    -X POST \
-    -H 'content-type: application/grpc-web+proto' \
-    --data-binary "$(printf '\x00\x00\x00\x00\x00')" \
-    "http://127.0.0.1:${PORT}/" 2>/dev/null || echo "000")
 
-  if [ -n "$http_code" ] && [ "$http_code" != "000" ]; then
+  http_code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${PORT}/" 2>/dev/null) || http_code="000"
+
+  # Any 1xx/2xx/3xx/4xx/5xx HTTP code = the server's HTTP layer is up.
+  # Connection failures and timeouts produce "000" (or empty); we retry.
+  if [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
     echo "$(basename "$BINARY") gRPC dispatch responsive after ${attempt} attempt(s) (HTTP $http_code on port $PORT)"
     break
   fi
 
   if [ "$SECONDS" -ge "$deadline" ]; then
-    echo "::error::$(basename "$BINARY") did not respond on port $PORT within ${TIMEOUT}s"
+    echo "::error::$(basename "$BINARY") did not respond on port $PORT within ${TIMEOUT}s (last http_code='$http_code')"
     echo "--- $LOG_FILE tail ---"
     tail -50 "$LOG_FILE" 2>/dev/null || echo "(log file is empty or missing)"
     pgrep -af "$(basename "$BINARY")" || echo "(no $(basename "$BINARY") process running)"
