@@ -5,7 +5,7 @@
 ### Enhancements
 
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
-* [CHORE][ci] Validate the consolidated trusted-publishing flow end-to-end (`pnpm publish` + npm OIDC + `--provenance`) by cutting `0.15.0-alpha.1` to the `next` dist-tag, including the three Node.js native packages (`@miden-sdk/node-darwin-arm64`, `node-darwin-x64`, `node-linux-x64-gnu`) that bootstrapped at `0.15.0-alpha.0`.
+* [CHORE][ci] Validate the consolidated trusted-publishing flow end-to-end (`pnpm publish` + npm OIDC + `--provenance`) by cutting `0.15.0-alpha.2` to the `next` dist-tag, including the three Node.js native packages (`@miden-sdk/node-darwin-arm64`, `node-darwin-x64`, `node-linux-x64-gnu`) that bootstrapped at `0.15.0-alpha.0`. (`alpha.1` was prepared but the publish workflow tripped on a missing executable bit on `scripts/check-react-sdk-version-pr.sh`; `alpha.2` ships the chmod fix.)
 
 ## 0.14.4 (TBA)
 
