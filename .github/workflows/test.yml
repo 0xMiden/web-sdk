@@ -18,7 +18,7 @@ env:
   # node-builder serves protos using the schema of this ref, and a mismatch
   # against the client manifests as cryptic 'invalid wire type' decode errors
   # on the client side (e.g. Digest fields encoded as bytes vs fixed64).
-  MIDEN_CLIENT_REF: v0.14.4
+  MIDEN_CLIENT_REF: v0.14.5
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
