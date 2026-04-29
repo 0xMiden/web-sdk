@@ -5,6 +5,7 @@
 ### Enhancements
 
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
+* [web] Removed the redundant `partialBlockchainPeaks` field from the IndexedDB `blockHeaders` table. MMR peaks are tracked only in the `blockchainCheckpoint` table at the current sync height, eliminating per-block duplication ([#33](https://github.com/0xMiden/web-sdk/pull/33)).
 
 ## 0.14.4 (TBA)
 
