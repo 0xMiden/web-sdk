@@ -6,6 +6,10 @@
 
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
 
+### Chores
+
+* [CHORE][ci] Auto-cut a GitHub release when a `patch release`-labeled PR merges to `main`. Mirrors the existing `next`-branch flow: once the release publishes, `publish-web-sdk.yml` ships every package whose version actually changed to the `latest` dist-tag with provenance.
+
 ## 0.14.2 (2026-04-15)
 
 ### Features
