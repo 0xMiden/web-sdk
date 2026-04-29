@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/node-darwin-arm64",
-  "version": "0.15.0-alpha.3",
+  "version": "0.15.0-alpha.4",
   "description": "Miden Client SDK native module for macOS ARM64 (Apple Silicon)",
   "os": [
     "darwin"

@@ -1,7 +1,16 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.15.0-alpha.3",
+  "version": "0.15.0-alpha.4",
   "description": "Miden Wasm SDK",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xMiden/web-sdk",
+    "directory": "crates/web-client"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
   "collaborators": [
     "Miden"
   ],
