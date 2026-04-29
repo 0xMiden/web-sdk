@@ -1,0 +1,106 @@
+# Auto-cut a GitHub release when a PR with the `patch release` label
+# is merged into main. Tag is `v<crates/web-client.version>`. The
+# release body is populated from the matching CHANGELOG.md section
+# via the existing extract-changelog-section.sh helper.
+#
+# Once the release is published, `publish-web-sdk.yml`'s
+# `release: published` trigger fires and ships every package whose
+# version actually changed (web-client, react-sdk, vite-plugin) to the
+# `latest` dist-tag with provenance.
+#
+# Mirrors the `next` flow:
+#   - `next`: PR merge with `patch release` label → publish to `next`
+#   - `main`: PR merge with `patch release` label → cut release
+#                                                 → publish to `latest`
+#
+# Failure modes:
+#   - `v<version>` tag already exists  → fail loudly (forces version
+#                                        bump on every release-labeled
+#                                        merge to main).
+#   - CHANGELOG section missing        → release is still cut, body is
+#                                        empty; release-notes.yml is
+#                                        not triggered (we're inline).
+#                                        The CHANGELOG gate at PR time
+#                                        is where we catch missing
+#                                        entries.
+
+name: Auto-release on main merge
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'patch release')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out main (post-merge)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Resolve web-client version
+        id: version
+        run: |
+          set -euo pipefail
+          V=$(jq -r '.version' crates/web-client/package.json)
+          if [ -z "$V" ] || [ "$V" = "null" ]; then
+            echo "::error::Could not read version from crates/web-client/package.json"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: v$V"
+
+      - name: Fail if tag already exists
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Bump crates/web-client/package.json version before merging a 'patch release' PR."
+            exit 1
+          fi
+
+      - name: Extract changelog section
+        id: changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/extract-changelog-section.sh
+          BODY=$(./scripts/extract-changelog-section.sh "$VERSION" || true)
+          if [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+            echo "::warning::No CHANGELOG.md section found for $VERSION — release body will be empty."
+            BODY=""
+          fi
+          {
+            echo "body<<__CHANGELOG_EOF__"
+            printf '%s' "$BODY"
+            echo
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          BODY: ${{ steps.changelog.outputs.body }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$BODY" \
+            --target main \
+            --repo "${{ github.repository }}"
+          echo "::notice::Created release $TAG. publish-web-sdk.yml will fire on the release:published event."
