@@ -465,8 +465,6 @@ jobs:
   test-web-client-unit:
     name: web-client unit tests
     runs-on: ubuntu-24.04
-    needs: [changes]
-    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
