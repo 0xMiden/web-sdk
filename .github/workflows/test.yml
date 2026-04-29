@@ -681,11 +681,14 @@ jobs:
           name: node-builder-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # `sleep 4 && pgrep` only proves the process is alive, not that
+        # tonic's gRPC dispatcher is serving. The kernel completes TCP
+        # handshakes the moment TcpListener::bind() runs, but the actual
+        # `serve_with_incoming(...)` call happens seconds later — so a
+        # /dev/tcp probe would also race. The real signal is "the server
+        # responded with ANY HTTP status to a real POST" — see
+        # scripts/wait-for-grpc.sh.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -752,17 +755,18 @@ jobs:
           name: remote-prover-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # `sleep 4 && pgrep` only proves the process is alive, not that
+        # tonic's gRPC dispatcher is serving. The kernel completes TCP
+        # handshakes the moment TcpListener::bind() runs, but the actual
+        # `serve_with_incoming(...)` call happens seconds later — so a
+        # /dev/tcp probe would also race. The real signal is "the server
+        # responded with ANY HTTP status to a real POST" — see
+        # scripts/wait-for-grpc.sh.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
       - name: Start prover
-        run: |
-          chmod +x ./bin/testing-remote-prover
-          RUST_LOG=none ./bin/testing-remote-prover &
-          sleep 4
-          pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
+        # Same gRPC probe as the node-builder above; remote-prover's
+        # `serve_with_incoming` window has the same race.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-remote-prover 50051
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
