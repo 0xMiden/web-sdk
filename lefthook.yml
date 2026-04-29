@@ -1,0 +1,13 @@
+# Lefthook config — local dev hygiene hooks.
+# Docs: https://lefthook.dev/configuration/
+#
+# Install: `pnpm install` triggers `prepare` → `lefthook install`.
+# Manual:  `pnpm exec lefthook install`
+
+pre-commit:
+  commands:
+    lint-staged:
+      run: pnpm exec lint-staged
+      stage_fixed: true
+
+# commit-msg: future commitlint integration goes here

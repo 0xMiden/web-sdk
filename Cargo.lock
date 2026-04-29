@@ -1721,7 +1721,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=next#dab6cf7b3549b57515aa305e64d3d9561bf8e5ca"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=next#b7c69aed9eef875578ecc2d73c0938dfc3fcdd73"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1753,13 +1753,12 @@ dependencies = [
  "tonic-web-wasm-client",
  "tracing",
  "uuid",
- "web-sys",
 ]
 
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=next#dab6cf7b3549b57515aa305e64d3d9561bf8e5ca"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=next#b7c69aed9eef875578ecc2d73c0938dfc3fcdd73"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2010,7 +2009,7 @@ dependencies = [
 [[package]]
 name = "miden-node-proto-build"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/node.git?branch=next#28fbaa108549b696a238db339bb5e33c7c71fb7a"
+source = "git+https://github.com/0xMiden/node.git?branch=next#ef46d50efd124f6e3df9271c99f7d6e7d505b8f6"
 dependencies = [
  "build-rs",
  "codegen",
@@ -2144,7 +2143,7 @@ dependencies = [
 [[package]]
 name = "miden-remote-prover-client"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/node.git?branch=next#28fbaa108549b696a238db339bb5e33c7c71fb7a"
+source = "git+https://github.com/0xMiden/node.git?branch=next#ef46d50efd124f6e3df9271c99f7d6e7d505b8f6"
 dependencies = [
  "build-rs",
  "fs-err",

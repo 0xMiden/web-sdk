@@ -2,15 +2,7 @@ name: Build
 on:
   push:
     branches: [main, next]
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
 
 permissions:
   contents: read
@@ -23,14 +15,45 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
+  # Pre-flight: detect whether any non-docs files changed. We deliberately
+  # trigger this workflow on EVERY push/PR (no top-level paths-ignore) so
+  # required status checks always report a state — `paths-ignore` at the
+  # workflow level prevents the workflow from running at all on docs-only
+  # PRs, which leaves required checks stuck in "Expected" forever and blocks
+  # merging. Instead, every downstream job gates on this filter's output and
+  # reports `skipped` when there's nothing relevant to build (skipped jobs
+  # satisfy required checks).
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-24.04
+    outputs:
+      non_docs: ${{ steps.filter.outputs.non_docs }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # `non_docs` matches whenever a changed file is NOT a doc/text file
+          # under one of the listed paths. Mirror of the previous
+          # `paths-ignore` set.
+          filters: |
+            non_docs:
+              - '!**/*.md'
+              - '!**/*.txt'
+              - '!docs/**'
+
   build-wasm:
     name: Build Client for Wasm
-    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
+    runs-on: warp-ubuntu-latest-x64-8x
     env:
       # See test.yml's build-web-client-dist-folder for rationale.
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust toolchain
         run: rustup update --no-self-update
       - name: Add wasm32-unknown-unknown target

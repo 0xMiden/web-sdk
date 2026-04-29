@@ -31,7 +31,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "node ./test/serve-tests.js",
+    command: "node ./test/serve-tests.cjs",
     url: "http://127.0.0.1:8081",
     reuseExistingServer: true,
     timeout: 30000,
