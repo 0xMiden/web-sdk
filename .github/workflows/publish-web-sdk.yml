@@ -179,8 +179,10 @@ jobs:
       - name: Ensure npm CLI supports trusted publishing
         # Trusted publishing (OIDC) needs npm CLI ≥ 11.5. node-version: '24'
         # ships npm 11.x as of 2026-Q2, but a force-update keeps the workflow
-        # robust to runner image drift.
-        run: npm install -g npm@latest
+        # robust to runner image drift. Pinned to the 11.x major: a future
+        # npm 12 could land breaking changes to --provenance / OIDC and this
+        # workflow would silently break with a floating @latest.
+        run: npm install -g 'npm@^11.5'
 
       - name: Set up Rust and wasm target
         uses: actions-rs/toolchain@v1
@@ -317,7 +319,14 @@ jobs:
 
   skipped:
     needs: check-version
+    # Only run when check-version actually evaluated. If its top-level
+    # `if:` rejected the event (e.g. PR merged to next without the
+    # `patch release` label), all `should_publish_*` outputs are empty
+    # strings, the `!= 'true'` checks below would all evaluate true,
+    # and this job would print a misleading "all gates failed" message.
+    # The `result == 'success'` guard prevents that.
     if: >
+      needs.check-version.result == 'success' &&
       needs.check-version.outputs.should_publish_web != 'true' &&
       needs.check-version.outputs.should_publish_react != 'true' &&
       needs.check-version.outputs.should_publish_vite != 'true'
