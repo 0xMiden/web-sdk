@@ -150,7 +150,15 @@ jobs:
         needs.check-version.outputs.should_publish_react == 'true' ||
         needs.check-version.outputs.should_publish_vite == 'true'
       )
-    runs-on: warp-ubuntu-latest-x64-8x
+    # Must be a github-hosted runner — npm's provenance verifier rejects
+    # attestations from "self-hosted" runners (Warp, etc.) with
+    # `422 Unprocessable Entity: Unsupported GitHub Actions runner
+    # environment: "self-hosted"`. The OIDC token's `runner_environment`
+    # claim is checked against an allowlist by npm. Trade-off: 4-core
+    # ubuntu-24.04 builds the WASM dist somewhat slower than warp's 8x
+    # runner, but the build is still well under 15 min and provenance
+    # is the whole point of trusted publishing.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
