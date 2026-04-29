@@ -665,11 +665,13 @@ jobs:
           name: node-builder-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # Wait for the binary's own "Node started successfully" stdout
+        # signal — printed AFTER all gRPC services are wired up. A bare
+        # `sleep 4 && pgrep` only checks process liveness; a TCP probe
+        # races the gap between TcpListener::bind and gRPC service
+        # registration. See scripts/wait-for-bg-binary.sh for the pty
+        # rationale (Rust block-buffers stdout when redirected to a file).
+        run: ./scripts/wait-for-bg-binary.sh ./bin/testing-node-builder "Node started successfully"
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -741,11 +743,13 @@ jobs:
           name: node-builder-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # Wait for the binary's own "Node started successfully" stdout
+        # signal — printed AFTER all gRPC services are wired up. A bare
+        # `sleep 4 && pgrep` only checks process liveness; a TCP probe
+        # races the gap between TcpListener::bind and gRPC service
+        # registration. See scripts/wait-for-bg-binary.sh for the pty
+        # rationale (Rust block-buffers stdout when redirected to a file).
+        run: ./scripts/wait-for-bg-binary.sh ./bin/testing-node-builder "Node started successfully"
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -810,17 +814,17 @@ jobs:
           name: remote-prover-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # Wait for the binary's own "Node started successfully" stdout
+        # signal — printed AFTER all gRPC services are wired up. A bare
+        # `sleep 4 && pgrep` only checks process liveness; a TCP probe
+        # races the gap between TcpListener::bind and gRPC service
+        # registration. See scripts/wait-for-bg-binary.sh for the pty
+        # rationale (Rust block-buffers stdout when redirected to a file).
+        run: ./scripts/wait-for-bg-binary.sh ./bin/testing-node-builder "Node started successfully"
       - name: Start prover
-        run: |
-          chmod +x ./bin/testing-remote-prover
-          RUST_LOG=none ./bin/testing-remote-prover &
-          sleep 4
-          pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
+        # Same pty/readiness pattern as the node-builder above; the prover
+        # prints "Remote prover listening on <addr>" after binding.
+        run: ./scripts/wait-for-bg-binary.sh ./bin/testing-remote-prover "Remote prover listening"
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
