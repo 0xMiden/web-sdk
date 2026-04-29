@@ -380,7 +380,7 @@ describe("pruneIrrelevantBlocks", () => {
     expect(ids).not.toContain(3);
   });
 
-  it("rejects when stateSync is undefined", async () => {
+  it("rejects when blockchainCheckpoint is undefined", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 

@@ -134,17 +134,17 @@ describe("exportStore", () => {
     const jsonStr = await exportStore(dbId);
     const parsed = JSON.parse(jsonStr);
 
-    // stateSync gets one row on populate and settings gets the clientVersion row.
+    // blockchainCheckpoint gets one row on populate and settings gets the clientVersion row.
     // Everything else should be empty.
     const db = getDatabase(dbId);
     const tableNames = db.dexie.tables.map((t) => t.name);
     const nonEmptyTables = tableNames.filter((name) => parsed[name].length > 0);
     expect(nonEmptyTables).toEqual(
-      expect.arrayContaining(["stateSync", "settings"])
+      expect.arrayContaining(["blockchainCheckpoint", "settings"])
     );
     // tables other than these two must be empty
     const otherNonEmpty = nonEmptyTables.filter(
-      (n) => n !== "stateSync" && n !== "settings"
+      (n) => n !== "blockchainCheckpoint" && n !== "settings"
     );
     expect(otherNonEmpty).toHaveLength(0);
   });
