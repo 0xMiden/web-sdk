@@ -99,6 +99,26 @@ WASM size is gated at 25 MB in the publish workflow — if `wasm-opt` ever silen
 
 Crate publishing (`miden-idxdb-store`, `miden-client-web`) goes through `.github/workflows/publish-crates-release.yml` and uses the `CARGO_REGISTRY_TOKEN` org secret.
 
+## CHANGELOG content
+
+The root `CHANGELOG.md` is read by **consumers of the SDK** — dApp authors and downstream library maintainers, not the team that ships the SDK. Before adding an entry, imagine that audience opening the file at the moment they upgrade. They want to know: what new API can I call? what behavior changed? what broke?
+
+What does NOT belong in CHANGELOG:
+
+- CI plumbing changes ("CI now uses github-hosted runners for publish", "added a chmod fix", "consolidated workflows"). Use the `no changelog` PR label.
+- Build-system or tooling changes that don't reach the published bytes ("switched lint runner", "bumped a dev dep"). Same — `no changelog` label.
+- Failed release attempts. If `alpha.1` and `alpha.2` had to be skipped before `alpha.3` shipped, the changelog entry is for `alpha.3` and describes the user-visible state. Don't write a postmortem of the misses.
+- Internal refactors that don't change the public API surface.
+
+What DOES belong:
+
+- New public APIs (with the smallest example or method shape).
+- Behavioral changes consumers can observe (e.g. "`account.storage()` now returns a `StorageView` wrapper").
+- Bug fixes that resolve a symptom downstream code might have hit.
+- Breaking changes (loud, with migration guidance).
+
+When in doubt, drop the entry and apply `no changelog`. A missing entry the reviewer can ask about is cheaper than a noisy one the consumer has to skip past.
+
 ## Gotchas worth remembering
 
 - **No yarn.** The repo migrated from yarn to pnpm. If you see a doc, comment, or script that says `yarn ...`, it's stale — fix it (or flag it).

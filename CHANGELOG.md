@@ -5,7 +5,6 @@
 ### Enhancements
 
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
-* [CHORE][ci] Validate the consolidated trusted-publishing flow end-to-end (`pnpm publish` + npm OIDC + `--provenance`) by cutting `0.15.0-alpha.3` to the `next` dist-tag, including the three Node.js native packages (`@miden-sdk/node-darwin-arm64`, `node-darwin-x64`, `node-linux-x64-gnu`) that bootstrapped at `0.15.0-alpha.0`. Earlier attempts: `alpha.1` died on a missing executable bit (fixed in `alpha.2`); `alpha.2` was rejected by npm's provenance verifier with `Unsupported GitHub Actions runner environment: "self-hosted"` because the `publish` job ran on a Warp runner. `alpha.3` moves the publish job to `ubuntu-24.04` (github-hosted), which is required for npm provenance attestations.
 
 ## 0.14.4 (TBA)
 
