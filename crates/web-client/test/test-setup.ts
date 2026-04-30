@@ -81,7 +81,7 @@ export function loadNodeSdk(): any {
 
 let _nodeTestCounter = 0;
 
-export async function createNodeMockClient(): Promise<{
+async function createNodeMockClient(): Promise<{
   client: any;
   sdk: any;
 }> {
@@ -333,7 +333,7 @@ function patchNapiPrototypes(rawSdk: any) {
   }
 }
 
-export function createNodeSdkWrapper(rawSdk: any): any {
+function createNodeSdkWrapper(rawSdk: any): any {
   patchNapiPrototypes(rawSdk);
   // Expose the StorageView JS wrapper on `sdk.*` so tests can reach it via the
   // same namespace on both platforms (browser exposes it on `window.*`).

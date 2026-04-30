@@ -600,19 +600,10 @@ test.describe("Sync Lock Timeout Race Condition", () => {
     // This test verifies that waiters (coalesced callers) are properly
     // rejected when the sync they're waiting on times out
     const result = await page.evaluate(async () => {
-      // Access the sync lock functions directly from the idxdb-store module
-      const { acquireSyncLock, releaseSyncLock, releaseSyncLockWithError } =
-        await import("@aspect-build/aspect-rsdoctor/index.js").catch(() => {
-          // Fallback: the functions may not be directly exported
-          // In this case, we test via the client API
-          return {
-            acquireSyncLock: null,
-            releaseSyncLock: null,
-            releaseSyncLockWithError: null,
-          };
-        });
-
-      // If we can't access the low-level functions, test via client API
+      // Test via the client API: an in-flight sync that holds the lock
+      // plus two coalesced waiters. If the lock implementation regresses
+      // (e.g. waiters aren't rejected on timeout), Promise.all rejects
+      // and the assertions below fail.
       const client = window.client;
 
       // Start a sync that will hold the lock

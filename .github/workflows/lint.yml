@@ -54,14 +54,40 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - run: make rust-client-ts-lint
 
+  knip:
+    name: Knip (unused code/deps)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Knip
+        run: pnpm run check:knip
+
   clippy-wasm:
     name: Clippy WASM
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     env:
       # See test.yml's build-web-client-dist-folder for rationale.
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. build.yml's build-wasm job is the designated
+      # comment-poster; we only need the dep rewrite here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust with nightly clippy
         run: |
           rustup update --no-self-update nightly
