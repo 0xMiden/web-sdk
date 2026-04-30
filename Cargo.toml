@@ -40,14 +40,22 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 # The 0.15.x API isn't on crates.io yet, so we track miden-client via
 # git+branch=next here; once miden-client publishes 0.15.0 we can switch
 # back to versioned crates.io deps.
-# TEMPORARY: pinned to upstream miden-client PR branch
-# (https://github.com/0xMiden/miden-client/pull/2091) which adds the
-# `sync_chain()` / `sync_note_transport()` methods on `Client`. Before
-# merging this PR:
-#   1. Land + release miden-client#2091,
+# TEMPORARY: pinned to a custom branch that snapshots
+# miden-client#2091 BEFORE its merge with the post-#2100 next (which
+# removes peaks from the Store trait). Web-sdk's idxdb-store still
+# implements the pre-#2100 Store API, so pointing directly at jere's
+# branch tip fails to compile (8 errors in idxdb-store: missing
+# get_current_blockchain_peaks, partial_blockchain_updates field, etc.).
+# This snapshot branch (`wiktor/syncstate-pre-2100-rebase` at e212878cb,
+# the parent of jere's merge with next) carries sync_chain/
+# sync_note_transport on top of the OLD Store trait, so web-sdk
+# compiles. Before merging this PR:
+#   1. Land + release miden-client#2091 (and migrate web-sdk's idxdb-store
+#      to the post-#2100 Store API, OR have miden-client#2091 land
+#      ALONGSIDE that migration as one rollup),
 #   2. Revert these two lines back to `branch = "next"`.
-miden-client              = { branch = "jere/syncstate-ntl-decouple-1930", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
-miden-client-sqlite-store = { branch = "jere/syncstate-ntl-decouple-1930", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client              = { branch = "wiktor/syncstate-pre-2100-rebase", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client-sqlite-store = { branch = "wiktor/syncstate-pre-2100-rebase", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
 # Miden protocol dependencies
 miden-protocol  = { default-features = false, version = "0.14" }
