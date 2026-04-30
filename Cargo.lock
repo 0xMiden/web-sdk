@@ -1585,8 +1585,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b07d0abdc07189903a3c7085fb4e0f88ae2a5ace616131e35ecb2d20c032123d"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=wiktor%2Fapply-tx-after-submit-failed#3ec08c7ad3954a7b2daae939d76cf9ba0e7eba6d"
 dependencies = [
  "anyhow",
  "async-trait",
