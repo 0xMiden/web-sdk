@@ -126,7 +126,10 @@ fi
 read -r head_owner head_repo head_ref head_sha state merged <<<"$(gh api repos/"$repo"/pulls/"$num" \
   --jq '"\(.head.repo.owner.login) \(.head.repo.name) \(.head.ref) \(.head.sha) \(.state) \(.merged)"')"
 
-if [ "$state" != "OPEN" ] && [ "$merged" != "true" ]; then
+# gh's REST API returns lowercase ("open"/"closed"); GraphQL uses
+# uppercase. Normalize before comparing.
+state_lc=$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')
+if [ "$state_lc" != "open" ] && [ "$merged" != "true" ]; then
   echo "⚠ ${repo}#${num} is ${state} (merged=${merged}). The branch may be gone."
   echo "  Continuing anyway — git resolves the head sha if it still exists."
 fi
