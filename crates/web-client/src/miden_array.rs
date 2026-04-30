@@ -191,6 +191,30 @@ macro_rules! declare_js_miden_arrays {
                 }
             }
 
+            impl $miden_type_array_name {
+                pub fn iter(&self) -> std::slice::Iter<'_, $miden_type_name> {
+                    self.0.iter()
+                }
+            }
+
+            impl IntoIterator for $miden_type_array_name {
+                type Item = $miden_type_name;
+                type IntoIter = std::vec::IntoIter<$miden_type_name>;
+
+                fn into_iter(self) -> Self::IntoIter {
+                    self.0.into_iter()
+                }
+            }
+
+            impl<'a> IntoIterator for &'a $miden_type_array_name {
+                type Item = &'a $miden_type_name;
+                type IntoIter = std::slice::Iter<'a, $miden_type_name>;
+
+                fn into_iter(self) -> Self::IntoIter {
+                    self.0.iter()
+                }
+            }
+
             impl napi::bindgen_prelude::TypeName for $miden_type_array_name {
                 fn type_name() -> &'static str {
                     concat!("Array<", stringify!($miden_type_name), ">")
