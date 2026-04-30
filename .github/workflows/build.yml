@@ -52,6 +52,15 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. This is the *one* job per workflow run that
+      # opts into posting the sticky PR comment about the patch — every
+      # other cargo-using job re-runs the action with comment=false (the
+      # default) so we keep the strict 0-or-1 comment invariant.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
+        with:
+          comment: "true"
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust toolchain
