@@ -36,14 +36,8 @@ codegen-units = 16
 # Workspace crates
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.14.0" }
 
-# TEMPORARY: pinned to upstream miden-client PR branch
-# (https://github.com/0xMiden/miden-client/pull/2059) which adds the
-# `ApplyTransactionAfterSubmitFailed` ClientError variant. Note: this
-# web-sdk PR was migrated from miden-client#2060, but #2060 stacks on
-# #2059 — the Rust variant lives on #2059. Before merging this PR:
-#   1. Land + release miden-client#2059 (and #2060),
-#   2. Revert this dep back to a crates.io version pin.
-miden-client = { branch = "wiktor/apply-tx-after-submit-failed", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+# Miden client (from crates.io)
+miden-client = { default-features = false, version = "0.14.5" }
 
 # Miden protocol dependencies
 miden-protocol = { default-features = false, version = "0.14" }
