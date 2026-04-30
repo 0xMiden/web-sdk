@@ -40,6 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. build.yml's build-wasm job is the designated
+      # comment-poster; we only need the dep rewrite here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
+
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
 
