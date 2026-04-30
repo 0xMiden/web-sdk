@@ -101,7 +101,10 @@ runs:
         # Closed without merge → loud failure. (A merged PR is acceptable —
         # it just means the linked branch may be stale; cargo will resolve
         # to the head sha which still exists.)
-        if [ "$state" != "OPEN" ] && [ "$merged" != "true" ]; then
+        # gh's REST API returns state in lowercase ("open"/"closed"), GraphQL
+        # uses uppercase. Normalize to lowercase before comparing.
+        state_lc=$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')
+        if [ "$state_lc" != "open" ] && [ "$merged" != "true" ]; then
           {
             echo "## ❌ Linked client PR is closed without merge"
             echo
