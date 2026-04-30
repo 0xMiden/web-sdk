@@ -86,8 +86,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          read -r body base_ref state <<<"$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM \
-            --jq '"\(.body // "")\t\(.base.ref)\t\(.state)"')"
+          # Extract body and metadata separately. body is multi-line
+          # arbitrary text, so it can't be packed into a `read`-friendly
+          # tab-separated row alongside other fields — `read -r` only
+          # consumes through the first newline. base_ref and state are
+          # both single-token, so they pack fine.
+          body=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUM" --jq '.body // ""')
+          IFS=$'\t' read -r base_ref state <<<"$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUM" \
+            --jq '"\(.base.ref)\t\(.state)"')"
 
           # Skip closed PRs entirely.
           if [ "$state" != "open" ] && [ "$state" != "OPEN" ]; then
@@ -110,8 +116,9 @@ jobs:
           num=$(printf '%s' "$marker" | grep -oE '[0-9]+$')
           head_sha=$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)
 
-          # Pull the upstream PR's state.
-          read -r merged merge_commit_sha <<<"$(gh api repos/$repo/pulls/$num --jq '"\(.merged)\t\(.merge_commit_sha // "")"')"
+          # Pull the upstream PR's state. Tab-separated, IFS=$'\t' for
+          # consistency even though neither field can contain whitespace.
+          IFS=$'\t' read -r merged merge_commit_sha <<<"$(gh api "repos/$repo/pulls/$num" --jq '"\(.merged)\t\(.merge_commit_sha // "")"')"
 
           set_status() {
             local s="$1" desc="$2"
