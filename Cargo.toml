@@ -40,15 +40,8 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 # The 0.15.x API isn't on crates.io yet, so we track miden-client via
 # git+branch=next here; once miden-client publishes 0.15.0 we can switch
 # back to versioned crates.io deps.
-# TEMPORARY: pinned to upstream miden-client PR branch
-# (https://github.com/0xMiden/miden-client/pull/1835) — opt-in passkey-based
-# keystore (Rust side). The branch was just merged with current `next` so it
-# now uses miden-protocol="0.14" (matching everything else). Before merging
-# this PR:
-#   1. Land + release miden-client#1835,
-#   2. Revert these two lines back to `branch = "next"`.
-miden-client              = { branch = "wiktor-storekeys", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
-miden-client-sqlite-store = { branch = "wiktor-storekeys", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
 # Miden protocol dependencies
 miden-protocol  = { default-features = false, version = "0.14" }
