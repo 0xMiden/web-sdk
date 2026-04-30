@@ -99,8 +99,17 @@
       // `./crates/miden_client_web` is the wasm-bindgen module emitted
       // into dist/ by the rollup rust plugin; the .d.ts files in
       // js/types/ reference it but it doesn't exist until after build.
-      // Knip can't follow either of these dynamic targets.
-      "ignoreUnresolved": ["./index.js", "./crates/miden_client_web"],
+      // `./passkey-keystore.js` is the rolled-up passkey module emitted
+      // into dist/ by a dedicated rollup config in rollup.config.js; the
+      // dynamic import inside test/passkey-keystore.test.ts:100's
+      // page.evaluate(...) resolves it from http://localhost:8080/, not
+      // from the test file's path.
+      // Knip can't follow any of these dynamic targets.
+      "ignoreUnresolved": [
+        "./index.js",
+        "./crates/miden_client_web",
+        "./passkey-keystore.js",
+      ],
     },
     "crates/idxdb-store/src": {
       // Each `ts/*.ts` is independently tsc-compiled into `js/` and
