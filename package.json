@@ -3,20 +3,42 @@
   "private": true,
   "scripts": {
     "check:sync:react-sdk": "node scripts/check-react-sdk-sync.js",
+    "check:knip": "knip",
     "build:web-client": "pnpm --filter @miden-sdk/miden-sdk run build",
     "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
-    "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage"
+    "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
+    "prepare": "lefthook install || true",
+    "check:publint": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --workspace-concurrency=1 exec publint",
+    "check:attw": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --workspace-concurrency=1 exec attw --pack .",
+    "check:publish": "pnpm run build:web-client && pnpm run build:react-sdk && pnpm run build:vite-plugin && pnpm run check:publint && pnpm run check:attw"
   },
   "dependencies": {
     "prettier": "^3.8.1"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.25.0",
+    "@arethetypeswrong/cli": "^0.18.2",
     "@typescript-eslint/parser": "^8.25.0",
     "eslint": "^9.30.1",
-    "typescript": "^5.5.4"
+    "eslint-config-prettier": "^10.1.8",
+    "knip": "^6.7.0",
+    "lefthook": "^1.13.6",
+    "lint-staged": "^16.4.0",
+    "publint": "^0.3.18",
+    "typescript": "^5.5.4",
+    "vitest": "^3.0.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css}": [
+      "prettier --write"
+    ]
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

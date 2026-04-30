@@ -1721,7 +1721,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=next#dab6cf7b3549b57515aa305e64d3d9561bf8e5ca"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=jere%2Fsyncstate-ntl-decouple-1930#f0d1b94c796dff7b75c55d0647f895aa25dd28ea"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1753,13 +1753,12 @@ dependencies = [
  "tonic-web-wasm-client",
  "tracing",
  "uuid",
- "web-sys",
 ]
 
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=next#dab6cf7b3549b57515aa305e64d3d9561bf8e5ca"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=jere%2Fsyncstate-ntl-decouple-1930#f0d1b94c796dff7b75c55d0647f895aa25dd28ea"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -42,7 +42,7 @@ jobs:
     # warm target/ directory, sccache gives finer per-crate caching that
     # survives even when target/ is partially invalidated.
     name: Build Web Client
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
       # action sets RUSTC_WRAPPER=sccache as a step output on success — we
@@ -53,6 +53,8 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
         run: |
           rustup update --no-self-update
@@ -104,7 +106,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y binaryen
 
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
           shared-key: rust-wasm
           prefix-key: ${{ env.RUST_CACHE_KEY }}
@@ -114,7 +116,7 @@ jobs:
           # the integration branch where most pre-release churn happens —
           # both worth caching independently so PRs against either don't
           # cold-build.
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -182,7 +184,7 @@ jobs:
   # shipped artifact is always exercised before it can land on main.
   verify-release-build:
     name: Verify release WASM build
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     if: github.event_name == 'push'
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
@@ -194,6 +196,8 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
         run: |
           rustup update --no-self-update
@@ -240,7 +244,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y binaryen
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
           shared-key: rust-wasm-release
           prefix-key: ${{ env.RUST_CACHE_KEY }}
@@ -250,7 +254,7 @@ jobs:
           # the integration branch where most pre-release churn happens —
           # both worth caching independently so PRs against either don't
           # cold-build.
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') }}
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
@@ -458,12 +462,30 @@ jobs:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
 
-  # NOTE: web-client `js/__tests__/` (PR #10 coverage gate) was dropped on
-  # the next branch — the overlay from miden-client `next` (incl. #2062's
-  # proveTransaction-by-reference change and #1908's Node.js loader) shifted
-  # the JS API enough that those vitest specs no longer match. Revisit once
-  # the next-branch JS surface stabilizes; for now the Playwright integration
-  # tests + the new Node.js test job cover this code path.
+  test-web-client-unit:
+    name: web-client unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Run unit tests with coverage
+        run: make test-web-client-unit
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-web-client
+          path: crates/web-client/coverage
 
   test-react-sdk-integration:
     name: React SDK integration tests
@@ -520,13 +542,15 @@ jobs:
   # Build test infrastructure from miden-client repo
   build-node-builder:
     name: Build node-builder
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
         with:
           repository: 0xMiden/miden-client
           ref: ${{ env.MIDEN_CLIENT_REF }}
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Restore node-builder binary
         id: cache-node-builder
         uses: actions/cache@v4
@@ -547,7 +571,7 @@ jobs:
 
   build-remote-prover:
     name: Build remote-prover
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     # Remote prover tests are slow (~14 min) and rarely affected by typical PR
     # changes. Skip on PRs unless explicitly opted in via the
     # 'run-remote-prover' label; always run on push to main/next.
@@ -560,6 +584,8 @@ jobs:
         with:
           repository: 0xMiden/miden-client
           ref: ${{ env.MIDEN_CLIENT_REF }}
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Restore remote-prover binary
         id: cache-remote-prover
         uses: actions/cache@v4
@@ -585,12 +611,14 @@ jobs:
     # process. Mirrors the equivalent job that lived on miden-client `next`
     # before the split.
     name: Web client tests (Node.js)
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [build-node-builder]
     env:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install Rust
         run: rustup update --no-self-update
       - name: Configure sccache cache backend (v2)
@@ -613,11 +641,11 @@ jobs:
             echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
           fi
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
           shared-key: rust-nodejs
           prefix-key: ${{ env.RUST_CACHE_KEY }}
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') }}
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
@@ -637,11 +665,14 @@ jobs:
           name: node-builder-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # `sleep 4 && pgrep` only proves the process is alive, not that
+        # tonic's gRPC dispatcher is serving. The kernel completes TCP
+        # handshakes the moment TcpListener::bind() runs, but the actual
+        # `serve_with_incoming(...)` call happens seconds later — so a
+        # /dev/tcp probe would also race. The real signal is "the server
+        # responded with ANY HTTP status to a real POST" — see
+        # scripts/wait-for-grpc.sh.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -674,7 +705,7 @@ jobs:
     # slowest shards (2 min vs 41 min); see the playwright config comment
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [build-web-client-dist-folder, build-node-builder]
     strategy:
       fail-fast: false
@@ -686,6 +717,8 @@ jobs:
           - ci-shard-4-compile-and-misc
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Fetch dist folder
         uses: actions/download-artifact@v4
         with:
@@ -711,11 +744,14 @@ jobs:
           name: node-builder-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # `sleep 4 && pgrep` only proves the process is alive, not that
+        # tonic's gRPC dispatcher is serving. The kernel completes TCP
+        # handshakes the moment TcpListener::bind() runs, but the actual
+        # `serve_with_incoming(...)` call happens seconds later — so a
+        # /dev/tcp probe would also race. The real signal is "the server
+        # responded with ANY HTTP status to a real POST" — see
+        # scripts/wait-for-grpc.sh.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -738,7 +774,7 @@ jobs:
 
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     needs: [build-web-client-dist-folder, build-node-builder, build-remote-prover]
     # Same opt-in rule as build-remote-prover. The job needs the prover binary,
     # so it can only run when build-remote-prover ran too.
@@ -747,6 +783,8 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
     steps:
       - uses: actions/checkout@v6
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
@@ -778,17 +816,18 @@ jobs:
           name: remote-prover-binary
           path: ./bin
       - name: Start test node
-        run: |
-          chmod +x ./bin/testing-node-builder
-          RUST_LOG=none ./bin/testing-node-builder &
-          sleep 4
-          pgrep -f testing-node-builder || (echo "Failed to start node" && exit 1)
+        # `sleep 4 && pgrep` only proves the process is alive, not that
+        # tonic's gRPC dispatcher is serving. The kernel completes TCP
+        # handshakes the moment TcpListener::bind() runs, but the actual
+        # `serve_with_incoming(...)` call happens seconds later — so a
+        # /dev/tcp probe would also race. The real signal is "the server
+        # responded with ANY HTTP status to a real POST" — see
+        # scripts/wait-for-grpc.sh.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
       - name: Start prover
-        run: |
-          chmod +x ./bin/testing-remote-prover
-          RUST_LOG=none ./bin/testing-remote-prover &
-          sleep 4
-          pgrep -f testing-remote-prover || (echo "Failed to start prover" && exit 1)
+        # Same gRPC probe as the node-builder above; remote-prover's
+        # `serve_with_incoming` window has the same race.
+        run: ./scripts/wait-for-grpc.sh ./bin/testing-remote-prover 50051
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
