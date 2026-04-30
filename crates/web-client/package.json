@@ -1,23 +1,45 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.14.5",
+  "version": "0.15.0-alpha.4",
   "description": "Miden Wasm SDK",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xMiden/web-sdk",
+    "directory": "crates/web-client"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
   "collaborators": [
     "Miden"
   ],
   "type": "module",
-  "main": "./dist/index.js",
-  "browser": "./dist/index.js",
+  "main": "./dist/eager.js",
+  "browser": "./dist/eager.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "browser": "./dist/index.js",
-      "node": "./js/node-index.js",
-      "default": "./dist/index.js"
-    }
+      "node": {
+        "types": "./dist/index.d.ts",
+        "default": "./js/node-index.js"
+      },
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/eager.js"
+      }
+    },
+    "./lazy": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "lazy",
     "js/node-index.js",
     "js/node",
     "js/client.js",
@@ -28,7 +50,7 @@
   ],
   "scripts": {
     "build-rust-client-js": "pnpm --filter web_store run build",
-    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js",
+    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js && node ./scripts/post-build.js",
     "build-dev": "pnpm install && MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",
@@ -45,6 +67,8 @@
     "test:remote_prover:testnet": "cross-env TEST_MIDEN_NETWORK=testnet TEST_MIDEN_PROVER_URL=testnet pnpm exec playwright test -g 'with remote prover'",
     "test:clean": "pnpm exec playwright test",
     "test:clean:opt": "pnpm exec playwright test",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typedoc": "typedoc"
   },
   "devDependencies": {
@@ -52,25 +76,20 @@
     "@rollup/plugin-commonjs": "^25.0.7",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@types/node": "^24.9.2",
+    "@vitest/coverage-v8": "^3.0.0",
     "@wasm-tool/rollup-plugin-rust": "^3.0.3",
     "binaryen": "^129.0.0",
-    "chai": "^5.1.1",
     "cpr": "^3.0.1",
     "cross-env": "^7.0.3",
-    "esm": "^3.2.25",
-    "http-server": "^14.1.1",
-    "mocha": "^10.7.3",
-    "puppeteer": "^23.1.0",
     "rimraf": "^6.0.1",
     "rollup": "^4.59.0",
     "rollup-plugin-copy": "^3.5.0",
-    "ts-node": "^10.9.2",
     "typedoc": "^0.28.1",
     "typedoc-plugin-markdown": "^4.8.1",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^3.0.0"
   },
   "dependencies": {
-    "@rollup/plugin-typescript": "^12.3.0",
     "dexie": "^4.0.1",
     "glob": "^11.0.0"
   }
