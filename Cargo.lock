@@ -1721,7 +1721,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=next#dab6cf7b3549b57515aa305e64d3d9561bf8e5ca"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=jmunoz-decouple-statesync-from-store#1fddc93fc47536d8d2c5e4c96848878df2c42db3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1753,13 +1753,12 @@ dependencies = [
  "tonic-web-wasm-client",
  "tracing",
  "uuid",
- "web-sys",
 ]
 
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.15.0"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=next#dab6cf7b3549b57515aa305e64d3d9561bf8e5ca"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=jmunoz-decouple-statesync-from-store#1fddc93fc47536d8d2c5e4c96848878df2c42db3"
 dependencies = [
  "anyhow",
  "async-trait",
