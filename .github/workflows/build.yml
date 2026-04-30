@@ -47,6 +47,12 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
     runs-on: warp-ubuntu-latest-x64-8x
+    permissions:
+      contents: read
+      # Required by .github/actions/inject-linked-client-pr's sticky
+      # comment step. Scoped to this job (the only one that posts) so
+      # the rest of the workflow keeps the read-only default.
+      pull-requests: write
     env:
       # See test.yml's build-web-client-dist-folder for rationale.
       SCCACHE_GHA_ENABLED: "true"
