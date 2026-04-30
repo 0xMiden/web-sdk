@@ -33,6 +33,12 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # The gate posts a custom commit status named `linked-client-pr-ready`
+  # via POST /repos/.../statuses/$sha. That endpoint requires `statuses: write`,
+  # NOT `checks: write` (which is for the check-runs API on a different
+  # endpoint). Without this scope the status POSTs silently 403 and the
+  # readiness verdict never lands on the commit.
+  statuses: write
   checks: write
 
 concurrency:
@@ -93,10 +99,10 @@ jobs:
           marker=$(printf '%s' "$body" | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
           if [ -z "$marker" ]; then
             echo "No Client PR marker on PR #$PR_NUM — check passes."
-            gh api repos/$GITHUB_REPOSITORY/statuses/$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha) \
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)" \
               -X POST -f state=success \
               -f context="linked-client-pr-ready" \
-              -f description="No linked client PR — nothing to gate." >/dev/null
+              -f description="No linked client PR — nothing to gate."
             exit 0
           fi
 
@@ -109,11 +115,13 @@ jobs:
 
           set_status() {
             local s="$1" desc="$2"
+            # No `>/dev/null` — let the gh API failure surface (e.g. on
+            # missing `statuses: write` perms) instead of swallowing the 403.
             gh api "repos/$GITHUB_REPOSITORY/statuses/$head_sha" -X POST \
               -f state="$s" \
               -f context="linked-client-pr-ready" \
               -f description="$desc" \
-              -f target_url="https://github.com/${repo}/pull/${num}" >/dev/null
+              -f target_url="https://github.com/${repo}/pull/${num}"
           }
 
           # Step 1: linked PR must be merged.
