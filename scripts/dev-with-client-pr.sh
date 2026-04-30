@@ -100,7 +100,7 @@ fi
 arg="${1:-}"
 if [ -z "$arg" ]; then
   body=$(gh pr view --json body -q .body 2>/dev/null || true)
-  marker=$(printf '%s' "$body" | grep -ioE 'Client PR:\s*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
+  marker=$(printf '%s' "$body" | grep -ioE 'Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
   if [ -z "$marker" ]; then
     echo "Usage: $0 [<pr-num> | <owner/repo>#<pr-num> | --clear]"
     echo
