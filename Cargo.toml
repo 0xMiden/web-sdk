@@ -42,9 +42,8 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 # back to versioned crates.io deps.
 # TEMPORARY: pinned to upstream miden-client PR branch
 # (https://github.com/0xMiden/miden-client/pull/2109) — the batch builder
-# implementation. Before merging this PR:
-#   1. Land + release miden-client#2109,
-#   2. Revert these two lines back to `branch = "next"`.
+# implementation. Do not merge this PR until #2109 has landed + been
+# released, then revert these two lines back to `branch = "next"`.
 miden-client              = { branch = "jmunoz-submit-proven-batch-p2", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 miden-client-sqlite-store = { branch = "jmunoz-submit-proven-batch-p2", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
