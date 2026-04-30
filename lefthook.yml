@@ -1,0 +1,35 @@
+# Lefthook config — local dev hygiene hooks.
+# Docs: https://lefthook.dev/configuration/
+#
+# Install: `pnpm install` triggers `prepare` → `lefthook install`.
+# Manual:  `pnpm exec lefthook install`
+
+pre-commit:
+  commands:
+    # Guard against committing the auto-injected linked-client-pr block.
+    # See scripts/dev-with-client-pr.sh / .github/actions/inject-linked-client-pr.
+    no-linked-client-pr-block:
+      glob: "Cargo.toml"
+      run: |
+        if grep -qF ">>>>>>> linked-client-pr" Cargo.toml; then
+          cat <<MSG >&2
+        ❌ Cargo.toml has an auto-injected linked-client-pr block.
+
+        That block is meant for local-dev / CI only — it pins miden-client to a
+        feature branch on github, which would lock the published web-sdk
+        artifact against an unreleased upstream commit if it landed on main/next.
+
+        Clear it before committing:
+          scripts/dev-with-client-pr.sh --clear
+
+        If you need the patch state in CI, add 'Client PR: #<number>' to the PR
+        description instead — the workflow will inject the same block at run-time
+        without requiring it to be committed.
+        MSG
+          exit 1
+        fi
+    lint-staged:
+      run: pnpm exec lint-staged
+      stage_fixed: true
+
+# commit-msg: future commitlint integration goes here

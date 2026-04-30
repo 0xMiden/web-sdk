@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { expect } from "chai";
+import { expect } from "@playwright/test";
 import { TransactionProver } from "../dist";
 import test from "./playwright.global.setup";
 import { Page } from "@playwright/test";
@@ -942,7 +942,7 @@ export const clearStore = async (page: Page) => {
 // Misc test utils
 
 export const isValidAddress = (address: string) => {
-  expect(address.startsWith("0x")).to.be.true;
+  expect(address.startsWith("0x")).toBe(true);
 };
 
 // Constants
