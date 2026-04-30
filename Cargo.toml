@@ -40,8 +40,13 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 # The 0.15.x API isn't on crates.io yet, so we track miden-client via
 # git+branch=next here; once miden-client publishes 0.15.0 we can switch
 # back to versioned crates.io deps.
-miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
-miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+# TEMPORARY: pinned to upstream miden-client PR branch
+# (https://github.com/0xMiden/miden-client/pull/2109) — the batch builder
+# implementation. Before merging this PR:
+#   1. Land + release miden-client#2109,
+#   2. Revert these two lines back to `branch = "next"`.
+miden-client              = { branch = "jmunoz-submit-proven-batch-p2", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client-sqlite-store = { branch = "jmunoz-submit-proven-batch-p2", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
 # Miden protocol dependencies
 miden-protocol  = { default-features = false, version = "0.14" }
