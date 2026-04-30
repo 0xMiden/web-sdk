@@ -238,7 +238,12 @@ runs:
     #     This keeps the invariant "at most one linked-client-pr comment
     #     on any PR": if the marker is added then removed, the stale
     #     comment doesn't linger.
+    # The comment step is decorative — if it fails (missing pull-requests:
+    # write permission, transient API blip, etc.) we don't want to abort
+    # the build. Surface the failure as a notice and continue. The actual
+    # patch state is already in the runner's Cargo.toml at this point.
     - if: inputs.comment == 'true' && steps.parse.outputs.patched == 'true'
+      continue-on-error: true
       uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
       with:
         header: linked-client-pr
@@ -260,6 +265,7 @@ runs:
           ```
 
     - if: inputs.comment == 'true' && steps.parse.outputs.patched != 'true'
+      continue-on-error: true
       uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
       with:
         header: linked-client-pr
