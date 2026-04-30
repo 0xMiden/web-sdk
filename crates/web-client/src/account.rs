@@ -21,17 +21,7 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "failed to get accounts"))?;
 
-<<<<<<< ours
-            Ok(result
-                .into_iter()
-                .map(|(header, _)| header.into())
-                .collect())
-        } else {
-            Err(JsValue::from_str("Client not initialized"))
-        }
-=======
         Ok(result.into_iter().map(|(header, _)| header.into()).collect())
->>>>>>> theirs
     }
 
     /// Retrieves the full account data for the given account ID, returning `null` if not found.

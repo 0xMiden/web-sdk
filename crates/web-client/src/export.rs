@@ -61,20 +61,6 @@ impl WebClient {
                 JsValue::from_str(&format!("Account with ID {} not found", account_id.to_string()))
             })?;
 
-<<<<<<< ours
-            let key_pairs = keystore
-                .get_keys_for_account(account_id.as_native())
-                .await
-                .map_err(|err| {
-                    js_error_with_context(
-                        err,
-                        &format!(
-                            "failed to get keys for account: {}",
-                            &account_id.to_string()
-                        ),
-                    )
-                })?;
-=======
         let key_pairs =
             keystore.get_keys_for_account(account_id.as_native()).await.map_err(|err| {
                 js_error_with_context(
@@ -82,7 +68,6 @@ impl WebClient {
                     &format!("failed to get keys for account: {}", &account_id.to_string()),
                 )
             })?;
->>>>>>> theirs
 
         let account_data = NativeAccountFile::new(account, key_pairs);
 

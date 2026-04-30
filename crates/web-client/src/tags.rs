@@ -44,27 +44,6 @@ impl WebClient {
     }
 
     #[wasm_bindgen(js_name = "listTags")]
-<<<<<<< ours
-    pub async fn list_tags(&mut self) -> Result<JsValue, JsValue> {
-        if let Some(client) = self.get_mut_inner() {
-            let tags: Vec<NoteTag> = client
-                .get_note_tags()
-                .await
-                .map_err(|err| js_error_with_context(err, "failed to get note tags"))?
-                .into_iter()
-                .map(|tag_record| tag_record.tag)
-                .collect();
-
-            // call toString() on each tag
-            let result = tags
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>();
-            serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-        } else {
-            Err(JsValue::from_str("Client not initialized"))
-        }
-=======
     pub async fn list_tags(&self) -> Result<JsValue, JsValue> {
         let client = self.get_inner()?;
         let tags: Vec<NoteTag> = client
@@ -78,6 +57,5 @@ impl WebClient {
         // call toString() on each tag
         let result = tags.iter().map(ToString::to_string).collect::<Vec<String>>();
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
->>>>>>> theirs
     }
 }
