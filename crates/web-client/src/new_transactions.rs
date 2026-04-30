@@ -301,7 +301,6 @@ impl WebClient {
         account_id: &AccountId,
         tx_script: &TransactionScript,
         advice_inputs: &AdviceInputs,
-<<<<<<< ours
         foreign_accounts: ForeignAccountArray,
     ) -> Result<FeltArray, JsErr> {
         let mut guard = self.get_mut_inner().await;
@@ -326,29 +325,6 @@ impl WebClient {
             )
             .await
             .map_err(|err| js_error_with_context(err, "failed to execute program"))?;
-=======
-        foreign_accounts: &ForeignAccountArray,
-    ) -> Result<FeltArray, JsValue> {
-        if let Some(client) = self.get_mut_inner() {
-            let foreign_accounts_map: BTreeMap<NativeAccountId, NativeForeignAccount> =
-                foreign_accounts
-                    .into_iter()
-                    .map(|a| {
-                        let fa: NativeForeignAccount = a.clone().into();
-                        (fa.account_id(), fa)
-                    })
-                    .collect();
-
-            let result = client
-                .execute_program(
-                    account_id.into(),
-                    tx_script.into(),
-                    advice_inputs.into(),
-                    foreign_accounts_map,
-                )
-                .await
-                .map_err(|err| js_error_with_context(err, "failed to execute program"))?;
->>>>>>> theirs
 
         let felt_vec: Vec<Felt> = result.iter().map(|f| Felt::from(*f)).collect();
         Ok(felt_vec.into())

@@ -126,15 +126,9 @@ impl TransactionRequestBuilder {
     pub fn with_foreign_accounts(&mut self, foreign_accounts: ForeignAccountArray) -> Self {
         let items: Vec<ForeignAccount> = foreign_accounts.into();
         let native_foreign_accounts: Vec<NativeForeignAccount> =
-<<<<<<< ours
             items.into_iter().map(Into::into).collect();
         self.0 = self.0.clone().foreign_accounts(native_foreign_accounts);
         self.clone()
-=======
-            foreign_accounts.iter().map(|account| account.clone().into()).collect();
-        self.0 = self.0.foreign_accounts(native_foreign_accounts);
-        self
->>>>>>> theirs
     }
 
     /// Adds a transaction script argument.

@@ -61,16 +61,9 @@ impl From<&Felt> for NativeFelt {
 // CONVERSIONS
 // ================================================================================================
 
-<<<<<<< ours
 /// Converts a `FeltArray` reference to a Vec of native Felt values.
 pub(crate) fn felt_array_to_native_vec(felt_array: &FeltArray) -> Vec<NativeFelt> {
-    Vec::from(felt_array).into_iter().map(Into::into).collect()
-=======
-impl From<&FeltArray> for Vec<NativeFelt> {
-    fn from(felt_array: &FeltArray) -> Self {
-        felt_array.iter().map(Into::into).collect()
-    }
->>>>>>> theirs
+    felt_array.iter().map(Into::into).collect()
 }
 
 impl_napi_from_value!(Felt);
