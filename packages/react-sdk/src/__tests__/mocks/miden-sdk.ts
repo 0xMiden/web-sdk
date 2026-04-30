@@ -76,7 +76,7 @@ export const createMockNote = (id: string = "0xnote1") => ({
   free: vi.fn(),
 });
 
-export const createMockOutputNote = (note = createMockNote()) => ({
+const createMockOutputNote = (note = createMockNote()) => ({
   intoFull: vi.fn(() => note),
 });
 
@@ -161,7 +161,7 @@ export const createMockTransactionId = (id: string = "0xtx123") => ({
 });
 
 // Mock TransactionRecord
-export const createMockTransactionRecord = (
+const createMockTransactionRecord = (
   status: "committed" | "pending" | "discarded" = "committed"
 ) => ({
   id: vi.fn(() => createMockTransactionId()),
@@ -183,120 +183,6 @@ export const createMockTransactionRequest = () => ({
   [Symbol.dispose]: vi.fn(),
 });
 
-// Mock NoteFilter
-export const MockNoteFilter = vi.fn().mockImplementation(() => ({
-  free: vi.fn(),
-}));
-
-// Mock NoteFilterTypes enum
-export const MockNoteFilterTypes = {
-  All: 0,
-  Consumed: 1,
-  Committed: 2,
-  Expected: 3,
-  Processing: 4,
-  List: 5,
-  Unique: 6,
-  Nullifiers: 7,
-  Unverified: 8,
-};
-
-// Mock NoteType enum
-export const MockNoteType = {
-  Private: 2,
-  Public: 1,
-};
-
-export const MockNote = {
-  createP2IDNote: vi.fn(
-    (
-      sender: ReturnType<typeof createMockAccountId>,
-      receiver: ReturnType<typeof createMockAccountId>,
-      assets: unknown,
-      noteType: number,
-      attachment: unknown
-    ) => ({
-      id: vi.fn(() => ({ toString: () => "0xnote" })),
-      sender,
-      receiver,
-      assets,
-      noteType,
-      attachment,
-    })
-  ),
-};
-
-export const MockNoteAssets = class NoteAssets {
-  assets: unknown[];
-  constructor(assets: unknown[]) {
-    this.assets = assets;
-  }
-};
-
-export const MockFungibleAsset = class FungibleAsset {
-  faucetId: ReturnType<typeof createMockAccountId>;
-  amount: bigint;
-  constructor(
-    faucetId: ReturnType<typeof createMockAccountId>,
-    amount: bigint
-  ) {
-    this.faucetId = faucetId;
-    this.amount = amount;
-  }
-};
-
-export const MockNoteAttachment = class NoteAttachment {};
-
-export const MockNoteArray = class NoteArray {
-  notes: unknown[];
-  constructor(notes?: unknown[]) {
-    this.notes = notes ?? [];
-  }
-  push(note: unknown) {
-    this.notes.push(note);
-  }
-};
-
-export const MockNoteAndArgs = class NoteAndArgs {
-  note: unknown;
-  args: unknown;
-  constructor(note: unknown, args: unknown) {
-    this.note = note;
-    this.args = args;
-  }
-};
-
-export const MockNoteAndArgsArray = class NoteAndArgsArray {
-  notes: unknown[];
-  constructor(notes: unknown[]) {
-    this.notes = notes;
-  }
-};
-
-export const MockTransactionRequestBuilder = class TransactionRequestBuilder {
-  withOwnOutputNotes = vi.fn(() => this);
-  withInputNotes = vi.fn(() => this);
-  build = vi.fn(() => ({}));
-};
-
-// Mock NoteId static methods
-export const MockNoteId = {
-  fromHex: vi.fn((hex: string) => ({ toString: () => hex })),
-};
-
-// Mock AccountStorageMode
-export const MockAccountStorageMode = {
-  private: vi.fn(() => ({ type: "private" })),
-  public: vi.fn(() => ({ type: "public" })),
-  network: vi.fn(() => ({ type: "network" })),
-};
-
-// Mock AccountId static methods
-export const MockAccountId = {
-  fromHex: vi.fn((hex: string) => createMockAccountId(hex)),
-  fromBech32: vi.fn((bech32: string) => createMockAccountId(bech32)),
-};
-
 // Mock FeltArray
 export const createMockFeltArray = (length: number = 16) => ({
   length: vi.fn(() => length),
@@ -304,27 +190,6 @@ export const createMockFeltArray = (length: number = 16) => ({
     asInt: vi.fn(() => BigInt(i)),
   })),
 });
-
-// Mock AdviceInputs
-export const MockAdviceInputs = class AdviceInputs {};
-
-// Mock ForeignAccount
-export const MockForeignAccount = Object.assign(class ForeignAccount {}, {
-  public: vi.fn(
-    (_id: unknown, _storage: unknown) => new (class ForeignAccount {})()
-  ),
-});
-
-// Mock ForeignAccountArray
-export const MockForeignAccountArray = class ForeignAccountArray {
-  accounts: unknown[];
-  constructor(accounts: unknown[] = []) {
-    this.accounts = accounts;
-  }
-};
-
-// Mock AccountStorageRequirements
-export const MockAccountStorageRequirements = class AccountStorageRequirements {};
 
 // Create a mock WebClient
 export const createMockWebClient = (
@@ -406,7 +271,7 @@ export const createMockWebClient = (
   return { ...defaultClient, ...overrides };
 };
 
-export type MockWebClientType = {
+type MockWebClientType = {
   createClient: ReturnType<typeof vi.fn>;
   getAccounts: ReturnType<typeof vi.fn>;
   getAccount: ReturnType<typeof vi.fn>;
@@ -440,66 +305,4 @@ export type MockWebClientType = {
   setSignCb: ReturnType<typeof vi.fn>;
   executeProgram: ReturnType<typeof vi.fn>;
   free: ReturnType<typeof vi.fn>;
-};
-
-// Factory to create mock SDK module
-export const createMockSdkModule = (
-  clientOverrides: Partial<MockWebClientType> = {}
-) => {
-  const mockClient = createMockWebClient(clientOverrides);
-
-  const WebClientMock = Object.assign(
-    vi.fn().mockImplementation(() => mockClient),
-    {
-      createClient: vi.fn().mockResolvedValue(mockClient),
-      createClientWithExternalKeystore: vi.fn().mockResolvedValue(mockClient),
-    }
-  );
-
-  return {
-    WebClient: WebClientMock,
-    WasmWebClient: WebClientMock,
-    AccountId: MockAccountId,
-    Address: {
-      fromBech32: vi.fn((bech32: string) => ({
-        accountId: vi.fn(() => createMockAccountId(bech32)),
-        toString: vi.fn(() => bech32),
-      })),
-      fromAccountId: vi.fn(
-        (accountId: ReturnType<typeof createMockAccountId>) => ({
-          accountId: vi.fn(() => accountId),
-          toString: vi.fn(() => accountId.toString()),
-        })
-      ),
-    },
-    AccountStorageMode: MockAccountStorageMode,
-    NoteType: MockNoteType,
-    Note: MockNote,
-    NoteAssets: MockNoteAssets,
-    FungibleAsset: MockFungibleAsset,
-    NoteAttachment: MockNoteAttachment,
-    NoteArray: MockNoteArray,
-    NoteAndArgs: MockNoteAndArgs,
-    NoteAndArgsArray: MockNoteAndArgsArray,
-    TransactionRequestBuilder: MockTransactionRequestBuilder,
-    TransactionFilter: {
-      all: vi.fn(() => ({})),
-      uncommitted: vi.fn(() => ({})),
-      ids: vi.fn((ids: unknown) => ({ ids })),
-    },
-    AdviceInputs: MockAdviceInputs,
-    ForeignAccount: MockForeignAccount,
-    ForeignAccountArray: MockForeignAccountArray,
-    AccountStorageRequirements: MockAccountStorageRequirements,
-    AccountFile: Object.assign(
-      vi.fn().mockImplementation(() => createMockAccountFile()),
-      {
-        deserialize: vi.fn(() => createMockAccountFile()),
-      }
-    ),
-    NoteId: MockNoteId,
-    NoteFilter: MockNoteFilter,
-    NoteFilterTypes: MockNoteFilterTypes,
-    __mockClient: mockClient, // Expose for test assertions
-  };
 };
