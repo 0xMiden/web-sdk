@@ -139,6 +139,38 @@ When in doubt, drop the entry and apply `no changelog`. A missing entry the revi
 
 PRs that touch the WASM/JS boundary often need a synchronized PR in miden-client — bump the workspace dep and verify the integration tests still pass.
 
+### Linking a web-sdk PR to an in-flight miden-client PR
+
+When a web-sdk PR depends on Rust changes that haven't been released yet (i.e. the upstream PR on miden-client is still open), add a marker line to the web-sdk PR description:
+
+```
+Client PR: #2080
+```
+or, for forks / cross-repo,
+```
+Client PR: 0xMiden/miden-client#2080
+```
+
+CI picks up the marker via `.github/actions/inject-linked-client-pr`, appends a `[patch]` block to `Cargo.toml` (runner-local — never committed) pointing the workspace `miden-client` dep at the linked PR's head, refreshes `Cargo.lock`, and posts a sticky comment on the web-sdk PR summarizing what was patched. There is at most one such comment per PR (the action deletes it if the marker is later removed).
+
+Local-dev parity:
+
+```bash
+# Apply the same patch to your working tree (reads the marker from the current branch's PR body):
+scripts/dev-with-client-pr.sh
+
+# Or pass an explicit number / cross-repo target:
+scripts/dev-with-client-pr.sh 2080
+scripts/dev-with-client-pr.sh koookxbt/miden-client#1965
+
+# Strip the patch before committing:
+scripts/dev-with-client-pr.sh --clear
+```
+
+The script writes a marker-wrapped `[patch]` block at the bottom of `Cargo.toml`. A pre-commit hook (`lefthook.yml`) blocks any commit while the markers are present, so you can't ship the local override by accident.
+
+**Mergeability gate.** A separate workflow (`.github/workflows/check-linked-client-pr.yml`) keeps a `linked-client-pr-ready` check on the PR. It stays *pending* while the linked client PR isn't merged-and-reachable from web-sdk's target branch's canonical refs (miden-client `next` for `next`-targeted PRs, or the latest miden-client release tag for `main`-targeted PRs). It re-evaluates every 15 minutes, so the check goes green automatically once upstream catches up — no need to push to the PR. Configure branch protection to require this check before merge.
+
 ## Contributing checklist
 
 1. `make lint` clean.
