@@ -332,13 +332,7 @@ The publish workflow gates the WASM artifact with a 25 MB upper-bound check — 
 
 ## Contributing
 
-We welcome PRs. Before opening one:
-
-1. Read [CLAUDE.md](CLAUDE.md) for repo-specific conventions and tooling notes.
-2. Run `make lint test` locally — CI runs the same suite, but local feedback is faster.
-3. For changes that touch the public API surface (hooks, WASM bindings, plugin options), include or update the type tests in `crates/web-client/scripts/check-*-types.js`.
-
-The upstream Rust SDK lives at [`0xMiden/miden-client`](https://github.com/0xMiden/miden-client); changes that touch shared types or the gRPC schema usually need a coordinated PR there first.
+See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/miden-client` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
 
 ---
 
