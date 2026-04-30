@@ -37,7 +37,7 @@ codegen-units = 16
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.14.0" }
 
 # Miden client (from crates.io)
-miden-client = { default-features = false, version = "0.14.0" }
+miden-client = { default-features = false, version = "0.14.5" }
 
 # Miden protocol dependencies
 miden-protocol = { default-features = false, version = "0.14" }

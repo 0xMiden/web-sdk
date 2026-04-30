@@ -1,4 +1,4 @@
-import { expect } from "chai";
+import { expect } from "@playwright/test";
 import test from "./playwright.global.setup";
 import { Page } from "@playwright/test";
 
@@ -31,7 +31,7 @@ test.describe("add_tag tests", () => {
     const tag = "123";
     const result = await addTag(page, tag);
 
-    expect(result.tags).to.include(tag);
+    expect(result.tags).toContain(tag);
   });
 });
 
@@ -66,7 +66,7 @@ test.describe("remove_tag tests", () => {
     const tag = "321";
     const result = await removeTag(page, tag);
 
-    expect(result.tags).to.not.include(tag);
+    expect(result.tags).not.toContain(tag);
   });
 
   // When a note is created, the client adds a tag with sourceNoteId to track it.
@@ -123,6 +123,6 @@ test.describe("remove_tag tests", () => {
       };
     });
 
-    expect(result.tagsAfterSync).to.be.lessThan(result.tagsAfterMint);
+    expect(result.tagsAfterSync).toBeLessThan(result.tagsAfterMint);
   });
 });

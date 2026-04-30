@@ -2,6 +2,15 @@
   "name": "@miden-sdk/miden-sdk",
   "version": "0.14.5",
   "description": "Miden Wasm SDK",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xMiden/web-sdk",
+    "directory": "crates/web-client"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
   "collaborators": [
     "Miden"
   ],
@@ -11,21 +20,27 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/eager.js"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/eager.js"
+      }
     },
     "./lazy": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "lazy",
     "../LICENSE.md"
   ],
   "scripts": {
     "build-rust-client-js": "pnpm --filter web_store run build",
-    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js",
+    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js && node ./scripts/post-build.js",
     "build-dev": "pnpm install && MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",
@@ -54,24 +69,17 @@
     "@types/node": "^24.9.2",
     "@wasm-tool/rollup-plugin-rust": "^3.0.3",
     "binaryen": "^129.0.0",
-    "chai": "^5.1.1",
     "cpr": "^3.0.1",
     "cross-env": "^7.0.3",
-    "esm": "^3.2.25",
-    "http-server": "^14.1.1",
-    "mocha": "^10.7.3",
-    "puppeteer": "^23.1.0",
     "rimraf": "^6.0.1",
     "rollup": "^4.59.0",
     "rollup-plugin-copy": "^3.5.0",
-    "ts-node": "^10.9.2",
     "typedoc": "^0.28.1",
     "typedoc-plugin-markdown": "^4.8.1",
     "typescript": "^5.5.4",
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "@rollup/plugin-typescript": "^12.3.0",
     "dexie": "^4.0.1",
     "glob": "^11.0.0"
   }
