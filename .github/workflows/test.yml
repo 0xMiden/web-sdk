@@ -64,6 +64,11 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. Sticky comment is owned by build.yml's
+      # build-wasm job (single comment per PR run); we don't post here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
@@ -208,6 +213,11 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. Sticky comment is owned by build.yml's
+      # build-wasm job (single comment per PR run); we don't post here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
