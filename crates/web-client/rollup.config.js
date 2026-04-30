@@ -164,17 +164,6 @@ export default [
       },
     ],
   },
-<<<<<<< ours
-  // Classic worker build.
-  //
-  // Safari/WKWebView is extremely slow with module workers ({type: "module"}),
-  // so we ship a self-contained async-IIFE classic script alongside the module
-  // variant below. `wrap-worker-classic` rewrites `import.meta.url` →
-  // `self.location.href` (the only form a classic worker can see at runtime),
-  // strips `export` clauses, and wraps the rollup ESM output in an async IIFE.
-  //
-  // Output: dist/workers/web-client-methods-worker.js
-=======
   // Build the passkey-keystore as a standalone module (used by tests and direct imports)
   {
     input: "./js/passkey-keystore.js",
@@ -185,8 +174,15 @@ export default [
     },
     plugins: [resolve(), commonjs()],
   },
-  // Build the worker file
->>>>>>> theirs
+  // Classic worker build.
+  //
+  // Safari/WKWebView is extremely slow with module workers ({type: "module"}),
+  // so we ship a self-contained async-IIFE classic script alongside the module
+  // variant below. `wrap-worker-classic` rewrites `import.meta.url` →
+  // `self.location.href` (the only form a classic worker can see at runtime),
+  // strips `export` clauses, and wraps the rollup ESM output in an async IIFE.
+  //
+  // Output: dist/workers/web-client-methods-worker.js
   {
     input: "./js/workers/web-client-methods-worker.js",
     output: {

@@ -64,10 +64,6 @@ export class MidenClient {
 
     const seed = options?.seed ? await hashSeed(options.seed) : undefined;
 
-<<<<<<< ours
-    const rpcUrl = resolveRpcUrl(options?.rpcUrl);
-    const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
-=======
     // Resolve passkey encryption → keystore callbacks (before the keystore branch)
     if (options?.passkeyEncryption && options?.keystore) {
       console.warn(
@@ -97,7 +93,9 @@ export class MidenClient {
         );
       }
     }
->>>>>>> theirs
+
+    const rpcUrl = resolveRpcUrl(options?.rpcUrl);
+    const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
     let inner;
     if (options?.keystore) {
