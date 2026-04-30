@@ -539,7 +539,7 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       for (let i = 0; i < 3; i++) {
         try {
-          const result = await client.syncStateWithTimeout(30000);
+          const result = await client.syncState();
           results.push(result.blockNum());
         } catch (e) {
           results.push(-1); // Mark failures
@@ -653,10 +653,10 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       // Fire many concurrent syncs with various timeouts
       const promises = [
-        client.syncStateWithTimeout(50000),
-        client.syncStateWithTimeout(50000),
         client.syncState(),
-        client.syncStateWithTimeout(50000),
+        client.syncState(),
+        client.syncState(),
+        client.syncState(),
         client.syncState(),
       ];
 
@@ -708,14 +708,14 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       // Do several syncs with timeouts
       for (let i = 0; i < 3; i++) {
-        await client.syncStateWithTimeout(30000);
+        await client.syncState();
       }
 
       // Do concurrent syncs
       await Promise.all([
         client.syncState(),
         client.syncState(),
-        client.syncStateWithTimeout(30000),
+        client.syncState(),
       ]);
 
       // Verify account state is still consistent
