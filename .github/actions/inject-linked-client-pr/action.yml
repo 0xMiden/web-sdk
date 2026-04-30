@@ -81,7 +81,7 @@ runs:
         # Marker: "Client PR:" optionally followed by "<owner>/<repo>" then "#N".
         # First match wins; case-insensitive.
         marker=$(printf '%s' "$body" \
-          | grep -ioE 'Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' \
+          | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' \
           | head -1 || true)
         if [ -z "$marker" ]; then
           echo "patched=false" >> "$GITHUB_OUTPUT"

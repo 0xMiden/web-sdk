@@ -90,7 +90,7 @@ jobs:
           fi
 
           # Parse marker; absent → check passes (no gate needed).
-          marker=$(printf '%s' "$body" | grep -ioE 'Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
+          marker=$(printf '%s' "$body" | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
           if [ -z "$marker" ]; then
             echo "No Client PR marker on PR #$PR_NUM — check passes."
             gh api repos/$GITHUB_REPOSITORY/statuses/$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha) \
