@@ -21,7 +21,10 @@ impl WebClient {
     ) -> Result<NoteFile, JsValue> {
         let client = self.get_inner()?;
         let note_id = NoteId::from_raw(Word::try_from(note_id).map_err(|err| {
-            js_error_with_context(err, "error exporting note file: failed to parse input note id")
+            js_error_with_context(
+                err,
+                "error exporting note file: failed to parse input note id",
+            )
         })?);
 
         let output_note = client
@@ -54,18 +57,29 @@ impl WebClient {
             .map_err(|err| {
                 js_error_with_context(
                     err,
-                    &format!("failed to get account for account id: {}", account_id.to_string()),
+                    &format!(
+                        "failed to get account for account id: {}",
+                        account_id.to_string()
+                    ),
                 )
             })?
             .ok_or_else(|| {
-                JsValue::from_str(&format!("Account with ID {} not found", account_id.to_string()))
+                JsValue::from_str(&format!(
+                    "Account with ID {} not found",
+                    account_id.to_string()
+                ))
             })?;
 
-        let key_pairs =
-            keystore.get_keys_for_account(account_id.as_native()).await.map_err(|err| {
+        let key_pairs = keystore
+            .get_keys_for_account(account_id.as_native())
+            .await
+            .map_err(|err| {
                 js_error_with_context(
                     err,
-                    &format!("failed to get keys for account: {}", &account_id.to_string()),
+                    &format!(
+                        "failed to get keys for account: {}",
+                        &account_id.to_string()
+                    ),
                 )
             })?;
 

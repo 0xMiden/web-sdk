@@ -21,7 +21,10 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "failed to get accounts"))?;
 
-        Ok(result.into_iter().map(|(header, _)| header.into()).collect())
+        Ok(result
+            .into_iter()
+            .map(|(header, _)| header.into())
+            .collect())
     }
 
     /// Retrieves the full account data for the given account ID, returning `null` if not found.
