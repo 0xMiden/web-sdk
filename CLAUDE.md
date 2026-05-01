@@ -99,6 +99,26 @@ WASM size is gated at 25 MB in the publish workflow — if `wasm-opt` ever silen
 
 Crate publishing (`miden-idxdb-store`, `miden-client-web`) goes through `.github/workflows/publish-crates-release.yml` and uses the `CARGO_REGISTRY_TOKEN` org secret.
 
+## CHANGELOG content
+
+The root `CHANGELOG.md` is read by **consumers of the SDK** — dApp authors and downstream library maintainers, not the team that ships the SDK. Before adding an entry, imagine that audience opening the file at the moment they upgrade. They want to know: what new API can I call? what behavior changed? what broke?
+
+What does NOT belong in CHANGELOG:
+
+- CI plumbing changes ("CI now uses github-hosted runners for publish", "added a chmod fix", "consolidated workflows"). Use the `no changelog` PR label.
+- Build-system or tooling changes that don't reach the published bytes ("switched lint runner", "bumped a dev dep"). Same — `no changelog` label.
+- Failed release attempts. If `alpha.1` and `alpha.2` had to be skipped before `alpha.3` shipped, the changelog entry is for `alpha.3` and describes the user-visible state. Don't write a postmortem of the misses.
+- Internal refactors that don't change the public API surface.
+
+What DOES belong:
+
+- New public APIs (with the smallest example or method shape).
+- Behavioral changes consumers can observe (e.g. "`account.storage()` now returns a `StorageView` wrapper").
+- Bug fixes that resolve a symptom downstream code might have hit.
+- Breaking changes (loud, with migration guidance).
+
+When in doubt, drop the entry and apply `no changelog`. A missing entry the reviewer can ask about is cheaper than a noisy one the consumer has to skip past.
+
 ## Gotchas worth remembering
 
 - **No yarn.** The repo migrated from yarn to pnpm. If you see a doc, comment, or script that says `yarn ...`, it's stale — fix it (or flag it).
@@ -118,6 +138,38 @@ Crate publishing (`miden-idxdb-store`, `miden-client-web`) goes through `.github
 | Turnkey signer integration | [`0xMiden/miden-turnkey`](https://github.com/0xMiden/miden-turnkey) |
 
 PRs that touch the WASM/JS boundary often need a synchronized PR in miden-client — bump the workspace dep and verify the integration tests still pass.
+
+### Linking a web-sdk PR to an in-flight miden-client PR
+
+When a web-sdk PR depends on Rust changes that haven't been released yet (i.e. the upstream PR on miden-client is still open), add a marker line to the web-sdk PR description:
+
+```
+Client PR: #2080
+```
+or, for forks / cross-repo,
+```
+Client PR: 0xMiden/miden-client#2080
+```
+
+CI picks up the marker via `.github/actions/inject-linked-client-pr`, appends a `[patch]` block to `Cargo.toml` (runner-local — never committed) pointing the workspace `miden-client` dep at the linked PR's head, refreshes `Cargo.lock`, and posts a sticky comment on the web-sdk PR summarizing what was patched. There is at most one such comment per PR (the action deletes it if the marker is later removed).
+
+Local-dev parity:
+
+```bash
+# Apply the same patch to your working tree (reads the marker from the current branch's PR body):
+scripts/dev-with-client-pr.sh
+
+# Or pass an explicit number / cross-repo target:
+scripts/dev-with-client-pr.sh 2080
+scripts/dev-with-client-pr.sh koookxbt/miden-client#1965
+
+# Strip the patch before committing:
+scripts/dev-with-client-pr.sh --clear
+```
+
+The script writes a marker-wrapped `[patch]` block at the bottom of `Cargo.toml`. A pre-commit hook (`lefthook.yml`) blocks any commit while the markers are present, so you can't ship the local override by accident.
+
+**Mergeability gate.** A separate workflow (`.github/workflows/check-linked-client-pr.yml`) keeps a `linked-client-pr-ready` check on the PR. It stays *pending* while the linked client PR isn't merged-and-reachable from web-sdk's target branch's canonical refs (miden-client `next` for `next`-targeted PRs, or the latest miden-client release tag for `main`-targeted PRs). It re-evaluates every 15 minutes, so the check goes green automatically once upstream catches up — no need to push to the PR. Configure branch protection to require this check before merge.
 
 ## Contributing checklist
 

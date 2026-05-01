@@ -34,11 +34,20 @@ jobs:
     # (sccache + rust-cache + binaryen + MIDEN_FAST_BUILD on PRs) so PR CI
     # stays in the same ballpark.
     name: publint + attw
-    runs-on: ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-8x
     env:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. build.yml's build-wasm job is the designated
+      # comment-poster; we only need the dep rewrite here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
 
       - name: Install Rust (needed for WASM build)
         run: |
@@ -76,11 +85,11 @@ jobs:
           sudo apt-get update && sudo apt-get install -y binaryen
 
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
           shared-key: rust-wasm
           prefix-key: ${{ env.RUST_CACHE_KEY }}
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
