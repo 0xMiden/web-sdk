@@ -409,7 +409,8 @@ function wrapClass(Cls: any): any {
 
 /**
  * Wraps a raw napi WebClient for MidenClient compatibility.
- * Handles syncState → syncStateImpl, BigInt → Number, null → undefined.
+ * Handles syncState → syncStateImpl (and the new split-sync siblings),
+ * BigInt → Number, null → undefined.
  */
 function wrapClientForMidenClient(
   rawClient: any,
@@ -420,6 +421,10 @@ function wrapClientForMidenClient(
     get(target, prop) {
       if (prop === "syncState")
         return (...args: any[]) => target.syncStateImpl(...args);
+      if (prop === "syncChain")
+        return (...args: any[]) => target.syncChainImpl(...args);
+      if (prop === "syncNoteTransport")
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       if (prop === "storeName") return storeName || "mock";
       if (prop === "wasmWebClient") return target;
       if (prop === "proveBlock") return async () => target.proveBlock();
