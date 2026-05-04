@@ -171,9 +171,45 @@ The script writes a marker-wrapped `[patch]` block at the bottom of `Cargo.toml`
 
 **Mergeability gate.** A separate workflow (`.github/workflows/check-linked-client-pr.yml`) keeps a `linked-client-pr-ready` check on the PR. It stays *pending* while the linked client PR isn't merged-and-reachable from web-sdk's target branch's canonical refs (miden-client `next` for `next`-targeted PRs, or the latest miden-client release tag for `main`-targeted PRs). It re-evaluates every 15 minutes, so the check goes green automatically once upstream catches up — no need to push to the PR. Configure branch protection to require this check before merge.
 
+## Documenting public-API changes
+
+Any change that adds, renames, removes, or alters the observable behavior of a method, type, hook, option field, or return shape on either the `MidenClient` resource surface or `@miden-sdk/react` is a public-API change. Document it in **all** of the surfaces below before merging — the surfaces aren't redundant; each one is read at a different moment in the consumer's workflow (CHANGELOG at upgrade time, README/CLAUDE.md when learning, JSDoc in the IDE, typedoc on the docs site).
+
+### MidenClient surface — `crates/web-client/`
+
+| Surface | What goes there | Trigger |
+|---|---|---|
+| `crates/web-client/js/types/api-types.d.ts` | TS declaration with full JSDoc on every method, option field, and return shape. Discriminated unions for option variants. | Any addition/change to a `*Resource` interface, `MidenClient` class, or supporting option/result type. |
+| `crates/web-client/js/resources/<area>.js` | JSDoc comment on the impl method explaining behavior, inputs, return value, and any non-obvious invariants (locking, atomicity, polling semantics). | Any new method or behavioral change on a resource impl. |
+| `crates/web-client/js/types/docs-entry.d.ts` | Add the type to the curated re-exports if it should appear on the typedoc-generated public-API site. `api-types` is already re-exported wholesale; only WASM-side classes need explicit listing. | New WASM class becomes part of the public surface. |
+| `crates/web-client/README.md` → `## Usage` | Narrative example: 1–2 short code blocks under a new `### <Capability>` subsection in the "Usage" / "Quick Start" area. Show the happy path; cross-reference singular siblings. Mention V1 constraints if they're non-obvious (single-account, no per-tx ids, etc.). | New high-level capability that a dApp author would reach for. |
+| Root `CHANGELOG.md` | One bullet under `## <next-version> (TBD)` → `### Enhancements` (or `### Fixes` / `### Breaking`). Prefix tags: `[FEATURE][web]` for web-only, `[FEATURE][rust,cli,web]` for cross-cutting. Include the *smallest* example or method shape, link the PR (`web-sdk#NN`) and any companion miden-client PR. Don't repeat README copy verbatim — the audience is a consumer who's about to upgrade. | Any user-visible API addition, behavior change, or fix. |
+
+### React SDK surface — `packages/react-sdk/`
+
+| Surface | What goes there | Trigger |
+|---|---|---|
+| `packages/react-sdk/src/hooks/<hook>.ts` | JSDoc on the hook export covering the returned object shape (`{action, result, isLoading, stage, error, reset}` for mutations; `{...data, isLoading, error, refetch}` for queries), accepted args, side effects, and concurrency guards. | New hook or change to an existing hook's signature/return. |
+| `packages/react-sdk/src/types/*` | TS declarations for any new option/result types the hook surfaces. Mirror the discriminated-union conventions used in the WebClient surface. | New public type emerging from a hook. |
+| `packages/react-sdk/CLAUDE.md` | Hook-by-hook usage guide. Add a fenced code block under the right section (`## Reading Data`, `## Writing Data`, `## Common Patterns`, `## External Signer Integration`). Show realistic usage, not just the signature. | New hook, new pattern, or changed semantics worth a code example. |
+| `packages/react-sdk/README.md` → `## Features` | One bullet on the high-level feature list if it's a notable addition (new hook category, new integration). Subordinate hook tweaks don't go here. | A reader scanning the README would want to know this exists. |
+| Root `CHANGELOG.md` | One bullet, same format as above, prefixed `[FEATURE][react]` (or `[FIX][react]`, `[BREAKING][react]`). | Any user-visible hook/provider/util change. |
+
+### Conventions
+
+- **Match existing tone.** Look at adjacent README/CHANGELOG entries before writing — they're terse, imperative, and lead with what the consumer can now *do*. Avoid implementation chatter ("we now do X internally") unless it's a behavioral signal that affects how the consumer writes code.
+- **Don't write speculative docs.** If the API is part-implemented (e.g. V1 today, V2 planned), document V1 only and call out the constraint inline. The next PR can extend the doc when V2 lands.
+- **Cross-link the PRs.** Every CHANGELOG entry needs the PR link at the end. If the change required a coordinated miden-client PR, link both — the consumer's mental model spans both repos.
+- **One source of truth per fact.** A V1 constraint ("single-account batch") goes in the README narrative *and* the JSDoc. The CHANGELOG mentions it once. Don't repeat the full constraint list across files; cross-reference if it gets long.
+- **Update before commit.** Pre-commit hooks don't enforce doc parity, but reviewers will. Mention "docs updated" in the PR description so reviewers know where to look.
+
+### Doc-only PRs
+
+If you find a stale doc (e.g. the API changed but the README didn't), fix it as a separate `docs:`-prefixed commit on the same branch — keeps diffs reviewable. The CHANGELOG `no changelog` label exists for these.
+
 ## Contributing checklist
 
 1. `make lint` clean.
 2. `make test-coverage` clean (and locally verify thresholds before pushing).
-3. For changes to public API: update the relevant per-package CLAUDE.md (e.g. `packages/react-sdk/CLAUDE.md` for hook signatures) and the type-check scripts under `crates/web-client/scripts/`.
+3. For changes to public API: every doc surface in the [Documenting public-API changes](#documenting-public-api-changes) section above. The type-check scripts under `crates/web-client/scripts/` may also need updating if you added a forwarder or new method classification.
 4. For changes to release flow: cross-check both `publish-web-client-release.yml` (latest channel) and `publish-web-client-next.yml` (next channel) — they intentionally mirror each other.
