@@ -23,5 +23,7 @@ export const MethodName = Object.freeze({
   SYNC_STATE: "syncState",
   SYNC_STATE_MOCK: "syncStateMock",
   SYNC_CHAIN: "syncChain",
+  SYNC_CHAIN_MOCK: "syncChainMock",
   SYNC_NOTE_TRANSPORT: "syncNoteTransport",
+  SYNC_NOTE_TRANSPORT_MOCK: "syncNoteTransportMock",
 });

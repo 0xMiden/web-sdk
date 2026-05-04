@@ -315,6 +315,36 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   return await methodHandlers[MethodName.SYNC_STATE]();
 };
 
+methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
+  let [serializedMockChain, serializedMockNoteTransportNode] = args;
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  return await methodHandlers[MethodName.SYNC_CHAIN]();
+};
+
+methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
+  let [serializedMockChain, serializedMockNoteTransportNode] = args;
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
+};
+
 methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
   const wasm = await getWasmOrThrow();
   let serializedMockNoteTransportNode = args.pop();

@@ -7,8 +7,8 @@
  * - Same-method coalescing: if a sync of the same method is in progress,
  *   subsequent callers share its result promise
  * - Different-method serialization: different methods (e.g. syncState vs
- *   syncNoteTransport) wait for each other via the Web Lock (or the
- *   WASM-level mutex when Web Locks are unavailable)
+ *   syncNoteTransport) wait for each other via the Web Lock, or via an
+ *   in-process per-dbId promise chain when Web Locks are unavailable
  * - Web Locks also serialize across tabs (Chrome 69+, Safari 15.4+)
  */
 
@@ -26,6 +26,11 @@ export function hasWebLocks() {
 // Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise.
 const inFlight = new Map();
 
+// Per-dbId promise tail used to serialize cross-method calls when Web Locks
+// are unavailable. Each new task chains onto the current tail so different
+// methods on the same dbId run sequentially within the tab.
+const fallbackTails = new Map();
+
 /**
  * Build the coalesce-map key for an in-flight sync of `(dbId, methodId)`.
  *
@@ -39,8 +44,11 @@ function coalesceKey(dbId, methodId) {
 
 /**
  * Run `fn` while holding the per-db Web Lock. When Web Locks are unavailable,
- * runs `fn` directly and relies on the WASM-level mutex (`get_mut_inner`) to
- * serialize across methods within the tab.
+ * serializes `fn` against any other in-flight call on the same `dbId` via an
+ * in-process promise chain — the wasm-bindgen `WebClient` uses a synchronous
+ * `RefCell` for interior mutability in the browser, so overlapping
+ * cross-method borrows would throw "recursive use of an object detected
+ * which would lead to unsafe aliasing in rust".
  *
  * @param {string} dbId
  * @param {() => Promise<T>} fn
@@ -49,9 +57,15 @@ function coalesceKey(dbId, methodId) {
  */
 function runUnderLock(dbId, fn) {
   if (!hasWebLocks()) {
-    // No Web Locks: rely on the WASM-level mutex (get_mut_inner) to serialize
-    // across methods within the tab.
-    return Promise.resolve().then(fn);
+    const prev = fallbackTails.get(dbId) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    const guarded = next.catch(() => {});
+    fallbackTails.set(dbId, guarded);
+    guarded.then(() => {
+      // Drop the slot only if no successor chained onto this tail.
+      if (fallbackTails.get(dbId) === guarded) fallbackTails.delete(dbId);
+    });
+    return next;
   }
   return navigator.locks.request(
     `miden-sync-${dbId}`,

@@ -353,7 +353,10 @@ export class TransactionsResource {
       }
 
       try {
-        await this.#inner.syncState();
+        // Chain-only sync is sufficient: confirmation only needs on-chain
+        // state, and skipping NTL keeps polling alive when the note
+        // transport endpoint is unavailable.
+        await this.#inner.syncChain();
       } catch {
         // Sync may fail transiently; continue polling
       }

@@ -180,6 +180,60 @@ describe("withSyncLock — in-process fallback (no Web Locks)", () => {
     expect(b).toBe("B");
   });
 
+  it("serializes calls with different methodIds on the same dbId (no overlap)", async () => {
+    // Browser WebClient uses a synchronous RefCell, so overlapping
+    // cross-method borrows would throw the "recursive use" aliasing error.
+    // Without Web Locks we serialize per-dbId via the in-process chain.
+    const dbId = uniqueDb();
+    const events = [];
+    let releaseA;
+    const gateA = new Promise((r) => (releaseA = r));
+
+    const fnA = vi.fn(async () => {
+      events.push("start-A");
+      await gateA;
+      events.push("finish-A");
+      return "A";
+    });
+    const fnB = vi.fn(async () => {
+      events.push("start-B");
+      events.push("finish-B");
+      return "B";
+    });
+
+    const pA = withSyncLock(dbId, "syncState", fnA);
+    const pB = withSyncLock(dbId, "syncNoteTransport", fnB);
+
+    // Yield enough microtasks for fnA to enter; fnB must still be queued.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(events).toEqual(["start-A"]);
+
+    releaseA();
+    await Promise.all([pA, pB]);
+
+    expect(events).toEqual(["start-A", "finish-A", "start-B", "finish-B"]);
+  });
+
+  it("runs the next queued call after a prior cross-method call rejects", async () => {
+    const dbId = uniqueDb();
+    const events = [];
+    const fnA = vi.fn(async () => {
+      events.push("A");
+      throw new Error("A-fail");
+    });
+    const fnB = vi.fn(async () => {
+      events.push("B");
+      return "B";
+    });
+
+    const pA = withSyncLock(dbId, "syncState", fnA);
+    const pB = withSyncLock(dbId, "syncNoteTransport", fnB);
+
+    await expect(pA).rejects.toThrow("A-fail");
+    await expect(pB).resolves.toBe("B");
+    expect(events).toEqual(["A", "B"]);
+  });
+
   it("does not coalesce calls with the same methodId on different dbIds", async () => {
     const dbA = uniqueDb();
     const dbB = uniqueDb();

@@ -1038,6 +1038,90 @@ class MockWebClient extends WebClient {
     }
   }
 
+  /**
+   * Syncs only the on-chain mock state (no note transport fetch).
+   *
+   * In worker mode, the main-thread mock chain + note-transport-node state
+   * is serialized and shipped to the worker before the sync, so a prior
+   * `proveBlock()` on the main thread is reflected in the worker's WASM
+   * client. The no-worker path uses the main-thread WASM client directly.
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_CHAIN;
+
+    try {
+      return await withSyncLock(dbId, methodId, async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+
+        if (!this.worker) {
+          return await wasmWebClient.syncChainImpl();
+        }
+
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
+
+        const wasm = await getWasmOrThrow();
+        const serializedSyncSummaryBytes = await this.callMethodWithWorker(
+          MethodName.SYNC_CHAIN_MOCK,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
+        return wasm.SyncSummary.deserialize(
+          new Uint8Array(serializedSyncSummaryBytes)
+        );
+      });
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncChain:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs only the mock note-transport state (no chain fetch).
+   *
+   * Mirrors {@link MockWebClient#syncChain}: in worker mode, the
+   * main-thread mock chain + note-transport-node state is serialized
+   * and shipped to the worker first.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncNoteTransport() {
+    const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_NOTE_TRANSPORT;
+
+    try {
+      await withSyncLock(dbId, methodId, async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+
+        if (!this.worker) {
+          await wasmWebClient.syncNoteTransportImpl();
+          return;
+        }
+
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
+
+        await this.callMethodWithWorker(
+          MethodName.SYNC_NOTE_TRANSPORT_MOCK,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
+      });
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncNoteTransport:", error);
+      throw error;
+    }
+  }
+
   async submitNewTransaction(accountId, transactionRequest) {
     try {
       if (!this.worker) {
