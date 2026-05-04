@@ -4,6 +4,7 @@
 
 ### Features
 
+* [FEATURE][web] Let concurrent `WebClient` reads run in parallel. Flip the WASM read bindings (`getAccount`, `getAccounts`, `getAccountStorage`, ...) to `&self` and replace the write-serialization chain with a readers-writer lock so reads coalesce while writes still take the slot exclusively ([#2080](https://github.com/0xMiden/miden-client/pull/2080)).
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
 
 ### Chores
