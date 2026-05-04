@@ -216,6 +216,161 @@ export class TransactionsResource {
   async execute(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+    const { accountId, request } = this.#buildExecuteRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /**
+   * Submit a heterogeneous batch of operations against a single account. All
+   * operations are executed, proven individually and as a batch, and submitted
+   * atomically — either every tx in the batch lands or none does.
+   *
+   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
+   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   */
+  async batch(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (!opts || !opts.account) {
+      throw new Error("batch: `account` is required");
+    }
+    if (!Array.isArray(opts.operations) || opts.operations.length === 0) {
+      throw new Error("batch: `operations` must be a non-empty array");
+    }
+
+    // Build each TransactionRequest. Per-op builders all use the batch-level
+    // `account` — V1 only supports same-account batches, mirroring the Rust
+    // constraint. We forward `opts.account` into each per-op options object so
+    // the existing builders' `resolveAccountRef` produces fresh AccountIds
+    // when needed.
+    const requests = [];
+    for (let i = 0; i < opts.operations.length; i++) {
+      const op = opts.operations[i];
+      let built;
+      switch (op?.kind) {
+        case "send":
+          built = await this.#buildSendRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "mint":
+          built = await this.#buildMintRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "consume":
+          built = await this.#buildConsumeRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "swap":
+          built = await this.#buildSwapRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "execute":
+          built = this.#buildExecuteRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "custom":
+          if (!op.request) {
+            throw new Error(
+              `batch: operation[${i}] of kind "custom" is missing \`request\``
+            );
+          }
+          built = { request: op.request };
+          break;
+        default:
+          throw new Error(
+            `batch: operation[${i}] has unknown kind "${op?.kind}"`
+          );
+      }
+      requests.push(built.request);
+    }
+
+    return this.submitBatch(opts.account, requests, opts);
+  }
+
+  /**
+   * Submit pre-built TransactionRequests as an atomic batch. Lower-level
+   * counterpart of `batch()` — for callers that already have built requests in
+   * hand. Equivalent to `submit()` but plural.
+   *
+   * @param {AccountRef} account - The account executing the batch.
+   * @param {TransactionRequest[]} requests - Pre-built transaction requests.
+   * @param {object} [options] - Optional settings (waitForConfirmation, timeout, prover).
+   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   */
+  async submitBatch(account, requests, options) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (!Array.isArray(requests) || requests.length === 0) {
+      throw new Error("submitBatch: `requests` must be a non-empty array");
+    }
+
+    const accountId = resolveAccountRef(account, wasm);
+    const blockNumber = await this.#inner.submitNewTransactionBatch(
+      accountId,
+      requests.map((r) => r.serialize())
+    );
+
+    if (options?.waitForConfirmation) {
+      await this.#waitForBlock(blockNumber, options);
+    }
+
+    return { blockNumber };
+  }
+
+  /**
+   * Polls until the local sync height reaches `blockNumber` or the timeout
+   * expires. The Rust V1 batch API returns only a block number — there are no
+   * per-tx ids to poll on, so we wait on the chain height instead.
+   *
+   * @param {number} blockNumber - The block height to wait for.
+   * @param {object} [opts] - Polling options (timeout, interval).
+   */
+  async #waitForBlock(blockNumber, opts) {
+    const timeout = opts?.timeout ?? 60_000;
+    const interval = opts?.interval ?? 5_000;
+    const start = Date.now();
+
+    while (true) {
+      if (timeout > 0 && Date.now() - start >= timeout) {
+        throw new Error(
+          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+        );
+      }
+      try {
+        await this.#inner.syncStateWithTimeout(0);
+      } catch {
+        // sync may fail transiently; continue polling
+      }
+      const height = await this.#inner.getSyncHeight();
+      if (height >= blockNumber) return;
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+  }
+
+  #buildExecuteRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
 
     let builder = new wasm.TransactionRequestBuilder().withCustomScript(
@@ -243,18 +398,7 @@ export class TransactionsResource {
       );
     }
 
-    const request = builder.build();
-    const { txId, result } = await this.#submitOrSubmitWithProver(
-      accountId,
-      request,
-      opts.prover
-    );
-
-    if (opts.waitForConfirmation) {
-      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
-    }
-
-    return { txId, result };
+    return { accountId, request: builder.build() };
   }
 
   async executeProgram(opts) {
