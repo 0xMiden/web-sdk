@@ -627,6 +627,12 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. Required for changes that depend on Rust-side
+      # APIs not yet released to crates.io. Sticky comment owned by
+      # build.yml's build-wasm job; we don't post here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust
