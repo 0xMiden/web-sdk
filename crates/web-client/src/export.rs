@@ -84,7 +84,7 @@ impl WebClient {
                         err,
                         &format!(
                             "failed to get keys for account: {}",
-                            &account_id.to_string()
+                            account_id.to_string()
                         ),
                     )
                 })?;
