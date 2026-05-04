@@ -322,6 +322,38 @@ const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
 
+### Batch Operations
+
+Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+```typescript
+const { blockNumber } = await client.transactions.batch({
+  account: wallet,
+  operations: [
+    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", notes: pendingNotes },
+  ],
+  waitForConfirmation: true,
+});
+console.log(`Batch landed in block ${blockNumber}`);
+```
+
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
+
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+
+```typescript
+const { blockNumber } = await client.transactions.submitBatch(wallet, [
+  request1,
+  request2,
+]);
+```
+
+The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
