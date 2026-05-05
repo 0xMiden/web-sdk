@@ -3,6 +3,8 @@ export type MidenErrorCode =
   | "WASM_POINTER_CONSUMED"
   | "WASM_NOT_INITIALIZED"
   | "WASM_SYNC_REQUIRED"
+  | "MASM_ASSERTION_FAILED"
+  | "TRANSACTION_EXECUTION_FAILED"
   | "SEND_BUSY"
   | "OPERATION_BUSY"
   | "UNKNOWN";
@@ -66,6 +68,23 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     message:
       "Account state is stale. Call sync() before executing transactions, or ensure no concurrent " +
       "transactions are running against the same account.",
+  },
+  {
+    test: (msg) => msg.includes("assertion failed at clock cycle"),
+    code: "MASM_ASSERTION_FAILED",
+    message:
+      "A MASM assertion failed during transaction execution. Check the error's `code` field " +
+      "for the assertion error code (e.g. MASM_ERR_0) and the `cause` chain for the full " +
+      "execution context.",
+  },
+  {
+    test: (msg) =>
+      msg.includes("transaction execution failed") ||
+      msg.includes("failed to execute transaction"),
+    code: "TRANSACTION_EXECUTION_FAILED",
+    message:
+      "Transaction execution failed. Check the `cause` chain on the error for details on the " +
+      "specific failure, and the `help` field for actionable guidance if available.",
   },
 ];
 

@@ -489,15 +489,31 @@ pub(crate) fn js_error_with_context<T>(err: T, context: &str) -> JsErr
 where
     T: Error + 'static,
 {
+    // Build the full concatenated message (preserved for backward compatibility with consumers
+    // that pattern-match on error strings).
     let error_message = build_error_chain(context, &err);
     let help = hint_from_error(&err);
 
     #[cfg(feature = "browser")]
     {
         let js_error: JsValue = JsError::new(&error_message).into();
+
+        // Attach a structured cause chain so JS consumers can traverse the error hierarchy
+        // without parsing the concatenated message string.
+        if let Some(source) = err.source() {
+            let cause = js_cause_chain(source);
+            let _ = Reflect::set(&js_error, &JsValue::from_str("cause"), &cause);
+        }
+
         if let Some(help) = help {
             let _ = Reflect::set(&js_error, &JsValue::from_str("help"), &JsValue::from_str(&help));
         }
+
+        // Expose a machine-readable `code` when we can identify one in the error chain.
+        if let Some(code) = error_code_from_message(&error_message) {
+            let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(&code));
+        }
+
         js_error
     }
 
@@ -520,6 +536,34 @@ fn build_error_chain(context: &str, err: &(dyn Error + 'static)) -> String {
         source = e.source();
     }
     msg
+}
+
+/// Recursively builds a JS `Error` cause chain mirroring the Rust `.source()` chain.
+#[cfg(feature = "browser")]
+fn js_cause_chain(err: &(dyn Error + 'static)) -> JsValue {
+    let js_err: JsValue = JsError::new(&err.to_string()).into();
+    if let Some(source) = err.source() {
+        let cause = js_cause_chain(source);
+        let _ = Reflect::set(&js_err, &JsValue::from_str("cause"), &cause);
+    }
+    js_err
+}
+
+/// Extracts a machine-readable error code from a formatted error message string.
+///
+/// Recognises the miden-vm assertion pattern `"... error code: <N>"` and returns
+/// `"MASM_ERR_<N>"` so JS consumers can branch on the code without parsing the message.
+fn error_code_from_message(msg: &str) -> Option<String> {
+    let marker = "error code: ";
+    let idx = msg.find(marker)?;
+    let rest = msg[idx + marker.len()..].trim();
+    let code_str = rest
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .next()?;
+    if code_str.is_empty() {
+        return None;
+    }
+    Some(format!("MASM_ERR_{code_str}"))
 }
 
 fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
