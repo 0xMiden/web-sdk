@@ -164,6 +164,16 @@ export default [
       },
     ],
   },
+  // Build the passkey-keystore as a standalone module (used by tests and direct imports)
+  {
+    input: "./js/passkey-keystore.js",
+    output: {
+      dir: `dist`,
+      format: "es",
+      sourcemap: true,
+    },
+    plugins: [resolve(), commonjs()],
+  },
   // Classic worker build.
   //
   // Safari/WKWebView is extremely slow with module workers ({type: "module"}),

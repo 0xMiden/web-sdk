@@ -60,6 +60,10 @@ export { MidenClient };
 export { CompilerResource };
 export { createP2IDNote, createP2IDENote, buildSwapTag };
 export { StorageView, StorageResult, wordToBigInt };
+export {
+  isPasskeyPrfSupported,
+  createPasskeyKeystore,
+} from "./passkey-keystore.js";
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
 export {
