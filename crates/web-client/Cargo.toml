@@ -31,7 +31,9 @@ miden-client = { features = ["testing", "tonic"], workspace = true }
 # miden-client/miden-tx pulls in. The `concurrent` feature does NOT require
 # `std`, so it's safe to enable in the WASM build (unlike `miden-tx/concurrent`,
 # which transitively requires tempfile/tokio that don't compile to wasm32).
-miden-crypto = { default-features = false, features = ["concurrent"], version = "0.23" }
+miden-crypto = { default-features = false, features = [
+  "concurrent",
+], version = "0.23" }
 miden-protocol = { workspace = true }
 miden-standards = { workspace = true }
 

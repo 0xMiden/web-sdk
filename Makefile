@@ -115,7 +115,16 @@ integration-test-remote-prover-web-client: ## Run integration tests for the web 
 
 .PHONY: build-wasm
 build-wasm: rust-client-ts-build ## Build the WASM packages (web client and idxdb store)
-	cargo build --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
+	# Nightly + -Z build-std=std,panic_abort: required because
+	# .cargo/config.toml's [target.wasm32-unknown-unknown].rustflags sets
+	# `target-feature=+atomics`. The precompiled rust-std-wasm32 from
+	# rustup is built WITHOUT atomics, so stable cargo trips at link time
+	# once any std code path emits an atomic. Build-std rebuilds std with
+	# our target features active. Matches the rollup build's baseCargoArgs
+	# (rollup.config.js) so the two paths stay consistent — previously
+	# `make build-wasm` silently produced a non-mt artifact divergent from
+	# the actual published build.
+	cargo +nightly build -Z build-std=std,panic_abort --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
 
 .PHONY: rust-client-ts-build
 rust-client-ts-build:

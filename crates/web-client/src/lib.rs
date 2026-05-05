@@ -67,7 +67,12 @@ pub fn rayon_thread_count() -> usize {
 /// rayon pool. Returns elapsed micros. If the pool is actually multi-threaded,
 /// large `n` should scale ~linearly with thread count. Diagnostic for
 /// confirming whether rayon is dispatching work at all.
+//
+// `cast_precision_loss` is intentional: this is a synthetic FP-mix workload
+// to defeat constant-folding and exercise rayon's dispatch — we don't care
+// about precision, only about CPU work being divided across threads.
 #[wasm_bindgen(js_name = "parallelSumBench")]
+#[allow(clippy::cast_precision_loss)]
 pub fn parallel_sum_bench(n: u64) -> u64 {
     use rayon::prelude::*;
     // Don't actually need timing on the Rust side — caller times it. We
@@ -83,6 +88,7 @@ pub fn parallel_sum_bench(n: u64) -> u64 {
 /// Single-threaded version of `parallel_sum_bench` for direct comparison.
 /// Same workload, plain `iter()` — bypasses rayon entirely.
 #[wasm_bindgen(js_name = "sequentialSumBench")]
+#[allow(clippy::cast_precision_loss)]
 pub fn sequential_sum_bench(n: u64) -> u64 {
     let s: f64 = (0..n)
         .map(|i| ((i as f64).sqrt() * 1.0001).sin().abs())
