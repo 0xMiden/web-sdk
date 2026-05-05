@@ -1,15 +1,15 @@
 /**
  * Sync Lock Module
  *
- * Provides coordination for concurrent syncState() calls using the Web Locks API
- * with an in-process mutex fallback for older browsers.
+ * Coordinates concurrent sync calls using the Web Locks API.
  *
  * Behavior:
- * - Uses "coalescing": if a sync is in progress, subsequent callers wait and receive
- *   the same result
- * - Web Locks for cross-tab coordination (Chrome 69+, Safari 15.4+)
- * - In-process mutex fallback when Web Locks unavailable
- * - Optional timeout support
+ * - Same-method coalescing: if a sync of the same method is in progress,
+ *   subsequent callers share its result promise
+ * - Different-method serialization: different methods (e.g. syncState vs
+ *   syncNoteTransport) wait for each other via the Web Lock, or via an
+ *   in-process per-dbId promise chain when Web Locks are unavailable
+ * - Web Locks also serialize across tabs (Chrome 69+, Safari 15.4+)
  */
 
 /**
@@ -23,193 +23,84 @@ export function hasWebLocks() {
   );
 }
 
-/**
- * Internal state for tracking in-progress syncs and waiters per database.
- */
-const syncStates = new Map();
+// Coalesce map keyed by `${dbId}:${methodId}` -> in-flight promise.
+const inFlight = new Map();
+
+// Per-dbId promise tail used to serialize cross-method calls when Web Locks
+// are unavailable. Each new task chains onto the current tail so different
+// methods on the same dbId run sequentially within the tab.
+const fallbackTails = new Map();
 
 /**
- * Get or create sync state for a database.
+ * Build the coalesce-map key for an in-flight sync of `(dbId, methodId)`.
+ *
+ * @param {string} dbId
+ * @param {string} methodId
+ * @returns {string}
  */
-function getSyncState(dbId) {
-  let state = syncStates.get(dbId);
-  if (!state) {
-    state = {
-      inProgress: false,
-      result: null,
-      error: null,
-      waiters: [],
-      releaseLock: null,
-      syncGeneration: 0,
-    };
-    syncStates.set(dbId, state);
-  }
-  return state;
+function coalesceKey(dbId, methodId) {
+  return `${dbId}:${methodId}`;
 }
 
 /**
- * Acquire a sync lock for the given database.
+ * Run `fn` while holding the per-db Web Lock. When Web Locks are unavailable,
+ * serializes `fn` against any other in-flight call on the same `dbId` via an
+ * in-process promise chain — the wasm-bindgen `WebClient` uses a synchronous
+ * `RefCell` for interior mutability in the browser, so overlapping
+ * cross-method borrows would throw "recursive use of an object detected
+ * which would lead to unsafe aliasing in rust".
  *
- * If a sync is already in progress:
- * - Returns { acquired: false, coalescedResult } after waiting for the result
- *
- * If no sync is in progress:
- * - Returns { acquired: true } and the caller should perform the sync,
- *   then call releaseSyncLock() or releaseSyncLockWithError()
- *
- * @param {string} dbId - The database ID to lock
- * @param {number} timeoutMs - Optional timeout in milliseconds (0 = no timeout)
- * @returns {Promise<{acquired: boolean, coalescedResult?: any}>}
+ * @param {string} dbId
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ * @template T
  */
-export async function acquireSyncLock(dbId, timeoutMs = 0) {
-  const state = getSyncState(dbId);
-
-  // If a sync is already in progress, wait for it to complete (coalescing)
-  if (state.inProgress) {
-    return new Promise((resolve, reject) => {
-      let timeoutId;
-      if (timeoutMs > 0) {
-        timeoutId = setTimeout(() => {
-          const idx = state.waiters.findIndex((w) => w.resolve === onResult);
-          if (idx !== -1) {
-            state.waiters.splice(idx, 1);
-          }
-          reject(new Error("Sync lock acquisition timed out"));
-        }, timeoutMs);
-      }
-
-      const onResult = (result) => {
-        /* v8 ignore next 1 -- timeoutId only set when timeoutMs>0 AND another sync is in progress; combo rare in tests */
-        if (timeoutId) clearTimeout(timeoutId);
-        resolve({ acquired: false, coalescedResult: result });
-      };
-
-      const onError = (error) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        reject(error);
-      };
-
-      state.waiters.push({ resolve: onResult, reject: onError });
+function runUnderLock(dbId, fn) {
+  if (!hasWebLocks()) {
+    const prev = fallbackTails.get(dbId) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    const guarded = next.catch(() => {});
+    fallbackTails.set(dbId, guarded);
+    guarded.then(() => {
+      // Drop the slot only if no successor chained onto this tail.
+      if (fallbackTails.get(dbId) === guarded) fallbackTails.delete(dbId);
     });
+    return next;
   }
-
-  // Mark sync as in progress and increment generation
-  state.inProgress = true;
-  state.result = null;
-  state.error = null;
-  state.syncGeneration++;
-  const currentGeneration = state.syncGeneration;
-
-  // Try to acquire Web Lock if available
-  if (hasWebLocks()) {
-    const lockName = `miden-sync-${dbId}`;
-
-    return new Promise((resolve, reject) => {
-      let timeoutId;
-      let timedOut = false;
-
-      if (timeoutMs > 0) {
-        timeoutId = setTimeout(() => {
-          timedOut = true;
-          if (state.syncGeneration === currentGeneration) {
-            state.inProgress = false;
-            const error = new Error("Sync lock acquisition timed out");
-            for (const waiter of state.waiters) {
-              waiter.reject(error);
-            }
-            state.waiters = [];
-          }
-          reject(new Error("Sync lock acquisition timed out"));
-        }, timeoutMs);
-      }
-
-      navigator.locks
-        .request(lockName, { mode: "exclusive" }, async () => {
-          /* v8 ignore next 3 -- race: lock granted after timeout or newer generation */
-          if (timedOut || state.syncGeneration !== currentGeneration) {
-            return;
-          }
-
-          if (timeoutId) clearTimeout(timeoutId);
-
-          return new Promise((releaseLock) => {
-            state.releaseLock = releaseLock;
-            resolve({ acquired: true });
-          });
-        })
-        .catch((err) => {
-          /* v8 ignore next 5 -- catch path requires Web Locks rejection combined with
-             optional timeout; tested via "rejects when Web Locks request rejects" but
-             the timeoutId-set branch needs Web Locks + timeout simultaneously */
-          if (timeoutId) clearTimeout(timeoutId);
-          if (state.syncGeneration === currentGeneration) {
-            state.inProgress = false;
-          }
-          reject(err instanceof Error ? err : new Error(String(err)));
-        });
-    });
-  } else {
-    // Fallback: no Web Locks, just use in-process state
-    return { acquired: true };
-  }
+  return navigator.locks.request(
+    `miden-sync-${dbId}`,
+    { mode: "exclusive" },
+    fn
+  );
 }
 
 /**
- * Release the sync lock with a successful result.
+ * Run `fn` under the sync lock for (dbId, methodId).
  *
- * This notifies all waiting callers with the result and releases the lock.
+ * Concurrent calls with the same (dbId, methodId) share the same promise
+ * (coalescing). Concurrent calls on the same dbId with different methodIds
+ * serialize via the Web Lock.
  *
- * @param {string} dbId - The database ID
- * @param {any} result - The sync result to pass to waiters
+ * @param {string} dbId - Database ID
+ * @param {string} methodId - Method identifier (see MethodName constants)
+ * @param {() => Promise<T>} fn - Work to run under the lock
+ * @returns {Promise<T>}
  */
-export function releaseSyncLock(dbId, result) {
-  const state = getSyncState(dbId);
+export function withSyncLock(dbId, methodId, fn) {
+  const key = coalesceKey(dbId, methodId);
 
-  if (!state.inProgress) {
-    console.warn("releaseSyncLock called but no sync was in progress");
-    return;
+  let work = inFlight.get(key);
+  if (!work) {
+    work = runUnderLock(dbId, fn);
+    inFlight.set(key, work);
+    // Swallow on the derived promise so a rejection here doesn't surface as
+    // an unhandled rejection; the caller still sees the error through `work`.
+    work
+      .finally(() => {
+        if (inFlight.get(key) === work) inFlight.delete(key);
+      })
+      .catch(() => {});
   }
 
-  state.result = result;
-  state.inProgress = false;
-
-  for (const waiter of state.waiters) {
-    waiter.resolve(result);
-  }
-  state.waiters = [];
-
-  if (state.releaseLock) {
-    state.releaseLock();
-    state.releaseLock = null;
-  }
-}
-
-/**
- * Release the sync lock due to an error.
- *
- * This notifies all waiting callers that the sync failed.
- *
- * @param {string} dbId - The database ID
- * @param {Error} error - The error to pass to waiters
- */
-export function releaseSyncLockWithError(dbId, error) {
-  const state = getSyncState(dbId);
-
-  if (!state.inProgress) {
-    console.warn("releaseSyncLockWithError called but no sync was in progress");
-    return;
-  }
-
-  state.error = error;
-  state.inProgress = false;
-
-  for (const waiter of state.waiters) {
-    waiter.reject(error);
-  }
-  state.waiters = [];
-
-  if (state.releaseLock) {
-    state.releaseLock();
-    state.releaseLock = null;
-  }
+  return work;
 }

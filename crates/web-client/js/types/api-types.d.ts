@@ -933,8 +933,12 @@ export declare class MidenClient {
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
 
-  /** Syncs the client state with the Miden node. */
-  sync(options?: { timeout?: number }): Promise<SyncSummary>;
+  /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
+  sync(): Promise<SyncSummary>;
+  /** Syncs on-chain state only (no NTL fetch). */
+  syncChain(): Promise<SyncSummary>;
+  /** Fetches private notes from the Note Transport Layer. */
+  syncNoteTransport(): Promise<void>;
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
   /** Returns the client-level default prover. */

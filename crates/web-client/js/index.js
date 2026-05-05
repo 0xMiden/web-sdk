@@ -1,10 +1,6 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import {
-  acquireSyncLock,
-  releaseSyncLock,
-  releaseSyncLockWithError,
-} from "./syncLock.js";
+import { withSyncLock } from "./syncLock.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
@@ -66,6 +62,7 @@ export {
   WebClient as WasmWebClient,
   MockWebClient as MockWasmWebClient,
   MockWebClient,
+  withSyncLock,
 };
 
 // Method classification sets — used by scripts/check-method-classification.js to ensure
@@ -841,7 +838,7 @@ class WebClient {
   }
 
   /**
-   * Syncs the client state with the node.
+   * Syncs the client (NTL followed by chain sync, failing fast on either).
    *
    * This method coordinates concurrent sync calls using the Web Locks API when available,
    * with an in-process mutex fallback for older browsers. If a sync is already in progress,
@@ -850,58 +847,76 @@ class WebClient {
    * @returns {Promise<SyncSummary>} The sync summary
    */
   async syncState() {
-    return this.syncStateWithTimeout(0);
+    const dbId = this.storeName || "default";
+    const methodId = MethodName.SYNC_STATE;
+
+    try {
+      return await withSyncLock(dbId, methodId, async () => {
+        if (!this.worker) {
+          const wasmWebClient = await this.getWasmWebClient();
+          return await wasmWebClient.syncStateImpl();
+        }
+        const wasm = await getWasmOrThrow();
+        const serializedSyncSummaryBytes =
+          await this.callMethodWithWorker(methodId);
+        return wasm.SyncSummary.deserialize(
+          new Uint8Array(serializedSyncSummaryBytes)
+        );
+      });
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncState:", error);
+      throw error;
+    }
   }
 
   /**
-   * Syncs the client state with the node with an optional timeout.
+   * Fetches private notes from the Note Transport Layer.
    *
-   * This method coordinates concurrent sync calls using the Web Locks API when available,
-   * with an in-process mutex fallback for older browsers. If a sync is already in progress,
-   * subsequent callers will wait and receive the same result (coalescing behavior).
-   *
-   * @param {number} timeoutMs - Timeout in milliseconds (0 = no timeout)
-   * @returns {Promise<SyncSummary>} The sync summary
+   * @returns {Promise<void>}
    */
-  async syncStateWithTimeout(timeoutMs = 0) {
-    // Use storeName as the database ID for lock coordination
+  async syncNoteTransport() {
     const dbId = this.storeName || "default";
+    const methodId = MethodName.SYNC_NOTE_TRANSPORT;
 
     try {
-      // Acquire the sync lock (coordinates concurrent calls)
-      const lockHandle = await acquireSyncLock(dbId, timeoutMs);
-
-      if (!lockHandle.acquired) {
-        // We're coalescing - return the result from the in-progress sync
-        return lockHandle.coalescedResult;
-      }
-
-      // We acquired the lock - perform the sync
-      try {
-        let result;
+      await withSyncLock(dbId, methodId, async () => {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          result = await wasmWebClient.syncStateImpl();
+          await wasmWebClient.syncNoteTransportImpl();
         } else {
-          const wasm = await getWasmOrThrow();
-          const serializedSyncSummaryBytes = await this.callMethodWithWorker(
-            MethodName.SYNC_STATE
-          );
-          result = wasm.SyncSummary.deserialize(
-            new Uint8Array(serializedSyncSummaryBytes)
-          );
+          await this.callMethodWithWorker(methodId);
         }
-
-        // Release the lock with the result
-        releaseSyncLock(dbId, result);
-        return result;
-      } catch (error) {
-        // Release the lock with the error
-        releaseSyncLockWithError(dbId, error);
-        throw error;
-      }
+      });
     } catch (error) {
-      console.error("INDEX.JS: Error in syncState:", error);
+      console.error("INDEX.JS: Error in syncNoteTransport:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs on-chain state only (no NTL fetch).
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    const dbId = this.storeName || "default";
+    const methodId = MethodName.SYNC_CHAIN;
+
+    try {
+      return await withSyncLock(dbId, methodId, async () => {
+        if (!this.worker) {
+          const wasmWebClient = await this.getWasmWebClient();
+          return await wasmWebClient.syncChainImpl();
+        }
+        const wasm = await getWasmOrThrow();
+        const serializedSyncSummaryBytes =
+          await this.callMethodWithWorker(methodId);
+        return wasm.SyncSummary.deserialize(
+          new Uint8Array(serializedSyncSummaryBytes)
+        );
+      });
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncChain:", error);
       throw error;
     }
   }
@@ -990,59 +1005,119 @@ class MockWebClient extends WebClient {
    * @returns {Promise<SyncSummary>} The sync summary
    */
   async syncState() {
-    return this.syncStateWithTimeout(0);
-  }
-
-  /**
-   * Syncs the mock client state with an optional timeout.
-   *
-   * @param {number} timeoutMs - Timeout in milliseconds (0 = no timeout)
-   * @returns {Promise<SyncSummary>} The sync summary
-   */
-  async syncStateWithTimeout(timeoutMs = 0) {
     const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_STATE;
 
     try {
-      const lockHandle = await acquireSyncLock(dbId, timeoutMs);
-
-      if (!lockHandle.acquired) {
-        return lockHandle.coalescedResult;
-      }
-
-      try {
-        let result;
+      return await withSyncLock(dbId, methodId, async () => {
         const wasmWebClient = await this.getWasmWebClient();
 
         if (!this.worker) {
-          result = await wasmWebClient.syncStateImpl();
-        } else {
-          let serializedMockChain = (await wasmWebClient.serializeMockChain())
-            .buffer;
-          let serializedMockNoteTransportNode = (
-            await wasmWebClient.serializeMockNoteTransportNode()
-          ).buffer;
-
-          const wasm = await getWasmOrThrow();
-
-          const serializedSyncSummaryBytes = await this.callMethodWithWorker(
-            MethodName.SYNC_STATE_MOCK,
-            serializedMockChain,
-            serializedMockNoteTransportNode
-          );
-
-          result = wasm.SyncSummary.deserialize(
-            new Uint8Array(serializedSyncSummaryBytes)
-          );
+          return await wasmWebClient.syncStateImpl();
         }
 
-        releaseSyncLock(dbId, result);
-        return result;
-      } catch (error) {
-        releaseSyncLockWithError(dbId, error);
-        throw error;
-      }
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
+
+        const wasm = await getWasmOrThrow();
+        const serializedSyncSummaryBytes = await this.callMethodWithWorker(
+          MethodName.SYNC_STATE_MOCK,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
+        return wasm.SyncSummary.deserialize(
+          new Uint8Array(serializedSyncSummaryBytes)
+        );
+      });
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs only the on-chain mock state (no note transport fetch).
+   *
+   * In worker mode, the main-thread mock chain + note-transport-node state
+   * is serialized and shipped to the worker before the sync, so a prior
+   * `proveBlock()` on the main thread is reflected in the worker's WASM
+   * client. The no-worker path uses the main-thread WASM client directly.
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_CHAIN;
+
+    try {
+      return await withSyncLock(dbId, methodId, async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+
+        if (!this.worker) {
+          return await wasmWebClient.syncChainImpl();
+        }
+
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
+
+        const wasm = await getWasmOrThrow();
+        const serializedSyncSummaryBytes = await this.callMethodWithWorker(
+          MethodName.SYNC_CHAIN_MOCK,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
+        return wasm.SyncSummary.deserialize(
+          new Uint8Array(serializedSyncSummaryBytes)
+        );
+      });
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncChain:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs only the mock note-transport state (no chain fetch).
+   *
+   * Mirrors {@link MockWebClient#syncChain}: in worker mode, the
+   * main-thread mock chain + note-transport-node state is serialized
+   * and shipped to the worker first.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncNoteTransport() {
+    const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_NOTE_TRANSPORT;
+
+    try {
+      await withSyncLock(dbId, methodId, async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+
+        if (!this.worker) {
+          await wasmWebClient.syncNoteTransportImpl();
+          return;
+        }
+
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
+
+        await this.callMethodWithWorker(
+          MethodName.SYNC_NOTE_TRANSPORT_MOCK,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
+      });
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncNoteTransport:", error);
       throw error;
     }
   }

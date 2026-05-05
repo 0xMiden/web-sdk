@@ -7,6 +7,8 @@
  * Key adaptations:
  * - BigInt → Number for JsU64 params (napi uses f64, browser uses BigInt)
  * - syncState() → syncStateImpl()
+ * - syncChain() → syncChainImpl()
+ * - syncNoteTransport() → syncNoteTransportImpl()
  * - createMockClient() with no args → createMockClient(dbPath, keystorePath, ...)
  * - Fake page.evaluate() that runs callbacks directly
  */
@@ -194,9 +196,13 @@ function wrapClient(client: any, storeName?: string): any {
       if (prop === "syncState") {
         return (...args: any[]) => target.syncStateImpl(...args);
       }
-      // syncStateWithTimeout — just calls syncState (no browser lock coordination needed)
-      if (prop === "syncStateWithTimeout") {
-        return (_timeoutMs?: number) => target.syncStateImpl();
+      // syncChain → syncChainImpl
+      if (prop === "syncChain") {
+        return (...args: any[]) => target.syncChainImpl(...args);
+      }
+      // syncNoteTransport → syncNoteTransportImpl
+      if (prop === "syncNoteTransport") {
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       }
       // storeName — used by MidenClient for lock coordination
       if (prop === "storeName") {
