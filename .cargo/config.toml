@@ -1,5 +1,17 @@
 [target.wasm32-unknown-unknown]
 rustflags = [
+  # NOTE: tried `+simd128` and measured a 16-37% REGRESSION across mint /
+  # consume / send vs. non-SIMD release on M-series Mac in V8/Chrome.
+  # Plonky3's Goldilocks backend has hand-tuned SIMD only for native x86
+  # (AVX2/AVX-512 IFMA) and ARM (NEON). For wasm32-unknown-unknown it falls
+  # back to scalar code, and LLVM's auto-vectorizer for `+simd128` on u64
+  # modular arithmetic produces v128 sequences that lose to scalar — no
+  # widening v128 multiply means the high-half emulation costs more than
+  # the `mul` it replaces; the branchy modular reduction doesn't auto-vec
+  # cleanly; LLVM tags too many short loops as "vectorize me" when the setup
+  # cost outweighs the throughput gain. Re-enabling +simd128 should be
+  # paired with explicit std::arch::wasm32 intrinsics in the Goldilocks
+  # backend (upstream Plonky3 contribution), not just a target-feature flag.
   '-C', 'target-feature=+atomics,+bulk-memory,+mutable-globals',
   # --shared-memory + --import-memory: linker flags so the WASM module
   # IMPORTS a shared memory rather than defining its own. wasm-bindgen-rayon

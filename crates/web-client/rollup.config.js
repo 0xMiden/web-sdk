@@ -158,6 +158,10 @@ const wasmOptArgs = [
   devMode ? "-O0" : "-O3",
   "--enable-bulk-memory",
   "--enable-nontrapping-float-to-int",
+  // Threads: the WASM uses shared memory + atomics for the rayon thread
+  // pool. Tell binaryen to leave those instructions alone instead of
+  // either erroring or "optimizing" them into a non-shared form.
+  "--enable-threads",
   // Preserve the name section through optimization passes.
   "--debuginfo",
 ];
