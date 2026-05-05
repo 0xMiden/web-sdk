@@ -2,6 +2,10 @@
 
 ## 0.15.0 (TBD)
 
+### Fixes
+
+* [FIX][react] Fixed `transactionId` returned by transaction hooks (`useSend`, `useMultiSend`, `useMint`, `useConsume`, `useSwap`, `useTransaction`) always being `[object Object]`. The hooks were calling `.toString()` on the WASM `TransactionId` object instead of `.toHex()` ([web-sdk#83](https://github.com/0xMiden/web-sdk/issues/83)).
+
 ### Enhancements
 
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))

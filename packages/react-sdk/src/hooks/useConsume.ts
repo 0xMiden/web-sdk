@@ -147,7 +147,7 @@ export function useConsume(): UseConsumeResult {
                 prover
               )
             : await client.submitNewTransaction(accountIdObj, txRequest);
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");
