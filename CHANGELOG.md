@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web,react] Improved MASM and runtime error details surfaced to JS/TS consumers. Transaction execution errors now carry a structured `cause` chain (mirroring the Rust `.source()` hierarchy) so callers can inspect individual error stages without parsing the concatenated message string. A machine-readable `code` field (e.g. `MASM_ERR_0`) is attached when the error contains a miden-vm assertion error code. The React SDK `wrapWasmError` recognises two new `MidenErrorCode` values: `MASM_ASSERTION_FAILED` and `TRANSACTION_EXECUTION_FAILED` (web-sdk#TODO).
+* [FEATURE][web,react] Improved MASM and runtime error details surfaced to JS/TS consumers. Transaction execution errors now carry a structured `cause` chain (mirroring the Rust `.source()` hierarchy) so callers can inspect individual error stages without parsing the concatenated message string. A machine-readable `code` field (e.g. `MASM_ERR_0`) is attached when the error contains a miden-vm assertion error code. The React SDK `wrapWasmError` recognises two new `MidenErrorCode` values: `MASM_ASSERTION_FAILED` and `TRANSACTION_EXECUTION_FAILED` ([web-sdk#130](https://github.com/0xMiden/web-sdk/pull/130)).
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
 
 ## 0.14.4 (TBA)
