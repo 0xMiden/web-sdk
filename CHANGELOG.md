@@ -4,6 +4,8 @@
 
 ### Features
 
+* [FEATURE][web] **Multi-threaded WASM proving via wasm-bindgen-rayon.** The web-client WASM build now ships with atomics, bulk-memory, and shared-memory enabled, and re-exports `initThreadPool(n)` so consumers can bring up a rayon thread pool sized to `navigator.hardwareConcurrency`. With `SharedArrayBuffer` + cross-origin isolation (COOP/COEP), `proveTransactionWithProver` parallelizes across cores, taking a typical proof from ~25-40 s on a single thread to ~5-10 s on commodity laptops. Single-thread fallback is preserved: when SAB / `crossOriginIsolated` is unavailable, the prover still produces correct proofs on one thread. Build-time requirements are bumped (nightly Rust + `-Z build-std` + `+atomics,+bulk-memory,+mutable-globals` target features); consumers don't see anything new at the package level beyond the `initThreadPool` export. Hosting requirement: the consumer must serve the SDK in a cross-origin-isolated context (extension manifests with COOP/COEP set on the page, web apps with the headers configured at the server).
+* [FEATURE][web] Added `MidenClient._getInnerWebClient()` escape hatch returning the underlying `WasmWebClient` instance. Lets framework wrappers split the bundled prove pipeline — for example, dispatching the prove step to a `chrome.offscreen` document or a Web Worker while keeping execute / submit / apply on the main `MidenClient` — without re-implementing the resource-based surface from scratch. Marked private (`_` prefix) and may iterate; pin the SDK version if you depend on it.
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
 
 ### Chores
