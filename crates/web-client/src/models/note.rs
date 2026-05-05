@@ -187,15 +187,13 @@ impl From<&Note> for NativeNote {
 
 impl From<crate::models::miden_arrays::NoteArray> for Vec<NativeNote> {
     fn from(note_array: crate::models::miden_arrays::NoteArray) -> Self {
-        let items: Vec<Note> = note_array.into();
-        items.into_iter().map(Into::into).collect()
+        note_array.into_iter().map(Into::into).collect()
     }
 }
 
 impl From<&crate::models::miden_arrays::NoteArray> for Vec<NativeNote> {
     fn from(note_array: &crate::models::miden_arrays::NoteArray) -> Self {
-        let items: Vec<Note> = note_array.into();
-        items.into_iter().map(Into::into).collect()
+        note_array.iter().cloned().map(Into::into).collect()
     }
 }
 

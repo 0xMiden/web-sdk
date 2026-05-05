@@ -53,15 +53,13 @@ impl From<&NoteDetailsAndTag> for (NativeNoteDetails, NativeNoteTag) {
 
 impl From<NoteDetailsAndTagArray> for Vec<(NativeNoteDetails, NativeNoteTag)> {
     fn from(note_details_and_tag_array: NoteDetailsAndTagArray) -> Self {
-        let items: Vec<NoteDetailsAndTag> = note_details_and_tag_array.into();
-        items.into_iter().map(Into::into).collect()
+        note_details_and_tag_array.into_iter().map(Into::into).collect()
     }
 }
 
 impl From<&NoteDetailsAndTagArray> for Vec<(NativeNoteDetails, NativeNoteTag)> {
     fn from(note_details_and_tag_array: &NoteDetailsAndTagArray) -> Self {
-        let items: Vec<NoteDetailsAndTag> = note_details_and_tag_array.into();
-        items.into_iter().map(Into::into).collect()
+        note_details_and_tag_array.iter().map(Into::into).collect()
     }
 }
 
