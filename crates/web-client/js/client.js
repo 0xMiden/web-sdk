@@ -40,6 +40,35 @@ export class MidenClient {
   }
 
   /**
+   * Escape hatch: returns the proxied JS WebClient that backs this
+   * MidenClient. The proxy forwards missing properties to the underlying
+   * wasm-bindgen `WebClient`, so callers can reach lower-level methods like
+   * `executeTransaction`, `proveTransaction[WithProver]`,
+   * `submitProvenTransaction`, `applyTransaction`,
+   * `newSendTransactionRequest`, `newConsumeTransactionRequest`, etc.
+   *
+   * Intended for advanced consumers that need to split the bundled
+   * execute → prove → submit → apply pipeline across contexts — for example,
+   * a Chrome MV3 extension that runs `executeTransaction` in its service
+   * worker, dispatches the prove step to a `chrome.offscreen` document
+   * (where wasm-bindgen-rayon can spawn a real thread pool), then runs
+   * `submitProvenTransaction` + `applyTransaction` back in the SW.
+   *
+   * Stability: marked `@internal`. The shape of `#inner` is intentionally
+   * not part of the documented public API and may change between SDK
+   * versions. If you depend on this method, pin the SDK version and
+   * test the lower-level surface carefully on each upgrade. If your use
+   * case is common enough to warrant a stable public API, file an issue.
+   *
+   * @internal
+   * @returns {object} The proxied JS WebClient with wasm-bindgen fallback.
+   */
+  _getInnerWebClient() {
+    this.assertNotTerminated();
+    return this.#inner;
+  }
+
+  /**
    * Creates and initializes a new MidenClient.
    *
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
