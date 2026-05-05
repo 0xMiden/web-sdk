@@ -492,6 +492,20 @@ class WebClient {
     return result;
   }
 
+  /**
+   * Replaces the sign callback on a live WebClient instance.
+   *
+   * The message handler reads `this.signCb` fresh on every callback
+   * invocation, so swapping it here takes effect for all subsequent
+   * signing requests without recreating the client or the worker.
+   *
+   * @param {SignCallback | null | undefined} signCb - The new sign callback,
+   *   or null/undefined to clear it.
+   */
+  setSignCb(signCb) {
+    this.signCb = signCb ?? null;
+  }
+
   // TODO: This will soon conflict with some changes in main.
   // More context here:
   // https://github.com/0xMiden/miden-client/pull/1645?notification_referrer_id=NT_kwHOA1yg7NoAJVJlcG9zaXRvcnk7NjU5MzQzNzAyO0lzc3VlOzM3OTY4OTU1Nzk&notifications_query=is%3Aunread#discussion_r2696075480
