@@ -40,7 +40,7 @@
   ],
   "scripts": {
     "build-rust-client-js": "pnpm --filter web_store run build",
-    "build": "rimraf dist && pnpm run build-rust-client-js && cross-env RUSTFLAGS=\"--cfg getrandom_backend=\\\"wasm_js\\\"\" rollup -c rollup.config.js && cpr js/types dist && node clean.js && node ./scripts/post-build.js",
+    "build": "rimraf dist && pnpm run build-rust-client-js && rollup -c rollup.config.js && cpr js/types dist && node clean.js && node ./scripts/post-build.js",
     "build-dev": "pnpm install && MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",

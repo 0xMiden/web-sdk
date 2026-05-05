@@ -1,2 +1,27 @@
 [target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+rustflags = [
+  '-C', 'target-feature=+atomics,+bulk-memory,+mutable-globals',
+  # --shared-memory + --import-memory: linker flags so the WASM module
+  # IMPORTS a shared memory rather than defining its own. wasm-bindgen-rayon
+  # needs this so the JS side can construct ONE
+  # `WebAssembly.Memory({shared: true, ...})` and hand it to both the main
+  # thread and every spawned rayon worker via `postMessage`. Without these,
+  # rustc/lld emit a `(memory ...)` definition (non-shared, non-postable)
+  # and the worker spawn fails with "Memory could not be cloned".
+  '-C', 'link-arg=--shared-memory',
+  '-C', 'link-arg=--import-memory',
+  # Per-thread TLS init function. wasm-bindgen-cli's threading-prep step
+  # rewrites every exported function to call `__wasm_init_tls` before its
+  # body runs, but only if lld kept the symbol in the WASM exports. By
+  # default lld GCs it because no Rust code references it directly.
+  '-C', 'link-arg=--export=__wasm_init_tls',
+  # `__tls_size` is a synthetic global LLD generates that wasm-bindgen reads
+  # to know the per-thread TLS allocation size. Same GC story as
+  # __wasm_init_tls — needs an explicit export to survive linking.
+  '-C', 'link-arg=--export=__tls_size',
+  '-C', 'link-arg=--export=__tls_align',
+  '-C', 'link-arg=--export=__tls_base',
+  '-C', 'link-arg=--max-memory=4294967296',
+  '-C', 'panic=abort',
+  '--cfg', 'getrandom_backend="wasm_js"',
+]

@@ -388,11 +388,26 @@ async function processMessage(event) {
         hasInsertKeyCb,
         hasSignCb,
         logLevel,
+        numThreads,
       ] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
+      }
+
+      // Initialize rayon's thread pool inside THIS worker's WASM instance.
+      // The SDK runs every prove call here (NOT on the main thread), so a
+      // pool initialized only in main-thread WASM does not parallelize the
+      // prove. Without this, par_iter()/par_chunks() in miden-crypto +
+      // p3-maybe-rayon return rayon::current_num_threads() == 1 and fall
+      // through to sequential code despite the parallel features being on.
+      if (
+        numThreads &&
+        numThreads > 1 &&
+        typeof wasm.initThreadPool === "function"
+      ) {
+        await wasm.initThreadPool(numThreads);
       }
 
       wasmWebClient = new wasm.WebClient();

@@ -46,6 +46,50 @@ use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
 pub use web_keystore::WebKeyStore;
 
+// Re-export wasm-bindgen-rayon's `init_thread_pool`. JS callers MUST `await
+// initThreadPool(navigator.hardwareConcurrency)` once on the main thread (or
+// inside the worker that owns the WebClient) before any transaction proving
+// runs. Without this call the rayon global thread pool spawns zero threads
+// on wasm32 and every `par_iter(...)` falls through to a sequential loop —
+// i.e. you've shipped multi-threaded WASM that runs single-threaded.
+pub use wasm_bindgen_rayon::init_thread_pool;
+
+/// How many rayon worker threads are visible from THIS WASM instance's view of
+/// the global rayon pool. Diagnostic only — the value should equal whatever
+/// `initThreadPool(n)` was called with. If it's 1, rayon is in single-threaded
+/// fallback (workers never spawned, or spawned in a different WASM instance).
+#[wasm_bindgen(js_name = "rayonThreadCount")]
+pub fn rayon_thread_count() -> usize {
+    rayon::current_num_threads()
+}
+
+/// Synthetic parallel benchmark: sums 0..n via `par_iter()` on the global
+/// rayon pool. Returns elapsed micros. If the pool is actually multi-threaded,
+/// large `n` should scale ~linearly with thread count. Diagnostic for
+/// confirming whether rayon is dispatching work at all.
+#[wasm_bindgen(js_name = "parallelSumBench")]
+pub fn parallel_sum_bench(n: u64) -> u64 {
+    use rayon::prelude::*;
+    // Don't actually need timing on the Rust side — caller times it. We
+    // return the sum to defeat the optimizer. Use an FP-mix workload so
+    // it's not trivially constant-folded.
+    let s: f64 = (0..n)
+        .into_par_iter()
+        .map(|i| ((i as f64).sqrt() * 1.0001).sin().abs())
+        .sum();
+    s.to_bits()
+}
+
+/// Single-threaded version of `parallel_sum_bench` for direct comparison.
+/// Same workload, plain `iter()` — bypasses rayon entirely.
+#[wasm_bindgen(js_name = "sequentialSumBench")]
+pub fn sequential_sum_bench(n: u64) -> u64 {
+    let s: f64 = (0..n)
+        .map(|i| ((i as f64).sqrt() * 1.0001).sin().abs())
+        .sum();
+    s.to_bits()
+}
+
 /// Client authenticator type. Gate with `#[cfg]` to support other keystores, e.g.
 /// `FilesystemKeyStore` for Node.js.
 pub(crate) type ClientAuth = WebKeyStore<RandomCoin>;

@@ -25,6 +25,13 @@ testing = ["miden-client/testing"]
 # Workspace dependencies
 idxdb-store = { workspace = true }
 miden-client = { features = ["testing", "tonic"], workspace = true }
+# Direct dep on miden-crypto with the `concurrent` feature so cargo's feature
+# unification turns on parallel paths (real rayon for Merkle hashing, and
+# p3-maybe-rayon/parallel for the Plonky3 prover) for the indirect dep that
+# miden-client/miden-tx pulls in. The `concurrent` feature does NOT require
+# `std`, so it's safe to enable in the WASM build (unlike `miden-tx/concurrent`,
+# which transitively requires tempfile/tokio that don't compile to wasm32).
+miden-crypto = { default-features = false, features = ["concurrent"], version = "0.23" }
 miden-protocol = { workspace = true }
 miden-standards = { workspace = true }
 
@@ -44,6 +51,13 @@ tracing-subscriber = { default-features = false, features = [
 tracing-wasm = { version = "0.2" }
 wasm-bindgen = { features = ["serde-serialize"], version = "=0.2.108" }
 wasm-bindgen-futures = { version = "0.4" }
+# Bootstraps a rayon thread pool over Web Workers backed by SharedArrayBuffer.
+# Re-exported as `initThreadPool` from JS — must be called once before any
+# transaction proving so the rayon paths above actually have threads to run on.
+wasm-bindgen-rayon = "1.3"
+# Direct dep on rayon so we can use par_iter / current_num_threads from
+# diagnostic functions (rayon_thread_count, parallel_sum_bench).
+rayon = "1.10"
 
 [dev-dependencies]
 web-sys = { features = ["console"], version = "0.3" }
