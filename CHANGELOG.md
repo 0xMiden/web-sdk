@@ -5,6 +5,7 @@
 ### Enhancements
 
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
+* [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
 
 ## 0.14.4 (TBA)
 

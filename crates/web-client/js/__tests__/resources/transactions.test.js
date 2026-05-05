@@ -1125,4 +1125,212 @@ describe("TransactionsResource", () => {
       ).rejects.toThrow("Note not found: 0xnoteHexFromId");
     });
   });
+
+  describe("batch + submitBatch", () => {
+    // Helper: a fake TransactionRequest with a .serialize() method, since
+    // submitBatch calls `r.serialize()` on every entry. The per-op
+    // builders' `new*Request` methods need to return objects with
+    // `.serialize()` so the batch path is exercised end-to-end.
+    function fakeRequest(label = "req") {
+      return {
+        serialize: vi.fn().mockReturnValue(new Uint8Array([1, 2])),
+        _label: label,
+      };
+    }
+
+    it("dispatches send / mint / consume / swap / execute / custom kinds and submits", async () => {
+      // Override the TransactionRequestBuilder so `build()` returns a
+      // serializable fake request (the `execute` kind path goes through
+      // build() rather than a `new*Request` inner method).
+      const { resource, inner } = makeResource(
+        {
+          newSendTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("send")),
+          newMintTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("mint")),
+          newConsumeTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("consume")),
+          newSwapTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("swap")),
+          submitNewTransactionBatch: vi.fn().mockResolvedValue(42),
+        },
+        {},
+        {
+          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+            const b = makeTxRequestBuilder();
+            b.build = vi.fn().mockReturnValue(fakeRequest("built"));
+            return b;
+          }),
+        }
+      );
+      const customReq = fakeRequest("custom");
+
+      const result = await resource.batch({
+        account: "0xsender",
+        operations: [
+          {
+            kind: "send",
+            to: "0xto",
+            token: "0xtok",
+            amount: 1,
+            type: "public",
+          },
+          { kind: "mint", to: "0xto", amount: 2, type: "public" },
+          { kind: "consume", notes: ["0xnoteId"] },
+          {
+            kind: "swap",
+            offer: { token: "0xt1", amount: 5 },
+            request: { token: "0xt2", amount: 7 },
+            type: "public",
+          },
+          { kind: "execute", script: "scriptHandle" },
+          { kind: "custom", request: customReq },
+        ],
+      });
+
+      expect(inner.submitNewTransactionBatch).toHaveBeenCalledTimes(1);
+      const [accountIdArg, bytesArg] =
+        inner.submitNewTransactionBatch.mock.calls[0];
+      expect(accountIdArg.toString()).toBe("0xsender");
+      expect(bytesArg).toHaveLength(6);
+      expect(result).toEqual({ blockNumber: 42 });
+      // custom request.serialize() called via submitBatch path
+      expect(customReq.serialize).toHaveBeenCalled();
+    });
+
+    it("execute kind threads foreignAccounts through ForeignAccountArray", async () => {
+      const { resource, wasm } = makeResource(
+        {
+          submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
+        },
+        {},
+        {
+          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+            const b = makeTxRequestBuilder();
+            b.build = vi.fn().mockReturnValue(fakeRequest("execBuilt"));
+            return b;
+          }),
+        }
+      );
+
+      await resource.batch({
+        account: "0xsender",
+        operations: [
+          {
+            kind: "execute",
+            script: "scriptHandle",
+            foreignAccounts: ["0xforeign1", { id: "0xforeign2" }],
+          },
+        ],
+      });
+
+      expect(wasm.ForeignAccount.public).toHaveBeenCalledTimes(2);
+      expect(wasm.ForeignAccountArray).toHaveBeenCalled();
+    });
+
+    it("throws when account is missing", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({ operations: [{ kind: "send" }] })
+      ).rejects.toThrow(/account.*required/);
+    });
+
+    it("throws when operations is empty or not an array", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({ account: "0xsender", operations: [] })
+      ).rejects.toThrow(/non-empty array/);
+      await expect(
+        resource.batch({ account: "0xsender", operations: undefined })
+      ).rejects.toThrow(/non-empty array/);
+    });
+
+    it("throws on unknown operation kind", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({
+          account: "0xsender",
+          operations: [{ kind: "bogus" }],
+        })
+      ).rejects.toThrow(/unknown kind/);
+    });
+
+    it("throws when custom kind is missing the pre-built request", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({
+          account: "0xsender",
+          operations: [{ kind: "custom" }],
+        })
+      ).rejects.toThrow(/missing.*request/);
+    });
+
+    it("submitBatch rejects an empty requests array", async () => {
+      const { resource } = makeResource();
+      await expect(resource.submitBatch("0xsender", [])).rejects.toThrow(
+        /non-empty array/
+      );
+    });
+
+    it("submitBatch with waitForConfirmation polls sync height until block lands", async () => {
+      const heights = [99, 99, 100];
+      const { resource, inner } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
+        getSyncHeight: vi
+          .fn()
+          .mockImplementation(() => Promise.resolve(heights.shift())),
+        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const r1 = fakeRequest("a");
+      const r2 = fakeRequest("b");
+      const result = await resource.submitBatch("0xsender", [r1, r2], {
+        waitForConfirmation: true,
+        timeout: 60_000,
+        interval: 0, // poll immediately, no wall-clock wait in tests
+      });
+
+      expect(result).toEqual({ blockNumber: 100 });
+      expect(inner.getSyncHeight).toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation tolerates transient sync failures", async () => {
+      // First syncState rejects, next call resolves; getSyncHeight returns the
+      // target on the first read so the poll loop exits cleanly.
+      const sync = vi.fn();
+      sync.mockRejectedValueOnce(new Error("transient"));
+      sync.mockResolvedValue(undefined);
+      const { resource, inner } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(50),
+        getSyncHeight: vi.fn().mockResolvedValue(50),
+        syncStateWithTimeout: sync,
+      });
+      const r = fakeRequest();
+      await resource.submitBatch("0xsender", [r], {
+        waitForConfirmation: true,
+        interval: 0,
+      });
+      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation throws on timeout", async () => {
+      const { resource } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
+        getSyncHeight: vi.fn().mockResolvedValue(0),
+        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+      });
+      const r = fakeRequest();
+      await expect(
+        resource.submitBatch("0xsender", [r], {
+          waitForConfirmation: true,
+          timeout: 1, // 1ms — first poll already past
+          interval: 0,
+        })
+      ).rejects.toThrow(/timed out/);
+    });
+  });
 });
