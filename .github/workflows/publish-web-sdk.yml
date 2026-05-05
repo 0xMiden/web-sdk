@@ -184,14 +184,8 @@ jobs:
         # workflow would silently break with a floating @latest.
         run: npm install -g 'npm@^11.5'
 
-      - name: Set up Rust and wasm target
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-          target: wasm32-unknown-unknown
-          components: rust-src
+      - name: Install Rust
+        run: rustup update --no-self-update
 
       - name: Install binaryen (wasm-opt)
         run: |
