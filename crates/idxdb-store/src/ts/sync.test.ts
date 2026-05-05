@@ -115,19 +115,19 @@ describe("sync", () => {
       expect(result).toEqual({ blockNum: 0 });
     });
 
-    it("returns the persisted blockNum after updating stateSync", async () => {
+    it("returns the persisted blockNum after updating blockchainCheckpoint", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
       // Manually bump blockNum to verify getSyncHeight reads it back
-      await db.stateSync.update(1, { blockNum: 42 });
+      await db.blockchainCheckpoint.update(1, { blockNum: 42 });
       const result = await getSyncHeight(dbId);
       expect(result).toEqual({ blockNum: 42 });
     });
 
-    it("returns null when no stateSync record exists (deleted)", async () => {
+    it("returns null when no blockchainCheckpoint record exists (deleted)", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      await db.stateSync.delete(1);
+      await db.blockchainCheckpoint.delete(1);
       const result = await getSyncHeight(dbId);
       expect(result).toBeNull();
     });

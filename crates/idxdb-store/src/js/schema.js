@@ -54,7 +54,7 @@ var Table;
     Table["InputNotes"] = "inputNotes";
     Table["OutputNotes"] = "outputNotes";
     Table["NotesScripts"] = "notesScripts";
-    Table["StateSync"] = "stateSync";
+    Table["BlockchainCheckpoint"] = "blockchainCheckpoint";
     Table["BlockHeaders"] = "blockHeaders";
     Table["PartialBlockchainNodes"] = "partialBlockchainNodes";
     Table["Tags"] = "tags";
@@ -84,7 +84,7 @@ const V1_STORES = {
     [Table.InputNotes]: indexes("noteId", "nullifier", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
     [Table.OutputNotes]: indexes("noteId", "recipientDigest", "stateDiscriminant", "nullifier"),
     [Table.NotesScripts]: indexes("scriptRoot"),
-    [Table.StateSync]: indexes("id"),
+    [Table.BlockchainCheckpoint]: indexes("id"),
     [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
     [Table.PartialBlockchainNodes]: indexes("id"),
     [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -110,7 +110,7 @@ export class MidenDatabase {
     inputNotes;
     outputNotes;
     notesScripts;
-    stateSync;
+    blockchainCheckpoint;
     blockHeaders;
     partialBlockchainNodes;
     tags;
@@ -179,16 +179,20 @@ export class MidenDatabase {
         this.inputNotes = this.dexie.table(Table.InputNotes);
         this.outputNotes = this.dexie.table(Table.OutputNotes);
         this.notesScripts = this.dexie.table(Table.NotesScripts);
-        this.stateSync = this.dexie.table(Table.StateSync);
+        this.blockchainCheckpoint = this.dexie.table(Table.BlockchainCheckpoint);
         this.blockHeaders = this.dexie.table(Table.BlockHeaders);
         this.partialBlockchainNodes = this.dexie.table(Table.PartialBlockchainNodes);
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
         this.dexie.on("populate", () => {
-            this.stateSync
-                .put({ id: 1, blockNum: 0 })
-                /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+            this.blockchainCheckpoint
+                .put({
+                id: 1,
+                blockNum: 0,
+                partialBlockchainPeaks: new Uint8Array(),
+            })
+                /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
         });
     }
