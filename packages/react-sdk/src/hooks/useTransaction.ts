@@ -155,7 +155,7 @@ export function useTransaction(): UseTransactionResult {
           }
         }
 
-        const txSummary = { transactionId: txId.toString() };
+        const txSummary = { transactionId: txId.toHex() };
         setStage("complete");
         setResult(txSummary);
         await sync();
