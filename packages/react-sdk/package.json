@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/react",
-  "version": "0.14.5",
+  "version": "0.14.6",
   "description": "React hooks library for Miden Web Client",
   "type": "module",
   "module": "dist/index.mjs",
@@ -14,11 +14,20 @@
       "types": "./dist/lazy.d.ts",
       "default": "./dist/lazy.mjs"
     },
+    "./mt": {
+      "types": "./dist/mt.d.ts",
+      "default": "./dist/mt.mjs"
+    },
+    "./mt/lazy": {
+      "types": "./dist/mt/lazy.d.ts",
+      "default": "./dist/mt/lazy.mjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "lazy",
+    "mt",
     "README.md",
     "CLAUDE.md"
   ],

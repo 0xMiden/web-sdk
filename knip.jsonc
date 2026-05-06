@@ -80,6 +80,10 @@
         "js/constants.js",
         "js/workers/**/*.js",
         "js/__tests__/**/*.test.js",
+        // clean.js is invoked from scripts/build-types.js via
+        // `execSync('node clean.js')`. Direct entry so knip knows it's
+        // alive even though the call site is dynamic.
+        "clean.js",
         // The .d.ts files in js/types/ ship as the package's published
         // type surface — `pnpm run build` runs `cpr js/types dist` after
         // rollup, so dist/index.d.ts (the package's `types` field) is a

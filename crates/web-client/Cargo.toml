@@ -20,11 +20,34 @@ crate-type = ["cdylib"]
 
 [features]
 testing = ["miden-client/testing"]
+# Multi-threaded WASM build. When enabled, pulls in wasm-bindgen-rayon (the
+# rayon thread pool over Web Workers + SharedArrayBuffer) plus the parallel
+# paths in miden-crypto / miden-tx / Plonky3 (via cargo feature unification
+# of `miden-crypto/concurrent`). When DISABLED, the SDK is single-threaded
+# end-to-end and works in non-cross-origin-isolated contexts (no SAB
+# requirement, no `+atomics` target feature, stable cargo with the
+# precompiled rust-std-wasm32 — no `-Z build-std` needed).
+#
+# Two distinct WASM artifacts are shipped (see crates/web-client/rollup.config.js):
+#   - dist/{eager,lazy}-st  built without this feature  → loads anywhere
+#   - dist/{eager,lazy}-mt  built with this feature     → requires COI
+#
+# Consumers select via package.json exports subpaths:
+#   `@miden-sdk/miden-sdk`           → eager-st (default; safe everywhere)
+#   `@miden-sdk/miden-sdk/lazy`      → lazy-st
+#   `@miden-sdk/miden-sdk/mt`        → eager-mt (opt-in; needs COI)
+#   `@miden-sdk/miden-sdk/mt/lazy`   → lazy-mt
+mt-threads = ["dep:wasm-bindgen-rayon", "dep:rayon", "miden-crypto/concurrent"]
 
 [dependencies]
 # Workspace dependencies
 idxdb-store = { workspace = true }
 miden-client = { features = ["testing", "tonic"], workspace = true }
+# `concurrent` feature is enabled via the `mt-threads` feature only — see the
+# feature definition above. Without `mt-threads`, the parallel paths stay
+# inactive and the build doesn't need atomics / shared memory / nightly
+# build-std.
+miden-crypto = { default-features = false, version = "0.23" }
 miden-protocol = { workspace = true }
 miden-standards = { workspace = true }
 
@@ -44,6 +67,12 @@ tracing-subscriber = { default-features = false, features = [
 tracing-wasm = { version = "0.2" }
 wasm-bindgen = { features = ["serde-serialize"], version = "=0.2.108" }
 wasm-bindgen-futures = { version = "0.4" }
+# Optional MT-only deps: pulled in by the `mt-threads` feature.
+# wasm-bindgen-rayon bootstraps a rayon thread pool over Web Workers backed
+# by SharedArrayBuffer; rayon is used directly by diagnostic helpers
+# (rayon_thread_count, parallel_sum_bench).
+wasm-bindgen-rayon = { version = "1.3", optional = true }
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 web-sys = { features = ["console"], version = "0.3" }

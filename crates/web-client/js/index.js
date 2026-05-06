@@ -574,6 +574,22 @@ class WebClient {
   // More context here:
   // https://github.com/0xMiden/miden-client/pull/1645?notification_referrer_id=NT_kwHOA1yg7NoAJVJlcG9zaXRvcnk7NjU5MzQzNzAyO0lzc3VlOzM3OTY4OTU1Nzk&notifications_query=is%3Aunread#discussion_r2696075480
   initializeWorker() {
+    // Pass `numThreads` to the worker so it can call `wasm.initThreadPool(n)`
+    // inside its OWN WASM instance — the SDK worker's instance is separate
+    // from the main thread's, and rayon's global pool is per-instance.
+    // Default: navigator.hardwareConcurrency (or 1 if unavailable for any
+    // reason — e.g. the page isn't crossOriginIsolated, in which case the
+    // worker will skip pool init and parallelism falls back to sequential).
+    let numThreads = 1;
+    try {
+      if (
+        typeof self !== "undefined" &&
+        self.crossOriginIsolated &&
+        navigator?.hardwareConcurrency
+      ) {
+        numThreads = navigator.hardwareConcurrency;
+      }
+    } catch {}
     this.worker.postMessage({
       action: WorkerAction.INIT,
       args: [
@@ -585,6 +601,7 @@ class WebClient {
         !!this.insertKeyCb,
         !!this.signCb,
         this.logLevel,
+        numThreads,
       ],
     });
   }
