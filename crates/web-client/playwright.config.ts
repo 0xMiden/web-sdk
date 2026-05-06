@@ -90,6 +90,7 @@ const ciShardProjects = process.env.CI
           "test/compile_and_contract.test.ts",
           "test/package.test.ts",
           "test/mockchain.test.ts",
+          "test/no_auth_consume.test.ts",
           "test/miden_array.test.ts",
           "test/miden_client_api.test.ts",
           "test/address.test.ts",
