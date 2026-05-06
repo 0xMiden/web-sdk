@@ -33,10 +33,6 @@
     // strings.
     "publint",
     "@arethetypeswrong/cli",
-    // `cpr` is invoked from scripts/build-types.js via
-    // `execSync('cpr js/types dist/${v}')`. Knip's static analysis
-    // can't follow shell-spawned binaries.
-    "cpr",
   ],
   "rules": {
     // Three intentional dual-export patterns in this repo:

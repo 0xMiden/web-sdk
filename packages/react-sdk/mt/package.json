@@ -1,0 +1,5 @@
+{
+  "main": "../dist/mt.mjs",
+  "module": "../dist/mt.mjs",
+  "types": "../dist/mt.d.ts"
+}

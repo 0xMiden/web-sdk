@@ -65,23 +65,127 @@ pnpm add @miden-sdk/miden-sdk@next
 
 > **Note:** The `next` version of the SDK must be used in conjunction with a locally running Miden node built from the `next` branch of the `miden-node` repository. This is necessary because the public testnet runs the stable `main` branch, which may not be compatible with the latest development features in `next`. Instructions to run a local node can be found [here](https://github.com/0xMiden/miden-node/tree/next) on the `next` branch of the `miden-node` repository. Additionally, if you plan to leverage delegated proving in your application, you may need to run a local prover (see [Remote prover instructions](https://github.com/0xMiden/miden-node/tree/next/bin/remote-prover)).
 
-## Entry Points: Eager (default) and `/lazy`
+## Entry Points: Eager / Lazy × ST / MT
 
-The SDK ships two entry points with an identical public API. They differ only in **when** the WASM module is initialized.
+The SDK ships **four** entry points with an identical public API. They vary along two orthogonal axes:
 
-| Import path                    | When WASM initializes                         | When to use                                                                |
-| ------------------------------ | --------------------------------------------- | -------------------------------------------------------------------------- |
-| `@miden-sdk/miden-sdk`         | At module evaluation (top-level `await`)      | Plain browser apps, Vite, CRA, esbuild, Webpack client bundles             |
-| `@miden-sdk/miden-sdk/lazy`    | On first call to `MidenClient.ready()` or any `await`-ing SDK method | Next.js / SSR, Capacitor (iOS/Android WKWebView), framework adapters |
+- **WASM init timing** — _eager_ awaits at module load (top-level `await`); _lazy_ leaves init to an explicit `MidenClient.ready()` or first awaiting SDK method.
+- **WASM threading model** — _ST_ (single-threaded) loads in any browser context; _MT_ (multi-threaded, `wasm-bindgen-rayon`) parallelizes proving across hardware threads but **requires the page to be cross-origin-isolated**.
 
-The eager entry awaits WASM at module top level via a small shim (`js/eager.js`), so once an `import` statement resolves, any wasm-bindgen constructor (`new Felt(…)`, `AccountId.fromHex(…)`, `TransactionProver.newLocalProver()`, etc.) is safe to call synchronously on the next line. No `await MidenClient.ready()` is required.
+| Import path                         | Timing | Threading | When WASM initializes                | Hosting requirement                    |
+| ----------------------------------- | ------ | --------- | ------------------------------------ | -------------------------------------- |
+| `@miden-sdk/miden-sdk`              | eager  | ST        | At module evaluation (TLA)           | None — works anywhere                  |
+| `@miden-sdk/miden-sdk/lazy`         | lazy   | ST        | On `ready()` / first `await`         | None — works anywhere                  |
+| `@miden-sdk/miden-sdk/mt`           | eager  | **MT**    | At module evaluation (TLA)           | Cross-origin isolation (see below)     |
+| `@miden-sdk/miden-sdk/mt/lazy`      | lazy   | **MT**    | On `ready()` / first `await`         | Cross-origin isolation (see below)     |
 
-The lazy entry does not run any top-level await. This matters in two environments that hang on TLA:
+The default subpaths (`/`, `/lazy`) ship the single-threaded WASM and load in any browser context. The `/mt` family enables wasm-bindgen-rayon, which gives ~3–5× faster `proveTransactionWithProver` on commodity laptops at the cost of a hard hosting requirement.
+
+### Threading model — when to pick `/mt`
+
+The MT build can ONLY load on a page where `self.crossOriginIsolated === true`, i.e. the host has set:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Without those response headers, the browser refuses to construct `WebAssembly.Memory({ shared: true })` and the `/mt` WASM fails to instantiate at module load. The default ST subpaths don't depend on shared memory and have no such requirement.
+
+Pick MT when:
+
+- Your dApp does local (non-delegated) proving and you control the hosting headers.
+- You're shipping the SDK inside a Chrome extension or other host whose manifest already sets COOP/COEP.
+
+Pick ST when:
+
+- You don't control the response headers (third-party host, CDN that won't set them).
+- You're using delegated proving exclusively — the network round-trip dwarfs any local-prove speedup.
+- You're targeting Capacitor / native WebViews — they don't expose cross-origin isolation by default.
+
+### Setting cross-origin isolation headers
+
+If you import `/mt` or `/mt/lazy`, the page hosting the SDK must respond with the COOP/COEP headers above. Common setups:
+
+**Vite dev server**
+
+```ts
+// vite.config.ts
+export default {
+  server: {
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
+  },
+};
+```
+
+**Next.js**
+
+```js
+// next.config.mjs
+export default {
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+        ],
+      },
+    ];
+  },
+};
+```
+
+**Express / generic Node**
+
+```js
+app.use((_, res, next) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  next();
+});
+```
+
+**Chrome / Firefox extension manifests (MV3)**
+
+```json
+{
+  "cross_origin_opener_policy": { "value": "same-origin" },
+  "cross_origin_embedder_policy": { "value": "require-corp" }
+}
+```
+
+**Caveat — COEP side effects.** `require-corp` blocks any cross-origin resource (images, fonts, iframes, scripts) that doesn't carry `Cross-Origin-Resource-Policy: cross-origin` or appropriate CORS. If your page loads remote avatars, embeds YouTube, pulls fonts from Google, etc., those break unless you serve them from same-origin or add the right headers. This is a deployment decision; opt in only when you understand the resource graph.
+
+If you cannot set these headers (CDN, hosting provider that doesn't allow header injection), the COI service-worker shim pattern (`gzuidhof/coi-serviceworker`) lets a small same-origin SW intercept fetches and re-inject the headers on the way back. We don't bundle this with the SDK because installing a service worker into a consumer's app is intrusive — adopt it deliberately if you need it.
+
+### `initThreadPool(n)` — required once for MT
+
+Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon. **Consumers must `await` it once before any prove call** (typically at app startup, or just before the first transaction):
+
+```ts
+import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
+
+await MidenClient.ready();
+await initThreadPool(navigator.hardwareConcurrency); // size to physical threads
+```
+
+Without this call, the rayon global thread pool spawns zero workers on `wasm32` and every `par_iter(...)` falls through to a sequential loop — i.e. you've shipped multi-threaded WASM that runs single-threaded. The ST entries don't expose `initThreadPool` (no thread pool to bring up).
+
+### Timing model — eager vs lazy
+
+The eager entries await WASM at module top level via a small shim, so once an `import` statement resolves, any wasm-bindgen constructor (`new Felt(…)`, `AccountId.fromHex(…)`, `TransactionProver.newLocalProver()`, etc.) is safe to call synchronously on the next line. No `await MidenClient.ready()` is required.
+
+The lazy entries do not run any top-level await. This matters in two environments that hang on TLA:
 
 - **Next.js / SSR** — TLA blocks server-side module evaluation.
 - **Capacitor WKWebView hosts (Miden Wallet iOS/Android)** — the custom `capacitor://localhost` scheme handler interacts poorly with TLA in the main WebView. Verified empirically: the same TLA in a dApp WebView (vanilla HTTPS) resolves in <100ms, but hangs indefinitely in the Capacitor host.
 
-On the lazy entry, callers are responsible for awaiting initialization before calling any wasm-bindgen constructor. Every async SDK method (`client.accounts.create()`, `client.transactions.send()`, etc.) awaits internally, so you only need to gate on readiness when you're constructing wasm-bindgen types yourself.
+On a lazy entry, callers are responsible for awaiting initialization before calling any bare wasm-bindgen constructor. Every async SDK method (`client.accounts.create()`, `client.transactions.send()`, etc.) awaits internally, so you only need to gate on readiness when you're constructing wasm-bindgen types yourself.
 
 ### Eager usage (default)
 
@@ -112,6 +216,32 @@ await client.sync();
 ```
 
 `MidenClient.ready()` is idempotent and safe to call from multiple places — concurrent callers share the same in-flight promise, and post-init callers resolve immediately from a cached module. `MidenProvider`, tutorial helpers, and application code can all call it without any coordination.
+
+### Multi-threaded usage (`/mt` or `/mt/lazy`)
+
+The MT entries enable wasm-bindgen-rayon for ~3–5× faster `proveTransactionWithProver` on hardware-multi-threaded machines. Same shape as ST, plus `initThreadPool` once at startup:
+
+```typescript
+// Use the lazy MT entry for environments that hang on TLA (Next.js, Capacitor):
+import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
+
+await MidenClient.ready();
+await initThreadPool(navigator.hardwareConcurrency); // bring up the rayon pool ONCE
+
+const client = await MidenClient.createTestnet();
+// All subsequent prove calls dispatch across threads automatically.
+```
+
+Or eager:
+
+```typescript
+import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt";
+
+await initThreadPool(navigator.hardwareConcurrency);
+const client = await MidenClient.createTestnet();
+```
+
+Reminder: the `/mt` entries fail to load on pages without cross-origin isolation. See "Setting cross-origin isolation headers" above. If `self.crossOriginIsolated === false` at the time of import, you'll see a `WebAssembly.Memory: shared memory requires crossOriginIsolated` (or similar) thrown out of `__wbg_init`.
 
 ### Next.js example
 
