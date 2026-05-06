@@ -53,10 +53,9 @@
   ],
   "scripts": {
     "build-rust-client-js": "pnpm --filter web_store run build",
-    "build": "rimraf dist && pnpm run build-rust-client-js && pnpm run build-st && pnpm run build-mt-conditional && pnpm run build-types && node ./scripts/post-build.js",
+    "build": "rimraf dist && pnpm run build-rust-client-js && pnpm run build-st && pnpm run build-mt && pnpm run build-types && node ./scripts/post-build.js",
     "build-st": "cross-env MIDEN_BUILD_VARIANT=st rollup -c rollup.config.js",
     "build-mt": "cross-env MIDEN_BUILD_VARIANT=mt rollup -c rollup.config.js",
-    "build-mt-conditional": "node ./scripts/build-mt-conditional.js",
     "build-types": "node ./scripts/build-types.js",
     "build-dev": "pnpm install && cross-env MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
