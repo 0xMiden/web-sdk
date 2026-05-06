@@ -110,6 +110,70 @@ const wasmBindgenRayonSnippetResolver = {
   },
 };
 
+// Build variant: "st" (single-threaded, works in any browser context) or
+// "mt" (multi-threaded via wasm-bindgen-rayon, requires cross-origin
+// isolation). The two variants ship to separate dist subdirs and are
+// surfaced via package.json `exports` subpaths:
+//
+//   `@miden-sdk/miden-sdk`           → dist/st/eager.js
+//   `@miden-sdk/miden-sdk/lazy`      → dist/st/index.js
+//   `@miden-sdk/miden-sdk/mt`        → dist/mt/eager.js
+//   `@miden-sdk/miden-sdk/mt/lazy`   → dist/mt/index.js
+//
+// The package.json build script invokes rollup twice (once per variant)
+// to produce both subdirs. PR-CI builds may set MIDEN_BUILD_VARIANT=st
+// for fast validation; release builds run both. Default is "st" — the
+// safer fallback that loads anywhere — so that omitting the env var
+// during local iteration produces the same artifact as v0.14.2.
+const variant = process.env.MIDEN_BUILD_VARIANT || "st";
+if (variant !== "st" && variant !== "mt") {
+  throw new Error(
+    `MIDEN_BUILD_VARIANT must be "st" or "mt" (got "${variant}")`
+  );
+}
+const distDir = `dist/${variant}`;
+const isMt = variant === "mt";
+
+// MT-only target rustflags. These set up the WASM module's atomics + shared
+// memory imports that wasm-bindgen-rayon needs. Passed via cargo's
+// `--config target.<triple>.rustflags=[...]` so they only apply to the MT
+// build invocation. Previously these lived in `.cargo/config.toml` and
+// applied unconditionally, which broke the ST build (stable cargo's
+// precompiled rust-std-wasm32 has atomics disabled, so any std code path
+// using atomics fails at link time).
+const mtTargetRustflags = [
+  // Target features: atomics + bulk-memory + mutable-globals are required
+  // by wasm-bindgen-rayon. SIMD (`+simd128`) was tried and regressed prove
+  // time 16-37%; see commit 05dcac9b for the data.
+  "-C",
+  "target-feature=+atomics,+bulk-memory,+mutable-globals",
+  // Linker flags: import a SHARED memory rather than defining one. Without
+  // these the rayon worker spawn fails with "Memory could not be cloned"
+  // (because a non-shared memory can't be postMessaged to a Worker).
+  "-C",
+  "link-arg=--shared-memory",
+  "-C",
+  "link-arg=--import-memory",
+  // Per-thread TLS exports. wasm-bindgen-cli's threading-prep step rewrites
+  // every export to call `__wasm_init_tls` first, but only if lld kept the
+  // symbol. By default lld GCs them because no Rust code references them
+  // directly.
+  "-C",
+  "link-arg=--export=__wasm_init_tls",
+  "-C",
+  "link-arg=--export=__tls_size",
+  "-C",
+  "link-arg=--export=__tls_align",
+  "-C",
+  "link-arg=--export=__tls_base",
+  "-C",
+  "link-arg=--max-memory=4294967296",
+  "-C",
+  "panic=abort",
+  "--cfg",
+  'getrandom_backend="wasm_js"',
+];
+
 // Flag that indicates if the build is meant for development purposes.
 // If true, wasm-opt is not applied.
 const devMode = process.env.MIDEN_WEB_DEV === "true";
@@ -166,24 +230,37 @@ const wasmOptArgs = [
   "--debuginfo",
 ];
 
-// Base cargo arguments
+// MT-only cargo args. For the MT build we need:
+// - `-Z build-std=std,panic_abort` (nightly): recompile std with `+atomics`
+//   so cfg(target_feature = "atomics") returns true in wasm-bindgen-rayon's
+//   compile-time guard. Without this, the precompiled rust-std-wasm32 from
+//   rustup has atomics disabled and wasm-bindgen-rayon's compile-time
+//   compile_error! gate fires.
+// - `--features mt-threads` enables the optional wasm-bindgen-rayon + rayon
+//   deps and miden-crypto/concurrent (cargo feature unification turns on
+//   the parallel paths in Plonky3 / miden-tx via miden-protocol).
+// - `--config target.wasm32-unknown-unknown.rustflags=[...]` injects the
+//   atomics target feature + shared-memory linker flags + TLS exports.
+//   Previously these lived in .cargo/config.toml unconditionally; moved
+//   here so they only apply to the MT invocation.
+const mtOnlyCargoArgs = isMt
+  ? [
+      "-Z",
+      "build-std=std,panic_abort",
+      "--features",
+      "mt-threads",
+      // Cargo --config accepts an inline TOML expression. Quote-wrap each
+      // entry so spaces/commas in the rustflags array don't get mangled
+      // by shell parsing. cargo expects the value as: `[ "-C", "...", ... ]`.
+      "--config",
+      `target.wasm32-unknown-unknown.rustflags=${JSON.stringify(mtTargetRustflags)}`,
+    ]
+  : [];
+
+// Base cargo arguments shared by both ST and MT builds.
 const baseCargoArgs = [
-  // -Z build-std recompiles std (and panic_abort) with the +atomics target
-  // feature so cfg(target_feature = "atomics") returns true everywhere —
-  // including in wasm-bindgen-rayon's compile-time guard. Requires nightly,
-  // pinned in rust-toolchain.toml. Without this flag the prebuilt
-  // rust-std-wasm32 from rustup has atomics disabled and wasm-bindgen-rayon
-  // refuses to compile.
-  "-Z",
-  "build-std=std,panic_abort",
   "--features",
   "testing",
-  // target-feature flags moved to .cargo/config.toml under
-  // [target.wasm32-unknown-unknown].rustflags so they apply uniformly to all
-  // crates including wasm-bindgen-rayon (whose `cfg(target_feature = "atomics")`
-  // check fired a compile_error! when the flags came in via `--config
-  // build.rustflags` AND the package.json `RUSTFLAGS` env was set, since the
-  // env-var fully shadows the [build.rustflags] from --config).
   "--no-default-features",
   // Always include line-tables-only debug info for readable stack traces.
   ...cargoArgsLineTablesDebug,
@@ -191,6 +268,7 @@ const baseCargoArgs = [
   // Cargo uses last-wins semantics for repeated --config keys,
   // so debug='full' overrides debug='line-tables-only'.
 ]
+  .concat(mtOnlyCargoArgs)
   .concat(devMode ? cargoArgsUseDebugSymbols : [])
   // Fast-build overrides come LAST so they win the last-wins race against
   // both the plugin's defaults and any earlier --config entries.
@@ -223,7 +301,7 @@ export default [
   {
     input: ["./js/wasm.js", "./js/index.js", "./js/eager.js"],
     output: {
-      dir: `dist`,
+      dir: distDir,
       format: "es",
       sourcemap: true,
       assetFileNames: "assets/[name][extname]",
@@ -242,13 +320,13 @@ export default [
           wasmBindgen: ["--keep-debug"],
         },
         experimental: {
-          typescriptDeclarationDir: "dist/crates",
+          typescriptDeclarationDir: `${distDir}/crates`,
         },
         optimize: { release: true, rustc: !devMode },
       }),
       resolve(),
       commonjs(),
-      emitWorkerHelpers("dist"),
+      emitWorkerHelpers(distDir),
       // Convert the top-level `await __wbg_init(...)` to a non-blocking
       // exported Promise. This prevents the TLA from blocking WKWebView
       // module evaluation while still allowing the Worker (and anyone else)
@@ -304,11 +382,11 @@ export default [
   // `self.location.href` (the only form a classic worker can see at runtime),
   // strips `export` clauses, and wraps the rollup ESM output in an async IIFE.
   //
-  // Output: dist/workers/web-client-methods-worker.js
+  // Output: dist/{st,mt}/workers/web-client-methods-worker.js
   {
     input: "./js/workers/web-client-methods-worker.js",
     output: {
-      dir: `dist/workers`,
+      dir: `${distDir}/workers`,
       format: "es",
       sourcemap: true,
       inlineDynamicImports: true,
@@ -318,8 +396,11 @@ export default [
       commonjs(),
       copy({
         targets: [
-          // Copy WASM to `dist/workers/assets` for worker accessibility
-          { src: "dist/assets/*.wasm", dest: "dist/workers/assets" },
+          // Copy WASM into the worker's assets dir alongside the worker bundle
+          {
+            src: `${distDir}/assets/*.wasm`,
+            dest: `${distDir}/workers/assets`,
+          },
         ],
         verbose: true,
       }),
@@ -363,11 +444,11 @@ export default [
   // rewrites that reference to `self.location.href`, which webpack cannot trace,
   // producing a 404 on the WASM file for Next.js/webpack consumers.
   //
-  // Output: dist/workers/web-client-methods-worker.mjs
+  // Output: dist/{st,mt}/workers/web-client-methods-worker.module.js
   {
     input: "./js/workers/web-client-methods-worker.js",
     output: {
-      dir: `dist/workers`,
+      dir: `${distDir}/workers`,
       format: "es",
       sourcemap: true,
       // Two deliberate choices here:
@@ -390,6 +471,6 @@ export default [
       //    from the classic worker output that sits alongside it.
       entryFileNames: "[name].module.js",
     },
-    plugins: [resolve(), commonjs(), emitWorkerHelpers("dist/workers")],
+    plugins: [resolve(), commonjs(), emitWorkerHelpers(`${distDir}/workers`)],
   },
 ];

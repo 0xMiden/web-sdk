@@ -15,20 +15,32 @@
     "Miden"
   ],
   "type": "module",
-  "main": "./dist/eager.js",
-  "browser": "./dist/eager.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/st/eager.js",
+  "browser": "./dist/st/eager.js",
+  "types": "./dist/st/index.d.ts",
   "exports": {
     ".": {
       "import": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/eager.js"
+        "types": "./dist/st/index.d.ts",
+        "default": "./dist/st/eager.js"
       }
     },
     "./lazy": {
       "import": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
+        "types": "./dist/st/index.d.ts",
+        "default": "./dist/st/index.js"
+      }
+    },
+    "./mt": {
+      "import": {
+        "types": "./dist/mt/index.d.ts",
+        "default": "./dist/mt/eager.js"
+      }
+    },
+    "./mt/lazy": {
+      "import": {
+        "types": "./dist/mt/index.d.ts",
+        "default": "./dist/mt/index.js"
       }
     },
     "./package.json": "./package.json"
@@ -36,12 +48,17 @@
   "files": [
     "dist",
     "lazy",
+    "mt",
     "../LICENSE.md"
   ],
   "scripts": {
     "build-rust-client-js": "pnpm --filter web_store run build",
-    "build": "rimraf dist && pnpm run build-rust-client-js && rollup -c rollup.config.js && cpr js/types dist && node clean.js && node ./scripts/post-build.js",
-    "build-dev": "pnpm install && MIDEN_WEB_DEV=true pnpm run build",
+    "build": "rimraf dist && pnpm run build-rust-client-js && pnpm run build-st && pnpm run build-mt-conditional && pnpm run build-types && node ./scripts/post-build.js",
+    "build-st": "cross-env MIDEN_BUILD_VARIANT=st RUSTUP_TOOLCHAIN=stable rollup -c rollup.config.js",
+    "build-mt": "cross-env MIDEN_BUILD_VARIANT=mt rollup -c rollup.config.js",
+    "build-mt-conditional": "node ./scripts/build-mt-conditional.js",
+    "build-types": "node ./scripts/build-types.js",
+    "build-dev": "pnpm install && cross-env MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",
     "check:standalone-types": "node ./scripts/check-standalone-types.js",

@@ -114,17 +114,35 @@ integration-test-remote-prover-web-client: ## Run integration tests for the web 
 # --- Building ------------------------------------------------------------------------------------
 
 .PHONY: build-wasm
-build-wasm: rust-client-ts-build ## Build the WASM packages (web client and idxdb store)
-	# Nightly + -Z build-std=std,panic_abort: required because
-	# .cargo/config.toml's [target.wasm32-unknown-unknown].rustflags sets
-	# `target-feature=+atomics`. The precompiled rust-std-wasm32 from
-	# rustup is built WITHOUT atomics, so stable cargo trips at link time
-	# once any std code path emits an atomic. Build-std rebuilds std with
-	# our target features active. Matches the rollup build's baseCargoArgs
-	# (rollup.config.js) so the two paths stay consistent — previously
-	# `make build-wasm` silently produced a non-mt artifact divergent from
-	# the actual published build.
-	cargo +nightly build -Z build-std=std,panic_abort --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
+build-wasm: rust-client-ts-build ## Build the WASM packages — ST variant only (stable cargo, no atomics, no build-std)
+	# ST sanity check: stable cargo, no `+atomics`, no `-Z build-std`.
+	# This is the variant exposed at the default `@miden-sdk/miden-sdk`
+	# subpath — works in any browser context (no SAB / cross-origin
+	# isolation needed). Uses the precompiled rust-std-wasm32 from rustup,
+	# so it's fast and doesn't require nightly. Matches the v0.14.2
+	# build profile.
+	#
+	# To validate the MT variant locally, run `make build-wasm-mt`.
+	# The full release pipeline runs both.
+	RUSTUP_TOOLCHAIN=stable cargo build --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
+
+.PHONY: build-wasm-mt
+build-wasm-mt: rust-client-ts-build ## Build the WASM packages — MT variant (nightly + build-std + atomics)
+	# MT build: nightly cargo with `-Z build-std=std,panic_abort` to
+	# recompile std with `+atomics` enabled. Without build-std the
+	# precompiled rust-std-wasm32 from rustup has atomics disabled and
+	# wasm-bindgen-rayon's `compile_error!` gate fires.
+	#
+	# Target-feature flags + shared-memory linker flags + TLS exports are
+	# passed via `--config target.wasm32-unknown-unknown.rustflags=[...]`
+	# so they only apply to this invocation. (See rollup.config.js for
+	# the canonical list — Makefile mirrors it for the sanity-check build.)
+	cargo +nightly build \
+		-Z build-std=std,panic_abort \
+		--package miden-client-web --package miden-idxdb-store \
+		--target wasm32-unknown-unknown --locked \
+		--features miden-client-web/mt-threads \
+		--config 'target.wasm32-unknown-unknown.rustflags=["-C","target-feature=+atomics,+bulk-memory,+mutable-globals","-C","link-arg=--shared-memory","-C","link-arg=--import-memory","-C","link-arg=--export=__wasm_init_tls","-C","link-arg=--export=__tls_size","-C","link-arg=--export=__tls_align","-C","link-arg=--export=__tls_base","-C","link-arg=--max-memory=4294967296","-C","panic=abort","--cfg","getrandom_backend=\"wasm_js\""]'
 
 .PHONY: rust-client-ts-build
 rust-client-ts-build:
