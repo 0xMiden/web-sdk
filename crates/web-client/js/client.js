@@ -40,9 +40,11 @@ export class MidenClient {
   }
 
   /**
-   * Escape hatch: returns the proxied JS WebClient that backs this
-   * MidenClient. The proxy forwards missing properties to the underlying
-   * wasm-bindgen `WebClient`, so callers can reach lower-level methods like
+   * Escape hatch: runs `fn` with exclusive access to the proxied JS
+   * WebClient that backs this MidenClient.
+   *
+   * The proxy forwards missing properties to the underlying wasm-bindgen
+   * `WebClient`, so `fn` can reach lower-level methods like
    * `executeTransaction`, `proveTransaction[WithProver]`,
    * `submitProvenTransaction`, `applyTransaction`,
    * `newSendTransactionRequest`, `newConsumeTransactionRequest`, etc.
@@ -54,18 +56,33 @@ export class MidenClient {
    * (where wasm-bindgen-rayon can spawn a real thread pool), then runs
    * `submitProvenTransaction` + `applyTransaction` back in the SW.
    *
-   * Stability: marked `@internal`. The shape of `#inner` is intentionally
-   * not part of the documented public API and may change between SDK
-   * versions. If you depend on this method, pin the SDK version and
-   * test the lower-level surface carefully on each upgrade. If your use
-   * case is common enough to warrant a stable public API, file an issue.
+   * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
+   * held for the duration of `fn`. Concurrent SDK calls (sync, other
+   * transactions, etc.) queue on the same chain and run after `fn`
+   * settles. Without this serialization, raw inner-client access would
+   * race the proxy's chain and trip wasm-bindgen's "recursive use of an
+   * object detected" panic.
+   *
+   * Stability: marked `@internal`. The shape of the proxied client is
+   * intentionally not part of the documented public API and may change
+   * between SDK versions. If you depend on this method, pin the SDK
+   * version and test the lower-level surface carefully on each upgrade.
+   * If your use case is common enough to warrant a stable public API,
+   * file an issue.
    *
    * @internal
-   * @returns {object} The proxied JS WebClient with wasm-bindgen fallback.
+   * @template T
+   * @param {(inner: object) => Promise<T>} fn - Async callback receiving
+   *   the proxied JS WebClient. Must not return references that escape
+   *   the callback's lifetime (the lock is released on settle).
+   * @returns {Promise<T>} The resolved value of `fn`.
    */
-  _getInnerWebClient() {
+  _withInnerWebClient(fn) {
     this.assertNotTerminated();
-    return this.#inner;
+    if (typeof fn !== "function") {
+      throw new TypeError("_withInnerWebClient: fn must be a function");
+    }
+    return this.#inner._serializeWasmCall(() => fn(this.#inner));
   }
 
   /**

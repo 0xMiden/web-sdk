@@ -4,7 +4,11 @@
 # the multi-threaded prover. Stable 1.93 silently emits a wasm with the +atomics
 # bit set but the cfg() check still says false, so the wasm-bindgen-rayon compile
 # guard fires.
-channel = "nightly"
+#
+# Pinned to a specific date for reproducibility — published WASM bytes and prove
+# perf both shift with the toolchain. Bump deliberately, never via floating
+# `nightly`. See PR #134 review (SantiagoPittella) for context.
+channel = "nightly-2026-05-05"
 components = ["clippy", "rust-src", "rustfmt"]
 profile = "minimal"
 targets = ["wasm32-unknown-unknown"]
