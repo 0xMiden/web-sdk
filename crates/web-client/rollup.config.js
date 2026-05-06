@@ -169,10 +169,34 @@ const isMt = variant === "mt";
 // using atomics fails at link time).
 const mtTargetRustflags = [
   // Target features: atomics + bulk-memory + mutable-globals are required
-  // by wasm-bindgen-rayon. SIMD (`+simd128`) was tried and regressed prove
-  // time 16-37%; see commit 05dcac9b for the data.
+  // by wasm-bindgen-rayon. Plus `+simd128` — see commit 05dcac9b for the
+  // earlier blanket-SIMD regression data. Re-enabled here paired with
+  // `-C llvm-args=-vectorize-loops=false -vectorize-slp=false` to suppress
+  // LLVM auto-vectorization. The earlier regression came from autovec
+  // mis-vectorizing Goldilocks's u64 modular reduction (WASM v128 has no
+  // widening 64×64 mul, so emulation costs more than scalar). With autovec
+  // off, hand-written WASM-SIMD paths in libraries (BLAKE3, etc.) still
+  // light up via `cfg(target_feature = "simd128")` while Goldilocks scalar
+  // code stays scalar.
+  //
+  // Measured on testnet, ECDSA, M-series Mac, 10-cycle send/consume bench:
+  //   median send:    4173 ms -> 3895 ms  (-6.7%)
+  //   median consume: 4132 ms -> 3903 ms  (-5.5%)
+  //   min send:       3795 ms -> 3325 ms  (-12%)
+  //   min consume:    3799 ms -> 3499 ms  (-7.9%)
+  // Variance widened (max-cycle outliers got worse), but typical-case prove
+  // is faster. Net positive.
+  //
+  // The deeper win is upstream: hand-written std::arch::wasm32 intrinsics
+  // for Goldilocks mul/reduce in p3-goldilocks (Plonky3). That's the only
+  // change that closes the WASM-vs-native gap meaningfully; this flag
+  // combo is a free incremental on top.
   "-C",
-  "target-feature=+atomics,+bulk-memory,+mutable-globals",
+  "target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128",
+  "-C",
+  "llvm-args=-vectorize-loops=false",
+  "-C",
+  "llvm-args=-vectorize-slp=false",
   // Linker flags: import a SHARED memory rather than defining one. Without
   // these the rayon worker spawn fails with "Memory could not be cloned"
   // (because a non-shared memory can't be postMessaged to a Worker).
@@ -252,6 +276,10 @@ const wasmOptArgs = [
   // pool. Tell binaryen to leave those instructions alone instead of
   // either erroring or "optimizing" them into a non-shared form.
   "--enable-threads",
+  // SIMD: required when the input WASM contains v128 instructions, which
+  // it does once `+simd128` is on in mtTargetRustflags. Without this,
+  // binaryen would refuse to process the module.
+  "--enable-simd",
   // Preserve the name section through optimization passes.
   "--debuginfo",
 ];
