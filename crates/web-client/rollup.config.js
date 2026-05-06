@@ -76,6 +76,32 @@ waitForMsgType(self, 'wasm_bindgen_worker_init').then(async ({ init, receiver })
   },
 });
 
+// Rewrites the worker's static import `../../dist/wasm.js` to point at the
+// variant-specific build output (`../../dist/${variant}/wasm.js`). The
+// worker source has to use a static (non-templated) import since JS module
+// imports can't take variables, but the actual file lives under a
+// per-variant subdir. resolveId fires before rollup tries to load the file
+// so the rewrite is transparent.
+const rewriteWorkerWasmImport = {
+  name: "rewrite-worker-wasm-import",
+  resolveId(source, importer) {
+    if (
+      source === "../../dist/wasm.js" &&
+      importer &&
+      importer.includes("web-client-methods-worker.js")
+    ) {
+      return path.resolve(
+        path.dirname(importer),
+        "..",
+        "..",
+        distDir,
+        "wasm.js"
+      );
+    }
+    return null;
+  },
+};
+
 const wasmBindgenRayonSnippetResolver = {
   name: "wasm-bindgen-rayon-snippet-resolver",
   // Use `order: 'pre'` so our resolveId fires BEFORE rollup-plugin-rust's
@@ -230,23 +256,20 @@ const wasmOptArgs = [
   "--debuginfo",
 ];
 
-// MT-only cargo args. For the MT build we need:
-// - `-Z build-std=std,panic_abort` (nightly): recompile std with `+atomics`
-//   so cfg(target_feature = "atomics") returns true in wasm-bindgen-rayon's
-//   compile-time guard. Without this, the precompiled rust-std-wasm32 from
-//   rustup has atomics disabled and wasm-bindgen-rayon's compile-time
-//   compile_error! gate fires.
+// MT-only cargo args. For the MT build we additionally need:
 // - `--features mt-threads` enables the optional wasm-bindgen-rayon + rayon
 //   deps and miden-crypto/concurrent (cargo feature unification turns on
 //   the parallel paths in Plonky3 / miden-tx via miden-protocol).
 // - `--config target.wasm32-unknown-unknown.rustflags=[...]` injects the
 //   atomics target feature + shared-memory linker flags + TLS exports.
 //   Previously these lived in .cargo/config.toml unconditionally; moved
-//   here so they only apply to the MT invocation.
+//   here so they only apply to the MT invocation. The `+atomics` target
+//   feature requires `-Z build-std` (below) to recompile std with atomics
+//   enabled — without it, the precompiled rust-std-wasm32 has atomics
+//   disabled and wasm-bindgen-rayon's compile-time compile_error! gate
+//   fires.
 const mtOnlyCargoArgs = isMt
   ? [
-      "-Z",
-      "build-std=std,panic_abort",
       "--features",
       "mt-threads",
       // Cargo --config accepts an inline TOML expression. Quote-wrap each
@@ -258,7 +281,26 @@ const mtOnlyCargoArgs = isMt
   : [];
 
 // Base cargo arguments shared by both ST and MT builds.
+//
+// `-Z build-std=std,panic_abort` recompiles std (and panic_abort) from
+// rust-src for the wasm32-unknown-unknown target. Originally added for the
+// MT build (where +atomics requires std to be rebuilt with atomics enabled),
+// but kept on the ST path too for two reasons:
+//   1. The CI workflow installs rust-src for nightly via rust-toolchain.toml's
+//      `targets = ["wasm32-unknown-unknown"]` + `components = [..., "rust-src"]`,
+//      but does NOT explicitly install the precompiled rust-std-wasm32 binary
+//      for the auto-installed nightly. Without `-Z build-std`, the ST build
+//      hits "can't find crate for std" because the precompiled wasm32 std
+//      isn't there.
+//   2. Adds ~30s to the ST build, but keeps both paths on the same
+//      toolchain (nightly) so we don't have to maintain two CI setups.
+//
+// If at some point we want stable cargo for ST (no nightly), the CI
+// workflow needs `rustup target add wasm32-unknown-unknown --toolchain stable`
+// AND `RUSTUP_TOOLCHAIN=stable` on the ST invocation. Defer until needed.
 const baseCargoArgs = [
+  "-Z",
+  "build-std=std,panic_abort",
   "--features",
   "testing",
   "--no-default-features",
@@ -392,6 +434,7 @@ export default [
       inlineDynamicImports: true,
     },
     plugins: [
+      rewriteWorkerWasmImport,
       resolve(),
       commonjs(),
       copy({
@@ -471,6 +514,11 @@ export default [
       //    from the classic worker output that sits alongside it.
       entryFileNames: "[name].module.js",
     },
-    plugins: [resolve(), commonjs(), emitWorkerHelpers(`${distDir}/workers`)],
+    plugins: [
+      rewriteWorkerWasmImport,
+      resolve(),
+      commonjs(),
+      emitWorkerHelpers(`${distDir}/workers`),
+    ],
   },
 ];

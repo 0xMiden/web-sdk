@@ -114,17 +114,22 @@ integration-test-remote-prover-web-client: ## Run integration tests for the web 
 # --- Building ------------------------------------------------------------------------------------
 
 .PHONY: build-wasm
-build-wasm: rust-client-ts-build ## Build the WASM packages — ST variant only (stable cargo, no atomics, no build-std)
-	# ST sanity check: stable cargo, no `+atomics`, no `-Z build-std`.
-	# This is the variant exposed at the default `@miden-sdk/miden-sdk`
-	# subpath — works in any browser context (no SAB / cross-origin
-	# isolation needed). Uses the precompiled rust-std-wasm32 from rustup,
-	# so it's fast and doesn't require nightly. Matches the v0.14.2
-	# build profile.
+build-wasm: rust-client-ts-build ## Build the WASM packages — ST variant (no atomics, no rayon)
+	# ST sanity check. No `+atomics`, no wasm-bindgen-rayon dependency,
+	# no MT linker flags. The default `@miden-sdk/miden-sdk` subpath ships
+	# this variant — works in any browser context (no SAB / cross-origin
+	# isolation required).
 	#
-	# To validate the MT variant locally, run `make build-wasm-mt`.
-	# The full release pipeline runs both.
-	RUSTUP_TOOLCHAIN=stable cargo build --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
+	# `-Z build-std=std,panic_abort` is kept (matches the rollup ST path).
+	# Reason: CI installs rust-src for the project's nightly toolchain via
+	# rust-toolchain.toml, but doesn't install a precompiled rust-std-wasm32
+	# for nightly — so without build-std the ST build trips on "can't find
+	# crate for std". Build-std rebuilds std from rust-src instead. ~30s
+	# slower than precompiled but keeps the build path consistent. To use
+	# stable + precompiled std for ST, CI would need an explicit
+	# `rustup target add wasm32-unknown-unknown --toolchain stable` step
+	# (deferred until there's a reason to drop nightly here).
+	cargo build -Z build-std=std,panic_abort --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
 
 .PHONY: build-wasm-mt
 build-wasm-mt: rust-client-ts-build ## Build the WASM packages — MT variant (nightly + build-std + atomics)

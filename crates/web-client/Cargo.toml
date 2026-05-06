@@ -37,11 +37,7 @@ testing = ["miden-client/testing"]
 #   `@miden-sdk/miden-sdk/lazy`      → lazy-st
 #   `@miden-sdk/miden-sdk/mt`        → eager-mt (opt-in; needs COI)
 #   `@miden-sdk/miden-sdk/mt/lazy`   → lazy-mt
-mt-threads = [
-  "dep:wasm-bindgen-rayon",
-  "dep:rayon",
-  "miden-crypto/concurrent",
-]
+mt-threads = ["dep:wasm-bindgen-rayon", "dep:rayon", "miden-crypto/concurrent"]
 
 [dependencies]
 # Workspace dependencies
