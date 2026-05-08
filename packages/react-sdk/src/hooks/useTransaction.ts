@@ -14,10 +14,8 @@ import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
-import {
-  waitForTransactionCommit,
-  extractFullNotes,
-} from "../utils/transactions";
+import { waitForTransactionCommit } from "../utils/noteFilters";
+import { extractFullNotes } from "../utils/transactions";
 
 export interface UseTransactionResult {
   /** Execute a transaction request end-to-end */
@@ -136,18 +134,22 @@ export function useTransaction(): UseTransactionResult {
           client.submitProvenTransaction(provenTransaction, txResult)
         );
 
+        // Save txId hex and full notes BEFORE applyTransaction, which consumes
+        // the WASM pointer inside txResult (and any child objects like TransactionId).
+        const txIdHex = txResult.id().toHex();
+        const fullNotes =
+          options.privateNoteTarget != null ? extractFullNotes(txResult) : [];
+
         // Step 4: Apply
         await runExclusiveSafe(() =>
           client.applyTransaction(txResult, submissionHeight)
         );
 
         // Deliver private notes if requested
-        const txId = txResult.id();
         if (options.privateNoteTarget != null) {
-          await waitForTransactionCommit(client, runExclusiveSafe, txId);
+          await waitForTransactionCommit(client, runExclusiveSafe, txIdHex);
 
           const targetAddress = parseAddress(options.privateNoteTarget);
-          const fullNotes = extractFullNotes(txResult);
           for (const note of fullNotes) {
             await runExclusiveSafe(() =>
               client.sendPrivateNote(note, targetAddress)
@@ -155,7 +157,7 @@ export function useTransaction(): UseTransactionResult {
           }
         }
 
-        const txSummary = { transactionId: txId.toHex() };
+        const txSummary = { transactionId: txIdHex };
         setStage("complete");
         setResult(txSummary);
         await sync();

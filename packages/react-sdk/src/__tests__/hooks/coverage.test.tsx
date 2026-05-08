@@ -265,6 +265,7 @@ describe("useConsume — note-resolution error paths", () => {
     const mockClient = createMockWebClient({
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_consume",
+        toHex: () => "0xtx_consume",
       }),
     });
     mockUseMiden.mockReturnValue({
@@ -385,7 +386,10 @@ describe("useMint / useSwap — prover branch", () => {
   it("useMint uses submitNewTransactionWithProver when prover is provided", async () => {
     const submitWithProver = vi
       .fn()
-      .mockResolvedValue({ toString: () => "0xtx_mint" });
+      .mockResolvedValue({
+        toString: () => "0xtx_mint",
+        toHex: () => "0xtx_mint",
+      });
     const submitWithout = vi.fn();
     const mockClient = createMockWebClient({
       submitNewTransactionWithProver: submitWithProver,
@@ -417,7 +421,10 @@ describe("useMint / useSwap — prover branch", () => {
   it("useSwap uses submitNewTransactionWithProver when prover is provided", async () => {
     const submitWithProver = vi
       .fn()
-      .mockResolvedValue({ toString: () => "0xtx_swap" });
+      .mockResolvedValue({
+        toString: () => "0xtx_swap",
+        toHex: () => "0xtx_swap",
+      });
     const submitWithout = vi.fn();
     const mockClient = createMockWebClient({
       submitNewTransactionWithProver: submitWithProver,

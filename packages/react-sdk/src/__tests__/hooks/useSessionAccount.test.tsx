@@ -115,6 +115,7 @@ describe("useSessionAccount", () => {
         newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
         submitNewTransaction: vi.fn().mockResolvedValue({
           toString: vi.fn(() => "0xtx"),
+          toHex: vi.fn(() => "0xtx"),
         }),
       });
 
@@ -169,6 +170,7 @@ describe("useSessionAccount", () => {
         newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
         submitNewTransaction: vi.fn().mockResolvedValue({
           toString: vi.fn(() => "0xtx"),
+          toHex: vi.fn(() => "0xtx"),
         }),
       });
 

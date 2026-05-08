@@ -344,6 +344,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_priv",
+        toHex: () => "0xtx_priv",
       }),
     });
     mockUseMiden.mockReturnValue({
@@ -470,6 +471,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
       newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_default",
+        toHex: () => "0xtx_default",
       }),
     });
     mockUseMiden.mockReturnValue({

@@ -146,7 +146,10 @@ describe("useSend", () => {
 
     it("should execute send with returnNote=true via submitNewTransaction", async () => {
       const mockSync = vi.fn().mockResolvedValue(undefined);
-      const mockTxId = { toString: vi.fn(() => "0xtx456") };
+      const mockTxId = {
+        toString: vi.fn(() => "0xtx456"),
+        toHex: vi.fn(() => "0xtx456"),
+      };
       const mockClient = createMockWebClient({
         submitNewTransaction: vi.fn().mockResolvedValue(mockTxId),
       });
