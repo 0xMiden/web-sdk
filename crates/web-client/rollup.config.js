@@ -173,7 +173,7 @@ const mtTargetRustflags = [
   // earlier blanket-SIMD regression data. Re-enabled here paired with
   // `-C llvm-args=-vectorize-loops=false -vectorize-slp=false` to suppress
   // LLVM auto-vectorization. The earlier regression came from autovec
-  // mis-vectorizing Goldilocks's u64 modular reduction (WASM v128 has no
+  // incorrectly vectorizing Goldilocks's u64 modular reduction (WASM v128 has no
   // widening 64×64 mul, so emulation costs more than scalar). With autovec
   // off, hand-written WASM-SIMD paths in libraries (BLAKE3, etc.) still
   // light up via `cfg(target_feature = "simd128")` while Goldilocks scalar
