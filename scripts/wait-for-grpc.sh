@@ -34,11 +34,26 @@ set -uo pipefail
 # and false-positived on a curl edge case that emitted "000000" (likely
 # an internal connection retry concatenating two failure codes). The
 # regex form is the strict version.
+#
+# Stability requirement: a single HTTP success isn't enough. Observed
+# flake mode: probe gets HTTP 200 once, exits, tests start, ALL tests
+# fail with `TypeError: Failed to fetch`. The HTTP layer can flicker up
+# briefly during init (e.g. a tonic-health endpoint comes online before
+# the rest of the dispatcher is fully wired). We require N consecutive
+# successes spaced ~PROBE_INTERVAL apart so a one-shot 200 doesn't pass
+# the gate. If the server flickers down between successes, the streak
+# resets to zero and the slow-poll loop resumes.
 
 BINARY="${1:?usage: $0 <binary> <port> [log-file] [timeout-seconds]}"
 PORT="${2:?usage: $0 <binary> <port> [log-file] [timeout-seconds]}"
 LOG_FILE="${3:-/tmp/$(basename "$BINARY").log}"
 TIMEOUT="${4:-90}"
+
+# Tunables. Conservative defaults — three consecutive successes 500ms
+# apart equals ~1s of stable response, which empirically clears the
+# observed flicker window.
+REQUIRED_STREAK=3
+PROBE_INTERVAL=0.5
 
 chmod +x "$BINARY"
 rm -f "$LOG_FILE"
@@ -48,6 +63,7 @@ BIN_PID=$!
 
 deadline=$((SECONDS + TIMEOUT))
 attempt=0
+streak=0
 while true; do
   attempt=$((attempt + 1))
 
@@ -57,9 +73,19 @@ while true; do
   # Any 1xx/2xx/3xx/4xx/5xx HTTP code = the server's HTTP layer is up.
   # Connection failures and timeouts produce "000" (or empty); we retry.
   if [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
-    echo "$(basename "$BINARY") gRPC dispatch responsive after ${attempt} attempt(s) (HTTP $http_code on port $PORT)"
-    break
+    streak=$((streak + 1))
+    if [ "$streak" -ge "$REQUIRED_STREAK" ]; then
+      echo "$(basename "$BINARY") gRPC dispatch stable after ${attempt} probe(s), ${REQUIRED_STREAK} consecutive HTTP successes (last code $http_code on port $PORT)"
+      break
+    fi
+    # Quick re-probe to confirm the streak.
+    sleep "$PROBE_INTERVAL"
+    continue
   fi
+
+  # Non-success → reset streak. A single bad probe in the middle of a
+  # would-be confirmation invalidates it — we want N IN A ROW.
+  streak=0
 
   if [ "$SECONDS" -ge "$deadline" ]; then
     echo "::error::$(basename "$BINARY") did not respond on port $PORT within ${TIMEOUT}s (last http_code='$http_code')"

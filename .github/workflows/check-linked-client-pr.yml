@@ -1,0 +1,183 @@
+name: Linked client PR ready
+
+# Mergeability gate for PRs that carry a `Client PR: #N` marker.
+#
+# The auto-patch action (.github/actions/inject-linked-client-pr) makes
+# the PR's CI build green against the linked PR's head, so the diff stays
+# clean. But the *published* artifact, after merge, builds from canonical
+# refs:
+#   - PRs targeting `main` build against `miden-client = "X.Y.Z"` from
+#     crates.io. After merge, main's CI is red until miden-client publishes
+#     a release that includes the linked PR's commit.
+#   - PRs targeting `next` build against `miden-client@next` (git source).
+#     After merge, next's CI is red until the linked PR is merged into
+#     miden-client's `next`.
+#
+# This workflow keeps a check status on the PR that goes green only when
+# the linked PR has reached the right state for the target branch:
+#   - `main` target → linked PR must be merged AND released to crates.io
+#                      at a version satisfying web-sdk's version requirement.
+#   - `next` target → linked PR must be merged into miden-client/next.
+#
+# Until that's true, the check stays pending — branch protection can be
+# configured to require this check, blocking merge.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  # Re-evaluate on a schedule so the check goes green when upstream catches
+  # up, without requiring a push to this PR.
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  pull-requests: read
+  # The gate posts a custom commit status named `linked-client-pr-ready`
+  # via POST /repos/.../statuses/$sha. That endpoint requires `statuses: write`,
+  # NOT `checks: write` (which is for the check-runs API on a different
+  # endpoint). Without this scope the status POSTs silently 403 and the
+  # readiness verdict never lands on the commit.
+  statuses: write
+  checks: write
+
+concurrency:
+  group: linked-client-pr-ready @ ${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scheduled-fanout:
+    # The schedule trigger fires once per repo; we need to fan out across
+    # every open PR that carries a Client PR marker so each gets its check
+    # re-evaluated. On `pull_request` events we skip this and run `gate`
+    # directly with the event's PR.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    outputs:
+      prs: ${{ steps.list.outputs.prs }}
+    steps:
+      - id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --state open --search 'in:body "Client PR:"' \
+            --json number --jq 'map(.number)')
+          echo "prs=${prs:-[]}" >> "$GITHUB_OUTPUT"
+
+  gate:
+    needs: [scheduled-fanout]
+    if: |
+      always() &&
+      (github.event_name == 'pull_request' ||
+       (github.event_name == 'schedule' && needs.scheduled-fanout.outputs.prs != '[]'))
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ github.event_name == 'schedule' && fromJSON(needs.scheduled-fanout.outputs.prs) || fromJSON(format('[{0}]', github.event.pull_request.number)) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Evaluate linked-client-pr readiness for PR #${{ matrix.pr }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUM: ${{ matrix.pr }}
+        run: |
+          set -euo pipefail
+
+          # Extract body and metadata separately. body is multi-line
+          # arbitrary text, so it can't be packed into a `read`-friendly
+          # tab-separated row alongside other fields — `read -r` only
+          # consumes through the first newline. base_ref and state are
+          # both single-token, so they pack fine.
+          body=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUM" --jq '.body // ""')
+          IFS=$'\t' read -r base_ref state <<<"$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUM" \
+            --jq '"\(.base.ref)\t\(.state)"')"
+
+          # Skip closed PRs entirely.
+          if [ "$state" != "open" ] && [ "$state" != "OPEN" ]; then
+            echo "PR #$PR_NUM is $state — skipping."
+            exit 0
+          fi
+
+          # Parse marker; absent → check passes (no gate needed).
+          marker=$(printf '%s' "$body" | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
+          if [ -z "$marker" ]; then
+            echo "No Client PR marker on PR #$PR_NUM — check passes."
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)" \
+              -X POST -f state=success \
+              -f context="linked-client-pr-ready" \
+              -f description="No linked client PR — nothing to gate."
+            exit 0
+          fi
+
+          repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/miden-client")
+          num=$(printf '%s' "$marker" | grep -oE '[0-9]+$')
+          head_sha=$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)
+
+          # Pull the upstream PR's state. Tab-separated, IFS=$'\t' for
+          # consistency even though neither field can contain whitespace.
+          IFS=$'\t' read -r merged merge_commit_sha <<<"$(gh api "repos/$repo/pulls/$num" --jq '"\(.merged)\t\(.merge_commit_sha // "")"')"
+
+          set_status() {
+            local s="$1" desc="$2"
+            # No `>/dev/null` — let the gh API failure surface (e.g. on
+            # missing `statuses: write` perms) instead of swallowing the 403.
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$head_sha" -X POST \
+              -f state="$s" \
+              -f context="linked-client-pr-ready" \
+              -f description="$desc" \
+              -f target_url="https://github.com/${repo}/pull/${num}"
+          }
+
+          # Step 1: linked PR must be merged.
+          if [ "$merged" != "true" ]; then
+            set_status pending "Linked ${repo}#${num} not merged yet."
+            echo "::notice::Gate PENDING — ${repo}#${num} not merged yet."
+            exit 0
+          fi
+
+          # Step 2: target-branch-specific readiness.
+          case "$base_ref" in
+            next)
+              # next-target → require the merge_commit_sha to be reachable
+              # from miden-client's `next` branch.
+              next_sha=$(gh api repos/$repo/git/ref/heads/next --jq .object.sha)
+              if [ -z "$merge_commit_sha" ]; then
+                set_status pending "Linked ${repo}#${num} merged but merge_commit_sha unknown."
+                exit 0
+              fi
+              # Use the compare API: if merge_commit_sha is an ancestor of next, status is "ahead" or "identical".
+              status_field=$(gh api "repos/$repo/compare/${merge_commit_sha}...${next_sha}" --jq .status)
+              case "$status_field" in
+                ahead|identical) set_status success "Linked ${repo}#${num} merged into ${repo}/next." ;;
+                *)               set_status pending "Linked ${repo}#${num} merged, not yet on ${repo}/next." ;;
+              esac
+              ;;
+            main)
+              # main-target → require miden-client to have a published release
+              # whose tag commit reaches merge_commit_sha. We approximate this
+              # by checking whether merge_commit_sha is reachable from the
+              # latest release tag.
+              latest_tag=$(gh api repos/$repo/releases/latest --jq .tag_name 2>/dev/null || echo "")
+              if [ -z "$latest_tag" ]; then
+                set_status pending "Linked ${repo}#${num} merged; no release tag visible on ${repo} yet."
+                exit 0
+              fi
+              latest_tag_sha=$(gh api repos/$repo/git/ref/tags/$latest_tag --jq .object.sha 2>/dev/null || echo "")
+              if [ -z "$latest_tag_sha" ] || [ -z "$merge_commit_sha" ]; then
+                set_status pending "Could not resolve tag SHA for ${repo}@${latest_tag}."
+                exit 0
+              fi
+              status_field=$(gh api "repos/$repo/compare/${merge_commit_sha}...${latest_tag_sha}" --jq .status)
+              case "$status_field" in
+                ahead|identical) set_status success "Linked ${repo}#${num} included in release ${latest_tag}." ;;
+                *)               set_status pending "Linked ${repo}#${num} merged; not yet in a ${repo} release (latest: ${latest_tag})." ;;
+              esac
+              ;;
+            *)
+              # Unknown target branch — pass through.
+              set_status success "Base branch '${base_ref}' has no readiness rule."
+              ;;
+          esac
