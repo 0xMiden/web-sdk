@@ -160,6 +160,23 @@ if (variant !== "st" && variant !== "mt") {
 const distDir = `dist/${variant}`;
 const isMt = variant === "mt";
 
+// Toolchain selection. The MT path needs the project-pinned nightly:
+//   - `cfg(target_feature = "atomics")` only flips true on nightly. Stable
+//     1.93 silently emits the +atomics bit but the cfg() check still says
+//     false, so wasm-bindgen-rayon's compile_error! gate fires.
+//   - `-Z build-std` (in mtOnlyCargoArgs below) is nightly-only.
+// MT inherits the date-pinned nightly from rust-toolchain.toml — we leave
+// RUSTUP_TOOLCHAIN unset for that path so the toolchain file takes effect.
+//
+// The ST path stays on stable: nothing in its dep graph requires nightly
+// once `mt-threads` gates wasm-bindgen-rayon / rayon / concurrent out.
+// We override RUSTUP_TOOLCHAIN=stable for ST only (rustup precedence:
+// env > toolchain file). The cargo subprocess spawned by
+// @wasm-tool/rollup-plugin-rust inherits this env.
+if (!isMt) {
+  process.env.RUSTUP_TOOLCHAIN = "stable";
+}
+
 // MT-only target rustflags. These set up the WASM module's atomics + shared
 // memory imports that wasm-bindgen-rayon needs. Passed via cargo's
 // `--config target.<triple>.rustflags=[...]` so they only apply to the MT
@@ -296,8 +313,14 @@ const wasmOptArgs = [
 //   enabled — without it, the precompiled rust-std-wasm32 has atomics
 //   disabled and wasm-bindgen-rayon's compile-time compile_error! gate
 //   fires.
+// - `-Z build-std=std,panic_abort` recompiles std (and panic_abort) from
+//   rust-src for wasm32-unknown-unknown so std atomic ops link against
+//   an atomics-enabled std. Nightly-only flag — the ST path uses the
+//   precompiled stable rust-std-wasm32 instead.
 const mtOnlyCargoArgs = isMt
   ? [
+      "-Z",
+      "build-std=std,panic_abort",
       "--features",
       "mt-threads",
       // Cargo --config accepts an inline TOML expression. Quote-wrap each
@@ -310,25 +333,15 @@ const mtOnlyCargoArgs = isMt
 
 // Base cargo arguments shared by both ST and MT builds.
 //
-// `-Z build-std=std,panic_abort` recompiles std (and panic_abort) from
-// rust-src for the wasm32-unknown-unknown target. Originally added for the
-// MT build (where +atomics requires std to be rebuilt with atomics enabled),
-// but kept on the ST path too for two reasons:
-//   1. The CI workflow installs rust-src for nightly via rust-toolchain.toml's
-//      `targets = ["wasm32-unknown-unknown"]` + `components = [..., "rust-src"]`,
-//      but does NOT explicitly install the precompiled rust-std-wasm32 binary
-//      for the auto-installed nightly. Without `-Z build-std`, the ST build
-//      hits "can't find crate for std" because the precompiled wasm32 std
-//      isn't there.
-//   2. Adds ~30s to the ST build, but keeps both paths on the same
-//      toolchain (nightly) so we don't have to maintain two CI setups.
-//
-// If at some point we want stable cargo for ST (no nightly), the CI
-// workflow needs `rustup target add wasm32-unknown-unknown --toolchain stable`
-// AND `RUSTUP_TOOLCHAIN=stable` on the ST invocation. Defer until needed.
+// The ST path stays on stable Rust: nothing in its dep graph
+// (`miden-client` + `miden-protocol` + Plonky3 + idxdb-store, with the
+// `mt-threads` feature gating wasm-bindgen-rayon / rayon / concurrent
+// out) requires nightly. The CI workflow installs the precompiled
+// rust-std-wasm32 binary for stable so this build links cleanly without
+// `-Z build-std`. The MT path keeps nightly + `-Z build-std` (see
+// mtOnlyCargoArgs above) — `+atomics` cfg requires nightly to flip true,
+// and atomics-enabled std requires recompiling std from rust-src.
 const baseCargoArgs = [
-  "-Z",
-  "build-std=std,panic_abort",
   "--features",
   "testing",
   "--no-default-features",
