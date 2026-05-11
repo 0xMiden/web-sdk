@@ -8,6 +8,12 @@
 * [FEATURE][web] Added `MidenClient._withInnerWebClient(fn)` escape hatch that runs `fn` with exclusive access to the proxied JS WebClient. Lets framework wrappers split the bundled prove pipeline — for example, dispatching the prove step to a `chrome.offscreen` document or a Web Worker while keeping execute / submit / apply on the main `MidenClient` — without re-implementing the resource-based surface from scratch. The callback runs inside `_serializeWasmCall`, so the WASM RefCell is held for the duration of `fn` and concurrent SDK calls queue safely. Marked private (`_` prefix) and may iterate; pin the SDK version if you depend on it.
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
 
+### Fixes
+
+* [FIX][react] Fixed `useConsume({ notes: [hexString] })` crashing with `null pointer passed to rust`. Surfaced when consuming notes against accounts built with `withNoAuthComponent()` ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
+* [FIX][react] Fixed `useMultiSend` crashing with `null pointer passed to rust` whenever any recipient used `NoteType.Private`. The `NoteArray` constructor was moving each output's `Note` handle, leaving it unusable for the post-commit `sendPrivateNote` delivery loop ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
+* [FIX][react] Fixed `transactionId` (and `txId`) in hook return values being `"[object Object]"` instead of a hex string. `useTransaction`, `useConsume`, `useMint`, `useSwap`, `useSend`, and `useMultiSend` were calling `.toString()` on the WASM `TransactionId` — which has no `toString` binding and so fell through to `Object.prototype.toString`. Switched all six hooks to `.toHex()`, the actual exposed method. The unit-test mock used to mirror the bug (its `.toString()` returned the hex), masking the regression; the mock now matches real WASM behavior so a future regression would fail the suite ([#83](https://github.com/0xMiden/web-sdk/issues/83)).
+
 ### Chores
 
 * [CHORE][ci] Auto-cut a GitHub release when a `patch release`-labeled PR merges to `main`. Mirrors the existing `next`-branch flow: once the release publishes, `publish-web-sdk.yml` ships every package whose version actually changed to the `latest` dist-tag with provenance.

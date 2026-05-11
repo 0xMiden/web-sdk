@@ -184,7 +184,7 @@ export function useSend(): UseSendResult {
                 )
               : await client.submitNewTransaction(execFromId, txRequest);
 
-            return { txId: txId.toString(), note: p2idNote } as SendResult;
+            return { txId: txId.toHex(), note: p2idNote } as SendResult;
           });
 
           setStage("complete");
@@ -259,7 +259,6 @@ export function useSend(): UseSendResult {
         // Save txId hex BEFORE applyTransaction, which consumes the WASM
         // pointer inside txResult (and any child objects like TransactionId).
         const txIdHex = txResult.id().toHex();
-        const txIdString = txResult.id().toString();
 
         // For private notes, extract the full note BEFORE applyTransaction
         // consumes the WASM pointers.
@@ -293,7 +292,7 @@ export function useSend(): UseSendResult {
         }
 
         const sendResult: SendResult = {
-          txId: txIdString,
+          txId: txIdHex,
           note: null,
         };
 

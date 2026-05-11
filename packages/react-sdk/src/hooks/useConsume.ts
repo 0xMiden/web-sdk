@@ -115,10 +115,12 @@ export function useConsume(): UseConsumeResult {
           }
 
           if (lookupIds.length > 0) {
+            // Snapshot id strings before handing the array to NoteFilter
+            const lookupIdStrings = lookupIds.map((id) => id.toString());
             const filter = new NoteFilter(NoteFilterTypes.List, lookupIds);
             const noteRecords = await client.getInputNotes(filter);
 
-            if (noteRecords.length !== lookupIds.length) {
+            if (noteRecords.length !== lookupIdStrings.length) {
               throw new Error("Some notes could not be found for provided IDs");
             }
 
@@ -127,7 +129,7 @@ export function useConsume(): UseConsumeResult {
               noteRecords.map((r) => [r.id().toString(), r])
             );
             for (let j = 0; j < lookupIndices.length; j++) {
-              const record = recordById.get(lookupIds[j].toString());
+              const record = recordById.get(lookupIdStrings[j]);
               if (!record) {
                 throw new Error(
                   "Some notes could not be found for provided IDs"
@@ -160,7 +162,7 @@ export function useConsume(): UseConsumeResult {
                 prover
               )
             : await client.submitNewTransaction(accountIdObj, txRequest);
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");
