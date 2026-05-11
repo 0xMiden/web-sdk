@@ -1,5 +1,6 @@
 const tsParser = require("@typescript-eslint/parser");
 const tsPlugin = require("@typescript-eslint/eslint-plugin");
+const prettierConfig = require("eslint-config-prettier");
 
 module.exports = [
   {
@@ -33,4 +34,6 @@ module.exports = [
       ],
     },
   },
+  // Must be last: disables any stylistic rules that conflict with Prettier.
+  prettierConfig,
 ];

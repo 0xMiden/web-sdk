@@ -45,36 +45,37 @@ function App() {
 
 ## Reading Data (Query Hooks)
 
-All query hooks return `{ data, isLoading, error, refetch }`.
+Query hooks return `{ ...data, isLoading, error, refetch }` — the data fields are spread directly onto the result object, with hook-specific names (no generic `data` field).
 
 ### List Accounts
 ```tsx
-const { data: accounts, isLoading } = useAccounts();
+const { accounts, wallets, faucets, isLoading } = useAccounts();
 
-// accounts.wallets - regular accounts
-// accounts.faucets - token faucets
-// accounts.all - everything
+// wallets - regular accounts
+// faucets - token faucets
+// accounts - both, combined
 ```
 
 ### Get Account Details
 ```tsx
-const { data: account } = useAccount(accountId);
+const { account, isLoading } = useAccount(accountId);
 
-// account.id, account.nonce, account.bech32id()
-// account.balance(faucetId) - get token balance
+// account.id(), account.nonce(), account.bech32id()
+// account.vault().getBalance(assetId) - get token balance
 ```
 
 ### Get Notes
 ```tsx
-const { data: notes } = useNotes();
+const { notes, consumableNotes, noteSummaries, consumableNoteSummaries } = useNotes();
 
-// notes.input - incoming notes
-// notes.consumable - ready to claim
+// notes - all input notes for this account
+// consumableNotes - subset that's ready to claim
+// noteSummaries / consumableNoteSummaries - same lists, projected to UI-friendly summaries
 ```
 
 ### Check Sync Status
 ```tsx
-const { syncHeight, isSyncing, sync } = useSyncState();
+const { syncHeight, isSyncing, lastSyncTime, sync, error } = useSyncState();
 
 // Manual sync
 await sync();
@@ -82,19 +83,19 @@ await sync();
 
 ### Get Token Metadata
 ```tsx
-const { data: metadata } = useAssetMetadata(faucetId);
+const { metadata, isLoading } = useAssetMetadata(assetId);
 // metadata.symbol, metadata.decimals
 ```
 
 ## Writing Data (Mutation Hooks)
 
-All mutation hooks return `{ mutate, data, isLoading, stage, error, reset }`.
+Mutation hooks return `{ <action>, result, isLoading, stage, error, reset }` — the action callback is named after the hook (`send`, `consume`, `mint`, ...) and the resolved value is on `result`.
 
 **Transaction stages:** `idle` → `executing` → `proving` → `submitting` → `complete`
 
 ### Create Wallet
 ```tsx
-const { mutate: createWallet, isLoading } = useCreateWallet();
+const { createWallet, isLoading } = useCreateWallet();
 
 const account = await createWallet({
   storageMode: "private",  // "private" | "public" | "network"
@@ -103,12 +104,12 @@ const account = await createWallet({
 
 ### Send Tokens
 ```tsx
-const { mutate: send, stage } = useSend();
+const { send, stage } = useSend();
 
 await send({
   from: senderAccountId,
   to: recipientAccountId,
-  faucetId: tokenFaucetId,
+  assetId: tokenFaucetId,
   amount: 1000n,
   noteType: "private",  // "private" | "public"
 });
@@ -116,20 +117,20 @@ await send({
 
 ### Send to Multiple Recipients
 ```tsx
-const { mutate: multiSend } = useMultiSend();
+const { multiSend } = useMultiSend();
 
 await multiSend({
   from: senderAccountId,
-  outputs: [
-    { to: recipient1, faucetId, amount: 500n },
-    { to: recipient2, faucetId, amount: 300n },
+  recipients: [
+    { to: recipient1, assetId, amount: 500n },
+    { to: recipient2, assetId, amount: 300n },
   ],
 });
 ```
 
 ### Claim Notes
 ```tsx
-const { mutate: consume } = useConsume();
+const { consume } = useConsume();
 
 await consume({
   accountId: myAccountId,
@@ -139,7 +140,7 @@ await consume({
 
 ### Mint Tokens (Faucet Owner)
 ```tsx
-const { mutate: mint } = useMint();
+const { mint } = useMint();
 
 await mint({
   faucetId: myFaucetId,
@@ -150,7 +151,7 @@ await mint({
 
 ### Create Faucet
 ```tsx
-const { mutate: createFaucet } = useCreateFaucet();
+const { createFaucet } = useCreateFaucet();
 
 const faucet = await createFaucet({
   symbol: "TOKEN",
@@ -165,11 +166,11 @@ const faucet = await createFaucet({
 ### Show Transaction Progress
 ```tsx
 function SendButton() {
-  const { mutate: send, stage, isLoading, error } = useSend();
+  const { send, stage, isLoading, error } = useSend();
 
   const handleSend = async () => {
     try {
-      await send({ from, to, faucetId, amount });
+      await send({ from, to, assetId, amount });
     } catch (err) {
       console.error("Transaction failed:", err);
     }
@@ -207,11 +208,11 @@ const text = formatNoteSummary(summary);  // "1.5 TOKEN"
 
 ### Wait for Transaction Confirmation
 ```tsx
-const { mutate: waitForCommit } = useWaitForCommit();
+const { waitForCommit } = useWaitForCommit();
 
 // After sending
 const result = await send({ ... });
-await waitForCommit({ transactionId: result.transactionId });
+await waitForCommit({ txId: result.txId });
 ```
 
 ### Access Client Directly
@@ -316,7 +317,8 @@ import { SignerContext } from "@miden-sdk/react";
   storeName: `mywallet_${userAddress}`,  // unique per user for DB isolation
   isConnected: true,
   accountConfig: {
-    publicKey: userPublicKeyCommitment,  // Uint8Array
+    publicKeyCommitment: userPublicKeyCommitment,  // Uint8Array
+    accountType: "RegularAccountUpdatableCode",
     storageMode: "private",
   },
   signCb: async (pubKey, signingInputs) => {
@@ -377,23 +379,40 @@ account.bech32id();  // "miden1qy35..."
 
 ## Hook Reference
 
-| Hook | Returns | Purpose |
-|------|---------|---------|
-| `useAccounts()` | `{ wallets, faucets, all }` | List all accounts |
-| `useAccount(id)` | `Account` | Account details + balances |
-| `useNotes(filter?)` | `{ input, consumable }` | Available notes |
-| `useSyncState()` | `{ syncHeight, sync() }` | Sync status |
-| `useAssetMetadata(id)` | `{ symbol, decimals }` | Token info |
-| `useCreateWallet()` | `Account` | Create wallet |
-| `useCreateFaucet()` | `Account` | Create faucet |
-| `useImportAccount()` | `Account` | Import account |
-| `useSend()` | `TransactionResult` | Send tokens |
-| `useMultiSend()` | `TransactionResult` | Multi-recipient send |
-| `useMint()` | `TransactionResult` | Mint tokens |
-| `useConsume()` | `TransactionResult` | Claim notes |
-| `useSwap()` | `TransactionResult` | Atomic swap |
-| `useTransaction()` | `TransactionResult` | Custom transaction |
-| `useCompile()` | `{ component, txScript, noteScript }` | Compile MASM into `AccountComponent` / `TransactionScript` / `NoteScript` |
+Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks return `{ <action>, result, isLoading, stage, error, reset }`.
+
+### Query (read)
+| Hook | Data fields | Purpose |
+|------|-------------|---------|
+| `useAccounts()` | `accounts`, `wallets`, `faucets` | List local accounts |
+| `useAccount(id)` | `account` | Account details + balances |
+| `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
+| `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive |
+| `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
+| `useSyncControl()` | `pause()`, `resume()`, `isPaused` | Pause/resume the auto-sync timer |
+| `useAssetMetadata(id)` | `metadata: { symbol, decimals }` | Token info |
+| `useTransactionHistory(...)` | `transactions` | Local transaction log |
+| `useSessionAccount()` | `account` | The signer's connected account |
+| `useWaitForNotes(...)` | resolves when matching notes appear | Pull-style note waiting |
+
+### Mutation (write)
+| Hook | Action | Returns on success |
+|------|--------|--------------------|
+| `useCreateWallet()` | `createWallet({ storageMode })` | `Account` |
+| `useCreateFaucet()` | `createFaucet({ symbol, decimals, ... })` | `Account` |
+| `useImportAccount()` | `importAccount(...)` | `Account` |
+| `useImportNote()` | `importNote(...)` | imported `InputNoteRecord` |
+| `useExportNote()` | `exportNote(...)` | serialized note bytes |
+| `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
+| `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
+| `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
+| `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
+| `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
+| `useSwap()` | `swap({ ... })` | `TransactionResult` |
+| `useTransaction()` | `transact({ ... })` | `TransactionResult` (custom tx) |
+| `useExecuteProgram()` | `execute(...)` | program output |
+| `useCompile()` | `compile({ source })` | `{ component, txScript, noteScript }` |
+| `useWaitForCommit()` | `waitForCommit({ txId })` | resolves when committed on-chain |
 
 ## Type Imports
 

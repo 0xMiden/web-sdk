@@ -116,7 +116,7 @@ function initSdk(): any {
   return rawSdk;
 }
 
-export const sdk = new Proxy(
+const sdk = new Proxy(
   {},
   {
     get(_target, prop) {
@@ -323,7 +323,7 @@ function tmpTestDir(): string {
 /**
  * Matches the browser's `window.MockWasmWebClient` interface.
  */
-export const MockWasmWebClient = {
+const MockWasmWebClient = {
   createClient: async (
     seed?: any,
     serializedMockChain?: any,

@@ -33,7 +33,7 @@ export function normalizeArg(val) {
 /**
  * Wraps a napi class so constructor and static method args are normalized.
  */
-export function wrapClass(Cls) {
+function wrapClass(Cls) {
   if (!Cls) return Cls;
   const Wrapper = function (...args) {
     return new Cls(...args.map(normalizeArg));
@@ -126,7 +126,7 @@ export function wrapClient(rawClient, storeName) {
  * - Converts null -> undefined for Option<T> returns
  * - Aliases static methods
  */
-export function patchSdkPrototypes(rawSdk) {
+function patchSdkPrototypes(rawSdk) {
   // snake_case aliases for instance methods
   /* eslint-disable camelcase */
   for (const [cls, aliases] of [
@@ -176,7 +176,7 @@ export function patchSdkPrototypes(rawSdk) {
  * typed wrappers (NoteAndArgsArray, FeltArray, etc.). These polyfills
  * let `new sdk.FeltArray([a, b])` work on Node.js by returning a plain array.
  */
-export function makeArrayPolyfills() {
+function makeArrayPolyfills() {
   function polyfill(items) {
     const arr =
       items === undefined || items === null

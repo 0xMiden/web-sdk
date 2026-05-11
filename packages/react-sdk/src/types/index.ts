@@ -38,11 +38,8 @@ export type {
   TransactionRecord,
   TransactionRequest,
   NoteType,
-  NoteId,
   Note,
   AccountStorageMode,
-  NoteVisibility,
-  StorageMode,
 };
 
 export type { AccountRef } from "../utils/accountParsing";
@@ -50,8 +47,6 @@ export type { AccountRef } from "../utils/accountParsing";
 // Re-export signer types for external signer providers
 export type {
   SignCallback,
-  GetKeyCallback,
-  InsertKeyCallback,
   SignerAccountType,
   SignerAccountConfig,
   SignerContextValue,

@@ -35,6 +35,14 @@ packages/react-sdk/node_modules/
 packages/vite-plugin/dist/
 packages/vite-plugin/coverage/
 packages/vite-plugin/node_modules/
+!packages/node-sdk-darwin-arm64/
+!packages/node-sdk-darwin-arm64/**
+!packages/node-sdk-darwin-x64/
+!packages/node-sdk-darwin-x64/**
+!packages/node-sdk-linux-x64-gnu/
+!packages/node-sdk-linux-x64-gnu/**
+# Native binaries are built fresh in CI; never commit them.
+packages/node-sdk-*/miden_client_web.node
 
 # Per-package coverage (re-listed to override the package un-ignores above)
 crates/web-client/coverage/
@@ -50,3 +58,6 @@ crates/web-client/playwright-report
 # JS metadata generated from idxdb-store TypeScript build
 crates/idxdb-store/src/js/**/*.d.ts
 crates/idxdb-store/src/js/**/*.js.map
+
+# AI tooling
+docs/superpowers/

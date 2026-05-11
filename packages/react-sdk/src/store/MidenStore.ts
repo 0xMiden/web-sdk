@@ -242,14 +242,10 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
 }));
 
 // Selector hooks for optimal re-renders
-export const useClient = () => useMidenStore((state) => state.client);
-export const useIsReady = () => useMidenStore((state) => state.isReady);
 export const useSignerConnected = () =>
   useMidenStore((state) => state.signerConnected);
 export const useIsInitializing = () =>
   useMidenStore((state) => state.isInitializing);
-export const useInitError = () => useMidenStore((state) => state.initError);
-export const useConfig = () => useMidenStore((state) => state.config);
 export const useSyncStateStore = () => useMidenStore((state) => state.sync);
 export const useAccountsStore = () => useMidenStore((state) => state.accounts);
 export const useNotesStore = () => useMidenStore((state) => state.notes);
