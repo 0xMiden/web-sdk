@@ -75,6 +75,12 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Also install stable wasm32 std so the ST rollup build can
+          # use stable Rust (set via RUSTUP_TOOLCHAIN=stable in
+          # crates/web-client/rollup.config.js when MIDEN_BUILD_VARIANT=st).
+          # MT keeps the project-pinned nightly from rust-toolchain.toml.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
 
       # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
       # mozilla-actions/sccache-action used by default. The new GHA cache
@@ -224,6 +230,12 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Also install stable wasm32 std so the ST rollup build can
+          # use stable Rust (set via RUSTUP_TOOLCHAIN=stable in
+          # crates/web-client/rollup.config.js when MIDEN_BUILD_VARIANT=st).
+          # MT keeps the project-pinned nightly from rust-toolchain.toml.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
       # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
       # mozilla-actions/sccache-action used by default. The new GHA cache
       # service requires ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN, which

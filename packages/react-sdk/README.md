@@ -119,14 +119,25 @@ function App() {
 }
 ```
 
-## Next.js & SSR
+## Subpaths: Eager / Lazy × ST / MT
 
-The React SDK is Next.js-compatible out of the box: it ships two bundle variants built from a single source tree, and both internally import `@miden-sdk/miden-sdk/lazy` — the lazy entry point that does **not** use a top-level `await`. Nothing initializes WASM at module evaluation, so server-side rendering never hangs.
+The React SDK ships **four** bundle variants built from a single source tree. The two axes are independent:
 
-- Default (`@miden-sdk/react`) — internally consumes the eager SDK. Use this in plain browser apps, Vite, CRA.
-- `@miden-sdk/react/lazy` — internally consumes the lazy SDK. Use this in Next.js (app router or pages), SSR, or inside a Capacitor iOS/Android WKWebView host (the wallet shell uses this).
+- **WASM init timing** — _eager_ awaits at SDK load (TLA); _lazy_ leaves init to `MidenClient.ready()` or first awaiting method.
+- **WASM threading model** — _ST_ (single-threaded) loads anywhere; _MT_ (multi-threaded via `wasm-bindgen-rayon`) parallelizes proving but **requires the page to be cross-origin-isolated**.
 
-Both exports have identical APIs. The choice only affects which `@miden-sdk/miden-sdk` variant your bundler ends up resolving.
+| Subpath                            | SDK variant                       | When to use                                                |
+| ---------------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| `@miden-sdk/react`                 | eager + ST                        | Plain browser apps, Vite, CRA, esbuild — no host control needed. |
+| `@miden-sdk/react/lazy`            | lazy + ST                         | Next.js / SSR, Capacitor (iOS/Android WKWebView).          |
+| `@miden-sdk/react/mt`              | eager + MT                        | dApps with COOP/COEP set; want fast proving and tolerate TLA. |
+| `@miden-sdk/react/mt/lazy`         | lazy + MT                         | dApps with COOP/COEP set, on Next.js or anywhere TLA can't run. |
+
+All four exports have identical APIs. The choice affects which `@miden-sdk/miden-sdk` variant your bundler resolves and therefore the underlying WASM behavior.
+
+### Next.js / SSR
+
+The lazy variants (`/lazy`, `/mt/lazy`) do not run a top-level `await` at module evaluation. Server-side rendering never hangs on WASM init. Use these in any Next.js app or Capacitor host:
 
 ```tsx
 // Next.js: app/providers.tsx
@@ -140,6 +151,50 @@ export function Providers({ children }: { children: React.ReactNode }) {
 ```
 
 `MidenProvider` gates child rendering on `isReady`, so you don't have to await anything manually in components — hooks already fire only after WASM is initialized.
+
+### Multi-threaded proving (`/mt`, `/mt/lazy`)
+
+The MT variants enable `wasm-bindgen-rayon` for ~3–5× faster local proving on commodity laptops. Same API surface as the ST variants. Two extra requirements compared to ST:
+
+**1. The page must be cross-origin-isolated.** Set the host response headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Without those, the browser refuses to construct `WebAssembly.Memory({ shared: true })` and the MT WASM fails to instantiate at SDK load. See the underlying [`@miden-sdk/miden-sdk` README](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#setting-cross-origin-isolation-headers) for snippets per host (Vite, Next.js, Express, browser-extension manifests). COEP also blocks cross-origin resources unless they carry CORP / proper CORS — opt in deliberately.
+
+**2. Bring up the rayon thread pool once at startup.** Re-exported as `initThreadPool(n)`. The React SDK does NOT call this for you — consumers must `await` it before the first transaction:
+
+```tsx
+"use client";
+import { useEffect } from "react";
+import { MidenProvider, useMiden } from "@miden-sdk/react/mt/lazy";
+import { initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
+
+function ThreadPoolBoot() {
+  const { isReady } = useMiden();
+  useEffect(() => {
+    if (!isReady) return;
+    void initThreadPool(navigator.hardwareConcurrency);
+  }, [isReady]);
+  return null;
+}
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <MidenProvider config={{ rpcUrl: "testnet" }}>
+      <ThreadPoolBoot />
+      {children}
+    </MidenProvider>
+  );
+}
+```
+
+`initThreadPool` is idempotent — calling it multiple times resolves with the existing pool. Without this call, the rayon global thread pool spawns zero workers on `wasm32` and every `par_iter(...)` falls through to a sequential loop. You'd be shipping multi-threaded WASM that runs single-threaded.
+
+If you can't satisfy the COI requirement (third-party host, CDN that won't set headers), stay on the default `@miden-sdk/react` / `/lazy` subpaths — they ship the ST WASM and load anywhere.
 
 ### Constructing wasm-bindgen types directly in Next.js
 

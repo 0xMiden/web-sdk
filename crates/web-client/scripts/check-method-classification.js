@@ -16,9 +16,12 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
+// Use dist/st/ as the canonical published layout — bindgen type
+// declarations are identical between ST and MT variants.
 const wasmTypesPath = path.join(
   rootDir,
   "dist",
+  "st",
   "crates",
   "miden_client_web.d.ts"
 );

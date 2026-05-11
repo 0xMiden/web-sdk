@@ -1,10 +1,18 @@
 # Changelog
 
-## 0.14.4 (TBA)
+## 0.14.6 (TBA)
 
 ### Features
 
+* [FEATURE][web] **Optional multi-threaded WASM proving via dual-build subpaths.** The package now ships TWO WASM artifacts: a single-threaded build at the default subpaths (`@miden-sdk/miden-sdk`, `@miden-sdk/miden-sdk/lazy`) that loads in any browser context, and a multi-threaded build at the new `@miden-sdk/miden-sdk/mt` and `@miden-sdk/miden-sdk/mt/lazy` subpaths that uses wasm-bindgen-rayon for ~3–5× faster proving on cross-origin-isolated pages. Default (ST) behavior is unchanged from v0.14.2 — existing consumers keep working in non-COI contexts with no migration needed. Consumers who want the speedup opt in by importing the `/mt` subpath; they're then responsible for running on a page with `SharedArrayBuffer` + `crossOriginIsolated` (COOP=`same-origin` + COEP=`require-corp` HTTP headers, or the equivalent in a Chrome extension manifest). The MT build re-exports `initThreadPool(n)` which consumers must `await` once before any prove, sized to `navigator.hardwareConcurrency`. PR CI builds ST only via the `MIDEN_FAST_BUILD` flag for ~15-min validation; release CI builds both for the published artifact.
+* [FEATURE][web] Added `MidenClient._withInnerWebClient(fn)` escape hatch that runs `fn` with exclusive access to the proxied JS WebClient. Lets framework wrappers split the bundled prove pipeline — for example, dispatching the prove step to a `chrome.offscreen` document or a Web Worker while keeping execute / submit / apply on the main `MidenClient` — without re-implementing the resource-based surface from scratch. The callback runs inside `_serializeWasmCall`, so the WASM RefCell is held for the duration of `fn` and concurrent SDK calls queue safely. Marked private (`_` prefix) and may iterate; pin the SDK version if you depend on it.
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
+
+### Fixes
+
+* [FIX][react] Fixed `useConsume({ notes: [hexString] })` crashing with `null pointer passed to rust`. Surfaced when consuming notes against accounts built with `withNoAuthComponent()` ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
+* [FIX][react] Fixed `useMultiSend` crashing with `null pointer passed to rust` whenever any recipient used `NoteType.Private`. The `NoteArray` constructor was moving each output's `Note` handle, leaving it unusable for the post-commit `sendPrivateNote` delivery loop ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
+* [FIX][react] Fixed `transactionId` (and `txId`) in hook return values being `"[object Object]"` instead of a hex string. `useTransaction`, `useConsume`, `useMint`, `useSwap`, `useSend`, and `useMultiSend` were calling `.toString()` on the WASM `TransactionId` — which has no `toString` binding and so fell through to `Object.prototype.toString`. Switched all six hooks to `.toHex()`, the actual exposed method. The unit-test mock used to mirror the bug (its `.toString()` returned the hex), masking the regression; the mock now matches real WASM behavior so a future regression would fail the suite ([#83](https://github.com/0xMiden/web-sdk/issues/83)).
 
 ### Chores
 

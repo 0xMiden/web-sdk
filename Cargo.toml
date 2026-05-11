@@ -9,7 +9,7 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.93"
-version = "0.14.0"
+version = "0.14.8"
 
 [profile.dev]
 codegen-units = 16
@@ -34,10 +34,10 @@ codegen-units = 16
 
 [workspace.dependencies]
 # Workspace crates
-idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.14.0" }
+idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.14.8" }
 
 # Miden client (from crates.io)
-miden-client = { default-features = false, version = "0.14.5" }
+miden-client = { default-features = false, version = "0.14.8" }
 
 # Miden protocol dependencies
 miden-protocol = { default-features = false, version = "0.14" }

@@ -25,10 +25,14 @@ import ts from "typescript";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const standalonePath = path.join(rootDir, "js", "standalone.js");
-const apiTypesPath = path.join(rootDir, "dist", "api-types.d.ts");
+// Use dist/st/ as the canonical published layout — type declarations are
+// identical between ST and MT variants (the WASM surface is feature-gated
+// at the impl level but the .d.ts is uniform).
+const apiTypesPath = path.join(rootDir, "dist", "st", "api-types.d.ts");
 const wasmTypesPath = path.join(
   rootDir,
   "dist",
+  "st",
   "crates",
   "miden_client_web.d.ts"
 );

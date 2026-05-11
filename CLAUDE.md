@@ -106,6 +106,7 @@ Crate publishing (`miden-idxdb-store`, `miden-client-web`) goes through `.github
 - **Test sharding is manually balanced.** `packages/react-sdk/playwright.config.ts` defines four CI shard projects (`ci-shard-1` … `ci-shard-4`) with explicit `testMatch` arrays sized empirically from observed run timings. Rebalance by moving file paths between arrays — no workflow edits needed. Comment block at the top of the config explains the history.
 - **Network-bound tests don't belong in CI.** Anything that hits a live RPC node (testnet/devnet) is excluded. If you add such a test, gate it on an env var and skip by default.
 - **Account ID display.** Hooks accept hex (`0x…`) and bech32 (`mtst1q…`) interchangeably. Bech32 prefix tracks the active network — `mtst1` for testnet/devnet, `mid1` for mainnet (when it lands). Don't hardcode prefixes.
+- **Code comments describe current state, not history.** Don't reference PR review threads, "earlier revisions", "per review feedback", or links to specific comment IDs in source comments — that context rots the moment the PR merges or the thread resolves. State the present-tense rationale a future reader needs ("X is gated behind `testing` so it doesn't ship in production WASM bundles"), and leave the historical "why we changed it" to the commit message and PR description.
 
 ## Cross-repo coordination
 

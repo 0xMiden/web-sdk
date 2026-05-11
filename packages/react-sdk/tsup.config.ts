@@ -1,38 +1,37 @@
 import { defineConfig } from "tsup";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 /**
- * Post-build rewrite: swap every `@miden-sdk/miden-sdk/lazy` import in the
- * eager bundle (`index.mjs`) to `@miden-sdk/miden-sdk` (the default entry).
- * Consumer bundlers resolve the rewritten string to the SDK's eager variant,
- * which initializes WASM via TLA on import.
+ * Post-build rewrite: change every `@miden-sdk/miden-sdk/lazy` import in
+ * the named bundle to a different subpath. The React SDK's source tree
+ * always imports `/lazy` (the platform-neutral spelling); each emitted
+ * variant gets the corresponding SDK subpath substituted at the
+ * file-level after emit. This is more reliable than an esbuild
+ * `onResolve` hook — tsup's default externalization from
+ * `peerDependencies` happens before our plugin gets a chance to change
+ * the import path.
  *
- * The React SDK's source tree always imports from the `/lazy` subpath, so the
- * lazy build (`lazy.mjs`) ships unchanged. We rewrite only the eager bundle
- * at the emitted-file level, which is more reliable than an esbuild
- * `onResolve` hook — tsup's default externalization from `peerDependencies`
- * happens before our plugin gets a chance to change the import path.
+ * Mapping per variant:
+ *   index.mjs    → `@miden-sdk/miden-sdk`         (eager + ST)
+ *   lazy.mjs     → `@miden-sdk/miden-sdk/lazy`    (lazy + ST, no rewrite needed)
+ *   mt.mjs       → `@miden-sdk/miden-sdk/mt`      (eager + MT)
+ *   mt/lazy.mjs  → `@miden-sdk/miden-sdk/mt/lazy` (lazy + MT)
  */
-function rewriteEagerBundles(distDir: string): void {
-  for (const file of ["index.mjs"]) {
-    const path = join(distDir, file);
-    const before = readFileSync(path, "utf8");
-    const after = before.replace(
-      /@miden-sdk\/miden-sdk\/lazy/g,
-      "@miden-sdk/miden-sdk"
-    );
-    if (after === before) continue;
-    writeFileSync(path, after);
-  }
+function rewriteSdkImport(distFile: string, replacement: string): void {
+  const path = join("dist", distFile);
+  if (!existsSync(path)) return;
+  const before = readFileSync(path, "utf8");
+  const after = before.replace(/@miden-sdk\/miden-sdk\/lazy/g, replacement);
+  if (after === before) return;
+  writeFileSync(path, after);
 }
 
 export default defineConfig([
-  // Eager variant — default entry (`@miden-sdk/react`).
+  // Eager + ST — default entry (`@miden-sdk/react`).
   //
   // Source imports `@miden-sdk/miden-sdk/lazy`; `onSuccess` rewrites those
-  // to `@miden-sdk/miden-sdk` after emit, so consumer bundlers resolve
-  // against the SDK's eager default.
+  // to `@miden-sdk/miden-sdk` (eager-ST) after emit.
   //
   // ESM-only: `@miden-sdk/miden-sdk` is `"type": "module"` and exports only
   // `import` conditions, so a CJS variant of this package would crash with
@@ -42,6 +41,9 @@ export default defineConfig([
   // We force the `.mjs` extension explicitly via `outExtension` so the
   // emitted file name stays stable regardless of the package.json `type`
   // field (tsup defaults to `.js` for ESM under `"type": "module"`).
+  //
+  // `clean: true` only on this first config so subsequent variants build
+  // into the same `dist/` without wiping each other.
   {
     entry: { index: "src/index.ts" },
     format: ["esm"],
@@ -49,13 +51,13 @@ export default defineConfig([
     dts: true,
     clean: true,
     onSuccess: async () => {
-      rewriteEagerBundles("dist");
+      rewriteSdkImport("index.mjs", "@miden-sdk/miden-sdk");
     },
   },
-  // Lazy variant — subpath entry (`@miden-sdk/react/lazy`).
+  // Lazy + ST — subpath entry (`@miden-sdk/react/lazy`).
   //
   // No rewrite; imports keep `@miden-sdk/miden-sdk/lazy` so consumer
-  // bundlers resolve them against the SDK's lazy subpath (no TLA).
+  // bundlers resolve them against the SDK's lazy-ST subpath (no TLA).
   // Required for Capacitor hosts, Next.js SSR, and any environment that
   // can't tolerate top-level await at SDK module evaluation.
   {
@@ -64,5 +66,39 @@ export default defineConfig([
     outExtension: () => ({ js: ".mjs" }),
     dts: true,
     clean: false,
+  },
+  // Eager + MT — subpath entry (`@miden-sdk/react/mt`).
+  //
+  // Rewrites SDK imports to `@miden-sdk/miden-sdk/mt`. Consumer must run
+  // on a cross-origin-isolated page; see the SDK's README for header
+  // setup. Multi-threaded proving via wasm-bindgen-rayon is enabled
+  // automatically once `initThreadPool(navigator.hardwareConcurrency)`
+  // has been awaited (typically at app startup).
+  {
+    entry: { mt: "src/index.ts" },
+    format: ["esm"],
+    outExtension: () => ({ js: ".mjs" }),
+    dts: true,
+    clean: false,
+    onSuccess: async () => {
+      rewriteSdkImport("mt.mjs", "@miden-sdk/miden-sdk/mt");
+    },
+  },
+  // Lazy + MT — subpath entry (`@miden-sdk/react/mt/lazy`).
+  //
+  // Rewrites SDK imports to `@miden-sdk/miden-sdk/mt/lazy`. The MT lazy
+  // path is what dApp authors typically want when they control their
+  // server's COOP/COEP headers — no TLA at SDK load (Next.js SSR safe)
+  // AND multi-threaded proving once `initThreadPool` is awaited.
+  {
+    // tsup writes this to `dist/mt/lazy.mjs` (subdir).
+    entry: { "mt/lazy": "src/index.ts" },
+    format: ["esm"],
+    outExtension: () => ({ js: ".mjs" }),
+    dts: true,
+    clean: false,
+    onSuccess: async () => {
+      rewriteSdkImport("mt/lazy.mjs", "@miden-sdk/miden-sdk/mt/lazy");
+    },
   },
 ]);

@@ -140,8 +140,15 @@ export function useMultiSend(): UseMultiSendResult {
           }
         );
 
+        // NoteArray constructor consumes its elements via Vec<Note>; use
+        // push(&note) so each output.note handle stays valid for the
+        // sendPrivateNote loop below.
+        const ownOutputs = new NoteArray();
+        for (const o of outputs) {
+          ownOutputs.push(o.note);
+        }
         const txRequest = new TransactionRequestBuilder()
-          .withOwnOutputNotes(new NoteArray(outputs.map((o) => o.note)))
+          .withOwnOutputNotes(ownOutputs)
           .build();
 
         const txSenderId = parseAccountId(options.from);
@@ -165,10 +172,9 @@ export function useMultiSend(): UseMultiSendResult {
           txResult
         );
 
-        // Save txId hex/string BEFORE applyTransaction, which consumes the
+        // Save txId hex BEFORE applyTransaction, which consumes the
         // WASM pointer inside txResult (and any child objects).
         const txIdHex = txResult.id().toHex();
-        const txIdString = txResult.id().toString();
 
         await client.applyTransaction(txResult, submissionHeight);
 
@@ -191,7 +197,7 @@ export function useMultiSend(): UseMultiSendResult {
           }
         }
 
-        const txSummary = { transactionId: txIdString };
+        const txSummary = { transactionId: txIdHex };
 
         setStage("complete");
         setResult(txSummary);
