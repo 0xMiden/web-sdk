@@ -95,53 +95,17 @@ jobs:
         if: github.event_name == 'release'
         run: ./scripts/check-vite-plugin-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
 
-  build-native-nodejs:
-    needs: check-version
-    if: needs.check-version.outputs.should_publish_web == 'true'
-    strategy:
-      matrix:
-        include:
-          - os: macos-26
-            platform-package: node-sdk-darwin-arm64
-          - os: macos-26-intel
-            platform-package: node-sdk-darwin-x64
-          - os: ubuntu-24.04
-            platform-package: node-sdk-linux-x64-gnu
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.check-version.outputs.checkout_ref }}
-
-      - name: Install Rust
-        run: rustup update --no-self-update
-
-      - name: Build napi binary
-        run: cargo build -p miden-client-web --no-default-features --features nodejs --release
-
-      - name: Prepare .node binary
-        run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            EXT="dylib"
-          else
-            EXT="so"
-          fi
-          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
-          if [ -z "$BINARY" ]; then
-            echo "::error::napi binary not found"
-            exit 1
-          fi
-          cp "$BINARY" "packages/${{ matrix.platform-package }}/miden_client_web.node"
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform-package }}
-          path: packages/${{ matrix.platform-package }}/miden_client_web.node
+  # NOTE: build-native-nodejs is intentionally absent on `main`. The Node.js
+  # napi binding (the `nodejs` Cargo feature on miden-client-web and the
+  # platform-binary `@miden-sdk/node-*` packages) lives on the `next` branch
+  # only. Building it on `main` fails with "the package 'miden-client-web'
+  # does not contain this feature: nodejs", which cascades into the publish
+  # job and blocks the whole npm release. If/when the Node binding is
+  # forward-ported to `main`, re-add the build-native-nodejs job and the
+  # gated steps in `publish` below (see git history for the previous shape).
 
   publish:
-    needs: [check-version, build-native-nodejs]
+    needs: [check-version]
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
@@ -184,14 +148,25 @@ jobs:
         # workflow would silently break with a floating @latest.
         run: npm install -g 'npm@^11.5'
 
-      - name: Set up Rust and wasm target
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-          target: wasm32-unknown-unknown
-          components: rust-src
+      - name: Set up Rust toolchains and wasm target
+        # The WASM build matrix needs BOTH toolchains:
+        #   - nightly (pinned by rust-toolchain.toml) for the MT variant —
+        #     `-Z build-std=std,panic_abort` is nightly-only, and
+        #     `cfg(target_feature = "atomics")` only resolves correctly on
+        #     the pinned nightly.
+        #   - stable for the ST variant — rollup.config.js sets
+        #     `RUSTUP_TOOLCHAIN=stable` when MIDEN_BUILD_VARIANT=st,
+        #     keeping the published default WASM stable-built.
+        # `rustup update --no-self-update` honors rust-toolchain.toml from
+        # the checked-out repo root and installs the pinned nightly +
+        # components automatically; the explicit `rustup install stable`
+        # adds stable in parallel. Mirrors the Test workflow's
+        # "Install Rust (needed for WASM build)" step.
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
 
       - name: Install binaryen (wasm-opt)
         run: |
@@ -224,47 +199,12 @@ jobs:
             exit 1
           fi
 
-      # ── Node.js platform packages ─────────────────────────────────────
-      # Tied to the web-client publish; ship only when web-client itself
-      # ships, so the optionalDependencies versions on web-client's
-      # package.json always match a real published platform-binary version.
-
-      - name: Download native binary artifacts
-        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Sync platform package versions and publish
-        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
-        run: |
-          WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
-          DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
-          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
-            cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
-            jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
-            mv /tmp/pkg.json "packages/${pkg}/package.json"
-            echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
-            cd "packages/${pkg}"
-            npm publish --tag "$DIST_TAG" --access public --provenance
-            cd ../..
-          done
-
-      - name: Inject Node.js optionalDependencies before web-client publish
-        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
-        run: |
-          cd crates/web-client
-          node -e "
-            const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf8'));
-            const v = pkg.version;
-            pkg.optionalDependencies = {
-              '@miden-sdk/node-darwin-arm64': v,
-              '@miden-sdk/node-darwin-x64': v,
-              '@miden-sdk/node-linux-x64-gnu': v,
-            };
-            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-            console.log('Injected optionalDependencies with version ' + v);
-          "
+      # NOTE: Node.js platform-package publish steps removed on `main`.
+      # They lived alongside the `build-native-nodejs` matrix job and the
+      # `nodejs` Cargo feature, all of which currently exist only on the
+      # `next` branch. See the comment on the removed `build-native-nodejs`
+      # job above. Re-add together with that job if the Node binding is
+      # forward-ported to `main`.
 
       - name: Publish web-client to npm
         if: needs.check-version.outputs.should_publish_web == 'true'
