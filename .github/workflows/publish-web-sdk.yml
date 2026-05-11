@@ -114,7 +114,20 @@ jobs:
         needs.check-version.outputs.should_publish_react == 'true' ||
         needs.check-version.outputs.should_publish_vite == 'true'
       )
-    runs-on: warp-ubuntu-latest-x64-8x
+    # github-hosted, not warp-ubuntu. `npm publish --provenance` (the
+    # trusted-publishing path introduced in #48) requires a github-hosted
+    # runner — sigstore needs the OIDC identity that only github's runners
+    # expose. On `warp-ubuntu-latest-x64-8x` npm returns:
+    #   422 Unprocessable Entity ... Error verifying sigstore provenance
+    #   bundle: Unsupported GitHub Actions runner environment:
+    #   "self-hosted". Only "github-hosted" runners are supported when
+    #   publishing with provenance.
+    # The build itself is slower on ubuntu-latest (no warp cache), but
+    # publishes only run a few times per month and provenance / trusted
+    # publishing is the deliberate choice. If the build duration becomes
+    # a real issue, split the job: build on warp, publish-steps on
+    # ubuntu-latest with an artifact handoff.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
