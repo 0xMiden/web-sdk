@@ -156,12 +156,23 @@ runs:
         # The block is bracketed by markers so it's clear at a glance that
         # this Cargo.toml is in a CI-mutated state — and so a future
         # cleanup can locate and revert it.
+        #
+        # Pin by SHA, not branch. Branches on the linked repo are typically
+        # auto-deleted when the PR merges, which makes a `branch = "..."`
+        # pin fail to resolve from that moment on (cargo errors with
+        # `failed to find branch X`). A `rev = "<sha>"` pin survives branch
+        # deletion because the commit object itself is reachable in git
+        # history regardless of what refs point at it. The header in this
+        # action's docstring already says "merged PR is acceptable, cargo
+        # will resolve to the head sha which still exists" — this is what
+        # makes that claim actually true.
         url="https://github.com/${HEAD_OWNER}/${HEAD_REPO}.git"
         python3 <<PY
         import re
         path = "Cargo.toml"
         url = "${url}"
         ref = "${HEAD_REF}"
+        sha = "${HEAD_SHA}"
         mark_begin = "# >>>>>>> linked-client-pr (auto-injected by .github/actions/inject-linked-client-pr) >>>>>>>"
         mark_end   = "# <<<<<<< linked-client-pr <<<<<<<"
 
@@ -178,7 +189,7 @@ runs:
                 continue
             captured.append(ln.rstrip('\n'))
             df = ', default-features = false' if 'default-features = false' in m.group('rhs') else ''
-            patched_lines.append(f"{m.group('name'):<25} = {{ branch = \"{ref}\"{df}, git = \"{url}\" }}")
+            patched_lines.append(f"{m.group('name'):<25} = {{ rev = \"{sha}\"{df}, git = \"{url}\" }}")
 
         if not captured:
             raise SystemExit("No miden-client dep line found in Cargo.toml — nothing to patch.")
