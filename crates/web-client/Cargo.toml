@@ -21,12 +21,25 @@ crate-type = ["cdylib"]
 [features]
 testing = ["miden-client/testing"]
 # Multi-threaded WASM build. When enabled, pulls in wasm-bindgen-rayon (the
-# rayon thread pool over Web Workers + SharedArrayBuffer) plus the parallel
-# paths in miden-crypto / miden-tx / Plonky3 (via cargo feature unification
-# of `miden-crypto/concurrent`). When DISABLED, the SDK is single-threaded
-# end-to-end and works in non-cross-origin-isolated contexts (no SAB
-# requirement, no `+atomics` target feature, stable cargo with the
-# precompiled rust-std-wasm32 — no `-Z build-std` needed).
+# rayon thread pool over Web Workers + SharedArrayBuffer) and propagates
+# `concurrent` through the full miden-client dependency tree:
+# miden-client/concurrent → miden-tx/concurrent → miden-prover/concurrent,
+# with miden-crypto/concurrent picked up transitively from miden-prover.
+# When DISABLED, the SDK is single-threaded end-to-end and works in
+# non-cross-origin-isolated contexts (no SAB requirement, no `+atomics`
+# target feature, stable cargo with the precompiled rust-std-wasm32 — no
+# `-Z build-std` needed).
+#
+# Earlier revisions used `miden-crypto/concurrent` here, which only
+# enabled rayon parallelism in miden-crypto (Merkle/hash). The
+# prover-side parallelism in miden-tx + miden-prover stayed
+# single-threaded — see review thread:
+# https://github.com/0xMiden/web-sdk/pull/134/files#r3196048839. Switching
+# to `miden-client/concurrent` (a feature added in miden-client PR #2169)
+# delivers full MT prove. Verify with:
+# `cargo tree -p miden-client-web --features mt-threads --target wasm32-unknown-unknown -f "{p} {f}"`
+# — miden-tx, miden-prover, and miden-crypto should all show
+# `concurrent` in their feature lists.
 #
 # Two distinct WASM artifacts are shipped (see crates/web-client/rollup.config.js):
 #   - dist/{eager,lazy}-st  built without this feature  → loads anywhere
@@ -37,7 +50,7 @@ testing = ["miden-client/testing"]
 #   `@miden-sdk/miden-sdk/lazy`      → lazy-st
 #   `@miden-sdk/miden-sdk/mt`        → eager-mt (opt-in; needs COI)
 #   `@miden-sdk/miden-sdk/mt/lazy`   → lazy-mt
-mt-threads = ["dep:wasm-bindgen-rayon", "dep:rayon", "miden-crypto/concurrent"]
+mt-threads = ["dep:wasm-bindgen-rayon", "dep:rayon", "miden-client/concurrent"]
 
 [dependencies]
 # Workspace dependencies

@@ -1593,9 +1593,8 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15007f2cf4e80316a8141665b43f454e77ce0dfd2ac0307ce6cdf7a5d552d58b"
+version = "0.14.7"
+source = "git+https://github.com/0xMiden/miden-client?branch=wiktor%2Fexpose-concurrent-feature#38b74bea88abd5818c0966fb397fced5c65a575f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1957,7 +1956,9 @@ dependencies = [
  "rand_xoshiro",
  "regex",
  "semver 1.0.28",
+ "serde",
  "thiserror",
+ "toml",
  "walkdir",
 ]
 

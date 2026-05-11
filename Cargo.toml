@@ -65,6 +65,15 @@ must_use_candidate = "allow"                 # This marks many fn's which isn't 
 should_panic_without_expect = "allow"        # We don't care about the specific panic message.
 # End of pedantic lints.
 
+# TEMPORARY: pin miden-client to the branch that adds the `concurrent`
+# feature (0xMiden/miden-client PR #2169). Required by the
+# `mt-threads = [..., "miden-client/concurrent"]` line in
+# crates/web-client/Cargo.toml. Drop this patch and bump the workspace
+# `miden-client` version (line 40) once that PR lands AND a new
+# miden-client release ships to crates.io. See PR #134 description.
+[patch.crates-io]
+miden-client = { git = "https://github.com/0xMiden/miden-client", branch = "wiktor/expose-concurrent-feature" }
+
 # Uncomment for local development against a local miden-client checkout:
 # [patch.crates-io]
 # miden-client = { path = "../miden-client/crates/rust-client" }
