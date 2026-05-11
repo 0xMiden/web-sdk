@@ -146,7 +146,7 @@ describe("useSend", () => {
 
     it("should execute send with returnNote=true via submitNewTransaction", async () => {
       const mockSync = vi.fn().mockResolvedValue(undefined);
-      const mockTxId = { toString: vi.fn(() => "0xtx456") };
+      const mockTxId = { toHex: vi.fn(() => "0xtx456") };
       const mockClient = createMockWebClient({
         submitNewTransaction: vi.fn().mockResolvedValue(mockTxId),
       });
@@ -814,7 +814,7 @@ describe("useSend", () => {
 
     it("should use submitNewTransactionWithProver in returnNote path (line 183)", async () => {
       const mockSync = vi.fn().mockResolvedValue(undefined);
-      const mockTxId = { toString: vi.fn(() => "0xtxprover456") };
+      const mockTxId = { toHex: vi.fn(() => "0xtxprover456") };
       const mockProver = { type: "local" };
       const mockClient = createMockWebClient({
         submitNewTransactionWithProver: vi.fn().mockResolvedValue(mockTxId),

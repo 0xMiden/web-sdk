@@ -10,6 +10,7 @@
 
 * [FIX][react] Fixed `useConsume({ notes: [hexString] })` crashing with `null pointer passed to rust`. Surfaced when consuming notes against accounts built with `withNoAuthComponent()` ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
 * [FIX][react] Fixed `useMultiSend` crashing with `null pointer passed to rust` whenever any recipient used `NoteType.Private`. The `NoteArray` constructor was moving each output's `Note` handle, leaving it unusable for the post-commit `sendPrivateNote` delivery loop ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
+* [FIX][react] Fixed `transactionId` (and `txId`) in hook return values being `"[object Object]"` instead of a hex string. `useTransaction`, `useConsume`, `useMint`, `useSwap`, `useSend`, and `useMultiSend` were calling `.toString()` on the WASM `TransactionId` — which has no `toString` binding and so fell through to `Object.prototype.toString`. Switched all six hooks to `.toHex()`, the actual exposed method. The unit-test mock used to mirror the bug (its `.toString()` returned the hex), masking the regression; the mock now matches real WASM behavior so a future regression would fail the suite ([#83](https://github.com/0xMiden/web-sdk/issues/83)).
 
 ### Chores
 
