@@ -241,7 +241,20 @@ export const createMockWebClient = (
     proveTransactionWithProver: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
-    sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+    sendPrivateNote: vi.fn(async (note: unknown, _addr: unknown) => {
+      // Any method call against a moved wasm-bindgen handle crashes with
+      // "null pointer passed to rust"; mirror that here so move-after-use
+      // bugs (e.g. building a NoteArray via Vec<Note> ctor then re-reading
+      // the source notes) are caught in unit tests.
+      if (
+        note &&
+        typeof note === "object" &&
+        (note as { _live?: boolean })._live === false
+      ) {
+        throw new Error("null pointer passed to rust");
+      }
+      return undefined;
+    }),
     importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue(createMockAccount()),

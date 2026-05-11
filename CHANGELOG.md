@@ -9,6 +9,7 @@
 ### Fixes
 
 * [FIX][react] Fixed `useConsume({ notes: [hexString] })` crashing with `null pointer passed to rust`. Surfaced when consuming notes against accounts built with `withNoAuthComponent()` ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
+* [FIX][react] Fixed `useMultiSend` crashing with `null pointer passed to rust` whenever any recipient used `NoteType.Private`. The `NoteArray` constructor was moving each output's `Note` handle, leaving it unusable for the post-commit `sendPrivateNote` delivery loop ([#138](https://github.com/0xMiden/web-sdk/pull/138)).
 
 ### Chores
 

@@ -43,7 +43,20 @@ vi.mock("@miden-sdk/miden-sdk/lazy", () => {
     proveTransactionWithProver: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
-    sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+    sendPrivateNote: vi.fn(async (note: unknown, _addr: unknown) => {
+      // Any method call against a moved wasm-bindgen handle crashes with
+      // "null pointer passed to rust"; mirror that here so move-after-use
+      // bugs (e.g. building a NoteArray via Vec<Note> ctor then re-reading
+      // the source notes) are caught in unit tests.
+      if (
+        note &&
+        typeof note === "object" &&
+        (note as { _live?: boolean })._live === false
+      ) {
+        throw new Error("null pointer passed to rust");
+      }
+      return undefined;
+    }),
     exportStore: vi.fn().mockResolvedValue({ tables: {} }),
     forceImportStore: vi.fn().mockResolvedValue(undefined),
     exportNoteFile: vi
@@ -157,7 +170,11 @@ vi.mock("@miden-sdk/miden-sdk/lazy", () => {
           noteType: number,
           attachment: unknown
         ) => ({
-          id: vi.fn(() => ({ toString: () => "0xnote" })),
+          _live: true,
+          id() {
+            if (!this._live) throw new Error("invalid Note handle");
+            return { toString: () => "0xnote" };
+          },
           sender,
           receiver,
           assets,
@@ -221,7 +238,17 @@ vi.mock("@miden-sdk/miden-sdk/lazy", () => {
     NoteArray: class NoteArray {
       notes: unknown[];
       constructor(notes?: unknown[]) {
+        // Mirror the wasm-bindgen Vec<Note> ABI: the constructor MOVES each
+        // element out of its JS handle, leaving it unusable. push(&note)
+        // borrows and keeps the handle valid.
         this.notes = notes ?? [];
+        if (notes) {
+          for (const n of notes) {
+            if (n && typeof n === "object") {
+              (n as { _live?: boolean })._live = false;
+            }
+          }
+        }
       }
       push(note: unknown) {
         this.notes.push(note);
