@@ -39,8 +39,8 @@ clear_block() {
   #   #  miden-client = ...
   #   #  miden-client-sqlite-store = ...
   #   $MARK_END
-  #   miden-client = { branch = "<linked>", ... }     <-- patched
-  #   miden-client-sqlite-store = { branch = "<linked>", ... }  <-- patched (if present)
+  #   miden-client = { rev = "<linked head sha>", ... }     <-- patched
+  #   miden-client-sqlite-store = { rev = "<linked head sha>", ... }  <-- patched (if present)
   #
   awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
     function restore() {
@@ -130,8 +130,7 @@ read -r head_owner head_repo head_ref head_sha state merged <<<"$(gh api repos/"
 # uppercase. Normalize before comparing.
 state_lc=$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')
 if [ "$state_lc" != "open" ] && [ "$merged" != "true" ]; then
-  echo "⚠ ${repo}#${num} is ${state} (merged=${merged}). The branch may be gone."
-  echo "  Continuing anyway — git resolves the head sha if it still exists."
+  echo "⚠ ${repo}#${num} is ${state} (merged=${merged}). Pinning by SHA — git resolves the head sha regardless of branch state."
 fi
 
 # Idempotent: clear any prior block first.
@@ -151,6 +150,7 @@ import re, sys
 path = "$CARGO_TOML"
 url = "$url"
 ref = "$head_ref"
+sha = "$head_sha"
 mark_begin = """$MARK_BEGIN"""
 mark_end = """$MARK_END"""
 
@@ -169,10 +169,13 @@ for ln in lines:
     name = m.group('name')
     rhs = m.group('rhs').rstrip('\n')
     captured.append(ln.rstrip('\n'))
-    # Build a git+branch table that matches the workspace dep style.
-    # Keep default-features = false if it was on the original.
+    # Pin by SHA, not branch. Linked-repo branches are auto-deleted on
+    # merge, so a branch-pin breaks the moment the upstream PR merges
+    # (cargo errors with "failed to find branch X"). Commit objects
+    # are reachable in git history regardless of refs, so rev-pin
+    # survives branch deletion.
     df = ', default-features = false' if 'default-features = false' in rhs else ''
-    new_rhs = '{ branch = "' + ref + '"' + df + ', git = "' + url + '" }'
+    new_rhs = '{ rev = "' + sha + '"' + df + ', git = "' + url + '" }'
     patched.append(f"{name:<25} = {new_rhs}")
 
 # Inject marker block + patched lines BELOW the first captured-line position.
