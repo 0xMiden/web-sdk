@@ -6,6 +6,10 @@
 
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
 
+### Fixes
+
+* [FIX][react] Fixed `transactionId` (and `txId`) in hook return values being `"[object Object]"` instead of a hex string. `useTransaction`, `useConsume`, `useMint`, `useSwap`, `useSend`, and `useMultiSend` were calling `.toString()` on the WASM `TransactionId` — which has no `toString` binding and so fell through to `Object.prototype.toString`. Switched all six hooks to `.toHex()`, the actual exposed method. The unit-test mock used to mirror the bug (its `.toString()` returned the hex), masking the regression; the mock now matches real WASM behavior so a future regression would fail the suite ([#83](https://github.com/0xMiden/web-sdk/issues/83)).
+
 ### Chores
 
 * [CHORE][ci] Auto-cut a GitHub release when a `patch release`-labeled PR merges to `main`. Mirrors the existing `next`-branch flow: once the release publishes, `publish-web-sdk.yml` ships every package whose version actually changed to the `latest` dist-tag with provenance.

@@ -97,7 +97,7 @@ export function useMint(): UseMintResult {
               )
             : await client.submitNewTransaction(faucetIdObj, txRequest);
 
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");

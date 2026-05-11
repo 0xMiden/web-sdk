@@ -37,7 +37,7 @@ vi.mock("@miden-sdk/miden-sdk/lazy", () => {
     newSwapTransactionRequest: vi.fn().mockReturnValue({}),
     submitNewTransaction: vi
       .fn()
-      .mockResolvedValue({ toString: vi.fn(() => "0xtx") }),
+      .mockResolvedValue({ toHex: vi.fn(() => "0xtx") }),
     executeTransaction: vi.fn().mockResolvedValue({}),
     proveTransaction: vi.fn().mockResolvedValue({}),
     proveTransactionWithProver: vi.fn().mockResolvedValue({}),

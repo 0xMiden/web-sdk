@@ -165,10 +165,9 @@ export function useMultiSend(): UseMultiSendResult {
           txResult
         );
 
-        // Save txId hex/string BEFORE applyTransaction, which consumes the
+        // Save txId hex BEFORE applyTransaction, which consumes the
         // WASM pointer inside txResult (and any child objects).
         const txIdHex = txResult.id().toHex();
-        const txIdString = txResult.id().toString();
 
         await client.applyTransaction(txResult, submissionHeight);
 
@@ -191,7 +190,7 @@ export function useMultiSend(): UseMultiSendResult {
           }
         }
 
-        const txSummary = { transactionId: txIdString };
+        const txSummary = { transactionId: txIdHex };
 
         setStage("complete");
         setResult(txSummary);

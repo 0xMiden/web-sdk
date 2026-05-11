@@ -150,8 +150,12 @@ const createMockWord = (hex: string = "0xword") => ({
   [Symbol.dispose]: vi.fn(),
 });
 
+// Real WASM `TransactionId` exposes only `toHex()` (no `to_string` binding) —
+// callers that reach for `.toString()` hit Object.prototype's default and get
+// "[object Object]" (issue #83). Mirror that here so any future hook that
+// regresses to `.toString()` fails the unit tests instead of silently passing.
 export const createMockTransactionId = (id: string = "0xtx123") => ({
-  toString: vi.fn(() => id),
+  toString: vi.fn(() => "[object Object]"),
   toHex: vi.fn(() => id),
   asElements: vi.fn(() => []),
   asBytes: vi.fn(() => new Uint8Array()),

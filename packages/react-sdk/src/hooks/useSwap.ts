@@ -106,7 +106,7 @@ export function useSwap(): UseSwapResult {
               )
             : await client.submitNewTransaction(accountIdObj, txRequest);
 
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");
