@@ -1594,7 +1594,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.14.7"
-source = "git+https://github.com/0xMiden/miden-client?branch=wiktor%2Fexpose-concurrent-feature#38b74bea88abd5818c0966fb397fced5c65a575f"
+source = "git+https://github.com/0xMiden/miden-client.git?branch=wiktor%2Fexpose-concurrent-feature#6cf92452b8c46510a1ec3a1758fbf5a06707409a"
 dependencies = [
  "anyhow",
  "async-trait",

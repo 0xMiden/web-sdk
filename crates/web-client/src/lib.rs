@@ -59,11 +59,17 @@ pub use web_keystore::WebKeyStore;
 #[cfg(feature = "mt-threads")]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
+// MT bring-up diagnostics — gated behind `testing` so they don't ship in
+// production WASM bundles. Useful during initial wiring of a new MT host
+// or when investigating "why is my MT prove not faster" regressions; not
+// needed at runtime by normal consumers. Enable with
+// `--features mt-threads,testing` to surface them on the wasm-bindgen API.
+
 /// How many rayon worker threads are visible from THIS WASM instance's view of
 /// the global rayon pool. Diagnostic only — the value should equal whatever
 /// `initThreadPool(n)` was called with. If it's 1, rayon is in single-threaded
 /// fallback (workers never spawned, or spawned in a different WASM instance).
-#[cfg(feature = "mt-threads")]
+#[cfg(all(feature = "mt-threads", feature = "testing"))]
 #[wasm_bindgen(js_name = "rayonThreadCount")]
 pub fn rayon_thread_count() -> usize {
     rayon::current_num_threads()
@@ -77,7 +83,7 @@ pub fn rayon_thread_count() -> usize {
 // `cast_precision_loss` is intentional: this is a synthetic FP-mix workload
 // to defeat constant-folding and exercise rayon's dispatch — we don't care
 // about precision, only about CPU work being divided across threads.
-#[cfg(feature = "mt-threads")]
+#[cfg(all(feature = "mt-threads", feature = "testing"))]
 #[wasm_bindgen(js_name = "parallelSumBench")]
 #[allow(clippy::cast_precision_loss)]
 pub fn parallel_sum_bench(n: u64) -> u64 {
@@ -93,7 +99,11 @@ pub fn parallel_sum_bench(n: u64) -> u64 {
 }
 
 /// Single-threaded version of `parallel_sum_bench` for direct comparison.
-/// Same workload, plain `iter()` — bypasses rayon entirely.
+/// Same workload, plain `iter()` — bypasses rayon entirely. Needs to live
+/// on the WASM side rather than be reimplemented in JS so the workload is
+/// bit-for-bit identical to `parallel_sum_bench` (same libm, same FP
+/// determinism, same constant-folding resistance).
+#[cfg(feature = "testing")]
 #[wasm_bindgen(js_name = "sequentialSumBench")]
 #[allow(clippy::cast_precision_loss)]
 pub fn sequential_sum_bench(n: u64) -> u64 {
