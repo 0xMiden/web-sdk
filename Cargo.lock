@@ -1593,8 +1593,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.14.7"
-source = "git+https://github.com/0xMiden/miden-client.git?branch=wiktor%2Fexpose-concurrent-feature#6cf92452b8c46510a1ec3a1758fbf5a06707409a"
+version = "0.14.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "906ba973b4854bbb65cf993225f67655322c356c24783ba13e380b11f946d13d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1629,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.14.0"
+version = "0.14.8"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -1793,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.14.0"
+version = "0.14.8"
 dependencies = [
  "async-trait",
  "base64",
