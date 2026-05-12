@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = ["crates/idxdb-store", "crates/web-client"]
+members = ["crates/idxdb-store", "crates/mobile-prover", "crates/web-client"]
 
 [workspace.package]
 authors = ["miden contributors"]
