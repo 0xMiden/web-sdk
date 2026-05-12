@@ -13,15 +13,6 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_futures::js_sys::{Function, Promise, Uint8Array};
 
-// Bind `console.log` directly so we don't need `web-sys` as a regular dep —
-// the existing web-sys dependency in Cargo.toml is dev-only. Used for
-// prove-path tracing (see `JsCallbackTransactionProver::prove`).
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn console_log(s: &str);
-}
-
 /// Wrapper over local or remote transaction proving backends.
 #[wasm_bindgen]
 #[derive(Clone)]
@@ -203,16 +194,11 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
         &self,
         tx_inputs: TransactionInputs,
     ) -> Result<ProvenTransaction, TransactionProverError> {
-        console_log("[JsCallbackTransactionProver] prove() entered");
         // Wire format matches the existing gRPC `RemoteTransactionProver`:
         // `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes(..)`
         // out. Keeping these identical means a native prover plugin can be
         // re-used unchanged behind either dispatcher.
         let serialized = tx_inputs.to_bytes();
-        console_log(&format!(
-            "[JsCallbackTransactionProver] serialized {} bytes, calling JS callback",
-            serialized.len()
-        ));
         let input_arr = Uint8Array::from(serialized.as_slice());
 
         let call_result = self
@@ -223,7 +209,6 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
                     "callback prover threw at invocation: {err:?}"
                 ))
             })?;
-        console_log("[JsCallbackTransactionProver] JS callback returned (sync), awaiting Promise if any");
 
         let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
             JsFuture::from(promise.clone()).await.map_err(|err| {
@@ -234,7 +219,6 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
         } else {
             call_result
         };
-        console_log("[JsCallbackTransactionProver] Promise resolved, decoding Uint8Array");
 
         let bytes = resolved
             .dyn_ref::<Uint8Array>()
@@ -244,10 +228,6 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
                 )
             })?
             .to_vec();
-        console_log(&format!(
-            "[JsCallbackTransactionProver] got {} output bytes, deserializing ProvenTransaction",
-            bytes.len()
-        ));
 
         ProvenTransaction::read_from_bytes(&bytes).map_err(|err| {
             TransactionProverError::other(format!(
