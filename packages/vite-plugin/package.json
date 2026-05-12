@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/vite-plugin",
-  "version": "0.14.8",
+  "version": "0.14.9",
   "description": "Vite plugin for Miden dApps — WASM dedup, COOP/COEP headers, and gRPC-web proxy",
   "type": "commonjs",
   "main": "dist/index.js",
