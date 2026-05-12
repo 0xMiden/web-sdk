@@ -1,11 +1,26 @@
+use alloc::format;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::time::Duration;
 
 use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
-    LocalTransactionProver, ProvingOptions, TransactionProver as TransactionProverTrait,
+    LocalTransactionProver, ProvenTransaction, ProvingOptions, TransactionInputs,
+    TransactionProver as TransactionProverTrait, TransactionProverError,
 };
+use miden_client::utils::{Deserializable, Serializable};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_futures::js_sys::{Function, Promise, Uint8Array};
+
+// Bind `console.log` directly so we don't need `web-sys` as a regular dep —
+// the existing web-sys dependency in Cargo.toml is dev-only. Used for
+// prove-path tracing (see `JsCallbackTransactionProver::prove`).
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn console_log(s: &str);
+}
 
 /// Wrapper over local or remote transaction proving backends.
 #[wasm_bindgen]
@@ -24,6 +39,35 @@ impl TransactionProver {
         let local_prover = LocalTransactionProver::new(ProvingOptions::default());
         TransactionProver {
             prover: Arc::new(local_prover),
+            endpoint: None,
+            timeout: None,
+        }
+    }
+
+    /// Creates a prover that delegates `prove()` to a JavaScript callback.
+    ///
+    /// The callback receives the serialized [`TransactionInputs`] as a
+    /// `Uint8Array` and must return a `Promise<Uint8Array>` resolving to a
+    /// serialized [`ProvenTransaction`] (same encoding the gRPC remote
+    /// prover uses: `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes`
+    /// out).
+    ///
+    /// Use case: routing prove to a native iOS / Android plugin
+    /// (`@miden/native-prover`) so mobile builds skip WASM prove entirely
+    /// — WKWebView can't be made cross-origin-isolated reliably and the
+    /// MT WASM bundle can't instantiate without SharedArrayBuffer, so the
+    /// host wraps a native Rust prover (built with the same `miden_tx`
+    /// crate) and exposes a JS-shaped callback over the Capacitor bridge.
+    ///
+    /// The SDK does NOT serialize the prover for persistence across
+    /// reloads (unlike `newRemoteProver`), since the callback is a
+    /// runtime JS reference. Hosts must recreate the prover on every
+    /// page load.
+    #[wasm_bindgen(js_name = "newCallbackProver")]
+    pub fn new_callback_prover(callback: Function) -> TransactionProver {
+        let prover = JsCallbackTransactionProver { callback };
+        TransactionProver {
+            prover: Arc::new(prover),
             endpoint: None,
             timeout: None,
         }
@@ -132,5 +176,83 @@ impl From<Arc<dyn TransactionProverTrait + Send + Sync>> for TransactionProver {
             endpoint: None,
             timeout: None,
         }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// JsCallbackTransactionProver — delegates prove() to a JS function.
+// ────────────────────────────────────────────────────────────────────────
+
+/// [`TransactionProverTrait`] adapter that dispatches `prove()` to a JS
+/// callback returning a `Promise<Uint8Array>`. See
+/// [`TransactionProver::newCallbackProver`].
+pub(crate) struct JsCallbackTransactionProver {
+    callback: Function,
+}
+
+// `Function` / `JsValue` are not `Send`/`Sync`, but the SDK only runs on
+// the single-threaded WASM main context. Mirrors the same pattern
+// `WebKeyStore`'s `JsCallbacks` uses for its own JS-held callbacks.
+unsafe impl Send for JsCallbackTransactionProver {}
+unsafe impl Sync for JsCallbackTransactionProver {}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl TransactionProverTrait for JsCallbackTransactionProver {
+    async fn prove(
+        &self,
+        tx_inputs: TransactionInputs,
+    ) -> Result<ProvenTransaction, TransactionProverError> {
+        console_log("[JsCallbackTransactionProver] prove() entered");
+        // Wire format matches the existing gRPC `RemoteTransactionProver`:
+        // `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes(..)`
+        // out. Keeping these identical means a native prover plugin can be
+        // re-used unchanged behind either dispatcher.
+        let serialized = tx_inputs.to_bytes();
+        console_log(&format!(
+            "[JsCallbackTransactionProver] serialized {} bytes, calling JS callback",
+            serialized.len()
+        ));
+        let input_arr = Uint8Array::from(serialized.as_slice());
+
+        let call_result = self
+            .callback
+            .call1(&JsValue::NULL, &input_arr.into())
+            .map_err(|err| {
+                TransactionProverError::other(format!(
+                    "callback prover threw at invocation: {err:?}"
+                ))
+            })?;
+        console_log("[JsCallbackTransactionProver] JS callback returned (sync), awaiting Promise if any");
+
+        let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
+            JsFuture::from(promise.clone()).await.map_err(|err| {
+                TransactionProverError::other(format!(
+                    "callback prover promise rejected: {err:?}"
+                ))
+            })?
+        } else {
+            call_result
+        };
+        console_log("[JsCallbackTransactionProver] Promise resolved, decoding Uint8Array");
+
+        let bytes = resolved
+            .dyn_ref::<Uint8Array>()
+            .ok_or_else(|| {
+                TransactionProverError::other(
+                    "callback prover must resolve to Uint8Array".to_string(),
+                )
+            })?
+            .to_vec();
+        console_log(&format!(
+            "[JsCallbackTransactionProver] got {} output bytes, deserializing ProvenTransaction",
+            bytes.len()
+        ));
+
+        ProvenTransaction::read_from_bytes(&bytes).map_err(|err| {
+            TransactionProverError::other(format!(
+                "callback prover returned undecodable ProvenTransaction: {err:?}"
+            ))
+        })
     }
 }
