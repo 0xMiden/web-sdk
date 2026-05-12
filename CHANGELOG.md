@@ -1,12 +1,17 @@
 # Changelog
 
-## 0.14.6 (TBA)
+## 0.14.9 (TBA)
 
 ### Features
 
 * [FEATURE][web] Added `TransactionProver.newCallbackProver(jsFn)` — a JS-callable prover variant whose `prove()` dispatches to a `Function` returning `Promise<Uint8Array>`. Wire format matches `RemoteTransactionProver` (`tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes(..)` out), so a JS-side bridge (e.g. a Capacitor / Tauri / Electron native-prover plugin) slots in behind the existing dispatcher unchanged ([#149](https://github.com/0xMiden/web-sdk/pull/149)).
 * [FEATURE][web] Added `ClientOptions.useWorker?: boolean` (default `true`) — opt out of the WebClient's Web Worker shim. The shim serialises the prover via `TransactionProver.serialize()` (format `"local"` / `"remote|{endpoint}"`), which has no encoding for the callback variant — the closure is silently dropped and the worker spawns its own in-process WASM prover. Setting `useWorker: false` skips the shim so the JS function reaches `wasmWebClient.proveTransactionWithProver(...)` with the closure intact. Required for any consumer passing a `newCallbackProver` ([#149](https://github.com/0xMiden/web-sdk/pull/149)).
 * [FEATURE][react] Added `MidenConfig.useWorker?: boolean` — mirrors the new `ClientOptions.useWorker` on the React `<MidenProvider>`, plumbed through to both `WebClient.createClient` and `WebClient.createClientWithExternalKeystore` ([#149](https://github.com/0xMiden/web-sdk/pull/149)).
+
+## 0.14.6 (TBA)
+
+### Features
+
 * [FEATURE][web] **Optional multi-threaded WASM proving via dual-build subpaths.** The package now ships TWO WASM artifacts: a single-threaded build at the default subpaths (`@miden-sdk/miden-sdk`, `@miden-sdk/miden-sdk/lazy`) that loads in any browser context, and a multi-threaded build at the new `@miden-sdk/miden-sdk/mt` and `@miden-sdk/miden-sdk/mt/lazy` subpaths that uses wasm-bindgen-rayon for ~3–5× faster proving on cross-origin-isolated pages. Default (ST) behavior is unchanged from v0.14.2 — existing consumers keep working in non-COI contexts with no migration needed. Consumers who want the speedup opt in by importing the `/mt` subpath; they're then responsible for running on a page with `SharedArrayBuffer` + `crossOriginIsolated` (COOP=`same-origin` + COEP=`require-corp` HTTP headers, or the equivalent in a Chrome extension manifest). The MT build re-exports `initThreadPool(n)` which consumers must `await` once before any prove, sized to `navigator.hardwareConcurrency`. PR CI builds ST only via the `MIDEN_FAST_BUILD` flag for ~15-min validation; release CI builds both for the published artifact.
 * [FEATURE][web] Added `MidenClient._withInnerWebClient(fn)` escape hatch that runs `fn` with exclusive access to the proxied JS WebClient. Lets framework wrappers split the bundled prove pipeline — for example, dispatching the prove step to a `chrome.offscreen` document or a Web Worker while keeping execute / submit / apply on the main `MidenClient` — without re-implementing the resource-based surface from scratch. The callback runs inside `_serializeWasmCall`, so the WASM RefCell is held for the duration of `fn` and concurrent SDK calls queue safely. Marked private (`_` prefix) and may iterate; pin the SDK version if you depend on it.
 * [FEATURE][web] Added `"custom"` operation to `preview()` so users can dry-run any pre-built `TransactionRequest`, not just send/mint/consume/swap ([#2052](https://github.com/0xMiden/miden-client/pull/2052)).
