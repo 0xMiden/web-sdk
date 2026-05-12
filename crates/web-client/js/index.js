@@ -367,6 +367,15 @@ class WebClient {
    * @param {string | undefined} [logLevel] - Optional log verbosity level
    *   ("error", "warn", "info", "debug", "trace", "off", or "none").
    *   When set, Rust tracing output is routed to the browser console.
+   * @param {boolean} [useWorker=true] - When `false`, skip the Web Worker shim
+   *   and call the wasm-bindgen `WebClient` directly on the current thread.
+   *   The worker exists to keep the main thread responsive during WASM work
+   *   in browser/extension contexts, but it serializes the prover argument
+   *   via `TransactionProver.serialize()` — a format that has no encoding
+   *   for `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
+   *   Consumers that hand a `CallbackProver` (e.g. native iOS/Android plug-in
+   *   provers in Capacitor apps, or any other JS-side prover bridge) need
+   *   `useWorker: false` so the prover handle reaches the WASM binding intact.
    */
   constructor(
     rpcUrl,
@@ -376,7 +385,8 @@ class WebClient {
     getKeyCb,
     insertKeyCb,
     signCb,
-    logLevel
+    logLevel,
+    useWorker = true
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -386,9 +396,12 @@ class WebClient {
     this.insertKeyCb = insertKeyCb;
     this.signCb = signCb;
     this.logLevel = logLevel;
+    this.useWorker = useWorker !== false;
 
-    // Check if Web Workers are available.
-    if (typeof Worker !== "undefined") {
+    // Check if Web Workers are available AND the caller didn't opt out via
+    // `useWorker: false`. The opt-out is load-bearing for `CallbackProver`
+    // consumers — see the constructor doc above.
+    if (this.useWorker && typeof Worker !== "undefined") {
       console.log("WebClient: Web Workers are available.");
       // Pick between the module and classic worker variants at runtime — see
       // `WebClient.workerMode` below. Both branches keep the
@@ -502,8 +515,12 @@ class WebClient {
       // Once the worker script has loaded, initialize the worker.
       this.loaded.then(() => this.initializeWorker());
     } else {
-      console.log("WebClient: Web Workers are not available.");
-      // Worker not available; set up fallback values.
+      console.log(
+        this.useWorker
+          ? "WebClient: Web Workers are not available."
+          : "WebClient: Web Worker shim disabled by caller (useWorker=false)."
+      );
+      // Worker not available or explicitly disabled; set up fallback values.
       this.worker = null;
       this.pendingRequests = null;
       this.loaded = Promise.resolve();
@@ -630,9 +647,19 @@ class WebClient {
    * @param {string} seed - The seed for the account.
    * @param {string | undefined} network - Optional name for the store. Setting this allows multiple clients to be used in the same browser.
    * @param {string | undefined} logLevel - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none").
+   * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
+   *   and run WASM calls on the current thread. Required for `CallbackProver`
+   *   consumers (the worker path serializes the prover and loses the callback).
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
-  static async createClient(rpcUrl, noteTransportUrl, seed, network, logLevel) {
+  static async createClient(
+    rpcUrl,
+    noteTransportUrl,
+    seed,
+    network,
+    logLevel,
+    useWorker = true
+  ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
       rpcUrl,
@@ -642,7 +669,8 @@ class WebClient {
       undefined,
       undefined,
       undefined,
-      logLevel
+      logLevel,
+      useWorker
     );
 
     // Set up logging on the main thread before creating the client.
@@ -673,6 +701,9 @@ class WebClient {
    * @param {Function | undefined} insertKeyCb - The insert key callback.
    * @param {Function | undefined} signCb - The sign callback.
    * @param {string | undefined} logLevel - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none").
+   * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
+   *   and run WASM calls on the current thread. Required for `CallbackProver`
+   *   consumers (the worker path serializes the prover and loses the callback).
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
   static async createClientWithExternalKeystore(
@@ -683,7 +714,8 @@ class WebClient {
     getKeyCb,
     insertKeyCb,
     signCb,
-    logLevel
+    logLevel,
+    useWorker = true
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -694,7 +726,8 @@ class WebClient {
       getKeyCb,
       insertKeyCb,
       signCb,
-      logLevel
+      logLevel,
+      useWorker
     );
 
     // Set up logging on the main thread before creating the client.

@@ -209,6 +209,21 @@ export interface ClientOptions {
     insertKey: InsertKeyCallback;
     sign: SignCallback;
   };
+  /**
+   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Defaults to `true` — leave it that way in browsers/extensions so the UI
+   * stays responsive while WASM is busy.
+   *
+   * Set to `false` when:
+   * - You pass a `CallbackProver` via `TransactionProver.newCallbackProver(jsFn)`.
+   *   The worker boundary serializes the prover with `TransactionProver.serialize()`,
+   *   which has no encoding for the callback variant and silently downgrades
+   *   to `"local"` — your callback would never fire.
+   * - You're embedding the client in a single-WebView native shell (iOS/Android
+   *   Capacitor host, Tauri, Electron preload), where the UI thread isn't
+   *   competing with the WASM thread anyway.
+   */
+  useWorker?: boolean;
 }
 
 // ════════════════════════════════════════════════════════════════

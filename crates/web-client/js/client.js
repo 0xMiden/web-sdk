@@ -113,6 +113,13 @@ export class MidenClient {
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
+    // `useWorker: false` opts out of the Web Worker shim that wraps every
+    // WASM call. The shim exists to keep the main thread responsive in
+    // browser/extension contexts, but it serializes the prover via
+    // `TransactionProver.serialize()` — a format that has no encoding for
+    // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
+    // Mobile/Tauri/native-prover consumers must pass `useWorker: false`.
+    const useWorker = options?.useWorker;
     let inner;
     if (options?.keystore) {
       inner = await WebClientClass.createClientWithExternalKeystore(
@@ -122,14 +129,18 @@ export class MidenClient {
         options?.storeName,
         options.keystore.getKey,
         options.keystore.insertKey,
-        options.keystore.sign
+        options.keystore.sign,
+        undefined,
+        useWorker
       );
     } else {
       inner = await WebClientClass.createClient(
         rpcUrl,
         noteTransportUrl,
         seed,
-        options?.storeName
+        options?.storeName,
+        undefined,
+        useWorker
       );
     }
 

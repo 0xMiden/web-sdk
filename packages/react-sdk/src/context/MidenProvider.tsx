@@ -269,7 +269,9 @@ export function MidenProvider({
               storeName,
               signerContext.getKeyCb,
               signerContext.insertKeyCb,
-              wrappedSignCb
+              wrappedSignCb,
+              undefined,
+              resolvedConfig.useWorker
             );
 
             if (cancelled) return;
@@ -292,7 +294,10 @@ export function MidenProvider({
             webClient = await WebClient.createClient(
               resolvedConfig.rpcUrl,
               resolvedConfig.noteTransportUrl,
-              seed
+              seed,
+              undefined,
+              undefined,
+              resolvedConfig.useWorker
             );
             /* v8 ignore next 1 — post-signer-init cancellation check; timing the cancel() during init is not deterministic */
             if (cancelled) return;
