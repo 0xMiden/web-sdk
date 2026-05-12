@@ -45,8 +45,8 @@ impl TransactionProver {
     ///
     /// Use case: routing prove to a native iOS / Android plugin
     /// (`@miden/native-prover`) so mobile builds skip WASM prove entirely
-    /// — WKWebView can't be made cross-origin-isolated reliably and the
-    /// MT WASM bundle can't instantiate without SharedArrayBuffer, so the
+    /// — `WKWebView` can't be made cross-origin-isolated reliably and the
+    /// MT WASM bundle can't instantiate without `SharedArrayBuffer`, so the
     /// host wraps a native Rust prover (built with the same `miden_tx`
     /// crate) and exposes a JS-shaped callback over the Capacitor bridge.
     ///
@@ -212,9 +212,7 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
 
         let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
             JsFuture::from(promise.clone()).await.map_err(|err| {
-                TransactionProverError::other(format!(
-                    "callback prover promise rejected: {err:?}"
-                ))
+                TransactionProverError::other(format!("callback prover promise rejected: {err:?}"))
             })?
         } else {
             call_result
