@@ -63,6 +63,26 @@ export class MidenClient {
    * race the proxy's chain and trip wasm-bindgen's "recursive use of an
    * object detected" panic.
    *
+   * Re-entrancy: while `fn` is running, the underlying client's
+   * `_withInnerLockDepth` counter is bumped so that `_serializeWasmCall`
+   * invocations made BY `fn` (or any proxy-dispatched method it calls)
+   * run inline rather than enqueuing on the chain. Without this, every
+   * `await inner.X(...)` inside `fn` would enqueue behind the outer
+   * `_withInnerWebClient` slot which is itself awaiting `fn` —
+   * a classic re-entrant-lock deadlock. The depth counter restores the
+   * intent of the docstring above: the lock is held for the duration
+   * of `fn`, and inner-client calls "borrow" that already-held lock
+   * instead of trying to re-acquire it.
+   *
+   * SAFETY CONTRACT for re-entrancy: callers MUST hold an external
+   * mutex preventing concurrent access to this same client instance
+   * via other code paths during `fn`. The chain still serializes
+   * against external callers — they queue behind the outer slot — but
+   * if an external task runs during one of `fn`'s awaits and calls
+   * into the SDK, it will see `_withInnerLockDepth > 0` and run
+   * inline, racing wasm-bindgen's borrow check. The wallet pattern
+   * (own outer mutex around `_withInnerWebClient`) satisfies this.
+   *
    * Stability: marked `@internal`. The shape of the proxied client is
    * intentionally not part of the documented public API and may change
    * between SDK versions. If you depend on this method, pin the SDK
@@ -82,7 +102,15 @@ export class MidenClient {
     if (typeof fn !== "function") {
       throw new TypeError("_withInnerWebClient: fn must be a function");
     }
-    return this.#inner._serializeWasmCall(() => fn(this.#inner));
+    const inner = this.#inner;
+    return inner._serializeWasmCall(async () => {
+      inner._withInnerLockDepth = (inner._withInnerLockDepth || 0) + 1;
+      try {
+        return await fn(inner);
+      } finally {
+        inner._withInnerLockDepth--;
+      }
+    });
   }
 
   /**
