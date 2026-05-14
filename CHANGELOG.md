@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.10 (TBA)
+
+### Fixes
+
+* [FIX][web] **`JsAccountUpdate` / `JsStorageMapEntry` / `JsStorageSlot` / `JsVaultAsset` no longer crash under Next.js 16.2 dev-mode console patches.** These four wasm-bindgen structs were declared with `#[wasm_bindgen(inspectable)]`, which made the JS bridge auto-emit a `toJSON()` method that reads every `pub` field through a WASM round-trip (`wasm.__wbg_get_<class>_<field>(this.__wbg_ptr)`). Next.js 16.2's dev-mode `clientFileLogger.log` path runs every non-primitive `console.*` argument through `safe-stable-stringify`, which invokes `toJSON()` automatically — firing 11 WASM getter calls per `console.log(update)`. If the underlying pointer had been freed or another WASM call was in flight, the resulting `"null pointer passed to rust"` trap propagated out of the user's `console.log` call site and crashed the caller (originally surfaced by the Lumina team). Dropping `inspectable` on these four structs (none of the other `inspectable` usages in the SDK have public fields, so they were never affected) skips the auto-generated `toJSON()`; `JSON.stringify` and `safe-stable-stringify` now fall back to `{}` (the wasm-bindgen wrapper has no own enumerable data — it's all behind the `__wbg_ptr`). Field access via the named getters is unchanged. Fixes [`miden-client#2183`](https://github.com/0xMiden/miden-client/issues/2183).
+
 ## 0.14.9 (TBA)
 
 ### Features
