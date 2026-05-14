@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.14.9"
+version = "0.14.10"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.14.9"
+version = "0.14.10"
 dependencies = [
  "async-trait",
  "base64",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "miden-mobile-prover"
-version = "0.14.9"
+version = "0.14.10"
 dependencies = [
  "futures-executor",
  "miden-client",
