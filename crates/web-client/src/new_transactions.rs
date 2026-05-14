@@ -4,13 +4,14 @@ use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote};
+use miden_client::note::{BlockNumber, Note as NativeNote, NoteAttachment};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
     ForeignAccount as NativeForeignAccount,
     PaymentNoteDescription,
     ProvenTransaction as NativeProvenTransaction,
+    PswapTransactionData,
     SwapTransactionData,
     TransactionExecutorError,
     TransactionRequest as NativeTransactionRequest,
@@ -170,6 +171,100 @@ impl WebClient {
         };
 
         Ok(swap_transaction_request.into())
+    }
+
+    #[js_export(js_name = "newPswapCreateTransactionRequest")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_pswap_create_transaction_request(
+        &self,
+        creator_account_id: &AccountId,
+        offered_asset_faucet_id: &AccountId,
+        offered_asset_amount: JsU64,
+        requested_asset_faucet_id: &AccountId,
+        requested_asset_amount: JsU64,
+        note_type: NoteType,
+        payback_note_type: NoteType,
+    ) -> Result<TransactionRequest, JsErr> {
+        let offered_asset_amount = js_u64_to_u64(offered_asset_amount);
+        let offered_fungible_asset =
+            FungibleAsset::new(offered_asset_faucet_id.into(), offered_asset_amount).map_err(
+                |err| js_error_with_context(err, "failed to create offered fungible asset"),
+            )?;
+
+        let requested_asset_amount = js_u64_to_u64(requested_asset_amount);
+        let requested_fungible_asset =
+            FungibleAsset::new(requested_asset_faucet_id.into(), requested_asset_amount).map_err(
+                |err| js_error_with_context(err, "failed to create requested fungible asset"),
+            )?;
+
+        let pswap_transaction_data = PswapTransactionData::new(
+            creator_account_id.into(),
+            offered_fungible_asset,
+            requested_fungible_asset,
+        );
+
+        let pswap_transaction_request = {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| {
+                from_str_err("Client not initialized while generating transaction request")
+            })?;
+
+            NativeTransactionRequestBuilder::new()
+                .build_pswap_create(
+                    &pswap_transaction_data,
+                    note_type.into(),
+                    payback_note_type.into(),
+                    NoteAttachment::default(),
+                    client.rng(),
+                )
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to create PSWAP create transaction request")
+                })?
+        };
+
+        Ok(pswap_transaction_request.into())
+    }
+
+    #[js_export(js_name = "newPswapConsumeTransactionRequest")]
+    pub fn new_pswap_consume_transaction_request(
+        &self,
+        pswap_note: &Note,
+        consumer_account_id: &AccountId,
+        account_fill_amount: JsU64,
+        note_fill_amount: JsU64,
+    ) -> Result<TransactionRequest, JsErr> {
+        let native_pswap_note: NativeNote = pswap_note.into();
+        let account_fill_amount = js_u64_to_u64(account_fill_amount);
+        let note_fill_amount = js_u64_to_u64(note_fill_amount);
+
+        let pswap_transaction_request = NativeTransactionRequestBuilder::new()
+            .build_pswap_consume(
+                &native_pswap_note,
+                consumer_account_id.into(),
+                account_fill_amount,
+                note_fill_amount,
+            )
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create PSWAP consume transaction request")
+            })?;
+
+        Ok(pswap_transaction_request.into())
+    }
+
+    #[js_export(js_name = "newPswapCancelTransactionRequest")]
+    pub fn new_pswap_cancel_transaction_request(
+        &self,
+        pswap_note: &Note,
+    ) -> Result<TransactionRequest, JsErr> {
+        let native_pswap_note: NativeNote = pswap_note.into();
+
+        let pswap_transaction_request = NativeTransactionRequestBuilder::new()
+            .build_pswap_cancel(native_pswap_note)
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create PSWAP cancel transaction request")
+            })?;
+
+        Ok(pswap_transaction_request.into())
     }
 
     /// Executes a transaction specified by the request against the specified account,

@@ -380,6 +380,50 @@ export interface SwapOptions extends TransactionOptions {
   paybackType?: NoteVisibility;
 }
 
+export interface PswapCreateOptions extends TransactionOptions {
+  /** Account that creates the partial-swap (PSWAP) note. */
+  account: AccountRef;
+  /** Fungible asset offered by the creator. */
+  offer: Asset;
+  /** Fungible asset requested in exchange. */
+  request: Asset;
+  /** Visibility of the PSWAP note itself. */
+  type?: NoteVisibility;
+  /**
+   * Visibility of the payback note that fillers emit back to the creator.
+   * Defaults to `private` (cheaper, and the fill amount is already recorded
+   * on-chain in the executing transaction).
+   */
+  paybackType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions extends TransactionOptions {
+  /** Consumer account filling the PSWAP note. */
+  account: AccountRef;
+  /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
+  note: NoteInput;
+  /**
+   * Amount of the requested asset the consumer is providing from its own
+   * vault. The consumer receives a proportional share of the offered asset;
+   * if this is less than the full requested amount, the script also produces
+   * a remainder PSWAP note carrying the unfilled portion.
+   */
+  fillAmount: number | bigint;
+  /**
+   * Amount of the requested asset supplied by other (in-flight) notes routed
+   * into the same transaction. Defaults to `0`; most callers should leave
+   * this unset.
+   */
+  noteFillAmount?: number | bigint;
+}
+
+export interface PswapCancelOptions extends TransactionOptions {
+  /** Creator account reclaiming the offered asset. */
+  account: AccountRef;
+  /** PSWAP note to cancel — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
+  note: NoteInput;
+}
+
 export interface ExecuteOptions extends TransactionOptions {
   /** Account executing the custom script. */
   account: AccountRef;
@@ -440,6 +484,29 @@ export interface PreviewSwapOptions {
   paybackType?: NoteVisibility;
 }
 
+export interface PreviewPswapCreateOptions {
+  operation: "pswapCreate";
+  account: AccountRef;
+  offer: Asset;
+  request: Asset;
+  type?: NoteVisibility;
+  paybackType?: NoteVisibility;
+}
+
+export interface PreviewPswapConsumeOptions {
+  operation: "pswapConsume";
+  account: AccountRef;
+  note: NoteInput;
+  fillAmount: number | bigint;
+  noteFillAmount?: number | bigint;
+}
+
+export interface PreviewPswapCancelOptions {
+  operation: "pswapCancel";
+  account: AccountRef;
+  note: NoteInput;
+}
+
 export interface PreviewCustomOptions {
   operation: "custom";
   account: AccountRef;
@@ -451,6 +518,9 @@ export type PreviewOptions =
   | PreviewMintOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
+  | PreviewPswapCreateOptions
+  | PreviewPswapConsumeOptions
+  | PreviewPswapCancelOptions
   | PreviewCustomOptions;
 
 /** Status values reported during waitFor polling. */
@@ -656,6 +726,31 @@ export interface TransactionsResource {
    * @param options - Swap options including the account, offered asset, and requested asset.
    */
   swap(options: SwapOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Create a partial-swap (PSWAP) note offering one fungible asset for
+   * another. Unlike `swap`, the resulting note can be filled by multiple
+   * consumers; each fill emits a payback note to the creator and, on a
+   * partial fill, a remainder PSWAP note carrying the unfilled amount.
+   *
+   * @param options - Creator, offered asset, requested asset, and visibility.
+   */
+  pswapCreate(options: PswapCreateOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Consume (fully or partially fill) an existing PSWAP note. The consumer
+   * supplies `fillAmount` of the requested asset and receives a proportional
+   * share of the offered asset. A full fill (`fillAmount` equal to the
+   * note's requested amount) produces only the payback note; a partial fill
+   * also produces a remainder PSWAP note.
+   *
+   * @param options - Consumer account, PSWAP note, and fill amount.
+   */
+  pswapConsume(options: PswapConsumeOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Cancel a PSWAP note as the creator and reclaim the offered asset.
+   *
+   * @param options - Creator account and PSWAP note to cancel.
+   */
+  pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
   /**
    * Consume all available notes for an account, up to an optional limit.
    * Returns the count of remaining notes for pagination.

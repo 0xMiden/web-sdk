@@ -70,11 +70,21 @@ export {
 
 // Method classification sets — used by scripts/check-method-classification.js to ensure
 // every WASM export is explicitly categorised. Update when adding new WASM methods.
+//
+// Naming note: "SYNC_METHODS" is a historical misnomer. This set groups methods
+// that are forwarded transparently to the underlying WASM via the Proxy in
+// `createClientProxy` — meaning they don't need an explicit JS-class wrapper
+// here. It does NOT mean "the method is synchronous"; several entries
+// (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
+// `async fn` in Rust because they take the client's RNG via an async lock.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
   "createCodeBuilder",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCreateTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "proveBlock",
