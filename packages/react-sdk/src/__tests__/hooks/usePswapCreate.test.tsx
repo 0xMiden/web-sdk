@@ -371,6 +371,34 @@ describe("usePswapCreate", () => {
         expect(result.current.error?.message).toBe("boom");
       });
     });
+
+    it("should handle same asset create error", async () => {
+      const mockClient = createMockWebClient({
+        newPswapCreateTransactionRequest: vi.fn().mockImplementation(() => {
+          throw new Error("Cannot create PSWAP with same asset");
+        }),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => usePswapCreate());
+
+      await act(async () => {
+        await expect(
+          result.current.pswapCreate({
+            accountId: "0x1",
+            offeredFaucetId: "0xsamefaucet",
+            offeredAmount: 100n,
+            requestedFaucetId: "0xsamefaucet",
+            requestedAmount: 100n,
+          })
+        ).rejects.toThrow("Cannot create PSWAP with same asset");
+      });
+    });
   });
 
   describe("reset", () => {
