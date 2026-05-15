@@ -68,11 +68,7 @@ const noAuthConsumeTest = async (testingPage: Page) => {
       throw new Error("Mint transaction record not found");
     }
 
-    const mintedNoteId = mintTxRecord
-      .outputNotes()
-      .notes()[0]
-      .id()
-      .toString();
+    const mintedNoteId = mintTxRecord.outputNotes().notes()[0].id().toString();
 
     const mintedNoteRecord = await client.getInputNote(mintedNoteId);
     if (!mintedNoteRecord) {
