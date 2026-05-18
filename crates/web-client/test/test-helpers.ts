@@ -320,6 +320,185 @@ export async function mockSwap(
   return { accountAAssets, accountBAssets };
 }
 
+/**
+ * Performs a full-fill partial-swap (PSWAP) between two accounts on the mock
+ * chain. Mirrors `mockSwap`, but exercises the dedicated PSWAP builders:
+ * the creator emits a PSWAP note, the filler consumes it supplying the full
+ * requested amount (so no remainder note is produced), and the creator
+ * consumes the resulting payback note. End state is identical to a plain
+ * swap of the same amounts.
+ */
+export async function mockPswap(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  fillerId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  fillAmount: number,
+  pswapNoteType: string = "private",
+  paybackNoteType: string = "private"
+): Promise<{
+  creatorAssets: { assetId: string; amount: string }[];
+  fillerAssets: { assetId: string; amount: string }[];
+  consumeOutputNoteCount: number;
+}> {
+  const noteType =
+    pswapNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
+  const pbNoteType =
+    paybackNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
+
+  // 1. Creator builds and submits the PSWAP note.
+  const createRequest = await client.newPswapCreateTransactionRequest(
+    creatorId,
+    offeredFaucetId,
+    sdk.u64(offeredAmount),
+    requestedFaucetId,
+    sdk.u64(requestedAmount),
+    noteType,
+    pbNoteType
+  );
+  const createTxId = await client.submitNewTransaction(
+    creatorId,
+    createRequest
+  );
+  await client.proveBlock();
+  await client.syncState();
+
+  const [createTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([createTxId])
+  );
+  const pswapNoteId = createTxRecord
+    .outputNotes()
+    .notes()[0]
+    .id()
+    .toString();
+
+  // 2. Filler consumes (fills) the PSWAP note from its own vault.
+  const pswapNoteRecord = await client.getInputNote(pswapNoteId);
+  if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
+  const consumeRequest = client.newPswapConsumeTransactionRequest(
+    pswapNoteRecord.toNote(),
+    fillerId,
+    sdk.u64(fillAmount),
+    sdk.u64(0)
+  );
+  const consumeTxId = await client.submitNewTransaction(
+    fillerId,
+    consumeRequest
+  );
+  await client.proveBlock();
+  await client.syncState();
+
+  const [consumeTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([consumeTxId])
+  );
+  const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+  // 3. Creator consumes the payback note carrying the requested asset.
+  //    A full fill produces exactly this one note (no remainder PSWAP note).
+  const paybackNoteId = consumeOutputNotes[0].id().toString();
+  const paybackNoteRecord = await client.getInputNote(paybackNoteId);
+  if (!paybackNoteRecord)
+    throw new Error(`Payback note ${paybackNoteId} not found`);
+  const paybackConsume = client.newConsumeTransactionRequest([
+    paybackNoteRecord.toNote(),
+  ]);
+  await client.submitNewTransaction(creatorId, paybackConsume);
+  await client.proveBlock();
+  await client.syncState();
+
+  // 4. Final asset snapshots.
+  const creator = await client.getAccount(creatorId);
+  const creatorAssets = creator
+    ?.vault()
+    .fungibleAssets()
+    .map((asset: any) => ({
+      assetId: asset.faucetId().toString(),
+      amount: asset.amount().toString(),
+    }));
+  const filler = await client.getAccount(fillerId);
+  const fillerAssets = filler
+    ?.vault()
+    .fungibleAssets()
+    .map((asset: any) => ({
+      assetId: asset.faucetId().toString(),
+      amount: asset.amount().toString(),
+    }));
+
+  return {
+    creatorAssets,
+    fillerAssets,
+    consumeOutputNoteCount: consumeOutputNotes.length,
+  };
+}
+
+/**
+ * Creates a PSWAP note and immediately cancels it from the creator account,
+ * exercising the `build_pswap_cancel` Rust path. Returns the creator's vault
+ * after the offered asset has been reclaimed.
+ */
+export async function mockPswapCancel(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  pswapNoteType: string = "private"
+): Promise<{ creatorAssets: { assetId: string; amount: string }[] }> {
+  const noteType =
+    pswapNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
+
+  const createRequest = await client.newPswapCreateTransactionRequest(
+    creatorId,
+    offeredFaucetId,
+    sdk.u64(offeredAmount),
+    requestedFaucetId,
+    sdk.u64(requestedAmount),
+    noteType,
+    noteType
+  );
+  const createTxId = await client.submitNewTransaction(
+    creatorId,
+    createRequest
+  );
+  await client.proveBlock();
+  await client.syncState();
+
+  const [createTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([createTxId])
+  );
+  const pswapNoteId = createTxRecord
+    .outputNotes()
+    .notes()[0]
+    .id()
+    .toString();
+
+  const pswapNoteRecord = await client.getInputNote(pswapNoteId);
+  if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
+  const cancelRequest = client.newPswapCancelTransactionRequest(
+    pswapNoteRecord.toNote()
+  );
+  await client.submitNewTransaction(creatorId, cancelRequest);
+  await client.proveBlock();
+  await client.syncState();
+
+  const creator = await client.getAccount(creatorId);
+  const creatorAssets = creator
+    ?.vault()
+    .fungibleAssets()
+    .map((asset: any) => ({
+      assetId: asset.faucetId().toString(),
+      amount: asset.amount().toString(),
+    }));
+
+  return { creatorAssets };
+}
+
 // ── Utility helpers ──────────────────────────────────────────────────
 
 export function parseNetworkId(sdk: any, networkId: string): any {

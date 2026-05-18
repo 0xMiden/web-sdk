@@ -666,6 +666,167 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           return { accountAAssets, accountBAssets };
         },
 
+        mockPswap: async (
+          creatorId,
+          fillerId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          fillAmount,
+          pswapNoteType,
+          paybackNoteType
+        ) => {
+          const c = window.client;
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+          const pbNoteType =
+            paybackNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            pbNoteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const consumeRequest = c.newPswapConsumeTransactionRequest(
+            pswapNoteRecord.toNote(),
+            fillerId,
+            BigInt(fillAmount),
+            BigInt(0)
+          );
+          const consumeTxId = await c.submitNewTransaction(
+            fillerId,
+            consumeRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [consumeTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId])
+          );
+          const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+          const paybackNoteId = consumeOutputNotes[0].id().toString();
+          const paybackNoteRecord = await c.getInputNote(paybackNoteId);
+          if (!paybackNoteRecord)
+            throw new Error(`Payback note ${paybackNoteId} not found`);
+          const paybackConsume = c.newConsumeTransactionRequest([
+            paybackNoteRecord.toNote(),
+          ]);
+          await c.submitNewTransaction(creatorId, paybackConsume);
+          await c.proveBlock();
+          await c.syncState();
+
+          const creator = await c.getAccount(creatorId);
+          const creatorAssets = creator
+            ?.vault()
+            .fungibleAssets()
+            .map((asset) => ({
+              assetId: asset.faucetId().toString(),
+              amount: asset.amount().toString(),
+            }));
+          const filler = await c.getAccount(fillerId);
+          const fillerAssets = filler
+            ?.vault()
+            .fungibleAssets()
+            .map((asset) => ({
+              assetId: asset.faucetId().toString(),
+              amount: asset.amount().toString(),
+            }));
+          return {
+            creatorAssets,
+            fillerAssets,
+            consumeOutputNoteCount: consumeOutputNotes.length,
+          };
+        },
+
+        mockPswapCancel: async (
+          creatorId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          pswapNoteType
+        ) => {
+          const c = window.client;
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            noteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const cancelRequest = c.newPswapCancelTransactionRequest(
+            pswapNoteRecord.toNote()
+          );
+          await c.submitNewTransaction(creatorId, cancelRequest);
+          await c.proveBlock();
+          await c.syncState();
+
+          const creator = await c.getAccount(creatorId);
+          const creatorAssets = creator
+            ?.vault()
+            .fungibleAssets()
+            .map((asset) => ({
+              assetId: asset.faucetId().toString(),
+              amount: asset.amount().toString(),
+            }));
+          return { creatorAssets };
+        },
+
         executeAndApplyTransaction: async (
           accountId,
           transactionRequest,
@@ -797,6 +958,48 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         assetBAmount,
         swapNoteType,
         paybackNoteType
+      ),
+    mockPswap: (
+      creatorId: any,
+      fillerId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      fillAmount: number,
+      pswapNoteType?: string,
+      paybackNoteType?: string
+    ) =>
+      h.mockPswap(
+        client,
+        sdk,
+        creatorId,
+        fillerId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        fillAmount,
+        pswapNoteType,
+        paybackNoteType
+      ),
+    mockPswapCancel: (
+      creatorId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      pswapNoteType?: string
+    ) =>
+      h.mockPswapCancel(
+        client,
+        sdk,
+        creatorId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        pswapNoteType
       ),
     executeAndApplyTransaction: (accountId: any, req: any, prover?: any) =>
       executeAndApplyTransaction(client, sdk, accountId, req, prover),
