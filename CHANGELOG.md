@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.14.9 (TBA)
+## 0.14.10 (2026-05-19)
+
+### Changes
+
+* [CHORE][web] Bumped `miden-client` to `0.14.9` and `miden-vm` crates to `0.22.4`.
+
+## 0.14.9 (2026-05-13)
 
 ### Features
 
