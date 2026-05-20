@@ -72,7 +72,7 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
 }
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteIds, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, partialBlockchainPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteIds, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.stateSync,
@@ -131,10 +131,9 @@ export async function applyStateSync(dbId, stateUpdate) {
                 // blockNum matches the new sync height). That row is always
                 // present in this iteration because `partial_blockchain_updates`
                 // includes the chain tip header by construction.
-
                 // TODO: potentially move this to be under the sync state info table
                 // as currently done in SQLite
-                const peaks = newBlockNums[i] === blockNum ? newPeaks : undefined;
+                const peaks = newBlockNums[i] === blockNum ? partialBlockchainPeaks : undefined;
                 return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1, peaks);
             })),
         ]);
