@@ -131,6 +131,9 @@ export async function applyStateSync(dbId, stateUpdate) {
                 // blockNum matches the new sync height). That row is always
                 // present in this iteration because `partial_blockchain_updates`
                 // includes the chain tip header by construction.
+
+                // TODO: potentially move this to be under the sync state info table
+                // as currently done in SQLite
                 const peaks = newBlockNums[i] === blockNum ? newPeaks : undefined;
                 return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1, peaks);
             })),
