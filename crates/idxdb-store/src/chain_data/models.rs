@@ -11,8 +11,6 @@ pub struct BlockHeaderIdxdbObject {
     pub block_num: u32,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub header: Vec<u8>,
-    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
-    pub partial_blockchain_peaks: Vec<u8>,
     pub has_client_notes: bool,
 }
 
@@ -27,9 +25,12 @@ pub struct PartialBlockchainNodeIdxdbObject {
     pub node: String,
 }
 
+/// The current blockchain peaks at the latest sync height, stored as a single row
+/// in the `stateSync` table.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PartialBlockchainPeaksIdxdbObject {
+pub struct CurrentBlockchainPeaksIdxdbObject {
+    pub block_num: u32,
     #[serde(deserialize_with = "base64_to_vec_u8_optional", default)]
     pub peaks: Option<Vec<u8>>,
 }

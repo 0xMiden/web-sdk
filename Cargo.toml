@@ -43,9 +43,12 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
-# Miden protocol dependencies
-miden-protocol  = { default-features = false, version = "0.14" }
-miden-standards = { default-features = false, version = "0.14" }
+# Miden protocol dependencies. Tracked via git (branch = "next") to stay in lock-step
+# with the protocol revision that miden-client's `next` branch is tested against.
+# Cargo unifies these with the transitive deps pulled in by miden-client, avoiding
+# the double-version problem that breaks From/Into conversions across the boundary.
+miden-protocol  = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
+miden-standards = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
 
 # External dependencies
 async-trait = { version = "0.1" }

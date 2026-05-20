@@ -1,6 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::account::Account as NativeAccount;
-use miden_client::account::component::BasicFungibleFaucet as NativeBasicFungibleFaucet;
+use miden_client::account::component::FungibleTokenMetadata as NativeFungibleTokenMetadata;
 
 use super::account::Account;
 use super::felt::Felt;
@@ -9,8 +9,11 @@ use crate::js_error_with_context;
 use crate::platform::JsErr;
 
 /// Provides metadata for a basic fungible faucet account component.
+///
+/// Reads the on-chain [`FungibleTokenMetadata`] for the account, which now holds the
+/// per-token info that used to live on `BasicFungibleFaucet` (symbol/decimals/maxSupply).
 #[js_export]
-pub struct BasicFungibleFaucetComponent(NativeBasicFungibleFaucet);
+pub struct BasicFungibleFaucetComponent(NativeFungibleTokenMetadata);
 
 #[js_export]
 impl BasicFungibleFaucetComponent {
@@ -18,10 +21,11 @@ impl BasicFungibleFaucetComponent {
     #[js_export(js_name = "fromAccount")]
     pub fn from_account(account: Account) -> Result<Self, JsErr> {
         let native_account: NativeAccount = account.into();
-        let native_faucet = NativeBasicFungibleFaucet::try_from(native_account).map_err(|e| {
-            js_error_with_context(e, "failed to get basic fungible faucet details from account")
-        })?;
-        Ok(native_faucet.into())
+        let metadata =
+            NativeFungibleTokenMetadata::try_from(native_account.storage()).map_err(|e| {
+                js_error_with_context(e, "failed to get basic fungible faucet details from account")
+            })?;
+        Ok(Self(metadata))
     }
 
     /// Returns the faucet's token symbol.
@@ -38,20 +42,5 @@ impl BasicFungibleFaucetComponent {
     #[js_export(js_name = "maxSupply")]
     pub fn max_supply(&self) -> Felt {
         self.0.max_supply().into()
-    }
-}
-
-// CONVERSIONS
-// ================================================================================================
-
-impl From<NativeBasicFungibleFaucet> for BasicFungibleFaucetComponent {
-    fn from(native_basic_fungible_faucet: NativeBasicFungibleFaucet) -> Self {
-        BasicFungibleFaucetComponent(native_basic_fungible_faucet)
-    }
-}
-
-impl From<BasicFungibleFaucetComponent> for NativeBasicFungibleFaucet {
-    fn from(basic_fungible_faucet: BasicFungibleFaucetComponent) -> Self {
-        basic_fungible_faucet.0
     }
 }

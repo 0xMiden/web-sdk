@@ -53,7 +53,7 @@ impl NoteScript {
 
     /// Returns the MAST root of this script.
     pub fn root(&self) -> Word {
-        self.0.root().into()
+        miden_client::Word::from(self.0.root()).into()
     }
 
     /// Creates a `NoteScript` from the given `Package`.

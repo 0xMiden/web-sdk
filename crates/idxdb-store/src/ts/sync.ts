@@ -157,7 +157,9 @@ interface JsAccountUpdate {
 interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
-  flattenedPartialBlockChainPeaks: FlattenedU8Vec;
+  /** Serialized MMR peaks at the new sync height. A single set per sync update,
+   *  stored on the singleton stateSync row. */
+  newPeaks: Uint8Array;
   newBlockNums: number[];
   blockHasRelevantNotes: Uint8Array;
   serializedNodeIds: string[];
@@ -177,7 +179,7 @@ export async function applyStateSync(
   const {
     blockNum,
     flattenedNewBlockHeaders,
-    flattenedPartialBlockChainPeaks,
+    newPeaks,
     newBlockNums,
     blockHasRelevantNotes,
     serializedNodeIds,
@@ -190,9 +192,6 @@ export async function applyStateSync(
   } = stateUpdate;
 
   const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
-  const partialBlockchainPeaks = reconstructFlattenedVec(
-    flattenedPartialBlockChainPeaks
-  );
 
   const tablesToAccess = [
     db.stateSync,
@@ -295,7 +294,7 @@ export async function applyStateSync(
           })
         )
       ),
-      updateSyncHeight(tx, blockNum),
+      updateSyncHeightAndPeaks(tx, blockNum, newPeaks),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
       updateCommittedNoteTags(tx, committedNoteIds),
       Promise.all(
@@ -304,7 +303,6 @@ export async function applyStateSync(
             tx,
             newBlockNums[i],
             newBlockHeader,
-            partialBlockchainPeaks[i],
             blockHasRelevantNotes[i] == 1
           );
         })
@@ -313,9 +311,17 @@ export async function applyStateSync(
   });
 }
 
-async function updateSyncHeight(tx: Transaction, blockNum: number) {
+/**
+ * Atomically advances `stateSync.blockNum` and `stateSync.currentPeaks`. Mirrors
+ * SQLite's `UPDATE blockchain_checkpoint ... WHERE block_num < ?`: peaks are only
+ * overwritten when the new sync height moves forward.
+ */
+async function updateSyncHeightAndPeaks(
+  tx: Transaction,
+  blockNum: number,
+  newPeaks: Uint8Array
+) {
   try {
-    // Only update if moving forward to prevent race conditions
     const current = await (
       tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
     ).stateSync.get(1);
@@ -324,6 +330,7 @@ async function updateSyncHeight(tx: Transaction, blockNum: number) {
         tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
       ).stateSync.update(1, {
         blockNum: blockNum,
+        currentPeaks: newPeaks,
       });
     }
   } catch (error) {
@@ -335,14 +342,12 @@ async function updateBlockHeader(
   tx: Transaction,
   blockNum: number,
   blockHeader: Uint8Array,
-  partialBlockchainPeaks: Uint8Array,
   hasClientNotes: boolean
 ) {
   try {
     const data = {
       blockNum: blockNum,
       header: blockHeader,
-      partialBlockchainPeaks,
       hasClientNotes: hasClientNotes.toString(),
     };
 

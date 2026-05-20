@@ -209,12 +209,14 @@ export interface INotesScript {
 export interface IStateSync {
   id: number;
   blockNum: number;
+  /** Serialized MMR peaks at `blockNum`. Written by `applyStateSync` and read by
+   *  `getCurrentBlockchainPeaks`. Absent before the first sync. */
+  currentPeaks?: Uint8Array;
 }
 
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  partialBlockchainPeaks: Uint8Array;
   hasClientNotes: string;
 }
 

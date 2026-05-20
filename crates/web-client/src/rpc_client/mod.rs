@@ -25,7 +25,7 @@ use crate::models::fetched_account::FetchedAccount;
 use crate::models::network_note_status::NetworkNoteStatusInfo;
 use crate::models::note_id::NoteId;
 use crate::models::note_script::NoteScript;
-use crate::models::note_sync_info::NoteSyncInfo;
+use crate::models::note_sync_info::NoteSyncBlock;
 use crate::models::note_tag::NoteTag;
 use crate::models::storage_map_info::StorageMapInfo;
 use crate::models::word::Word;
@@ -229,25 +229,25 @@ impl RpcClient {
     #[js_export(js_name = "syncNotes")]
     pub async fn sync_notes(
         &self,
-        block_num: u32,
-        block_to: Option<u32>,
+        block_from: u32,
+        block_to: u32,
         note_tags: Vec<NoteTag>,
-    ) -> Result<NoteSyncInfo, JsErr> {
+    ) -> Result<Vec<NoteSyncBlock>, JsErr> {
         let mut tags = BTreeSet::new();
         for tag in note_tags {
             tags.insert(tag.into());
         }
 
-        let block_num = BlockNumber::from(block_num);
-        let block_to = block_to.map(BlockNumber::from);
+        let block_from = BlockNumber::from(block_from);
+        let block_to = BlockNumber::from(block_to);
 
-        let info = self
+        let blocks = self
             .inner
-            .sync_notes(block_num, block_to, &tags)
+            .sync_notes(block_from, block_to, &tags)
             .await
             .map_err(|err| js_error_with_context(err, "failed to sync notes"))?;
 
-        Ok(info.into())
+        Ok(blocks.into_iter().map(Into::into).collect())
     }
 
     /// Fetches the processing status of a network note by its ID.
