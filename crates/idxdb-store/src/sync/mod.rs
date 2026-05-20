@@ -130,7 +130,7 @@ impl IdxdbStore {
 
         let (
             block_headers_as_bytes,
-            new_peaks_as_bytes,
+            partial_blockchain_peaks_as_bytes,
             block_nums,
             block_has_relevant_notes,
             serialized_node_ids,
@@ -292,7 +292,7 @@ impl IdxdbStore {
             block_num: block_num.as_u32(),
             flattened_new_block_headers: flatten_nested_u8_vec(block_headers_as_bytes),
             new_block_nums: block_nums,
-            new_peaks: new_peaks_as_bytes,
+            partial_blockchain_peaks: partial_blockchain_peaks_as_bytes,
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
@@ -337,7 +337,7 @@ fn serialize_partial_blockchain_updates(
         block_has_relevant_notes.push(u8::from(*has_client_notes));
     }
 
-    let new_peaks_as_bytes = updates.new_peaks.peaks().to_vec().to_bytes();
+    let partial_blockchain_peaks_as_bytes = updates.new_peaks.peaks().to_vec().to_bytes();
 
     let auth_nodes_len = updates.new_authentication_nodes().len();
     let mut serialized_node_ids = Vec::with_capacity(auth_nodes_len);
@@ -351,7 +351,7 @@ fn serialize_partial_blockchain_updates(
 
     Ok((
         block_headers_as_bytes,
-        new_peaks_as_bytes,
+        partial_blockchain_peaks_as_bytes,
         block_nums,
         block_has_relevant_notes,
         serialized_node_ids,

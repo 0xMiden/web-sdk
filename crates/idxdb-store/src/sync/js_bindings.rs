@@ -73,9 +73,10 @@ pub struct JsStateSyncUpdate {
     pub new_block_nums: Vec<u32>,
 
     /// Serialized MMR peaks at the new sync height (single set for the whole update).
-    /// Stored on the singleton `stateSync` row and exposed by `getCurrentBlockchainPeaks`.
-    #[wasm_bindgen(js_name = "newPeaks")]
-    pub new_peaks: Vec<u8>,
+    /// Written onto the chain-tip block's `blockHeaders` row (the one whose
+    /// `blockNum` matches `block_num`) and read back by `getCurrentBlockchainPeaks`.
+    #[wasm_bindgen(js_name = "partialBlockchainPeaks")]
+    pub partial_blockchain_peaks: Vec<u8>,
 
     /// For each block in this update, stores a boolean (as u8) indicating whether
     /// that block contains notes relevant to this client. Index i corresponds to

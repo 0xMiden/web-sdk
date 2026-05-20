@@ -158,8 +158,8 @@ interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
   /** Serialized MMR peaks at the new sync height. A single set per sync update,
-   *  stored on the singleton stateSync row. */
-  newPeaks: Uint8Array;
+   *  written onto the chain-tip block's blockHeaders row. */
+  partialBlockchainPeaks: Uint8Array;
   newBlockNums: number[];
   blockHasRelevantNotes: Uint8Array;
   serializedNodeIds: string[];
