@@ -29,8 +29,8 @@ use js_bindings::{
 mod models;
 use models::{
     BlockHeaderIdxdbObject,
-    PartialBlockchainPeaksIdxdbObject,
     PartialBlockchainNodeIdxdbObject,
+    PartialBlockchainPeaksIdxdbObject,
 };
 
 pub mod utils;

@@ -433,7 +433,8 @@ test.describe("get_input_note", () => {
       const fetchedNote = fetchedNotes[0].note;
       const tag = fetchedNotes[0].metadata.tag();
 
-      const syncInfo = await rpcClient.syncNotes(0, undefined, [tag]);
+      const chainTip = await intClient.getSyncHeight();
+      const syncInfo = await rpcClient.syncNotes(0, chainTip, [tag]);
       const blocks = syncInfo.blocks();
       const syncedNotes = syncInfo.notes();
       const syncedNoteIds = syncedNotes.map((synced) =>
@@ -466,7 +467,7 @@ test.describe("get_input_note", () => {
         syncedNoteIds,
         syncedBlockNoteIds,
         consumedNoteId: createdNoteId,
-        chainTip: syncInfo.chainTip(),
+        chainTip,
         blockTo: syncInfo.blockTo(),
         compatBlockNum: compatBlockHeader?.blockNum(),
         firstBlockNum: blocks[0]?.blockHeader().blockNum(),
