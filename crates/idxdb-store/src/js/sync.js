@@ -123,27 +123,30 @@ export async function applyStateSync(dbId, stateUpdate) {
                 accountCommitment: accountUpdate.accountCommitment,
                 accountSeed: accountUpdate.accountSeed,
             }))),
-            updateSyncHeightAndPeaks(tx, blockNum, newPeaks),
+            updateSyncHeight(tx, blockNum),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
             updateCommittedNoteTags(tx, committedNoteIds),
             Promise.all(newBlockHeaders.map((newBlockHeader, i) => {
-                return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1);
+                // Peaks are attached only to the chain-tip block (the one whose
+                // blockNum matches the new sync height). That row is always
+                // present in this iteration because `partial_blockchain_updates`
+                // includes the chain tip header by construction.
+                const peaks = newBlockNums[i] === blockNum ? newPeaks : undefined;
+                return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1, peaks);
             })),
         ]);
     });
 }
 /**
- * Atomically advances `stateSync.blockNum` and `stateSync.currentPeaks`. Mirrors
- * SQLite's `UPDATE blockchain_checkpoint ... WHERE block_num < ?`: peaks are only
- * overwritten when the new sync height moves forward.
+ * Advances `stateSync.blockNum` only when moving forward. Mirrors SQLite's
+ * `UPDATE blockchain_checkpoint ... WHERE block_num < ?`.
  */
-async function updateSyncHeightAndPeaks(tx, blockNum, newPeaks) {
+async function updateSyncHeight(tx, blockNum) {
     try {
         const current = await tx.stateSync.get(1);
         if (!current || current.blockNum < blockNum) {
             await tx.stateSync.update(1, {
                 blockNum: blockNum,
-                currentPeaks: newPeaks,
             });
         }
     }
@@ -151,12 +154,13 @@ async function updateSyncHeightAndPeaks(tx, blockNum, newPeaks) {
         logWebStoreError(error, "Failed to update sync height");
     }
 }
-async function updateBlockHeader(tx, blockNum, blockHeader, hasClientNotes) {
+async function updateBlockHeader(tx, blockNum, blockHeader, hasClientNotes, partialBlockchainPeaks) {
     try {
         const data = {
             blockNum: blockNum,
             header: blockHeader,
             hasClientNotes: hasClientNotes.toString(),
+            ...(partialBlockchainPeaks !== undefined && { partialBlockchainPeaks }),
         };
         const existingBlockHeader = await tx.blockHeaders.get(blockNum);
         if (!existingBlockHeader) {

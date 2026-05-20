@@ -86,7 +86,7 @@ pub mod note_metadata;
 pub mod note_recipient;
 pub mod note_script;
 pub mod note_storage;
-pub mod note_sync_info;
+pub mod note_sync;
 pub mod note_tag;
 pub mod note_type;
 pub mod output_note;

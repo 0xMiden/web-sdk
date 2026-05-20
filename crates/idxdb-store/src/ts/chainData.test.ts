@@ -238,14 +238,30 @@ describe("getCurrentBlockchainPeaks", () => {
     expect(result!.peaks).toBeUndefined();
   });
 
-  it("returns base64-encoded peaks and blockNum after they are persisted on stateSync", async () => {
+  it("returns {blockNum, peaks: undefined} when the chain-tip row has no peaks (backfill)", async () => {
+    // Simulate a chain-tip row that was inserted without peaks (the path
+    // applyStateSync wouldn't take, but `get_and_store_authenticated_block` does).
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
-    // Simulate what `applyStateSync` writes: blockNum + currentPeaks on the
-    // singleton row.
-    await db.stateSync.update(1, {
+    await db.stateSync.update(1, { blockNum: 50 });
+    await insertBlockHeader(dbId, 50, HEADER_V1, false);
+
+    const result = await getCurrentBlockchainPeaks(dbId);
+    expect(result!.blockNum).toBe(50);
+    expect(result!.peaks).toBeUndefined();
+  });
+
+  it("returns base64-encoded peaks from the blockHeaders row at the current sync height", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    // Simulate what `applyStateSync` writes: blockHeader at blockNum with
+    // partialBlockchainPeaks set, and stateSync.blockNum pointing at it.
+    await db.stateSync.update(1, { blockNum: 50 });
+    await db.blockHeaders.add({
       blockNum: 50,
-      currentPeaks: PEAKS_FROM_SYNC,
+      header: HEADER_V1,
+      partialBlockchainPeaks: PEAKS_FROM_SYNC,
+      hasClientNotes: "false",
     });
 
     const result = await getCurrentBlockchainPeaks(dbId);

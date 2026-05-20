@@ -115,24 +115,26 @@ export async function getTrackedBlockHeaderNumbers(dbId) {
     }
 }
 /**
- * Returns the current blockchain peaks at the latest synced height. The peaks
- * live on the singleton `stateSync` row (alongside `blockNum`) and are written
- * by `applyStateSync`. Returns `{ blockNum, peaks: undefined }` before the
- * first sync.
+ * Returns the blockchain peaks at the current sync height. Peaks live on the
+ * `blockHeaders` row at `stateSync.blockNum` — the block that was the chain
+ * tip when its sync ran. Returns `{ blockNum, peaks: undefined }` if the
+ * stateSync row is missing or if that block was inserted via backfill
+ * (which leaves `partialBlockchainPeaks` unset).
  */
 export async function getCurrentBlockchainPeaks(dbId) {
     try {
         const db = getDatabase(dbId);
-        const record = await db.stateSync.get(1);
-        if (record == undefined) {
+        const stateSyncRow = await db.stateSync.get(1);
+        if (stateSyncRow == undefined) {
             return { blockNum: 0, peaks: undefined };
         }
-        if (record.currentPeaks == undefined) {
-            return { blockNum: record.blockNum, peaks: undefined };
+        const header = await db.blockHeaders.get(stateSyncRow.blockNum);
+        if (header == undefined || header.partialBlockchainPeaks == undefined) {
+            return { blockNum: stateSyncRow.blockNum, peaks: undefined };
         }
         return {
-            blockNum: record.blockNum,
-            peaks: uint8ArrayToBase64(record.currentPeaks),
+            blockNum: stateSyncRow.blockNum,
+            peaks: uint8ArrayToBase64(header.partialBlockchainPeaks),
         };
     }
     catch (err) {

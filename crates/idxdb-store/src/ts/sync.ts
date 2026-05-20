@@ -294,16 +294,22 @@ export async function applyStateSync(
           })
         )
       ),
-      updateSyncHeightAndPeaks(tx, blockNum, newPeaks),
+      updateSyncHeight(tx, blockNum),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
       updateCommittedNoteTags(tx, committedNoteIds),
       Promise.all(
         newBlockHeaders.map((newBlockHeader, i) => {
+          // Peaks are attached only to the chain-tip block (the one whose
+          // blockNum matches the new sync height). That row is always
+          // present in this iteration because `partial_blockchain_updates`
+          // includes the chain tip header by construction.
+          const peaks = newBlockNums[i] === blockNum ? newPeaks : undefined;
           return updateBlockHeader(
             tx,
             newBlockNums[i],
             newBlockHeader,
-            blockHasRelevantNotes[i] == 1
+            blockHasRelevantNotes[i] == 1,
+            peaks
           );
         })
       ),
@@ -312,15 +318,10 @@ export async function applyStateSync(
 }
 
 /**
- * Atomically advances `stateSync.blockNum` and `stateSync.currentPeaks`. Mirrors
- * SQLite's `UPDATE blockchain_checkpoint ... WHERE block_num < ?`: peaks are only
- * overwritten when the new sync height moves forward.
+ * Advances `stateSync.blockNum` only when moving forward. Mirrors SQLite's
+ * `UPDATE blockchain_checkpoint ... WHERE block_num < ?`.
  */
-async function updateSyncHeightAndPeaks(
-  tx: Transaction,
-  blockNum: number,
-  newPeaks: Uint8Array
-) {
+async function updateSyncHeight(tx: Transaction, blockNum: number) {
   try {
     const current = await (
       tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
@@ -330,7 +331,6 @@ async function updateSyncHeightAndPeaks(
         tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
       ).stateSync.update(1, {
         blockNum: blockNum,
-        currentPeaks: newPeaks,
       });
     }
   } catch (error) {
@@ -342,13 +342,15 @@ async function updateBlockHeader(
   tx: Transaction,
   blockNum: number,
   blockHeader: Uint8Array,
-  hasClientNotes: boolean
+  hasClientNotes: boolean,
+  partialBlockchainPeaks: Uint8Array | undefined
 ) {
   try {
-    const data = {
+    const data: IBlockHeader = {
       blockNum: blockNum,
       header: blockHeader,
       hasClientNotes: hasClientNotes.toString(),
+      ...(partialBlockchainPeaks !== undefined && { partialBlockchainPeaks }),
     };
 
     const existingBlockHeader = await (

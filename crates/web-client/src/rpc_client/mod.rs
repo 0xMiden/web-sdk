@@ -25,7 +25,7 @@ use crate::models::fetched_account::FetchedAccount;
 use crate::models::network_note_status::NetworkNoteStatusInfo;
 use crate::models::note_id::NoteId;
 use crate::models::note_script::NoteScript;
-use crate::models::note_sync_info::NoteSyncBlock;
+use crate::models::note_sync::NoteSyncInfo;
 use crate::models::note_tag::NoteTag;
 use crate::models::storage_map_info::StorageMapInfo;
 use crate::models::word::Word;
@@ -232,7 +232,7 @@ impl RpcClient {
         block_from: u32,
         block_to: u32,
         note_tags: Vec<NoteTag>,
-    ) -> Result<Vec<NoteSyncBlock>, JsErr> {
+    ) -> Result<NoteSyncInfo, JsErr> {
         let mut tags = BTreeSet::new();
         for tag in note_tags {
             tags.insert(tag.into());
@@ -247,7 +247,7 @@ impl RpcClient {
             .await
             .map_err(|err| js_error_with_context(err, "failed to sync notes"))?;
 
-        Ok(blocks.into_iter().map(Into::into).collect())
+        Ok(NoteSyncInfo::new(blocks, block_to))
     }
 
     /// Fetches the processing status of a network note by its ID.

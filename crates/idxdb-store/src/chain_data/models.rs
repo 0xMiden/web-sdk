@@ -25,8 +25,11 @@ pub struct PartialBlockchainNodeIdxdbObject {
     pub node: String,
 }
 
-/// The current blockchain peaks at the latest sync height, stored as a single row
-/// in the `stateSync` table.
+/// Blockchain peaks at the current sync height. Resolved by looking up the
+/// `blockHeaders` row at `stateSync.blockNum` — that row's
+/// `partialBlockchainPeaks` column holds the peaks captured when the block was
+/// the chain tip. `peaks` is `None` before the first sync (or if the chain-tip
+/// row was inserted via backfill and never received peaks).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentBlockchainPeaksIdxdbObject {
