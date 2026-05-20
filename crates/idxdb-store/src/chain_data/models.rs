@@ -32,7 +32,7 @@ pub struct PartialBlockchainNodeIdxdbObject {
 /// row was inserted via backfill and never received peaks).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CurrentBlockchainPeaksIdxdbObject {
+pub struct PartialBlockchainPeaksIdxdbObject {
     pub block_num: u32,
     #[serde(deserialize_with = "base64_to_vec_u8_optional", default)]
     pub peaks: Option<Vec<u8>>,

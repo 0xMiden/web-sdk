@@ -43,18 +43,7 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
-# Miden protocol dependencies. Tracked via git (branch = "next") to stay in lock-step
-# with the protocol revision that miden-client's `next` branch is tested against.
-# Cargo unifies these with the transitive deps pulled in by miden-client, avoiding
-# the double-version problem that breaks From/Into conversions across the boundary.
-#
-# Most types we need come through `miden-client` re-exports. These direct deps
-# are kept only for the handful of types miden-client doesn't re-export today:
-#   - miden-protocol::account::AccountProcedureRoot   (models/account_component.rs)
-#   - miden-protocol::note::NoteAttachmentContent     (models/note_attachment.rs)
-#   - miden-standards::note::{P2ideNote, P2ideNoteStorage}  (models/note.rs)
-# Once miden-client re-exports those (upstream PR), both lines can be deleted
-# and `crates/web-client/Cargo.toml` cleaned up.
+# TODO: remove once AccountProcedureRoot, NoteAttachmentContent, P2ideNote, P2ideNoteStorage are re-exported from miden-client.
 miden-protocol  = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
 miden-standards = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
 

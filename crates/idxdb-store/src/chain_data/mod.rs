@@ -29,7 +29,7 @@ use js_bindings::{
 mod models;
 use models::{
     BlockHeaderIdxdbObject,
-    CurrentBlockchainPeaksIdxdbObject,
+    PartialBlockchainPeaksIdxdbObject,
     PartialBlockchainNodeIdxdbObject,
 };
 
@@ -162,10 +162,10 @@ impl IdxdbStore {
 
     pub(crate) async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
         let promise = idxdb_get_current_blockchain_peaks(self.db_id());
-        let peaks_idxdb: CurrentBlockchainPeaksIdxdbObject =
+        let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
             await_js(promise, "failed to get current blockchain peaks").await?;
 
-        let CurrentBlockchainPeaksIdxdbObject { block_num, peaks } = peaks_idxdb;
+        let PartialBlockchainPeaksIdxdbObject { block_num, peaks } = peaks_idxdb;
 
         if let Some(peaks) = peaks {
             let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks)?;
