@@ -241,6 +241,8 @@ export interface WalletCreateOptions {
 export interface FaucetCreateOptions {
   /** Use `AccountType.FungibleFaucet` or `AccountType.NonFungibleFaucet`. */
   type: AccountTypeValue;
+  /** Human-readable token name. Defaults to `symbol` when omitted. */
+  name?: string;
   symbol: string;
   decimals: number;
   maxSupply: number | bigint;

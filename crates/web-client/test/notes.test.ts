@@ -20,6 +20,7 @@ test.describe("get_input_note", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -50,6 +51,7 @@ test.describe("get_input_note", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -194,6 +196,7 @@ test.describe("get_input_note", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -332,6 +335,7 @@ test.describe("get_input_note", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -533,6 +537,7 @@ test.describe("get_input_notes", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -657,6 +662,7 @@ test.describe("get_consumable_notes", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -763,6 +769,7 @@ test.describe("get_consumable_notes", () => {
         const faucet = await intClient.newFaucet(
           sdk.AccountStorageMode.private(),
           false,
+          "DAG",
           "DAG",
           8,
           sdk.u64(10000000),
@@ -884,6 +891,7 @@ test.describe("get_consumable_notes", () => {
       const senderFaucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -1062,6 +1070,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -1253,6 +1262,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),

@@ -58,10 +58,12 @@ impl WebClient {
 #[js_export]
 impl WebClient {
     #[js_export(js_name = "newFaucet")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_faucet(
         &self,
         storage_mode: &AccountStorageMode,
         non_fungible: bool,
+        token_name: String,
         token_symbol: String,
         decimals: u8,
         max_supply: JsU64,
@@ -109,7 +111,7 @@ impl WebClient {
         };
 
         let symbol = TokenSymbol::new(&token_symbol).map_err(|e| from_str_err(&e.to_string()))?;
-        let name = TokenName::new(&symbol.to_string())
+        let name = TokenName::new(&token_name)
             .map_err(|err| js_error_with_context(err, "invalid token name"))?;
         let max_supply = js_u64_to_u64(max_supply);
 

@@ -56,6 +56,7 @@ export async function setupWalletAndFaucet(
     sdk.AccountStorageMode.private(),
     false,
     "DAG",
+    "DAG",
     8,
     sdk.u64(10000000),
     sdk.AuthScheme.AuthRpoFalcon512
@@ -446,6 +447,7 @@ function wrapClientForMidenClient(
           target.newFaucet(
             mode,
             nonFungible,
+            symbol,
             symbol,
             decimals,
             norm(maxSupply),

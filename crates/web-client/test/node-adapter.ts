@@ -236,6 +236,7 @@ function wrapClient(client: any, storeName?: string): any {
             mode,
             nonFungible,
             symbol,
+            symbol,
             decimals,
             toNum(maxSupply),
             auth,

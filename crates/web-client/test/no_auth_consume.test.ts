@@ -26,6 +26,7 @@ const noAuthConsumeTest = async (testingPage: Page) => {
       window.AccountStorageMode.private(),
       false,
       "TST",
+      "TST",
       8,
       BigInt(10000000),
       window.AuthScheme.AuthRpoFalcon512
