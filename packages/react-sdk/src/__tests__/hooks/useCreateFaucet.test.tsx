@@ -56,7 +56,7 @@ describe("useCreateFaucet", () => {
       ).rejects.toThrow("Miden client is not ready");
     });
 
-    it("should create faucet with required options", async () => {
+    it("should create faucet with required options (name defaults to symbol)", async () => {
       const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
       const mockClient = createMockWebClient({
         newFaucet: vi.fn().mockResolvedValue(mockFaucet),
@@ -83,10 +83,11 @@ describe("useCreateFaucet", () => {
       expect(result.current.isCreating).toBe(false);
       expect(result.current.error).toBeNull();
 
-      // Verify default options were used
+      // Verify default options were used; token name falls back to symbol.
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.private() (default)
         false, // nonFungible (always false for now)
+        "TEST", // tokenName falls back to tokenSymbol
         "TEST",
         8, // decimals (default)
         1000000n,
@@ -94,7 +95,7 @@ describe("useCreateFaucet", () => {
       );
     });
 
-    it("should create faucet with custom options", async () => {
+    it("should create faucet with custom options including an explicit token name", async () => {
       const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
       const mockClient = createMockWebClient({
         newFaucet: vi.fn().mockResolvedValue(mockFaucet),
@@ -111,6 +112,7 @@ describe("useCreateFaucet", () => {
       await act(async () => {
         await result.current.createFaucet({
           tokenSymbol: "USDC",
+          tokenName: "USD Coin",
           maxSupply: 10000000000n,
           decimals: 6,
           storageMode: "public",
@@ -121,6 +123,7 @@ describe("useCreateFaucet", () => {
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.public()
         false,
+        "USD Coin",
         "USDC",
         6,
         10000000000n,
@@ -357,6 +360,7 @@ describe("useCreateFaucet", () => {
       await act(async () => {
         await result.current.createFaucet({
           tokenSymbol: "BIG",
+          tokenName: "Big Token",
           maxSupply: largeSupply,
         });
       });
@@ -364,6 +368,7 @@ describe("useCreateFaucet", () => {
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(),
         false,
+        "Big Token",
         "BIG",
         8,
         largeSupply,

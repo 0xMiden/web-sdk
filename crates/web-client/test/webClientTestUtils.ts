@@ -594,6 +594,7 @@ export const createNewFaucet = async (
         accountStorageMode,
         nonFungible,
         tokenSymbol,
+        tokenSymbol,
         decimals,
         maxSupply,
         authSchemeId
@@ -892,6 +893,7 @@ export const setupWalletAndFaucet = async (
     const faucetAccount = await client.newFaucet(
       window.AccountStorageMode.private(),
       false,
+      "DAG",
       "DAG",
       8,
       BigInt(10000000),

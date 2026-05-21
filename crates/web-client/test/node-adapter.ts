@@ -226,6 +226,7 @@ function wrapClient(client: any, storeName?: string): any {
         return (
           mode: any,
           nonFungible: any,
+          name: any,
           symbol: any,
           decimals: any,
           maxSupply: any,
@@ -235,6 +236,7 @@ function wrapClient(client: any, storeName?: string): any {
           target.newFaucet(
             mode,
             nonFungible,
+            name,
             symbol,
             decimals,
             toNum(maxSupply),

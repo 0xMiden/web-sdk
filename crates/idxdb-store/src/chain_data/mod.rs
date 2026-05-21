@@ -15,10 +15,10 @@ use crate::promise::{await_js, await_js_value, await_ok};
 mod js_bindings;
 use js_bindings::{
     idxdb_get_block_headers,
+    idxdb_get_current_blockchain_peaks,
     idxdb_get_partial_blockchain_nodes,
     idxdb_get_partial_blockchain_nodes_all,
     idxdb_get_partial_blockchain_nodes_up_to_inorder_index,
-    idxdb_get_partial_blockchain_peaks_by_block_num,
     idxdb_get_tracked_block_header_numbers,
     idxdb_get_tracked_block_headers,
     idxdb_insert_block_header,
@@ -46,24 +46,12 @@ impl IdxdbStore {
     pub(crate) async fn insert_block_header(
         &self,
         block_header: &BlockHeader,
-        partial_blockchain_peaks: MmrPeaks,
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
-        let partial_blockchain_peaks = partial_blockchain_peaks.peaks().to_vec();
-        let SerializedBlockHeaderData {
-            block_num,
-            header,
-            partial_blockchain_peaks,
-            has_client_notes,
-        } = serialize_block_header(block_header, &partial_blockchain_peaks, has_client_notes);
+        let SerializedBlockHeaderData { block_num, header, has_client_notes } =
+            serialize_block_header(block_header, has_client_notes);
 
-        let promise = idxdb_insert_block_header(
-            self.db_id(),
-            block_num,
-            header,
-            partial_blockchain_peaks,
-            has_client_notes,
-        );
+        let promise = idxdb_insert_block_header(self.db_id(), block_num, header, has_client_notes);
         await_ok(promise, "failed to insert block header").await?;
 
         Ok(())
@@ -172,21 +160,17 @@ impl IdxdbStore {
         }
     }
 
-    pub(crate) async fn get_partial_blockchain_peaks_by_block_num(
-        &self,
-        block_num: BlockNumber,
-    ) -> Result<MmrPeaks, StoreError> {
-        let block_num_as_u32 = block_num.as_u32();
+    pub(crate) async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
+        let promise = idxdb_get_current_blockchain_peaks(self.db_id());
+        let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
+            await_js(promise, "failed to get current blockchain peaks").await?;
 
-        let promise =
-            idxdb_get_partial_blockchain_peaks_by_block_num(self.db_id(), block_num_as_u32);
-        let mmr_peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
-            await_js(promise, "failed to get partial blockchain peaks by block number").await?;
+        let PartialBlockchainPeaksIdxdbObject { block_num, peaks } = peaks_idxdb;
 
-        if let Some(peaks) = mmr_peaks_idxdb.peaks {
+        if let Some(peaks) = peaks {
             let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks)?;
 
-            return MmrPeaks::new(Forest::new(block_num.as_usize()), mmr_peaks_nodes)
+            return MmrPeaks::new(Forest::new(block_num as usize), mmr_peaks_nodes)
                 .map_err(StoreError::MmrError);
         }
 

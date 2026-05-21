@@ -195,6 +195,19 @@ impl Store for IdxdbStore {
         self.apply_transaction(tx_update).await
     }
 
+    /// `IndexedDB` cannot batch independent transactions atomically across the JS boundary,
+    /// so this implementation applies each update sequentially. A failure mid-batch leaves
+    /// earlier updates persisted.
+    async fn apply_transaction_batch(
+        &self,
+        tx_updates: Vec<TransactionStoreUpdate>,
+    ) -> Result<(), StoreError> {
+        for update in tx_updates {
+            self.apply_transaction(update).await?;
+        }
+        Ok(())
+    }
+
     // NOTES
     // --------------------------------------------------------------------------------------------
     async fn get_input_notes(
@@ -241,11 +254,9 @@ impl Store for IdxdbStore {
     async fn insert_block_header(
         &self,
         block_header: &BlockHeader,
-        partial_blockchain_peaks: MmrPeaks,
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
-        self.insert_block_header(block_header, partial_blockchain_peaks, has_client_notes)
-            .await
+        self.insert_block_header(block_header, has_client_notes).await
     }
 
     async fn get_block_headers(
@@ -277,11 +288,8 @@ impl Store for IdxdbStore {
         self.insert_partial_blockchain_nodes(nodes).await
     }
 
-    async fn get_partial_blockchain_peaks_by_block_num(
-        &self,
-        block_num: BlockNumber,
-    ) -> Result<MmrPeaks, StoreError> {
-        self.get_partial_blockchain_peaks_by_block_num(block_num).await
+    async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
+        self.get_current_blockchain_peaks().await
     }
 
     async fn untrack_and_prune_irrelevant_blocks(

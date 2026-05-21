@@ -214,7 +214,13 @@ export interface IStateSync {
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  partialBlockchainPeaks: Uint8Array;
+  /** Serialized MMR peaks at this block's forest. Set only on rows that were
+   *  the chain tip when their corresponding sync ran — `applyStateSync`
+   *  writes peaks to the row where `blockNum === state_sync.block_num`.
+   *  Backfilled blocks (`insertBlockHeader` from `get_and_store_authenticated_block`)
+   *  leave this undefined. `getCurrentBlockchainPeaks` reads the row at
+   *  the current `stateSync.blockNum`. */
+  partialBlockchainPeaks?: Uint8Array;
   hasClientNotes: string;
 }
 

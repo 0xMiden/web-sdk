@@ -92,6 +92,7 @@ describe("AccountsResource", () => {
         type: 0,
         storage: "public",
         auth: "falcon",
+        name: "US Dollar",
         symbol: "USD",
         decimals: 2,
         maxSupply: 1000000,
@@ -100,6 +101,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false, // not NonFungibleFaucet for type=0
+        "US Dollar",
         "USD",
         2,
         BigInt(1000000),
@@ -108,7 +110,7 @@ describe("AccountsResource", () => {
       expect(result).toBe("newFaucetResult");
     });
 
-    it("creates fungible faucet when type='FungibleFaucet'", async () => {
+    it("falls back to symbol when name is omitted", async () => {
       const resource = makeResource();
       await resource.create({
         type: "FungibleFaucet",
@@ -121,6 +123,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false,
+        "FOO", // name defaults to symbol
         "FOO",
         0,
         BigInt(500),
@@ -134,6 +137,7 @@ describe("AccountsResource", () => {
         type: 1,
         storage: "public",
         auth: "falcon",
+        name: "Collectible",
         symbol: "NFT",
         decimals: 0,
         maxSupply: 1,
@@ -141,6 +145,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         true, // NonFungibleFaucet
+        "Collectible",
         "NFT",
         0,
         BigInt(1),
@@ -154,6 +159,7 @@ describe("AccountsResource", () => {
         type: "NonFungibleFaucet",
         storage: "public",
         auth: "falcon",
+        name: "Collectible",
         symbol: "NFT",
         decimals: 0,
         maxSupply: 1,
@@ -161,6 +167,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         true,
+        "Collectible",
         "NFT",
         0,
         BigInt(1),
@@ -173,7 +180,8 @@ describe("AccountsResource", () => {
       await resource.create({
         type: 0,
         auth: "falcon",
-        symbol: "T",
+        name: "Test Token",
+        symbol: "TST",
         decimals: 0,
         maxSupply: 1,
         // no storage specified — should default to "public"
@@ -187,14 +195,16 @@ describe("AccountsResource", () => {
         type: 0,
         storage: "public",
         auth: "ecdsa",
-        symbol: "T",
+        name: "Test Token",
+        symbol: "TST",
         decimals: 0,
         maxSupply: 1,
       });
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false,
-        "T",
+        "Test Token",
+        "TST",
         0,
         BigInt(1),
         1 // ecdsa

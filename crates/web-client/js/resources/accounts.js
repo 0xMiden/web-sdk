@@ -34,6 +34,7 @@ export class AccountsResource {
       return await this.#inner.newFaucet(
         storageMode,
         type === 1 || type === "NonFungibleFaucet",
+        opts.name ?? opts.symbol,
         opts.symbol,
         opts.decimals,
         BigInt(opts.maxSupply),

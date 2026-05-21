@@ -150,7 +150,7 @@ pub async fn upsert_note_script_tx(
     note_script: &NoteScript,
 ) -> Result<(), StoreError> {
     let note_script_bytes = note_script.to_bytes();
-    let note_script_root = note_script.root().into();
+    let note_script_root = note_script.root().to_string();
 
     let promise = idxdb_upsert_note_script(db_id, note_script_root, note_script_bytes);
     await_js_value(promise, "failed to upsert note script").await?;

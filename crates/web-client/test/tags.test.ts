@@ -42,6 +42,7 @@ test.describe("remove_tag tests", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
