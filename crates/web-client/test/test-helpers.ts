@@ -438,6 +438,7 @@ function wrapClientForMidenClient(
         return (
           mode: any,
           nonFungible: any,
+          name: any,
           symbol: any,
           decimals: any,
           maxSupply: any,
@@ -447,7 +448,7 @@ function wrapClientForMidenClient(
           target.newFaucet(
             mode,
             nonFungible,
-            symbol,
+            name,
             symbol,
             decimals,
             norm(maxSupply),
