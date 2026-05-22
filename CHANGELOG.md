@@ -5,7 +5,7 @@
 ### Enhancements
 
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
-* [FEATURE][web,react] Added partial-swap (PSWAP) support: `transactions.pswapCreate / pswapConsume / pswapCancel` on `MidenClient` (and matching `preview()` operations) plus three React hooks `usePswapCreate`, `usePswapConsume`, `usePswapCancel`. PSWAP notes can be filled by multiple consumers; each fill emits a payback note to the creator and, on a partial fill, a remainder PSWAP note carrying the unfilled amount. (PR link to be inserted at merge time.)
+* [FEATURE][web,react] Added partial-swap (PSWAP) support: `transactions.pswapCreate / pswapConsume / pswapCancel` on `MidenClient` (and matching `preview()` operations) plus three React hooks `usePswapCreate`, `usePswapConsume`, `usePswapCancel`. PSWAP notes can be filled by multiple consumers; each fill emits a payback note to the creator and, on a partial fill, a remainder PSWAP note carrying the unfilled amount. ([#159](https://github.com/0xMiden/web-sdk/pull/159)).
 
 ### Changes
 
