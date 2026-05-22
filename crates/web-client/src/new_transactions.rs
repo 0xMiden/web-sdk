@@ -255,11 +255,12 @@ impl WebClient {
     pub fn new_pswap_cancel_transaction_request(
         &self,
         pswap_note: &Note,
+        creator_account_id: &AccountId,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
 
         let pswap_transaction_request = NativeTransactionRequestBuilder::new()
-            .build_pswap_cancel(native_pswap_note)
+            .build_pswap_cancel(native_pswap_note, creator_account_id.into())
             .map_err(|err| {
                 js_error_with_context(err, "failed to create PSWAP cancel transaction request")
             })?;
