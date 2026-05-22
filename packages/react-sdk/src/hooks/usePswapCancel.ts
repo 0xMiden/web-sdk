@@ -66,12 +66,15 @@ export function usePswapCancel(): UsePswapCancelResult {
       try {
         const accountIdObj = parseAccountId(options.accountId);
 
-        setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
           const note = await resolveNoteInput(options.note, client);
 
-          const txRequest = await client.newPswapCancelTransactionRequest(note);
+          const txRequest = await client.newPswapCancelTransactionRequest(
+            note,
+            accountIdObj
+          );
 
+          setStage("proving");
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,

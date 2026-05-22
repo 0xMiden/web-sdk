@@ -22,8 +22,6 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 npm install @miden-sdk/react @miden-sdk/miden-sdk
 # or
 pnpm add @miden-sdk/react @miden-sdk/miden-sdk
-# or
-pnpm add @miden-sdk/react @miden-sdk/miden-sdk
 ```
 
 ## Testing

@@ -97,7 +97,8 @@ describe("usePswapCancel", () => {
       expect(mockClient.getInputNote).toHaveBeenCalledWith("0xpswap_note");
       expect(noteRecord.toNote).toHaveBeenCalled();
       expect(mockClient.newPswapCancelTransactionRequest).toHaveBeenCalledWith(
-        expect.anything()
+        expect.anything(), // resolved note
+        expect.anything() // creator account id
       );
     });
 
@@ -196,6 +197,9 @@ describe("usePswapCancel", () => {
           note: "0xpswap_note",
         });
       });
+
+      // "executing" is observable until the request is built inside the lock.
+      expect(result.current.stage).toBe("executing");
 
       await waitFor(() => {
         expect(result.current.stage).toBe("proving");
@@ -445,7 +449,8 @@ describe("usePswapCancel", () => {
 
       expect(getInputNote).not.toHaveBeenCalled();
       expect(mockClient.newPswapCancelTransactionRequest).toHaveBeenCalledWith(
-        note
+        note,
+        expect.anything() // creator account id
       );
     });
 

@@ -214,6 +214,7 @@ impl WebClient {
                     &pswap_transaction_data,
                     note_type.into(),
                     payback_note_type.into(),
+                    // V1: PSWAP notes carry no attachment (not yet exposed in JS).
                     NoteAttachment::default(),
                     client.rng(),
                 )

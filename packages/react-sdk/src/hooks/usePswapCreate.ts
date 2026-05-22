@@ -26,10 +26,8 @@ export interface UsePswapCreateResult {
 }
 
 /**
- * Hook to create a partial-swap (PSWAP) note offering one fungible asset for
- * another. The resulting note can be filled by multiple consumers; each fill
- * emits a payback note to the creator and, on a partial fill, a remainder
- * PSWAP note carrying the unfilled amount.
+ * Hook to create a partial-swap (PSWAP) note. The note can be filled by
+ * multiple consumers; partial fills emit a remainder PSWAP note.
  *
  * @example
  * ```tsx
@@ -84,7 +82,6 @@ export function usePswapCreate(): UsePswapCreateResult {
         const offeredFaucetIdObj = parseAccountId(options.offeredFaucetId);
         const requestedFaucetIdObj = parseAccountId(options.requestedFaucetId);
 
-        setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
           const txRequest = await client.newPswapCreateTransactionRequest(
             accountIdObj,
@@ -96,6 +93,7 @@ export function usePswapCreate(): UsePswapCreateResult {
             paybackNoteType
           );
 
+          setStage("proving");
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,

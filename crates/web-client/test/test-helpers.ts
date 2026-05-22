@@ -370,11 +370,7 @@ export async function mockPswap(
   const [createTxRecord] = await client.getTransactions(
     sdk.TransactionFilter.ids([createTxId])
   );
-  const pswapNoteId = createTxRecord
-    .outputNotes()
-    .notes()[0]
-    .id()
-    .toString();
+  const pswapNoteId = createTxRecord.outputNotes().notes()[0].id().toString();
 
   // 2. Filler consumes (fills) the PSWAP note from its own vault.
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
@@ -399,6 +395,11 @@ export async function mockPswap(
 
   // 3. Creator consumes the payback note carrying the requested asset.
   //    A full fill produces exactly this one note (no remainder PSWAP note).
+  if (consumeOutputNotes.length !== 1) {
+    throw new Error(
+      `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+    );
+  }
   const paybackNoteId = consumeOutputNotes[0].id().toString();
   const paybackNoteRecord = await client.getInputNote(paybackNoteId);
   if (!paybackNoteRecord)
@@ -472,16 +473,13 @@ export async function mockPswapCancel(
   const [createTxRecord] = await client.getTransactions(
     sdk.TransactionFilter.ids([createTxId])
   );
-  const pswapNoteId = createTxRecord
-    .outputNotes()
-    .notes()[0]
-    .id()
-    .toString();
+  const pswapNoteId = createTxRecord.outputNotes().notes()[0].id().toString();
 
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
   const cancelRequest = client.newPswapCancelTransactionRequest(
-    pswapNoteRecord.toNote()
+    pswapNoteRecord.toNote(),
+    creatorId
   );
   await client.submitNewTransaction(creatorId, cancelRequest);
   await client.proveBlock();

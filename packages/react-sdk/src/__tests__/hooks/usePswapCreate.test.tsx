@@ -262,6 +262,9 @@ describe("usePswapCreate", () => {
         });
       });
 
+      // "executing" is observable until the request is built inside the lock.
+      expect(result.current.stage).toBe("executing");
+
       await waitFor(() => {
         expect(result.current.stage).toBe("proving");
       });

@@ -26,9 +26,8 @@ export interface UsePswapConsumeResult {
 
 /**
  * Hook to consume (fully or partially fill) an existing PSWAP note. The
- * consumer supplies `fillAmount` of the requested asset and receives a
- * proportional share of the offered asset. A full fill produces only the
- * payback note; a partial fill also produces a remainder PSWAP note.
+ * consumer supplies `fillAmount` and receives a proportional share of the
+ * offered asset.
  *
  * @example
  * ```tsx
@@ -73,7 +72,6 @@ export function usePswapConsume(): UsePswapConsumeResult {
       try {
         const accountIdObj = parseAccountId(options.accountId);
 
-        setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
           const note = await resolveNoteInput(options.note, client);
 
@@ -84,6 +82,7 @@ export function usePswapConsume(): UsePswapConsumeResult {
             BigInt(options.noteFillAmount ?? 0)
           );
 
+          setStage("proving");
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,

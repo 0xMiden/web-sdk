@@ -380,6 +380,10 @@ export interface SwapOptions extends TransactionOptions {
   paybackType?: NoteVisibility;
 }
 
+/**
+ * Options for {@link TransactionsResource.pswapCreate}. V1 PSWAP notes carry
+ * no attachment, so there is no `attachment` field.
+ */
 export interface PswapCreateOptions extends TransactionOptions {
   /** Account that creates the partial-swap (PSWAP) note. */
   account: AccountRef;
@@ -389,11 +393,7 @@ export interface PswapCreateOptions extends TransactionOptions {
   request: Asset;
   /** Visibility of the PSWAP note itself. */
   type?: NoteVisibility;
-  /**
-   * Visibility of the payback note that fillers emit back to the creator.
-   * Defaults to `private` (cheaper, and the fill amount is already recorded
-   * on-chain in the executing transaction).
-   */
+  /** Visibility of the payback note fillers emit to the creator. Defaults to `private`. */
   paybackType?: NoteVisibility;
 }
 
@@ -402,18 +402,9 @@ export interface PswapConsumeOptions extends TransactionOptions {
   account: AccountRef;
   /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
   note: NoteInput;
-  /**
-   * Amount of the requested asset the consumer is providing from its own
-   * vault. The consumer receives a proportional share of the offered asset;
-   * if this is less than the full requested amount, the script also produces
-   * a remainder PSWAP note carrying the unfilled portion.
-   */
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
   fillAmount: number | bigint;
-  /**
-   * Amount of the requested asset supplied by other (in-flight) notes routed
-   * into the same transaction. Defaults to `0`; most callers should leave
-   * this unset.
-   */
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
   noteFillAmount?: number | bigint;
 }
 

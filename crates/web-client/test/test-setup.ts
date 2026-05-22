@@ -733,6 +733,12 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           );
           const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
 
+          // A full fill produces exactly one payback note (no remainder PSWAP note).
+          if (consumeOutputNotes.length !== 1) {
+            throw new Error(
+              `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+            );
+          }
           const paybackNoteId = consumeOutputNotes[0].id().toString();
           const paybackNoteRecord = await c.getInputNote(paybackNoteId);
           if (!paybackNoteRecord)
@@ -810,7 +816,8 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
           const cancelRequest = c.newPswapCancelTransactionRequest(
-            pswapNoteRecord.toNote()
+            pswapNoteRecord.toNote(),
+            creatorId
           );
           await c.submitNewTransaction(creatorId, cancelRequest);
           await c.proveBlock();

@@ -177,16 +177,7 @@ export class TransactionsResource {
     return { txId, result };
   }
 
-  /**
-   * Create a partial-swap (PSWAP) note. The note offers a fixed amount of one
-   * fungible asset and requests a fixed amount of another; consumers may fill
-   * the note in whole or in part, and each partial fill emits a remainder
-   * PSWAP carrying the unfilled portion. A payback note is emitted back to
-   * `opts.account` for every fill.
-   *
-   * @param {PswapCreateOptions} opts
-   * @returns {Promise<{ txId: TransactionId, result: TransactionResult }>}
-   */
+  /** Create a partial-swap (PSWAP) note. See {@link PswapCreateOptions}. */
   async pswapCreate(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -208,16 +199,7 @@ export class TransactionsResource {
     return { txId, result };
   }
 
-  /**
-   * Consume (fully or partially fill) an existing PSWAP note. The consumer
-   * supplies `fillAmount` of the requested asset from its own vault and
-   * receives a proportional share of the offered asset. `noteFillAmount` is
-   * the amount supplied by other in-flight notes routed into the same
-   * transaction and defaults to `0n` — most callers should leave it unset.
-   *
-   * @param {PswapConsumeOptions} opts
-   * @returns {Promise<{ txId: TransactionId, result: TransactionResult }>}
-   */
+  /** Consume (fully or partially fill) a PSWAP note. See {@link PswapConsumeOptions}. */
   async pswapConsume(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -239,14 +221,7 @@ export class TransactionsResource {
     return { txId, result };
   }
 
-  /**
-   * Cancel a PSWAP note as its creator and reclaim the unfilled offered
-   * asset. Submitting account must be the original creator; the WASM builder
-   * enforces this at request-build time.
-   *
-   * @param {PswapCancelOptions} opts
-   * @returns {Promise<{ txId: TransactionId, result: TransactionResult }>}
-   */
+  /** Cancel a PSWAP note as its creator and reclaim the offered asset. See {@link PswapCancelOptions}. */
   async pswapCancel(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -639,7 +614,10 @@ export class TransactionsResource {
     const accountId = resolveAccountRef(opts.account, wasm);
     const note = await this.#resolveNoteInput(opts.note);
 
-    const request = await this.#inner.newPswapCancelTransactionRequest(note);
+    const request = await this.#inner.newPswapCancelTransactionRequest(
+      note,
+      accountId
+    );
     return { accountId, request };
   }
 
