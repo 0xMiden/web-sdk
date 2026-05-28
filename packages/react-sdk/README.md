@@ -777,6 +777,59 @@ function MultiSendButton() {
 }
 ```
 
+#### `useBatch()`
+
+Submit multiple transactions across one or more tracked accounts as one atomic
+batch — every tx lands together or none does. Each item pairs a local account
+with a pre-built `TransactionRequest`. Later items may consume notes produced by
+earlier ones (even across accounts); push order must respect
+producer-before-consumer. The underlying primitive returns a block number
+rather than per-tx ids, so the hook's result is `{ blockNumber }`.
+
+Built-in features:
+- **Auto pre-sync** before submit (disable with `skipSync: true`)
+- **Concurrency guard** rejects a second `batch()` while the first is still
+  in flight (`BATCH_BUSY`)
+- **Atomicity** — the batch path uses the same proven-batch RPC the underlying
+  `submitNewTransactionBatch` exposes; the store applies all per-tx updates
+  in one IndexedDB transaction
+
+```tsx
+import { useBatch, useMidenClient } from '@miden-sdk/react';
+import { BatchItem, NoteType } from '@miden-sdk/miden-sdk';
+
+function BatchButton() {
+  const { batch, isLoading, stage } = useBatch();
+  const client = useMidenClient();
+
+  const handleBatch = async () => {
+    const sendReq = await client.newSendTransactionRequest(
+      alice, bob, token, NoteType.Private, 50n, null, null,
+    );
+    const consumeReq = await client.newConsumeTransactionRequest([incomingNote]);
+
+    const { blockNumber } = await batch({
+      items: [
+        { account: alice, request: sendReq },
+        { account: bob,   request: consumeReq },  // can consume notes from earlier items
+      ],
+    });
+    console.log('Batch landed in block', blockNumber);
+  };
+
+  return (
+    <button onClick={handleBatch} disabled={isLoading}>
+      {isLoading ? `Submitting (${stage})...` : 'Submit batch'}
+    </button>
+  );
+}
+```
+
+Pass `skipSync: true` if you've already synced and want to avoid the pre-submit
+round-trip. The hook never serializes the requests — the WASM `BatchItem`
+constructor takes the `TransactionRequest` by reference, so there's no
+hidden `.serialize()` cost on the JS side.
+
 #### `useInternalTransfer()`
 
 Create a P2ID note and immediately consume it. This is useful for transfers
@@ -1767,6 +1820,9 @@ import type {
   SendOptions,
   MultiSendRecipient,
   MultiSendOptions,
+  BatchItemInput,
+  BatchOptions,
+  BatchResult,
   InternalTransferOptions,
   InternalTransferChainOptions,
   InternalTransferResult,

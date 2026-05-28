@@ -326,8 +326,9 @@ impl IdxdbStore {
 
         // Simulates read-writes across batch transactions, since nothing is persisted to
         // IndexedDB until the single Dexie transaction at the end.
-        let mut vault_overlay: BTreeMap<AssetVaultKey, Option<Asset>> = BTreeMap::new();
-        let mut map_roots_overlay: BTreeMap<StorageSlotName, Word> = BTreeMap::new();
+        let mut vault_overlay: BTreeMap<(AccountId, AssetVaultKey), Option<Asset>> =
+            BTreeMap::new();
+        let mut map_roots_overlay: BTreeMap<(AccountId, StorageSlotName), Word> = BTreeMap::new();
 
         for update in &tx_updates {
             let (payload, account_id) = self
@@ -377,8 +378,8 @@ impl IdxdbStore {
     async fn prepare_update_for_batch(
         &self,
         update: &TransactionStoreUpdate,
-        vault_overlay: &mut BTreeMap<AssetVaultKey, Option<Asset>>,
-        map_roots_overlay: &mut BTreeMap<StorageSlotName, Word>,
+        vault_overlay: &mut BTreeMap<(AccountId, AssetVaultKey), Option<Asset>>,
+        map_roots_overlay: &mut BTreeMap<(AccountId, StorageSlotName), Word>,
     ) -> Result<(BatchUpdatePayload, AccountId), StoreError> {
         let executed_tx = update.executed_transaction();
         let delta = executed_tx.account_delta();
@@ -422,14 +423,14 @@ impl IdxdbStore {
 
             // Seed overlays with the new full account state so subsequent non-full-state
             // preparations in the same batch see post-this-tx values.
-            vault_overlay.clear();
+            vault_overlay.retain(|(acc, _), _| *acc != account_id);
             for asset in account.vault().assets() {
-                vault_overlay.insert(asset.vault_key(), Some(asset));
+                vault_overlay.insert((account_id, asset.vault_key()), Some(asset));
             }
-            map_roots_overlay.clear();
+            map_roots_overlay.retain(|(acc, _), _| *acc != account_id);
             for slot in account.storage().slots() {
                 if let StorageSlotContent::Map(map) = slot.content() {
-                    map_roots_overlay.insert(slot.name().clone(), map.root());
+                    map_roots_overlay.insert((account_id, slot.name().clone()), map.root());
                 }
             }
 
@@ -474,7 +475,7 @@ impl IdxdbStore {
             let mut old_vault_assets: Vec<Asset> = Vec::new();
             let mut vault_keys_to_fetch: Vec<String> = Vec::new();
             for (vault_key, _) in delta.vault().fungible().iter() {
-                match vault_overlay.get(vault_key) {
+                match vault_overlay.get(&(account_id, *vault_key)) {
                     Some(Some(asset)) => old_vault_assets.push(*asset),
                     Some(None) => { /* key was removed earlier in the batch; treat as empty */ },
                     None => vault_keys_to_fetch.push(vault_key.to_string()),
@@ -488,7 +489,7 @@ impl IdxdbStore {
             let mut old_map_roots: BTreeMap<StorageSlotName, Word> = BTreeMap::new();
             let mut map_slot_names_to_fetch: Vec<String> = Vec::new();
             for (slot_name, _) in delta.storage().maps() {
-                if let Some(root) = map_roots_overlay.get(slot_name) {
+                if let Some(root) = map_roots_overlay.get(&(account_id, slot_name.clone())) {
                     old_map_roots.insert(slot_name.clone(), *root);
                 } else {
                     map_slot_names_to_fetch.push(slot_name.to_string());
@@ -547,16 +548,16 @@ impl IdxdbStore {
                 smt_forest.stage_roots(account_id, final_roots);
 
                 // Propagate this tx's post-state into the overlays so subsequent preparations
-                // in the same batch see these updates.
+                // against this same account in the batch see these updates.
                 for asset in &updated_assets {
-                    vault_overlay.insert(asset.vault_key(), Some(*asset));
+                    vault_overlay.insert((account_id, asset.vault_key()), Some(*asset));
                 }
                 for vault_key in &removed_vault_keys {
-                    vault_overlay.insert(*vault_key, None);
+                    vault_overlay.insert((account_id, *vault_key), None);
                 }
                 for (slot_name, (new_root, slot_type)) in &updated_storage_slots {
                     if *slot_type == StorageSlotType::Map {
-                        map_roots_overlay.insert(slot_name.clone(), *new_root);
+                        map_roots_overlay.insert((account_id, slot_name.clone()), *new_root);
                     }
                 }
 

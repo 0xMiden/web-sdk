@@ -364,6 +364,26 @@ export interface MultiSendOptions {
   skipSync?: boolean;
 }
 
+/** A single (account, request) pair for {@link BatchOptions.items}. */
+export interface BatchItemInput {
+  /** Local account that executes this transaction. */
+  account: AccountRef;
+  /** Pre-built `TransactionRequest`. */
+  request: unknown;
+}
+
+export interface BatchOptions {
+  /** Per-tx `(account, request)` pairs. Must be non-empty. */
+  items: BatchItemInput[];
+  /** Skip auto-sync before submit. Default: false */
+  skipSync?: boolean;
+}
+
+export interface BatchResult {
+  /** The block number the batch was accepted into. */
+  blockNumber: number;
+}
+
 export interface WaitForCommitOptions {
   /** Timeout in milliseconds. Default: 10000 */
   timeoutMs?: number;

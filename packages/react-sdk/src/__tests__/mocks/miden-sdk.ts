@@ -281,6 +281,7 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
 
+    submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
     executeTransaction: vi
       .fn()
       .mockResolvedValue(createMockTransactionResult()),
@@ -356,6 +357,7 @@ type MockWebClientType = {
   getPswapLineagesFor: ReturnType<typeof vi.fn>;
   getPswapLineage: ReturnType<typeof vi.fn>;
   buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
+  submitNewTransactionBatch: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;

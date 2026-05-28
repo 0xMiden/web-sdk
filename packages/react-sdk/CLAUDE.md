@@ -128,6 +128,26 @@ await multiSend({
 });
 ```
 
+### Submit a Multi-Transaction Batch
+```tsx
+const { batch } = useBatch();
+const client = useMidenClient();
+
+const sendReq = await client.newSendTransactionRequest(
+  alice, bob, token, NoteType.Private, 50n, null, null
+);
+const consumeReq = await client.newConsumeTransactionRequest([note]);
+
+const { blockNumber } = await batch({
+  items: [
+    { account: alice, request: sendReq },
+    { account: bob, request: consumeReq },  // may consume notes from earlier items in the batch
+  ],
+});
+```
+
+Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically — either every tx lands or none. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
+
 ### Claim Notes
 ```tsx
 const { consume } = useConsume();
@@ -425,6 +445,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useImportStore()` / `useExportStore()` | store import/export | bytes / `void` |
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
+| `useBatch()` | `batch({ items })` — items are `{ account, request }` pairs | `BatchResult` (with `blockNumber`) |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |

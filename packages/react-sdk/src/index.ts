@@ -39,6 +39,7 @@ export { useCreateFaucet } from "./hooks/useCreateFaucet";
 export { useImportAccount } from "./hooks/useImportAccount";
 export { useSend } from "./hooks/useSend";
 export { useMultiSend } from "./hooks/useMultiSend";
+export { useBatch } from "./hooks/useBatch";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";

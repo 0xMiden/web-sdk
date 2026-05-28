@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -343,8 +343,7 @@ impl IdxdbStore {
                 }
             },
             AccountStorageFilter::SlotNames(names) => {
-                let wanted: alloc::collections::BTreeSet<&str> =
-                    names.iter().map(StorageSlotName::as_str).collect();
+                let wanted: BTreeSet<&str> = names.iter().map(StorageSlotName::as_str).collect();
                 account_storage_idxdb
                     .into_iter()
                     .filter(|s| wanted.contains(s.slot_name.as_str()))
