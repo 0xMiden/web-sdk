@@ -59,9 +59,9 @@ export async function getCurrentBlockchainPeaks(dbId: string) {
   try {
     const db = getDatabase(dbId);
     const record = await db.blockchainCheckpoint.get(1);
-    if (!record) {
+    if (!record || record.partialBlockchainPeaks.length === 0) {
       return {
-        blockNum: 0,
+        blockNum: record?.blockNum ?? 0,
         peaks: uint8ArrayToBase64(new Uint8Array()),
       };
     }
@@ -334,7 +334,10 @@ async function updateSyncHeight(
   newPeaks: Uint8Array
 ) {
   try {
-    // Only update if moving forward to prevent race conditions
+    // Only update if moving forward to prevent race conditions.
+    // Peaks travel with blockNum: skipping the height update also skips the
+    // peaks update, by design — a backward-going sync must not overwrite the
+    // newer peaks with older ones.
     const current = await (
       tx as Transaction & {
         blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
@@ -351,6 +354,8 @@ async function updateSyncHeight(
       });
     }
   } catch (error) {
+    // logWebStoreError always re-throws, so a failure here aborts the whole
+    // Dexie rw transaction rather than silently committing a partial update.
     logWebStoreError(error, "Failed to update sync height");
   }
 }

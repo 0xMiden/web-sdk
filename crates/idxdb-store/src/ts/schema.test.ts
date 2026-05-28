@@ -250,6 +250,59 @@ describe("ensureClientVersion: major version bump triggers nuke", () => {
 });
 
 // ============================================================
+// ensureClientVersion — stored version predates the schema sentinel
+// (same major.minor, but still nukes)
+// ============================================================
+describe("ensureClientVersion: stored version below MIN_COMPATIBLE_CLIENT_VERSION", () => {
+  it("nukes within the same major.minor when the stored DB predates the schema change", async () => {
+    const name = uniqueDbName();
+    // alpha.4 shipped the pre-rename schema; alpha.5 introduced the breaking
+    // V1_STORES change. Same major.minor (0.15), so the normal fast path would
+    // skip the nuke — the sentinel forces it.
+    await openDatabase(name, "0.15.0-alpha.4");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("gone-after-nuke"),
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb2.open("0.15.0-alpha.5");
+    expect(success).toBe(true);
+
+    // Row from the old DB must be gone (DB was nuked despite same major.minor).
+    const sentinel = await mdb2.settings.get("sentinel");
+    expect(sentinel).toBeUndefined();
+
+    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe(
+      "0.15.0-alpha.5"
+    );
+  });
+
+  it("does not nuke once the stored DB is at or past the sentinel", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.15.0-alpha.5");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("safe"),
+    });
+    db1.dexie.close();
+
+    // Same major.minor, stored >= sentinel: fast path, no nuke.
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    await mdb2.open("0.15.0");
+
+    const sentinel = await mdb2.settings.get("sentinel");
+    expect(sentinel).toBeDefined();
+  });
+});
+
+// ============================================================
 // ensureClientVersion — invalid semver strings (warn + nuke path)
 // ============================================================
 describe("ensureClientVersion: invalid semver strings", () => {

@@ -91,8 +91,10 @@ impl IdxdbStore {
         }
 
         let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks_idxdb.peaks)?;
-        MmrPeaks::new(Forest::new(peaks_idxdb.block_num as usize), mmr_peaks_nodes)
-            .map_err(StoreError::MmrError)
+        let forest = Forest::new(
+            usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize"),
+        );
+        MmrPeaks::new(forest, mmr_peaks_nodes).map_err(StoreError::MmrError)
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {

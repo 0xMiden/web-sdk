@@ -4,6 +4,21 @@ import { logWebStoreError } from "./utils.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 
+/**
+ * The earliest client version whose on-disk schema is compatible with the
+ * current `V1_STORES` definition. When a DB's persisted version is older than
+ * this, `ensureClientVersion` resets the store regardless of semver proximity.
+ * This is how a breaking schema change that ships *within the same major.minor*
+ * (e.g. an alpha-to-alpha bump) still forces a clean reset — the normal
+ * same-major-minor fast path would otherwise skip the nuke.
+ *
+ * Bump this to the release version whenever a change modifies `V1_STORES`. It
+ * must be `<=` the version that ships the change, or that release won't reset
+ * older DBs. Set to `0.15.0-alpha.5`: the release that moved MMR peaks out of
+ * the `blockHeaders` table into `blockchainCheckpoint` (renamed from `stateSync`).
+ */
+export const MIN_COMPATIBLE_CLIENT_VERSION = "0.15.0-alpha.5";
+
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 
@@ -572,12 +587,22 @@ export class MidenDatabase {
     const validCurrent = semver.valid(clientVersion);
     const validStored = semver.valid(storedVersion);
     if (validCurrent && validStored) {
+      // A DB created before the last schema-breaking release is incompatible
+      // with the current V1_STORES and must be reset, even within the same
+      // major.minor (the fast path below would otherwise skip the nuke).
+      const schemaIncompatible = semver.lt(
+        validStored,
+        MIN_COMPATIBLE_CLIENT_VERSION
+      );
       const parsedCurrent = semver.parse(validCurrent);
       const parsedStored = semver.parse(validStored);
       const sameMajorMinor =
         parsedCurrent?.major === parsedStored?.major &&
         parsedCurrent?.minor === parsedStored?.minor;
-      if (sameMajorMinor || !semver.gt(clientVersion, storedVersion)) {
+      if (
+        !schemaIncompatible &&
+        (sameMajorMinor || !semver.gt(clientVersion, storedVersion))
+      ) {
         await this.persistClientVersion(clientVersion);
         return;
       }
