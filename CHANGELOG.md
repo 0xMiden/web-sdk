@@ -7,6 +7,11 @@
 * [FEATURE][rust,cli,web] Added `get_network_note_status` to `NodeRpcClient` trait for querying the processing status of notes submitted to the network (pending, nullifier-inflight, discarded, nullifier-committed), along with attempt count and error details. Exposed as `miden-client network-note-status <note_id>` CLI command and `RpcClient.getNetworkNoteStatus()` in the web client. ([#1981](https://github.com/0xMiden/miden-client/pull/1981))
 * [web] Removed the redundant `partialBlockchainPeaks` field from the IndexedDB `blockHeaders` table. MMR peaks are tracked only in the `blockchainCheckpoint` table at the current sync height, eliminating per-block duplication ([#33](https://github.com/0xMiden/web-sdk/pull/33)).
 
+### Changes
+
+* [BREAKING][param][web] `RpcClient.syncNotes(blockFrom, blockTo, noteTags)` — `blockTo` is now required, and `NoteSyncInfo.chainTip()` was removed (upstream RPC no longer returns it; use `client.syncState()`). ([#157](https://github.com/0xMiden/web-sdk/pull/157))
+* [BREAKING][behavior][web] `newFaucet(...)` accounts are now built on `FungibleTokenMetadata` + `TokenPolicyManager`; `BasicFungibleFaucetComponent.fromAccount(...)` reads the new metadata slot, so faucets minted by prior SDK versions can't be introspected through it. ([#157](https://github.com/0xMiden/web-sdk/pull/157))
+
 ## 0.14.4 (TBA)
 
 ### Features

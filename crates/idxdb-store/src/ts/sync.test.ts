@@ -69,7 +69,7 @@ function minimalStateUpdate(
   return {
     blockNum: 5,
     flattenedNewBlockHeaders: emptyFlattenedVec(),
-    flattenedPartialBlockChainPeaks: emptyFlattenedVec(),
+    partialBlockchainPeaks: new Uint8Array(0),
     newBlockNums: [],
     blockHasRelevantNotes: new Uint8Array(0),
     serializedNodeIds: [],
@@ -413,7 +413,7 @@ describe("sync", () => {
           newBlockNums: [7],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaksBytes),
+          partialBlockchainPeaks: peaksBytes,
         })
       );
 
@@ -436,7 +436,7 @@ describe("sync", () => {
           newBlockNums: [15],
           blockHasRelevantNotes: new Uint8Array([1]),
           flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaksBytes),
+          partialBlockchainPeaks: peaksBytes,
         })
       );
 
@@ -459,7 +459,7 @@ describe("sync", () => {
           newBlockNums: [5],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(original),
-          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaks),
+          partialBlockchainPeaks: peaks,
         })
       );
 
@@ -471,7 +471,7 @@ describe("sync", () => {
           newBlockNums: [5],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(replacement),
-          flattenedPartialBlockChainPeaks: singleFlattenedVec(peaks),
+          partialBlockchainPeaks: peaks,
         })
       );
 

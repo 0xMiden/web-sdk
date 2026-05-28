@@ -254,6 +254,8 @@ export interface CreateWalletOptions {
 export interface CreateFaucetOptions {
   /** Token symbol (e.g., "TEST") */
   tokenSymbol: string;
+  /** Human-readable token name. Defaults to `tokenSymbol` when omitted. */
+  tokenName?: string;
   /** Number of decimals. Default: 8 */
   decimals?: number;
   /** Maximum supply */

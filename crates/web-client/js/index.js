@@ -664,6 +664,7 @@ class WebClient {
   async newFaucet(
     storageMode,
     nonFungible,
+    tokenName,
     tokenSymbol,
     decimals,
     maxSupply,
@@ -674,6 +675,7 @@ class WebClient {
       return await wasmWebClient.newFaucet(
         storageMode,
         nonFungible,
+        tokenName,
         tokenSymbol,
         decimals,
         maxSupply,

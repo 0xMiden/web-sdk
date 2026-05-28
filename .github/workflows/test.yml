@@ -30,7 +30,7 @@ env:
   # The web-sdk's `next` branch tracks miden-client's `next` (0.15.0 series,
   # no tagged release yet), so we pin to the exact commit pinned in Cargo.lock
   # rather than a moving branch ref so cache keys stay stable.
-  MIDEN_CLIENT_REF: dab6cf7b3549b57515aa305e64d3d9561bf8e5ca
+  MIDEN_CLIENT_REF: b0ac3797f6c3c6aedb13d27d85e428c8bf066484
 
 jobs:
   build-web-client-dist-folder:

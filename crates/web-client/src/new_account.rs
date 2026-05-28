@@ -1,6 +1,13 @@
 use js_export_macro::js_export;
-use miden_client::Felt;
-use miden_client::account::component::{AuthControlled, BasicFungibleFaucet};
+use miden_client::account::component::{
+    BasicFungibleFaucet,
+    BurnPolicyConfig,
+    FungibleTokenMetadata,
+    MintPolicyConfig,
+    PolicyAuthority,
+    TokenName,
+    TokenPolicyManager,
+};
 use miden_client::account::{
     AccountBuilder,
     AccountBuilderSchemaCommitmentExt,
@@ -51,10 +58,12 @@ impl WebClient {
 #[js_export]
 impl WebClient {
     #[js_export(js_name = "newFaucet")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_faucet(
         &self,
         storage_mode: &AccountStorageMode,
         non_fungible: bool,
+        token_name: String,
         token_symbol: String,
         decimals: u8,
         max_supply: JsU64,
@@ -102,8 +111,13 @@ impl WebClient {
         };
 
         let symbol = TokenSymbol::new(&token_symbol).map_err(|e| from_str_err(&e.to_string()))?;
+        let name = TokenName::new(&token_name)
+            .map_err(|err| js_error_with_context(err, "invalid token name"))?;
         let max_supply = js_u64_to_u64(max_supply);
-        let max_supply = Felt::new(max_supply);
+
+        let token_metadata = FungibleTokenMetadata::builder(name, symbol, decimals, max_supply)
+            .build()
+            .map_err(|err| js_error_with_context(err, "failed to build token metadata"))?;
 
         let mut init_seed = [0u8; 32];
         faucet_rng.fill_bytes(&mut init_seed);
@@ -112,11 +126,13 @@ impl WebClient {
             .account_type(AccountType::FungibleFaucet)
             .storage_mode(storage_mode.into())
             .with_auth_component(auth_component)
-            .with_component(
-                BasicFungibleFaucet::new(symbol, decimals, max_supply)
-                    .map_err(|err| js_error_with_context(err, "failed to create new faucet"))?,
-            )
-            .with_component(AuthControlled::allow_all())
+            .with_component(token_metadata)
+            .with_component(BasicFungibleFaucet)
+            .with_components(TokenPolicyManager::new(
+                PolicyAuthority::AuthControlled,
+                MintPolicyConfig::AllowAll,
+                BurnPolicyConfig::AllowAll,
+            ))
             .build_with_schema_commitment()
         {
             Ok(result) => result,

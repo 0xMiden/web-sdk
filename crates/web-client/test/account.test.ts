@@ -363,6 +363,7 @@ test.describe("getAccountByKeyCommitment tests", () => {
         sdk.AccountStorageMode.private(),
         false,
         "TST",
+        "TST",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512

@@ -183,6 +183,7 @@ test.describe("new_faucet tests", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -227,6 +228,7 @@ test.describe("new_faucet tests", () => {
       const newFaucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -276,6 +278,7 @@ test.describe("new_faucet tests", () => {
           sdk.AccountStorageMode.public(),
           true,
           "DAG",
+          "DAG",
           8,
           sdk.u64(10000000),
           sdk.AuthScheme.AuthRpoFalcon512
@@ -299,6 +302,7 @@ test.describe("new_faucet tests", () => {
         await client.newFaucet(
           sdk.AccountStorageMode.public(),
           false,
+          "INVALID_TOKEN",
           "INVALID_TOKEN",
           8,
           sdk.u64(10000000),

@@ -37,7 +37,7 @@ use miden_client::store::{
     AccountStorageFilter,
     StoreError,
 };
-use miden_client::utils::Serializable;
+use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{AccountError, Felt, Word};
 
 use super::IdxdbStore;
@@ -254,8 +254,7 @@ impl IdxdbStore {
         let account_code_idxdb: AccountCodeIdxdbObject =
             await_js(promise, "failed to fetch account code").await?;
 
-        let code =
-            AccountCode::from_bytes(&account_code_idxdb.code).map_err(StoreError::AccountError)?;
+        let code = AccountCode::read_from_bytes(&account_code_idxdb.code)?;
 
         Ok(code)
     }
@@ -606,8 +605,7 @@ impl IdxdbStore {
             .map(|idxdb_object| {
                 let account_id = AccountId::from_hex(&idxdb_object.account_id)
                     .map_err(StoreError::AccountIdError)?;
-                let code = AccountCode::from_bytes(&idxdb_object.code)
-                    .map_err(StoreError::AccountError)?;
+                let code = AccountCode::read_from_bytes(&idxdb_object.code)?;
 
                 Ok((account_id, code))
             })
