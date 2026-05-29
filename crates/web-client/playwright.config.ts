@@ -99,6 +99,7 @@ const ciShardProjects = process.env.CI
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
           "test/transactions.test.ts",
+          "test/with_inner_web_client_reentrancy.test.ts",
         ],
       },
     ]
