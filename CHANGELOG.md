@@ -1,12 +1,18 @@
 # Changelog
 
-## 0.14.10 (TBA)
+## 0.14.11 (TBA)
 
 ### Fixes
 
 * [FIX][web] Fixed `_withInnerWebClient` re-entrant deadlock. Calling any proxied async wasm method on the `inner` client inside the callback — `inner.getInputNote(...)`, `inner.executeTransaction(...)`, `inner.submitProvenTransaction(...)`, `inner.applyTransaction(...)`, etc. — enqueued onto the same `_serializeWasmCall` chain that `_withInnerWebClient` itself had already claimed for the callback, so the inner call would wait for the outer to settle while the outer awaited the inner — classic re-entrant-lock deadlock with no timeout. `_serializeWasmCall` now runs its callback inline when `_withInnerLockDepth > 0` (set/cleared by `_withInnerWebClient` around `await fn(inner)`), so inner calls "borrow" the already-held chain slot instead of trying to re-acquire it; external callers still queue behind the outer slot. This was the load-bearing bug behind the Miden Wallet's `proveLocallyViaOffscreen` consume path hanging indefinitely with local proving enabled on Chrome MV3 (`generateTransaction:consume` reached "acquired tx lock; calling midenClient dispatch" then never logged another marker), which surfaced to users as a "cannot reach the miden node" connectivity banner via downstream `withWasmClientLock` timeouts in the SW's `SyncManager`. SAFETY CONTRACT: re-entrancy assumes the caller holds an external mutex preventing concurrent access via other code paths during `fn` — the wallet's own `withWasmClientLock` discipline satisfies this. See the docstring on `_withInnerWebClient` for details.
 
-## 0.14.9 (TBA)
+## 0.14.10 (2026-05-19)
+
+### Changes
+
+* [CHORE][web] Bumped `miden-client` to `0.14.9` and `miden-vm` crates to `0.22.4`.
+
+## 0.14.9 (2026-05-13)
 
 ### Features
 

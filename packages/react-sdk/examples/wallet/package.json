@@ -15,7 +15,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@miden-sdk/vite-plugin": "^0.14.8",
+    "@miden-sdk/vite-plugin": "^0.14.10",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",

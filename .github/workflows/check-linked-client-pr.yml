@@ -67,8 +67,8 @@ jobs:
   scheduled-fanout:
     # The schedule trigger fires once per repo; we need to fan out across
     # every open PR that carries a Client PR marker so each gets its check
-    # re-evaluated. On `pull_request` events we skip this and run `gate`
-    # directly with the event's PR.
+    # re-evaluated. On `pull_request_target` events we skip this and run
+    # `gate` directly with the event's PR.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     outputs:
@@ -87,7 +87,7 @@ jobs:
     needs: [scheduled-fanout]
     if: |
       always() &&
-      (github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request_target' ||
        (github.event_name == 'schedule' && needs.scheduled-fanout.outputs.prs != '[]'))
     runs-on: ubuntu-24.04
     strategy:
@@ -119,35 +119,69 @@ jobs:
             exit 0
           fi
 
+          head_sha=$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)
+
+          set_status() {
+            local s="$1" desc="$2"
+
+            # Idempotency guard. GitHub caps each (commit SHA, context) pair
+            # at 1000 statuses. This workflow re-runs every 15 min via cron
+            # and would otherwise POST a fresh status on every run — even when
+            # the verdict hasn't changed — steadily burning toward that cap on
+            # any PR whose head SHA stays put. Once the cap is hit the POST
+            # 422s and the job fails, emailing the PR author every 15 min.
+            # Skip the POST when the latest existing status already matches the
+            # state + description we're about to write.
+            local cur
+            cur=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/statuses" \
+              --jq '[.[] | select(.context == "linked-client-pr-ready")]
+                    | if length > 0 then "\(.[0].state)\t\(.[0].description)" else "" end' \
+              2>/dev/null || true)
+            if [ "$cur" = "$s"$'\t'"$desc" ]; then
+              echo "::notice::linked-client-pr-ready already '$s' on $head_sha — skipping POST."
+              return 0
+            fi
+
+            # Only attach target_url when a linked PR is known; the no-marker
+            # success path has no repo/num to point at.
+            local args=(-X POST -f "state=$s" -f "context=linked-client-pr-ready" -f "description=$desc")
+            if [ -n "${repo:-}" ] && [ -n "${num:-}" ]; then
+              args+=(-f "target_url=https://github.com/${repo}/pull/${num}")
+            fi
+
+            # A 422 "maximum number of statuses" means this SHA exhausted the
+            # 1000-status cap before the idempotency guard above could prevent
+            # it (e.g. a long-lived PR from before this guard existed). Treat
+            # it as non-fatal — the gate verdict is unchanged and re-POSTing is
+            # impossible anyway — so the job doesn't email the author on every
+            # scheduled run. Any OTHER failure (e.g. 403 from a missing
+            # `statuses: write` scope) must still surface as a job failure.
+            local out rc
+            out=$(gh api "repos/$GITHUB_REPOSITORY/statuses/$head_sha" "${args[@]}" 2>&1) && rc=0 || rc=$?
+            if [ "${rc:-0}" -ne 0 ]; then
+              if printf '%s' "$out" | grep -qi "maximum number of statuses"; then
+                echo "::warning::(SHA,context) status cap reached for $head_sha; cannot POST. Intended verdict: $s — $desc"
+                return 0
+              fi
+              printf '%s\n' "$out" >&2
+              return "$rc"
+            fi
+          }
+
           # Parse marker; absent → check passes (no gate needed).
           marker=$(printf '%s' "$body" | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
           if [ -z "$marker" ]; then
             echo "No Client PR marker on PR #$PR_NUM — check passes."
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)" \
-              -X POST -f state=success \
-              -f context="linked-client-pr-ready" \
-              -f description="No linked client PR — nothing to gate."
+            set_status success "No linked client PR — nothing to gate."
             exit 0
           fi
 
           repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/miden-client")
           num=$(printf '%s' "$marker" | grep -oE '[0-9]+$')
-          head_sha=$(gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUM --jq .head.sha)
 
           # Pull the upstream PR's state. Tab-separated, IFS=$'\t' for
           # consistency even though neither field can contain whitespace.
           IFS=$'\t' read -r merged merge_commit_sha <<<"$(gh api "repos/$repo/pulls/$num" --jq '"\(.merged)\t\(.merge_commit_sha // "")"')"
-
-          set_status() {
-            local s="$1" desc="$2"
-            # No `>/dev/null` — let the gh API failure surface (e.g. on
-            # missing `statuses: write` perms) instead of swallowing the 403.
-            gh api "repos/$GITHUB_REPOSITORY/statuses/$head_sha" -X POST \
-              -f state="$s" \
-              -f context="linked-client-pr-ready" \
-              -f description="$desc" \
-              -f target_url="https://github.com/${repo}/pull/${num}"
-          }
 
           # Step 1: linked PR must be merged.
           if [ "$merged" != "true" ]; then
