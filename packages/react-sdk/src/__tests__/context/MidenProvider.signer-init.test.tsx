@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import React from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk/lazy";
 import { MidenProvider, useMiden } from "../../context/MidenProvider";
 import { SignerContext } from "../../context/SignerContext";
