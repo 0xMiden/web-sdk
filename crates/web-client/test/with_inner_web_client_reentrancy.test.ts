@@ -105,17 +105,25 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     // `_withInnerLockDepth` counter is GLOBAL on the inner client, not
     // scoped to `fn`'s async context — so while `fn` is mid-flight
     // (depth > 0), ANY `_serializeWasmCall` runs inline, including one
-    // issued by code OUTSIDE `fn` that races in during one of `fn`'s
-    // awaits. Such a caller does NOT queue behind the outer slot; it
-    // interleaves. This is exactly why `_withInnerWebClient`'s SAFETY
-    // CONTRACT requires callers to hold an external mutex preventing
-    // concurrent access during `fn` (the Miden Wallet's
-    // `withWasmClientLock` discipline satisfies it).
+    // issued by code OUTSIDE `fn`. Such a caller does NOT queue behind the
+    // outer slot; it interleaves. This is exactly why `_withInnerWebClient`'s
+    // SAFETY CONTRACT requires callers to hold an external mutex preventing
+    // concurrent access during `fn` (the Miden Wallet's `withWasmClientLock`
+    // discipline satisfies it).
     //
-    // This test deliberately violates that contract to pin the behavior:
-    // if a future change made the depth counter context-scoped (closing
-    // the hole) or reverted it (reintroducing the deadlock), this
-    // assertion would flip and flag the semantic change for review.
+    // The interleaving is pinned with explicit handshakes rather than timer
+    // races: `_serializeWasmCall`'s inline path is `Promise.resolve().then`,
+    // so whether an external call runs inline vs queued hinges on whether
+    // `depth > 0` at the exact microtask it fires — not something a `setTimeout`
+    // can order reliably. `fnEntered` guarantees the external call is issued
+    // only once `fn` is mid-flight (depth = 1, so it MUST take the inline
+    // path), and `fn` parks on `externalDone` until the external call returns.
+    //
+    // If a regression closed the hole (context-scoped depth) or reverted the
+    // fix (re-queuing the call), the external read would queue behind the
+    // outer slot — which is parked on `externalDone` — and deadlock. The
+    // 5s race below converts that hang into a fast, explicit failure:
+    // "external-blocked" instead of "external-ran".
     const result = await page.evaluate(async () => {
       const inner = window.client as any;
       const client = new (window as any).MidenClient(
@@ -124,45 +132,55 @@ test.describe("_withInnerWebClient re-entrancy", () => {
         null
       );
       const order: string[] = [];
+      // Bogus hex → the proxy-fallback read returns undefined cheaply.
+      const ZERO_HEX = "0x" + "0".repeat(64);
 
-      const innerSlot = client._withInnerWebClient(async (inner: any) => {
+      const defer = () => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((r) => (resolve = r));
+        return { promise, resolve };
+      };
+      const fnEntered = defer();
+      const externalDone = defer();
+
+      const innerSlot = client._withInnerWebClient(async (innerArg: any) => {
         order.push("inner-start");
-        // Long inline re-entrant call: a proxy-fallback read.
-        await inner.getInputNote(
-          "0x0000000000000000000000000000000000000000000000000000000000000000"
-        );
+        // Inline re-entrant call FROM fn: a proxy-fallback read.
+        await innerArg.getInputNote(ZERO_HEX);
         order.push("inner-middle");
-        // Yield long enough for the external slot to race in during this
-        // await — with the global depth counter it runs inline here.
-        await new Promise((r) => setTimeout(r, 50));
+        // Signal that fn is mid-flight (depth = 1), then park until the
+        // external call has run, so its inline execution is observable
+        // BEFORE this slot resolves.
+        fnEntered.resolve();
+        await externalDone.promise;
         order.push("inner-end");
       });
 
-      // Kick off an external SDK call that uses `_serializeWasmCall`.
-      // Because depth > 0 while `fn` is awaiting, it runs inline rather
-      // than queuing behind the outer slot. A cheap proxy-fallback read
-      // (local store lookup, returns undefined for a bogus hex) keeps the
-      // ordering deterministic — it completes well within the inner
-      // slot's 50ms sleep, so "external-ran" reliably precedes
-      // "inner-end" without depending on network latency. Uses the shared
-      // inner client (the `MidenClient` wrapper has no proxy fallback).
+      // External SDK call issued only after `fn` is mid-flight, so depth > 0
+      // and `_serializeWasmCall` MUST take the inline path. Uses the shared
+      // inner client (the `MidenClient` wrapper has no proxy fallback). The
+      // race guards against a regression that would queue this call and
+      // deadlock against the parked outer slot.
       const externalSlot = (async () => {
-        await Promise.resolve();
+        await fnEntered.promise;
         order.push("external-queued");
-        await inner.getInputNote(
-          "0x0000000000000000000000000000000000000000000000000000000000000000"
-        );
-        order.push("external-ran");
+        const ran = inner.getInputNote(ZERO_HEX).then(() => "ran");
+        const blocked = new Promise((r) => setTimeout(r, 5_000, "blocked"));
+        const outcome = await Promise.race([ran, blocked]);
+        order.push("external-" + outcome);
+        externalDone.resolve();
       })();
 
       await Promise.all([innerSlot, externalSlot]);
       return { order };
     });
 
-    // The external call interleaves: it runs inline DURING `fn`'s await,
-    // so "external-ran" lands before "inner-end".
-    expect(result.order).toContain("inner-end");
+    // The external call ran inline DURING `fn` (not blocked behind the outer
+    // slot), and did so before this slot resolved — so "external-ran" lands
+    // before "inner-end".
     expect(result.order).toContain("external-ran");
+    expect(result.order).not.toContain("external-blocked");
+    expect(result.order).toContain("inner-end");
     expect(result.order.indexOf("external-ran")).toBeLessThan(
       result.order.indexOf("inner-end")
     );
