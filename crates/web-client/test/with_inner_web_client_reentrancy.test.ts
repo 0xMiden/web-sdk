@@ -34,7 +34,16 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     page,
   }) => {
     const result = await page.evaluate(async () => {
-      const client = window.client as any;
+      // `window.client` is the proxy-wrapped inner WebClient (it owns
+      // `_serializeWasmCall`); `_withInnerWebClient` lives on the
+      // `MidenClient` wrapper. Wrap the existing inner so the test drives
+      // the real shipped method against the same chain.
+      const inner = window.client as any;
+      const client = new (window as any).MidenClient(
+        inner,
+        (window as any).getWasmOrThrow,
+        null
+      );
       const completed = await Promise.race([
         client._withInnerWebClient(async (inner: any) => {
           // Any proxied async wasm method — `getInputNote` is a READ_METHOD
@@ -64,7 +73,12 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     // without a valid request, so we exercise a representative wrapper
     // path that also funnels through `_serializeWasmCall`: `syncState`.
     const result = await page.evaluate(async () => {
-      const client = window.client as any;
+      const inner = window.client as any;
+      const client = new (window as any).MidenClient(
+        inner,
+        (window as any).getWasmOrThrow,
+        null
+      );
       const completed = await Promise.race([
         client._withInnerWebClient(async (inner: any) => {
           // syncState is defined on the wrapper class and uses
@@ -93,7 +107,12 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     // wait for `fn` to settle — it cannot interleave on the same WASM
     // instance.
     const result = await page.evaluate(async () => {
-      const client = window.client as any;
+      const inner = window.client as any;
+      const client = new (window as any).MidenClient(
+        inner,
+        (window as any).getWasmOrThrow,
+        null
+      );
       const order: string[] = [];
       const innerFinished = Promise.withResolvers
         ? Promise.withResolvers<void>()
@@ -121,9 +140,11 @@ test.describe("_withInnerWebClient re-entrancy", () => {
       // It should NOT run until `innerSlot` resolves.
       const externalSlot = (async () => {
         await Promise.resolve();
-        // Acquire the chain via syncState's `_serializeWasmCall`.
+        // Acquire the chain via syncState's `_serializeWasmCall`. Uses the
+        // shared inner client so it queues on the SAME chain the inner slot
+        // holds — `client` (the MidenClient wrapper) has no `syncState`.
         order.push("external-queued");
-        const summary = await client.syncState();
+        const summary = await inner.syncState();
         order.push("external-ran");
         return summary.blockNum();
       })();
@@ -148,7 +169,12 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     // future calls). After a rejected fn, subsequent SDK calls should
     // see normal queueing behavior.
     const result = await page.evaluate(async () => {
-      const client = window.client as any;
+      const inner = window.client as any;
+      const client = new (window as any).MidenClient(
+        inner,
+        (window as any).getWasmOrThrow,
+        null
+      );
       let threw = false;
       try {
         await client._withInnerWebClient(async () => {
@@ -159,9 +185,10 @@ test.describe("_withInnerWebClient re-entrancy", () => {
       }
 
       // Now do a normal SDK call and an external call to verify the
-      // chain is still healthy.
-      const a = client.syncState();
-      const b = client.syncState();
+      // chain is still healthy. Issued on the shared inner client (the
+      // `MidenClient` wrapper exposes `sync()`, not `syncState()`).
+      const a = inner.syncState();
+      const b = inner.syncState();
       const [r1, r2] = await Promise.all([a, b]);
       return {
         threw,
