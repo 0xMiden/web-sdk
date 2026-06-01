@@ -536,6 +536,11 @@ class WebClient {
     // would panic with "recursive use of an object detected" due to
     // wasm-bindgen's internal RefCell.
     this._wasmCallChain = Promise.resolve();
+    // Depth counter for `_withInnerWebClient` re-entrancy. While > 0,
+    // `_serializeWasmCall` runs its callback inline instead of queueing
+    // it on the chain — see the comment on `_serializeWasmCall` for the
+    // safety contract.
+    this._withInnerLockDepth = 0;
   }
 
   /**
@@ -549,10 +554,27 @@ class WebClient {
    * without it, concurrent main-thread callers would panic with
    * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
    *
+   * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
+   * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
+   * (no chain enqueue). The outer `_withInnerWebClient` invocation
+   * already holds the chain via its own wrapping `_serializeWasmCall`,
+   * so enqueueing the inner call would deadlock (the inner queues
+   * behind the outer; the outer awaits the inner). The inline run is
+   * safe because the chain still serializes against external callers
+   * — they queue behind the outer call's chain slot, which only resolves
+   * after `fn` (including all inline re-entries) settles. Callers of
+   * `_withInnerWebClient` MUST hold an external mutex preventing
+   * concurrent access via other code paths on this same instance during
+   * the callback; without that, an external task running between two
+   * awaits inside `fn` would race wasm-bindgen's borrow check.
+   *
    * @param {() => Promise<any>} fn - The async function to execute.
    * @returns {Promise<any>} The result of fn.
    */
   _serializeWasmCall(fn) {
+    if (this._withInnerLockDepth > 0) {
+      return Promise.resolve().then(fn);
+    }
     const result = this._wasmCallChain.catch(() => {}).then(fn);
     this._wasmCallChain = result.catch(() => {});
     return result;

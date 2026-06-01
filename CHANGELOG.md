@@ -1,12 +1,19 @@
 # Changelog
 
-## 0.14.10 (TBA)
+## 0.14.11 (TBA)
 
 ### Fixes
 
 * [FIX][web] **`JsAccountUpdate` / `JsStorageMapEntry` / `JsStorageSlot` / `JsVaultAsset` no longer crash under Next.js 16.2 dev-mode console patches.** These four wasm-bindgen structs were declared with `#[wasm_bindgen(inspectable)]`, which made the JS bridge auto-emit a `toJSON()` method that reads every `pub` field through a WASM round-trip (`wasm.__wbg_get_<class>_<field>(this.__wbg_ptr)`). Next.js 16.2's dev-mode `clientFileLogger.log` path runs every non-primitive `console.*` argument through `safe-stable-stringify`, which invokes `toJSON()` automatically — firing 11 WASM getter calls per `console.log(update)`. If the underlying pointer had been freed or another WASM call was in flight, the resulting `"null pointer passed to rust"` trap propagated out of the user's `console.log` call site and crashed the caller (originally surfaced by the Lumina team). Dropping `inspectable` on these four structs (none of the other `inspectable` usages in the SDK have public fields, so they were never affected) skips the auto-generated `toJSON()`; `JSON.stringify` and `safe-stable-stringify` now fall back to `{}` (the wasm-bindgen wrapper has no own enumerable data — it's all behind the `__wbg_ptr`). Field access via the named getters is unchanged. Fixes [`miden-client#2183`](https://github.com/0xMiden/miden-client/issues/2183).
+* [FIX][web] Fixed `_withInnerWebClient` re-entrant deadlock. Calling any proxied async wasm method on the `inner` client inside the callback — `inner.getInputNote(...)`, `inner.executeTransaction(...)`, `inner.submitProvenTransaction(...)`, `inner.applyTransaction(...)`, etc. — enqueued onto the same `_serializeWasmCall` chain that `_withInnerWebClient` itself had already claimed for the callback, so the inner call would wait for the outer to settle while the outer awaited the inner — classic re-entrant-lock deadlock with no timeout. `_serializeWasmCall` now runs its callback inline when `_withInnerLockDepth > 0` (set/cleared by `_withInnerWebClient` around `await fn(inner)`), so inner calls "borrow" the already-held chain slot instead of trying to re-acquire it; external callers still queue behind the outer slot. This was the load-bearing bug behind the Miden Wallet's `proveLocallyViaOffscreen` consume path hanging indefinitely with local proving enabled on Chrome MV3 (`generateTransaction:consume` reached "acquired tx lock; calling midenClient dispatch" then never logged another marker), which surfaced to users as a "cannot reach the miden node" connectivity banner via downstream `withWasmClientLock` timeouts in the SW's `SyncManager`. SAFETY CONTRACT: re-entrancy assumes the caller holds an external mutex preventing concurrent access via other code paths during `fn` — the wallet's own `withWasmClientLock` discipline satisfies this. See the docstring on `_withInnerWebClient` for details.
 
-## 0.14.9 (TBA)
+## 0.14.10 (2026-05-19)
+
+### Changes
+
+* [CHORE][web] Bumped `miden-client` to `0.14.9` and `miden-vm` crates to `0.22.4`.
+
+## 0.14.9 (2026-05-13)
 
 ### Features
 
