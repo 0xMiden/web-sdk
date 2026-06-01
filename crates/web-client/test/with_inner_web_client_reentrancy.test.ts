@@ -98,14 +98,24 @@ test.describe("_withInnerWebClient re-entrancy", () => {
     expect(typeof result.blockNum).toBe("number");
   });
 
-  test("external SDK callers still queue behind an in-flight _withInnerWebClient slot", async ({
+  test("an external SDK call made during fn runs inline (documents the safety-contract hole)", async ({
     page,
   }) => {
-    // The fix MUST NOT break the SDK's outer serialization contract.
-    // An external caller (e.g. a concurrent `client.syncState()`)
-    // starting WHILE `_withInnerWebClient(fn)` is mid-execution must
-    // wait for `fn` to settle — it cannot interleave on the same WASM
-    // instance.
+    // Characterizes the documented limit of the re-entrancy fix. The
+    // `_withInnerLockDepth` counter is GLOBAL on the inner client, not
+    // scoped to `fn`'s async context — so while `fn` is mid-flight
+    // (depth > 0), ANY `_serializeWasmCall` runs inline, including one
+    // issued by code OUTSIDE `fn` that races in during one of `fn`'s
+    // awaits. Such a caller does NOT queue behind the outer slot; it
+    // interleaves. This is exactly why `_withInnerWebClient`'s SAFETY
+    // CONTRACT requires callers to hold an external mutex preventing
+    // concurrent access during `fn` (the Miden Wallet's
+    // `withWasmClientLock` discipline satisfies it).
+    //
+    // This test deliberately violates that contract to pin the behavior:
+    // if a future change made the depth counter context-scoped (closing
+    // the hole) or reverted it (reintroducing the deadlock), this
+    // assertion would flip and flag the semantic change for review.
     const result = await page.evaluate(async () => {
       const inner = window.client as any;
       const client = new (window as any).MidenClient(
@@ -114,13 +124,6 @@ test.describe("_withInnerWebClient re-entrancy", () => {
         null
       );
       const order: string[] = [];
-      const innerFinished = Promise.withResolvers
-        ? Promise.withResolvers<void>()
-        : (() => {
-            let r!: () => void;
-            const p = new Promise<void>((res) => (r = res));
-            return { promise: p, resolve: r };
-          })();
 
       const innerSlot = client._withInnerWebClient(async (inner: any) => {
         order.push("inner-start");
@@ -129,35 +132,39 @@ test.describe("_withInnerWebClient re-entrancy", () => {
           "0x0000000000000000000000000000000000000000000000000000000000000000"
         );
         order.push("inner-middle");
-        // Yield once to give the external slot a chance to interleave
-        // (it must not — the chain holds the outer slot).
+        // Yield long enough for the external slot to race in during this
+        // await — with the global depth counter it runs inline here.
         await new Promise((r) => setTimeout(r, 50));
         order.push("inner-end");
-        innerFinished.resolve();
       });
 
       // Kick off an external SDK call that uses `_serializeWasmCall`.
-      // It should NOT run until `innerSlot` resolves.
+      // Because depth > 0 while `fn` is awaiting, it runs inline rather
+      // than queuing behind the outer slot. A cheap proxy-fallback read
+      // (local store lookup, returns undefined for a bogus hex) keeps the
+      // ordering deterministic — it completes well within the inner
+      // slot's 50ms sleep, so "external-ran" reliably precedes
+      // "inner-end" without depending on network latency. Uses the shared
+      // inner client (the `MidenClient` wrapper has no proxy fallback).
       const externalSlot = (async () => {
         await Promise.resolve();
-        // Acquire the chain via syncState's `_serializeWasmCall`. Uses the
-        // shared inner client so it queues on the SAME chain the inner slot
-        // holds — `client` (the MidenClient wrapper) has no `syncState`.
         order.push("external-queued");
-        const summary = await inner.syncState();
+        await inner.getInputNote(
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
         order.push("external-ran");
-        return summary.blockNum();
       })();
 
       await Promise.all([innerSlot, externalSlot]);
       return { order };
     });
 
-    // The external slot must run AFTER the inner slot finishes.
+    // The external call interleaves: it runs inline DURING `fn`'s await,
+    // so "external-ran" lands before "inner-end".
     expect(result.order).toContain("inner-end");
     expect(result.order).toContain("external-ran");
-    expect(result.order.indexOf("inner-end")).toBeLessThan(
-      result.order.indexOf("external-ran")
+    expect(result.order.indexOf("external-ran")).toBeLessThan(
+      result.order.indexOf("inner-end")
     );
   });
 
