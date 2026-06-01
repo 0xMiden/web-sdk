@@ -466,6 +466,29 @@ describe("initializeSignerAccount", () => {
       expect(result).toBe("0xstringrejection");
     });
 
+    it("should tolerate a fresh account not yet on the network (does not error the provider)", async () => {
+      // A brand-new wallet's account isn't registered on-chain yet, so
+      // importAccountById fails with "not found on the network". This must NOT
+      // throw — otherwise MidenProvider errors out and the user can't build the
+      // first transaction that would register the account (a catch-22).
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xfreshaccount",
+      });
+      mockClient.importAccountById.mockRejectedValue(
+        new Error(
+          "failed to import public account: account with id 0xfreshaccount not found on the network"
+        )
+      );
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(result).toBe("0xfreshaccount");
+      // syncState still runs after the tolerated error.
+      expect(mockClient.syncState).toHaveBeenCalled();
+      // Fast path: never rebuilds the account locally.
+      expect(AccountBuilder).not.toHaveBeenCalled();
+    });
+
     it("should re-throw non-tracked errors in importAccountId path", async () => {
       const config = createMockSignerAccountConfig({
         importAccountId: "0xbadimport",

@@ -80,7 +80,26 @@ export async function initializeSignerAccount(
       await client.importAccountById(accountId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("already being tracked")) {
+      // Tolerate two benign cases; rethrow anything else (e.g. a real network
+      // failure) so genuine problems still surface as an init error.
+      //
+      // - "not found on the network": the account is fresh — a brand-new wallet
+      //   whose account isn't registered on-chain yet (miden-client's
+      //   ClientError::AccountNotFoundOnChain). Expected, not fatal: rethrowing
+      //   errors out MidenProvider and leaves new users unable to do anything —
+      //   a catch-22, since registering the account on-chain is exactly what
+      //   they're blocked from. The local client keeps no record of the account
+      //   until it lands on-chain and a later syncState() imports it; until then
+      //   useAccount(accountId) returns null, which is the correct fresh state.
+      // - "already being tracked": the account is already imported locally.
+      //   Defensive — this import path overwrites, so it shouldn't normally
+      //   surface, but tolerating it is harmless.
+      //
+      // These match on message text because the WASM boundary flattens the typed
+      // ClientError into a string; if miden-client rewords them, revisit.
+      const isFreshAccount = msg.includes("not found on the network");
+      const isAlreadyTracked = msg.includes("already being tracked");
+      if (!isAlreadyTracked && !isFreshAccount) {
         throw e;
       }
     }
