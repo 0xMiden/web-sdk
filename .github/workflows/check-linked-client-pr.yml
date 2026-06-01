@@ -67,8 +67,8 @@ jobs:
   scheduled-fanout:
     # The schedule trigger fires once per repo; we need to fan out across
     # every open PR that carries a Client PR marker so each gets its check
-    # re-evaluated. On `pull_request` events we skip this and run `gate`
-    # directly with the event's PR.
+    # re-evaluated. On `pull_request_target` events we skip this and run
+    # `gate` directly with the event's PR.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     outputs:
@@ -87,7 +87,7 @@ jobs:
     needs: [scheduled-fanout]
     if: |
       always() &&
-      (github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request_target' ||
        (github.event_name == 'schedule' && needs.scheduled-fanout.outputs.prs != '[]'))
     runs-on: ubuntu-24.04
     strategy:
