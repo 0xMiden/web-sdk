@@ -393,7 +393,7 @@ export interface PswapCreateOptions extends TransactionOptions {
   request: Asset;
   /** Visibility of the PSWAP note itself. */
   type?: NoteVisibility;
-  /** Visibility of the payback note fillers emit to the creator. Defaults to `private`. */
+  /** Visibility of the payback note fillers emit to the creator. Defaults to `public`. */
   paybackType?: NoteVisibility;
 }
 

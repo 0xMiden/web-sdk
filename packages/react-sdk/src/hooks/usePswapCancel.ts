@@ -66,6 +66,7 @@ export function usePswapCancel(): UsePswapCancelResult {
       try {
         const accountIdObj = parseAccountId(options.accountId);
 
+        setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
           const note = await resolveNoteInput(options.note, client);
 
@@ -74,7 +75,6 @@ export function usePswapCancel(): UsePswapCancelResult {
             accountIdObj
           );
 
-          setStage("proving");
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,
@@ -83,7 +83,7 @@ export function usePswapCancel(): UsePswapCancelResult {
               )
             : await client.submitNewTransaction(accountIdObj, txRequest);
 
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");

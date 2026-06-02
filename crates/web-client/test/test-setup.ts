@@ -666,7 +666,105 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           return { accountAAssets, accountBAssets };
         },
 
-        mockPswap: async (
+        mockPswapFullFill: async (
+          creatorId,
+          fillerId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          pswapNoteType,
+          paybackNoteType
+        ) => {
+          const c = window.client;
+          const vaultAssets = (account) =>
+            account
+              ?.vault()
+              .fungibleAssets()
+              .map((asset) => ({
+                assetId: asset.faucetId().toString(),
+                amount: asset.amount().toString(),
+              }));
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+          const pbNoteType =
+            paybackNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            pbNoteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const consumeRequest = c.newPswapConsumeTransactionRequest(
+            pswapNoteRecord.toNote(),
+            fillerId,
+            BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
+            BigInt(0)
+          );
+          const consumeTxId = await c.submitNewTransaction(
+            fillerId,
+            consumeRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [consumeTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId])
+          );
+          const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+          // A full fill produces exactly one payback note (no remainder PSWAP note).
+          if (consumeOutputNotes.length !== 1) {
+            throw new Error(
+              `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+            );
+          }
+          const paybackNoteId = consumeOutputNotes[0].id().toString();
+          const paybackNoteRecord = await c.getInputNote(paybackNoteId);
+          if (!paybackNoteRecord)
+            throw new Error(`Payback note ${paybackNoteId} not found`);
+          const paybackConsume = c.newConsumeTransactionRequest([
+            paybackNoteRecord.toNote(),
+          ]);
+          await c.submitNewTransaction(creatorId, paybackConsume);
+          await c.proveBlock();
+          await c.syncState();
+
+          return {
+            creatorAssets: vaultAssets(await c.getAccount(creatorId)),
+            fillerAssets: vaultAssets(await c.getAccount(fillerId)),
+            consumeOutputNoteCount: consumeOutputNotes.length,
+          };
+        },
+
+        mockPswapPartialFill: async (
           creatorId,
           fillerId,
           offeredFaucetId,
@@ -678,6 +776,14 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           paybackNoteType
         ) => {
           const c = window.client;
+          const vaultAssets = (account) =>
+            account
+              ?.vault()
+              .fungibleAssets()
+              .map((asset) => ({
+                assetId: asset.faucetId().toString(),
+                amount: asset.amount().toString(),
+              }));
           const noteType =
             pswapNoteType === "public"
               ? window.NoteType.Public
@@ -733,13 +839,29 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           );
           const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
 
-          // A full fill produces exactly one payback note (no remainder PSWAP note).
-          if (consumeOutputNotes.length !== 1) {
+          // A partial fill emits a payback note plus a remainder PSWAP note.
+          if (consumeOutputNotes.length !== 2) {
             throw new Error(
-              `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+              `Expected a payback note and a remainder PSWAP note from a partial fill, got ${consumeOutputNotes.length}`
             );
           }
-          const paybackNoteId = consumeOutputNotes[0].id().toString();
+
+          // The remainder PSWAP note carries the offered asset; the payback
+          // note carries the requested asset destined for the creator.
+          const offeredFaucetStr = offeredFaucetId.toString();
+          let paybackNoteId;
+          let remainderOfferedAmount;
+          for (const note of consumeOutputNotes) {
+            const asset = note.assets()?.fungibleAssets()[0];
+            if (asset && asset.faucetId().toString() === offeredFaucetStr) {
+              remainderOfferedAmount = asset.amount().toString();
+            } else {
+              paybackNoteId = note.id().toString();
+            }
+          }
+          if (!paybackNoteId)
+            throw new Error("Payback note not found in consume output");
+
           const paybackNoteRecord = await c.getInputNote(paybackNoteId);
           if (!paybackNoteRecord)
             throw new Error(`Payback note ${paybackNoteId} not found`);
@@ -750,26 +872,11 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           await c.proveBlock();
           await c.syncState();
 
-          const creator = await c.getAccount(creatorId);
-          const creatorAssets = creator
-            ?.vault()
-            .fungibleAssets()
-            .map((asset) => ({
-              assetId: asset.faucetId().toString(),
-              amount: asset.amount().toString(),
-            }));
-          const filler = await c.getAccount(fillerId);
-          const fillerAssets = filler
-            ?.vault()
-            .fungibleAssets()
-            .map((asset) => ({
-              assetId: asset.faucetId().toString(),
-              amount: asset.amount().toString(),
-            }));
           return {
-            creatorAssets,
-            fillerAssets,
+            creatorAssets: vaultAssets(await c.getAccount(creatorId)),
+            fillerAssets: vaultAssets(await c.getAccount(fillerId)),
             consumeOutputNoteCount: consumeOutputNotes.length,
+            remainderOfferedAmount,
           };
         },
 
@@ -966,7 +1073,29 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         swapNoteType,
         paybackNoteType
       ),
-    mockPswap: (
+    mockPswapFullFill: (
+      creatorId: any,
+      fillerId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      pswapNoteType?: string,
+      paybackNoteType?: string
+    ) =>
+      h.mockPswapFullFill(
+        client,
+        sdk,
+        creatorId,
+        fillerId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        pswapNoteType,
+        paybackNoteType
+      ),
+    mockPswapPartialFill: (
       creatorId: any,
       fillerId: any,
       offeredFaucetId: any,
@@ -977,7 +1106,7 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
       pswapNoteType?: string,
       paybackNoteType?: string
     ) =>
-      h.mockPswap(
+      h.mockPswapPartialFill(
         client,
         sdk,
         creatorId,

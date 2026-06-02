@@ -214,7 +214,11 @@ impl WebClient {
                     &pswap_transaction_data,
                     note_type.into(),
                     payback_note_type.into(),
-                    // V1: PSWAP notes carry no attachment (not yet exposed in JS).
+                    // V1 limitation: PSWAP notes always use the default (empty)
+                    // attachment — it is not yet exposed to JS callers. Follow-up:
+                    // surface an optional `attachment` field on PswapCreateOptions
+                    // in a non-breaking way. Until then, do not change this default
+                    // without bumping existing PSWAP note compatibility.
                     NoteAttachment::default(),
                     client.rng(),
                 )

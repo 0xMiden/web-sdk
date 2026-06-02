@@ -242,9 +242,8 @@ describe("usePswapConsume", () => {
         });
       });
 
-      // "executing" is observable until the request is built inside the lock.
-      expect(result.current.stage).toBe("executing");
-
+      // "proving" is the first observable stage because setStage runs
+      // synchronously before the WASM lock is awaited.
       await waitFor(() => {
         expect(result.current.stage).toBe("proving");
       });
@@ -327,6 +326,61 @@ describe("usePswapConsume", () => {
       await waitFor(() => {
         expect(result.current.error?.message).toBe("boom");
       });
+    });
+
+    it("rejects a non-positive fillAmount before touching the client", async () => {
+      const mockClient = createMockWebClient({
+        newPswapConsumeTransactionRequest: vi.fn(),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => usePswapConsume());
+
+      await act(async () => {
+        await expect(
+          result.current.pswapConsume({
+            accountId: "0x1",
+            note: "0xpswap_note",
+            fillAmount: 0n,
+          })
+        ).rejects.toThrow("fillAmount must be greater than 0");
+      });
+
+      expect(
+        mockClient.newPswapConsumeTransactionRequest
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a negative noteFillAmount before touching the client", async () => {
+      const mockClient = createMockWebClient({
+        newPswapConsumeTransactionRequest: vi.fn(),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => usePswapConsume());
+
+      await act(async () => {
+        await expect(
+          result.current.pswapConsume({
+            accountId: "0x1",
+            note: "0xpswap_note",
+            fillAmount: 25n,
+            noteFillAmount: -1n,
+          })
+        ).rejects.toThrow("noteFillAmount must not be negative");
+      });
+
+      expect(
+        mockClient.newPswapConsumeTransactionRequest
+      ).not.toHaveBeenCalled();
     });
   });
 

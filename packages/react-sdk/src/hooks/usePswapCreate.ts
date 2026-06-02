@@ -68,6 +68,15 @@ export function usePswapCreate(): UsePswapCreateResult {
         throw new Error("Miden client is not ready");
       }
 
+      const offeredAmount = BigInt(options.offeredAmount);
+      const requestedAmount = BigInt(options.requestedAmount);
+      if (offeredAmount <= 0n) {
+        throw new Error("offeredAmount must be greater than 0");
+      }
+      if (requestedAmount <= 0n) {
+        throw new Error("requestedAmount must be greater than 0");
+      }
+
       setIsLoading(true);
       setStage("executing");
       setError(null);
@@ -82,18 +91,18 @@ export function usePswapCreate(): UsePswapCreateResult {
         const offeredFaucetIdObj = parseAccountId(options.offeredFaucetId);
         const requestedFaucetIdObj = parseAccountId(options.requestedFaucetId);
 
+        setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
           const txRequest = await client.newPswapCreateTransactionRequest(
             accountIdObj,
             offeredFaucetIdObj,
-            BigInt(options.offeredAmount),
+            offeredAmount,
             requestedFaucetIdObj,
-            BigInt(options.requestedAmount),
+            requestedAmount,
             noteType,
             paybackNoteType
           );
 
-          setStage("proving");
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,
@@ -102,7 +111,7 @@ export function usePswapCreate(): UsePswapCreateResult {
               )
             : await client.submitNewTransaction(accountIdObj, txRequest);
 
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");

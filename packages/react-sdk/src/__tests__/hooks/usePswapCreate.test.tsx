@@ -262,9 +262,8 @@ describe("usePswapCreate", () => {
         });
       });
 
-      // "executing" is observable until the request is built inside the lock.
-      expect(result.current.stage).toBe("executing");
-
+      // "proving" is the first observable stage because setStage runs
+      // synchronously before the WASM lock is awaited.
       await waitFor(() => {
         expect(result.current.stage).toBe("proving");
       });
@@ -335,12 +334,70 @@ describe("usePswapCreate", () => {
           result.current.pswapCreate({
             accountId: "0x1",
             offeredFaucetId: "0xA",
-            offeredAmount: 0n,
+            offeredAmount: 100n,
             requestedFaucetId: "0xB",
-            requestedAmount: 0n,
+            requestedAmount: 50n,
           })
         ).rejects.toThrow("Invalid PSWAP parameters");
       });
+    });
+
+    it("rejects a non-positive offeredAmount before touching the client", async () => {
+      const mockClient = createMockWebClient({
+        newPswapCreateTransactionRequest: vi.fn(),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => usePswapCreate());
+
+      await act(async () => {
+        await expect(
+          result.current.pswapCreate({
+            accountId: "0x1",
+            offeredFaucetId: "0xA",
+            offeredAmount: 0n,
+            requestedFaucetId: "0xB",
+            requestedAmount: 50n,
+          })
+        ).rejects.toThrow("offeredAmount must be greater than 0");
+      });
+
+      expect(
+        mockClient.newPswapCreateTransactionRequest
+      ).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-positive requestedAmount before touching the client", async () => {
+      const mockClient = createMockWebClient({
+        newPswapCreateTransactionRequest: vi.fn(),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => usePswapCreate());
+
+      await act(async () => {
+        await expect(
+          result.current.pswapCreate({
+            accountId: "0x1",
+            offeredFaucetId: "0xA",
+            offeredAmount: 100n,
+            requestedFaucetId: "0xB",
+            requestedAmount: 0n,
+          })
+        ).rejects.toThrow("requestedAmount must be greater than 0");
+      });
+
+      expect(
+        mockClient.newPswapCreateTransactionRequest
+      ).not.toHaveBeenCalled();
     });
 
     it("should wrap non-Error throws in Error", async () => {
@@ -375,7 +432,10 @@ describe("usePswapCreate", () => {
       });
     });
 
-    it("should handle same asset create error", async () => {
+    it("propagates client errors (e.g. same-asset rejection) to the caller", async () => {
+      // Same-asset validation lives in the WASM client and is exercised by the
+      // pswap integration tests. Here we only assert the hook surfaces whatever
+      // the client throws.
       const mockClient = createMockWebClient({
         newPswapCreateTransactionRequest: vi.fn().mockImplementation(() => {
           throw new Error("Cannot create PSWAP with same asset");
@@ -557,7 +617,10 @@ describe("usePswapCreate", () => {
   });
 
   describe("bigint handling", () => {
-    it("should preserve large amounts", async () => {
+    // Real large-amount behavior is exercised end-to-end by the pswap
+    // integration tests. Here we only assert the hook forwards the bigint
+    // amounts to the client unchanged (no precision loss / coercion).
+    it("forwards large bigint amounts unchanged to the client", async () => {
       const mockTxId = createMockTransactionId();
       const mockClient = createMockWebClient({
         newPswapCreateTransactionRequest: vi

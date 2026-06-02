@@ -320,15 +320,23 @@ export async function mockSwap(
   return { accountAAssets, accountBAssets };
 }
 
+function vaultAssets(account: any): { assetId: string; amount: string }[] {
+  return account
+    ?.vault()
+    .fungibleAssets()
+    .map((asset: any) => ({
+      assetId: asset.faucetId().toString(),
+      amount: asset.amount().toString(),
+    }));
+}
+
 /**
- * Performs a full-fill partial-swap (PSWAP) between two accounts on the mock
- * chain. Mirrors `mockSwap`, but exercises the dedicated PSWAP builders:
- * the creator emits a PSWAP note, the filler consumes it supplying the full
- * requested amount (so no remainder note is produced), and the creator
- * consumes the resulting payback note. End state is identical to a plain
- * swap of the same amounts.
+ * Creates a PSWAP note from `creatorId` and fills it from `fillerId` supplying
+ * `fillAmount` of the requested asset. Returns the filler's consume output
+ * notes so the caller can assert on the full-fill (one payback note) vs.
+ * partial-fill (payback note + remainder PSWAP note) shapes.
  */
-export async function mockPswap(
+async function createAndFillPswapNote(
   client: any,
   sdk: any,
   creatorId: any,
@@ -338,13 +346,9 @@ export async function mockPswap(
   requestedFaucetId: any,
   requestedAmount: number,
   fillAmount: number,
-  pswapNoteType: string = "private",
-  paybackNoteType: string = "private"
-): Promise<{
-  creatorAssets: { assetId: string; amount: string }[];
-  fillerAssets: { assetId: string; amount: string }[];
-  consumeOutputNoteCount: number;
-}> {
+  pswapNoteType: string,
+  paybackNoteType: string
+): Promise<{ consumeOutputNotes: any[] }> {
   const noteType =
     pswapNoteType === "public" ? sdk.NoteType.Public : sdk.NoteType.Private;
   const pbNoteType =
@@ -391,15 +395,53 @@ export async function mockPswap(
   const [consumeTxRecord] = await client.getTransactions(
     sdk.TransactionFilter.ids([consumeTxId])
   );
-  const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+  return { consumeOutputNotes: consumeTxRecord.outputNotes().notes() };
+}
 
-  // 3. Creator consumes the payback note carrying the requested asset.
-  //    A full fill produces exactly this one note (no remainder PSWAP note).
+/**
+ * Performs a full-fill partial-swap (PSWAP) between two accounts on the mock
+ * chain. The filler supplies the entire requested amount, so the consume
+ * produces exactly one payback note (no remainder PSWAP note). The creator
+ * then consumes the payback note. End state is identical to a plain swap of
+ * the same amounts.
+ */
+export async function mockPswapFullFill(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  fillerId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  pswapNoteType: string = "private",
+  paybackNoteType: string = "private"
+): Promise<{
+  creatorAssets: { assetId: string; amount: string }[];
+  fillerAssets: { assetId: string; amount: string }[];
+  consumeOutputNoteCount: number;
+}> {
+  const { consumeOutputNotes } = await createAndFillPswapNote(
+    client,
+    sdk,
+    creatorId,
+    fillerId,
+    offeredFaucetId,
+    offeredAmount,
+    requestedFaucetId,
+    requestedAmount,
+    requestedAmount, // full fill: filler supplies the entire requested amount
+    pswapNoteType,
+    paybackNoteType
+  );
+
   if (consumeOutputNotes.length !== 1) {
     throw new Error(
       `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
     );
   }
+
+  // Creator consumes the payback note carrying the requested asset.
   const paybackNoteId = consumeOutputNotes[0].id().toString();
   const paybackNoteRecord = await client.getInputNote(paybackNoteId);
   if (!paybackNoteRecord)
@@ -411,28 +453,91 @@ export async function mockPswap(
   await client.proveBlock();
   await client.syncState();
 
-  // 4. Final asset snapshots.
-  const creator = await client.getAccount(creatorId);
-  const creatorAssets = creator
-    ?.vault()
-    .fungibleAssets()
-    .map((asset: any) => ({
-      assetId: asset.faucetId().toString(),
-      amount: asset.amount().toString(),
-    }));
-  const filler = await client.getAccount(fillerId);
-  const fillerAssets = filler
-    ?.vault()
-    .fungibleAssets()
-    .map((asset: any) => ({
-      assetId: asset.faucetId().toString(),
-      amount: asset.amount().toString(),
-    }));
+  return {
+    creatorAssets: vaultAssets(await client.getAccount(creatorId)),
+    fillerAssets: vaultAssets(await client.getAccount(fillerId)),
+    consumeOutputNoteCount: consumeOutputNotes.length,
+  };
+}
+
+/**
+ * Performs a partial-fill PSWAP. The filler supplies less than the requested
+ * amount, so the consume emits two notes: a payback note carrying the filled
+ * portion of the requested asset (which the creator consumes) and a remainder
+ * PSWAP note carrying the unfilled portion of the offered asset (left on-chain
+ * for another filler). Returns the remainder note's offered-asset amount so
+ * callers can assert the unfilled portion was carried forward correctly.
+ */
+export async function mockPswapPartialFill(
+  client: any,
+  sdk: any,
+  creatorId: any,
+  fillerId: any,
+  offeredFaucetId: any,
+  offeredAmount: number,
+  requestedFaucetId: any,
+  requestedAmount: number,
+  fillAmount: number,
+  pswapNoteType: string = "private",
+  paybackNoteType: string = "private"
+): Promise<{
+  creatorAssets: { assetId: string; amount: string }[];
+  fillerAssets: { assetId: string; amount: string }[];
+  consumeOutputNoteCount: number;
+  remainderOfferedAmount: string | undefined;
+}> {
+  const { consumeOutputNotes } = await createAndFillPswapNote(
+    client,
+    sdk,
+    creatorId,
+    fillerId,
+    offeredFaucetId,
+    offeredAmount,
+    requestedFaucetId,
+    requestedAmount,
+    fillAmount,
+    pswapNoteType,
+    paybackNoteType
+  );
+
+  if (consumeOutputNotes.length !== 2) {
+    throw new Error(
+      `Expected a payback note and a remainder PSWAP note from a partial fill, got ${consumeOutputNotes.length}`
+    );
+  }
+
+  // The remainder PSWAP note carries the offered asset; the payback note
+  // carries the requested asset destined for the creator.
+  const offeredFaucetStr = offeredFaucetId.toString();
+  let paybackNoteId: string | undefined;
+  let remainderOfferedAmount: string | undefined;
+  for (const note of consumeOutputNotes) {
+    const asset = note.assets()?.fungibleAssets()[0];
+    if (asset && asset.faucetId().toString() === offeredFaucetStr) {
+      remainderOfferedAmount = asset.amount().toString();
+    } else {
+      paybackNoteId = note.id().toString();
+    }
+  }
+
+  if (!paybackNoteId)
+    throw new Error("Payback note not found in consume output");
+
+  const paybackNoteRecord = await client.getInputNote(paybackNoteId);
+  if (!paybackNoteRecord)
+    throw new Error(`Payback note ${paybackNoteId} not found`);
+  const paybackConsume = client.newConsumeTransactionRequest([
+    paybackNoteRecord.toNote(),
+  ]);
+  await client.submitNewTransaction(creatorId, paybackConsume);
+  await client.proveBlock();
+  await client.syncState();
 
   return {
-    creatorAssets,
-    fillerAssets,
+    creatorAssets: vaultAssets(await client.getAccount(creatorId)),
+    fillerAssets: vaultAssets(await client.getAccount(fillerId)),
     consumeOutputNoteCount: consumeOutputNotes.length,
+    remainderOfferedAmount,
   };
 }
 

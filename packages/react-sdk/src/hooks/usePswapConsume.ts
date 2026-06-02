@@ -65,6 +65,15 @@ export function usePswapConsume(): UsePswapConsumeResult {
         throw new Error("Miden client is not ready");
       }
 
+      const fillAmount = BigInt(options.fillAmount);
+      const noteFillAmount = BigInt(options.noteFillAmount ?? 0);
+      if (fillAmount <= 0n) {
+        throw new Error("fillAmount must be greater than 0");
+      }
+      if (noteFillAmount < 0n) {
+        throw new Error("noteFillAmount must not be negative");
+      }
+
       setIsLoading(true);
       setStage("executing");
       setError(null);
@@ -72,17 +81,17 @@ export function usePswapConsume(): UsePswapConsumeResult {
       try {
         const accountIdObj = parseAccountId(options.accountId);
 
+        setStage("proving");
         const txResult = await runExclusiveSafe(async () => {
           const note = await resolveNoteInput(options.note, client);
 
           const txRequest = await client.newPswapConsumeTransactionRequest(
             note,
             accountIdObj,
-            BigInt(options.fillAmount),
-            BigInt(options.noteFillAmount ?? 0)
+            fillAmount,
+            noteFillAmount
           );
 
-          setStage("proving");
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,
@@ -91,7 +100,7 @@ export function usePswapConsume(): UsePswapConsumeResult {
               )
             : await client.submitNewTransaction(accountIdObj, txRequest);
 
-          return { transactionId: txId.toString() };
+          return { transactionId: txId.toHex() };
         });
 
         setStage("complete");

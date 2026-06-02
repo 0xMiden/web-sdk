@@ -198,9 +198,8 @@ describe("usePswapCancel", () => {
         });
       });
 
-      // "executing" is observable until the request is built inside the lock.
-      expect(result.current.stage).toBe("executing");
-
+      // "proving" is the first observable stage because setStage runs
+      // synchronously before the WASM lock is awaited.
       await waitFor(() => {
         expect(result.current.stage).toBe("proving");
       });
