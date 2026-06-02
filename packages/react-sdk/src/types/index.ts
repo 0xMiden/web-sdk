@@ -40,7 +40,6 @@ export type {
   TransactionRequest,
   NoteType,
   Note,
-  NoteInput,
   AccountStorageMode,
 };
 

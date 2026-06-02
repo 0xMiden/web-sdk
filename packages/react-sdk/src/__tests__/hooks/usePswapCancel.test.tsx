@@ -410,7 +410,9 @@ describe("usePswapCancel", () => {
       await act(async () => {
         await result.current.pswapCancel({
           accountId: "0x1",
-          note: noteRecord,
+          // `as never` sidesteps the structural NoteInput typing — the loose
+          // test mock can't satisfy the full WASM InputNoteRecord class.
+          note: noteRecord as never,
         });
       });
 
@@ -442,7 +444,9 @@ describe("usePswapCancel", () => {
       await act(async () => {
         await result.current.pswapCancel({
           accountId: "0x1",
-          note,
+          // `as never` sidesteps the structural NoteInput typing — the loose
+          // test mock can't satisfy the full WASM Note class.
+          note: note as never,
         });
       });
 
