@@ -74,8 +74,27 @@ export async function initializeSignerAccount(
     try {
       await client.importAccountById(accountId);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("already being tracked")) {
+      // The WASM boundary attaches a stable, machine-readable `code` to the JS
+      // error for the ClientError variants callers branch on (see
+      // `code_from_error` in crates/web-client/src/lib.rs); it survives the
+      // worker shim. We match on that code rather than the changeable message.
+      const code = (e as { code?: string } | null | undefined)?.code;
+      // Tolerate two benign cases; rethrow anything else (e.g. a real network
+      // failure) so genuine problems still surface as an init error.
+      //
+      // - AccountNotFoundOnChain: the account is fresh — a brand-new wallet whose
+      //   account isn't registered on-chain yet. Expected, not fatal: rethrowing
+      //   errors out MidenProvider and leaves new users unable to do anything —
+      //   a catch-22, since registering the account on-chain is exactly what
+      //   they're blocked from. The local client keeps no record of the account
+      //   until it lands on-chain and a later syncState() imports it; until then
+      //   useAccount(accountId) returns null, which is the correct fresh state.
+      // - AccountAlreadyTracked: the account is already imported locally.
+      //   Defensive — this import path overwrites, so it shouldn't normally
+      //   surface, but tolerating it is harmless.
+      const isFreshAccount = code === "ACCOUNT_NOT_FOUND_ON_CHAIN";
+      const isAlreadyTracked = code === "ACCOUNT_ALREADY_TRACKED";
+      if (!isAlreadyTracked && !isFreshAccount) {
         throw e;
       }
     }
