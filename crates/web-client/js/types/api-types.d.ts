@@ -18,6 +18,7 @@ import type {
   TransactionRecord,
   InputNoteRecord,
   OutputNoteRecord,
+  ConsumableNoteRecord,
   NoteId,
   NoteFile,
   NoteTag,
@@ -827,6 +828,17 @@ export interface NotesResource {
   listAvailable(options: { account: AccountRef }): Promise<InputNoteRecord[]>;
 
   /**
+   * List notes consumable by an account, keeping each note's consumability
+   * metadata. Unlike {@link NotesResource.listAvailable}, the returned records
+   * expose `noteConsumability()`, so callers can distinguish notes consumable
+   * now from block-locked ones (status `consumableAfterBlock`).
+   *
+   * @param options - Optional account to check; omit to list notes consumable
+   *   by any tracked account.
+   */
+  listConsumable(options?: { account?: AccountRef }): Promise<ConsumableNoteRecord[]>;
+
+  /**
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
@@ -873,6 +885,21 @@ export interface CompileComponentOptions {
    * auth transaction kernel invocation or intentionally omits one.
    */
   supportAllTypes?: boolean;
+  /**
+   * Dependency modules the component imports (e.g. auth libraries), linked as
+   * source modules before compilation. Components always static-link their
+   * dependencies (so a component's MAST stays stable), hence no `linking`
+   * option here. Two entries sharing a `namespace` cause a link error.
+   */
+  libraries?: ComponentLibrary[];
+}
+
+/** A dependency module linked into an account component (always static). */
+export interface ComponentLibrary {
+  /** MASM namespace for the module (e.g. "openzeppelin::auth::multisig"). */
+  namespace: string;
+  /** MASM source code for the module. */
+  code: string;
 }
 
 export interface CompileTxScriptLibrary {

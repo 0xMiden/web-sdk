@@ -203,6 +203,44 @@ describe("NotesResource", () => {
     });
   });
 
+  describe("listConsumable", () => {
+    it("returns the consumable records unmapped (consumability preserved)", async () => {
+      const record = {
+        inputNoteRecord: vi.fn(),
+        noteConsumability: vi.fn(),
+      };
+      inner.getConsumableNotes.mockResolvedValue([record]);
+      const resource = makeResource();
+      const result = await resource.listConsumable({ account: "0xacc" });
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+      // Unlike listAvailable, the record itself is returned so callers can read
+      // noteConsumability() — it must not be mapped to inputNoteRecord().
+      expect(result).toEqual([record]);
+      expect(record.inputNoteRecord).not.toHaveBeenCalled();
+    });
+
+    it("passes undefined to getConsumableNotes when account is omitted", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable();
+      expect(inner.getConsumableNotes).toHaveBeenCalledWith(undefined);
+    });
+
+    it("treats null account as 'all accounts' (matches underlying API)", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable({ account: null });
+      expect(inner.getConsumableNotes).toHaveBeenCalledWith(undefined);
+    });
+
+    it("resolves the account ref when provided", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable({ account: "mBech32Account" });
+      expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mBech32Account");
+    });
+  });
+
   describe("import", () => {
     it("delegates to inner.importNoteFile", async () => {
       inner.importNoteFile.mockResolvedValue("imported");

@@ -119,6 +119,64 @@ test.describe("compile.component()", () => {
     expect(compA.getProcedureHash("get_count")).not.toBeNull();
     expect(compB.getProcedureHash("get_count")).not.toBeNull();
   });
+
+  test("linking a dependency module matches the raw createCodeBuilder().linkModule() path", async ({
+    sdk,
+  }) => {
+    // A component's compiled MAST determines the account's code commitment, which
+    // is baked into the account ID. `compile.component({ libraries })` must produce
+    // a byte-identical component to building it off a raw code builder with
+    // `linkModule` — otherwise enabling library linking would silently change the
+    // commitment and break accounts already created the manual way (e.g. the
+    // OpenZeppelin multisig auth component).
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+
+    const NS = "external_contract::counter_contract";
+    // Component imports the linked module and inlines one of its procedures,
+    // so compilation fails unless the dependency is linked.
+    const componentCode = `
+      use external_contract::counter_contract
+      use miden::core::sys
+
+      pub proc wrapped_increment
+        exec.counter_contract::increment_count
+        exec.sys::truncate_stack
+      end
+    `;
+    // Fresh slots per path: wasm-bindgen moves/frees StorageSlot handles
+    // when AccountComponent.compile consumes them, so an array can't be
+    // reused for a second compilation.
+    const makeSlots = () => [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)];
+
+    const digests = (component) =>
+      component
+        .getProcedures()
+        .map((p) => p.digest.toHex())
+        .sort();
+
+    // High-level path: compile.component with inline library linking.
+    const client = await MidenClient.createMock();
+    const viaResource = await client.compile.component({
+      code: componentCode,
+      slots: makeSlots(),
+      libraries: [{ namespace: NS, code: COUNTER_CODE }],
+    });
+
+    // Raw path: exactly what the multisig client does today.
+    const raw = await MidenClient._MockWasmWebClient.createClient();
+    const builder = await raw.createCodeBuilder();
+    builder.linkModule(NS, COUNTER_CODE);
+    const compiledCode = builder.compileAccountComponentCode(componentCode);
+    const viaRaw = sdk.AccountComponent.compile(
+      compiledCode,
+      makeSlots()
+    ).withSupportsAllTypes();
+
+    const resourceDigests = digests(viaResource);
+    expect(resourceDigests.length).toBeGreaterThan(0);
+    expect(resourceDigests).toEqual(digests(viaRaw));
+  });
 });
 
 // ════════════════════════════════════════════════════════════════

@@ -143,6 +143,70 @@ test.describe("compile.component()", () => {
     expect(result.aHasProc).toBe(true);
     expect(result.bHasProc).toBe(true);
   });
+
+  test("linking a dependency module matches the raw createCodeBuilder().linkModule() path", async ({
+    page,
+  }) => {
+    // A component's compiled MAST determines the account's code commitment, which
+    // is baked into the account ID. `compile.component({ libraries })` must produce
+    // a byte-identical component to building it off a raw code builder with
+    // `linkModule` — otherwise enabling library linking would silently change the
+    // commitment and break accounts already created the manual way (e.g. the
+    // OpenZeppelin multisig auth component).
+    const result = await page.evaluate(
+      async ({ counterCode, slotName }) => {
+        const NS = "external_contract::counter_contract";
+        // Component imports the linked module and inlines one of its procedures,
+        // so compilation fails unless the dependency is linked.
+        const componentCode = `
+          use external_contract::counter_contract
+          use miden::core::sys
+
+          pub proc wrapped_increment
+            exec.counter_contract::increment_count
+            exec.sys::truncate_stack
+          end
+        `;
+        // Fresh slots per path: wasm-bindgen moves/frees StorageSlot handles
+        // when AccountComponent.compile consumes them, so an array can't be
+        // reused for a second compilation.
+        const makeSlots = () => [window.StorageSlot.emptyValue(slotName)];
+
+        const digests = (component) =>
+          component
+            .getProcedures()
+            .map((p) => p.digest.toHex())
+            .sort();
+
+        // High-level path: compile.component with inline library linking.
+        const client = await window.MidenClient.createMock();
+        const viaResource = await client.compile.component({
+          code: componentCode,
+          slots: makeSlots(),
+          libraries: [{ namespace: NS, code: counterCode }],
+        });
+
+        // Raw path: exactly what the multisig client does today.
+        const raw = await window.MockWasmWebClient.createClient();
+        const builder = await raw.createCodeBuilder();
+        builder.linkModule(NS, counterCode);
+        const compiledCode = builder.compileAccountComponentCode(componentCode);
+        const viaRaw = window.AccountComponent.compile(
+          compiledCode,
+          makeSlots()
+        ).withSupportsAllTypes();
+
+        return {
+          resourceDigests: digests(viaResource),
+          rawDigests: digests(viaRaw),
+        };
+      },
+      { counterCode: COUNTER_CODE, slotName: COUNTER_SLOT_NAME }
+    );
+
+    expect(result.resourceDigests.length).toBeGreaterThan(0);
+    expect(result.resourceDigests).toEqual(result.rawDigests);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════
