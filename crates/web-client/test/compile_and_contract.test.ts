@@ -167,7 +167,10 @@ test.describe("compile.component()", () => {
             exec.sys::truncate_stack
           end
         `;
-        const slots = [window.StorageSlot.emptyValue(slotName)];
+        // Fresh slots per path: wasm-bindgen moves/frees StorageSlot handles
+        // when AccountComponent.compile consumes them, so an array can't be
+        // reused for a second compilation.
+        const makeSlots = () => [window.StorageSlot.emptyValue(slotName)];
 
         const digests = (component) =>
           component
@@ -179,7 +182,7 @@ test.describe("compile.component()", () => {
         const client = await window.MidenClient.createMock();
         const viaResource = await client.compile.component({
           code: componentCode,
-          slots,
+          slots: makeSlots(),
           libraries: [{ namespace: NS, code: counterCode }],
         });
 
@@ -190,7 +193,7 @@ test.describe("compile.component()", () => {
         const compiledCode = builder.compileAccountComponentCode(componentCode);
         const viaRaw = window.AccountComponent.compile(
           compiledCode,
-          slots
+          makeSlots()
         ).withSupportsAllTypes();
 
         return {
