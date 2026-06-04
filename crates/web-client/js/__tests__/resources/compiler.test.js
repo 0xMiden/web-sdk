@@ -7,6 +7,7 @@ function makeBuilder() {
     compileTxScript: vi.fn(),
     compileNoteScript: vi.fn(),
     buildLibrary: vi.fn(),
+    linkModule: vi.fn(),
     linkStaticLibrary: vi.fn(),
     linkDynamicLibrary: vi.fn(),
   };
@@ -107,6 +108,35 @@ describe("CompilerResource", () => {
       const resource = new CompilerResource(inner, getWasm);
       // Should not throw even without client
       await resource.component({ code: "code" });
+    });
+
+    it("static-links dependency modules via linkModule before compiling", async () => {
+      builder.compileAccountComponentCode.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({
+        code: "component code",
+        slots: [],
+        libraries: [
+          { namespace: "oz::auth::guardian", code: "guardian masm" },
+          { namespace: "oz::auth::multisig", code: "multisig masm" },
+        ],
+      });
+      // Modules are linked as source (linkModule), not via buildLibrary, so the
+      // compiled component is identical to building it off a raw code builder.
+      expect(builder.linkModule).toHaveBeenNthCalledWith(
+        1,
+        "oz::auth::guardian",
+        "guardian masm"
+      );
+      expect(builder.linkModule).toHaveBeenNthCalledWith(
+        2,
+        "oz::auth::multisig",
+        "multisig masm"
+      );
+      expect(builder.buildLibrary).not.toHaveBeenCalled();
+      expect(builder.compileAccountComponentCode).toHaveBeenCalledWith(
+        "component code"
+      );
     });
   });
 

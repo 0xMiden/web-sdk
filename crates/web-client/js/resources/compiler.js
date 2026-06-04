@@ -12,13 +12,28 @@ export class CompilerResource {
   /**
    * Compiles MASM code + slots into an AccountComponent ready for accounts.create().
    *
-   * @param {{ code: string, slots: StorageSlot[], supportAllTypes?: boolean }} opts
+   * Dependency modules the component imports (e.g. auth libraries) are linked
+   * via `libraries` before compilation. Each entry is statically linked as a
+   * source module with `linkModule`, so the compiled component — and therefore
+   * the account's code commitment — is identical to building it directly off a
+   * `createCodeBuilder()`. This matters: changing the link path would change the
+   * MAST and break accounts already created with the original component.
+   *
+   * @param {{ code: string, slots?: StorageSlot[], supportAllTypes?: boolean, libraries?: Array<{ namespace: string, code: string }> }} opts
    * @returns {Promise<AccountComponent>}
    */
-  async component({ code, slots = [], supportAllTypes = true }) {
+  async component({
+    code,
+    slots = [],
+    supportAllTypes = true,
+    libraries = [],
+  }) {
     this.#client?.assertNotTerminated();
     const wasm = await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
+    for (const lib of libraries) {
+      builder.linkModule(lib.namespace, lib.code);
+    }
     const compiled = builder.compileAccountComponentCode(code);
     const component = wasm.AccountComponent.compile(compiled, slots);
     return supportAllTypes ? component.withSupportsAllTypes() : component;
