@@ -19,6 +19,7 @@ import type {
   NoteId,
   AccountStorageMode,
   Note,
+  NoteInput,
   NoteVisibility,
   StorageMode,
 } from "@miden-sdk/miden-sdk";
@@ -393,6 +394,58 @@ export interface SwapOptions {
   noteType?: NoteVisibility;
   /** Note type for payback note. Default: private */
   paybackNoteType?: NoteVisibility;
+}
+
+// PSWAP options — partial-swap notes can be filled by multiple consumers.
+export interface PswapCreateOptions {
+  /** Account that creates the PSWAP note */
+  accountId: AccountRef;
+  /** Faucet ID of the offered asset */
+  offeredFaucetId: AccountRef;
+  /** Amount being offered */
+  offeredAmount: bigint | number;
+  /** Faucet ID of the requested asset */
+  requestedFaucetId: AccountRef;
+  /** Amount being requested */
+  requestedAmount: bigint | number;
+  /** Visibility of the PSWAP note. Default: private */
+  noteType?: NoteVisibility;
+  /** Visibility of the payback note. Default: private */
+  paybackNoteType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions {
+  /** Consumer account filling the PSWAP note */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to consume. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
+  /**
+   * Amount of the requested asset the consumer is providing from its own
+   * vault. Receives a proportional share of the offered asset; partial fills
+   * also produce a remainder PSWAP note carrying the unfilled portion.
+   */
+  fillAmount: bigint | number;
+  /**
+   * Amount of the requested asset supplied by other (in-flight) notes routed
+   * into the same transaction. Defaults to `0`; most callers should leave
+   * this unset.
+   */
+  noteFillAmount?: bigint | number;
+}
+
+export interface PswapCancelOptions {
+  /** Creator account reclaiming the offered asset */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to cancel. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
 }
 
 // Arbitrary transaction options

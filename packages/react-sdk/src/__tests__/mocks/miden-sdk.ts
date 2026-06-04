@@ -231,6 +231,15 @@ export const createMockWebClient = (
     newSwapTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),
+    newPswapCreateTransactionRequest: vi
+      .fn()
+      .mockReturnValue(createMockTransactionRequest()),
+    newPswapConsumeTransactionRequest: vi
+      .fn()
+      .mockReturnValue(createMockTransactionRequest()),
+    newPswapCancelTransactionRequest: vi
+      .fn()
+      .mockReturnValue(createMockTransactionRequest()),
     submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
     submitNewTransactionWithProver: vi
       .fn()
@@ -287,6 +296,9 @@ type MockWebClientType = {
   newSendTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
+  newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
+  newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;
+  newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
