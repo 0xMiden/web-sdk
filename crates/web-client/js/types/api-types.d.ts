@@ -887,10 +887,19 @@ export interface CompileComponentOptions {
   supportAllTypes?: boolean;
   /**
    * Dependency modules the component imports (e.g. auth libraries), linked as
-   * source modules before compilation. Only `namespace` and `code` are used;
-   * components always static-link their dependencies, so `linking` is ignored.
+   * source modules before compilation. Components always static-link their
+   * dependencies (so a component's MAST stays stable), hence no `linking`
+   * option here. Two entries sharing a `namespace` cause a link error.
    */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: ComponentLibrary[];
+}
+
+/** A dependency module linked into an account component (always static). */
+export interface ComponentLibrary {
+  /** MASM namespace for the module (e.g. "openzeppelin::auth::multisig"). */
+  namespace: string;
+  /** MASM source code for the module. */
+  code: string;
 }
 
 export interface CompileTxScriptLibrary {

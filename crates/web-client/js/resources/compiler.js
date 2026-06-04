@@ -17,7 +17,8 @@ export class CompilerResource {
    * source module with `linkModule`, so the compiled component — and therefore
    * the account's code commitment — is identical to building it directly off a
    * `createCodeBuilder()`. This matters: changing the link path would change the
-   * MAST and break accounts already created with the original component.
+   * MAST and break accounts already created with the original component. Two
+   * entries sharing a `namespace` cause a link error.
    *
    * @param {{ code: string, slots?: StorageSlot[], supportAllTypes?: boolean, libraries?: Array<{ namespace: string, code: string }> }} opts
    * @returns {Promise<AccountComponent>}
@@ -31,9 +32,14 @@ export class CompilerResource {
     this.#client?.assertNotTerminated();
     const wasm = await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
-    for (const lib of libraries) {
+    libraries.forEach((lib, i) => {
+      if (typeof lib?.namespace !== "string" || typeof lib?.code !== "string") {
+        throw new TypeError(
+          `compile.component: libraries[${i}] must be { namespace: string, code: string }`
+        );
+      }
       builder.linkModule(lib.namespace, lib.code);
-    }
+    });
     const compiled = builder.compileAccountComponentCode(code);
     const component = wasm.AccountComponent.compile(compiled, slots);
     return supportAllTypes ? component.withSupportsAllTypes() : component;

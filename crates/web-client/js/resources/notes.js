@@ -47,14 +47,13 @@ export class NotesResource {
   // (`noteConsumability()`) instead of mapping it away. Callers that must
   // distinguish consumable-now from block-locked notes (status
   // `consumableAfterBlock`) need this; `listAvailable` cannot express it.
-  // Omit `account` to list notes consumable by any tracked account.
+  // Omit `account` (or pass null) to list notes consumable by any tracked
+  // account — matching the underlying `getConsumableNotes(account?)`.
   async listConsumable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const accountId =
-      opts?.account === undefined
-        ? undefined
-        : resolveAccountRef(opts.account, wasm);
+      opts?.account == null ? undefined : resolveAccountRef(opts.account, wasm);
     return await this.#inner.getConsumableNotes(accountId);
   }
 

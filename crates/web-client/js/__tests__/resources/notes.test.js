@@ -226,6 +226,13 @@ describe("NotesResource", () => {
       expect(inner.getConsumableNotes).toHaveBeenCalledWith(undefined);
     });
 
+    it("treats null account as 'all accounts' (matches underlying API)", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable({ account: null });
+      expect(inner.getConsumableNotes).toHaveBeenCalledWith(undefined);
+    });
+
     it("resolves the account ref when provided", async () => {
       inner.getConsumableNotes.mockResolvedValue([]);
       const resource = makeResource();

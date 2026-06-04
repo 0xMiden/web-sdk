@@ -138,6 +138,40 @@ describe("CompilerResource", () => {
         "component code"
       );
     });
+
+    it("compiles with no libraries without calling linkModule", async () => {
+      builder.compileAccountComponentCode.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({ code: "code", libraries: [] });
+      expect(builder.linkModule).not.toHaveBeenCalled();
+      expect(builder.compileAccountComponentCode).toHaveBeenCalledWith("code");
+    });
+
+    it("throws a descriptive error for a malformed library entry", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.component({
+          code: "code",
+          libraries: [{ namespace: "oz::auth", code: "masm" }, { code: "x" }],
+        })
+      ).rejects.toThrow(/libraries\[1\]/);
+      // Must fail before producing a component, not link a bad entry.
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
+    });
+
+    it("propagates linkModule errors (e.g. duplicate namespace)", async () => {
+      builder.linkModule.mockImplementation(() => {
+        throw new Error("DuplicateModule");
+      });
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.component({
+          code: "code",
+          libraries: [{ namespace: "oz::auth", code: "masm" }],
+        })
+      ).rejects.toThrow(/DuplicateModule/);
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
+    });
   });
 
   describe("txScript", () => {
