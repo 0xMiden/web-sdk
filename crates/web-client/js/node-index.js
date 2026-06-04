@@ -57,11 +57,8 @@ ensureInitialized();
 // ── Enum constants (matching browser entry point) ────────────────────
 
 export const AccountType = Object.freeze({
-  MutableWallet: "MutableWallet",
-  ImmutableWallet: "ImmutableWallet",
   FungibleFaucet: "FungibleFaucet",
-  ImmutableContract: "ImmutableContract",
-  MutableContract: "MutableContract",
+  NonFungibleFaucet: "NonFungibleFaucet",
 });
 
 export const AuthScheme = Object.freeze({
@@ -77,7 +74,6 @@ export const NoteVisibility = Object.freeze({
 export const StorageMode = Object.freeze({
   Public: "public",
   Private: "private",
-  Network: "network",
 });
 
 // ── Re-exports ───────────────────────────────────────────────────────

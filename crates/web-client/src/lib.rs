@@ -479,7 +479,7 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
         None => StdRng::from_os_rng(),
     };
     let coin_seed: [u64; 4] = rng.random();
-    Ok(RandomCoin::new(coin_seed.map(Felt::new).into()))
+    Ok(RandomCoin::new(coin_seed.map(|v| Felt::new(v).unwrap_or(Felt::ZERO)).into()))
 }
 
 // ERROR HANDLING HELPERS

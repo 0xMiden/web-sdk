@@ -10,7 +10,11 @@ use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
-use miden_client::rpc::domain::account::AccountStorageRequirements as NativeAccountStorageRequirements;
+use miden_client::rpc::domain::account::{
+    AccountStorageRequirements as NativeAccountStorageRequirements,
+    GetAccountRequest,
+    VaultFetch,
+};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
 use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient};
 use note::FetchedNote;
@@ -29,7 +33,7 @@ use crate::models::note_sync::NoteSyncInfo;
 use crate::models::note_tag::NoteTag;
 use crate::models::storage_map_info::StorageMapInfo;
 use crate::models::word::Word;
-use crate::platform::JsErr;
+use crate::platform::{JsErr, from_str_err};
 
 mod note;
 
@@ -73,13 +77,13 @@ impl RpcClient {
         let web_notes: Vec<FetchedNote> = fetched_notes
             .into_iter()
             .map(|native_note| match native_note {
-                NativeFetchedNote::Private(header, inclusion_proof) => {
-                    FetchedNote::from_header(header, None, inclusion_proof)
+                NativeFetchedNote::Private(note_id, metadata, inclusion_proof) => {
+                    FetchedNote::from_parts(note_id, metadata, None, inclusion_proof)
                 },
                 NativeFetchedNote::Public(note, inclusion_proof) => {
-                    let header =
-                        miden_client::note::NoteHeader::new(note.id(), note.metadata().clone());
-                    FetchedNote::from_header(header, Some(note.into()), inclusion_proof)
+                    let note_id = note.id();
+                    let metadata = *note.metadata();
+                    FetchedNote::from_parts(note_id, metadata, Some(note.into()), inclusion_proof)
                 },
             })
             .collect();
@@ -100,7 +104,8 @@ impl RpcClient {
             .inner
             .get_note_script_by_root(native_script_root)
             .await
-            .map_err(|err| js_error_with_context(err, "failed to get note script by root"))?;
+            .map_err(|err| js_error_with_context(err, "failed to get note script by root"))?
+            .ok_or_else(|| from_str_err("note script not found for the provided root"))?;
 
         Ok(note_script.into())
     }
@@ -181,15 +186,19 @@ impl RpcClient {
             None => AccountStateAt::ChainTip,
         };
 
+        let vault = match known_vault_commitment {
+            Some(commitment) => VaultFetch::IfChangedFrom(commitment.into()),
+            None => VaultFetch::Skip,
+        };
+
+        let request = GetAccountRequest::new()
+            .with_storage(native_requirements)
+            .at(account_state)
+            .with_vault(vault);
+
         let (block_num, proof) = self
             .inner
-            .get_account_proof(
-                native_id,
-                native_requirements,
-                account_state,
-                None,
-                known_vault_commitment.map(Into::into),
-            )
+            .get_account(native_id, request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account proof"))?;
 

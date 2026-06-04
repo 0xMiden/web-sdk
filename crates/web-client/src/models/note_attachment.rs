@@ -1,19 +1,15 @@
 use js_export_macro::js_export;
+use miden_client::Word as NativeWord;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::note::{
     NetworkAccountTarget as NativeNetworkAccountTarget,
     NoteAttachment as NativeNoteAttachment,
     NoteAttachmentScheme as NativeNoteAttachmentScheme,
 };
-use miden_client::{Felt as NativeFelt, Word as NativeWord};
-use miden_protocol::note::NoteAttachmentContent;
 
 use super::account_id::AccountId;
-use super::felt::Felt;
-use super::note_attachment_kind::NoteAttachmentKind;
 use super::note_execution_hint::NoteExecutionHint;
 use super::word::Word;
-use crate::models::miden_arrays::FeltArray;
 use crate::platform::{JsErr, from_str_err};
 
 // NOTE ATTACHMENT SCHEME
@@ -29,10 +25,12 @@ pub struct NoteAttachmentScheme(NativeNoteAttachmentScheme);
 
 #[js_export]
 impl NoteAttachmentScheme {
-    /// Creates a new `NoteAttachmentScheme` from a u32.
+    /// Creates a new `NoteAttachmentScheme` from a u16.
     #[js_export(constructor)]
-    pub fn new(scheme: u32) -> NoteAttachmentScheme {
-        NoteAttachmentScheme(NativeNoteAttachmentScheme::new(scheme))
+    pub fn new(scheme: u16) -> Result<NoteAttachmentScheme, JsErr> {
+        NativeNoteAttachmentScheme::new(scheme)
+            .map(NoteAttachmentScheme)
+            .map_err(|e| from_str_err(&e.to_string()))
     }
 
     /// Returns the `NoteAttachmentScheme` that signals the absence of an attachment scheme.
@@ -46,10 +44,10 @@ impl NoteAttachmentScheme {
         self.0.is_none()
     }
 
-    /// Returns the note attachment scheme as a u32.
-    #[js_export(js_name = "asU32")]
-    pub fn as_u32(&self) -> u32 {
-        self.0.as_u32()
+    /// Returns the note attachment scheme as a u16.
+    #[js_export(js_name = "asU16")]
+    pub fn as_u16(&self) -> u16 {
+        self.0.as_u16()
     }
 }
 
@@ -73,33 +71,27 @@ impl From<&NoteAttachmentScheme> for NativeNoteAttachmentScheme {
 /// Note attachments provide additional context about how notes should be processed.
 /// For example, a network account target attachment indicates that the note should
 /// be consumed by a specific network account.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 #[js_export]
 pub struct NoteAttachment(NativeNoteAttachment);
 
 #[js_export]
 impl NoteAttachment {
-    /// Creates a default (empty) note attachment.
-    #[js_export(constructor)]
-    pub fn new() -> NoteAttachment {
-        NoteAttachment(NativeNoteAttachment::default())
-    }
-
-    /// Creates a new note attachment with Word content from the provided word.
-    #[js_export(js_name = "newWord")]
-    pub fn new_word(scheme: &NoteAttachmentScheme, word: &Word) -> NoteAttachment {
+    /// Creates a new note attachment with a single word of content.
+    #[js_export(js_name = "withWord")]
+    pub fn with_word(scheme: &NoteAttachmentScheme, word: &Word) -> NoteAttachment {
         let native_word: NativeWord = word.into();
-        NoteAttachment(NativeNoteAttachment::new_word(scheme.into(), native_word))
+        NoteAttachment(NativeNoteAttachment::with_word(scheme.into(), native_word))
     }
 
-    /// Creates a new note attachment with Array content from the provided elements.
-    #[js_export(js_name = "newArray")]
-    pub fn new_array(
+    /// Creates a new note attachment with the provided words of content.
+    #[js_export(js_name = "withWords")]
+    pub fn with_words(
         scheme: &NoteAttachmentScheme,
-        elements: FeltArray,
+        words: Vec<Word>,
     ) -> Result<NoteAttachment, JsErr> {
-        let native_elements: Vec<NativeFelt> = super::felt::felt_array_to_native_vec(&elements);
-        NativeNoteAttachment::new_array(scheme.into(), native_elements)
+        let native_words: Vec<NativeWord> = words.iter().map(Into::into).collect();
+        NativeNoteAttachment::with_words(scheme.into(), native_words)
             .map(NoteAttachment)
             .map_err(|e| from_str_err(&e.to_string()))
     }
@@ -107,41 +99,18 @@ impl NoteAttachment {
     /// Returns the attachment scheme.
     #[js_export(js_name = "attachmentScheme")]
     pub fn attachment_scheme(&self) -> NoteAttachmentScheme {
-        self.0.attachment_scheme().into()
+        NoteAttachmentScheme(self.0.attachment_scheme())
     }
 
-    /// Returns the attachment kind.
-    #[js_export(js_name = "attachmentKind")]
-    pub fn attachment_kind(&self) -> NoteAttachmentKind {
-        self.0.attachment_kind().into()
-    }
-
-    /// Returns the content as a Word if the attachment kind is Word, otherwise None.
-    #[js_export(js_name = "asWord")]
-    pub fn as_word(&self) -> Option<Word> {
-        match self.0.content() {
-            NoteAttachmentContent::Word(word) => Some((*word).into()),
-            _ => None,
-        }
-    }
-
-    /// Returns the content as an array of Felts if the attachment kind is Array, otherwise None.
-    #[js_export(js_name = "asArray")]
-    pub fn as_array(&self) -> Option<FeltArray> {
-        match self.0.content() {
-            NoteAttachmentContent::Array(array) => {
-                let felts: Vec<Felt> = array.as_slice().iter().map(|f| (*f).into()).collect();
-                Some(felts.into())
-            },
-            _ => None,
-        }
+    /// Returns the attachment content as a list of words.
+    #[js_export(js_name = "asWords")]
+    pub fn as_words(&self) -> Vec<Word> {
+        self.0.content().as_words().iter().map(Into::into).collect()
     }
 
     /// Creates a new note attachment for a network account target.
     ///
     /// This attachment indicates that the note should be consumed by a specific network account.
-    /// Network accounts are accounts whose storage mode is `Network`, meaning the network (nodes)
-    /// can execute transactions on behalf of the account.
     ///
     /// # Arguments
     /// * `target_id` - The ID of the network account that should consume the note
@@ -188,3 +157,5 @@ impl From<&NoteAttachment> for NativeNoteAttachment {
         note_attachment.0.clone()
     }
 }
+
+impl_napi_from_value!(NoteAttachment);

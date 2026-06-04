@@ -4,7 +4,6 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
   TransactionRequestBuilder,
@@ -123,7 +122,7 @@ export function useMultiSend(): UseMultiSendResult {
             const noteAttachment =
               attachment !== undefined && attachment !== null
                 ? createNoteAttachment(attachment)
-                : new NoteAttachment();
+                : undefined;
             const note = Note.createP2IDNote(
               iterSenderId,
               receiverId,

@@ -82,15 +82,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const wallet = await client.accounts.create();
 
         return {
-          isFaucet: wallet.isFaucet(),
-          isRegularAccount: wallet.isRegularAccount(),
-          isUpdatable: wallet.isUpdatable(),
+          hasId: wallet.id() != null,
+          isPrivate: wallet.isPrivate(),
         };
       });
 
-      expect(result.isFaucet).toBe(false);
-      expect(result.isRegularAccount).toBe(true);
-      expect(result.isUpdatable).toBe(true);
+      expect(result.hasId).toBe(true);
+      expect(result.isPrivate).toBe(true);
     }
   );
 
@@ -107,12 +105,12 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       });
 
       return {
-        isFaucet: faucet.isFaucet(),
+        hasId: faucet.id() != null,
         isPublic: faucet.isPublic(),
       };
     });
 
-    expect(result.isFaucet).toBe(true);
+    expect(result.hasId).toBe(true);
     expect(result.isPublic).toBe(true);
   });
 
@@ -127,7 +125,6 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         window.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const built = new window.AccountBuilder(seed)
-        .accountType(window.AccountType.RegularAccountImmutableCode)
         .storageMode(window.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withBasicWalletComponent()
@@ -1105,16 +1102,14 @@ nodeTest.describe("MidenClient API - Integration", () => {
         const accounts = await client.accounts.list();
 
         return {
-          walletIsFaucet: wallet.isFaucet(),
-          walletIsUpdatable: wallet.isUpdatable(),
-          faucetIsFaucet: faucet.isFaucet(),
+          walletHasId: wallet.id() != null,
+          faucetHasId: faucet.id() != null,
           accountCount: accounts.length,
         };
       });
 
-      expect(result.walletIsFaucet).toBe(false);
-      expect(result.walletIsUpdatable).toBe(true);
-      expect(result.faucetIsFaucet).toBe(true);
+      expect(result.walletHasId).toBe(true);
+      expect(result.faucetHasId).toBe(true);
       expect(result.accountCount).toBe(2);
     }
   );

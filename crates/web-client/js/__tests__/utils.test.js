@@ -5,7 +5,6 @@ import {
   resolveNoteType,
   resolveStorageMode,
   resolveAuthScheme,
-  resolveAccountMutability,
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
@@ -241,40 +240,6 @@ describe("resolveAuthScheme", () => {
   it("throws for unknown scheme", () => {
     expect(() => resolveAuthScheme("rsa", wasm)).toThrow(
       'Unknown auth scheme: "rsa"'
-    );
-  });
-});
-
-// ── resolveAccountMutability ──────────────────────────────────────────────────
-
-describe("resolveAccountMutability", () => {
-  it("returns true (mutable) for null", () => {
-    expect(resolveAccountMutability(null)).toBe(true);
-  });
-
-  it("returns true (mutable) for undefined", () => {
-    expect(resolveAccountMutability(undefined)).toBe(true);
-  });
-
-  it("returns true for 'MutableWallet'", () => {
-    expect(resolveAccountMutability("MutableWallet")).toBe(true);
-  });
-
-  it("returns true for numeric 3", () => {
-    expect(resolveAccountMutability(3)).toBe(true);
-  });
-
-  it("returns false (immutable) for 'ImmutableWallet'", () => {
-    expect(resolveAccountMutability("ImmutableWallet")).toBe(false);
-  });
-
-  it("returns false for numeric 2", () => {
-    expect(resolveAccountMutability(2)).toBe(false);
-  });
-
-  it("throws for unknown type", () => {
-    expect(() => resolveAccountMutability("OtherType")).toThrow(
-      'Unknown wallet account type: "OtherType"'
     );
   });
 });

@@ -4,10 +4,8 @@ use miden_client::account::AccountType as NativeAccountType;
 #[derive(Clone)]
 #[js_export]
 pub enum AccountType {
-    FungibleFaucet,
-    NonFungibleFaucet,
-    RegularAccountImmutableCode,
-    RegularAccountUpdatableCode,
+    Private,
+    Public,
 }
 
 // CONVERSIONS
@@ -16,14 +14,8 @@ pub enum AccountType {
 impl From<AccountType> for NativeAccountType {
     fn from(value: AccountType) -> Self {
         match value {
-            AccountType::FungibleFaucet => NativeAccountType::FungibleFaucet,
-            AccountType::NonFungibleFaucet => NativeAccountType::NonFungibleFaucet,
-            AccountType::RegularAccountImmutableCode => {
-                NativeAccountType::RegularAccountImmutableCode
-            },
-            AccountType::RegularAccountUpdatableCode => {
-                NativeAccountType::RegularAccountUpdatableCode
-            },
+            AccountType::Private => NativeAccountType::Private,
+            AccountType::Public => NativeAccountType::Public,
         }
     }
 }
@@ -31,14 +23,8 @@ impl From<AccountType> for NativeAccountType {
 impl From<&AccountType> for NativeAccountType {
     fn from(value: &AccountType) -> Self {
         match value {
-            AccountType::FungibleFaucet => NativeAccountType::FungibleFaucet,
-            AccountType::NonFungibleFaucet => NativeAccountType::NonFungibleFaucet,
-            AccountType::RegularAccountImmutableCode => {
-                NativeAccountType::RegularAccountImmutableCode
-            },
-            AccountType::RegularAccountUpdatableCode => {
-                NativeAccountType::RegularAccountUpdatableCode
-            },
+            AccountType::Private => NativeAccountType::Private,
+            AccountType::Public => NativeAccountType::Public,
         }
     }
 }

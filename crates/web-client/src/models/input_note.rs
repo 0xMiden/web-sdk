@@ -45,7 +45,7 @@ impl InputNote {
 
     /// Returns the commitment to the note ID and metadata.
     pub fn commitment(&self) -> Word {
-        self.0.note().commitment().into()
+        self.0.note().id().as_word().into()
     }
 
     /// Returns the inclusion proof if the note is authenticated.

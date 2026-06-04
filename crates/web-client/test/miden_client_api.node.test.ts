@@ -68,9 +68,8 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     const wallet = await client.accounts.create();
 
-    expect(wallet.isFaucet()).toBe(false);
-    expect(wallet.isRegularAccount()).toBe(true);
-    expect(wallet.isUpdatable()).toBe(true);
+    expect(wallet.id() != null).toBe(true);
+    expect(wallet.isPrivate()).toBe(true);
   });
 
   test("accounts.create faucet", async ({ sdk }) => {
@@ -86,7 +85,7 @@ test.describe("MidenClient API - Mock Chain", () => {
       storage: "public",
     });
 
-    expect(faucet.isFaucet()).toBe(true);
+    expect(faucet.id() != null).toBe(true);
     expect(faucet.isPublic()).toBe(true);
   });
 
@@ -107,7 +106,6 @@ test.describe("MidenClient API - Mock Chain", () => {
         window.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const built = new window.AccountBuilder(seed)
-        .accountType(window.AccountType.RegularAccountImmutableCode)
         .storageMode(window.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withBasicWalletComponent()

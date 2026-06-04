@@ -92,13 +92,13 @@ export function wrapClient(rawClient, storeName) {
         return () => undefined;
       }
       if (prop === "newWallet") {
-        return (mode, mutable, authScheme, seed) => {
+        return (mode, authScheme, seed) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
           return target
-            .newWallet(mode, mutable, authScheme, normSeed ?? null)
+            .newWallet(mode, authScheme, normSeed ?? null)
             .then((v) => (v === null ? undefined : v));
         };
       }

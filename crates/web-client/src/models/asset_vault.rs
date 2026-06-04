@@ -1,4 +1,5 @@
 use js_export_macro::js_export;
+use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::AssetVault as NativeAssetVault;
 
 use super::account_id::AccountId;
@@ -28,9 +29,23 @@ impl AssetVault {
     }
 
     /// Returns the balance for the given fungible faucet, or zero if absent.
+    ///
+    /// Matches by faucet id across the vault's fungible assets, so the balance is
+    /// found regardless of the asset's callback flag.
     #[js_export(js_name = "getBalance")]
     pub fn get_balance(&self, faucet_id: &AccountId) -> u64 {
-        self.0.get_balance(faucet_id.into()).unwrap()
+        let native_faucet_id: NativeAccountId = faucet_id.into();
+        self.0
+            .assets()
+            .filter_map(|asset| {
+                if asset.is_fungible() {
+                    Some(asset.unwrap_fungible())
+                } else {
+                    None
+                }
+            })
+            .find(|fungible| fungible.faucet_id() == native_faucet_id)
+            .map_or(0, |fungible| u64::from(fungible.amount()))
     }
 
     /// Returns the fungible assets contained in this vault.

@@ -22,7 +22,7 @@ use miden_client::asset::{
     FungibleAsset,
     NonFungibleDeltaAction,
 };
-use miden_client::store::{AccountSmtForest, AccountStatus, StoreError};
+use miden_client::store::{AccountSmtForest, AccountStatus, ClientAccountType, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{EMPTY_WORD, Felt, Word};
 use wasm_bindgen::JsValue;
@@ -89,7 +89,11 @@ pub async fn upsert_account_asset_vault(
     Ok(())
 }
 
-pub async fn upsert_account_record(db_id: &str, account: &Account) -> Result<(), JsValue> {
+pub async fn upsert_account_record(
+    db_id: &str,
+    account: &Account,
+    client_account_type: ClientAccountType,
+) -> Result<(), JsValue> {
     let account_id_str = account.id().to_string();
     let code_root = account.code().commitment().to_string();
     let storage_root = account.storage().to_commitment().to_string();
@@ -98,6 +102,7 @@ pub async fn upsert_account_record(db_id: &str, account: &Account) -> Result<(),
     let nonce = account.nonce().to_string();
     let account_seed = account.seed().map(|seed| seed.to_bytes());
     let commitment = account.to_commitment().to_string();
+    let watched = matches!(client_account_type, ClientAccountType::Watched);
 
     let promise = idxdb_upsert_account_record(
         db_id,
@@ -109,6 +114,7 @@ pub async fn upsert_account_record(db_id: &str, account: &Account) -> Result<(),
         committed,
         commitment,
         account_seed,
+        watched,
     );
     JsFuture::from(promise).await?;
 
@@ -141,12 +147,14 @@ pub async fn remove_account_address(db_id: &str, address: Address) -> Result<(),
 
 pub fn parse_account_record_idxdb_object(
     account_header_idxdb: AccountRecordIdxdbObject,
-) -> Result<(AccountHeader, AccountStatus), StoreError> {
+) -> Result<(AccountHeader, AccountStatus, ClientAccountType), StoreError> {
     let native_account_id: AccountId = AccountId::from_hex(&account_header_idxdb.id)?;
     let native_nonce: u64 = account_header_idxdb
         .nonce
         .parse::<u64>()
         .map_err(|err| StoreError::ParsingError(err.to_string()))?;
+    let nonce = Felt::new(native_nonce)
+        .map_err(|err| StoreError::ParsingError(format!("invalid account nonce: {err}")))?;
     let account_seed = account_header_idxdb
         .account_seed
         .map(|seed| Word::read_from_bytes(&seed))
@@ -154,7 +162,7 @@ pub fn parse_account_record_idxdb_object(
 
     let account_header = AccountHeader::new(
         native_account_id,
-        Felt::new(native_nonce),
+        nonce,
         Word::try_from(&account_header_idxdb.vault_root)?,
         Word::try_from(&account_header_idxdb.storage_root)?,
         Word::try_from(&account_header_idxdb.code_root)?,
@@ -166,7 +174,13 @@ pub fn parse_account_record_idxdb_object(
         _ => AccountStatus::Tracked,
     };
 
-    Ok((account_header, status))
+    let client_account_type = if account_header_idxdb.watched {
+        ClientAccountType::Watched
+    } else {
+        ClientAccountType::Native
+    };
+
+    Ok((account_header, status, client_account_type))
 }
 
 pub fn parse_account_address_idxdb_object(
@@ -244,7 +258,7 @@ pub fn compute_vault_delta(
             None => delta_asset,
         };
 
-        if asset.amount() > 0 {
+        if u64::from(asset.amount()) > 0 {
             updated_assets.push(Asset::Fungible(asset));
         } else {
             removed_vault_keys.push(asset.vault_key());

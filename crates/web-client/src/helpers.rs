@@ -1,10 +1,5 @@
 use miden_client::account::component::{AccountComponent, BasicWallet};
-use miden_client::account::{
-    Account,
-    AccountBuilder,
-    AccountBuilderSchemaCommitmentExt,
-    AccountType,
-};
+use miden_client::account::{Account, AccountBuilder, AccountBuilderSchemaCommitmentExt};
 use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -25,7 +20,6 @@ use crate::platform::{JsErr, from_str_err};
 /// - If the seed is passed in and is not exactly 32 bytes
 pub(crate) async fn generate_wallet(
     storage_mode: &AccountStorageMode,
-    mutable: bool,
     seed: Option<Vec<u8>>,
     auth_scheme: AuthScheme,
 ) -> Result<(Account, AuthSecretKey), JsErr> {
@@ -56,17 +50,11 @@ pub(crate) async fn generate_wallet(
     let auth_component: AccountComponent =
         AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
 
-    let account_type = if mutable {
-        AccountType::RegularAccountUpdatableCode
-    } else {
-        AccountType::RegularAccountImmutableCode
-    };
     let mut init_seed = [0u8; 32];
     rng.fill_bytes(&mut init_seed);
 
     let new_account = AccountBuilder::new(init_seed)
-        .account_type(account_type)
-        .storage_mode(storage_mode.into())
+        .account_type(storage_mode.into())
         .with_auth_component(auth_component)
         .with_component(BasicWallet)
         .build_with_schema_commitment()

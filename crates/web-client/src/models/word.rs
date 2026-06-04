@@ -12,8 +12,10 @@ pub struct Word(NativeWord);
 #[js_export]
 impl Word {
     /// Creates a word from four numeric values.
+    ///
+    /// Throws if any value does not fit in the base field.
     #[js_export(constructor)]
-    pub fn new(u64_vec: Vec<JsU64>) -> Word {
+    pub fn new(u64_vec: Vec<JsU64>) -> Result<Word, JsErr> {
         assert!(u64_vec.len() == 4, "Word requires exactly 4 elements, got {}", u64_vec.len());
         let fixed_array_u64: [u64; 4] = u64_vec
             .into_iter()
@@ -23,11 +25,14 @@ impl Word {
             .expect("Word requires exactly 4 elements");
         let native_felt_vec: [NativeFelt; 4] = fixed_array_u64
             .iter()
-            .map(|&v| NativeFelt::new(v))
-            .collect::<Vec<NativeFelt>>()
+            .map(|&v| {
+                NativeFelt::new(v)
+                    .map_err(|_| from_str_err("Word element does not fit in the base field"))
+            })
+            .collect::<Result<Vec<NativeFelt>, JsErr>>()?
             .try_into()
             .expect("Word requires exactly 4 field elements");
-        Word(native_felt_vec.into())
+        Ok(Word(native_felt_vec.into()))
     }
 
     /// Returns the word as an array of numeric values.

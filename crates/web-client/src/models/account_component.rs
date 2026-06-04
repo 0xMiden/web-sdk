@@ -6,7 +6,6 @@ use miden_client::account::component::{
 };
 use miden_client::account::{
     AccountComponentCode as NativeAccountComponentCode,
-    AccountType,
     StorageSlot as NativeStorageSlot,
 };
 use miden_client::assembly::{Library as NativeLibrary, MastNodeExt};
@@ -83,7 +82,7 @@ impl AccountComponent {
         NativeAccountComponent::new(
             native_account_code,
             native_slots,
-            AccountComponentMetadata::new("custom", AccountType::all()),
+            AccountComponentMetadata::new("custom"),
         )
         .map(AccountComponent)
         .map_err(|e| js_error_with_context(e, "Failed to compile account component"))
@@ -95,7 +94,7 @@ impl AccountComponent {
         let code = self.0.component_code().clone();
         let slots = self.0.storage_slots().to_vec();
         let name = self.0.metadata().name();
-        let metadata = AccountComponentMetadata::new(name, AccountType::all());
+        let metadata = AccountComponentMetadata::new(name);
         AccountComponent(
             NativeAccountComponent::new(code, slots, metadata)
                 .expect("reconstructing component with updated metadata should not fail"),
@@ -201,7 +200,7 @@ impl AccountComponent {
         NativeAccountComponent::new(
             native_library,
             native_slots,
-            AccountComponentMetadata::new("custom", AccountType::all()),
+            AccountComponentMetadata::new("custom"),
         )
         .map(AccountComponent)
         .map_err(|e| js_error_with_context(e, "Failed to create account component from package"))
@@ -220,7 +219,7 @@ impl AccountComponent {
         NativeAccountComponent::new(
             native_library,
             native_slots,
-            AccountComponentMetadata::new("custom", AccountType::all()),
+            AccountComponentMetadata::new("custom"),
         )
         .map(AccountComponent)
         .map_err(|e| js_error_with_context(e, "Failed to create account component from library"))

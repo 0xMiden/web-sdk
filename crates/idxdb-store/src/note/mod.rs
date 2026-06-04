@@ -12,6 +12,7 @@ use miden_client::store::{
     OutputNoteState,
     StoreError,
 };
+use miden_protocol::note::NoteDetailsCommitment;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::{Array, Promise};
 
@@ -23,10 +24,12 @@ mod js_bindings;
 use js_bindings::{
     idxdb_get_input_note_by_offset,
     idxdb_get_input_notes,
+    idxdb_get_input_notes_from_details_commitments,
     idxdb_get_input_notes_from_ids,
     idxdb_get_input_notes_from_nullifiers,
     idxdb_get_note_script,
     idxdb_get_output_notes,
+    idxdb_get_output_notes_from_details_commitments,
     idxdb_get_output_notes_from_ids,
     idxdb_get_output_notes_from_nullifiers,
     idxdb_get_unspent_input_note_nullifiers,
@@ -173,7 +176,10 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
             InputNoteState::STATE_PROCESSING_AUTHENTICATED,
             InputNoteState::STATE_PROCESSING_UNAUTHENTICATED,
         ]),
-        NoteFilter::List(_) | NoteFilter::Unique(_) | NoteFilter::Nullifiers(_) => None,
+        NoteFilter::List(_)
+        | NoteFilter::Unique(_)
+        | NoteFilter::Nullifiers(_)
+        | NoteFilter::DetailsCommitments(_) => None,
     }
 }
 
@@ -212,6 +218,11 @@ impl NoteFilterExt for NoteFilter {
                     nullifiers.iter().map(ToString::to_string).collect::<Vec<String>>();
 
                 idxdb_get_input_notes_from_nullifiers(db_id, nullifiers_as_str)
+            },
+            NoteFilter::DetailsCommitments(commitments) => {
+                let commitments_as_str: Vec<String> =
+                    commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
+                idxdb_get_input_notes_from_details_commitments(db_id, commitments_as_str)
             },
         }
     }
@@ -263,6 +274,11 @@ impl NoteFilterExt for NoteFilter {
                     nullifiers.iter().map(ToString::to_string).collect::<Vec<String>>();
 
                 idxdb_get_output_notes_from_nullifiers(db_id, nullifiers_as_str)
+            },
+            NoteFilter::DetailsCommitments(commitments) => {
+                let commitments_as_str: Vec<String> =
+                    commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
+                idxdb_get_output_notes_from_details_commitments(db_id, commitments_as_str)
             },
         }
     }

@@ -12,7 +12,7 @@
  *   test("creates a wallet", async ({ run }) => {
  *     const result = await run(async ({ client, sdk }) => {
  *       const wallet = await client.newWallet(
- *         sdk.AccountStorageMode.private(), true, sdk.AuthScheme.AuthRpoFalcon512
+ *         sdk.AccountStorageMode.private(), sdk.AuthScheme.AuthRpoFalcon512
  *       );
  *       return { id: wallet.id().toString() };
  *     });
@@ -179,17 +179,12 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
         };
       }
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          const result = target.newWallet(
-            mode,
-            mutable,
-            authScheme,
-            normSeed ?? null
-          );
+          const result = target.newWallet(mode, authScheme, normSeed ?? null);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
           }
@@ -470,7 +465,6 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const c = window.client;
           const wallet = await c.newWallet(
             window.AccountStorageMode.private(),
-            true,
             window.AuthScheme.AuthRpoFalcon512
           );
           const faucet = await c.newFaucet(
@@ -614,9 +608,6 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             noteTypeB
           );
           const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-          const expectedPaybackNoteDetails = swapRequest
-            .expectedFutureNotes()
-            .map((fn) => fn.noteDetails);
           const swapTxId = await c.submitNewTransaction(
             accountAId,
             swapRequest
@@ -636,11 +627,12 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           await c.syncState();
 
           // Consume payback note for account A
-          const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
-          const paybackNoteRecord = await c.getInputNote(paybackNoteId);
-          if (!paybackNoteRecord)
-            throw new Error(`Payback note ${paybackNoteId} not found`);
-          const paybackNote = paybackNoteRecord.toNote();
+          const consumablePaybackNotes = await c.getConsumableNotes(undefined);
+          if (consumablePaybackNotes.length === 0)
+            throw new Error(`Payback note not found`);
+          const paybackNote = consumablePaybackNotes[0]
+            .inputNoteRecord()
+            .toNote();
           const consumeReq2 = c.newConsumeTransactionRequest([paybackNote]);
           await c.submitNewTransaction(accountAId, consumeReq2);
           await c.proveBlock();

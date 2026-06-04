@@ -40,7 +40,7 @@ export class TransactionsResource {
           new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
         ]),
         noteType,
-        new wasm.NoteAttachment()
+        undefined
       );
 
       // NoteArray constructor consumes its elements; use push(&note) to keep

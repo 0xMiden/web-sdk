@@ -163,12 +163,12 @@ describe("useCreateFaucet", () => {
         });
       });
 
-      // Test network
+      // Test public
       await act(async () => {
         await result.current.createFaucet({
           tokenSymbol: "C",
           maxSupply: 100n,
-          storageMode: "network",
+          storageMode: "public",
         });
       });
 

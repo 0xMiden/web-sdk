@@ -412,9 +412,7 @@ test.describe("compile.noteScript()", () => {
 // ════════════════════════════════════════════════════════════════
 
 test.describe("accounts.create() — ImmutableContract / MutableContract", () => {
-  test("ImmutableContract: isUpdatable=false, isPublic=true, isRegularAccount=true", async ({
-    page,
-  }) => {
+  test("ImmutableContract: isPublic=true, isNew=true", async ({ page }) => {
     const result = await page.evaluate(
       async ({ code, slotName }) => {
         const client = await window.MidenClient.createMock();
@@ -437,9 +435,6 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
         });
 
         return {
-          isFaucet: account.isFaucet(),
-          isRegularAccount: account.isRegularAccount(),
-          isUpdatable: account.isUpdatable(),
           isPublic: account.isPublic(),
           isNew: account.isNew(),
         };
@@ -447,14 +442,11 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
       { code: COUNTER_CODE, slotName: COUNTER_SLOT_NAME }
     );
 
-    expect(result.isFaucet).toBe(false);
-    expect(result.isRegularAccount).toBe(true);
-    expect(result.isUpdatable).toBe(false);
     expect(result.isPublic).toBe(true);
     expect(result.isNew).toBe(true);
   });
 
-  test("MutableContract: isUpdatable=true, isPublic=true", async ({ page }) => {
+  test("MutableContract: isPublic=true", async ({ page }) => {
     const result = await page.evaluate(
       async ({ code, slotName }) => {
         const client = await window.MidenClient.createMock();
@@ -477,17 +469,13 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
         });
 
         return {
-          isUpdatable: account.isUpdatable(),
           isPublic: account.isPublic(),
-          isRegularAccount: account.isRegularAccount(),
         };
       },
       { code: COUNTER_CODE, slotName: COUNTER_SLOT_NAME }
     );
 
-    expect(result.isUpdatable).toBe(true);
     expect(result.isPublic).toBe(true);
-    expect(result.isRegularAccount).toBe(true);
   });
 
   test("ImmutableContract defaults to public storage when storage is omitted", async ({
@@ -586,7 +574,6 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
         const authComp =
           window.AccountComponent.createAuthComponentFromSecretKey(auth2);
         const built = new window.AccountBuilder(seed)
-          .accountType(2 /* RegularAccountImmutableCode */)
           .storageMode(window.AccountStorageMode.public())
           .withAuthComponent(authComp)
           .withComponent(component2)

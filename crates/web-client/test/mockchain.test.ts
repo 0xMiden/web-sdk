@@ -12,7 +12,6 @@ test.describe("mock chain tests", () => {
 
       const account = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucetAccount = await client.newFaucet(

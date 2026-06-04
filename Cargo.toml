@@ -37,15 +37,15 @@ codegen-units = 16
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.0" }
 
 # Miden client + the SQLite store backend its Node.js variant uses.
-# The 0.15.x API isn't on crates.io yet, so we track miden-client via
-# git+branch=next here; once miden-client publishes 0.15.0 we can switch
-# back to versioned crates.io deps.
-miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
-miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+# Tracked via git+branch=igamigo-protocol-0.15 until that branch lands on
+# miden-client's published release, after which these can move back to
+# versioned crates.io deps.
+miden-client              = { branch = "igamigo-protocol-0.15", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
+miden-client-sqlite-store = { branch = "igamigo-protocol-0.15", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
 # TODO: remove once AccountProcedureRoot, NoteAttachmentContent, P2ideNote, P2ideNoteStorage are re-exported from miden-client.
-miden-protocol  = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
-miden-standards = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
+miden-protocol  = { default-features = false, version = "0.15" }
+miden-standards = { default-features = false, version = "0.15" }
 
 # External dependencies
 async-trait = { version = "0.1" }

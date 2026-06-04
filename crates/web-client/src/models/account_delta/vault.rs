@@ -2,7 +2,6 @@ use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{
     AccountVaultDelta as NativeAccountVaultDelta,
-    AssetVaultKey,
     FungibleAssetDelta as NativeFungibleAssetDelta,
 };
 
@@ -127,11 +126,15 @@ impl FungibleAssetDelta {
     }
 
     /// Returns the delta amount for a given faucet, if present.
+    ///
+    /// Matches by faucet id so the delta is found regardless of the asset's
+    /// callback flag.
     pub fn amount(&self, faucet_id: &AccountId) -> Option<i64> {
         let native_faucet_id: NativeAccountId = faucet_id.into();
-        let vault_key = AssetVaultKey::new_fungible(native_faucet_id)
-            .expect("faucet_id should be a fungible faucet");
-        self.0.amount(&vault_key)
+        self.0
+            .iter()
+            .find(|(vault_key, _)| vault_key.faucet_id() == native_faucet_id)
+            .map(|(_, &amount)| amount)
     }
 
     /// Returns the number of distinct fungible assets in the delta.

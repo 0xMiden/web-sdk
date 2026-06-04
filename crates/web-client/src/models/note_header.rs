@@ -26,10 +26,10 @@ impl NoteHeader {
         self.0.metadata().into()
     }
 
-    /// Returns a commitment to the note ID and metadata.
-    #[js_export(js_name = "toCommitment")]
-    pub fn to_commitment(&self) -> Word {
-        self.0.to_commitment().into()
+    /// Returns the commitment to the note's metadata.
+    #[js_export(js_name = "metadataCommitment")]
+    pub fn metadata_commitment(&self) -> Word {
+        self.0.metadata().to_commitment().into()
     }
 }
 
@@ -44,7 +44,7 @@ impl From<NativeNoteHeader> for NoteHeader {
 
 impl From<&NativeNoteHeader> for NoteHeader {
     fn from(native_note_header: &NativeNoteHeader) -> Self {
-        NoteHeader(native_note_header.clone())
+        NoteHeader(*native_note_header)
     }
 }
 
@@ -56,6 +56,6 @@ impl From<NoteHeader> for NativeNoteHeader {
 
 impl From<&NoteHeader> for NativeNoteHeader {
     fn from(note_header: &NoteHeader) -> Self {
-        note_header.0.clone()
+        note_header.0
     }
 }

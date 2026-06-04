@@ -160,7 +160,6 @@ test.describe("custom account component tests", () => {
         sdk.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const accountBuilderResult = new sdk.AccountBuilder(walletSeed)
-        .accountType(2 /* RegularAccountImmutableCode */)
         .storageMode(sdk.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withComponent(mappingAccountComponent)
@@ -306,7 +305,6 @@ test.describe("custom account component tests", () => {
         sdk.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const accountBuilderResult = new sdk.AccountBuilder(walletSeed)
-        .accountType(2 /* RegularAccountImmutableCode */)
         .storageMode(sdk.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withComponent(mappingAccountComponent)
@@ -572,7 +570,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
           sdk.createAuthFalcon512RpoMultisig(multisigConfig);
 
         const accountBuilderResult = new sdk.AccountBuilder(walletSeed)
-          .accountType(2 /* RegularAccountImmutableCode */)
           .storageMode(sdk.AccountStorageMode.private())
           .withAuthComponent(multisigComponent)
           .withBasicWalletComponent()
@@ -588,7 +585,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
 
         const targetAccount = await client.newWallet(
           sdk.AccountStorageMode.private(),
-          false,
           sdk.AuthScheme.AuthRpoFalcon512
         );
 
@@ -713,7 +709,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
       const result = await run(async ({ client, sdk }) => {
         const senderAccount = await client.newWallet(
           sdk.AccountStorageMode.private(),
-          false,
           sdk.AuthScheme.AuthRpoFalcon512
         );
 

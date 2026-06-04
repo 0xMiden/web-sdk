@@ -4,7 +4,6 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
   TransactionRequestBuilder,
@@ -163,7 +162,7 @@ export function useSend(): UseSendResult {
               toId,
               assets,
               noteType,
-              new NoteAttachment()
+              undefined
             );
 
             // NoteArray constructor consumes its elements; use push(&note)

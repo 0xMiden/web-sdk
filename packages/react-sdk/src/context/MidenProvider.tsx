@@ -143,11 +143,10 @@ export function MidenProvider({
   // when the signer provider creates a new object reference on every render.
   const signerIsConnected = signerContext?.isConnected ?? null;
   const signerStoreName = signerContext?.storeName ?? null;
-  // Stable identity for accountConfig — only re-init when the account type or
-  // storage mode actually changes (publicKeyCommitment is a Uint8Array so we
-  // use its length + first byte as a cheap fingerprint; full comparison happens
-  // inside initializeSignerAccount).
-  const signerAccountType = signerContext?.accountConfig?.accountType ?? null;
+  // Stable identity for accountConfig: only re-init when the storage mode
+  // actually changes. (publicKeyCommitment is a Uint8Array so we use its length
+  // plus first byte as a cheap fingerprint, with the full comparison happening
+  // inside initializeSignerAccount. accountType is ignored as of protocol 0.15.)
   const signerStorageMode =
     signerContext?.accountConfig?.storageMode?.toString() ?? null;
 
@@ -348,12 +347,11 @@ export function MidenProvider({
     setSignerConnected,
     signerIsConnected,
     signerStoreName,
-    signerAccountType,
     signerStorageMode,
     wrappedSignCb,
-    // Note: signerContext is intentionally NOT a dep — we use stable primitives
-    // (signerIsConnected, signerStoreName, signerAccountType, signerStorageMode)
-    // to avoid re-running when the signer provider creates a new object ref.
+    // Note: signerContext is intentionally NOT a dep. We use stable primitives
+    // (signerIsConnected, signerStoreName, signerStorageMode) to avoid
+    // re-running when the signer provider creates a new object ref.
     // signCb changes are handled by the dedicated useEffect + signCbRef above,
     // not by this effect.
   ]);

@@ -31,9 +31,12 @@ pub struct InputNoteRecord(NativeInputNoteRecord);
 
 #[js_export]
 impl InputNoteRecord {
-    /// Returns the note ID.
-    pub fn id(&self) -> NoteId {
-        self.0.id().into()
+    /// Returns the note ID, when the note's metadata is known.
+    ///
+    /// Metadata-less expected notes have no note ID; use `detailsCommitment` as a stable
+    /// identifier in that case.
+    pub fn id(&self) -> Option<NoteId> {
+        self.0.id().map(Into::into)
     }
 
     /// Returns the current processing state for this note.

@@ -19,6 +19,8 @@ pub struct InputNoteIdxdbObject {
     pub serialized_note_script: Vec<u8>,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub state: Vec<u8>,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub attachments: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -32,6 +34,8 @@ pub struct OutputNoteIdxdbObject {
     pub expected_height: u32,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub state: Vec<u8>,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub attachments: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -1,8 +1,11 @@
 use js_export_macro::js_export;
-use miden_client::note::NoteMetadata as NativeNoteMetadata;
+use miden_client::note::{
+    NoteAttachments as NativeNoteAttachments,
+    NoteMetadata as NativeNoteMetadata,
+    PartialNoteMetadata as NativePartialNoteMetadata,
+};
 
 use super::account_id::AccountId;
-use super::note_attachment::NoteAttachment;
 use super::{NoteTag, NoteType};
 
 /// Metadata associated with a note.
@@ -18,9 +21,9 @@ impl NoteMetadata {
     /// Creates metadata for a note.
     #[js_export(constructor)]
     pub fn new(sender: &AccountId, note_type: NoteType, note_tag: &NoteTag) -> NoteMetadata {
-        let native_note_metadata =
-            NativeNoteMetadata::new(sender.into(), note_type.into()).with_tag(note_tag.into());
-        NoteMetadata(native_note_metadata)
+        let partial = NativePartialNoteMetadata::new(sender.into(), note_type.into())
+            .with_tag(note_tag.into());
+        NoteMetadata(NativeNoteMetadata::new(partial, &NativeNoteAttachments::default()))
     }
 
     /// Returns the account that created the note.
@@ -39,26 +42,11 @@ impl NoteMetadata {
         self.0.note_type().into()
     }
 
-    /// Returns the attachment of the note.
-    pub fn attachment(&self) -> NoteAttachment {
-        self.0.attachment().into()
-    }
-
     /// Sets the tag for this metadata and returns the updated metadata.
     #[js_export(js_name = "withTag")]
     pub fn with_tag(&self, tag: &NoteTag) -> NoteMetadata {
-        NoteMetadata(self.clone().0.with_tag(tag.into()))
-    }
-
-    /// Adds an attachment to this metadata and returns the updated metadata.
-    ///
-    /// Attachments provide additional context about how notes should be processed.
-    /// For example, a `NetworkAccountTarget` attachment indicates that the note
-    /// should be consumed by a specific network account.
-    #[js_export(js_name = "withAttachment")]
-    pub fn with_attachment(&self, attachment: &NoteAttachment) -> NoteMetadata {
-        let native_attachment = attachment.into();
-        NoteMetadata(self.clone().0.with_attachment(native_attachment))
+        let partial = (*self.0.partial_metadata()).with_tag(tag.into());
+        NoteMetadata(NativeNoteMetadata::new(partial, &NativeNoteAttachments::default()))
     }
 }
 
@@ -73,7 +61,7 @@ impl From<NativeNoteMetadata> for NoteMetadata {
 
 impl From<&NativeNoteMetadata> for NoteMetadata {
     fn from(native_note_metadata: &NativeNoteMetadata) -> Self {
-        NoteMetadata(native_note_metadata.clone())
+        NoteMetadata(*native_note_metadata)
     }
 }
 
@@ -85,7 +73,7 @@ impl From<NoteMetadata> for NativeNoteMetadata {
 
 impl From<&NoteMetadata> for NativeNoteMetadata {
     fn from(note_metadata: &NoteMetadata) -> Self {
-        note_metadata.0.clone()
+        note_metadata.0
     }
 }
 

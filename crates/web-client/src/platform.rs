@@ -73,9 +73,8 @@ impl<T> AsyncCell<T> {
         Self(std::cell::RefCell::new(val))
     }
 
-    #[allow(clippy::unused_async)]
-    pub async fn lock(&self) -> std::cell::RefMut<'_, T> {
-        self.0.borrow_mut()
+    pub fn lock(&self) -> impl std::future::Future<Output = std::cell::RefMut<'_, T>> {
+        std::future::ready(self.0.borrow_mut())
     }
 
     /// Synchronous shared borrow (browser-only, single-threaded).

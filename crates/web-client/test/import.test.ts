@@ -12,11 +12,8 @@ test.describe("import from seed", () => {
       const walletSeed = new Uint8Array(32);
       crypto.getRandomValues(walletSeed);
 
-      const mutable = false;
-
       const initialWallet = await intClient.newWallet(
         sdk.AccountStorageMode.public(),
-        mutable,
         sdk.AuthScheme.AuthRpoFalcon512,
         walletSeed
       );
@@ -112,7 +109,6 @@ test.describe("import from seed", () => {
       await freshClient.syncState();
       const restoredAccount = await freshClient.importPublicAccountFromSeed(
         walletSeed,
-        mutable,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -160,11 +156,8 @@ test.describe("import public account by id", () => {
       const walletSeed = new Uint8Array(32);
       crypto.getRandomValues(walletSeed);
 
-      const mutable = false;
-
       const initialWallet = await intClient.newWallet(
         sdk.AccountStorageMode.public(),
-        mutable,
         sdk.AuthScheme.AuthRpoFalcon512,
         walletSeed
       );

@@ -83,13 +83,11 @@ test.describe("export and import account", () => {
     const walletSeed = new Uint8Array(32);
     crypto.getRandomValues(walletSeed);
 
-    const mutable = false;
     const storageMode = StorageMode.PRIVATE;
     const authSchemeId = 2;
 
     const initialWallet = await createNewWallet(page, {
       storageMode,
-      mutable,
       authSchemeId,
       walletSeed,
     });
@@ -217,9 +215,10 @@ test.describe("export and import note", () => {
       );
     }).rejects.toThrow("Note not found");
 
-    await expect(importSerializedNote(page, serializedNoteFile)).resolves.toBe(
-      noteId
-    );
+    await importSerializedNote(page, serializedNoteFile);
+
+    const reimported = await getInputNote(noteId, page);
+    expect(reimported.noteId).toBe(noteId);
   });
 
   test(`export input note`, async ({ page }) => {
@@ -248,12 +247,10 @@ test.describe("export and import note", () => {
           const client = window.client;
           const account1 = await client.newWallet(
             window.AccountStorageMode.private(),
-            true,
             window.AuthScheme.AuthRpoFalcon512
           );
           const account2 = await client.newWallet(
             window.AccountStorageMode.private(),
-            true,
             window.AuthScheme.AuthRpoFalcon512
           );
 
@@ -262,7 +259,7 @@ test.describe("export and import note", () => {
             account2.id(),
             new window.NoteAssets([]),
             window.NoteType.Public,
-            new window.NoteAttachment()
+            undefined
           );
           return window.NoteFile.fromOutputNote(
             window.OutputNote.full(p2IdNote)

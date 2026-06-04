@@ -1,25 +1,26 @@
 use js_export_macro::js_export;
 use miden_client::note::{
-    NoteHeader as NativeNoteHeader,
+    NoteId as NativeNoteId,
     NoteInclusionProof as NativeNoteInclusionProof,
+    NoteMetadata as NativeNoteMetadata,
 };
 
 use crate::models::NoteType;
 use crate::models::input_note::InputNote;
 use crate::models::note::Note;
-use crate::models::note_header::NoteHeader;
 use crate::models::note_id::NoteId;
 use crate::models::note_inclusion_proof::NoteInclusionProof;
 use crate::models::note_metadata::NoteMetadata;
 
 /// Wrapper for a note fetched over RPC.
 ///
-/// It contains the note header and inclusion proof. The note details are only present for
-/// public notes.
+/// It contains the note identifier, metadata and inclusion proof. The note details are only
+/// present for public notes.
 #[derive(Clone)]
 #[js_export]
 pub struct FetchedNote {
-    header: NoteHeader,
+    note_id: NoteId,
+    metadata: NoteMetadata,
     inclusion_proof: NoteInclusionProof,
     note: Option<Note>,
 }
@@ -42,12 +43,7 @@ impl FetchedNote {
         inclusion_proof: NoteInclusionProof,
         note: Option<Note>,
     ) -> FetchedNote {
-        // Convert note_id and metadata to NativeNoteHeader, then to web NoteHeader
-        let native_note_id = note_id.into();
-        let native_metadata = metadata.into();
-        let native_header = NativeNoteHeader::new(native_note_id, native_metadata);
-        let header = native_header.into();
-        FetchedNote { header, inclusion_proof, note }
+        FetchedNote { note_id, metadata, inclusion_proof, note }
     }
 
     // GETTERS
@@ -56,20 +52,14 @@ impl FetchedNote {
     /// The unique identifier of the note.
     #[js_export(getter, js_name = "noteId")]
     pub fn get_note_id(&self) -> NoteId {
-        self.header.id()
+        self.note_id
     }
 
     /// The note's metadata, including sender, tag, and other properties.
     /// Available for both private and public notes.
     #[js_export(getter)]
     pub fn metadata(&self) -> NoteMetadata {
-        self.header.metadata()
-    }
-
-    /// The note's header, containing the ID and metadata.
-    #[js_export(getter)]
-    pub fn header(&self) -> NoteHeader {
-        self.header.clone()
+        self.metadata.clone()
     }
 
     /// The full [`Note`] data.
@@ -92,7 +82,7 @@ impl FetchedNote {
     /// Returns whether the note is private, encrypted, or public.
     #[js_export(getter, js_name = "noteType")]
     pub fn get_note_type(&self) -> NoteType {
-        self.header.metadata().note_type()
+        self.metadata.note_type()
     }
 
     // CONVERSIONS
@@ -109,14 +99,16 @@ impl FetchedNote {
 }
 
 impl FetchedNote {
-    /// Create a `FetchedNote` from a native `NoteHeader` (internal use).
-    pub(super) fn from_header(
-        header: NativeNoteHeader,
+    /// Create a `FetchedNote` from its native parts (internal use).
+    pub(super) fn from_parts(
+        note_id: NativeNoteId,
+        metadata: NativeNoteMetadata,
         note: Option<Note>,
         inclusion_proof: NativeNoteInclusionProof,
     ) -> Self {
         FetchedNote {
-            header: header.into(),
+            note_id: note_id.into(),
+            metadata: metadata.into(),
             note,
             inclusion_proof: inclusion_proof.into(),
         }

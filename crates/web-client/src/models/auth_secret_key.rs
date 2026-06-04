@@ -69,7 +69,7 @@ impl AuthSecretKey {
 
         let secret_key_as_native_felts = secret_key_as_bytes
             .iter()
-            .map(|a| NativeFelt::new(u64::from(*a)))
+            .map(|a| NativeFelt::new(u64::from(*a)).expect("byte value always fits in the field"))
             .collect::<Vec<NativeFelt>>();
 
         Ok(secret_key_as_native_felts.into_iter().map(Into::into).collect())
@@ -85,7 +85,7 @@ impl AuthSecretKey {
 
         let secret_key_as_native_felts = secret_key_as_bytes
             .iter()
-            .map(|a| NativeFelt::new(u64::from(*a)))
+            .map(|a| NativeFelt::new(u64::from(*a)).expect("byte value always fits in the field"))
             .collect::<Vec<NativeFelt>>();
 
         Ok(secret_key_as_native_felts.into_iter().map(Into::into).collect())

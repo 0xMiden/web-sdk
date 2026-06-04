@@ -362,9 +362,6 @@ export const swapTransaction = async (
       );
 
       let expectedOutputNotes = swapTransactionRequest.expectedOutputOwnNotes();
-      let expectedPaybackNoteDetails = swapTransactionRequest
-        .expectedFutureNotes()
-        .map((futureNote) => futureNote.noteDetails);
 
       let swapTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -401,13 +398,12 @@ export const swapTransaction = async (
 
       // Consuming payback note for account A
 
-      noteId = expectedPaybackNoteDetails[0].id().toString();
-      inputNoteRecord = await client.getInputNote(noteId);
-      if (!inputNoteRecord) {
-        throw new Error(`Note with ID ${noteId} not found`);
+      let consumablePaybackNotes = await client.getConsumableNotes(undefined);
+      if (consumablePaybackNotes.length === 0) {
+        throw new Error(`Payback note not found`);
       }
 
-      note = inputNoteRecord.toNote();
+      note = consumablePaybackNotes[0].inputNoteRecord().toNote();
       let txRequest2 = client.newConsumeTransactionRequest([note]);
 
       let consumeTransaction2Result =
@@ -470,20 +466,14 @@ export interface NewAccountTestResult {
   vaultCommitment: string;
   storageCommitment: string;
   codeCommitment: string;
-  isFaucet: boolean;
-  isRegularAccount: boolean;
-  isUpdatable: boolean;
   isPublic: boolean;
   isPrivate: boolean;
-  isNetwork: boolean;
   isIdPublic: boolean;
   isIdPrivate: boolean;
-  isIdNetwork: boolean;
   isNew: boolean;
 }
 interface createNewWalletParams {
   storageMode: StorageMode;
-  mutable: boolean;
   authSchemeId: number;
   clientSeed?: Uint8Array;
   isolatedClient?: boolean;
@@ -495,7 +485,6 @@ export const createNewWallet = async (
   testingPage: Page,
   {
     storageMode,
-    mutable,
     authSchemeId,
     clientSeed,
     isolatedClient,
@@ -509,7 +498,6 @@ export const createNewWallet = async (
   return await testingPage.evaluate(
     async ({
       storageMode,
-      mutable,
       authSchemeId,
       _serializedWalletSeed,
       _serializedClientSeed,
@@ -535,7 +523,6 @@ export const createNewWallet = async (
 
       const newWallet = await client.newWallet(
         accountStorageMode,
-        mutable,
         authSchemeId,
         _walletSeed
       );
@@ -546,21 +533,15 @@ export const createNewWallet = async (
         vaultCommitment: newWallet.vault().root().toHex(),
         storageCommitment: newWallet.storage().commitment().toHex(),
         codeCommitment: newWallet.code().commitment().toHex(),
-        isFaucet: newWallet.isFaucet(),
-        isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         isIdPublic: newWallet.id().isPublic(),
         isIdPrivate: newWallet.id().isPrivate(),
-        isIdNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     },
     {
       storageMode: storageMode,
-      mutable: mutable,
       authSchemeId: authSchemeId,
       _serializedClientSeed: serializedClientSeed,
       isolatedClient: isolatedClient,
@@ -605,15 +586,10 @@ export const createNewFaucet = async (
         vaultCommitment: newFaucet.vault().root().toHex(),
         storageCommitment: newFaucet.storage().commitment().toHex(),
         codeCommitment: newFaucet.code().commitment().toHex(),
-        isFaucet: newFaucet.isFaucet(),
-        isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         isIdPublic: newFaucet.id().isPublic(),
         isIdPrivate: newFaucet.id().isPrivate(),
-        isIdNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     },
@@ -887,7 +863,6 @@ export const setupWalletAndFaucet = async (
     const client = window.client;
     const account = await client.newWallet(
       window.AccountStorageMode.private(),
-      true,
       window.AuthScheme.AuthRpoFalcon512
     );
     const faucetAccount = await client.newFaucet(

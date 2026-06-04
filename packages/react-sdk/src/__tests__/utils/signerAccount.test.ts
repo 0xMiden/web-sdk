@@ -154,16 +154,6 @@ describe("initializeSignerAccount", () => {
       );
     });
 
-    it("should set account type from config", async () => {
-      const config = createMockSignerAccountConfig({
-        accountType: "RegularAccountUpdatableCode",
-      });
-
-      await initializeSignerAccount(mockClient, config);
-
-      expect(mockBuilder.accountType).toHaveBeenCalled();
-    });
-
     it("should set storage mode from config", async () => {
       const mockStorageMode = { toString: () => "public" };
       const config = createMockSignerAccountConfig({

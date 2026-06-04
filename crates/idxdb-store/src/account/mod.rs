@@ -35,6 +35,7 @@ use miden_client::store::{
     AccountRecordData,
     AccountStatus,
     AccountStorageFilter,
+    ClientAccountType,
     StoreError,
 };
 use miden_client::utils::{Deserializable, Serializable};
@@ -110,29 +111,34 @@ impl IdxdbStore {
             await_js(promise, "failed to fetch account headers").await?;
         let account_headers: Vec<(AccountHeader, AccountStatus)> = account_headers_idxdb
             .into_iter()
-            .map(parse_account_record_idxdb_object)
+            .map(|obj| {
+                parse_account_record_idxdb_object(obj).map(|(header, status, _)| (header, status))
+            })
             .collect::<Result<Vec<_>, StoreError>>()?;
 
         Ok(account_headers)
+    }
+
+    /// Like [`Self::get_account_header`] but also returns how the client tracks the account.
+    async fn get_account_header_with_type(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<(AccountHeader, AccountStatus, ClientAccountType)>, StoreError> {
+        let account_id_str = account_id.to_string();
+        let promise = idxdb_get_account_header(self.db_id(), account_id_str);
+        let account_header_idxdb: Option<AccountRecordIdxdbObject> =
+            await_js(promise, "failed to fetch account header").await?;
+
+        account_header_idxdb.map(parse_account_record_idxdb_object).transpose()
     }
 
     pub(crate) async fn get_account_header(
         &self,
         account_id: AccountId,
     ) -> Result<Option<(AccountHeader, AccountStatus)>, StoreError> {
-        let account_id_str = account_id.to_string();
-        let promise = idxdb_get_account_header(self.db_id(), account_id_str);
-        let account_header_idxdb: Option<AccountRecordIdxdbObject> =
-            await_js(promise, "failed to fetch account header").await?;
-
-        match account_header_idxdb {
+        match self.get_account_header_with_type(account_id).await? {
             None => Ok(None),
-            Some(account_header_idxdb) => {
-                let parsed_account_record =
-                    parse_account_record_idxdb_object(account_header_idxdb)?;
-
-                Ok(Some(parsed_account_record))
-            },
+            Some((header, status, _client_account_type)) => Ok(Some((header, status))),
         }
     }
 
@@ -150,7 +156,7 @@ impl IdxdbStore {
             .map_or(Ok(None), |account_record| {
                 let result = parse_account_record_idxdb_object(account_record);
 
-                result.map(|(account_header, _status)| Some(account_header))
+                result.map(|(account_header, _status, _client_type)| Some(account_header))
             });
 
         account_header
@@ -177,9 +183,10 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let (account_header, status) = match self.get_account_header(account_id).await? {
-            None => return Ok(None),
-            Some((account_header, status)) => (account_header, status),
+        let Some((account_header, status, client_account_type)) =
+            self.get_account_header_with_type(account_id).await?
+        else {
+            return Ok(None);
         };
         let account_code = self.get_account_code(account_header.code_commitment()).await?;
 
@@ -197,16 +204,17 @@ impl IdxdbStore {
         )?;
 
         let account_data = AccountRecordData::Full(account);
-        Ok(Some(AccountRecord::new(account_data, status)))
+        Ok(Some(AccountRecord::new(account_data, status, client_account_type)))
     }
 
     pub(crate) async fn get_minimal_partial_account(
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let (account_header, status) = match self.get_account_header(account_id).await? {
-            None => return Ok(None),
-            Some((account_header, status)) => (account_header, status),
+        let Some((account_header, status, client_account_type)) =
+            self.get_account_header_with_type(account_id).await?
+        else {
+            return Ok(None);
         };
 
         let partial_vault = PartialVault::new(account_header.vault_root());
@@ -244,7 +252,7 @@ impl IdxdbStore {
         )?;
 
         let account_data = AccountRecordData::Partial(partial_account);
-        Ok(Some(AccountRecord::new(account_data, status)))
+        Ok(Some(AccountRecord::new(account_data, status, client_account_type)))
     }
 
     pub(super) async fn get_account_code(&self, root: Word) -> Result<AccountCode, StoreError> {
@@ -333,6 +341,14 @@ impl IdxdbStore {
                         ));
                     },
                 }
+            },
+            AccountStorageFilter::SlotNames(names) => {
+                let wanted: alloc::collections::BTreeSet<&str> =
+                    names.iter().map(StorageSlotName::as_str).collect();
+                account_storage_idxdb
+                    .into_iter()
+                    .filter(|s| wanted.contains(s.slot_name.as_str()))
+                    .collect()
             },
         };
 
@@ -431,6 +447,7 @@ impl IdxdbStore {
         &self,
         account: &Account,
         initial_address: Address,
+        client_account_type: ClientAccountType,
     ) -> Result<(), StoreError> {
         upsert_account_code(self.db_id(), account.code()).await.map_err(|js_error| {
             StoreError::DatabaseError(format!("failed to insert account code: {js_error:?}"))
@@ -448,9 +465,11 @@ impl IdxdbStore {
                 StoreError::DatabaseError(format!("failed to insert account vault:{js_error:?}"))
             })?;
 
-        upsert_account_record(self.db_id(), account).await.map_err(|js_error| {
-            StoreError::DatabaseError(format!("failed to insert account record: {js_error:?}"))
-        })?;
+        upsert_account_record(self.db_id(), account, client_account_type)
+            .await
+            .map_err(|js_error| {
+                StoreError::DatabaseError(format!("failed to insert account record: {js_error:?}"))
+            })?;
 
         insert_account_address(self.db_id(), &account.id(), initial_address)
             .await

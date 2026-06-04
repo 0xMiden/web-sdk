@@ -191,10 +191,10 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       }
     ),
     NoteAttachment: Object.assign(class NoteAttachment {}, {
-      newWord: vi.fn(
+      withWord: vi.fn(
         (_scheme: unknown, _word: unknown) => new (class NoteAttachment {})()
       ),
-      newArray: vi.fn(
+      withWords: vi.fn(
         (_scheme: unknown, _words: unknown[]) => new (class NoteAttachment {})()
       ),
     }),

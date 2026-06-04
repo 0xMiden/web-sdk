@@ -1,6 +1,8 @@
 use js_export_macro::js_export;
-use miden_client::note::NoteId as NativeNoteId;
+use miden_client::note::{NoteId as NativeNoteId, NoteMetadata as NativeNoteMetadata};
+use miden_protocol::note::NoteDetailsCommitment;
 
+use super::note_metadata::NoteMetadata;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::JsErr;
@@ -25,10 +27,12 @@ pub struct NoteId(NativeNoteId);
 
 #[js_export]
 impl NoteId {
-    /// Builds a note ID from the recipient and asset commitments.
+    /// Builds a note ID from the note details commitment and metadata.
     #[js_export(constructor)]
-    pub fn new(recipient_digest: &Word, asset_commitment_digest: &Word) -> NoteId {
-        NoteId(NativeNoteId::new(recipient_digest.into(), asset_commitment_digest.into()))
+    pub fn new(details_commitment: &Word, metadata: &NoteMetadata) -> NoteId {
+        let details_commitment = NoteDetailsCommitment::from_raw(details_commitment.into());
+        let native_metadata: NativeNoteMetadata = metadata.into();
+        NoteId(NativeNoteId::new(details_commitment, &native_metadata))
     }
 
     /// Parses a note ID from its hex encoding.

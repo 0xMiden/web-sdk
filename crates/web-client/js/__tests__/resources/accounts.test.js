@@ -213,88 +213,34 @@ describe("AccountsResource", () => {
   });
 
   describe("create — wallet", () => {
-    it("creates a mutable wallet by default (no type)", async () => {
+    it("creates a wallet by default (no type)", async () => {
       const resource = makeResource();
       const result = await resource.create({});
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        true,
-        2,
-        undefined
-      );
+      expect(inner.newWallet).toHaveBeenCalledWith("private", 2, undefined);
       expect(result).toBe("newWalletResult");
-    });
-
-    it("creates a mutable wallet when type='MutableWallet'", async () => {
-      const resource = makeResource();
-      await resource.create({ type: "MutableWallet" });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        true,
-        2,
-        undefined
-      );
-    });
-
-    it("creates an immutable wallet when type='ImmutableWallet'", async () => {
-      const resource = makeResource();
-      await resource.create({ type: "ImmutableWallet" });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        false,
-        2,
-        undefined
-      );
     });
 
     it("hashes string seed and passes it to newWallet", async () => {
       const resource = makeResource();
       await resource.create({ seed: "my seed" });
       const callArgs = inner.newWallet.mock.calls[0];
-      // 4th arg should be a Uint8Array (hashed seed)
-      expect(callArgs[3]).toBeInstanceOf(Uint8Array);
-      expect(callArgs[3]).toHaveLength(32);
+      // 3rd arg should be a Uint8Array (hashed seed)
+      expect(callArgs[2]).toBeInstanceOf(Uint8Array);
+      expect(callArgs[2]).toHaveLength(32);
     });
 
     it("passes through Uint8Array seed unchanged", async () => {
       const seed = new Uint8Array(32).fill(5);
       const resource = makeResource();
       await resource.create({ seed });
-      expect(inner.newWallet.mock.calls[0][3]).toBe(seed);
+      expect(inner.newWallet.mock.calls[0][2]).toBe(seed);
     });
 
     it("uses public storage when specified", async () => {
       const resource = makeResource();
       await resource.create({ storage: "public" });
       expect(wasm.AccountStorageMode.public).toHaveBeenCalled();
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "public",
-        true,
-        2,
-        undefined
-      );
-    });
-
-    it("creates mutable wallet when type=3", async () => {
-      const resource = makeResource();
-      await resource.create({ type: 3 });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        true,
-        2,
-        undefined
-      );
-    });
-
-    it("creates immutable wallet when type=2", async () => {
-      const resource = makeResource();
-      await resource.create({ type: 2 });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        false,
-        2,
-        undefined
-      );
+      expect(inner.newWallet).toHaveBeenCalledWith("public", 2, undefined);
     });
   });
 
@@ -576,22 +522,9 @@ describe("AccountsResource", () => {
       const result = await resource.import({ seed });
       expect(inner.importPublicAccountFromSeed).toHaveBeenCalledWith(
         seed,
-        true, // mutable default
         2 // falcon
       );
       expect(result).toBe("seedImport");
-    });
-
-    it("imports seed with explicit ImmutableWallet type", async () => {
-      inner.importPublicAccountFromSeed.mockResolvedValue("seedImport");
-      const seed = new Uint8Array(32);
-      const resource = makeResource();
-      await resource.import({ seed, type: "ImmutableWallet" });
-      expect(inner.importPublicAccountFromSeed).toHaveBeenCalledWith(
-        seed,
-        false,
-        2
-      );
     });
 
     it("fallback: imports plain object as AccountRef", async () => {

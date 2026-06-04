@@ -22,7 +22,8 @@ export const getNoteSummary = (
 ): NoteSummary | null => {
   try {
     const record = getInputNoteRecord(note);
-    const id = record.id().toString();
+    const id = record.id()?.toString();
+    if (!id) return null;
     const assets: NoteAsset[] = [];
 
     try {

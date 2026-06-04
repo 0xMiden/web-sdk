@@ -208,17 +208,12 @@ function wrapClient(client: any, storeName?: string): any {
       }
       // newWallet: convert Uint8Array/Buffer seed to plain Array for napi's Vec<u8>
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normalizedSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(
-            mode,
-            mutable,
-            authScheme,
-            normalizedSeed ?? null
-          );
+          return target.newWallet(mode, authScheme, normalizedSeed ?? null);
         };
       }
       // Methods that take JsU64 (BigInt in browser, Number in Node.js)

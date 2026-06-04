@@ -34,6 +34,7 @@ use miden_client::store::{
     AccountStatus,
     AccountStorageFilter,
     BlockRelevance,
+    ClientAccountType,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
@@ -315,8 +316,9 @@ impl Store for IdxdbStore {
         &self,
         account: &Account,
         initial_address: Address,
+        client_account_type: ClientAccountType,
     ) -> Result<(), StoreError> {
-        self.insert_account(account, initial_address).await
+        self.insert_account(account, initial_address, client_account_type).await
     }
 
     async fn update_account(&self, new_account_state: &Account) -> Result<(), StoreError> {
@@ -429,23 +431,10 @@ impl Store for IdxdbStore {
         address: Address,
         account_id: AccountId,
     ) -> Result<(), StoreError> {
-        let derived_note_tag = address.to_note_tag();
-        let note_tag_record = NoteTagRecord::with_account_source(derived_note_tag, account_id);
-        let success = self.add_note_tag(note_tag_record).await?;
-        if !success {
-            return Err(StoreError::NoteTagAlreadyTracked(u64::from(derived_note_tag.as_u32())));
-        }
         self.insert_address(address, &account_id).await
     }
 
-    async fn remove_address(
-        &self,
-        address: Address,
-        account_id: AccountId,
-    ) -> Result<(), StoreError> {
-        let derived_note_tag = address.to_note_tag();
-        let note_tag_record = NoteTagRecord::with_account_source(derived_note_tag, account_id);
-        self.remove_note_tag(note_tag_record).await?;
+    async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
         self.remove_address(address).await
     }
 

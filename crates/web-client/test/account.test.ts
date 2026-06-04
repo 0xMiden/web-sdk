@@ -9,7 +9,6 @@ test.describe("get_account tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -30,7 +29,7 @@ test.describe("get_account tests", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const nonExistingAccountId = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x0a0a0a0a0a0a0a110a0a0a0a0a0a0a"
       );
 
       const retrieved = await client.getAccount(nonExistingAccountId);
@@ -49,12 +48,10 @@ test.describe("getAccounts tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount1 = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const newAccount2 = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const commitmentsOfCreatedAccounts = [
@@ -115,7 +112,6 @@ test.describe("account public commitments", () => {
     const result = await run(async ({ client, sdk }) => {
       const newAccount = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const accountId = newAccount.id();
@@ -138,7 +134,7 @@ test.describe("account public commitments", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const accountId = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x0a0a0a0a0a0a0a110a0a0a0a0a0a0a"
       );
 
       const sk1 = sdk.AuthSecretKey.ecdsaWithRNG(null);
@@ -179,7 +175,7 @@ test.describe("account public commitments", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const accountId = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x0a0a0a0a0a0a0a110a0a0a0a0a0a0a"
       );
       let commitmentsLength;
       try {
@@ -203,7 +199,6 @@ test.describe("account public commitments", () => {
     const result = await run(async ({ client, sdk }) => {
       const account = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const commitments = await client.keystore.getCommitments(account.id());
@@ -217,7 +212,7 @@ test.describe("account public commitments", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const accountId1 = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x0a0a0a0a0a0a0a110a0a0a0a0a0a0a"
       );
 
       const sk1 = sdk.AuthSecretKey.ecdsaWithRNG(null);
@@ -230,7 +225,7 @@ test.describe("account public commitments", () => {
         await client.keystore.getCommitments(accountId1);
 
       const accountId2 = sdk.AccountId.fromHex(
-        "0x79817bcc6fb9f99027c2245f6979ef"
+        "0x0a0a0a0a0a0a0a110a0a0a0a0a0a0b"
       );
 
       const sk3 = sdk.AuthSecretKey.rpoFalconWithRNG(null);
@@ -258,7 +253,6 @@ test.describe("getAccountByKeyCommitment tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -299,12 +293,10 @@ test.describe("getAccountByKeyCommitment tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const wallet1 = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const wallet2 = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -331,7 +323,6 @@ test.describe("getAccountByKeyCommitment tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -379,11 +370,9 @@ test.describe("getAccountByKeyCommitment tests", () => {
       return {
         foundAccountId: foundAccount.id().toString(),
         faucetId: faucet.id().toString(),
-        isFaucet: foundAccount.isFaucet(),
       };
     });
     expect(result.foundAccountId).toEqual(result.faucetId);
-    expect(result.isFaucet).toBe(true);
   });
 });
 

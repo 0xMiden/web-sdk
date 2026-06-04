@@ -3,8 +3,9 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::{AccountId, StorageMap, StorageSlotType};
-use miden_client::note::{BlockNumber, NoteId, NoteTag};
-use miden_client::store::StoreError;
+use miden_client::asset::AssetVault;
+use miden_client::note::{BlockNumber, NoteTag};
+use miden_client::store::{AccountStorageFilter, StoreError};
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -13,6 +14,7 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use miden_protocol::note::NoteDetailsCommitment;
 
 use super::IdxdbStore;
 use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
@@ -56,7 +58,9 @@ impl IdxdbStore {
                         NoteTagSource::Account(AccountId::from_hex(account_id.as_str())?)
                     },
                     (None, Some(note_id)) => {
-                        NoteTagSource::Note(NoteId::try_from_hex(note_id.as_str())?)
+                        let word =
+                            Word::try_from(note_id.as_str()).map_err(StoreError::WordError)?;
+                        NoteTagSource::Note(NoteDetailsCommitment::from_raw(word))
                     },
                     _ => return Err(StoreError::ParsingError("Invalid NoteTagSource".to_string())),
                 };
@@ -152,7 +156,7 @@ impl IdxdbStore {
         let committed_note_ids: Vec<String> = note_updates
             .updated_input_notes()
             .filter(|update| update.inner().is_committed())
-            .map(|update| update.inner().id().to_string())
+            .map(|update| update.inner().details_commitment().to_hex())
             .collect();
 
         for (account_id, digest) in account_updates.mismatched_private_accounts() {
@@ -195,8 +199,27 @@ impl IdxdbStore {
         for update in account_updates.updated_public_accounts() {
             match update {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account),
-                PublicAccountUpdate::Delta { new_header, delta } => {
-                    delta_updates.push((new_header, delta));
+                PublicAccountUpdate::Delta(public_delta) => {
+                    let account_id = public_delta.id();
+                    let local_header = self
+                        .get_account_header(account_id)
+                        .await?
+                        .map(|(header, _)| header)
+                        .ok_or(StoreError::AccountDataNotFound(account_id))?;
+                    let local_storage = self
+                        .get_storage(
+                            account_id,
+                            AccountStorageFilter::SlotNames(public_delta.value_slot_names()),
+                        )
+                        .await?;
+                    let local_assets = self.get_vault_assets(account_id, vec![]).await?;
+                    let local_vault = AssetVault::new(&local_assets)?;
+                    let account_delta = public_delta.compute_account_delta(
+                        &local_header,
+                        &local_storage,
+                        &local_vault,
+                    )?;
+                    delta_updates.push((public_delta.new_header().clone(), account_delta));
                 },
             }
         }

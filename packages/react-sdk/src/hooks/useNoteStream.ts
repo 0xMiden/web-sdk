@@ -200,7 +200,8 @@ function buildStreamedNote(
   noteFirstSeen: Map<string, number>
 ): StreamedNote | null {
   try {
-    const id = record.id().toString();
+    const id = record.id()?.toString();
+    if (!id) return null;
 
     // Extract sender
     const metadata = record.metadata?.();

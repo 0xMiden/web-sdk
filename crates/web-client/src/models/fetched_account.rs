@@ -51,12 +51,6 @@ impl FetchedAccount {
     pub fn is_private(&self) -> bool {
         self.account_id.is_private()
     }
-
-    /// Returns true when the account is a network account.
-    #[js_export(js_name = "isNetwork")]
-    pub fn is_network(&self) -> bool {
-        self.account_id.is_network()
-    }
 }
 
 // CONVERSIONS

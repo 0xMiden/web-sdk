@@ -50,7 +50,8 @@ impl AccountBuilder {
         Ok(AccountBuilder(NativeAccountBuilder::new(seed_array)))
     }
 
-    /// Sets the account type (regular, faucet, etc.).
+    /// Sets the account type, which in protocol 0.15 is the account visibility
+    /// (public or private). Equivalent to [`Self::storage_mode`].
     #[js_export(js_name = "accountType")]
     pub fn account_type(&mut self, account_type: AccountType) -> Self {
         self.0 = self.0.clone().account_type(account_type.into());
@@ -61,7 +62,7 @@ impl AccountBuilder {
     /// Sets the storage mode (public/private) for the account.
     #[js_export(js_name = "storageMode")]
     pub fn storage_mode(&mut self, storage_mode: &AccountStorageMode) -> Self {
-        self.0 = self.0.clone().storage_mode(storage_mode.into());
+        self.0 = self.0.clone().account_type(storage_mode.into());
         self.clone()
     }
 

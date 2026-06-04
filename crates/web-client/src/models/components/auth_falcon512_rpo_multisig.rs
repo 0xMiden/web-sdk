@@ -1,11 +1,13 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
+use miden_client::account::AccountProcedureRoot as NativeAccountProcedureRoot;
 use miden_client::auth::{
     AuthMultisig as NativeAuthMultisig,
     AuthMultisigConfig as NativeAuthMultisigConfig,
     AuthSchemeId as NativeAuthSchemeId,
     PublicKeyCommitment,
 };
+use miden_client::utils::{Deserializable, Serializable};
 
 use crate::js_error_with_context;
 use crate::models::account_component::AccountComponent;
@@ -73,10 +75,13 @@ impl AuthFalcon512RpoMultisigConfig {
         &self,
         proc_thresholds: Vec<ProcedureThreshold>,
     ) -> Result<AuthFalcon512RpoMultisigConfig, JsErr> {
-        let native_proc_thresholds = proc_thresholds
+        let native_proc_thresholds: Vec<(NativeAccountProcedureRoot, u32)> = proc_thresholds
             .into_iter()
             .map(|entry| {
-                let proc_root: NativeWord = entry.proc_root.into();
+                let proc_root_word: NativeWord = entry.proc_root.into();
+                let proc_root =
+                    NativeAccountProcedureRoot::read_from_bytes(&proc_root_word.to_bytes())
+                        .expect("a word is a valid account procedure root");
                 (proc_root, entry.threshold)
             })
             .collect();
@@ -115,7 +120,7 @@ impl AuthFalcon512RpoMultisigConfig {
             .proc_thresholds()
             .iter()
             .map(|(proc_root, threshold)| ProcedureThreshold {
-                proc_root: (*proc_root).into(),
+                proc_root: NativeWord::from(*proc_root).into(),
                 threshold: *threshold,
             })
             .collect()

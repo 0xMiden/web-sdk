@@ -1,20 +1,14 @@
 use js_export_macro::js_export;
 use miden_client::account::component::{
-    BasicFungibleFaucet,
     BurnPolicyConfig,
-    FungibleTokenMetadata,
+    FungibleFaucet,
     MintPolicyConfig,
-    PolicyAuthority,
+    PolicyRegistration,
     TokenName,
     TokenPolicyManager,
 };
-use miden_client::account::{
-    AccountBuilder,
-    AccountBuilderSchemaCommitmentExt,
-    AccountComponent,
-    AccountType,
-};
-use miden_client::asset::TokenSymbol;
+use miden_client::account::{AccountBuilder, AccountBuilderSchemaCommitmentExt, AccountComponent};
+use miden_client::asset::{AssetAmount, TokenSymbol};
 use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
 use miden_client::block::BlockNumber;
 use miden_client::keystore::Keystore;
@@ -113,26 +107,31 @@ impl WebClient {
         let symbol = TokenSymbol::new(&token_symbol).map_err(|e| from_str_err(&e.to_string()))?;
         let name = TokenName::new(&token_name)
             .map_err(|err| js_error_with_context(err, "invalid token name"))?;
-        let max_supply = js_u64_to_u64(max_supply);
+        let max_supply = AssetAmount::new(js_u64_to_u64(max_supply))
+            .map_err(|err| js_error_with_context(err, "invalid max supply"))?;
 
-        let token_metadata = FungibleTokenMetadata::builder(name, symbol, decimals, max_supply)
+        let faucet = FungibleFaucet::builder()
+            .name(name)
+            .symbol(symbol)
+            .decimals(decimals)
+            .max_supply(max_supply)
             .build()
-            .map_err(|err| js_error_with_context(err, "failed to build token metadata"))?;
+            .map_err(|err| js_error_with_context(err, "failed to build fungible faucet"))?;
+
+        let policy_manager = TokenPolicyManager::new()
+            .with_mint_policy(MintPolicyConfig::AllowAll, PolicyRegistration::Active)
+            .map_err(|err| js_error_with_context(err, "failed to set mint policy"))?
+            .with_burn_policy(BurnPolicyConfig::AllowAll, PolicyRegistration::Active)
+            .map_err(|err| js_error_with_context(err, "failed to set burn policy"))?;
 
         let mut init_seed = [0u8; 32];
         faucet_rng.fill_bytes(&mut init_seed);
 
         let new_account = match AccountBuilder::new(init_seed)
-            .account_type(AccountType::FungibleFaucet)
-            .storage_mode(storage_mode.into())
+            .account_type(storage_mode.into())
             .with_auth_component(auth_component)
-            .with_component(token_metadata)
-            .with_component(BasicFungibleFaucet)
-            .with_components(TokenPolicyManager::new(
-                PolicyAuthority::AuthControlled,
-                MintPolicyConfig::AllowAll,
-                BurnPolicyConfig::AllowAll,
-            ))
+            .with_component(faucet)
+            .with_components(policy_manager)
             .build_with_schema_commitment()
         {
             Ok(result) => result,
@@ -160,15 +159,13 @@ impl WebClient {
     pub async fn new_wallet(
         &self,
         storage_mode: &AccountStorageMode,
-        mutable: bool,
         auth_scheme: AuthScheme,
         init_seed: Option<Vec<u8>>,
     ) -> Result<Account, JsErr> {
         self.maybe_sync_before_account_creation().await;
         let keystore = self.get_keystore().await?;
 
-        let (new_account, key_pair) =
-            generate_wallet(storage_mode, mutable, init_seed, auth_scheme).await?;
+        let (new_account, key_pair) = generate_wallet(storage_mode, init_seed, auth_scheme).await?;
 
         {
             let mut guard = self.get_mut_inner().await;

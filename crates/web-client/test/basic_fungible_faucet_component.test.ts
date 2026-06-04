@@ -36,7 +36,6 @@ test.describe("basic fungible faucet", () => {
     const result = await run(async ({ client, sdk }) => {
       const account = await client.newWallet(
         sdk.AccountStorageMode.tryFromStr("public"),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

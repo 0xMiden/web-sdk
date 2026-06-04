@@ -11,7 +11,7 @@ use crate::models::account_id::AccountId as JsAccountId;
 use crate::models::account_storage_mode::AccountStorageMode;
 use crate::models::auth::AuthScheme;
 use crate::models::note_file::NoteFile;
-use crate::models::note_id::NoteId;
+use crate::models::word::Word;
 use crate::platform::{JsErr, from_str_err};
 use crate::{WebClient, js_error_with_context};
 
@@ -46,14 +46,12 @@ impl WebClient {
     pub async fn import_public_account_from_seed(
         &self,
         init_seed: Vec<u8>,
-        mutable: bool,
         auth_scheme: AuthScheme,
     ) -> Result<Account, JsErr> {
         let keystore = self.get_keystore().await?;
 
         let (generated_acct, key_pair) =
-            generate_wallet(&AccountStorageMode::public(), mutable, Some(init_seed), auth_scheme)
-                .await?;
+            generate_wallet(&AccountStorageMode::public(), Some(init_seed), auth_scheme).await?;
 
         let native_id = generated_acct.id();
 
@@ -90,14 +88,17 @@ impl WebClient {
     }
 
     #[js_export(js_name = "importNoteFile")]
-    pub async fn import_note_file(&self, note_file: NoteFile) -> Result<NoteId, JsErr> {
+    pub async fn import_note_file(&self, note_file: NoteFile) -> Result<Word, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        Ok(client
+        let details_commitment = client
             .import_notes(&[note_file.into()])
             .await
-            .map_err(|err| js_error_with_context(err, "failed to import note"))?[0]
-            .into())
+            .map_err(|err| js_error_with_context(err, "failed to import note"))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| from_str_err("no notes were imported"))?;
+        Ok(details_commitment.as_word().into())
     }
 }
 

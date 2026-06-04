@@ -49,7 +49,6 @@ export async function setupWalletAndFaucet(
 }> {
   const wallet = await client.newWallet(
     sdk.AccountStorageMode.private(),
-    true,
     sdk.AuthScheme.AuthRpoFalcon512
   );
   const faucet = await client.newFaucet(
@@ -267,9 +266,6 @@ export async function mockSwap(
   );
 
   const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-  const expectedPaybackNoteDetails = swapRequest
-    .expectedFutureNotes()
-    .map((futureNote: any) => futureNote.noteDetails);
 
   const swapTxId = await client.submitNewTransaction(accountAId, swapRequest);
   await client.proveBlock();
@@ -287,12 +283,11 @@ export async function mockSwap(
   await client.syncState();
 
   // Consume payback note for account A
-  const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
-  const paybackNoteRecord = await client.getInputNote(paybackNoteId);
-  if (!paybackNoteRecord)
-    throw new Error(`Payback note ${paybackNoteId} not found`);
+  const consumablePaybackNotes = await client.getConsumableNotes(undefined);
+  if (consumablePaybackNotes.length === 0)
+    throw new Error(`Payback note not found`);
 
-  const paybackNote = paybackNoteRecord.toNote();
+  const paybackNote = consumablePaybackNotes[0].inputNoteRecord().toNote();
   const consumeRequest2 = client.newConsumeTransactionRequest([paybackNote]);
   await client.submitNewTransaction(accountAId, consumeRequest2);
   await client.proveBlock();
@@ -426,12 +421,12 @@ function wrapClientForMidenClient(
       if (prop === "wasmWebClient") return target;
       if (prop === "proveBlock") return async () => target.proveBlock();
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, mutable, authScheme, normSeed ?? null);
+          return target.newWallet(mode, authScheme, normSeed ?? null);
         };
       }
       if (prop === "newFaucet") {

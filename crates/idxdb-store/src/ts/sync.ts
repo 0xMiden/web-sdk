@@ -104,13 +104,15 @@ interface FlattenedU8Vec {
 }
 
 interface SerializedInputNoteData {
-  noteId: string;
+  detailsCommitment: string;
+  noteId?: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   noteScriptRoot: string;
   noteScript: Uint8Array;
-  nullifier: string;
+  nullifier?: string;
   createdAt: string;
   stateDiscriminant: number;
   state: Uint8Array;
@@ -120,8 +122,10 @@ interface SerializedInputNoteData {
 }
 
 interface SerializedOutputNoteData {
+  detailsCommitment: string;
   noteId: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
   nullifier?: string;
@@ -219,8 +223,10 @@ export async function applyStateSync(
         serializedInputNotes.map((note) => {
           return upsertInputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.serialNumber,
             note.inputs,
             note.noteScriptRoot,
@@ -239,8 +245,10 @@ export async function applyStateSync(
         serializedOutputNotes.map((note) => {
           return upsertOutputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.recipientDigest,
             note.metadata,
             note.nullifier,

@@ -147,8 +147,8 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       const newFirstSeen = new Map<string, number>();
       for (const note of notes) {
         try {
-          const id = note.id().toString();
-          newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
+          const id = note.id()?.toString();
+          if (id) newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
         } catch {
           // Skip if id() fails
         }
@@ -160,7 +160,7 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
     set((state) => {
       const safeId = (n: InputNoteRecord): string | null => {
         try {
-          return n.id().toString();
+          return n.id()?.toString() ?? null;
         } catch {
           return null;
         }
@@ -185,9 +185,9 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       const newFirstSeen = new Map<string, number>();
       for (const note of notes) {
         try {
-          const id = note.id().toString();
+          const id = note.id()?.toString();
           // Preserve existing timestamp or record new one
-          newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
+          if (id) newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
         } catch {
           // Skip
         }
@@ -201,7 +201,7 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
     set((state) => {
       const safeId = (n: ConsumableNoteRecord): string | null => {
         try {
-          return n.inputNoteRecord().id().toString();
+          return n.inputNoteRecord().id()?.toString() ?? null;
         } catch {
           return null;
         }

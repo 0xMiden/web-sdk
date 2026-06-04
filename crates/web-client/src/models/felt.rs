@@ -2,7 +2,7 @@ use js_export_macro::js_export;
 use miden_client::Felt as NativeFelt;
 
 use crate::models::miden_arrays::FeltArray;
-use crate::platform::{js_u64_to_u64, u64_to_js_u64};
+use crate::platform::{JsErr, from_str_err, js_u64_to_u64, u64_to_js_u64};
 
 /// Field element wrapper exposed to JavaScript.
 #[derive(Clone, Copy)]
@@ -13,8 +13,10 @@ pub struct Felt(NativeFelt);
 impl Felt {
     /// Creates a new field element.
     #[js_export(constructor)]
-    pub fn new(value: JsU64) -> Felt {
-        Felt(NativeFelt::new(js_u64_to_u64(value)))
+    pub fn new(value: JsU64) -> Result<Felt, JsErr> {
+        let native_felt = NativeFelt::new(js_u64_to_u64(value))
+            .map_err(|_| from_str_err("value does not fit in the base field"))?;
+        Ok(Felt(native_felt))
     }
 
     /// Returns the integer representation of the field element.

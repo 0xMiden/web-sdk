@@ -1,7 +1,7 @@
 use core::str::FromStr;
 
 use js_export_macro::js_export;
-use miden_client::account::AccountStorageMode as NativeAccountStorageMode;
+use miden_client::account::AccountType as NativeAccountStorageMode;
 
 use crate::platform::{JsErr, from_str_err};
 
@@ -20,11 +20,6 @@ impl AccountStorageMode {
     /// Creates a public storage mode.
     pub fn public() -> AccountStorageMode {
         AccountStorageMode(NativeAccountStorageMode::Public)
-    }
-
-    /// Creates a network storage mode.
-    pub fn network() -> AccountStorageMode {
-        AccountStorageMode(NativeAccountStorageMode::Network)
     }
 
     /// Parses a storage mode from its string representation.

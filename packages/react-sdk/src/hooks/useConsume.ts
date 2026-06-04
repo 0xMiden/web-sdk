@@ -124,7 +124,7 @@ export function useConsume(): UseConsumeResult {
 
             // Match returned records back to their original positions by ID
             const recordById = new Map(
-              noteRecords.map((r) => [r.id().toString(), r])
+              noteRecords.map((r) => [r.id()!.toString(), r])
             );
             for (let j = 0; j < lookupIndices.length; j++) {
               const record = recordById.get(lookupIds[j].toString());
