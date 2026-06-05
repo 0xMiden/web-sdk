@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -35,6 +35,7 @@ use miden_client::store::{
     AccountRecordData,
     AccountStatus,
     AccountStorageFilter,
+    ClientAccountType,
     StoreError,
 };
 use miden_client::utils::{Deserializable, Serializable};
@@ -197,7 +198,11 @@ impl IdxdbStore {
         )?;
 
         let account_data = AccountRecordData::Full(account);
-        Ok(Some(AccountRecord::new(account_data, status)))
+        // TODO(pr-a-followup): persist `ClientAccountType` and read it back
+        // here. Defaulting to `Native` for the API migration — every account
+        // currently held by an IndexedDB-backed client is one this client
+        // owns and executes transactions for, which matches `Native`.
+        Ok(Some(AccountRecord::new(account_data, status, ClientAccountType::Native)))
     }
 
     pub(crate) async fn get_minimal_partial_account(
@@ -244,7 +249,8 @@ impl IdxdbStore {
         )?;
 
         let account_data = AccountRecordData::Partial(partial_account);
-        Ok(Some(AccountRecord::new(account_data, status)))
+        // See `get_account` for the `ClientAccountType::Native` rationale.
+        Ok(Some(AccountRecord::new(account_data, status, ClientAccountType::Native)))
     }
 
     pub(super) async fn get_account_code(&self, root: Word) -> Result<AccountCode, StoreError> {
@@ -333,6 +339,18 @@ impl IdxdbStore {
                         ));
                     },
                 }
+            },
+            AccountStorageFilter::SlotNames(names) => {
+                // The sync delta path narrows storage reads to a small set of
+                // value-slot names; only return slots whose names match. Slots
+                // not present in `names` are silently skipped — a multi-name
+                // request is naturally a "best effort" load (in contrast to
+                // single-`SlotName`, which errors on a missing name).
+                let wanted: BTreeSet<&str> = names.iter().map(|n| n.as_str()).collect();
+                account_storage_idxdb
+                    .into_iter()
+                    .filter(|s| wanted.contains(s.slot_name.as_str()))
+                    .collect()
             },
         };
 

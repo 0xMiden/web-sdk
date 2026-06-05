@@ -6,6 +6,7 @@ use miden_client::Word;
 use miden_client::account::AccountId;
 use miden_client::note::{
     NoteAssets,
+    NoteAttachments,
     NoteDetails,
     NoteMetadata,
     NoteRecipient,
@@ -84,13 +85,22 @@ pub struct SerializedOutputNoteData {
 // ================================================================================================
 
 pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNoteData {
-    let note_id = note.id().to_hex().clone();
+    // Partial / metadata-less notes have no `NoteId`. Fall back to the
+    // details commitment hex as the IndexedDB row key so two distinct
+    // partial notes never collide on an empty string.
+    let note_id = note
+        .id()
+        .map(|id| id.to_hex())
+        .unwrap_or_else(|| note.details_commitment().to_hex());
     let note_assets = note.assets().to_bytes();
 
     let details = note.details();
     let serial_number = details.serial_num().to_bytes();
     let inputs = details.storage().to_bytes();
-    let nullifier = details.nullifier().to_hex();
+    // Nullifier now lives on `InputNoteRecord` (not `NoteDetails`) and is
+    // optional for partial notes; persist as empty string to mirror the
+    // existing not-null column shape.
+    let nullifier = note.nullifier().map(|n| n.to_hex()).unwrap_or_default();
 
     let recipient = details.recipient();
     let note_script: Vec<u8> = recipient.script().to_bytes();
@@ -159,7 +169,7 @@ pub async fn upsert_note_script_tx(
 }
 
 pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutputNoteData {
-    let note_id = note.id().to_hex().clone();
+    let note_id = note.id().to_hex();
     let note_assets = note.assets().to_bytes();
     let recipient_digest = note.recipient_digest().to_hex();
     let metadata = note.metadata().to_bytes();
@@ -226,7 +236,11 @@ pub fn parse_input_note_idxdb_object(
         .parse::<u64>()
         .map_err(|_| StoreError::QueryError("Failed to parse created_at timestamp".to_string()))?;
 
-    Ok(InputNoteRecord::new(details, Some(created_at), state))
+    // TODO(pr-a-followup): persist `NoteAttachments` on the IndexedDB
+    // `inputNotes` row. Stubbing with `default()` for the API migration —
+    // private-note attachment delivery (added upstream in PR #2214) is
+    // dropped until the schema gains an `attachments` column.
+    Ok(InputNoteRecord::new(details, NoteAttachments::default(), Some(created_at), state))
 }
 
 pub fn parse_output_note_idxdb_object(
@@ -237,12 +251,15 @@ pub fn parse_output_note_idxdb_object(
     let recipient = Word::try_from(note_idxdb.recipient_digest)?;
     let state = OutputNoteState::read_from_bytes(&note_idxdb.state)?;
 
+    // TODO(pr-a-followup): persist `NoteAttachments` on the IndexedDB
+    // `outputNotes` row. See matching TODO in `parse_input_note_idxdb_object`.
     Ok(OutputNoteRecord::new(
         recipient,
         note_assets,
         note_metadata,
         state,
         note_idxdb.expected_height.into(),
+        NoteAttachments::default(),
     ))
 }
 

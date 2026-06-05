@@ -1,3 +1,4 @@
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -52,10 +53,24 @@ impl IdxdbStore {
             await_js(filter.to_input_notes_promise(self.db_id()), "failed to get input notes")
                 .await?;
 
-        input_notes_idxdb
+        let notes = input_notes_idxdb
             .into_iter()
-            .map(parse_input_note_idxdb_object) // Simplified closure
-            .collect::<Result<Vec<_>, _>>() // Collect results into a single Result
+            .map(parse_input_note_idxdb_object)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // `to_input_notes_promise` returns the unfiltered set for the
+        // `DetailsCommitments` filter — there's no per-commitment index on
+        // the IndexedDB store. Filter in Rust by comparing each record's
+        // details commitment against the requested set.
+        if let NoteFilter::DetailsCommitments(commitments) = &filter {
+            let wanted: BTreeSet<_> = commitments.iter().copied().collect();
+            return Ok(notes
+                .into_iter()
+                .filter(|note| wanted.contains(&note.details_commitment()))
+                .collect());
+        }
+
+        Ok(notes)
     }
 
     pub(crate) async fn get_output_notes(
@@ -66,10 +81,22 @@ impl IdxdbStore {
             await_js(filter.to_output_note_promise(self.db_id()), "failed to get output notes")
                 .await?;
 
-        output_notes_idxdb
+        let notes = output_notes_idxdb
             .into_iter()
-            .map(parse_output_note_idxdb_object) // Simplified closure
-            .collect::<Result<Vec<_>, _>>() // Collect results into a single Result
+            .map(parse_output_note_idxdb_object)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Same in-Rust post-filter as `get_input_notes` for the
+        // `DetailsCommitments` variant.
+        if let NoteFilter::DetailsCommitments(commitments) = &filter {
+            let wanted: BTreeSet<_> = commitments.iter().copied().collect();
+            return Ok(notes
+                .into_iter()
+                .filter(|note| wanted.contains(&note.details_commitment()))
+                .collect());
+        }
+
+        Ok(notes)
     }
 
     pub(crate) async fn get_note_script(
@@ -173,7 +200,10 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
             InputNoteState::STATE_PROCESSING_AUTHENTICATED,
             InputNoteState::STATE_PROCESSING_UNAUTHENTICATED,
         ]),
-        NoteFilter::List(_) | NoteFilter::Unique(_) | NoteFilter::Nullifiers(_) => None,
+        NoteFilter::List(_)
+        | NoteFilter::Unique(_)
+        | NoteFilter::Nullifiers(_)
+        | NoteFilter::DetailsCommitments(_) => None,
     }
 }
 
@@ -213,6 +243,9 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_input_notes_from_nullifiers(db_id, nullifiers_as_str)
             },
+            // No `detailsCommitment` index on the IndexedDB store, so load all
+            // input notes and let the caller filter by commitment in Rust.
+            NoteFilter::DetailsCommitments(_) => idxdb_get_input_notes(db_id, vec![]),
         }
     }
 
@@ -264,6 +297,9 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_output_notes_from_nullifiers(db_id, nullifiers_as_str)
             },
+            // No `detailsCommitment` index on the IndexedDB store, so load all
+            // output notes and let the caller filter by commitment in Rust.
+            NoteFilter::DetailsCommitments(_) => idxdb_get_output_notes(db_id, vec![]),
         }
     }
 }

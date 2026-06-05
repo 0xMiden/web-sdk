@@ -17,6 +17,7 @@ use miden_client::account::{
 };
 use miden_client::asset::{
     Asset,
+    AssetAmount,
     AssetVault,
     AssetVaultKey,
     FungibleAsset,
@@ -154,7 +155,8 @@ pub fn parse_account_record_idxdb_object(
 
     let account_header = AccountHeader::new(
         native_account_id,
-        Felt::new(native_nonce),
+        Felt::new(native_nonce)
+            .map_err(|err| StoreError::ParsingError(format!("invalid nonce: {err}")))?,
         Word::try_from(&account_header_idxdb.vault_root)?,
         Word::try_from(&account_header_idxdb.storage_root)?,
         Word::try_from(&account_header_idxdb.code_root)?,
@@ -244,7 +246,7 @@ pub fn compute_vault_delta(
             None => delta_asset,
         };
 
-        if asset.amount() > 0 {
+        if asset.amount() > AssetAmount::ZERO {
             updated_assets.push(Asset::Fungible(asset));
         } else {
             removed_vault_keys.push(asset.vault_key());

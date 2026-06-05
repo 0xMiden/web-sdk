@@ -43,9 +43,13 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
-# TODO: remove once AccountProcedureRoot, NoteAttachmentContent, P2ideNote, P2ideNoteStorage are re-exported from miden-client.
-miden-protocol  = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
-miden-standards = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
+# TODO: remove once AccountProcedureRoot, NoteAttachmentContent, P2ideNote, P2ideNoteStorage,
+# NoteDetailsCommitment are re-exported from miden-client. Pinned to crates.io 0.15
+# to match the version `miden-client` resolves transitively; mismatched majors
+# produce two distinct copies of every type in the dep graph (E0308 across
+# the WASM build).
+miden-protocol  = { default-features = false, version = "0.15" }
+miden-standards = { default-features = false, version = "0.15" }
 
 # External dependencies
 async-trait = { version = "0.1" }
