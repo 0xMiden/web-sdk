@@ -31,9 +31,13 @@ pub struct InputNoteRecord(NativeInputNoteRecord);
 
 #[js_export]
 impl InputNoteRecord {
-    /// Returns the note ID.
-    pub fn id(&self) -> NoteId {
-        self.0.id().into()
+    /// Returns the note ID when available.
+    ///
+    /// Migration note (miden-client PR #2214): `InputNoteRecord::id()`
+    /// returns `Option<NoteId>` — partial / metadata-less notes have no
+    /// metadata-bearing ID yet.
+    pub fn id(&self) -> Option<NoteId> {
+        self.0.id().map(Into::into)
     }
 
     /// Returns the current processing state for this note.
@@ -68,9 +72,12 @@ impl InputNoteRecord {
         self.0.consumer_transaction_id().map(ToString::to_string)
     }
 
-    /// Returns the nullifier for this note.
-    pub fn nullifier(&self) -> String {
-        self.0.nullifier().to_hex()
+    /// Returns the nullifier for this note when available.
+    ///
+    /// Migration note (miden-client PR #2214): `InputNoteRecord::nullifier()`
+    /// returns `Option<Nullifier>` — partial notes have no nullifier yet.
+    pub fn nullifier(&self) -> Option<String> {
+        self.0.nullifier().map(|n| n.to_hex())
     }
 
     /// Returns true if the record contains authentication data (proof).

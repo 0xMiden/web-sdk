@@ -21,10 +21,19 @@ pub struct NoteAttachmentScheme(NativeNoteAttachmentScheme);
 
 #[js_export]
 impl NoteAttachmentScheme {
-    /// Creates a new `NoteAttachmentScheme` from a u32.
+    /// Creates a new `NoteAttachmentScheme` from a u32 value.
+    ///
+    /// Errors if `scheme` is out of range (the 0.15 surface narrowed the
+    /// underlying type from u32 → u16, so values outside `0..=u16::MAX`
+    /// are rejected).
     #[js_export(constructor)]
-    pub fn new(scheme: u32) -> NoteAttachmentScheme {
-        NoteAttachmentScheme(NativeNoteAttachmentScheme::new(scheme))
+    pub fn new(scheme: u32) -> Result<NoteAttachmentScheme, JsErr> {
+        let scheme_u16: u16 = scheme
+            .try_into()
+            .map_err(|_| from_str_err("attachment scheme value exceeds u16 range"))?;
+        NativeNoteAttachmentScheme::new(scheme_u16)
+            .map(NoteAttachmentScheme)
+            .map_err(|err| from_str_err(&format!("invalid attachment scheme: {err}")))
     }
 
     /// Returns the `NoteAttachmentScheme` that signals the absence of an attachment scheme.

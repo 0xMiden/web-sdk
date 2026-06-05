@@ -33,13 +33,23 @@ pub struct Note(pub(crate) NativeNote);
 #[js_export]
 impl Note {
     /// Creates a new note from the provided assets, metadata, and recipient.
+    ///
+    /// Migration note (miden-client PR #2214): `Note::new` now takes a
+    /// `PartialNoteMetadata` (not `NoteMetadata`). Extract the partial
+    /// fields from the JS-side `NoteMetadata` and reconstruct.
     #[js_export(constructor)]
     pub fn new(
         note_assets: &NoteAssets,
         note_metadata: &NoteMetadata,
         note_recipient: &NoteRecipient,
     ) -> Note {
-        Note(NativeNote::new(note_assets.into(), note_metadata.into(), note_recipient.into()))
+        let native_metadata: miden_client::note::NoteMetadata = note_metadata.into();
+        let partial = miden_protocol::note::PartialNoteMetadata::new(
+            native_metadata.sender(),
+            native_metadata.note_type(),
+        )
+        .with_tag(native_metadata.tag());
+        Note(NativeNote::new(note_assets.into(), partial, note_recipient.into()))
     }
 
     /// Serializes the note into bytes.
@@ -57,9 +67,14 @@ impl Note {
         self.0.id().into()
     }
 
-    /// Returns the commitment to the note ID and metadata.
+    /// Returns the commitment to the note (its ID).
+    ///
+    /// Migration note (miden-client PR #2214): `Note::commitment()` was
+    /// removed on the 0.15 surface — the note ID is the commitment. Return
+    /// the underlying `NoteId` as a `Word` so the JS API contract is
+    /// unchanged.
     pub fn commitment(&self) -> Word {
-        self.0.commitment().into()
+        self.0.id().as_word().into()
     }
 
     /// Returns the public metadata associated with the note.

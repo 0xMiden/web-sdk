@@ -4,7 +4,7 @@ use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote, NoteAttachment};
+use miden_client::note::{BlockNumber, Note as NativeNote};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
@@ -214,12 +214,16 @@ impl WebClient {
                     &pswap_transaction_data,
                     note_type.into(),
                     payback_note_type.into(),
-                    // V1 limitation: PSWAP notes always use the default (empty)
-                    // attachment — it is not yet exposed to JS callers. Follow-up:
-                    // surface an optional `attachment` field on PswapCreateOptions
-                    // in a non-breaking way. Until then, do not change this default
+                    // V1 limitation: PSWAP notes always use no attachment — it
+                    // is not yet exposed to JS callers. Follow-up: surface an
+                    // optional `attachment` field on PswapCreateOptions in a
+                    // non-breaking way. Until then, do not change this `None`
                     // without bumping existing PSWAP note compatibility.
-                    NoteAttachment::default(),
+                    //
+                    // (`NoteAttachment::default()` no longer exists on the
+                    // 0.15 surface — `Option::None` is the new way to say
+                    // "no attachment".)
+                    None,
                     client.rng(),
                 )
                 .map_err(|err| {

@@ -11,7 +11,6 @@ use crate::models::account_id::AccountId as JsAccountId;
 use crate::models::account_storage_mode::AccountStorageMode;
 use crate::models::auth::AuthScheme;
 use crate::models::note_file::NoteFile;
-use crate::models::note_id::NoteId;
 use crate::platform::{JsErr, from_str_err};
 use crate::{WebClient, js_error_with_context};
 
@@ -89,15 +88,23 @@ impl WebClient {
         Ok(())
     }
 
+    /// Imports a note file and returns the imported note's details-commitment
+    /// hex.
+    ///
+    /// Migration note (miden-client PR #2214): `Client::import_notes` now
+    /// returns `Vec<NoteDetailsCommitment>` instead of `Vec<NoteId>`. The
+    /// imported note may not have a metadata-bearing `NoteId` yet at import
+    /// time (private notes whose attachment / metadata is fetched later),
+    /// so the JS surface returns the metadata-independent commitment hex.
     #[js_export(js_name = "importNoteFile")]
-    pub async fn import_note_file(&self, note_file: NoteFile) -> Result<NoteId, JsErr> {
+    pub async fn import_note_file(&self, note_file: NoteFile) -> Result<String, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        Ok(client
+        let commitments = client
             .import_notes(&[note_file.into()])
             .await
-            .map_err(|err| js_error_with_context(err, "failed to import note"))?[0]
-            .into())
+            .map_err(|err| js_error_with_context(err, "failed to import note"))?;
+        Ok(commitments[0].to_hex())
     }
 }
 
