@@ -52,11 +52,8 @@ impl FetchedAccount {
         self.account_id.is_private()
     }
 
-    /// Returns true when the account is a network account.
-    #[js_export(js_name = "isNetwork")]
-    pub fn is_network(&self) -> bool {
-        self.account_id.is_network()
-    }
+    // `isNetwork` removed — see `crate::models::account::Account` for the
+    // matching change in the migration to miden-client PR #2214.
 }
 
 // CONVERSIONS

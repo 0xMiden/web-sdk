@@ -1,10 +1,5 @@
 use miden_client::account::component::{AccountComponent, BasicWallet};
-use miden_client::account::{
-    Account,
-    AccountBuilder,
-    AccountBuilderSchemaCommitmentExt,
-    AccountType,
-};
+use miden_client::account::{Account, AccountBuilder, AccountBuilderSchemaCommitmentExt};
 use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -56,17 +51,20 @@ pub(crate) async fn generate_wallet(
     let auth_component: AccountComponent =
         AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
 
-    let account_type = if mutable {
-        AccountType::RegularAccountUpdatableCode
-    } else {
-        AccountType::RegularAccountImmutableCode
-    };
+    // The `mutable` parameter is preserved at the JS surface but has no
+    // effect on the 0.15 protocol: the `RegularAccountUpdatableCode` vs
+    // `RegularAccountImmutableCode` distinction was removed (the on-chain
+    // `AccountType` is now just `Private` / `Public` — i.e. storage mode).
+    // Discarded here with `_` so existing callers don't break.
+    let _ = mutable;
     let mut init_seed = [0u8; 32];
     rng.fill_bytes(&mut init_seed);
 
+    // `AccountBuilder::storage_mode` was folded into `account_type` in 0.15;
+    // `AccountStorageMode` from web-sdk maps directly onto the new 2-way
+    // `AccountType { Private, Public }` via its `Into<NativeAccountType>` impl.
     let new_account = AccountBuilder::new(init_seed)
-        .account_type(account_type)
-        .storage_mode(storage_mode.into())
+        .account_type(storage_mode.into())
         .with_auth_component(auth_component)
         .with_component(BasicWallet)
         .build_with_schema_commitment()

@@ -1,10 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::{
-    Account as NativeAccount,
-    AccountInterfaceExt,
-    AccountType as NativeAccountType,
-};
+use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
 use miden_client::transaction::AccountInterface;
 
 use crate::models::account_code::AccountCode;
@@ -70,23 +66,15 @@ impl Account {
         self.0.code().into()
     }
 
-    /// Returns true if the account is a faucet.
-    #[js_export(js_name = "isFaucet")]
-    pub fn is_faucet(&self) -> bool {
-        self.0.is_faucet()
-    }
-
-    /// Returns true if the account is a regular account (immutable or updatable code).
-    #[js_export(js_name = "isRegularAccount")]
-    pub fn is_regular_account(&self) -> bool {
-        self.0.is_regular_account()
-    }
-
-    /// Returns true if the account can update its code.
-    #[js_export(js_name = "isUpdatable")]
-    pub fn is_updatable(&self) -> bool {
-        matches!(self.0.account_type(), NativeAccountType::RegularAccountUpdatableCode)
-    }
+    // NOTE: `isFaucet`, `isRegularAccount`, `isUpdatable`, `isNetwork`
+    // were removed in the migration to miden-client PR #2214 — the
+    // underlying protocol-level `AccountType` collapsed from a 4-way
+    // `{ FungibleFaucet, NonFungibleFaucet, RegularAccountImmutableCode,
+    // RegularAccountUpdatableCode }` to a 2-way storage flag
+    // `{ Private, Public }`. The faucet-vs-regular and updatable-vs-immutable
+    // distinctions no longer exist on chain; the network-account flag was
+    // dropped as well. `isPublic` / `isPrivate` carry the storage-mode
+    // information that remains.
 
     /// Returns true if the account exposes public storage.
     #[js_export(js_name = "isPublic")]
@@ -98,12 +86,6 @@ impl Account {
     #[js_export(js_name = "isPrivate")]
     pub fn is_private(&self) -> bool {
         self.0.is_private()
-    }
-
-    /// Returns true if this is a network-owned account.
-    #[js_export(js_name = "isNetwork")]
-    pub fn is_network(&self) -> bool {
-        self.0.is_network()
     }
 
     /// Returns true if the account has not yet been committed to the chain.

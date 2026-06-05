@@ -103,11 +103,6 @@ impl AccountId {
         self.0.is_private()
     }
 
-    /// Returns true if the ID is reserved for network accounts.
-    pub(crate) fn is_network(&self) -> bool {
-        self.0.is_network()
-    }
-
     pub(crate) fn as_native(&self) -> &NativeAccountId {
         &self.0
     }
@@ -142,17 +137,12 @@ impl AccountId {
         Ok(AccountId(native_account_id))
     }
 
-    /// Returns true if the ID refers to a faucet.
-    #[js_export(js_name = "isFaucet")]
-    pub fn is_faucet(&self) -> bool {
-        self.0.is_faucet()
-    }
-
-    /// Returns true if the ID refers to a regular account.
-    #[js_export(js_name = "isRegularAccount")]
-    pub fn is_regular_account(&self) -> bool {
-        self.0.is_regular_account()
-    }
+    // `isFaucet` / `isRegularAccount` / `isNetwork` were removed in the
+    // migration to miden-client PR #2214 — the protocol-level AccountType
+    // collapsed to a 2-way `{ Private, Public }` storage flag (see
+    // `crate::models::account::Account` for the matching change). The
+    // remaining `isPublic` / `isPrivate` cover the storage-mode information
+    // that is still part of the on-chain identifier.
 
     /// Returns true if the account uses public storage.
     #[js_export(js_name = "isPublic")]
@@ -164,12 +154,6 @@ impl AccountId {
     #[js_export(js_name = "isPrivate")]
     pub fn js_is_private(&self) -> bool {
         self.0.is_private()
-    }
-
-    /// Returns true if the ID is reserved for network accounts.
-    #[js_export(js_name = "isNetwork")]
-    pub fn js_is_network(&self) -> bool {
-        self.0.is_network()
     }
 
     /// Returns the canonical hex representation of the account ID.
