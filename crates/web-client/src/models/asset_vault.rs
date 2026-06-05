@@ -1,5 +1,10 @@
 use js_export_macro::js_export;
-use miden_client::asset::AssetVault as NativeAssetVault;
+use miden_client::account::AccountId as NativeAccountId;
+use miden_client::asset::{
+    AssetCallbackFlag,
+    AssetVault as NativeAssetVault,
+    AssetVaultKey,
+};
 
 use super::account_id::AccountId;
 use super::fungible_asset::FungibleAsset;
@@ -28,9 +33,17 @@ impl AssetVault {
     }
 
     /// Returns the balance for the given fungible faucet, or zero if absent.
+    ///
+    /// `get_balance` on the 0.15 surface keys by `AssetVaultKey`, not `AccountId`, and
+    /// validates the composition. The callback flag is `Disabled` because fungible balance
+    /// reads don't run asset callbacks. Returns zero on lookup error (`Err` arms here would
+    /// indicate the key was constructed wrong, which can't happen for fungible keys built
+    /// this way).
     #[js_export(js_name = "getBalance")]
     pub fn get_balance(&self, faucet_id: &AccountId) -> u64 {
-        self.0.get_balance(faucet_id.into()).unwrap()
+        let native_faucet_id: NativeAccountId = faucet_id.into();
+        let vault_key = AssetVaultKey::new_fungible(native_faucet_id, AssetCallbackFlag::Disabled);
+        self.0.get_balance(vault_key).map(u64::from).unwrap_or(0)
     }
 
     /// Returns the fungible assets contained in this vault.

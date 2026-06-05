@@ -117,17 +117,22 @@ impl Note {
     ) -> Result<Self, JsErr> {
         let mut rng = StdRng::from_os_rng();
         let coin_seed: [u64; 4] = rng.random();
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new).into());
+        // `coin_seed` is freshly random `u64`s; values at or beyond the modulus would only
+        // happen with vanishing probability and `new_unchecked` is what the upstream Rust
+        // client uses in the same spot.
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
+
+        let native_attachment: miden_client::note::NoteAttachment = attachment.into();
 
         let native_note = P2idNote::create(
             sender.into(),
             target.into(),
             native_assets,
             note_type.into(),
-            attachment.into(),
+            native_attachment.into(),
             &mut rng,
         )
         .map_err(|err| js_error_with_context(err, "create p2id note"))?;
@@ -148,7 +153,8 @@ impl Note {
     ) -> Result<Self, JsErr> {
         let mut rng = StdRng::from_os_rng();
         let coin_seed: [u64; 4] = rng.random();
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new).into());
+        // See `create_p2id_note` for why `new_unchecked` is fine here.
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
@@ -159,12 +165,14 @@ impl Note {
             timelock_height.map(NativeBlockNumber::from),
         );
 
+        let native_attachment: miden_client::note::NoteAttachment = attachment.into();
+
         let native_note = P2ideNote::create(
             sender.into(),
             storage,
             native_assets,
             note_type.into(),
-            attachment.into(),
+            native_attachment.into(),
             &mut rng,
         )
         .map_err(|err| js_error_with_context(err, "create p2ide note"))?;

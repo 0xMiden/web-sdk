@@ -10,7 +10,11 @@ use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
-use miden_client::rpc::domain::account::AccountStorageRequirements as NativeAccountStorageRequirements;
+use miden_client::rpc::domain::account::{
+    AccountStorageRequirements as NativeAccountStorageRequirements,
+    GetAccountRequest,
+    VaultFetch,
+};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
 use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient};
 use note::FetchedNote;
@@ -73,13 +77,26 @@ impl RpcClient {
         let web_notes: Vec<FetchedNote> = fetched_notes
             .into_iter()
             .map(|native_note| match native_note {
-                NativeFetchedNote::Private(header, inclusion_proof) => {
-                    FetchedNote::from_header(header, None, inclusion_proof)
+                // 0.15 surface: private fetched notes now carry the note ID, metadata, and
+                // attachments alongside the inclusion proof. Attachments aren't exposed on the
+                // JS `FetchedNote` surface yet — `_attachments` deliberately drops them.
+                NativeFetchedNote::Private(note_id, metadata, _attachments, inclusion_proof) => {
+                    FetchedNote::new(
+                        note_id.into(),
+                        metadata.into(),
+                        inclusion_proof.into(),
+                        None,
+                    )
                 },
                 NativeFetchedNote::Public(note, inclusion_proof) => {
-                    let header =
-                        miden_client::note::NoteHeader::new(note.id(), note.metadata().clone());
-                    FetchedNote::from_header(header, Some(note.into()), inclusion_proof)
+                    let note_id = note.id();
+                    let metadata = note.metadata().clone();
+                    FetchedNote::new(
+                        note_id.into(),
+                        metadata.into(),
+                        inclusion_proof.into(),
+                        Some(note.into()),
+                    )
                 },
             })
             .collect();
@@ -90,19 +107,25 @@ impl RpcClient {
     /// Fetches a note script by its root hash from the connected Miden node.
     ///
     /// @param script_root - The root hash of the note script to fetch.
-    /// @returns Promise that resolves to the `NoteScript`.
+    /// @returns Promise that resolves to the `NoteScript`, or `undefined` if the node has no
+    ///   script for that root.
     #[allow(clippy::doc_markdown)]
     #[js_export(js_name = "getNoteScriptByRoot")]
-    pub async fn get_note_script_by_root(&self, script_root: &Word) -> Result<NoteScript, JsErr> {
+    pub async fn get_note_script_by_root(
+        &self,
+        script_root: &Word,
+    ) -> Result<Option<NoteScript>, JsErr> {
         let native_script_root = script_root.into();
 
+        // 0.15 surface: the node returns `Option<NoteScript>` — `None` when the script root is
+        // unknown — rather than erroring. Surface that as `Option<NoteScript>` on the JS side.
         let note_script = self
             .inner
             .get_note_script_by_root(native_script_root)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get note script by root"))?;
 
-        Ok(note_script.into())
+        Ok(note_script.map(Into::into))
     }
 
     /// Fetches a block header by number. When `block_num` is undefined, returns the latest header.
@@ -181,15 +204,24 @@ impl RpcClient {
             None => AccountStateAt::ChainTip,
         };
 
+        // 0.15 surface: `get_account_proof` was renamed/reshaped to `get_account` taking a
+        // `GetAccountRequest` builder. The semantics carry over 1:1 — storage requirements,
+        // a target block, and an optional known vault commitment to short-circuit re-sending
+        // unchanged vault data. `with_known_code(None)` matches the previous call's behavior
+        // (always re-fetching code).
+        let vault = match known_vault_commitment {
+            Some(commitment) => VaultFetch::IfChangedFrom(commitment.into()),
+            None => VaultFetch::Skip,
+        };
+
+        let request = GetAccountRequest::new()
+            .with_storage(native_requirements)
+            .at(account_state)
+            .with_vault(vault);
+
         let (block_num, proof) = self
             .inner
-            .get_account_proof(
-                native_id,
-                native_requirements,
-                account_state,
-                None,
-                known_vault_commitment.map(Into::into),
-            )
+            .get_account(native_id, request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account proof"))?;
 

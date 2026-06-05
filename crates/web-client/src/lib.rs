@@ -479,7 +479,9 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
         None => StdRng::from_os_rng(),
     };
     let coin_seed: [u64; 4] = rng.random();
-    Ok(RandomCoin::new(coin_seed.map(Felt::new).into()))
+    // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
+    // vanishing and `new_unchecked` matches the upstream Rust client's usage.
+    Ok(RandomCoin::new(coin_seed.map(Felt::new_unchecked).into()))
 }
 
 // ERROR HANDLING HELPERS
