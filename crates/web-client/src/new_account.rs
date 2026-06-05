@@ -1,4 +1,5 @@
 use js_export_macro::js_export;
+use miden_client::auth::AuthSecretKey;
 use miden_client::block::BlockNumber;
 use miden_client::keystore::Keystore;
 
