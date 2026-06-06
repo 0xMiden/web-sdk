@@ -267,11 +267,8 @@ export async function mockSwap(
   );
 
   const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-  const expectedPaybackNoteDetails = swapRequest
-    .expectedFutureNotes()
-    .map((futureNote: any) => futureNote.noteDetails);
 
-  const swapTxId = await client.submitNewTransaction(accountAId, swapRequest);
+  await client.submitNewTransaction(accountAId, swapRequest);
   await client.proveBlock();
   await client.syncState();
 
@@ -282,12 +279,24 @@ export async function mockSwap(
 
   const swapNote = swapNoteRecord.toNote();
   const consumeRequest1 = client.newConsumeTransactionRequest([swapNote]);
-  await client.submitNewTransaction(accountBId, consumeRequest1);
+  const consumeTxId1 = await client.submitNewTransaction(
+    accountBId,
+    consumeRequest1
+  );
   await client.proveBlock();
   await client.syncState();
 
-  // Consume payback note for account A
-  const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
+  // Account B's consume of the swap note emits the payback note that account A
+  // consumes. Derive its id from the consume transaction's output notes
+  // (NoteDetails no longer exposes id()).
+  const [consumeTxRecord1] = await client.getTransactions(
+    sdk.TransactionFilter.ids([consumeTxId1])
+  );
+  const paybackNoteId = consumeTxRecord1
+    .outputNotes()
+    .notes()[0]
+    .id()
+    .toString();
   const paybackNoteRecord = await client.getInputNote(paybackNoteId);
   if (!paybackNoteRecord)
     throw new Error(`Payback note ${paybackNoteId} not found`);

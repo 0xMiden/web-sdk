@@ -362,9 +362,6 @@ export const swapTransaction = async (
       );
 
       let expectedOutputNotes = swapTransactionRequest.expectedOutputOwnNotes();
-      let expectedPaybackNoteDetails = swapTransactionRequest
-        .expectedFutureNotes()
-        .map((futureNote) => futureNote.noteDetails);
 
       let swapTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -399,9 +396,15 @@ export const swapTransaction = async (
         consumeTransaction1Result.executedTransaction().id().toHex()
       );
 
-      // Consuming payback note for account A
-
-      noteId = expectedPaybackNoteDetails[0].id().toString();
+      // Consuming payback note for account A. Account B's consume of the swap
+      // note emits the payback note; derive its id from that transaction's
+      // output notes (NoteDetails no longer exposes id()).
+      noteId = consumeTransaction1Result
+        .executedTransaction()
+        .outputNotes()
+        .notes()[0]
+        .id()
+        .toString();
       inputNoteRecord = await client.getInputNote(noteId);
       if (!inputNoteRecord) {
         throw new Error(`Note with ID ${noteId} not found`);

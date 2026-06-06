@@ -614,13 +614,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             noteTypeB
           );
           const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-          const expectedPaybackNoteDetails = swapRequest
-            .expectedFutureNotes()
-            .map((fn) => fn.noteDetails);
-          const swapTxId = await c.submitNewTransaction(
-            accountAId,
-            swapRequest
-          );
+          await c.submitNewTransaction(accountAId, swapRequest);
           await c.proveBlock();
           await c.syncState();
 
@@ -631,12 +625,24 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             throw new Error(`Swap note ${swapNoteId} not found`);
           const swapNote = swapNoteRecord.toNote();
           const consumeReq1 = c.newConsumeTransactionRequest([swapNote]);
-          await c.submitNewTransaction(accountBId, consumeReq1);
+          const consumeTxId1 = await c.submitNewTransaction(
+            accountBId,
+            consumeReq1
+          );
           await c.proveBlock();
           await c.syncState();
 
-          // Consume payback note for account A
-          const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
+          // Account B's consume of the swap note emits the payback note that
+          // account A consumes. Derive its id from the consume transaction's
+          // output notes (NoteDetails no longer exposes id()).
+          const [consumeTxRecord1] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId1])
+          );
+          const paybackNoteId = consumeTxRecord1
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
           const paybackNoteRecord = await c.getInputNote(paybackNoteId);
           if (!paybackNoteRecord)
             throw new Error(`Payback note ${paybackNoteId} not found`);

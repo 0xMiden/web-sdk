@@ -1,12 +1,12 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
 use miden_client::note::{
     NoteAttachment as NativeNoteAttachment,
     NoteAttachmentScheme as NativeNoteAttachmentScheme,
 };
+use miden_client::{Felt as NativeFelt, Word as NativeWord};
 
 use super::word::Word;
-use crate::platform::{JsErr, from_str_err};
+use crate::platform::{JsErr, JsU64, from_str_err, js_u64_to_u64};
 
 // NOTE ATTACHMENT SCHEME
 // ================================================================================================
@@ -78,6 +78,56 @@ pub struct NoteAttachment(NativeNoteAttachment);
 
 #[js_export]
 impl NoteAttachment {
+    /// Creates a note attachment from an optional list of packed values.
+    ///
+    /// Mirrors the encoding the JS-side `createNoteAttachment` helper performs
+    /// and preserves the `new NoteAttachment()` / `new NoteAttachment([...])`
+    /// ergonomics the package's own JS wrappers (`js/standalone.js`,
+    /// `js/resources/transactions.js`) rely on. The 0.15 surface has no truly
+    /// empty attachment (content is 1..=256 words), so the empty case is
+    /// represented as a single zero [`Word`] with the `none` scheme:
+    /// - no args / empty list → single zero-`Word`, `none` scheme.
+    /// - any number of values → padded to a whole number of `Word`s, `none` scheme.
+    ///
+    /// # Errors
+    /// Returns an error if a value is not a canonical field element, or if the
+    /// packed word count exceeds `NoteAttachment::MAX_NUM_WORDS`.
+    #[js_export(constructor)]
+    pub fn new(values: Option<Vec<JsU64>>) -> Result<NoteAttachment, JsErr> {
+        let scheme = NativeNoteAttachmentScheme::none();
+        let values: Vec<u64> = values.unwrap_or_default().into_iter().map(js_u64_to_u64).collect();
+
+        if values.is_empty() {
+            let zero = NativeFelt::new(0).expect("0 is a valid field element");
+            let zero_word = NativeWord::from([zero; 4]);
+            return Ok(NoteAttachment(NativeNoteAttachment::with_word(scheme, zero_word)));
+        }
+
+        // Pad up to a whole number of 4-element words.
+        let mut padded = values;
+        while padded.len() % 4 != 0 {
+            padded.push(0);
+        }
+
+        let words: Vec<NativeWord> = padded
+            .chunks_exact(4)
+            .map(|chunk| {
+                let felts: [NativeFelt; 4] = chunk
+                    .iter()
+                    .map(|&v| NativeFelt::new(v))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|err| from_str_err(&format!("invalid field element: {err}")))?
+                    .try_into()
+                    .expect("chunk is exactly 4 elements");
+                Ok::<NativeWord, JsErr>(NativeWord::from(felts))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        NativeNoteAttachment::with_words(scheme, words)
+            .map(NoteAttachment)
+            .map_err(|e| from_str_err(&e.to_string()))
+    }
+
     /// Creates a new note attachment from a single word.
     #[js_export(js_name = "fromWord")]
     pub fn from_word(scheme: &NoteAttachmentScheme, word: &Word) -> NoteAttachment {
