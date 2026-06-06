@@ -20,7 +20,7 @@ pub struct TransactionScript(NativeTransactionScript);
 impl TransactionScript {
     /// Returns the MAST root commitment of the transaction script.
     pub fn root(&self) -> Word {
-        miden_client::Word::from(self.0.root()).into()
+        self.0.root().into()
     }
 
     /// Creates a `NoteScript` from the given `Package`.

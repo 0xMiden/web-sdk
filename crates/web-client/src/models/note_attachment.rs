@@ -6,7 +6,7 @@ use miden_client::note::{
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
 
 use super::word::Word;
-use crate::platform::{JsErr, JsU64, from_str_err, js_u64_to_u64};
+use crate::platform::{JsErr, from_str_err, js_u64_to_u64};
 
 // NOTE ATTACHMENT SCHEME
 // ================================================================================================
@@ -105,7 +105,7 @@ impl NoteAttachment {
 
         // Pad up to a whole number of 4-element words.
         let mut padded = values;
-        while padded.len() % 4 != 0 {
+        while !padded.len().is_multiple_of(4) {
             padded.push(0);
         }
 
