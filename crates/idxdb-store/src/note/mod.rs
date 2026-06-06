@@ -242,8 +242,11 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_input_notes_from_nullifiers(db_id, nullifiers_as_str)
             },
-            // Load all input notes and let the caller filter by commitment in
-            // Rust.
+            // `detailsCommitment` is the input-notes primary key, so an
+            // index-scoped fetch is possible; we deliberately load every input
+            // note here and let `get_input_notes` filter by commitment in Rust,
+            // keeping a single parse/filter path. Revisit if this set grows
+            // large. (Output notes have no such index, see below.)
             NoteFilter::DetailsCommitments(_) => idxdb_get_input_notes(db_id, vec![]),
         }
     }

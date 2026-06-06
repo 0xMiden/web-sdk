@@ -20,9 +20,10 @@ export interface NoteAttachmentData {
  * words back into a `bigint[]`, the inverse of `createNoteAttachment`.
  *
  * - No attachments → `null`.
- * - The placeholder empty attachment produced by `emptyAttachment()` (a single
- *   all-zero word) → `null`, matching the pre-0.15 behavior where a `None`-kind
- *   attachment decoded to `null`.
+ * - An all-zero payload (regardless of word count) → `null`. This covers the
+ *   placeholder produced by `emptyAttachment()` (a single all-zero word) and
+ *   matches the pre-0.15 behavior where a `None`-kind attachment decoded to
+ *   `null`.
  * - Otherwise → `{ values, kind }` where `kind` is `"word"` for a single-word
  *   attachment and `"array"` for multi-word content.
  *
@@ -47,9 +48,9 @@ export function readNoteAttachment(
       }
     }
 
-    // The empty-attachment placeholder (single all-zero word) is the 0.15
-    // stand-in for "no attachment"; surface it as null so callers see the same
-    // thing they did pre-migration for a None-kind attachment.
+    // An all-zero payload (e.g. the `emptyAttachment()` placeholder) is the
+    // 0.15 stand-in for "no attachment"; surface it as null so callers see the
+    // same thing they did pre-migration for a None-kind attachment.
     if (values.every((value) => value === 0n)) return null;
 
     return { values, kind: words.length === 1 ? "word" : "array" };
