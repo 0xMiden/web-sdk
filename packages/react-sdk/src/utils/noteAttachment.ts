@@ -1,6 +1,5 @@
 import {
   NoteAttachment,
-  NoteAttachmentKind,
   NoteAttachmentScheme,
   Word,
 } from "@miden-sdk/miden-sdk";
@@ -11,95 +10,64 @@ export interface NoteAttachmentData {
   kind: "word" | "array";
 }
 
-// Runtime WASM objects may have methods not in the TS declarations.
-// Use a loose shape for runtime-only properties.
-type NoteMetadataRuntime = {
-  attachment?: () => {
-    kind?: () => unknown;
-    asWord?: () => { toU64s: () => Iterable<unknown> } | null;
-    asArray?: () => { toU64s: () => Iterable<unknown> } | null;
-  } | null;
-};
-
 /**
- * Decode a note's attachment. Returns null if no attachment.
+ * Decode a note's attachment payload back into the bigint values that
+ * `createNoteAttachment` packed in.
+ *
+ * **0.15 protocol surface gap.** Attachments are now a `(scheme, Vec<Word>)`
+ * pair on the `Note` itself (not on `NoteMetadata`), and the JS-side
+ * `NoteAttachment` class only exposes `numWords()` — there is no
+ * `toWord()` / `toWords()` accessor yet to read the content back out.
+ * Until that's wired up (tracked as a PR-A follow-up; see PR #172), this
+ * function returns `null` for every input. The encoding side
+ * (`createNoteAttachment`) is fully functional.
  */
 export function readNoteAttachment(
-  note: InputNoteRecord
+  _note: InputNoteRecord
 ): NoteAttachmentData | null {
-  try {
-    const metadata = note.metadata?.() as unknown as NoteMetadataRuntime | null;
-    if (!metadata) return null;
-
-    const attachment = metadata.attachment?.();
-    if (!attachment) return null;
-
-    const kind = attachment.kind?.();
-    if (!kind) return null;
-
-    if (kind === NoteAttachmentKind.None) return null;
-
-    if (kind === NoteAttachmentKind.Word) {
-      const word = attachment.asWord?.();
-      if (!word) return null;
-      const u64s = word.toU64s();
-      const values = Array.from(u64s as Iterable<unknown>).map((v) =>
-        BigInt(v as number | bigint)
-      );
-      return { values, kind: "word" };
-    }
-
-    if (kind === NoteAttachmentKind.Array) {
-      const arr = attachment.asArray?.();
-      if (!arr) return null;
-      const u64s = arr.toU64s();
-      const values = Array.from(u64s as Iterable<unknown>).map((v) =>
-        BigInt(v as number | bigint)
-      );
-      return { values, kind: "array" };
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
+  // TODO(pr-a-followup): wire `NoteAttachment.toWord` / `toWords` (and a
+  // `Note.attachments()` accessor that exposes the per-attachment word
+  // content) on the WASM surface, then re-implement decoding here.
+  return null;
 }
 
 /**
- * Encode values into a NoteAttachment.
- * <= 4 values -> Word (avoids miden-standards 0.13.x Array advice-map bug).
- * > 4 values -> Array.
+ * Encode bigint values into a `NoteAttachment`.
  *
- * Note: Values are padded to word boundaries (multiples of 4) with trailing 0n.
- * `readNoteAttachment` returns raw values including padding. Consumers should
- * strip trailing zeros if they need the original unpadded values.
+ * - 0 values → falls back to `emptyAttachment()` (a single zero-Word
+ *   attachment with the `none` scheme). On the 0.15 protocol surface there
+ *   is no native "empty" attachment; this preserves the pre-migration
+ *   "default attachment when caller has no payload" behavior at the cost
+ *   of one trivial word.
+ * - 1..=4 values → padded to 4 elements and wrapped as a single Word via
+ *   `NoteAttachment.fromWord(scheme, word)`.
+ * - >4 values → padded to a multiple of 4, chunked into Words, and wrapped
+ *   via `NoteAttachment.fromWords(scheme, words)`.
+ *
+ * Values are padded to word boundaries (multiples of 4) with trailing `0n`.
  */
 export function createNoteAttachment(
   values: bigint[] | Uint8Array | number[]
 ): NoteAttachment {
-  // Convert all values to bigint
   const bigints: bigint[] = [];
   for (let i = 0; i < values.length; i++) {
-    bigints.push(BigInt(values[i]));
+    bigints.push(BigInt(values[i]!));
   }
 
   if (bigints.length === 0) {
-    return new NoteAttachment();
+    return emptyAttachment();
   }
 
   const scheme = NoteAttachmentScheme.none();
 
   if (bigints.length <= 4) {
-    // Pad to 4 elements for Word
     while (bigints.length < 4) {
       bigints.push(0n);
     }
     const word = new Word(BigUint64Array.from(bigints));
-    return NoteAttachment.newWord(scheme, word);
+    return NoteAttachment.fromWord(scheme, word);
   }
 
-  // For > 4 values, use Array attachment
-  // Pad to multiple of 4 for Word alignment
   while (bigints.length % 4 !== 0) {
     bigints.push(0n);
   }
@@ -107,16 +75,22 @@ export function createNoteAttachment(
   for (let i = 0; i < bigints.length; i += 4) {
     words.push(new Word(BigUint64Array.from(bigints.slice(i, i + 4))));
   }
-  // NoteAttachment.newArray exists in the WASM bindings but is not yet
-  // exposed in the TS declarations (added in SDK ≥0.13.1). Access via
-  // bracket notation with a runtime guard until upstream types are updated.
-  const newArray = (NoteAttachment as unknown as Record<string, unknown>)[
-    "newArray"
-  ];
-  if (typeof newArray !== "function") {
-    throw new Error(
-      "NoteAttachment.newArray is not available. Ensure @miden-sdk/miden-sdk >= 0.13.1."
-    );
-  }
-  return newArray.call(NoteAttachment, scheme, words) as NoteAttachment;
+  return NoteAttachment.fromWords(scheme, words);
+}
+
+/**
+ * Build a placeholder `NoteAttachment` for code paths that previously used
+ * the now-private `new NoteAttachment()` empty constructor.
+ *
+ * The 0.15 protocol surface requires every note to carry at least one
+ * attachment word; this helper produces a single-Word attachment with the
+ * `none` scheme and all-zero content, which is the closest semantic to the
+ * pre-0.15 "no attachment" notion while keeping `Note.createP2IDNote`
+ * happy. Consumers that explicitly want a payload should call
+ * `createNoteAttachment` with their values instead.
+ */
+export function emptyAttachment(): NoteAttachment {
+  const scheme = NoteAttachmentScheme.none();
+  const word = new Word(BigUint64Array.from([0n, 0n, 0n, 0n]));
+  return NoteAttachment.fromWord(scheme, word);
 }

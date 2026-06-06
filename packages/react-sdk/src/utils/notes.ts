@@ -67,7 +67,12 @@ export const getNoteSummary = (
 ): NoteSummary | null => {
   try {
     const record = getInputNoteRecord(note);
-    const id = record.id().toString();
+    // `id()` is `NoteId | undefined` on the 0.15 surface — drop partial /
+    // metadata-less notes from the summary view (they don't have anything
+    // displayable yet).
+    const rawId = record.id();
+    if (!rawId) return null;
+    const id = rawId.toString();
     const assets: NoteAsset[] = [];
 
     try {

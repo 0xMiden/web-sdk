@@ -52,7 +52,15 @@ impl WebClient {
     /// with a clear message at runtime. Tracked as a PR-A follow-up — the
     /// proper port needs to come once the upstream faucet API stabilizes.
     #[js_export(js_name = "newFaucet")]
-    #[allow(clippy::too_many_arguments, clippy::unused_async)]
+    // `unknown_lints` lets older rustc/clippy silently ignore the newer
+    // `clippy::unused_async_trait_impl` name on local toolchains that don't
+    // know it yet; on CI's newer nightly, the inner allow takes effect.
+    #[allow(unknown_lints)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::unused_async,
+        clippy::unused_async_trait_impl
+    )]
     pub async fn new_faucet(
         &self,
         _storage_mode: &AccountStorageMode,

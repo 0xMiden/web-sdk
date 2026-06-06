@@ -102,16 +102,20 @@ export type NoteVisibility = "public" | "private";
 
 /**
  * User-friendly storage mode constants.
- * Use `StorageMode.Public`, `StorageMode.Private`, or `StorageMode.Network` instead of raw strings.
+ * Use `StorageMode.Public` or `StorageMode.Private` instead of raw strings.
+ *
+ * The `"network"` storage mode was removed in the migration to miden-client
+ * PR #2214 — the 0.15 protocol surface no longer has a separate
+ * network-account flag (network execution is now driven by the calling
+ * surface, not the account's storage mode).
  */
 export declare const StorageMode: {
   readonly Public: "public";
   readonly Private: "private";
-  readonly Network: "network";
 };
 
 /** Union of valid StorageMode string values. */
-export type StorageMode = "public" | "private" | "network";
+export type StorageMode = "public" | "private";
 
 /**
  * Library linking mode for script compilation.

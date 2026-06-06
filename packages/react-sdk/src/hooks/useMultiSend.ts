@@ -4,7 +4,6 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
   TransactionRequestBuilder,
@@ -16,7 +15,7 @@ import type {
 } from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
-import { createNoteAttachment } from "../utils/noteAttachment";
+import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError, assertSignerConnected } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
@@ -123,7 +122,7 @@ export function useMultiSend(): UseMultiSendResult {
             const noteAttachment =
               attachment !== undefined && attachment !== null
                 ? createNoteAttachment(attachment)
-                : new NoteAttachment();
+                : emptyAttachment();
             const note = Note.createP2IDNote(
               iterSenderId,
               receiverId,

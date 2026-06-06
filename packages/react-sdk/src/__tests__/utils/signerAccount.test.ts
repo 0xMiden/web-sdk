@@ -203,16 +203,6 @@ describe("initializeSignerAccount", () => {
       expect(mockClient.importAccountById).toHaveBeenCalledWith(mockAccountId);
     });
 
-    it("should try importAccountById for network accounts", async () => {
-      const config = createMockSignerAccountConfig({
-        storageMode: { toString: () => "network" } as any,
-      });
-
-      await initializeSignerAccount(mockClient, config);
-
-      expect(mockClient.importAccountById).toHaveBeenCalledWith(mockAccountId);
-    });
-
     it("should not try importAccountById for private accounts", async () => {
       const config = createMockSignerAccountConfig({
         storageMode: { toString: () => "private" } as any,

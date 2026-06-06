@@ -121,7 +121,6 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     AccountStorageMode: {
       private: vi.fn(() => ({ type: "private" })),
       public: vi.fn(() => ({ type: "public" })),
-      network: vi.fn(() => ({ type: "network" })),
     },
     NoteType: {
       Private: 2,
@@ -163,11 +162,6 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         this.amount = amount;
       }
     },
-    NoteAttachmentKind: {
-      None: 0,
-      Word: 1,
-      Array: 2,
-    },
     NoteAttachmentScheme: {
       none: vi.fn(() => ({ type: "none" })),
     },
@@ -191,10 +185,10 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       }
     ),
     NoteAttachment: Object.assign(class NoteAttachment {}, {
-      newWord: vi.fn(
+      fromWord: vi.fn(
         (_scheme: unknown, _word: unknown) => new (class NoteAttachment {})()
       ),
-      newArray: vi.fn(
+      fromWords: vi.fn(
         (_scheme: unknown, _words: unknown[]) => new (class NoteAttachment {})()
       ),
     }),

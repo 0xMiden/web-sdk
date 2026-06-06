@@ -36,7 +36,8 @@ function getAccountType(accountType: SignerAccountType): number {
 function isPrivateStorageMode(
   storageMode: import("@miden-sdk/miden-sdk").AccountStorageMode
 ): boolean {
-  // AccountStorageMode.toString() returns "private", "public", or "network"
+  // AccountStorageMode.toString() returns "private" or "public" (the 0.15
+  // protocol surface no longer carries a separate "network" storage mode).
   return storageMode.toString() === "private";
 }
 

@@ -122,9 +122,21 @@ export function useConsume(): UseConsumeResult {
               throw new Error("Some notes could not be found for provided IDs");
             }
 
-            // Match returned records back to their original positions by ID
+            // Match returned records back to their original positions by ID.
+            // `InputNoteRecord.id()` is now `NoteId | undefined` on the 0.15
+            // surface (partial / metadata-less notes have no id); records
+            // returned from a list-by-id lookup always carry one, so a
+            // missing id here is a degenerate Store invariant violation.
             const recordById = new Map(
-              noteRecords.map((r) => [r.id().toString(), r])
+              noteRecords.map((r) => {
+                const id = r.id();
+                if (!id) {
+                  throw new Error(
+                    "getInputNotes returned a record without a note id"
+                  );
+                }
+                return [id.toString(), r];
+              })
             );
             for (let j = 0; j < lookupIndices.length; j++) {
               const record = recordById.get(lookupIds[j].toString());
