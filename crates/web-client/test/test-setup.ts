@@ -734,12 +734,15 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
             BigInt(0)
           );
+          // Submit the fill but leave the block unproven: the creator consumes
+          // the payback note in the same block below. A private payback note
+          // carries a PSWAP attachment that the store cannot reconstruct from
+          // chain data once committed, so it must be consumed as a same-block
+          // unauthenticated note using the full note emitted here.
           const consumeTxId = await c.submitNewTransaction(
             fillerId,
             consumeRequest
           );
-          await c.proveBlock();
-          await c.syncState();
 
           const [consumeTxRecord] = await c.getTransactions(
             window.TransactionFilter.ids([consumeTxId])
@@ -752,13 +755,14 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
               `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
             );
           }
-          const paybackNoteId = consumeOutputNotes[0].id().toString();
-          const paybackNoteRecord = await c.getInputNote(paybackNoteId);
-          if (!paybackNoteRecord)
-            throw new Error(`Payback note ${paybackNoteId} not found`);
-          const paybackConsume = c.newConsumeTransactionRequest([
-            paybackNoteRecord.toNote(),
-          ]);
+          // Creator consumes the payback note carrying the requested asset, in
+          // the same block the filler created it, using the full note emitted by
+          // the filler's consume transaction (a private payback note's PSWAP
+          // attachment cannot be rebuilt from the store once committed).
+          const paybackNote = consumeOutputNotes[0].intoFull();
+          if (!paybackNote)
+            throw new Error("Payback note is not available in full form");
+          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
           await c.submitNewTransaction(creatorId, paybackConsume);
           await c.proveBlock();
           await c.syncState();
@@ -833,12 +837,15 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             BigInt(fillAmount),
             BigInt(0)
           );
+          // Submit the fill but leave the block unproven: the creator consumes
+          // the payback note in the same block below. A private payback note
+          // carries a PSWAP attachment that the store cannot reconstruct from
+          // chain data once committed, so it must be consumed as a same-block
+          // unauthenticated note using the full note emitted here.
           const consumeTxId = await c.submitNewTransaction(
             fillerId,
             consumeRequest
           );
-          await c.proveBlock();
-          await c.syncState();
 
           const [consumeTxRecord] = await c.getTransactions(
             window.TransactionFilter.ids([consumeTxId])
@@ -855,25 +862,27 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           // The remainder PSWAP note carries the offered asset; the payback
           // note carries the requested asset destined for the creator.
           const offeredFaucetStr = offeredFaucetId.toString();
-          let paybackNoteId;
+          let paybackOutputNote;
           let remainderOfferedAmount;
           for (const note of consumeOutputNotes) {
             const asset = note.assets()?.fungibleAssets()[0];
             if (asset && asset.faucetId().toString() === offeredFaucetStr) {
               remainderOfferedAmount = asset.amount().toString();
             } else {
-              paybackNoteId = note.id().toString();
+              paybackOutputNote = note;
             }
           }
-          if (!paybackNoteId)
+          if (!paybackOutputNote)
             throw new Error("Payback note not found in consume output");
 
-          const paybackNoteRecord = await c.getInputNote(paybackNoteId);
-          if (!paybackNoteRecord)
-            throw new Error(`Payback note ${paybackNoteId} not found`);
-          const paybackConsume = c.newConsumeTransactionRequest([
-            paybackNoteRecord.toNote(),
-          ]);
+          // Consume the full payback note emitted by the filler's consume
+          // transaction, in the same block it was created; a private payback
+          // note's PSWAP attachment cannot be rebuilt from the store once
+          // committed.
+          const paybackNote = paybackOutputNote.intoFull();
+          if (!paybackNote)
+            throw new Error("Payback note is not available in full form");
+          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
           await c.submitNewTransaction(creatorId, paybackConsume);
           await c.proveBlock();
           await c.syncState();
