@@ -816,6 +816,7 @@ describe("sync", () => {
           blockNum: 5,
           serializedInputNotes: [
             {
+              detailsCommitment: "commitment-in-1",
               noteId: "in-note-1",
               noteAssets: new Uint8Array([0x0a]),
               attachments: new Uint8Array([0x00]),

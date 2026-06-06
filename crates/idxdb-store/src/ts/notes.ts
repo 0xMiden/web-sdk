@@ -120,7 +120,8 @@ export async function getNoteScript(dbId: string, scriptRoot: string) {
 
 export async function upsertInputNote(
   dbId: string,
-  noteId: string,
+  detailsCommitment: string,
+  noteId: string | undefined,
   assets: Uint8Array,
   attachments: Uint8Array,
   serialNumber: Uint8Array,
@@ -140,7 +141,13 @@ export async function upsertInputNote(
   const doWork = async (t: Transaction) => {
     try {
       const data = {
-        noteId,
+        // The details commitment is the primary key. It is always present, even
+        // for partial notes lacking a noteId, so a partial note that later gains
+        // its noteId updates the same row instead of inserting a duplicate.
+        detailsCommitment,
+        // Convert null -> undefined so Dexie omits the noteId secondary index
+        // for partial notes that don't have one yet.
+        noteId: noteId ?? undefined,
         assets,
         attachments,
         serialNumber,
@@ -167,7 +174,7 @@ export async function upsertInputNote(
       await t.notesScripts.put(noteScriptData);
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
-      logWebStoreError(error, `Error inserting note: ${noteId}`);
+      logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
     }
   };
   if (tx) return doWork(tx);

@@ -14,21 +14,48 @@ export interface NoteAttachmentData {
  * Decode a note's attachment payload back into the bigint values that
  * `createNoteAttachment` packed in.
  *
- * **0.15 protocol surface gap.** Attachments are now a `(scheme, Vec<Word>)`
- * pair on the `Note` itself (not on `NoteMetadata`), and the JS-side
- * `NoteAttachment` class only exposes `numWords()` — there is no
- * `toWord()` / `toWords()` accessor yet to read the content back out.
- * Until that's wired up (tracked as a PR-A follow-up; see PR #172), this
- * function returns `null` for every input. The encoding side
- * (`createNoteAttachment`) is fully functional.
+ * On the 0.15 protocol surface the full attachment content (the packed words)
+ * lives on the note record (`InputNoteRecord.attachments()`), not on
+ * `NoteMetadata`. This reads the note's first attachment and flattens its
+ * words back into a `bigint[]`, the inverse of `createNoteAttachment`.
+ *
+ * - No attachments → `null`.
+ * - The placeholder empty attachment produced by `emptyAttachment()` (a single
+ *   all-zero word) → `null`, matching the pre-0.15 behavior where a `None`-kind
+ *   attachment decoded to `null`.
+ * - Otherwise → `{ values, kind }` where `kind` is `"word"` for a single-word
+ *   attachment and `"array"` for multi-word content.
+ *
+ * The returned `values` include the trailing-zero padding `createNoteAttachment`
+ * added to reach word boundaries; consumers that need the original unpadded
+ * values should strip trailing zeros.
  */
 export function readNoteAttachment(
-  _note: InputNoteRecord
+  note: InputNoteRecord
 ): NoteAttachmentData | null {
-  // TODO(pr-a-followup): wire `NoteAttachment.toWord` / `toWords` (and a
-  // `Note.attachments()` accessor that exposes the per-attachment word
-  // content) on the WASM surface, then re-implement decoding here.
-  return null;
+  try {
+    const attachments = note.attachments?.();
+    if (!attachments || attachments.length === 0) return null;
+
+    const words = attachments[0]!.toWords();
+    if (words.length === 0) return null;
+
+    const values: bigint[] = [];
+    for (const word of words) {
+      for (const value of word.toU64s()) {
+        values.push(BigInt(value as number | bigint));
+      }
+    }
+
+    // The empty-attachment placeholder (single all-zero word) is the 0.15
+    // stand-in for "no attachment"; surface it as null so callers see the same
+    // thing they did pre-migration for a None-kind attachment.
+    if (values.every((value) => value === 0n)) return null;
+
+    return { values, kind: words.length === 1 ? "word" : "array" };
+  } catch {
+    return null;
+  }
 }
 
 /**

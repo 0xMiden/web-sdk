@@ -75,10 +75,14 @@ async function insertNote(
     consumerAccountId?: string;
     scriptRoot?: string;
     nullifier?: string;
+    detailsCommitment?: string;
   } = {}
 ) {
   await upsertInputNote(
     dbId,
+    // The details commitment is the primary key. Default it to the noteId so
+    // each distinct note in these tests lands in its own row.
+    opts.detailsCommitment ?? noteId,
     noteId,
     DUMMY_BYTES,
     DUMMY_BYTES,
@@ -482,6 +486,7 @@ describe("getInputNotes", () => {
     await upsertInputNote(
       dbId,
       "note-no-script",
+      "note-no-script",
       DUMMY_BYTES,
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -825,6 +830,78 @@ describe("getOutputNotesFromNullifiers", () => {
 });
 
 // ================================================================================================
+// input note keying by details commitment
+// ================================================================================================
+
+describe("input note keying", () => {
+  it("keeps a single row when a partial note later gains its noteId", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const commitment = "details-commitment-1";
+
+    // First upsert: a partial note with no noteId yet (e.g. imported by details).
+    await upsertInputNote(
+      dbId,
+      commitment,
+      undefined,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_SCRIPT_ROOT,
+      DUMMY_BYTES,
+      "nullifier-1",
+      "created-at-1",
+      STATE_EXPECTED,
+      DUMMY_BYTES,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    // Second upsert: the same note (same details commitment) now carries its
+    // noteId. It must update the existing row rather than insert a duplicate.
+    await upsertInputNote(
+      dbId,
+      commitment,
+      "note-id-1",
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_SCRIPT_ROOT,
+      DUMMY_BYTES,
+      "nullifier-1",
+      "created-at-1",
+      STATE_COMMITTED,
+      DUMMY_BYTES,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(await db.inputNotes.count()).toBe(1);
+    const row = await db.inputNotes.get(commitment);
+    expect(row).toBeDefined();
+    expect(row!.noteId).toBe("note-id-1");
+
+    // The note is now reachable by its noteId via the secondary index.
+    const byId = await getInputNotesFromIds(dbId, ["note-id-1"]);
+    expect(byId).toHaveLength(1);
+  });
+
+  it("stores distinct rows for notes with distinct details commitments", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    await insertNote(dbId, "note-a", { detailsCommitment: "commitment-a" });
+    await insertNote(dbId, "note-b", { detailsCommitment: "commitment-b" });
+
+    expect(await db.inputNotes.count()).toBe(2);
+  });
+});
+
+// ================================================================================================
 // upsertInputNote with provided transaction
 // ================================================================================================
 
@@ -841,6 +918,7 @@ describe("upsertInputNote with external transaction", () => {
       async (tx) => {
         await upsertInputNote(
           dbId,
+          "tx-note-1",
           "tx-note-1",
           DUMMY_BYTES,
           DUMMY_BYTES,
@@ -961,6 +1039,7 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(
       upsertInputNote(
         BAD_DB,
+        "note-1",
         "note-1",
         DUMMY_BYTES,
         DUMMY_BYTES,

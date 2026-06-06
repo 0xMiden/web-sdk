@@ -39,8 +39,10 @@ use crate::promise::await_js_value;
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug)]
 pub struct SerializedInputNoteData {
+    #[wasm_bindgen(js_name = "detailsCommitment")]
+    pub details_commitment: String,
     #[wasm_bindgen(js_name = "noteId")]
-    pub note_id: String,
+    pub note_id: Option<String>,
     #[wasm_bindgen(js_name = "noteAssets")]
     pub note_assets: Vec<u8>,
     pub attachments: Vec<u8>,
@@ -87,10 +89,14 @@ pub struct SerializedOutputNoteData {
 // ================================================================================================
 
 pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNoteData {
-    // Partial / metadata-less notes have no `NoteId`. Fall back to the
-    // details commitment hex as the IndexedDB row key so two distinct
-    // partial notes never collide on an empty string.
-    let note_id = note.id().map_or_else(|| note.details_commitment().to_hex(), |id| id.to_hex());
+    // The details commitment is the IndexedDB row key. It is always present,
+    // even for partial / metadata-less notes that lack a `NoteId`, so two
+    // distinct partial notes never collide and a partial note that later gains
+    // its `NoteId` updates the same row instead of creating a duplicate.
+    let details_commitment = note.details_commitment().to_hex();
+    // The note id is only known once the note carries metadata; persist it as a
+    // secondary index used for id-based lookups.
+    let note_id = note.id().map(|id| id.to_hex());
     let note_assets = note.assets().to_bytes();
     // Attachments contribute to the note metadata commitment, so they must be
     // persisted to faithfully reconstruct a note whose id/nullifier match the
@@ -118,6 +124,7 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     let consumer_account_id = note.consumer_account().map(AccountId::to_hex);
 
     SerializedInputNoteData {
+        details_commitment,
         note_id,
         note_assets,
         attachments,
@@ -140,6 +147,7 @@ pub async fn upsert_input_note_tx(db_id: &str, note: &InputNoteRecord) -> Result
 
     let promise = idxdb_upsert_input_note(
         db_id,
+        serialized_data.details_commitment,
         serialized_data.note_id,
         serialized_data.note_assets,
         serialized_data.attachments,

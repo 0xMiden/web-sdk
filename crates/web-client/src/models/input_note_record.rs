@@ -4,6 +4,7 @@ use miden_client::store::InputNoteRecord as NativeInputNoteRecord;
 use miden_client::transaction::InputNote as NativeInputNote;
 
 use super::input_note_state::InputNoteState;
+use super::note_attachment::NoteAttachment;
 use super::note_details::NoteDetails;
 use super::note_id::NoteId;
 use super::note_inclusion_proof::NoteInclusionProof;
@@ -53,6 +54,17 @@ impl InputNoteRecord {
     /// Returns the note metadata if available.
     pub fn metadata(&self) -> Option<NoteMetadata> {
         self.0.metadata().map(Into::into)
+    }
+
+    /// Returns the note's attachments.
+    ///
+    /// On the 0.15 surface the full attachment content (the packed words) lives
+    /// on the note record itself rather than on `NoteMetadata` (which only
+    /// carries the attachment headers). This exposes that content so JS callers
+    /// can decode payloads packed via the `createNoteAttachment` helper. An
+    /// empty array means the note carries no attachments.
+    pub fn attachments(&self) -> Vec<NoteAttachment> {
+        self.0.attachments().iter().map(Into::into).collect()
     }
 
     /// Returns the note commitment (id + metadata), if available.

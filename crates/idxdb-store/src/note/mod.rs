@@ -59,9 +59,8 @@ impl IdxdbStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         // `to_input_notes_promise` returns the unfiltered set for the
-        // `DetailsCommitments` filter — there's no per-commitment index on
-        // the IndexedDB store. Filter in Rust by comparing each record's
-        // details commitment against the requested set.
+        // `DetailsCommitments` filter. Narrow it in Rust by comparing each
+        // record's details commitment against the requested set.
         if let NoteFilter::DetailsCommitments(commitments) = &filter {
             let wanted: BTreeSet<_> = commitments.iter().copied().collect();
             return Ok(notes
@@ -243,8 +242,8 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_input_notes_from_nullifiers(db_id, nullifiers_as_str)
             },
-            // No `detailsCommitment` index on the IndexedDB store, so load all
-            // input notes and let the caller filter by commitment in Rust.
+            // Load all input notes and let the caller filter by commitment in
+            // Rust.
             NoteFilter::DetailsCommitments(_) => idxdb_get_input_notes(db_id, vec![]),
         }
     }

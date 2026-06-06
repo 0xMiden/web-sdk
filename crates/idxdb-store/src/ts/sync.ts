@@ -104,7 +104,8 @@ interface FlattenedU8Vec {
 }
 
 interface SerializedInputNoteData {
-  noteId: string;
+  detailsCommitment: string;
+  noteId?: string;
   noteAssets: Uint8Array;
   attachments: Uint8Array;
   serialNumber: Uint8Array;
@@ -221,6 +222,7 @@ export async function applyStateSync(
         serializedInputNotes.map((note) => {
           return upsertInputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
             note.attachments,

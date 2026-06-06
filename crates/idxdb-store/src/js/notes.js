@@ -106,12 +106,18 @@ export async function getNoteScript(dbId, scriptRoot) {
         logWebStoreError(err, "Failed to get note script from root");
     }
 }
-export async function upsertInputNote(dbId, noteId, assets, attachments, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
+export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, attachments, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
             const data = {
-                noteId,
+                // The details commitment is the primary key. It is always present, even
+                // for partial notes lacking a noteId, so a partial note that later gains
+                // its noteId updates the same row instead of inserting a duplicate.
+                detailsCommitment,
+                // Convert null -> undefined so Dexie omits the noteId secondary index
+                // for partial notes that don't have one yet.
+                noteId: noteId ?? undefined,
                 assets,
                 attachments,
                 serialNumber,
@@ -136,7 +142,7 @@ export async function upsertInputNote(dbId, noteId, assets, attachments, serialN
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
-            logWebStoreError(error, `Error inserting note: ${noteId}`);
+            logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
         }
     };
     if (tx)

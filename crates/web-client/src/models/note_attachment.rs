@@ -162,6 +162,17 @@ impl NoteAttachment {
         self.0.num_words()
     }
 
+    /// Returns the attachment content as its constituent words.
+    ///
+    /// The content is always word-vector-shaped on the 0.15 surface, so this is
+    /// the inverse of `fromWord` / `fromWords`: it yields the same `Word`s the
+    /// attachment was built from (in order), letting JS callers decode the
+    /// packed values back out.
+    #[js_export(js_name = "toWords")]
+    pub fn to_words(&self) -> Vec<Word> {
+        self.0.content().as_words().iter().map(Word::from).collect()
+    }
+
     // NOTE: the previous `newWord` / `newArray` constructors, `asWord` /
     // `asArray` getters, `attachmentKind` accessor, and the
     // `newNetworkAccountTarget` helper were removed in the migration to
