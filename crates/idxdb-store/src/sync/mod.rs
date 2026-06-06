@@ -227,6 +227,17 @@ impl IdxdbStore {
             let new_header = public_delta.new_header();
             let account_id = new_header.id();
 
+            // `compute_account_delta` diffs the RPC-provided new state against
+            // the locally-stored account, anchoring the delta on the local
+            // nonce. The locally-stored header (not `new_header`) must be
+            // passed: it carries the old nonce the diff is computed from, and
+            // the call rejects a non-increasing nonce.
+            let local_header = self
+                .get_account_header(account_id)
+                .await?
+                .map(|(header, _)| header)
+                .ok_or(StoreError::AccountDataNotFound(account_id))?;
+
             // The RPC-side incremental updates address specific slot names so
             // a narrowed `SlotNames` filter avoids round-tripping the whole
             // storage tree.
@@ -238,7 +249,7 @@ impl IdxdbStore {
                 .await?;
             let local_vault = self.get_account_vault(account_id).await?;
             let delta =
-                public_delta.compute_account_delta(new_header, &local_storage, &local_vault)?;
+                public_delta.compute_account_delta(&local_header, &local_storage, &local_vault)?;
 
             // Load targeted data for delta computation
             let vault_keys: Vec<String> = delta
