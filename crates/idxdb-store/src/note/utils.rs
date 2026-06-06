@@ -88,10 +88,7 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     // Partial / metadata-less notes have no `NoteId`. Fall back to the
     // details commitment hex as the IndexedDB row key so two distinct
     // partial notes never collide on an empty string.
-    let note_id = note
-        .id()
-        .map(|id| id.to_hex())
-        .unwrap_or_else(|| note.details_commitment().to_hex());
+    let note_id = note.id().map_or_else(|| note.details_commitment().to_hex(), |id| id.to_hex());
     let note_assets = note.assets().to_bytes();
 
     let details = note.details();
@@ -240,7 +237,12 @@ pub fn parse_input_note_idxdb_object(
     // `inputNotes` row. Stubbing with `default()` for the API migration —
     // private-note attachment delivery (added upstream in PR #2214) is
     // dropped until the schema gains an `attachments` column.
-    Ok(InputNoteRecord::new(details, NoteAttachments::default(), Some(created_at), state))
+    Ok(InputNoteRecord::new(
+        details,
+        NoteAttachments::default(),
+        Some(created_at),
+        state,
+    ))
 }
 
 pub fn parse_output_note_idxdb_object(

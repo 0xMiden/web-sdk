@@ -346,7 +346,8 @@ impl IdxdbStore {
                 // not present in `names` are silently skipped — a multi-name
                 // request is naturally a "best effort" load (in contrast to
                 // single-`SlotName`, which errors on a missing name).
-                let wanted: BTreeSet<&str> = names.iter().map(|n| n.as_str()).collect();
+                let wanted: BTreeSet<&str> =
+                    names.iter().map(miden_client::account::StorageSlotName::as_str).collect();
                 account_storage_idxdb
                     .into_iter()
                     .filter(|s| wanted.contains(s.slot_name.as_str()))

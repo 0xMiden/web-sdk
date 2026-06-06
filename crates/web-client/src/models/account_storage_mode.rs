@@ -41,9 +41,8 @@ impl AccountStorageMode {
     /// previously-supported `"network"` — is rejected.
     #[js_export(js_name = "tryFromStr")]
     pub fn try_from_str(s: String) -> Result<AccountStorageMode, JsErr> {
-        let account_type = NativeAccountType::from_str(&s).map_err(|e| {
-            from_str_err(&format!("Invalid AccountStorageMode string: {e:?}"))
-        })?;
+        let account_type = NativeAccountType::from_str(&s)
+            .map_err(|e| from_str_err(&format!("Invalid AccountStorageMode string: {e:?}")))?;
         Ok(AccountStorageMode(account_type))
     }
 

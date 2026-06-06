@@ -12,8 +12,8 @@ use miden_client::sync::{
     PublicAccountUpdate,
     StateSyncUpdate,
 };
-use miden_protocol::note::NoteDetailsCommitment;
 use miden_client::utils::{Deserializable, Serializable};
+use miden_protocol::note::NoteDetailsCommitment;
 
 use super::IdxdbStore;
 use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
@@ -344,7 +344,7 @@ impl IdxdbStore {
 }
 
 /// Encodes a [`NoteTagSource`] into the two optional hex-string columns the
-/// `tags` IndexedDB store uses. Exactly one column is `Some` per non-`User`
+/// `tags` `IndexedDB` store uses. Exactly one column is `Some` per non-`User`
 /// variant — `get_note_tags` round-trips the variant back via that shape.
 fn encode_tag_source(source: &NoteTagSource) -> (Option<String>, Option<String>) {
     match source {

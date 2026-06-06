@@ -103,9 +103,8 @@ impl NoteFile {
     /// optional there), so the `NoteDetails`-only variant returns `None`.
     pub fn nullifier(&self) -> Option<String> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { .. } => None,
             NativeNoteFile::NoteWithProof(note, _) => Some(note.nullifier().to_hex()),
-            NativeNoteFile::NoteId(_) => None,
+            NativeNoteFile::NoteDetails { .. } | NativeNoteFile::NoteId(_) => None,
         }
     }
 

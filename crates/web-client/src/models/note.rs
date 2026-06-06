@@ -79,7 +79,7 @@ impl Note {
 
     /// Returns the public metadata associated with the note.
     pub fn metadata(&self) -> NoteMetadata {
-        self.0.metadata().clone().into()
+        (*self.0.metadata()).into()
     }
 
     /// Returns the recipient who can consume this note.

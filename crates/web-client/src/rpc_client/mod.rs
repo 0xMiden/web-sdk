@@ -81,16 +81,11 @@ impl RpcClient {
                 // attachments alongside the inclusion proof. Attachments aren't exposed on the
                 // JS `FetchedNote` surface yet — `_attachments` deliberately drops them.
                 NativeFetchedNote::Private(note_id, metadata, _attachments, inclusion_proof) => {
-                    FetchedNote::new(
-                        note_id.into(),
-                        metadata.into(),
-                        inclusion_proof.into(),
-                        None,
-                    )
+                    FetchedNote::new(note_id.into(), metadata.into(), inclusion_proof.into(), None)
                 },
                 NativeFetchedNote::Public(note, inclusion_proof) => {
                     let note_id = note.id();
-                    let metadata = note.metadata().clone();
+                    let metadata = *note.metadata();
                     FetchedNote::new(
                         note_id.into(),
                         metadata.into(),

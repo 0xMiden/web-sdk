@@ -1,10 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::{
-    AssetCallbackFlag,
-    AssetVault as NativeAssetVault,
-    AssetVaultKey,
-};
+use miden_client::asset::{AssetCallbackFlag, AssetVault as NativeAssetVault, AssetVaultKey};
 
 use super::account_id::AccountId;
 use super::fungible_asset::FungibleAsset;
@@ -43,7 +39,7 @@ impl AssetVault {
     pub fn get_balance(&self, faucet_id: &AccountId) -> u64 {
         let native_faucet_id: NativeAccountId = faucet_id.into();
         let vault_key = AssetVaultKey::new_fungible(native_faucet_id, AssetCallbackFlag::Disabled);
-        self.0.get_balance(vault_key).map(u64::from).unwrap_or(0)
+        self.0.get_balance(vault_key).map_or(0, u64::from)
     }
 
     /// Returns the fungible assets contained in this vault.

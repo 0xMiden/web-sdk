@@ -54,7 +54,7 @@ impl FetchedNote {
     /// The unique identifier of the note.
     #[js_export(getter, js_name = "noteId")]
     pub fn get_note_id(&self) -> NoteId {
-        self.note_id.clone()
+        self.note_id
     }
 
     /// The note's metadata, including sender, tag, and other properties.

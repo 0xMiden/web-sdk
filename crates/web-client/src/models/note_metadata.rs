@@ -8,7 +8,7 @@ use super::{NoteTag, NoteType};
 /// Metadata associated with a note.
 ///
 /// 0.15 protocol surface: `NoteMetadata` is now constructed from a
-/// `PartialNoteMetadata` (sender / note_type / tag) plus a `NoteAttachments`
+/// [`PartialNoteMetadata`] (sender / `note_type` / tag) plus a `NoteAttachments`
 /// collection — the previous `with_tag` / `with_attachment` / `attachment`
 /// methods on `NoteMetadata` were moved (`with_tag` lives on
 /// `PartialNoteMetadata`) or removed (`with_attachment` / `attachment`).
@@ -23,8 +23,8 @@ impl NoteMetadata {
     /// Creates metadata for a note with no attachments.
     #[js_export(constructor)]
     pub fn new(sender: &AccountId, note_type: NoteType, note_tag: &NoteTag) -> NoteMetadata {
-        let partial = PartialNoteMetadata::new(sender.into(), note_type.into())
-            .with_tag(note_tag.into());
+        let partial =
+            PartialNoteMetadata::new(sender.into(), note_type.into()).with_tag(note_tag.into());
         let native = NativeNoteMetadata::new(partial, &NoteAttachments::default());
         NoteMetadata(native)
     }
@@ -61,7 +61,7 @@ impl From<NativeNoteMetadata> for NoteMetadata {
 
 impl From<&NativeNoteMetadata> for NoteMetadata {
     fn from(native_note_metadata: &NativeNoteMetadata) -> Self {
-        NoteMetadata(native_note_metadata.clone())
+        NoteMetadata(*native_note_metadata)
     }
 }
 
@@ -73,7 +73,7 @@ impl From<NoteMetadata> for NativeNoteMetadata {
 
 impl From<&NoteMetadata> for NativeNoteMetadata {
     fn from(note_metadata: &NoteMetadata) -> Self {
-        note_metadata.0.clone()
+        note_metadata.0
     }
 }
 
