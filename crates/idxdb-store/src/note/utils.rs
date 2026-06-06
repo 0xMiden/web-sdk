@@ -43,6 +43,7 @@ pub struct SerializedInputNoteData {
     pub note_id: String,
     #[wasm_bindgen(js_name = "noteAssets")]
     pub note_assets: Vec<u8>,
+    pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "serialNumber")]
     pub serial_number: Vec<u8>,
     pub inputs: Vec<u8>,
@@ -71,6 +72,7 @@ pub struct SerializedOutputNoteData {
     pub note_id: String,
     #[wasm_bindgen(js_name = "noteAssets")]
     pub note_assets: Vec<u8>,
+    pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "recipientDigest")]
     pub recipient_digest: String,
     pub metadata: Vec<u8>,
@@ -90,6 +92,10 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     // partial notes never collide on an empty string.
     let note_id = note.id().map_or_else(|| note.details_commitment().to_hex(), |id| id.to_hex());
     let note_assets = note.assets().to_bytes();
+    // Attachments contribute to the note metadata commitment, so they must be
+    // persisted to faithfully reconstruct a note whose id/nullifier match the
+    // on-chain note (see `parse_input_note_idxdb_object`).
+    let attachments = note.attachments().to_bytes();
 
     let details = note.details();
     let serial_number = details.serial_num().to_bytes();
@@ -114,6 +120,7 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     SerializedInputNoteData {
         note_id,
         note_assets,
+        attachments,
         serial_number,
         inputs,
         note_script_root,
@@ -135,6 +142,7 @@ pub async fn upsert_input_note_tx(db_id: &str, note: &InputNoteRecord) -> Result
         db_id,
         serialized_data.note_id,
         serialized_data.note_assets,
+        serialized_data.attachments,
         serialized_data.serial_number,
         serialized_data.inputs,
         serialized_data.note_script_root,
@@ -168,6 +176,10 @@ pub async fn upsert_note_script_tx(
 pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutputNoteData {
     let note_id = note.id().to_hex();
     let note_assets = note.assets().to_bytes();
+    // Attachments contribute to the note metadata commitment, so they must be
+    // persisted to faithfully reconstruct a note whose id/nullifier match the
+    // on-chain note (see `parse_output_note_idxdb_object`).
+    let attachments = note.attachments().to_bytes();
     let recipient_digest = note.recipient_digest().to_hex();
     let metadata = note.metadata().to_bytes();
 
@@ -179,6 +191,7 @@ pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutput
     SerializedOutputNoteData {
         note_id,
         note_assets,
+        attachments,
         recipient_digest,
         metadata,
         nullifier,
@@ -195,6 +208,7 @@ pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Resu
         db_id,
         serialized_data.note_id,
         serialized_data.note_assets,
+        serialized_data.attachments,
         serialized_data.recipient_digest,
         serialized_data.metadata,
         serialized_data.nullifier,
@@ -212,6 +226,7 @@ pub fn parse_input_note_idxdb_object(
     // Merge the info that comes from the input notes table and the notes script table
     let InputNoteIdxdbObject {
         assets,
+        attachments,
         serial_number,
         inputs,
         serialized_note_script,
@@ -227,22 +242,16 @@ pub fn parse_input_note_idxdb_object(
     let recipient = NoteRecipient::new(serial_number, script, inputs);
 
     let details = NoteDetails::new(assets, recipient);
+    // Attachments feed the note metadata commitment, so the persisted bytes are
+    // required to reconstruct a record whose id/nullifier match the on-chain note.
+    let attachments = NoteAttachments::read_from_bytes(&attachments)?;
 
     let state = InputNoteState::read_from_bytes(&state)?;
     let created_at = created_at
         .parse::<u64>()
         .map_err(|_| StoreError::QueryError("Failed to parse created_at timestamp".to_string()))?;
 
-    // TODO(pr-a-followup): persist `NoteAttachments` on the IndexedDB
-    // `inputNotes` row. Stubbing with `default()` for the API migration —
-    // private-note attachment delivery (added upstream in PR #2214) is
-    // dropped until the schema gains an `attachments` column.
-    Ok(InputNoteRecord::new(
-        details,
-        NoteAttachments::default(),
-        Some(created_at),
-        state,
-    ))
+    Ok(InputNoteRecord::new(details, attachments, Some(created_at), state))
 }
 
 pub fn parse_output_note_idxdb_object(
@@ -252,16 +261,17 @@ pub fn parse_output_note_idxdb_object(
     let note_assets = NoteAssets::read_from_bytes(&note_idxdb.assets)?;
     let recipient = Word::try_from(note_idxdb.recipient_digest)?;
     let state = OutputNoteState::read_from_bytes(&note_idxdb.state)?;
+    // Attachments feed the note metadata commitment, so the persisted bytes are
+    // required to reconstruct a record whose id/nullifier match the on-chain note.
+    let attachments = NoteAttachments::read_from_bytes(&note_idxdb.attachments)?;
 
-    // TODO(pr-a-followup): persist `NoteAttachments` on the IndexedDB
-    // `outputNotes` row. See matching TODO in `parse_input_note_idxdb_object`.
     Ok(OutputNoteRecord::new(
         recipient,
         note_assets,
         note_metadata,
         state,
         note_idxdb.expected_height.into(),
-        NoteAttachments::default(),
+        attachments,
     ))
 }
 

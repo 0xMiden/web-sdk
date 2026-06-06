@@ -179,6 +179,7 @@ export interface IInputNote {
   noteId: string;
   stateDiscriminant: number;
   assets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   scriptRoot: string;
@@ -194,6 +195,7 @@ export interface IOutputNote {
   noteId: string;
   recipientDigest: string;
   assets: Uint8Array;
+  attachments: Uint8Array;
   metadata: Uint8Array;
   stateDiscriminant: number;
   nullifier?: string;

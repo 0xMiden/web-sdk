@@ -83,6 +83,7 @@ async function insertNote(
     DUMMY_BYTES,
     DUMMY_BYTES,
     DUMMY_BYTES,
+    DUMMY_BYTES,
     opts.scriptRoot ?? DUMMY_SCRIPT_ROOT,
     DUMMY_BYTES,
     opts.nullifier ?? `nullifier-${noteId}`,
@@ -484,6 +485,7 @@ describe("getInputNotes", () => {
       DUMMY_BYTES,
       DUMMY_BYTES,
       DUMMY_BYTES,
+      DUMMY_BYTES,
       "", // empty script root
       DUMMY_BYTES,
       "null-nullifier",
@@ -649,6 +651,7 @@ describe("getOutputNotes", () => {
       dbId,
       "out-1",
       DUMMY_BYTES,
+      DUMMY_BYTES,
       "recipient1",
       DUMMY_BYTES,
       "0xnull1",
@@ -659,6 +662,7 @@ describe("getOutputNotes", () => {
     await upsertOutputNote(
       dbId,
       "out-2",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "recipient2",
       DUMMY_BYTES,
@@ -677,6 +681,7 @@ describe("getOutputNotes", () => {
       dbId,
       "out-state3",
       DUMMY_BYTES,
+      DUMMY_BYTES,
       "r1",
       DUMMY_BYTES,
       "0xn1",
@@ -687,6 +692,7 @@ describe("getOutputNotes", () => {
     await upsertOutputNote(
       dbId,
       "out-state4",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r2",
       DUMMY_BYTES,
@@ -705,6 +711,7 @@ describe("getOutputNotes", () => {
     await upsertOutputNote(
       dbId,
       "out-processed",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "recipient-x",
       DUMMY_BYTES,
@@ -740,6 +747,7 @@ describe("getOutputNotesFromIds", () => {
       dbId,
       "out-id-1",
       DUMMY_BYTES,
+      DUMMY_BYTES,
       "r1",
       DUMMY_BYTES,
       "0xn1",
@@ -750,6 +758,7 @@ describe("getOutputNotesFromIds", () => {
     await upsertOutputNote(
       dbId,
       "out-id-2",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r2",
       DUMMY_BYTES,
@@ -782,6 +791,7 @@ describe("getOutputNotesFromNullifiers", () => {
       dbId,
       "out-null-1",
       DUMMY_BYTES,
+      DUMMY_BYTES,
       "r1",
       DUMMY_BYTES,
       "0xoutnull1",
@@ -792,6 +802,7 @@ describe("getOutputNotesFromNullifiers", () => {
     await upsertOutputNote(
       dbId,
       "out-null-2",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r2",
       DUMMY_BYTES,
@@ -834,6 +845,7 @@ describe("upsertInputNote with external transaction", () => {
           DUMMY_BYTES,
           DUMMY_BYTES,
           DUMMY_BYTES,
+          DUMMY_BYTES,
           "tx-script-root",
           DUMMY_BYTES,
           "tx-nullifier",
@@ -870,6 +882,7 @@ describe("upsertOutputNote with external transaction", () => {
         await upsertOutputNote(
           dbId,
           "out-tx-1",
+          DUMMY_BYTES,
           DUMMY_BYTES,
           "recipient-tx",
           DUMMY_BYTES,
@@ -949,6 +962,7 @@ describe("error paths: unregistered dbId re-throws", () => {
       upsertInputNote(
         BAD_DB,
         "note-1",
+        DUMMY_BYTES,
         DUMMY_BYTES,
         DUMMY_BYTES,
         DUMMY_BYTES,

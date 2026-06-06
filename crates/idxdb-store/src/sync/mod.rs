@@ -145,13 +145,15 @@ impl IdxdbStore {
             )
         };
 
-        // `InputNoteRecord::id()` is `Option<NoteId>` — partial / metadata-less
-        // notes have no id and so cannot be in the committed-id set. `filter_map`
-        // simultaneously drops the `None` and unwraps the `Some`.
-        let committed_note_ids: Vec<String> = note_updates
+        // Tags for tracked expected notes are keyed by the note's details
+        // commitment (`NoteTagSource::Note`), which `encode_tag_source` writes
+        // into the `tags.sourceNoteId` column. To prune those tags once their
+        // notes commit, collect the details-commitment hex of every committed
+        // input note so the JS layer can delete the matching rows.
+        let committed_note_tag_sources: Vec<String> = note_updates
             .updated_input_notes()
             .filter(|update| update.inner().is_committed())
-            .filter_map(|update| update.inner().id().map(|id| id.to_string()))
+            .map(|update| update.inner().details_commitment().to_hex())
             .collect();
 
         for (account_id, digest) in account_updates.mismatched_private_accounts() {
@@ -317,7 +319,7 @@ impl IdxdbStore {
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
-            committed_note_ids,
+            committed_note_tag_sources,
             serialized_input_notes,
             serialized_output_notes,
             account_updates: full_accounts
