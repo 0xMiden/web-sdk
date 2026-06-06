@@ -834,6 +834,9 @@ export interface NotesResource {
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
+   * @returns The imported note's id when the file carries metadata (a note id
+   *   or a full note with proof); for a details-only file, which has no note id
+   *   yet, the note's details commitment is returned instead.
    */
   import(noteFile: NoteFile): Promise<NoteId>;
   /**
