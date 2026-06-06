@@ -10,11 +10,7 @@ use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
-use miden_client::rpc::domain::account::{
-    AccountStorageRequirements as NativeAccountStorageRequirements,
-    GetAccountRequest,
-    VaultFetch,
-};
+use miden_client::rpc::domain::account::{GetAccountRequest, StorageMapFetch, VaultFetch};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
 use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient};
 use note::FetchedNote;
@@ -150,13 +146,22 @@ impl RpcClient {
         &self,
         account_id: &AccountId,
     ) -> Result<FetchedAccount, JsErr> {
-        let fetched = self
+        let native_id: miden_client::account::AccountId = account_id.into();
+
+        // `get_account_details` returns only `Option<Account>`, without the commitment or block
+        // height. Issue the underlying `get_account` request directly (full storage maps + vault)
+        // so `FetchedAccount` can report the account commitment and last block height.
+        let request = GetAccountRequest::new()
+            .with_storage(StorageMapFetch::All)
+            .with_vault(VaultFetch::Always);
+
+        let (block_num, proof) = self
             .inner
-            .get_account_details(account_id.into())
+            .get_account(native_id, request)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get account details"))?;
 
-        Ok(fetched.into())
+        FetchedAccount::from_proof(block_num, proof)
     }
 
     /// Fetches an account proof from the node.
@@ -191,8 +196,12 @@ impl RpcClient {
     ) -> Result<AccountProof, JsErr> {
         let native_id: miden_client::account::AccountId = account_id.into();
 
-        let native_requirements: NativeAccountStorageRequirements =
-            storage_requirements.map(Into::into).unwrap_or_default();
+        // Storage requirements are wrapped in a `StorageMapFetch` policy: named slots map to
+        // `Slots(..)`, and their absence maps to `Skip` (request only the storage header).
+        let storage_fetch = match storage_requirements {
+            Some(reqs) => StorageMapFetch::Slots(reqs.into()),
+            None => StorageMapFetch::Skip,
+        };
 
         let account_state = match block_num {
             Some(num) => AccountStateAt::Block(BlockNumber::from(num)),
@@ -210,7 +219,7 @@ impl RpcClient {
         };
 
         let request = GetAccountRequest::new()
-            .with_storage(native_requirements)
+            .with_storage(storage_fetch)
             .at(account_state)
             .with_vault(vault);
 

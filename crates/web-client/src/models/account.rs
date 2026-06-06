@@ -1,7 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
-use miden_client::transaction::AccountInterface;
+use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -66,15 +66,21 @@ impl Account {
         self.0.code().into()
     }
 
-    // NOTE: `isFaucet`, `isRegularAccount`, `isUpdatable`, `isNetwork`
-    // were removed in the migration to miden-client PR #2214 — the
-    // underlying protocol-level `AccountType` collapsed from a 4-way
-    // `{ FungibleFaucet, NonFungibleFaucet, RegularAccountImmutableCode,
-    // RegularAccountUpdatableCode }` to a 2-way storage flag
-    // `{ Private, Public }`. The faucet-vs-regular and updatable-vs-immutable
-    // distinctions no longer exist on chain; the network-account flag was
-    // dropped as well. `isPublic` / `isPrivate` carry the storage-mode
-    // information that remains.
+    // Faucet-ness is encoded in the account's code, so it is derived from the
+    // account's component interface rather than from its `AccountId`.
+
+    /// Returns true if the account exposes a fungible-faucet interface.
+    #[js_export(js_name = "isFaucet")]
+    pub fn is_faucet(&self) -> bool {
+        let interface = AccountInterface::from_account(&self.0);
+        interface.components().contains(&AccountComponentInterface::FungibleFaucet)
+    }
+
+    /// Returns true if the account is a regular (non-faucet) account.
+    #[js_export(js_name = "isRegularAccount")]
+    pub fn is_regular_account(&self) -> bool {
+        !self.is_faucet()
+    }
 
     /// Returns true if the account exposes public storage.
     #[js_export(js_name = "isPublic")]

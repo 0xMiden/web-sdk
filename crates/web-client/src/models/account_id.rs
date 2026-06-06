@@ -137,12 +137,9 @@ impl AccountId {
         Ok(AccountId(native_account_id))
     }
 
-    // `isFaucet` / `isRegularAccount` / `isNetwork` were removed in the
-    // migration to miden-client PR #2214 — the protocol-level AccountType
-    // collapsed to a 2-way `{ Private, Public }` storage flag (see
-    // `crate::models::account::Account` for the matching change). The
-    // remaining `isPublic` / `isPrivate` cover the storage-mode information
-    // that is still part of the on-chain identifier.
+    // An `AccountId` only encodes storage visibility, so `isPublic` / `isPrivate`
+    // are the only predicates here. Faucet detection needs the account's code and
+    // lives on `Account` (`isFaucet` / `isRegularAccount`).
 
     /// Returns true if the account uses public storage.
     #[js_export(js_name = "isPublic")]

@@ -472,13 +472,10 @@ export interface NewAccountTestResult {
   codeCommitment: string;
   isFaucet: boolean;
   isRegularAccount: boolean;
-  isUpdatable: boolean;
   isPublic: boolean;
   isPrivate: boolean;
-  isNetwork: boolean;
   isIdPublic: boolean;
   isIdPrivate: boolean;
-  isIdNetwork: boolean;
   isNew: boolean;
 }
 interface createNewWalletParams {
@@ -548,13 +545,10 @@ export const createNewWallet = async (
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         isIdPublic: newWallet.id().isPublic(),
         isIdPrivate: newWallet.id().isPrivate(),
-        isIdNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     },
@@ -607,13 +601,10 @@ export const createNewFaucet = async (
         codeCommitment: newFaucet.code().commitment().toHex(),
         isFaucet: newFaucet.isFaucet(),
         isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         isIdPublic: newFaucet.id().isPublic(),
         isIdPrivate: newFaucet.id().isPrivate(),
-        isIdNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     },
