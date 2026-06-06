@@ -211,8 +211,8 @@ impl RpcClient {
         // 0.15 surface: `get_account_proof` was renamed/reshaped to `get_account` taking a
         // `GetAccountRequest` builder. The semantics carry over 1:1 — storage requirements,
         // a target block, and an optional known vault commitment to short-circuit re-sending
-        // unchanged vault data. `with_known_code(None)` matches the previous call's behavior
-        // (always re-fetching code).
+        // unchanged vault data. `known_code` is left at its `None` default, so the node always
+        // re-sends the account code, matching the previous call.
         let vault = match known_vault_commitment {
             Some(commitment) => VaultFetch::IfChangedFrom(commitment.into()),
             None => VaultFetch::Skip,
