@@ -5,28 +5,17 @@ use chrono::Utc;
 use miden_client::Word;
 use miden_client::account::AccountId;
 use miden_client::note::{
-    NoteAssets,
-    NoteDetails,
-    NoteMetadata,
-    NoteRecipient,
-    NoteScript,
-    NoteStorage,
+    NoteAssets, NoteDetails, NoteMetadata, NoteRecipient, NoteScript, NoteStorage,
     NoteUpdateTracker,
 };
 use miden_client::store::{
-    InputNoteRecord,
-    InputNoteState,
-    OutputNoteRecord,
-    OutputNoteState,
-    StoreError,
+    InputNoteRecord, InputNoteState, OutputNoteRecord, OutputNoteState, StoreError,
 };
 use miden_client::utils::{Deserializable, Serializable};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::js_bindings::{
-    idxdb_upsert_input_note,
-    idxdb_upsert_note_script,
-    idxdb_upsert_output_note,
+    idxdb_upsert_input_note, idxdb_upsert_note_script, idxdb_upsert_output_note,
 };
 use super::{InputNoteIdxdbObject, OutputNoteIdxdbObject};
 use crate::note::models::NoteScriptIdxdbObject;

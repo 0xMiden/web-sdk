@@ -1,14 +1,11 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::note::{
-    Note as NativeNote,
-    NoteDetails as NativeNoteDetails,
-    NoteRecipient as NativeNoteRecipient,
+    Note as NativeNote, NoteDetails as NativeNoteDetails, NoteRecipient as NativeNoteRecipient,
     NoteTag as NativeNoteTag,
 };
 use miden_client::transaction::{
-    ForeignAccount as NativeForeignAccount,
-    NoteArgs as NativeNoteArgs,
+    ForeignAccount as NativeForeignAccount, NoteArgs as NativeNoteArgs,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionScript as NativeTransactionScript,
 };
@@ -18,11 +15,7 @@ use crate::js_error_with_context;
 use crate::models::advice_map::AdviceMap;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::miden_arrays::{
-    ForeignAccountArray,
-    NoteAndArgsArray,
-    NoteArray,
-    NoteDetailsAndTagArray,
-    NoteRecipientArray,
+    ForeignAccountArray, NoteAndArgsArray, NoteArray, NoteDetailsAndTagArray, NoteRecipientArray,
 };
 use crate::models::note_recipient::NoteRecipient;
 use crate::models::transaction_request::TransactionRequest;

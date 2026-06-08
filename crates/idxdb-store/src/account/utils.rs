@@ -3,24 +3,11 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::account::{
-    Account,
-    AccountCode,
-    AccountDelta,
-    AccountHeader,
-    AccountId,
-    AccountStorage,
-    Address,
-    StorageMap,
-    StorageSlotContent,
-    StorageSlotName,
-    StorageSlotType,
+    Account, AccountCode, AccountDelta, AccountHeader, AccountId, AccountStorage, Address,
+    StorageMap, StorageSlotContent, StorageSlotName, StorageSlotType,
 };
 use miden_client::asset::{
-    Asset,
-    AssetVault,
-    AssetVaultKey,
-    FungibleAsset,
-    NonFungibleDeltaAction,
+    Asset, AssetVault, AssetVaultKey, FungibleAsset, NonFungibleDeltaAction,
 };
 use miden_client::store::{AccountSmtForest, AccountStatus, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
@@ -29,16 +16,9 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
 use super::js_bindings::{
-    JsStorageMapEntry,
-    JsStorageSlot,
-    JsVaultAsset,
-    idxdb_apply_full_account_state,
-    idxdb_apply_transaction_delta,
-    idxdb_upsert_account_code,
-    idxdb_upsert_account_record,
-    idxdb_upsert_account_storage,
-    idxdb_upsert_storage_map_entries,
-    idxdb_upsert_vault_assets,
+    JsStorageMapEntry, JsStorageSlot, JsVaultAsset, idxdb_apply_full_account_state,
+    idxdb_apply_transaction_delta, idxdb_upsert_account_code, idxdb_upsert_account_record,
+    idxdb_upsert_account_storage, idxdb_upsert_storage_map_entries, idxdb_upsert_vault_assets,
 };
 use crate::account::js_bindings::idxdb_insert_account_address;
 use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
@@ -231,7 +211,11 @@ pub fn compute_vault_delta(
 
     // Process fungible deltas
     for (vault_key, delta_amount) in delta.vault().fungible().iter() {
-        let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?;
+        // Preserve the vault key's callback flag: it is part of the asset's vault key and
+        // value encoding, so dropping it would make the locally recomputed vault root diverge
+        // from the kernel's (this matches `AssetVault::apply_delta` in miden-protocol).
+        let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?
+            .with_callbacks(vault_key.callback_flag());
 
         let asset = match fungible_map.remove(vault_key) {
             Some(existing) => {

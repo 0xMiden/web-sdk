@@ -1,9 +1,6 @@
 use miden_client::account::component::{AccountComponent, BasicWallet};
 use miden_client::account::{
-    Account,
-    AccountBuilder,
-    AccountBuilderSchemaCommitmentExt,
-    AccountType,
+    Account, AccountBuilder, AccountBuilderSchemaCommitmentExt, AccountType,
 };
 use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
 use rand::rngs::StdRng;

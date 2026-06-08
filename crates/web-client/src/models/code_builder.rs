@@ -3,15 +3,8 @@ use alloc::sync::Arc;
 use js_export_macro::js_export;
 use miden_client::account::AccountComponentCode as NativeAccountComponentCode;
 use miden_client::assembly::{
-    Assembler,
-    CodeBuilder as NativeCodeBuilder,
-    Library as NativeLibrary,
-    Module,
-    ModuleKind,
-    Path,
-    PrintDiagnostic,
-    Report,
-    SourceManagerSync,
+    Assembler, CodeBuilder as NativeCodeBuilder, Library as NativeLibrary, Module, ModuleKind,
+    Path, PrintDiagnostic, Report, SourceManagerSync,
 };
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;

@@ -6,19 +6,14 @@ use miden_client::account::{AccountId, StorageMap, StorageSlotType};
 use miden_client::note::{BlockNumber, NoteId, NoteTag};
 use miden_client::store::StoreError;
 use miden_client::sync::{
-    NoteTagRecord,
-    NoteTagSource,
-    PartialBlockchainUpdates,
-    PublicAccountUpdate,
-    StateSyncUpdate,
+    NoteTagRecord, NoteTagSource, PartialBlockchainUpdates, PublicAccountUpdate, StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
 
 use super::IdxdbStore;
 use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
 use super::chain_data::utils::{
-    SerializedPartialBlockchainNodeData,
-    serialize_partial_blockchain_node,
+    SerializedPartialBlockchainNodeData, serialize_partial_blockchain_node,
 };
 use super::note::utils::{serialize_input_note, serialize_output_note};
 use super::transaction::utils::serialize_transaction_record;
@@ -27,12 +22,8 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::JsAccountUpdate;
 use js_bindings::{
-    JsStateSyncUpdate,
-    idxdb_add_note_tag,
-    idxdb_apply_state_sync,
-    idxdb_get_note_tags,
-    idxdb_get_sync_height,
-    idxdb_remove_note_tag,
+    JsStateSyncUpdate, idxdb_add_note_tag, idxdb_apply_state_sync, idxdb_get_note_tags,
+    idxdb_get_sync_height, idxdb_remove_note_tag,
 };
 
 mod models;

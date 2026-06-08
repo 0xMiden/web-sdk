@@ -5,21 +5,14 @@ use miden_client::Word;
 use miden_client::account::{Account, StorageMap, StorageSlotType};
 use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::transaction::{
-    TransactionDetails,
-    TransactionId,
-    TransactionRecord,
-    TransactionScript,
-    TransactionStatus,
+    TransactionDetails, TransactionId, TransactionRecord, TransactionScript, TransactionStatus,
     TransactionStoreUpdate,
 };
 use miden_client::utils::Deserializable;
 
 use super::IdxdbStore;
 use super::account::utils::{
-    apply_full_account_state,
-    apply_transaction_delta,
-    compute_storage_delta,
-    compute_vault_delta,
+    apply_full_account_state, apply_transaction_delta, compute_storage_delta, compute_vault_delta,
 };
 use super::note::utils::apply_note_updates_tx;
 use crate::promise::await_js;

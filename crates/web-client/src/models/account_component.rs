@@ -1,20 +1,16 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::component::{
-    AccountComponent as NativeAccountComponent,
-    AccountComponentMetadata,
+    AccountComponent as NativeAccountComponent, AccountComponentMetadata,
 };
 use miden_client::account::{
-    AccountComponentCode as NativeAccountComponentCode,
-    AccountType,
+    AccountComponentCode as NativeAccountComponentCode, AccountType,
     StorageSlot as NativeStorageSlot,
 };
 use miden_client::assembly::{Library as NativeLibrary, MastNodeExt};
 use miden_client::auth::{
-    AuthSchemeId as NativeAuthSchemeId,
-    AuthSecretKey as NativeSecretKey,
-    AuthSingleSig as NativeSingleSig,
-    PublicKeyCommitment,
+    AuthSchemeId as NativeAuthSchemeId, AuthSecretKey as NativeSecretKey,
+    AuthSingleSig as NativeSingleSig, PublicKeyCommitment,
 };
 use miden_client::vm::Package as NativePackage;
 

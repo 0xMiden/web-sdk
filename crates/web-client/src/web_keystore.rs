@@ -4,11 +4,7 @@ use alloc::sync::Arc;
 
 use miden_client::account::AccountId;
 use miden_client::auth::{
-    AuthSecretKey,
-    PublicKey,
-    PublicKeyCommitment,
-    Signature,
-    SigningInputs,
+    AuthSecretKey, PublicKey, PublicKeyCommitment, Signature, SigningInputs,
     TransactionAuthenticator,
 };
 use miden_client::keystore::{KeyStoreError, Keystore};
@@ -19,19 +15,12 @@ use wasm_bindgen_futures::js_sys::Function;
 
 use crate::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
 use crate::web_keystore_callbacks::{
-    GetKeyCallback,
-    InsertKeyCallback,
-    SignCallback,
-    decode_secret_key_from_bytes,
+    GetKeyCallback, InsertKeyCallback, SignCallback, decode_secret_key_from_bytes,
 };
 use crate::web_keystore_db::{
-    get_account_auth_by_pub_key_commitment,
-    get_account_id_by_key_commitment,
-    get_key_commitments_by_account_id,
-    insert_account_auth,
-    insert_account_key_mapping,
-    remove_account_auth,
-    remove_all_mappings_for_key,
+    get_account_auth_by_pub_key_commitment, get_account_id_by_key_commitment,
+    get_key_commitments_by_account_id, insert_account_auth, insert_account_key_mapping,
+    remove_account_auth, remove_all_mappings_for_key,
 };
 
 /// A web-based keystore that stores keys in [browser's local storage](https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API)

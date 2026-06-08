@@ -8,13 +8,9 @@ use miden_client::note::{BlockNumber, Note as NativeNote, NoteAttachment};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
-    ForeignAccount as NativeForeignAccount,
-    PaymentNoteDescription,
-    ProvenTransaction as NativeProvenTransaction,
-    PswapTransactionData,
-    SwapTransactionData,
-    TransactionExecutorError,
-    TransactionRequest as NativeTransactionRequest,
+    ForeignAccount as NativeForeignAccount, PaymentNoteDescription,
+    ProvenTransaction as NativeProvenTransaction, PswapTransactionData, SwapTransactionData,
+    TransactionExecutorError, TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionStoreUpdate as NativeTransactionStoreUpdate,
     TransactionSummary as NativeTransactionSummary,

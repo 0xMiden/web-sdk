@@ -1,9 +1,8 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{
-    AccountVaultDelta as NativeAccountVaultDelta,
-    AssetVaultKey,
-    FungibleAssetDelta as NativeFungibleAssetDelta,
+    AccountVaultDelta as NativeAccountVaultDelta, AssetVaultKey,
+    FungibleAsset as NativeFungibleAsset, FungibleAssetDelta as NativeFungibleAssetDelta,
 };
 
 use crate::models::account_id::AccountId;
@@ -52,7 +51,7 @@ impl AccountVaultDelta {
             .iter()
             .filter(|&(_, &value)| value > 0)
             .filter_map(|(vault_key, &diff)| {
-                FungibleAsset::new_inner(&vault_key.faucet_id().into(), diff.unsigned_abs()).ok()
+                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
             })
             .collect()
     }
@@ -65,10 +64,20 @@ impl AccountVaultDelta {
             .iter()
             .filter(|&(_, &value)| value < 0)
             .filter_map(|(vault_key, &diff)| {
-                FungibleAsset::new_inner(&vault_key.faucet_id().into(), diff.unsigned_abs()).ok()
+                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
             })
             .collect()
     }
+}
+
+/// Rebuilds a fungible asset from a vault-delta entry, preserving the vault key's callback flag.
+///
+/// The callback flag is part of the asset's vault-key and value encoding, so dropping it would
+/// report an asset that differs from the one the kernel encoded (e.g. for agglayer-minted assets).
+fn fungible_asset_from_delta(vault_key: &AssetVaultKey, amount: u64) -> Option<FungibleAsset> {
+    NativeFungibleAsset::new(vault_key.faucet_id(), amount)
+        .ok()
+        .map(|asset| asset.with_callbacks(vault_key.callback_flag()).into())
 }
 
 /// A single fungible asset change in the vault delta.

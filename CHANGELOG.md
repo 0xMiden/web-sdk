@@ -12,6 +12,10 @@
 * [BREAKING][param][web] `RpcClient.syncNotes(blockFrom, blockTo, noteTags)` — `blockTo` is now required, and `NoteSyncInfo.chainTip()` was removed (upstream RPC no longer returns it; use `client.syncState()`). ([#157](https://github.com/0xMiden/web-sdk/pull/157))
 * [BREAKING][behavior][web] `newFaucet(...)` accounts are now built on `FungibleTokenMetadata` + `TokenPolicyManager`; `BasicFungibleFaucetComponent.fromAccount(...)` reads the new metadata slot, so faucets minted by prior SDK versions can't be introspected through it. ([#157](https://github.com/0xMiden/web-sdk/pull/157))
 
+### Fixes
+
+* [FIX][web] Preserve a fungible asset's `AssetCallbackFlag` when rebuilding assets from a vault delta. The IndexedDB store's `compute_vault_delta` and the `AccountVaultDelta.addedFungibleAssets` / `removedFungibleAssets` getters rebuilt each fungible asset as `FungibleAsset::new(vault_key.faucet_id(), …)`, dropping the vault key's callback flag. Because the flag is part of the asset's vault-key and value encoding, dropping it in the store makes the locally recomputed vault root diverge from the kernel's, surfacing as a `ConflictingRoots` merkle error when the recomputed root is compared against the final account state; the delta getters likewise reported assets without their callback flag. Only callback-bearing fungible assets are affected (e.g. agglayer-minted assets); ordinary assets use the disabled flag where preserving it is a no-op. Mirrors the native [`miden-client#2225`](https://github.com/0xMiden/miden-client/pull/2225) fix.
+
 ## 0.14.4 (TBA)
 
 ### Features

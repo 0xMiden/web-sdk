@@ -4,9 +4,7 @@ use core::time::Duration;
 use js_export_macro::js_export;
 use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
-    LocalTransactionProver,
-    ProvingOptions,
-    TransactionProver as TransactionProverTrait,
+    LocalTransactionProver, ProvingOptions, TransactionProver as TransactionProverTrait,
 };
 
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64};

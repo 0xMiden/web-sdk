@@ -15,13 +15,7 @@ use alloc::vec::Vec;
 use base64::Engine;
 use base64::engine::general_purpose;
 use miden_client::account::{
-    Account,
-    AccountCode,
-    AccountHeader,
-    AccountId,
-    AccountStorage,
-    Address,
-    StorageMapKey,
+    Account, AccountCode, AccountHeader, AccountId, AccountStorage, Address, StorageMapKey,
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetVault, AssetVaultKey, AssetWitness, StorageMapWitness};
@@ -29,17 +23,8 @@ use miden_client::block::BlockHeader;
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
-    AccountRecord,
-    AccountSmtForest,
-    AccountStatus,
-    AccountStorageFilter,
-    BlockRelevance,
-    InputNoteRecord,
-    NoteFilter,
-    OutputNoteRecord,
-    PartialBlockchainFilter,
-    Store,
-    StoreError,
+    AccountRecord, AccountSmtForest, AccountStatus, AccountStorageFilter, BlockRelevance,
+    InputNoteRecord, NoteFilter, OutputNoteRecord, PartialBlockchainFilter, Store, StoreError,
     TransactionFilter,
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};

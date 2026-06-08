@@ -1,7 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::note::{
-    NoteHeader as NativeNoteHeader,
-    NoteInclusionProof as NativeNoteInclusionProof,
+    NoteHeader as NativeNoteHeader, NoteInclusionProof as NativeNoteInclusionProof,
 };
 
 use crate::models::NoteType;

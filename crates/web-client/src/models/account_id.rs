@@ -4,10 +4,7 @@ use js_export_macro::js_export;
 use miden_client::Felt as NativeFelt;
 use miden_client::account::{AccountId as NativeAccountId, NetworkId as NativeNetworkId};
 use miden_client::address::{
-    Address,
-    AddressId,
-    AddressInterface as NativeAccountInterface,
-    CustomNetworkId,
+    Address, AddressId, AddressInterface as NativeAccountInterface, CustomNetworkId,
     RoutingParameters,
 };
 

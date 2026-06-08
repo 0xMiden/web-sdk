@@ -1,18 +1,10 @@
 use js_export_macro::js_export;
 use miden_client::account::component::{
-    BasicFungibleFaucet,
-    BurnPolicyConfig,
-    FungibleTokenMetadata,
-    MintPolicyConfig,
-    PolicyAuthority,
-    TokenName,
-    TokenPolicyManager,
+    BasicFungibleFaucet, BurnPolicyConfig, FungibleTokenMetadata, MintPolicyConfig,
+    PolicyAuthority, TokenName, TokenPolicyManager,
 };
 use miden_client::account::{
-    AccountBuilder,
-    AccountBuilderSchemaCommitmentExt,
-    AccountComponent,
-    AccountType,
+    AccountBuilder, AccountBuilderSchemaCommitmentExt, AccountComponent, AccountType,
 };
 use miden_client::asset::TokenSymbol;
 use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
