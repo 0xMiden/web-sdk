@@ -834,11 +834,13 @@ export interface NotesResource {
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
-   * @returns The imported note's id when the file carries metadata (a note id
-   *   or a full note with proof); for a details-only file, which has no note id
-   *   yet, the note's details commitment is returned instead.
+   * @returns The imported note's id (hex) when the file carries metadata (a
+   *   note id or a full note with proof); for a details-only file, which has no
+   *   note id yet, the note's details commitment (hex) is returned instead.
+   *   In both cases the value is a hex string, not a `NoteId` object — pass it
+   *   to {@link NoteId.fromHex} if a `NoteId` instance is required.
    */
-  import(noteFile: NoteFile): Promise<NoteId>;
+  import(noteFile: NoteFile): Promise<string>;
   /**
    * Export a note to a {@link NoteFile} for transfer or backup.
    *

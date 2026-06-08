@@ -86,7 +86,13 @@ impl IdxdbStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Same in-Rust post-filter as `get_input_notes` for the
-        // `DetailsCommitments` variant.
+        // `DetailsCommitments` variant. Unlike input notes — which are keyed by
+        // `detailsCommitment` and bounded to the small set of expected notes —
+        // output notes have no `detailsCommitment` index, so this loads the full
+        // output-note table and filters in Rust. That set is unbounded (it grows
+        // with every emitted note), so if `DetailsCommitments` lookups on output
+        // notes become hot, persist a `detailsCommitment` column on the output
+        // store and add a secondary index to scope the fetch.
         if let NoteFilter::DetailsCommitments(commitments) = &filter {
             let wanted: BTreeSet<_> = commitments.iter().copied().collect();
             return Ok(notes

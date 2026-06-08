@@ -115,7 +115,17 @@ impl WebClient {
             .import_notes(&[native_note_file])
             .await
             .map_err(|err| js_error_with_context(err, "failed to import note"))?;
-        Ok(note_id.unwrap_or_else(|| commitments[0].to_hex()))
+        match note_id {
+            Some(id) => Ok(id),
+            // Only reached for the `NoteDetails` variant, which `import_notes`
+            // always imports (details are self-contained), so the vec is
+            // non-empty here. Guard against an empty result regardless rather
+            // than index blindly.
+            None => commitments
+                .first()
+                .map(miden_protocol::note::NoteDetailsCommitment::to_hex)
+                .ok_or_else(|| from_str_err("import produced no note commitment")),
+        }
     }
 }
 

@@ -228,6 +228,20 @@ pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Resu
     Ok(())
 }
 
+/// Decodes the serialized `NoteAttachments` bytes persisted on a note row.
+///
+/// A row written by this store always carries a serialized `NoteAttachments`
+/// (empty or not). Empty bytes only occur for a row that predates the
+/// attachments column; the 0.14 -> 0.15 store reset normally drops such rows,
+/// but decode them as an empty `NoteAttachments` rather than erroring so a
+/// stale row never makes a note permanently unreadable.
+fn decode_attachments(bytes: &[u8]) -> Result<NoteAttachments, StoreError> {
+    if bytes.is_empty() {
+        return Ok(NoteAttachments::default());
+    }
+    Ok(NoteAttachments::read_from_bytes(bytes)?)
+}
+
 pub fn parse_input_note_idxdb_object(
     note_idxdb: InputNoteIdxdbObject,
 ) -> Result<InputNoteRecord, StoreError> {
@@ -252,7 +266,7 @@ pub fn parse_input_note_idxdb_object(
     let details = NoteDetails::new(assets, recipient);
     // Attachments feed the note metadata commitment, so the persisted bytes are
     // required to reconstruct a record whose id/nullifier match the on-chain note.
-    let attachments = NoteAttachments::read_from_bytes(&attachments)?;
+    let attachments = decode_attachments(&attachments)?;
 
     let state = InputNoteState::read_from_bytes(&state)?;
     let created_at = created_at
@@ -271,7 +285,7 @@ pub fn parse_output_note_idxdb_object(
     let state = OutputNoteState::read_from_bytes(&note_idxdb.state)?;
     // Attachments feed the note metadata commitment, so the persisted bytes are
     // required to reconstruct a record whose id/nullifier match the on-chain note.
-    let attachments = NoteAttachments::read_from_bytes(&note_idxdb.attachments)?;
+    let attachments = decode_attachments(&note_idxdb.attachments)?;
 
     Ok(OutputNoteRecord::new(
         recipient,

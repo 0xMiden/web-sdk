@@ -35,6 +35,11 @@ impl AssetVault {
     /// reads don't run asset callbacks. Returns zero on lookup error (`Err` arms here would
     /// indicate the key was constructed wrong, which can't happen for fungible keys built
     /// this way).
+    ///
+    /// NOTE: the `AssetVaultKey` encodes the callback flag, so this reports only the balance
+    /// of callback-*disabled* fungible assets. Faucets built by this SDK omit transfer policies
+    /// and therefore mint callback-disabled assets, so this is exact for them; an asset minted
+    /// elsewhere with callbacks enabled would not be counted here.
     #[js_export(js_name = "getBalance")]
     pub fn get_balance(&self, faucet_id: &AccountId) -> u64 {
         let native_faucet_id: NativeAccountId = faucet_id.into();
