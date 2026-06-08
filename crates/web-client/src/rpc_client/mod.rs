@@ -73,20 +73,28 @@ impl RpcClient {
         let web_notes: Vec<FetchedNote> = fetched_notes
             .into_iter()
             .map(|native_note| match native_note {
-                // 0.15 surface: private fetched notes now carry the note ID, metadata, and
-                // attachments alongside the inclusion proof. Attachments aren't exposed on the
-                // JS `FetchedNote` surface yet — `_attachments` deliberately drops them.
-                NativeFetchedNote::Private(note_id, metadata, _attachments, inclusion_proof) => {
-                    FetchedNote::new(note_id.into(), metadata.into(), inclusion_proof.into(), None)
+                // 0.15 surface: private fetched notes carry the note ID, metadata, and
+                // attachment content alongside the inclusion proof (the body stays off-chain).
+                NativeFetchedNote::Private(note_id, metadata, attachments, inclusion_proof) => {
+                    let attachments = attachments.iter().map(Into::into).collect();
+                    FetchedNote::with_attachments(
+                        note_id.into(),
+                        metadata.into(),
+                        inclusion_proof.into(),
+                        None,
+                        attachments,
+                    )
                 },
                 NativeFetchedNote::Public(note, inclusion_proof) => {
                     let note_id = note.id();
                     let metadata = *note.metadata();
-                    FetchedNote::new(
+                    let attachments = note.attachments().iter().map(Into::into).collect();
+                    FetchedNote::with_attachments(
                         note_id.into(),
                         metadata.into(),
                         inclusion_proof.into(),
                         Some(note.into()),
+                        attachments,
                     )
                 },
             })
