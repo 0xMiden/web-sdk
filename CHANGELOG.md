@@ -18,6 +18,7 @@
 
 * [FIX][react] `readNoteAttachment(record)` decodes attachment payloads again. It reads `record.attachments()[0].toWords()` and flattens the words back into the `bigint[]` packed by `createNoteAttachment` (an all-zero placeholder still decodes to `null`). It had regressed to always returning `null` during the 0.15 migration. ([#172](https://github.com/0xMiden/web-sdk/pull/172))
 * [FIX][web] IndexedDB input notes are now keyed by their details commitment instead of their note id, matching the SQLite store. A partial (metadata-less) note that is later completed with its note id now updates the same row instead of creating a duplicate. ([#172](https://github.com/0xMiden/web-sdk/pull/172), companion: [0xMiden/miden-client#2214](https://github.com/0xMiden/miden-client/pull/2214))
+* [FIX][web] `miden-idxdb-store` now preserves the fungible-asset `AssetCallbackFlag` when replaying a public-account vault delta during sync. Dropping it made the recomputed vault root diverge from the transaction kernel's (a `ConflictingRoots` error) for callback-bearing assets (e.g. agglayer / B2AGG). Mirrors the SQLite-store fix in [0xMiden/miden-client#2225](https://github.com/0xMiden/miden-client/pull/2225). ([#172](https://github.com/0xMiden/web-sdk/pull/172))
 
 ## 0.14.4 (TBA)
 

@@ -233,7 +233,14 @@ pub fn compute_vault_delta(
 
     // Process fungible deltas
     for (vault_key, delta_amount) in delta.vault().fungible().iter() {
-        let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?;
+        // Preserve the vault key's `AssetCallbackFlag`: it is part of the
+        // asset's vault-key and value encoding, so dropping it makes the
+        // recomputed vault root diverge from the kernel's (a
+        // `ConflictingRoots` error) for callback-bearing assets. Mirrors
+        // miden-protocol's `AssetVault::apply_delta` and the sqlite-store fix
+        // in miden-client #2225.
+        let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?
+            .with_callbacks(vault_key.callback_flag());
 
         let asset = match fungible_map.remove(vault_key) {
             Some(existing) => {
