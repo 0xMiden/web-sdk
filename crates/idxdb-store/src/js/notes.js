@@ -106,13 +106,20 @@ export async function getNoteScript(dbId, scriptRoot) {
         logWebStoreError(err, "Failed to get note script from root");
     }
 }
-export async function upsertInputNote(dbId, noteId, assets, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
+export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, attachments, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
             const data = {
-                noteId,
+                // The details commitment is the primary key. It is always present, even
+                // for partial notes lacking a noteId, so a partial note that later gains
+                // its noteId updates the same row instead of inserting a duplicate.
+                detailsCommitment,
+                // Convert null -> undefined so Dexie omits the noteId secondary index
+                // for partial notes that don't have one yet.
+                noteId: noteId ?? undefined,
                 assets,
+                attachments,
                 serialNumber,
                 inputs,
                 scriptRoot,
@@ -135,7 +142,7 @@ export async function upsertInputNote(dbId, noteId, assets, serialNumber, inputs
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
-            logWebStoreError(error, `Error inserting note: ${noteId}`);
+            logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
         }
     };
     if (tx)
@@ -200,13 +207,14 @@ export async function getInputNoteByOffset(dbId, states, consumerAccountId, bloc
         logWebStoreError(err, "Failed to get input note by offset");
     }
 }
-export async function upsertOutputNote(dbId, noteId, assets, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
+export async function upsertOutputNote(dbId, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
             const data = {
                 noteId,
                 assets,
+                attachments,
                 recipientDigest,
                 metadata,
                 nullifier: nullifier ? nullifier : undefined,
@@ -229,6 +237,7 @@ async function processInputNotes(dbId, notes) {
     const db = getDatabase(dbId);
     return await Promise.all(notes.map(async (note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
+        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
         const inputsBase64 = uint8ArrayToBase64(note.inputs);
         let serializedNoteScriptBase64 = undefined;
@@ -241,6 +250,7 @@ async function processInputNotes(dbId, notes) {
         const stateBase64 = uint8ArrayToBase64(note.state);
         return {
             assets: assetsBase64,
+            attachments: attachmentsBase64,
             serialNumber: serialNumberBase64,
             inputs: inputsBase64,
             createdAt: note.serializedCreatedAt,
@@ -252,10 +262,12 @@ async function processInputNotes(dbId, notes) {
 async function processOutputNotes(notes) {
     return await Promise.all(notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
+        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
         const stateBase64 = uint8ArrayToBase64(note.state);
         return {
             assets: assetsBase64,
+            attachments: attachmentsBase64,
             recipientDigest: note.recipientDigest,
             metadata: metadataBase64,
             expectedHeight: note.expectedHeight,

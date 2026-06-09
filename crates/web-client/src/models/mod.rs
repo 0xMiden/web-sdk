@@ -72,7 +72,6 @@ pub mod network_note_status;
 pub mod note;
 pub mod note_assets;
 pub mod note_attachment;
-pub mod note_attachment_kind;
 pub mod note_details;
 pub mod note_execution_hint;
 pub mod note_export_format;

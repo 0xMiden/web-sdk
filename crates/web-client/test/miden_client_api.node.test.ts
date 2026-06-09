@@ -70,7 +70,6 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     expect(wallet.isFaucet()).toBe(false);
     expect(wallet.isRegularAccount()).toBe(true);
-    expect(wallet.isUpdatable()).toBe(true);
   });
 
   test("accounts.create faucet", async ({ sdk }) => {
@@ -107,7 +106,6 @@ test.describe("MidenClient API - Mock Chain", () => {
         window.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const built = new window.AccountBuilder(seed)
-        .accountType(window.AccountType.RegularAccountImmutableCode)
         .storageMode(window.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withBasicWalletComponent()

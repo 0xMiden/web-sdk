@@ -4,7 +4,6 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
   TransactionRequestBuilder,
@@ -13,7 +12,7 @@ import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
-import { createNoteAttachment } from "../utils/noteAttachment";
+import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
@@ -163,7 +162,7 @@ export function useSend(): UseSendResult {
               toId,
               assets,
               noteType,
-              new NoteAttachment()
+              emptyAttachment()
             );
 
             // NoteArray constructor consumes its elements; use push(&note)

@@ -120,8 +120,10 @@ export async function getNoteScript(dbId: string, scriptRoot: string) {
 
 export async function upsertInputNote(
   dbId: string,
-  noteId: string,
+  detailsCommitment: string,
+  noteId: string | undefined,
   assets: Uint8Array,
+  attachments: Uint8Array,
   serialNumber: Uint8Array,
   inputs: Uint8Array,
   scriptRoot: string,
@@ -139,8 +141,15 @@ export async function upsertInputNote(
   const doWork = async (t: Transaction) => {
     try {
       const data = {
-        noteId,
+        // The details commitment is the primary key. It is always present, even
+        // for partial notes lacking a noteId, so a partial note that later gains
+        // its noteId updates the same row instead of inserting a duplicate.
+        detailsCommitment,
+        // Convert null -> undefined so Dexie omits the noteId secondary index
+        // for partial notes that don't have one yet.
+        noteId: noteId ?? undefined,
         assets,
+        attachments,
         serialNumber,
         inputs,
         scriptRoot,
@@ -165,7 +174,7 @@ export async function upsertInputNote(
       await t.notesScripts.put(noteScriptData);
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
-      logWebStoreError(error, `Error inserting note: ${noteId}`);
+      logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
     }
   };
   if (tx) return doWork(tx);
@@ -243,6 +252,7 @@ export async function upsertOutputNote(
   dbId: string,
   noteId: string,
   assets: Uint8Array,
+  attachments: Uint8Array,
   recipientDigest: string,
   metadata: Uint8Array,
   nullifier: string | undefined,
@@ -257,6 +267,7 @@ export async function upsertOutputNote(
       const data = {
         noteId,
         assets,
+        attachments,
         recipientDigest,
         metadata,
         nullifier: nullifier ? nullifier : undefined,
@@ -281,6 +292,8 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
     notes.map(async (note) => {
       const assetsBase64 = uint8ArrayToBase64(note.assets);
 
+      const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
+
       const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
 
       const inputsBase64 = uint8ArrayToBase64(note.inputs);
@@ -299,6 +312,7 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
 
       return {
         assets: assetsBase64,
+        attachments: attachmentsBase64,
         serialNumber: serialNumberBase64,
         inputs: inputsBase64,
         createdAt: note.serializedCreatedAt,
@@ -314,12 +328,15 @@ async function processOutputNotes(notes: IOutputNote[]) {
     notes.map((note) => {
       const assetsBase64 = uint8ArrayToBase64(note.assets);
 
+      const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
+
       const metadataBase64 = uint8ArrayToBase64(note.metadata);
 
       const stateBase64 = uint8ArrayToBase64(note.state);
 
       return {
         assets: assetsBase64,
+        attachments: attachmentsBase64,
         recipientDigest: note.recipientDigest,
         metadata: metadataBase64,
         expectedHeight: note.expectedHeight,

@@ -154,14 +154,14 @@ describe("initializeSignerAccount", () => {
       );
     });
 
-    it("should set account type from config", async () => {
+    it("does not forward accountType to the builder (0.15 collapses it into storageMode)", async () => {
       const config = createMockSignerAccountConfig({
         accountType: "RegularAccountUpdatableCode",
       });
 
       await initializeSignerAccount(mockClient, config);
 
-      expect(mockBuilder.accountType).toHaveBeenCalled();
+      expect(mockBuilder.accountType).not.toHaveBeenCalled();
     });
 
     it("should set storage mode from config", async () => {
@@ -196,16 +196,6 @@ describe("initializeSignerAccount", () => {
     it("should try importAccountById for public accounts", async () => {
       const config = createMockSignerAccountConfig({
         storageMode: { toString: () => "public" } as any,
-      });
-
-      await initializeSignerAccount(mockClient, config);
-
-      expect(mockClient.importAccountById).toHaveBeenCalledWith(mockAccountId);
-    });
-
-    it("should try importAccountById for network accounts", async () => {
-      const config = createMockSignerAccountConfig({
-        storageMode: { toString: () => "network" } as any,
       });
 
       await initializeSignerAccount(mockClient, config);

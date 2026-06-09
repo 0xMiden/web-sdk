@@ -102,16 +102,20 @@ export type NoteVisibility = "public" | "private";
 
 /**
  * User-friendly storage mode constants.
- * Use `StorageMode.Public`, `StorageMode.Private`, or `StorageMode.Network` instead of raw strings.
+ * Use `StorageMode.Public` or `StorageMode.Private` instead of raw strings.
+ *
+ * The `"network"` storage mode was removed in the migration to miden-client
+ * PR #2214 — the 0.15 protocol surface no longer has a separate
+ * network-account flag (network execution is now driven by the calling
+ * surface, not the account's storage mode).
  */
 export declare const StorageMode: {
   readonly Public: "public";
   readonly Private: "private";
-  readonly Network: "network";
 };
 
 /** Union of valid StorageMode string values. */
-export type StorageMode = "public" | "private" | "network";
+export type StorageMode = "public" | "private";
 
 /**
  * Library linking mode for script compilation.
@@ -830,8 +834,13 @@ export interface NotesResource {
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
+   * @returns The imported note's id (hex) when the file carries metadata (a
+   *   note id or a full note with proof); for a details-only file, which has no
+   *   note id yet, the note's details commitment (hex) is returned instead.
+   *   In both cases the value is a hex string, not a `NoteId` object — pass it
+   *   to {@link NoteId.fromHex} if a `NoteId` instance is required.
    */
-  import(noteFile: NoteFile): Promise<NoteId>;
+  import(noteFile: NoteFile): Promise<string>;
   /**
    * Export a note to a {@link NoteFile} for transfer or backup.
    *
