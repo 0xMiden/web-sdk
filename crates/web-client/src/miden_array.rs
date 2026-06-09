@@ -96,6 +96,18 @@ macro_rules! declare_js_miden_arrays {
                     Self::new(Some(vec))
                 }
             }
+
+            impl $miden_type_array_name {
+                #[allow(dead_code)]
+                pub(crate) fn iter(&self) -> core::slice::Iter<'_, $miden_type_name> {
+                    self.__inner.iter()
+                }
+
+                #[allow(dead_code)]
+                pub(crate) fn into_iter(self) -> alloc::vec::IntoIter<$miden_type_name> {
+                    self.__inner.into_iter()
+                }
+            }
         )+
     }
     };

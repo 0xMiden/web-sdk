@@ -211,7 +211,6 @@ impl AccountComponent {
         let native_package: NativePackage = package.into();
         let native_library = (*native_package.mast).clone();
         let native_slots: Vec<NativeStorageSlot> = storage_slots
-            .__inner
             .iter()
             .map(|storage_slot| storage_slot.clone().into())
             .collect();
