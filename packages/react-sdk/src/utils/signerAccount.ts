@@ -54,6 +54,17 @@ function isPrivateStorageMode(
  * wallets that create accounts externally (e.g., via a vault with HD key
  * derivation) and already know the on-chain account ID.
  *
+ * Why import is needed even though the signer "owns" the account: with an
+ * external signer the keys live in the vault, not in this client's store, and
+ * the store is per-device — on a fresh device/browser it has no record of the
+ * account even though the signer can sign for it. `syncState()` only refreshes
+ * accounts the store already tracks; it does not discover an account by ID. So
+ * `importAccountById` is how an untracked-but-externally-owned account gets
+ * registered locally. The slow path doesn't need it because it rebuilds the
+ * account from the public-key commitment + seed and tracks it via `newAccount`;
+ * the fast path is for signers (e.g. MidenFi) that hand over only the ID and
+ * cannot reconstruct those creation parameters.
+ *
  * @param client - The WebClient instance
  * @param config - The signer account configuration
  * @returns The account ID as a string
@@ -86,9 +97,12 @@ export async function initializeSignerAccount(
       //   account isn't registered on-chain yet. Expected, not fatal: rethrowing
       //   errors out MidenProvider and leaves new users unable to do anything —
       //   a catch-22, since registering the account on-chain is exactly what
-      //   they're blocked from. The local client keeps no record of the account
-      //   until it lands on-chain and a later syncState() imports it; until then
-      //   useAccount(accountId) returns null, which is the correct fresh state.
+      //   they're blocked from. Tolerating it lets the dApp render. Note the
+      //   account is NOT tracked locally as a result (we only have its ID, not
+      //   the object), so useAccount(accountId) returns null and a transaction
+      //   can't be built against it yet. It becomes usable once it is registered
+      //   on-chain and a later importAccountById() succeeds — syncState() only
+      //   refreshes already-tracked accounts, so it won't import this one by ID.
       // - AccountAlreadyTracked: the account is already imported locally.
       //   Defensive — this import path overwrites, so it shouldn't normally
       //   surface, but tolerating it is harmless.
