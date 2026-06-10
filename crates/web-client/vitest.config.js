@@ -28,6 +28,11 @@ export default defineConfig({
         "js/index.js",
         "js/client.js",
         "js/storageView.js",
+        // WebAuthn-dependent: passkey-keystore depends on browser-only
+        // navigator.credentials APIs (WebAuthn PRF) that aren't available
+        // in the node test environment. Covered by Playwright integration
+        // tests (test/passkey-keystore.test.ts).
+        "js/passkey-keystore.js",
         // Tests not yet ported on next — main has them, but the source has
         // drifted from the napi-binding sync (PR #13) enough that the tests
         // need review before they apply. Tracked for a follow-up PR. Once
