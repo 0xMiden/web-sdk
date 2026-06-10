@@ -500,6 +500,12 @@ where
         if let Some(help) = help {
             let _ = Reflect::set(&js_error, &JsValue::from_str("help"), &JsValue::from_str(&help));
         }
+        // Stable, machine-readable code for the ClientError variants JS callers
+        // branch on, so they don't have to match the (changeable) message text.
+        // The worker shim's serializeError already forwards `code`.
+        if let Some(code) = code_from_error(&err) {
+            let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
+        }
         js_error
     }
 
@@ -530,4 +536,21 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
     }
 
     err.source().and_then(hint_from_error)
+}
+
+/// Maps the typed [`ClientError`] variants that JS callers need to distinguish
+/// to stable string codes (exposed as the `code` property on the thrown JS
+/// error). Only the variants consumers branch on are mapped; everything else
+/// returns `None`.
+#[cfg(feature = "browser")]
+fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        return match client_error {
+            ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
+            ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            _ => None,
+        };
+    }
+
+    err.source().and_then(code_from_error)
 }
