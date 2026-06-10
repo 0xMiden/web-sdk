@@ -545,9 +545,6 @@ export async function setupNodeGlobals(
       NonFungibleFaucet: "NonFungibleFaucet",
       ImmutableContract: "ImmutableContract",
       MutableContract: "MutableContract",
-      // Also keep the napi enum values for tests that use the low-level API
-      RegularAccountUpdatableCode: sdk.AccountType?.RegularAccountUpdatableCode,
-      RegularAccountImmutableCode: sdk.AccountType?.RegularAccountImmutableCode,
     },
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),

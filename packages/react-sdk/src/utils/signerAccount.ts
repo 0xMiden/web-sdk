@@ -1,34 +1,9 @@
 import type { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
-import type {
-  SignerAccountConfig,
-  SignerAccountType,
-} from "../context/SignerContext";
+import type { SignerAccountConfig } from "../context/SignerContext";
 import { parseAccountId } from "./accountParsing";
 
 // SIGNER ACCOUNT INITIALIZATION
 // ================================================================================================
-
-/**
- * WASM AccountType enum values (from wasm-bindgen).
- * We define these directly because the simplified API's AccountType const
- * shadows the WASM enum with string aliases for some variants.
- */
-const WASM_ACCOUNT_TYPE: Record<SignerAccountType, number> = {
-  FungibleFaucet: 0,
-  NonFungibleFaucet: 1,
-  RegularAccountImmutableCode: 2,
-  RegularAccountUpdatableCode: 3,
-};
-
-/**
- * Maps SignerAccountType string to the WASM AccountType enum numeric value.
- */
-function getAccountType(accountType: SignerAccountType): number {
-  return (
-    WASM_ACCOUNT_TYPE[accountType] ??
-    WASM_ACCOUNT_TYPE.RegularAccountImmutableCode
-  );
-}
 
 /**
  * Checks if the storage mode represents a private account.
@@ -36,7 +11,8 @@ function getAccountType(accountType: SignerAccountType): number {
 function isPrivateStorageMode(
   storageMode: import("@miden-sdk/miden-sdk").AccountStorageMode
 ): boolean {
-  // AccountStorageMode.toString() returns "private", "public", or "network"
+  // AccountStorageMode.toString() returns "private" or "public" (the 0.15
+  // protocol surface no longer carries a separate "network" storage mode).
   return storageMode.toString() === "private";
 }
 
@@ -119,9 +95,12 @@ export async function initializeSignerAccount(
   // Convert Uint8Array commitment to Word (required by SDK)
   const commitmentWord = Word.deserialize(config.publicKeyCommitment);
 
-  // Build account with auth component from public key commitment
+  // Build account with auth component from public key commitment.
+  //
+  // `config.accountType` is intentionally not forwarded to the builder: AccountType
+  // is a 2-way storage flag (Private / Public), so visibility is fully determined by
+  // `storageMode`. The field is retained on the config for back-compat.
   const seed = config.accountSeed ?? crypto.getRandomValues(new Uint8Array(32));
-  const accountType = getAccountType(config.accountType);
 
   let builder = new AccountBuilder(seed)
     .withAuthComponent(
@@ -130,8 +109,6 @@ export async function initializeSignerAccount(
         AuthScheme.AuthEcdsaK256Keccak
       )
     )
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK type mismatch between JS wrapper AccountType and WASM enum AccountType
-    .accountType(accountType as any)
     .storageMode(config.storageMode)
     .withBasicWalletComponent();
 

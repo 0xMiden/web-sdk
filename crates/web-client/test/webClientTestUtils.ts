@@ -362,9 +362,6 @@ export const swapTransaction = async (
       );
 
       let expectedOutputNotes = swapTransactionRequest.expectedOutputOwnNotes();
-      let expectedPaybackNoteDetails = swapTransactionRequest
-        .expectedFutureNotes()
-        .map((futureNote) => futureNote.noteDetails);
 
       let swapTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -399,9 +396,15 @@ export const swapTransaction = async (
         consumeTransaction1Result.executedTransaction().id().toHex()
       );
 
-      // Consuming payback note for account A
-
-      noteId = expectedPaybackNoteDetails[0].id().toString();
+      // Consuming payback note for account A. Account B's consume of the swap
+      // note emits the payback note; derive its id from that transaction's
+      // output notes (NoteDetails no longer exposes id()).
+      noteId = consumeTransaction1Result
+        .executedTransaction()
+        .outputNotes()
+        .notes()[0]
+        .id()
+        .toString();
       inputNoteRecord = await client.getInputNote(noteId);
       if (!inputNoteRecord) {
         throw new Error(`Note with ID ${noteId} not found`);
@@ -472,13 +475,10 @@ export interface NewAccountTestResult {
   codeCommitment: string;
   isFaucet: boolean;
   isRegularAccount: boolean;
-  isUpdatable: boolean;
   isPublic: boolean;
   isPrivate: boolean;
-  isNetwork: boolean;
   isIdPublic: boolean;
   isIdPrivate: boolean;
-  isIdNetwork: boolean;
   isNew: boolean;
 }
 interface createNewWalletParams {
@@ -548,13 +548,10 @@ export const createNewWallet = async (
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         isIdPublic: newWallet.id().isPublic(),
         isIdPrivate: newWallet.id().isPrivate(),
-        isIdNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     },
@@ -607,13 +604,10 @@ export const createNewFaucet = async (
         codeCommitment: newFaucet.code().commitment().toHex(),
         isFaucet: newFaucet.isFaucet(),
         isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         isIdPublic: newFaucet.id().isPublic(),
         isIdPrivate: newFaucet.id().isPrivate(),
-        isIdNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     },

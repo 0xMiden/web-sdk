@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::{AccountId, StorageMap, StorageSlotType};
-use miden_client::note::{BlockNumber, NoteId, NoteTag};
-use miden_client::store::StoreError;
+use miden_client::note::{BlockNumber, NoteTag};
+use miden_client::store::{AccountStorageFilter, StoreError};
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -13,6 +13,7 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use miden_protocol::note::NoteDetailsCommitment;
 
 use super::IdxdbStore;
 use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
@@ -55,9 +56,12 @@ impl IdxdbStore {
                     (Some(account_id), None) => {
                         NoteTagSource::Account(AccountId::from_hex(account_id.as_str())?)
                     },
-                    (None, Some(note_id)) => {
-                        NoteTagSource::Note(NoteId::try_from_hex(note_id.as_str())?)
-                    },
+                    (None, Some(commitment_hex)) => NoteTagSource::Note(
+                        // `NoteDetailsCommitment` wraps a `Word`; round-trip
+                        // through `Word::try_from(hex)` (the `WordWrapper`
+                        // derive supplies `from_raw` but not `try_from_hex`).
+                        NoteDetailsCommitment::from_raw(Word::try_from(commitment_hex.as_str())?),
+                    ),
                     _ => return Err(StoreError::ParsingError("Invalid NoteTagSource".to_string())),
                 };
 
@@ -84,11 +88,7 @@ impl IdxdbStore {
             return Ok(false);
         }
 
-        let (source_note_id, source_account_id) = match tag.source {
-            NoteTagSource::Note(note_id) => (Some(note_id.to_hex()), None),
-            NoteTagSource::Account(account_id) => (None, Some(account_id.to_hex())),
-            NoteTagSource::User => (None, None),
-        };
+        let (source_note_id, source_account_id) = encode_tag_source(&tag.source);
 
         let promise =
             idxdb_add_note_tag(self.db_id(), tag.tag.to_bytes(), source_note_id, source_account_id);
@@ -98,11 +98,7 @@ impl IdxdbStore {
     }
 
     pub(super) async fn remove_note_tag(&self, tag: NoteTagRecord) -> Result<usize, StoreError> {
-        let (source_note_id, source_account_id) = match tag.source {
-            NoteTagSource::Note(note_id) => (Some(note_id.to_hex()), None),
-            NoteTagSource::Account(account_id) => (None, Some(account_id.to_hex())),
-            NoteTagSource::User => (None, None),
-        };
+        let (source_note_id, source_account_id) = encode_tag_source(&tag.source);
 
         let promise = idxdb_remove_note_tag(
             self.db_id(),
@@ -149,10 +145,15 @@ impl IdxdbStore {
             )
         };
 
-        let committed_note_ids: Vec<String> = note_updates
+        // Tags for tracked expected notes are keyed by the note's details
+        // commitment (`NoteTagSource::Note`), which `encode_tag_source` writes
+        // into the `tags.sourceNoteId` column. To prune those tags once their
+        // notes commit, collect the details-commitment hex of every committed
+        // input note so the JS layer can delete the matching rows.
+        let committed_note_tag_sources: Vec<String> = note_updates
             .updated_input_notes()
             .filter(|update| update.inner().is_committed())
-            .map(|update| update.inner().id().to_string())
+            .map(|update| update.inner().details_commitment().to_hex())
             .collect();
 
         for (account_id, digest) in account_updates.mismatched_private_accounts() {
@@ -189,14 +190,22 @@ impl IdxdbStore {
             .map(serialize_transaction_record)
             .collect();
 
-        // Separate full updates from delta updates
+        // Separate full updates from delta updates.
+        //
+        // `PublicAccountUpdate::Delta` now wraps a single `PublicAccountDelta`
+        // carrying the per-block incremental updates from the RPC sync path.
+        // To apply it we load the local header / value-slot storage / vault,
+        // then call `PublicAccountDelta::compute_account_delta` to derive the
+        // same `AccountDelta` shape the existing apply logic consumes. (See
+        // sqlite-store's `apply_public_account_delta` for the canonical
+        // implementation of this redirect.)
         let mut full_accounts = Vec::new();
         let mut delta_updates = Vec::new();
         for update in account_updates.updated_public_accounts() {
             match update {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account),
-                PublicAccountUpdate::Delta { new_header, delta } => {
-                    delta_updates.push((new_header, delta));
+                PublicAccountUpdate::Delta(public_delta) => {
+                    delta_updates.push(public_delta);
                 },
             }
         }
@@ -214,8 +223,33 @@ impl IdxdbStore {
         }
 
         // Apply delta updates incrementally
-        for (new_header, delta) in &delta_updates {
+        for public_delta in &delta_updates {
+            let new_header = public_delta.new_header();
             let account_id = new_header.id();
+
+            // `compute_account_delta` diffs the RPC-provided new state against
+            // the locally-stored account, anchoring the delta on the local
+            // nonce. The locally-stored header (not `new_header`) must be
+            // passed: it carries the old nonce the diff is computed from, and
+            // the call rejects a non-increasing nonce.
+            let local_header = self
+                .get_account_header(account_id)
+                .await?
+                .map(|(header, _)| header)
+                .ok_or(StoreError::AccountDataNotFound(account_id))?;
+
+            // The RPC-side incremental updates address specific slot names so
+            // a narrowed `SlotNames` filter avoids round-tripping the whole
+            // storage tree.
+            let local_storage = self
+                .get_account_storage(
+                    account_id,
+                    AccountStorageFilter::SlotNames(public_delta.value_slot_names()),
+                )
+                .await?;
+            let local_vault = self.get_account_vault(account_id).await?;
+            let delta =
+                public_delta.compute_account_delta(&local_header, &local_storage, &local_vault)?;
 
             // Load targeted data for delta computation
             let vault_keys: Vec<String> = delta
@@ -240,7 +274,7 @@ impl IdxdbStore {
 
                 // Storage: compute new map roots via SMT forest
                 let updated_storage_slots =
-                    compute_storage_delta(&mut smt_forest, &old_map_roots, delta)?;
+                    compute_storage_delta(&mut smt_forest, &old_map_roots, &delta)?;
 
                 // Update map roots in final_roots with new values from the delta
                 let default_map_root = StorageMap::default().root();
@@ -259,7 +293,7 @@ impl IdxdbStore {
                 // Vault: compute new asset values and update SMT forest
                 let old_vault_root = final_roots[0];
                 let (updated_assets, removed_vault_keys) =
-                    compute_vault_delta(&old_vault_assets, delta)?;
+                    compute_vault_delta(&old_vault_assets, &delta)?;
                 let new_vault_root = smt_forest.update_asset_nodes(
                     old_vault_root,
                     updated_assets.iter().copied(),
@@ -280,7 +314,7 @@ impl IdxdbStore {
                 &updated_storage_slots,
                 &updated_assets,
                 &removed_vault_keys,
-                delta,
+                &delta,
             )
             .await
             .map_err(|err| {
@@ -296,7 +330,7 @@ impl IdxdbStore {
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
-            committed_note_ids,
+            committed_note_tag_sources,
             serialized_input_notes,
             serialized_output_notes,
             account_updates: full_accounts
@@ -319,6 +353,17 @@ impl IdxdbStore {
     ) -> Result<(), StoreError> {
         self.undo_account_states(account_commitments).await?;
         Ok(())
+    }
+}
+
+/// Encodes a [`NoteTagSource`] into the two optional hex-string columns the
+/// `tags` `IndexedDB` store uses. Exactly one column is `Some` per non-`User`
+/// variant — `get_note_tags` round-trips the variant back via that shape.
+fn encode_tag_source(source: &NoteTagSource) -> (Option<String>, Option<String>) {
+    match source {
+        NoteTagSource::Note(commitment) => (Some(commitment.to_hex()), None),
+        NoteTagSource::Account(account_id) => (None, Some(account_id.to_hex())),
+        NoteTagSource::User => (None, None),
     }
 }
 

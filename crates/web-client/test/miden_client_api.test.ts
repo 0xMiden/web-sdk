@@ -84,13 +84,11 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         return {
           isFaucet: wallet.isFaucet(),
           isRegularAccount: wallet.isRegularAccount(),
-          isUpdatable: wallet.isUpdatable(),
         };
       });
 
       expect(result.isFaucet).toBe(false);
       expect(result.isRegularAccount).toBe(true);
-      expect(result.isUpdatable).toBe(true);
     }
   );
 
@@ -127,7 +125,6 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         window.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const built = new window.AccountBuilder(seed)
-        .accountType(window.AccountType.RegularAccountImmutableCode)
         .storageMode(window.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withBasicWalletComponent()
@@ -1106,14 +1103,12 @@ nodeTest.describe("MidenClient API - Integration", () => {
 
         return {
           walletIsFaucet: wallet.isFaucet(),
-          walletIsUpdatable: wallet.isUpdatable(),
           faucetIsFaucet: faucet.isFaucet(),
           accountCount: accounts.length,
         };
       });
 
       expect(result.walletIsFaucet).toBe(false);
-      expect(result.walletIsUpdatable).toBe(true);
       expect(result.faucetIsFaucet).toBe(true);
       expect(result.accountCount).toBe(2);
     }

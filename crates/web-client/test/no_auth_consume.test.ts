@@ -37,7 +37,6 @@ const noAuthConsumeTest = async (testingPage: Page) => {
     crypto.getRandomValues(seed);
 
     const builderResult = new window.AccountBuilder(seed)
-      .accountType(window.AccountType.RegularAccountImmutableCode)
       .storageMode(window.AccountStorageMode.tryFromStr("public"))
       .withBasicWalletComponent()
       .withNoAuthComponent()

@@ -121,7 +121,6 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     AccountStorageMode: {
       private: vi.fn(() => ({ type: "private" })),
       public: vi.fn(() => ({ type: "public" })),
-      network: vi.fn(() => ({ type: "network" })),
     },
     NoteType: {
       Private: 2,
@@ -163,11 +162,6 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         this.amount = amount;
       }
     },
-    NoteAttachmentKind: {
-      None: 0,
-      Word: 1,
-      Array: 2,
-    },
     NoteAttachmentScheme: {
       none: vi.fn(() => ({ type: "none" })),
     },
@@ -190,14 +184,32 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         ),
       }
     ),
-    NoteAttachment: Object.assign(class NoteAttachment {}, {
-      newWord: vi.fn(
-        (_scheme: unknown, _word: unknown) => new (class NoteAttachment {})()
-      ),
-      newArray: vi.fn(
-        (_scheme: unknown, _words: unknown[]) => new (class NoteAttachment {})()
-      ),
-    }),
+    NoteAttachment: (() => {
+      // Faithful enough to round-trip what `createNoteAttachment` packs in:
+      // it stores the Word(s) it was built from and yields them back via
+      // `toWords()`, so `readNoteAttachment`'s decode path is exercised against
+      // the real Word mock (which implements `toU64s()`).
+      class NoteAttachment {
+        words: unknown[];
+        constructor(words: unknown[] = []) {
+          this.words = words;
+        }
+        toWords() {
+          return this.words;
+        }
+        numWords() {
+          return this.words.length;
+        }
+      }
+      return Object.assign(NoteAttachment, {
+        fromWord: vi.fn(
+          (_scheme: unknown, word: unknown) => new NoteAttachment([word])
+        ),
+        fromWords: vi.fn(
+          (_scheme: unknown, words: unknown[]) => new NoteAttachment(words)
+        ),
+      });
+    })(),
     NoteArray: class NoteArray {
       notes: unknown[];
       constructor(notes?: unknown[]) {
