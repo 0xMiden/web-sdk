@@ -81,6 +81,14 @@ impl<T> AsyncCell<T> {
         self.0.borrow_mut()
     }
 
+    /// Async shared borrow. Multiple shared borrows can coexist, so reads
+    /// holding one across an await can run in parallel; the JS-layer
+    /// readers-writer lock ensures no exclusive borrow overlaps them.
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
+    pub async fn lock_shared(&self) -> std::cell::Ref<'_, T> {
+        self.0.borrow()
+    }
+
     /// Synchronous shared borrow (browser-only, single-threaded).
     ///
     /// Used by `#[wasm_bindgen(getter)]` methods that cannot be async.
@@ -96,6 +104,12 @@ impl<T: Send> AsyncCell<T> {
     }
 
     pub async fn lock(&self) -> impl core::ops::DerefMut<Target = T> + '_ {
+        self.0.lock().await
+    }
+
+    /// Async shared borrow. The tokio `Mutex` has no shared mode, so reads
+    /// serialize on Node.js; the borrow semantics still match the browser.
+    pub async fn lock_shared(&self) -> impl core::ops::Deref<Target = T> + '_ {
         self.0.lock().await
     }
 }

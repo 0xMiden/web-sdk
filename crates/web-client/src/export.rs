@@ -21,8 +21,8 @@ impl WebClient {
         note_id: String,
         export_format: NoteExportFormat,
     ) -> Result<NoteFile, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let note_id = NoteId::from_raw(Word::try_from(note_id).map_err(|err| {
             js_error_with_context(err, "error exporting note file: failed to parse input note id")
         })?);
@@ -47,8 +47,8 @@ impl WebClient {
     #[js_export(js_name = "exportAccountFile")]
     pub async fn export_account_file(&self, account_id: AccountId) -> Result<AccountFile, JsErr> {
         let keystore = self.get_keystore().await?;
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let account = client
             .get_account(account_id.into())
             .await

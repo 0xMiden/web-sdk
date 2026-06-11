@@ -13,8 +13,8 @@ impl WebClient {
         &self,
         transaction_filter: TransactionFilter,
     ) -> Result<Vec<TransactionRecord>, JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let guard = self.get_inner().await;
+        let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         let transaction_records: Vec<NativeTransactionRecord> = client
             .get_transactions(transaction_filter.into())
             .await
