@@ -1,31 +1,13 @@
 use js_export_macro::js_export;
-use miden_client::account::component::{
-    BasicFungibleFaucet,
-    BurnPolicyConfig,
-    FungibleTokenMetadata,
-    MintPolicyConfig,
-    PolicyAuthority,
-    TokenName,
-    TokenPolicyManager,
-};
-use miden_client::account::{
-    AccountBuilder,
-    AccountBuilderSchemaCommitmentExt,
-    AccountComponent,
-    AccountType,
-};
-use miden_client::asset::TokenSymbol;
-use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
+use miden_client::auth::AuthSecretKey;
 use miden_client::block::BlockNumber;
 use miden_client::keystore::Keystore;
-use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
 
 use super::models::account::Account;
 use super::models::account_storage_mode::AccountStorageMode;
 use super::models::auth::AuthScheme;
 use super::models::auth_secret_key::AuthSecretKey as WebAuthSecretKey;
-use crate::helpers::generate_wallet;
+use crate::helpers::{generate_faucet, generate_wallet};
 use crate::models::account_id::AccountId;
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
@@ -57,6 +39,11 @@ impl WebClient {
 
 #[js_export]
 impl WebClient {
+    /// Creates, persists, and returns a new fungible faucet account.
+    ///
+    /// Only fungible faucets are supported, so passing `non_fungible = true` fails fast with a
+    /// clear message. The faucet is registered with mint and burn policies (both `AllowAll`); its
+    /// secret key is added to the keystore.
     #[js_export(js_name = "newFaucet")]
     #[allow(clippy::too_many_arguments)]
     pub async fn new_faucet(
@@ -69,91 +56,39 @@ impl WebClient {
         max_supply: JsU64,
         auth_scheme: AuthScheme,
     ) -> Result<Account, JsErr> {
-        self.maybe_sync_before_account_creation().await;
         if non_fungible {
             return Err(from_str_err("Non-fungible faucets are not supported yet"));
         }
 
+        self.maybe_sync_before_account_creation().await;
         let keystore = self.get_keystore().await?;
 
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-
-        let mut seed = [0u8; 32];
-        client.rng().fill_bytes(&mut seed);
-        // TODO: we need a way to pass the client's rng instead of having to use an stdrng
-        let mut faucet_rng = StdRng::from_seed(seed);
-
-        let native_scheme: NativeAuthScheme = auth_scheme.try_into()?;
-        let (key_pair, auth_component) = match native_scheme {
-            NativeAuthScheme::Falcon512Poseidon2 => {
-                let key_pair = AuthSecretKey::new_falcon512_poseidon2_with_rng(&mut faucet_rng);
-                let auth_component: AccountComponent = AuthSingleSig::new(
-                    key_pair.public_key().to_commitment(),
-                    NativeAuthScheme::Falcon512Poseidon2,
-                )
-                .into();
-                (key_pair, auth_component)
-            },
-            NativeAuthScheme::EcdsaK256Keccak => {
-                let key_pair = AuthSecretKey::new_ecdsa_k256_keccak_with_rng(&mut faucet_rng);
-                let auth_component: AccountComponent = AuthSingleSig::new(
-                    key_pair.public_key().to_commitment(),
-                    NativeAuthScheme::EcdsaK256Keccak,
-                )
-                .into();
-                (key_pair, auth_component)
-            },
-            _ => {
-                let message = format!("unsupported auth scheme: {native_scheme:?}");
-                return Err(from_str_err(&message));
-            },
-        };
-
-        let symbol = TokenSymbol::new(&token_symbol).map_err(|e| from_str_err(&e.to_string()))?;
-        let name = TokenName::new(&token_name)
-            .map_err(|err| js_error_with_context(err, "invalid token name"))?;
         let max_supply = js_u64_to_u64(max_supply);
+        let (new_account, key_pair) = generate_faucet(
+            storage_mode,
+            token_name,
+            token_symbol,
+            decimals,
+            max_supply,
+            auth_scheme,
+        )
+        .await?;
 
-        let token_metadata = FungibleTokenMetadata::builder(name, symbol, decimals, max_supply)
-            .build()
-            .map_err(|err| js_error_with_context(err, "failed to build token metadata"))?;
-
-        let mut init_seed = [0u8; 32];
-        faucet_rng.fill_bytes(&mut init_seed);
-
-        let new_account = match AccountBuilder::new(init_seed)
-            .account_type(AccountType::FungibleFaucet)
-            .storage_mode(storage_mode.into())
-            .with_auth_component(auth_component)
-            .with_component(token_metadata)
-            .with_component(BasicFungibleFaucet)
-            .with_components(TokenPolicyManager::new(
-                PolicyAuthority::AuthControlled,
-                MintPolicyConfig::AllowAll,
-                BurnPolicyConfig::AllowAll,
-            ))
-            .build_with_schema_commitment()
         {
-            Ok(result) => result,
-            Err(err) => {
-                let error_message = format!("Failed to create new faucet: {err:?}");
-                return Err(from_str_err(&error_message));
-            },
-        };
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+            client
+                .add_account(&new_account, false)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to insert new faucet"))?;
+        }
 
         keystore
             .add_key(&key_pair, new_account.id())
             .await
             .map_err(|err| from_str_err(&err.to_string()))?;
 
-        match client.add_account(&new_account, false).await {
-            Ok(_) => Ok(new_account.into()),
-            Err(err) => {
-                let error_message = format!("Failed to insert new faucet: {err:?}");
-                Err(from_str_err(&error_message))
-            },
-        }
+        Ok(new_account.into())
     }
 
     #[js_export(js_name = "newWallet")]

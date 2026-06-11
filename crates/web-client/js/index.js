@@ -48,7 +48,6 @@ export const NoteVisibility = Object.freeze({
 export const StorageMode = Object.freeze({
   Public: "public",
   Private: "private",
-  Network: "network",
 });
 
 export const Linking = Object.freeze({
@@ -70,11 +69,22 @@ export {
 
 // Method classification sets — used by scripts/check-method-classification.js to ensure
 // every WASM export is explicitly categorised. Update when adding new WASM methods.
+//
+// Naming note: "SYNC_METHODS" is a historical misnomer. This set groups methods
+// that are forwarded transparently to the underlying WASM via the Proxy in
+// `createClientProxy` — meaning they don't need an explicit JS-class wrapper
+// here. It does NOT mean "the method is synchronous"; several entries
+// (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
+// `async fn` in Rust because they take the client's RNG via an async lock.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
   "createCodeBuilder",
+  "lastAuthError",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCreateTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "proveBlock",
@@ -325,6 +335,15 @@ class WebClient {
    * @param {string | undefined} [logLevel] - Optional log verbosity level
    *   ("error", "warn", "info", "debug", "trace", "off", or "none").
    *   When set, Rust tracing output is routed to the browser console.
+   * @param {boolean} [useWorker=true] - When `false`, skip the Web Worker shim
+   *   and call the wasm-bindgen `WebClient` directly on the current thread.
+   *   The worker exists to keep the main thread responsive during WASM work
+   *   in browser/extension contexts, but it serializes the prover argument
+   *   via `TransactionProver.serialize()` — a format that has no encoding
+   *   for `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
+   *   Consumers that hand a `CallbackProver` (e.g. native iOS/Android plug-in
+   *   provers in Capacitor apps, or any other JS-side prover bridge) need
+   *   `useWorker: false` so the prover handle reaches the WASM binding intact.
    */
   constructor(
     rpcUrl,
@@ -334,7 +353,8 @@ class WebClient {
     getKeyCb,
     insertKeyCb,
     signCb,
-    logLevel
+    logLevel,
+    useWorker = true
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -344,9 +364,12 @@ class WebClient {
     this.insertKeyCb = insertKeyCb;
     this.signCb = signCb;
     this.logLevel = logLevel;
+    this.useWorker = useWorker !== false;
 
-    // Check if Web Workers are available.
-    if (typeof Worker !== "undefined") {
+    // Check if Web Workers are available AND the caller didn't opt out via
+    // `useWorker: false`. The opt-out is load-bearing for `CallbackProver`
+    // consumers — see the constructor doc above.
+    if (this.useWorker && typeof Worker !== "undefined") {
       console.log("WebClient: Web Workers are available.");
       // Pick between the module and classic worker variants at runtime — see
       // `WebClient.workerMode` below. Both branches keep the
@@ -460,8 +483,12 @@ class WebClient {
       // Once the worker script has loaded, initialize the worker.
       this.loaded.then(() => this.initializeWorker());
     } else {
-      console.log("WebClient: Web Workers are not available.");
-      // Worker not available; set up fallback values.
+      console.log(
+        this.useWorker
+          ? "WebClient: Web Workers are not available."
+          : "WebClient: Web Worker shim disabled by caller (useWorker=false)."
+      );
+      // Worker not available or explicitly disabled; set up fallback values.
       this.worker = null;
       this.pendingRequests = null;
       this.loaded = Promise.resolve();
@@ -477,25 +504,99 @@ class WebClient {
     // would panic with "recursive use of an object detected" due to
     // wasm-bindgen's internal RefCell.
     this._wasmCallChain = Promise.resolve();
+    // Depth counter for `_withInnerWebClient` re-entrancy. While > 0,
+    // `_serializeWasmCall` runs its callback inline instead of queueing
+    // it on the chain — see the comment on `_serializeWasmCall` for the
+    // safety contract.
+    this._withInnerLockDepth = 0;
   }
 
   /**
    * Serialize a WASM call that requires exclusive (&mut self) access.
    * Concurrent calls are queued and executed one at a time.
    *
+   * Wraps both the direct (in-thread) path and the worker-dispatched path.
+   * On the worker path this is redundant with the worker's own message queue,
+   * but harmless (the chain resolves immediately on the main thread once the
+   * worker's postMessage returns). On the direct path it is load-bearing —
+   * without it, concurrent main-thread callers would panic with
+   * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
+   *
+   * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
+   * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
+   * (no chain enqueue). The outer `_withInnerWebClient` invocation
+   * already holds the chain via its own wrapping `_serializeWasmCall`,
+   * so enqueueing the inner call would deadlock (the inner queues
+   * behind the outer; the outer awaits the inner). The inline run is
+   * safe because the chain still serializes against external callers
+   * — they queue behind the outer call's chain slot, which only resolves
+   * after `fn` (including all inline re-entries) settles. Callers of
+   * `_withInnerWebClient` MUST hold an external mutex preventing
+   * concurrent access via other code paths on this same instance during
+   * the callback; without that, an external task running between two
+   * awaits inside `fn` would race wasm-bindgen's borrow check.
+   *
    * @param {() => Promise<any>} fn - The async function to execute.
    * @returns {Promise<any>} The result of fn.
    */
   _serializeWasmCall(fn) {
+    if (this._withInnerLockDepth > 0) {
+      return Promise.resolve().then(fn);
+    }
     const result = this._wasmCallChain.catch(() => {}).then(fn);
     this._wasmCallChain = result.catch(() => {});
     return result;
+  }
+
+  /**
+   * Returns a promise that resolves once every serialized WASM call that
+   * was already on `_wasmCallChain` when `waitForIdle()` was called has
+   * settled. Use this from callers that need to perform a non-WASM-side
+   * action (e.g. clear an in-memory auth key) AFTER any in-flight
+   * execute / submit / sync has completed, so the WASM kernel's auth
+   * callback doesn't race with the key being cleared.
+   *
+   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
+   * this is intentional, so a caller can drain and then proceed without
+   * being blocked indefinitely by a concurrent workload.
+   *
+   * Caveat for `syncState`: `syncStateWithTimeout` awaits
+   * `acquireSyncLock` (Web Locks) BEFORE wrapping its WASM call in
+   * `_serializeWasmCall`, so a sync that is queued on the sync lock but
+   * has not yet reached its WASM phase is not on the chain and will not
+   * be awaited. Every other serialized method (`executeTransaction`,
+   * `newWallet`, `submitNewTransaction`, `proveTransaction`,
+   * `applyTransaction`, and the proxy-fallback reads) routes through
+   * the chain synchronously on call and is always observed.
+   *
+   * @returns {Promise<void>}
+   */
+  async waitForIdle() {
+    // Chain on `_wasmCallChain`; by the time this resolves, any in-flight
+    // serialized call has settled. Catch so the chain state doesn't leak.
+    await this._wasmCallChain.catch(() => {});
   }
 
   // TODO: This will soon conflict with some changes in main.
   // More context here:
   // https://github.com/0xMiden/miden-client/pull/1645?notification_referrer_id=NT_kwHOA1yg7NoAJVJlcG9zaXRvcnk7NjU5MzQzNzAyO0lzc3VlOzM3OTY4OTU1Nzk&notifications_query=is%3Aunread#discussion_r2696075480
   initializeWorker() {
+    // Pass `numThreads` to the worker so it can call `wasm.initThreadPool(n)`
+    // inside its OWN WASM instance — the SDK worker's instance is separate
+    // from the main thread's, and rayon's global pool is per-instance.
+    // Default: navigator.hardwareConcurrency (or 1 if unavailable for any
+    // reason — e.g. the page isn't crossOriginIsolated, in which case the
+    // worker will skip pool init and parallelism falls back to sequential).
+    let numThreads = 1;
+    try {
+      if (
+        typeof self !== "undefined" &&
+        self.crossOriginIsolated &&
+        navigator?.hardwareConcurrency
+      ) {
+        numThreads = navigator.hardwareConcurrency;
+      }
+    } catch {}
     this.worker.postMessage({
       action: WorkerAction.INIT,
       args: [
@@ -507,6 +608,7 @@ class WebClient {
         !!this.insertKeyCb,
         !!this.signCb,
         this.logLevel,
+        numThreads,
       ],
     });
   }
@@ -535,9 +637,19 @@ class WebClient {
    * @param {string} seed - The seed for the account.
    * @param {string | undefined} network - Optional name for the store. Setting this allows multiple clients to be used in the same browser.
    * @param {string | undefined} logLevel - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none").
+   * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
+   *   and run WASM calls on the current thread. Required for `CallbackProver`
+   *   consumers (the worker path serializes the prover and loses the callback).
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
-  static async createClient(rpcUrl, noteTransportUrl, seed, network, logLevel) {
+  static async createClient(
+    rpcUrl,
+    noteTransportUrl,
+    seed,
+    network,
+    logLevel,
+    useWorker = true
+  ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
       rpcUrl,
@@ -547,7 +659,8 @@ class WebClient {
       undefined,
       undefined,
       undefined,
-      logLevel
+      logLevel,
+      useWorker
     );
 
     // Set up logging on the main thread before creating the client.
@@ -578,6 +691,9 @@ class WebClient {
    * @param {Function | undefined} insertKeyCb - The insert key callback.
    * @param {Function | undefined} signCb - The sign callback.
    * @param {string | undefined} logLevel - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none").
+   * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
+   *   and run WASM calls on the current thread. Required for `CallbackProver`
+   *   consumers (the worker path serializes the prover and loses the callback).
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
   static async createClientWithExternalKeystore(
@@ -588,7 +704,8 @@ class WebClient {
     getKeyCb,
     insertKeyCb,
     signCb,
-    logLevel
+    logLevel,
+    useWorker = true
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -599,7 +716,8 @@ class WebClient {
       getKeyCb,
       insertKeyCb,
       signCb,
-      logLevel
+      logLevel,
+      useWorker
     );
 
     // Set up logging on the main thread before creating the client.

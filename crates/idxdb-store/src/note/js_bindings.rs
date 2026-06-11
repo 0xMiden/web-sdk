@@ -47,8 +47,10 @@ extern "C" {
     #[wasm_bindgen(js_name = upsertInputNote)]
     pub fn idxdb_upsert_input_note(
         db_id: &str,
-        note_id: String,
+        details_commitment: String,
+        note_id: Option<String>,
         assets: Vec<u8>,
+        attachments: Vec<u8>,
         serial_number: Vec<u8>,
         inputs: Vec<u8>,
         note_script_root: String,
@@ -77,6 +79,7 @@ extern "C" {
         db_id: &str,
         note_id: String,
         assets: Vec<u8>,
+        attachments: Vec<u8>,
         recipient_digest: String,
         metadata: Vec<u8>,
         nullifier: Option<String>,

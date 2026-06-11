@@ -19,6 +19,7 @@ import type {
   NoteId,
   AccountStorageMode,
   Note,
+  NoteInput,
   NoteVisibility,
   StorageMode,
 } from "@miden-sdk/miden-sdk";
@@ -105,6 +106,22 @@ export interface MidenConfig {
   proverUrls?: ProverUrls;
   /** Default timeout for remote prover requests in milliseconds. */
   proverTimeoutMs?: number | bigint;
+  /**
+   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Defaults to `true` — leave it that way in browsers/extensions so the UI
+   * stays responsive while WASM is busy.
+   *
+   * Set to `false` when:
+   * - You pass a `CallbackProver` (e.g. a native iOS/Android prover via
+   *   a Capacitor plugin). The worker boundary serializes the prover with
+   *   `TransactionProver.serialize()`, which has no encoding for the
+   *   callback variant and silently downgrades to `"local"` — your
+   *   callback would never fire.
+   * - You're embedding the client in a single-WebView native shell
+   *   (Capacitor host, Tauri, Electron preload), where the UI thread
+   *   isn't competing with the WASM thread anyway.
+   */
+  useWorker?: boolean;
 }
 
 // Provider state
@@ -393,6 +410,58 @@ export interface SwapOptions {
   noteType?: NoteVisibility;
   /** Note type for payback note. Default: private */
   paybackNoteType?: NoteVisibility;
+}
+
+// PSWAP options — partial-swap notes can be filled by multiple consumers.
+export interface PswapCreateOptions {
+  /** Account that creates the PSWAP note */
+  accountId: AccountRef;
+  /** Faucet ID of the offered asset */
+  offeredFaucetId: AccountRef;
+  /** Amount being offered */
+  offeredAmount: bigint | number;
+  /** Faucet ID of the requested asset */
+  requestedFaucetId: AccountRef;
+  /** Amount being requested */
+  requestedAmount: bigint | number;
+  /** Visibility of the PSWAP note. Default: private */
+  noteType?: NoteVisibility;
+  /** Visibility of the payback note. Default: private */
+  paybackNoteType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions {
+  /** Consumer account filling the PSWAP note */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to consume. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
+  /**
+   * Amount of the requested asset the consumer is providing from its own
+   * vault. Receives a proportional share of the offered asset; partial fills
+   * also produce a remainder PSWAP note carrying the unfilled portion.
+   */
+  fillAmount: bigint | number;
+  /**
+   * Amount of the requested asset supplied by other (in-flight) notes routed
+   * into the same transaction. Defaults to `0`; most callers should leave
+   * this unset.
+   */
+  noteFillAmount?: bigint | number;
+}
+
+export interface PswapCancelOptions {
+  /** Creator account reclaiming the offered asset */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to cancel. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
 }
 
 // Arbitrary transaction options

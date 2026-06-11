@@ -91,7 +91,7 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
 }
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteIds, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.blockchainCheckpoint,
@@ -115,10 +115,10 @@ export async function applyStateSync(dbId, stateUpdate) {
     return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
         await Promise.all([
             Promise.all(serializedInputNotes.map((note) => {
-                return upsertInputNote(dbId, note.noteId, note.noteAssets, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
+                return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
             })),
             Promise.all(serializedOutputNotes.map((note) => {
-                return upsertOutputNote(dbId, note.noteId, note.noteAssets, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                return upsertOutputNote(dbId, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
             })),
             Promise.all(transactionUpdates.map((transactionRecord) => {
                 let promises = [
@@ -144,7 +144,7 @@ export async function applyStateSync(dbId, stateUpdate) {
             }))),
             updateSyncHeight(tx, blockNum, newPeaks),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
-            updateCommittedNoteTags(tx, committedNoteIds),
+            updateCommittedNoteTags(tx, committedNoteTagSources),
             Promise.all(newBlockHeaders.map((newBlockHeader, i) => {
                 return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1);
             })),
@@ -207,13 +207,13 @@ async function updatePartialBlockchainNodes(tx, nodeIndexes, nodes) {
         logWebStoreError(err, "Failed to update partial blockchain nodes");
     }
 }
-async function updateCommittedNoteTags(tx, inputNoteIds) {
+async function updateCommittedNoteTags(tx, committedNoteTagSources) {
     try {
-        for (let i = 0; i < inputNoteIds.length; i++) {
-            const noteId = inputNoteIds[i];
+        for (let i = 0; i < committedNoteTagSources.length; i++) {
+            const tagSource = committedNoteTagSources[i];
             await tx.tags
                 .where("sourceNoteId")
-                .equals(noteId)
+                .equals(tagSource)
                 .delete();
         }
     }

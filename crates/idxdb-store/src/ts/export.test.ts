@@ -159,6 +159,7 @@ describe("exportStore", () => {
     const stateBytes = new Uint8Array([7, 8, 9]);
 
     await db.inputNotes.put({
+      detailsCommitment: "commitment-abc",
       noteId: "note-abc",
       stateDiscriminant: 0,
       assets: assetBytes,

@@ -95,7 +95,7 @@ const V1_STORES = {
     [Table.Addresses]: indexes("address", "id"),
     [Table.Transactions]: indexes("id", "statusVariant"),
     [Table.TransactionScripts]: indexes("scriptRoot"),
-    [Table.InputNotes]: indexes("noteId", "nullifier", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
+    [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
     [Table.OutputNotes]: indexes("noteId", "recipientDigest", "stateDiscriminant", "nullifier"),
     [Table.NotesScripts]: indexes("scriptRoot"),
     [Table.BlockchainCheckpoint]: indexes("id"),

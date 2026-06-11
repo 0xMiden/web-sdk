@@ -75,7 +75,7 @@ function minimalStateUpdate(
     blockHasRelevantNotes: new Uint8Array(0),
     serializedNodeIds: [],
     serializedNodes: [],
-    committedNoteIds: [],
+    committedNoteTagSources: [],
     serializedInputNotes: [],
     serializedOutputNotes: [],
     accountUpdates: [],
@@ -634,7 +634,7 @@ describe("sync", () => {
   // -------------------------------------------------------------------------
 
   describe("applyStateSync — committed note tags (updateCommittedNoteTags)", () => {
-    it("removes tags whose sourceNoteId matches a committedNoteId", async () => {
+    it("removes tags whose sourceNoteId matches a committed note tag source", async () => {
       const dbId = await openTestDb();
       // Add a tag that is associated with note-A
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
@@ -645,7 +645,7 @@ describe("sync", () => {
         dbId,
         minimalStateUpdate({
           blockNum: 1,
-          committedNoteIds: ["note-A"],
+          committedNoteTagSources: ["note-A"],
         })
       );
 
@@ -654,7 +654,7 @@ describe("sync", () => {
       expect(tags![0].sourceNoteId).toBe("note-B");
     });
 
-    it("is a no-op when committedNoteIds is empty", async () => {
+    it("is a no-op when committedNoteTagSources is empty", async () => {
       const dbId = await openTestDb();
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
 
@@ -662,7 +662,7 @@ describe("sync", () => {
         dbId,
         minimalStateUpdate({
           blockNum: 1,
-          committedNoteIds: [],
+          committedNoteTagSources: [],
         })
       );
 
@@ -670,7 +670,7 @@ describe("sync", () => {
       expect(tags).toHaveLength(1);
     });
 
-    it("removes all tags for multiple committedNoteIds", async () => {
+    it("removes all tags for multiple committedNoteTagSources", async () => {
       const dbId = await openTestDb();
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
       await addNoteTag(dbId, new Uint8Array([0x02]), "note-B", "acct-2");
@@ -680,7 +680,7 @@ describe("sync", () => {
         dbId,
         minimalStateUpdate({
           blockNum: 1,
-          committedNoteIds: ["note-A", "note-B"],
+          committedNoteTagSources: ["note-A", "note-B"],
         })
       );
 
@@ -799,6 +799,7 @@ describe("sync", () => {
             {
               noteId: "out-note-1",
               noteAssets: new Uint8Array([0x01, 0x02]),
+              attachments: new Uint8Array([0x00]),
               recipientDigest: "recipient-digest-abc",
               metadata: new Uint8Array([0x03, 0x04]),
               nullifier: undefined,
@@ -832,6 +833,7 @@ describe("sync", () => {
             {
               noteId: "out-a",
               noteAssets: new Uint8Array([0x01]),
+              attachments: new Uint8Array([0x00]),
               recipientDigest: "digest-a",
               metadata: new Uint8Array([0x02]),
               nullifier: "null-a",
@@ -842,6 +844,7 @@ describe("sync", () => {
             {
               noteId: "out-b",
               noteAssets: new Uint8Array([0x04]),
+              attachments: new Uint8Array([0x00]),
               recipientDigest: "digest-b",
               metadata: new Uint8Array([0x05]),
               nullifier: undefined,
@@ -873,8 +876,10 @@ describe("sync", () => {
           blockNum: 5,
           serializedInputNotes: [
             {
+              detailsCommitment: "commitment-in-1",
               noteId: "in-note-1",
               noteAssets: new Uint8Array([0x0a]),
+              attachments: new Uint8Array([0x00]),
               serialNumber: new Uint8Array([0x0b]),
               inputs: new Uint8Array([0x0c]),
               noteScriptRoot: "script-root-in",
