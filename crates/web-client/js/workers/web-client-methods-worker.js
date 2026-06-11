@@ -482,11 +482,22 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel] = args;
+      const [seed, logLevel, numThreads] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
+      }
+
+      // Initialize rayon's pool inside THIS worker's WASM instance — same
+      // rationale as the INIT path above: all proving executes here, and a
+      // pool initialized in any other instance does not parallelize it.
+      if (
+        numThreads &&
+        numThreads > 1 &&
+        typeof wasm.initThreadPool === "function"
+      ) {
+        await wasm.initThreadPool(numThreads);
       }
 
       wasmWebClient = new wasm.WebClient();
