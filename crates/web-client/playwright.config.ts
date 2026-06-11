@@ -207,6 +207,12 @@ export default defineConfig({
         // idxdb-store's Js* classes and the wasm-bindgen WebClient on
         // `window` — none of which exist under the napi binding.
         "test/no_wasm_reentry_via_tojson.test.ts",
+        // _withInnerWebClient re-entrancy (#152): exercises the browser
+        // worker-shim chain mechanics (_serializeWasmCall, the
+        // _withInnerLockDepth counter, chain release on rejection). The
+        // napi client has no JS call chain — serialization happens in
+        // Rust — so the escape hatch and its tests are browser-only.
+        "test/with_inner_web_client_reentrancy.test.ts",
         // Eager-vs-lazy entry contract: dynamic browser imports of
         // dist/st/{eager,index}.js via the page fixture.
         "test/eager_entry.test.ts",
