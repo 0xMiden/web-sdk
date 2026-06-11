@@ -230,10 +230,8 @@ impl TransactionProverTrait for JsCallbackTransactionProver {
         let serialized = tx_inputs.to_bytes();
         let input_arr = Uint8Array::from(serialized.as_slice());
 
-        let call_result = self
-            .callback
-            .call1(&JsValue::NULL, &input_arr.into())
-            .map_err(|err| {
+        let call_result =
+            self.callback.call1(&JsValue::NULL, &input_arr.into()).map_err(|err| {
                 TransactionProverError::other(format!(
                     "callback prover threw at invocation: {err:?}"
                 ))

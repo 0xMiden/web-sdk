@@ -129,10 +129,7 @@ pub fn parallel_sum_bench(n: u64) -> u64 {
     // Don't actually need timing on the Rust side — caller times it. We
     // return the sum to defeat the optimizer. Use an FP-mix workload so
     // it's not trivially constant-folded.
-    let s: f64 = (0..n)
-        .into_par_iter()
-        .map(|i| ((i as f64).sqrt() * 1.0001).sin().abs())
-        .sum();
+    let s: f64 = (0..n).into_par_iter().map(|i| ((i as f64).sqrt() * 1.0001).sin().abs()).sum();
     s.to_bits()
 }
 
@@ -145,9 +142,7 @@ pub fn parallel_sum_bench(n: u64) -> u64 {
 #[wasm_bindgen(js_name = "sequentialSumBench")]
 #[allow(clippy::cast_precision_loss)]
 pub fn sequential_sum_bench(n: u64) -> u64 {
-    let s: f64 = (0..n)
-        .map(|i| ((i as f64).sqrt() * 1.0001).sin().abs())
-        .sum();
+    let s: f64 = (0..n).map(|i| ((i as f64).sqrt() * 1.0001).sin().abs()).sum();
     s.to_bits()
 }
 
