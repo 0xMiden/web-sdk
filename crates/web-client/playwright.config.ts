@@ -202,6 +202,10 @@ export default defineConfig({
         // Browser-only tests preserved from `next` that use exportStore /
         // importStore / waitForBlocks / isolatedClient (all browser-only).
         "test/*.browser.test.ts",
+        // wasm-bindgen toJSON regression test (#150): asserts on
+        // idxdb-store's Js* classes and the wasm-bindgen WebClient on
+        // `window` — none of which exist under the napi binding.
+        "test/no_wasm_reentry_via_tojson.test.ts",
       ],
       // Skip specific browser-only tests by name.
       // Tests that request the `page` fixture must be listed here because
