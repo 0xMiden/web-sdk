@@ -138,6 +138,8 @@ export async function createNodeIntegrationClient(
 /**
  * Wraps a napi WebClient to normalize differences with the browser SDK:
  * - syncState() → syncStateImpl()
+ * - syncChain() → syncChainImpl()
+ * - syncNoteTransport() → syncNoteTransportImpl()
  * - null → undefined for Option<T> returns
  */
 export function wrapNodeClient(rawClient: any, rawSdk: any): any {
@@ -171,6 +173,12 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       }
       if (prop === "syncState") {
         return (...args: any[]) => target.syncStateImpl(...args);
+      }
+      if (prop === "syncChain") {
+        return (...args: any[]) => target.syncChainImpl(...args);
+      }
+      if (prop === "syncNoteTransport") {
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       }
       if (prop === "proveBlock") {
         return async () => {
