@@ -101,7 +101,6 @@ export function MidenProvider({
       return;
     }
     setDefaultProver(resolveTransactionProver(resolvedConfig));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isReady,
     resolvedConfig.prover,
