@@ -14,6 +14,12 @@
 //! web-sdk's `JsCallbackTransactionProver`: input is
 //! `TransactionInputs::to_bytes()`, output is `ProvenTransaction::to_bytes()`.
 //! Hosts can swap between dispatchers without changing serialization.
+//!
+//! The wire format is NOT stable across protocol versions: the 0.15 protocol
+//! changed both `TransactionInputs` and `ProvenTransaction` serialization, so
+//! a native library built from this crate only interoperates with an SDK
+//! pinned to the same miden-client line. Hosts must rebuild and ship the
+//! native binary together with every SDK protocol bump.
 
 use miden_client::transaction::{
     LocalTransactionProver, ProvenTransaction, ProvingOptions, TransactionInputs,

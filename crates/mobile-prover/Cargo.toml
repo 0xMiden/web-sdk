@@ -14,21 +14,11 @@ crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 # miden-client gives us the typed prover wrapper and the trait dispatch we
-# share with the web-sdk. It doesn't expose a `concurrent` feature itself
-# (only `default`, `std`, `testing`, `tonic`), so we depend on `miden-tx`
-# directly below and use cargo's feature unification to make the rayon-
-# backed prover propagate through the dep graph.
+# share with the web-sdk. Its `concurrent` feature cascades to
+# `miden-tx/concurrent` → `miden-prover/concurrent` — rayon-backed parallel
+# proving on real native threads, the actual point of this crate: full MT
+# prove without wasm-bindgen-rayon (which is broken on iOS WKWebView).
 miden-client = { workspace = true, default-features = false, features = [
-  "std",
-] }
-miden-protocol = { workspace = true, default-features = false, features = [
-  "std",
-] }
-# rayon-backed parallel proving on real native threads — the actual point
-# of this crate is to run full MT prove without wasm-bindgen-rayon (which
-# is broken on iOS WKWebView). `concurrent` cascades to
-# `miden-prover/concurrent`.
-miden-tx = { version = "0.14.5", default-features = false, features = [
   "std",
   "concurrent",
 ] }

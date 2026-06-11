@@ -716,14 +716,14 @@ describe("useSend", () => {
       });
     });
 
-    it("should use proveTransactionWithProver when store config has prover (line 247)", async () => {
+    it("should pass the resolved prover to proveTransaction when store config has prover (line 247)", async () => {
       const mockTxResult = createMockTransactionResult("0xtxstoreprover");
       const mockClient = createMockWebClient({
         newSendTransactionRequest: vi
           .fn()
           .mockReturnValue(createMockTransactionRequest()),
         executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
-        proveTransactionWithProver: vi.fn().mockResolvedValue({}),
+        proveTransaction: vi.fn().mockResolvedValue({}),
         submitProvenTransaction: vi.fn().mockResolvedValue(100),
         applyTransaction: vi.fn().mockResolvedValue({}),
         sendPrivateNote: vi.fn().mockResolvedValue(undefined),
@@ -735,7 +735,8 @@ describe("useSend", () => {
         sync: vi.fn().mockResolvedValue(undefined),
       });
 
-      // Set store config with a prover so proveWithFallback uses proveTransactionWithProver
+      // Set store config with a prover so proveWithFallback resolves one and
+      // passes it as proveTransaction's second argument
       useMidenStore
         .getState()
         .setConfig({ rpcUrl: "testnet", prover: "local" });
@@ -752,7 +753,7 @@ describe("useSend", () => {
         });
       });
 
-      expect(mockClient.proveTransactionWithProver).toHaveBeenCalled();
+      expect(mockClient.proveTransaction).toHaveBeenCalled();
       expect(result.current.stage).toBe("complete");
     });
   });
