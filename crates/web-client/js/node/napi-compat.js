@@ -95,6 +95,21 @@ export function wrapClient(rawClient, storeName) {
       if (prop === "onStateChanged") {
         return () => undefined;
       }
+      // waitForIdle drains the browser SDK's detached `_serializeWasmCall`
+      // chain. The napi binding has no such chain — every call is awaited
+      // directly by its caller and serialized inside Rust — so there is
+      // nothing in flight by the time a caller could invoke this. Resolve
+      // immediately to keep the cross-platform MidenClient surface intact.
+      if (prop === "waitForIdle") {
+        return () => Promise.resolve();
+      }
+      // lastAuthError surfaces the raw value a JS sign callback threw.
+      // The Node binding signs with FilesystemKeyStore (no JS callback can
+      // ever run), so "no sign error" is the semantically correct answer,
+      // not a stub.
+      if (prop === "lastAuthError") {
+        return () => null;
+      }
       if (prop === "newWallet") {
         return (mode, mutable, authScheme, seed) => {
           const normSeed =

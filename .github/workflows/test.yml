@@ -4,15 +4,7 @@ permissions:
 on:
   push:
     branches: [main, next]
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
 
 concurrency:
   group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
@@ -33,15 +25,38 @@ env:
   MIDEN_CLIENT_REF: 733720a7ce5886a390c848402b61079be1e6aa38
 
 jobs:
+  # Pre-flight: detect whether any non-docs files changed. See build.yml's
+  # `changes` job for the full rationale — short version: triggering this
+  # workflow on every push/PR (rather than gating with top-level `paths-ignore`)
+  # ensures required checks always report a state, so docs-only PRs aren't
+  # blocked by checks that never run.
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-24.04
+    outputs:
+      non_docs: ${{ steps.filter.outputs.non_docs }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            non_docs:
+              - '!**/*.md'
+              - '!**/*.txt'
+              - '!docs/**'
+
   build-web-client-dist-folder:
     # Uses the `release-fast` cargo profile (LTO off, codegen-units=16) and
     # skips wasm-opt — both via the MIDEN_FAST_BUILD env var. The shipped
     # artifact is built with the canonical full-optimization `release`
     # profile by the `verify-release-build` job (push to main/next only).
-    # sccache + Swatinem/rust-cache layer together: rust-cache gives a
+    # sccache + WarpBuilds/rust-cache layer together: rust-cache gives a
     # warm target/ directory, sccache gives finer per-crate caching that
     # survives even when target/ is partially invalidated.
     name: Build Web Client
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     runs-on: warp-ubuntu-latest-x64-8x
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
@@ -64,6 +79,12 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Also install stable wasm32 std so the ST rollup build can
+          # use stable Rust (set via RUSTUP_TOOLCHAIN=stable in
+          # crates/web-client/rollup.config.js when MIDEN_BUILD_VARIANT=st).
+          # MT keeps the project-pinned nightly from rust-toolchain.toml.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
 
       # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
       # mozilla-actions/sccache-action used by default. The new GHA cache
@@ -190,7 +211,8 @@ jobs:
   verify-release-build:
     name: Verify release WASM build
     runs-on: warp-ubuntu-latest-x64-8x
-    if: github.event_name == 'push'
+    needs: [changes]
+    if: github.event_name == 'push' && needs.changes.outputs.non_docs == 'true'
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
       # action sets RUSTC_WRAPPER=sccache as a step output on success — we
@@ -212,6 +234,12 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Also install stable wasm32 std so the ST rollup build can
+          # use stable Rust (set via RUSTUP_TOOLCHAIN=stable in
+          # crates/web-client/rollup.config.js when MIDEN_BUILD_VARIANT=st).
+          # MT keeps the project-pinned nightly from rust-toolchain.toml.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
       # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
       # mozilla-actions/sccache-action used by default. The new GHA cache
       # service requires ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN, which
@@ -289,7 +317,8 @@ jobs:
   react-sdk-lint:
     name: React SDK lint and typecheck
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -322,7 +351,8 @@ jobs:
   wasm-bindgen-types:
     name: Wasm bindgen types
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -353,7 +383,8 @@ jobs:
   docs-check:
     name: Check that web client documentation is up-to-date
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Check for bypass label
@@ -394,7 +425,8 @@ jobs:
   test-react-sdk:
     name: React SDK tests
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -425,6 +457,8 @@ jobs:
   test-idxdb-store:
     name: idxdb-store unit tests
     runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
@@ -450,6 +484,8 @@ jobs:
   test-vite-plugin:
     name: vite-plugin unit tests
     runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
@@ -475,6 +511,8 @@ jobs:
   test-web-client-unit:
     name: web-client unit tests
     runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
@@ -500,7 +538,8 @@ jobs:
   test-react-sdk-integration:
     name: React SDK integration tests
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -527,7 +566,8 @@ jobs:
   build-react-sdk:
     name: Build React SDK
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -553,6 +593,8 @@ jobs:
   build-node-builder:
     name: Build node-builder
     runs-on: warp-ubuntu-latest-x64-8x
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
@@ -582,12 +624,16 @@ jobs:
   build-remote-prover:
     name: Build remote-prover
     runs-on: warp-ubuntu-latest-x64-8x
+    needs: [changes]
     # Remote prover tests are slow (~14 min) and rarely affected by typical PR
     # changes. Skip on PRs unless explicitly opted in via the
     # 'run-remote-prover' label; always run on push to main/next.
+    # Also gated on `non_docs` so docs-only changes never trigger this.
     if: |
-      github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
+      needs.changes.outputs.non_docs == 'true' && (
+        github.event_name == 'push' ||
+        contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
+      )
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
@@ -716,7 +762,8 @@ jobs:
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-web-client-dist-folder, build-node-builder]
+    needs: [changes, build-web-client-dist-folder, build-node-builder]
+    if: needs.changes.outputs.non_docs == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -785,12 +832,14 @@ jobs:
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-web-client-dist-folder, build-node-builder, build-remote-prover]
+    needs: [changes, build-web-client-dist-folder, build-node-builder, build-remote-prover]
     # Same opt-in rule as build-remote-prover. The job needs the prover binary,
     # so it can only run when build-remote-prover ran too.
     if: |
-      github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
+      needs.changes.outputs.non_docs == 'true' && (
+        github.event_name == 'push' ||
+        contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
+      )
     steps:
       - uses: actions/checkout@v6
       - name: Cleanup large tools for build space

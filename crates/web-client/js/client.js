@@ -40,6 +40,80 @@ export class MidenClient {
   }
 
   /**
+   * Escape hatch: runs `fn` with exclusive access to the proxied JS
+   * WebClient that backs this MidenClient.
+   *
+   * The proxy forwards missing properties to the underlying wasm-bindgen
+   * `WebClient`, so `fn` can reach lower-level methods like
+   * `executeTransaction`, `proveTransaction[WithProver]`,
+   * `submitProvenTransaction`, `applyTransaction`,
+   * `newSendTransactionRequest`, `newConsumeTransactionRequest`, etc.
+   *
+   * Intended for advanced consumers that need to split the bundled
+   * execute → prove → submit → apply pipeline across contexts — for example,
+   * a Chrome MV3 extension that runs `executeTransaction` in its service
+   * worker, dispatches the prove step to a `chrome.offscreen` document
+   * (where wasm-bindgen-rayon can spawn a real thread pool), then runs
+   * `submitProvenTransaction` + `applyTransaction` back in the SW.
+   *
+   * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
+   * held for the duration of `fn`. Concurrent SDK calls (sync, other
+   * transactions, etc.) queue on the same chain and run after `fn`
+   * settles. Without this serialization, raw inner-client access would
+   * race the proxy's chain and trip wasm-bindgen's "recursive use of an
+   * object detected" panic.
+   *
+   * Re-entrancy: while `fn` is running, the underlying client's
+   * `_withInnerLockDepth` counter is bumped so that `_serializeWasmCall`
+   * invocations made BY `fn` (or any proxy-dispatched method it calls)
+   * run inline rather than enqueuing on the chain. Without this, every
+   * `await inner.X(...)` inside `fn` would enqueue behind the outer
+   * `_withInnerWebClient` slot which is itself awaiting `fn` —
+   * a classic re-entrant-lock deadlock. The depth counter restores the
+   * intent of the docstring above: the lock is held for the duration
+   * of `fn`, and inner-client calls "borrow" that already-held lock
+   * instead of trying to re-acquire it.
+   *
+   * SAFETY CONTRACT for re-entrancy: callers MUST hold an external
+   * mutex preventing concurrent access to this same client instance
+   * via other code paths during `fn`. The chain still serializes
+   * against external callers — they queue behind the outer slot — but
+   * if an external task runs during one of `fn`'s awaits and calls
+   * into the SDK, it will see `_withInnerLockDepth > 0` and run
+   * inline, racing wasm-bindgen's borrow check. The wallet pattern
+   * (own outer mutex around `_withInnerWebClient`) satisfies this.
+   *
+   * Stability: marked `@internal`. The shape of the proxied client is
+   * intentionally not part of the documented public API and may change
+   * between SDK versions. If you depend on this method, pin the SDK
+   * version and test the lower-level surface carefully on each upgrade.
+   * If your use case is common enough to warrant a stable public API,
+   * file an issue.
+   *
+   * @internal
+   * @template T
+   * @param {(inner: object) => Promise<T>} fn - Async callback receiving
+   *   the proxied JS WebClient. Must not return references that escape
+   *   the callback's lifetime (the lock is released on settle).
+   * @returns {Promise<T>} The resolved value of `fn`.
+   */
+  _withInnerWebClient(fn) {
+    this.assertNotTerminated();
+    if (typeof fn !== "function") {
+      throw new TypeError("_withInnerWebClient: fn must be a function");
+    }
+    const inner = this.#inner;
+    return inner._serializeWasmCall(async () => {
+      inner._withInnerLockDepth = (inner._withInnerLockDepth || 0) + 1;
+      try {
+        return await fn(inner);
+      } finally {
+        inner._withInnerLockDepth--;
+      }
+    });
+  }
+
+  /**
    * Creates and initializes a new MidenClient.
    *
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
@@ -67,6 +141,13 @@ export class MidenClient {
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
+    // `useWorker: false` opts out of the Web Worker shim that wraps every
+    // WASM call. The shim exists to keep the main thread responsive in
+    // browser/extension contexts, but it serializes the prover via
+    // `TransactionProver.serialize()` — a format that has no encoding for
+    // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
+    // Mobile/Tauri/native-prover consumers must pass `useWorker: false`.
+    const useWorker = options?.useWorker;
     let inner;
     if (options?.keystore) {
       inner = await WebClientClass.createClientWithExternalKeystore(
@@ -77,7 +158,8 @@ export class MidenClient {
         options.keystore.getKey,
         options.keystore.insertKey,
         options.keystore.sign,
-        options?.debugMode
+        options?.debugMode,
+        useWorker
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -85,7 +167,8 @@ export class MidenClient {
         noteTransportUrl,
         seed,
         options?.storeName,
-        options?.debugMode
+        options?.debugMode,
+        useWorker
       );
     }
 
@@ -140,6 +223,32 @@ export class MidenClient {
       autoSync: true,
       ...options,
     });
+  }
+
+  /**
+   * Resolves once the WASM module is initialized and safe to use.
+   *
+   * Idempotent and shared across callers: the underlying loader memoizes the
+   * in-flight promise, so concurrent `ready()` calls await the same
+   * initialization and post-init callers resolve immediately from a cached
+   * module. Safe to call from `MidenProvider`, tutorial helpers, and any
+   * other consumer simultaneously.
+   *
+   * Useful on the `/lazy` entry (e.g. Next.js / Capacitor), where no
+   * top-level await runs at import time. On the default (eager) entry this
+   * is redundant — importing the module already awaits WASM — but calling it
+   * is still harmless.
+   *
+   * @returns {Promise<void>} Resolves when WASM is initialized.
+   */
+  static async ready() {
+    const getWasm = MidenClient._getWasmOrThrow;
+    if (!getWasm) {
+      throw new Error(
+        "MidenClient not initialized. Import from the SDK package entry point."
+      );
+    }
+    await getWasm();
   }
 
   /**
@@ -215,6 +324,61 @@ export class MidenClient {
   async getSyncHeight() {
     this.assertNotTerminated();
     return await this.#inner.getSyncHeight();
+  }
+
+  /**
+   * Resolves once every serialized WASM call that was already on the
+   * internal `_serializeWasmCall` chain when `waitForIdle()` was called
+   * (execute, submit, prove, apply, sync, or account creation) has
+   * settled. Use this from callers that need to perform a non-WASM-side
+   * action — e.g. clearing an in-memory auth key on wallet lock — after
+   * the kernel finishes, so its auth callback doesn't race with the key
+   * being cleared.
+   *
+   * Does NOT wait for calls enqueued after `waitForIdle()` returns —
+   * intentional, so a caller can drain and proceed without being blocked
+   * indefinitely by concurrent workload.
+   *
+   * Caveat for `syncState`: `syncStateWithTimeout` awaits the sync lock
+   * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
+   * call onto the chain, so a `syncState` that is queued on the sync
+   * lock — but has not yet begun its WASM phase — is not visible to
+   * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
+   * `executeTransaction`, etc.) route through the chain synchronously
+   * on call and are always observed.
+   *
+   * Safe to call at any time; returns immediately if nothing was in
+   * flight.
+   *
+   * @returns {Promise<void>}
+   */
+  async waitForIdle() {
+    this.assertNotTerminated();
+    await this.#inner.waitForIdle();
+  }
+
+  /**
+   * Returns the raw JS value that the most recent sign-callback invocation
+   * threw, or `null` if the last sign call succeeded (or no call has
+   * happened yet).
+   *
+   * Useful for recovering structured metadata (e.g. a `reason: 'locked'`
+   * property) that the kernel-level `auth::request` diagnostic would
+   * otherwise erase. Call immediately after catching a failed
+   * `transactions.submit` / `transactions.send` / `transactions.consume`.
+   *
+   * Meaningful only with `useWorker: false`: under the worker shim the
+   * sign callback fires against the worker's WASM keystore, while this
+   * accessor reads the main-thread instance — which never signed — so it
+   * returns `null`. Consumers that need this signal (e.g. external
+   * keystores with lock-aware sign callbacks) already require
+   * `useWorker: false` for the callback to be reachable at all.
+   *
+   * @returns {any} The raw thrown value, or `null`.
+   */
+  lastAuthError() {
+    this.assertNotTerminated();
+    return this.#inner.lastAuthError();
   }
 
   /**

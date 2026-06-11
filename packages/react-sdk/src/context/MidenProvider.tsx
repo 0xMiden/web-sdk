@@ -251,7 +251,9 @@ export function MidenProvider({
               storeName,
               signerContext.getKeyCb,
               signerContext.insertKeyCb,
-              wrappedSignCb
+              wrappedSignCb,
+              undefined,
+              resolvedConfig.useWorker
             );
 
             if (cancelled) return;
@@ -274,7 +276,10 @@ export function MidenProvider({
             webClient = await WebClient.createClient(
               resolvedConfig.rpcUrl,
               resolvedConfig.noteTransportUrl,
-              seed
+              seed,
+              undefined,
+              undefined,
+              resolvedConfig.useWorker
             );
             if (cancelled) return;
           }
