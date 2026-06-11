@@ -102,15 +102,19 @@
         "test/playwright.global.setup.ts",
         "scripts/**/*.js",
       ],
-      // The `./index.js` strings inside `page.evaluate(...)` blocks are
-      // dynamic imports executed in the *browser* against
-      // http://localhost:8080 — they resolve to files in dist/ at test
-      // runtime, not relative to the Playwright test file.
-      // `./crates/miden_client_web` is the wasm-bindgen module emitted
-      // into dist/ by the rollup rust plugin; the .d.ts files in
-      // js/types/ reference it but it doesn't exist until after build.
-      // Knip can't follow either of these dynamic targets.
-      "ignoreUnresolved": ["./index.js", "./crates/miden_client_web"],
+      // The `./eager.js` and `./index.js` strings inside
+      // `page.evaluate(...)` blocks are dynamic imports executed in the
+      // *browser* against http://localhost:8080 — they resolve to files
+      // in dist/st/ at test runtime, not relative to the Playwright test
+      // file. `./crates/miden_client_web` is the wasm-bindgen module
+      // emitted into dist/ by the rollup rust plugin; the .d.ts files
+      // in js/types/ reference it but it doesn't exist until after
+      // build. Knip can't follow either of these dynamic targets.
+      "ignoreUnresolved": [
+        "./eager.js",
+        "./index.js",
+        "./crates/miden_client_web",
+      ],
     },
     "crates/idxdb-store/src": {
       // Each `ts/*.ts` is independently tsc-compiled into `js/` and

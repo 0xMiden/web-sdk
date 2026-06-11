@@ -206,6 +206,9 @@ export default defineConfig({
         // idxdb-store's Js* classes and the wasm-bindgen WebClient on
         // `window` — none of which exist under the napi binding.
         "test/no_wasm_reentry_via_tojson.test.ts",
+        // Eager-vs-lazy entry contract: dynamic browser imports of
+        // dist/st/{eager,index}.js via the page fixture.
+        "test/eager_entry.test.ts",
       ],
       // Skip specific browser-only tests by name.
       // Tests that request the `page` fixture must be listed here because
