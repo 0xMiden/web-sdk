@@ -3,18 +3,21 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 /**
- * Post-build rewrite: change every `@miden-sdk/miden-sdk/lazy` import in
- * the named bundle to a different subpath. The React SDK's source tree
- * always imports `/lazy` (the platform-neutral spelling); each emitted
- * variant gets the corresponding SDK subpath substituted at the
- * file-level after emit. This is more reliable than an esbuild
+ * Post-build rewrite: change every bare `@miden-sdk/miden-sdk` import in
+ * the named bundle to a variant-specific subpath. The React SDK's source
+ * tree always imports the bare specifier (the eager-ST default); each
+ * emitted variant gets the corresponding SDK subpath substituted at the
+ * file level after emit. This is more reliable than an esbuild
  * `onResolve` hook — tsup's default externalization from
  * `peerDependencies` happens before our plugin gets a chance to change
  * the import path.
  *
+ * Only the exact quoted specifier `"@miden-sdk/miden-sdk"` is rewritten,
+ * so subpath imports (if any ever appear in src) are left untouched.
+ *
  * Mapping per variant:
- *   index.mjs    → `@miden-sdk/miden-sdk`         (eager + ST)
- *   lazy.mjs     → `@miden-sdk/miden-sdk/lazy`    (lazy + ST, no rewrite needed)
+ *   index.mjs    → `@miden-sdk/miden-sdk`         (eager + ST, no rewrite needed)
+ *   lazy.mjs     → `@miden-sdk/miden-sdk/lazy`    (lazy + ST)
  *   mt.mjs       → `@miden-sdk/miden-sdk/mt`      (eager + MT)
  *   mt/lazy.mjs  → `@miden-sdk/miden-sdk/mt/lazy` (lazy + MT)
  */
@@ -22,16 +25,24 @@ function rewriteSdkImport(distFile: string, replacement: string): void {
   const path = join("dist", distFile);
   if (!existsSync(path)) return;
   const before = readFileSync(path, "utf8");
-  const after = before.replace(/@miden-sdk\/miden-sdk\/lazy/g, replacement);
-  if (after === before) return;
+  const after = before
+    .replace(/"@miden-sdk\/miden-sdk"/g, `"${replacement}"`)
+    .replace(/'@miden-sdk\/miden-sdk'/g, `'${replacement}'`);
+  if (after === before) {
+    throw new Error(
+      `rewriteSdkImport: no bare @miden-sdk/miden-sdk import found in ${path} — ` +
+        `the variant would silently ship the wrong SDK build. Did the source ` +
+        `import specifier change?`
+    );
+  }
   writeFileSync(path, after);
 }
 
 export default defineConfig([
   // Eager + ST — default entry (`@miden-sdk/react`).
   //
-  // Source imports `@miden-sdk/miden-sdk/lazy`; `onSuccess` rewrites those
-  // to `@miden-sdk/miden-sdk` (eager-ST) after emit.
+  // Source imports the bare `@miden-sdk/miden-sdk` (eager-ST), which is
+  // exactly what this variant wants — no rewrite.
   //
   // ESM-only: `@miden-sdk/miden-sdk` is `"type": "module"` and exports only
   // `import` conditions, so a CJS variant of this package would crash with
@@ -50,13 +61,10 @@ export default defineConfig([
     outExtension: () => ({ js: ".mjs" }),
     dts: true,
     clean: true,
-    onSuccess: async () => {
-      rewriteSdkImport("index.mjs", "@miden-sdk/miden-sdk");
-    },
   },
   // Lazy + ST — subpath entry (`@miden-sdk/react/lazy`).
   //
-  // No rewrite; imports keep `@miden-sdk/miden-sdk/lazy` so consumer
+  // Rewrites SDK imports to `@miden-sdk/miden-sdk/lazy` so consumer
   // bundlers resolve them against the SDK's lazy-ST subpath (no TLA).
   // Required for Capacitor hosts, Next.js SSR, and any environment that
   // can't tolerate top-level await at SDK module evaluation.
@@ -66,6 +74,9 @@ export default defineConfig([
     outExtension: () => ({ js: ".mjs" }),
     dts: true,
     clean: false,
+    onSuccess: async () => {
+      rewriteSdkImport("lazy.mjs", "@miden-sdk/miden-sdk/lazy");
+    },
   },
   // Eager + MT — subpath entry (`@miden-sdk/react/mt`).
   //

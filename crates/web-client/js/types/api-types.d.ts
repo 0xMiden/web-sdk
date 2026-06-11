@@ -1080,6 +1080,11 @@ export declare class MidenClient {
    * happened yet). Useful for recovering structured metadata (e.g. a
    * `reason: 'locked'` property) that the kernel-level `auth::request`
    * diagnostic would otherwise erase.
+   *
+   * Meaningful only with `useWorker: false` (the worker shim's keystore
+   * lives in the worker WASM instance, so this reads `null` there). On
+   * the Node.js binding it always returns `null` — signing goes through
+   * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;
   /** Returns the client-level default prover. */

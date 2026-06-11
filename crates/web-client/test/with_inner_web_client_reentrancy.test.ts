@@ -46,9 +46,15 @@ test.describe("_withInnerWebClient re-entrancy", () => {
       );
       const completed = await Promise.race([
         client._withInnerWebClient(async (inner: any) => {
-          // Any proxied async wasm method — `getInputNote` is a READ_METHOD
-          // that the proxy fallback wraps in `_serializeWasmCall`. Pass a
-          // bogus hex so the WASM side returns `undefined` cheaply.
+          // `getInputNote` reaches the WASM client via the proxy fallback,
+          // which binds it directly (NOT through `_serializeWasmCall`), so
+          // this call can never enqueue behind the outer slot. It guards
+          // the weaker invariant that a fallback read issued mid-callback
+          // completes against the held WASM instance without tripping
+          // wasm-bindgen's borrow check. The wrapper-method re-entrancy
+          // (the depth-counter path) is exercised by the syncState cases
+          // below. Pass a bogus hex so the WASM side returns `undefined`
+          // cheaply.
           const note = await inner.getInputNote(
             "0x0000000000000000000000000000000000000000000000000000000000000000"
           );

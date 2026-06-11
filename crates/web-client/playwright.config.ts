@@ -99,6 +99,7 @@ const ciShardProjects = process.env.CI
         name: "ci-shard-4-compile-and-misc",
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
+          "test/eager_entry.test.ts",
           "test/fpi.test.ts",
           "test/compile_and_contract.test.ts",
           "test/package.test.ts",
