@@ -112,6 +112,7 @@ const ciShardProjects = process.env.CI
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
           "test/transactions.test.ts",
+          "test/with_inner_web_client_reentrancy.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -233,12 +234,23 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   // FIXME: Modularise test server constants (localhost, port)
+  //
+  // Serves dist/st/ (the canonical published layout for the
+  // single-threaded variant). Integration tests that go through
+  // `page.evaluate(() => import('./index.js'))` resolve against
+  // dist/st/index.js, the same JS bundle consumers get when they
+  // import `@miden-sdk/miden-sdk/lazy`. The MT variant (dist/mt/) is
+  // covered by separate eager_entry / mt-specific tests when they
+  // exist; running the full integration suite against dist/mt/ would
+  // require a cross-origin-isolated test page (COOP+COEP headers via
+  // http-server flags), out of scope for this round.
+  //
   // Skip webServer when running only Node.js tests (no browser/dist needed)
   ...(process.env.SKIP_WEB_SERVER
     ? {}
     : {
         webServer: {
-          command: "npx http-server ./dist -a localhost -p 8080",
+          command: "npx http-server ./dist/st -a localhost -p 8080",
           url: "http://localhost:8080",
           reuseExistingServer: true,
         },

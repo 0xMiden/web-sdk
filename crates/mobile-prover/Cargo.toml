@@ -1,0 +1,43 @@
+[package]
+name = "miden-mobile-prover"
+description = "Native Miden transaction prover exposed as a C ABI for embedding in iOS/Android Capacitor plugins."
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+# `staticlib` for iOS (linked into the Capacitor plugin's static-lib bundle),
+# `cdylib` for Android (loaded at runtime via System.loadLibrary).
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+# miden-client gives us the typed prover wrapper and the trait dispatch we
+# share with the web-sdk. It doesn't expose a `concurrent` feature itself
+# (only `default`, `std`, `testing`, `tonic`), so we depend on `miden-tx`
+# directly below and use cargo's feature unification to make the rayon-
+# backed prover propagate through the dep graph.
+miden-client = { workspace = true, default-features = false, features = [
+  "std",
+] }
+miden-protocol = { workspace = true, default-features = false, features = [
+  "std",
+] }
+# rayon-backed parallel proving on real native threads — the actual point
+# of this crate is to run full MT prove without wasm-bindgen-rayon (which
+# is broken on iOS WKWebView). `concurrent` cascades to
+# `miden-prover/concurrent`.
+miden-tx = { version = "0.14.5", default-features = false, features = [
+  "std",
+  "concurrent",
+] }
+
+# Tiny block_on for the sync C ABI — the prove future is CPU-bound so no
+# real async runtime is needed.
+futures-executor = { version = "0.3", default-features = false, features = [
+  "std",
+] }
+# Profile settings are inherited from the workspace root. We don't redefine
+# them here because cargo emits a warning ("profiles for the non root package
+# will be ignored") that rollup-plugin-rust treats as a build error.

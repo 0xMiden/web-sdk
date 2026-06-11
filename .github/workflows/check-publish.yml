@@ -53,6 +53,10 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Stable wasm32 std for the ST rollup path. MT keeps nightly via
+          # rust-toolchain.toml. See crates/web-client/rollup.config.js.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
 
       # See test.yml for why these are forwarded explicitly.
       - name: Configure sccache cache backend (v2)

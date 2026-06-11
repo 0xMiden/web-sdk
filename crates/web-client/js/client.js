@@ -40,6 +40,80 @@ export class MidenClient {
   }
 
   /**
+   * Escape hatch: runs `fn` with exclusive access to the proxied JS
+   * WebClient that backs this MidenClient.
+   *
+   * The proxy forwards missing properties to the underlying wasm-bindgen
+   * `WebClient`, so `fn` can reach lower-level methods like
+   * `executeTransaction`, `proveTransaction[WithProver]`,
+   * `submitProvenTransaction`, `applyTransaction`,
+   * `newSendTransactionRequest`, `newConsumeTransactionRequest`, etc.
+   *
+   * Intended for advanced consumers that need to split the bundled
+   * execute → prove → submit → apply pipeline across contexts — for example,
+   * a Chrome MV3 extension that runs `executeTransaction` in its service
+   * worker, dispatches the prove step to a `chrome.offscreen` document
+   * (where wasm-bindgen-rayon can spawn a real thread pool), then runs
+   * `submitProvenTransaction` + `applyTransaction` back in the SW.
+   *
+   * The callback runs inside `_serializeWasmCall`, so the WASM RefCell is
+   * held for the duration of `fn`. Concurrent SDK calls (sync, other
+   * transactions, etc.) queue on the same chain and run after `fn`
+   * settles. Without this serialization, raw inner-client access would
+   * race the proxy's chain and trip wasm-bindgen's "recursive use of an
+   * object detected" panic.
+   *
+   * Re-entrancy: while `fn` is running, the underlying client's
+   * `_withInnerLockDepth` counter is bumped so that `_serializeWasmCall`
+   * invocations made BY `fn` (or any proxy-dispatched method it calls)
+   * run inline rather than enqueuing on the chain. Without this, every
+   * `await inner.X(...)` inside `fn` would enqueue behind the outer
+   * `_withInnerWebClient` slot which is itself awaiting `fn` —
+   * a classic re-entrant-lock deadlock. The depth counter restores the
+   * intent of the docstring above: the lock is held for the duration
+   * of `fn`, and inner-client calls "borrow" that already-held lock
+   * instead of trying to re-acquire it.
+   *
+   * SAFETY CONTRACT for re-entrancy: callers MUST hold an external
+   * mutex preventing concurrent access to this same client instance
+   * via other code paths during `fn`. The chain still serializes
+   * against external callers — they queue behind the outer slot — but
+   * if an external task runs during one of `fn`'s awaits and calls
+   * into the SDK, it will see `_withInnerLockDepth > 0` and run
+   * inline, racing wasm-bindgen's borrow check. The wallet pattern
+   * (own outer mutex around `_withInnerWebClient`) satisfies this.
+   *
+   * Stability: marked `@internal`. The shape of the proxied client is
+   * intentionally not part of the documented public API and may change
+   * between SDK versions. If you depend on this method, pin the SDK
+   * version and test the lower-level surface carefully on each upgrade.
+   * If your use case is common enough to warrant a stable public API,
+   * file an issue.
+   *
+   * @internal
+   * @template T
+   * @param {(inner: object) => Promise<T>} fn - Async callback receiving
+   *   the proxied JS WebClient. Must not return references that escape
+   *   the callback's lifetime (the lock is released on settle).
+   * @returns {Promise<T>} The resolved value of `fn`.
+   */
+  _withInnerWebClient(fn) {
+    this.assertNotTerminated();
+    if (typeof fn !== "function") {
+      throw new TypeError("_withInnerWebClient: fn must be a function");
+    }
+    const inner = this.#inner;
+    return inner._serializeWasmCall(async () => {
+      inner._withInnerLockDepth = (inner._withInnerLockDepth || 0) + 1;
+      try {
+        return await fn(inner);
+      } finally {
+        inner._withInnerLockDepth--;
+      }
+    });
+  }
+
+  /**
    * Creates and initializes a new MidenClient.
    *
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
@@ -67,6 +141,13 @@ export class MidenClient {
     const rpcUrl = resolveRpcUrl(options?.rpcUrl);
     const noteTransportUrl = resolveNoteTransportUrl(options?.noteTransportUrl);
 
+    // `useWorker: false` opts out of the Web Worker shim that wraps every
+    // WASM call. The shim exists to keep the main thread responsive in
+    // browser/extension contexts, but it serializes the prover via
+    // `TransactionProver.serialize()` — a format that has no encoding for
+    // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
+    // Mobile/Tauri/native-prover consumers must pass `useWorker: false`.
+    const useWorker = options?.useWorker;
     let inner;
     if (options?.keystore) {
       inner = await WebClientClass.createClientWithExternalKeystore(
@@ -77,7 +158,8 @@ export class MidenClient {
         options.keystore.getKey,
         options.keystore.insertKey,
         options.keystore.sign,
-        options?.debugMode
+        options?.debugMode,
+        useWorker
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -85,7 +167,8 @@ export class MidenClient {
         noteTransportUrl,
         seed,
         options?.storeName,
-        options?.debugMode
+        options?.debugMode,
+        useWorker
       );
     }
 

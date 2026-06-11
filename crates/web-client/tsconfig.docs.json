@@ -3,8 +3,8 @@
     "skipLibCheck": true
   },
   "files": [
-    "./dist/docs-entry.d.ts",
-    "./dist/api-types.d.ts",
-    "./dist/crates/miden_client_web.d.ts"
+    "./dist/st/docs-entry.d.ts",
+    "./dist/st/api-types.d.ts",
+    "./dist/st/crates/miden_client_web.d.ts"
   ]
 }
