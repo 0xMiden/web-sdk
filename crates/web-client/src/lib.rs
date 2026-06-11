@@ -295,6 +295,37 @@ impl WebClient {
         Ok(keystore_api::WebKeystoreApi::new(ks))
     }
 
+    /// Returns the raw JS value that the most recent sign-callback invocation
+    /// threw, or `null` if the last sign call succeeded (or no call has
+    /// happened yet).
+    ///
+    /// Combined with the serialized-call discipline enforced at the JS
+    /// `WebClient` wrapper, this lets a caller that caught a failed
+    /// `executeTransaction` / `submitNewTransaction` recover the original
+    /// JS error the signing callback threw — preserving any structured
+    /// metadata (e.g. a `reason: 'locked'` property) that the kernel-level
+    /// `auth::request` diagnostic would otherwise have erased.
+    ///
+    /// # Usage (TS)
+    /// ```ts
+    /// try {
+    ///   await client.submitNewTransaction(acc, req);
+    /// } catch (e) {
+    ///   const authErr = client.lastAuthError();
+    ///   if (authErr && authErr.reason === 'locked') {
+    ///     // wait for unlock, then retry
+    ///   }
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = "lastAuthError")]
+    pub fn last_auth_error(&self) -> JsValue {
+        let guard = self.inner.borrow();
+        match guard.as_ref().and_then(|c| c.authenticator()) {
+            Some(keystore) => keystore.last_sign_error(),
+            None => JsValue::NULL,
+        }
+    }
+
     /// Creates a new `WebClient` instance with the specified configuration.
     ///
     /// # Arguments
