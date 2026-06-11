@@ -87,15 +87,27 @@ export function MidenProvider({
     }),
     [config]
   );
-  const defaultProver = useMemo(
-    () => resolveTransactionProver(resolvedConfig),
-    [
-      resolvedConfig.prover,
-      resolvedConfig.proverTimeoutMs,
-      resolvedConfig.proverUrls?.devnet,
-      resolvedConfig.proverUrls?.testnet,
-    ]
-  );
+  // Resolving a prover constructs WASM objects (TransactionProver), which
+  // is only safe after the WASM module has initialized. On the lazy
+  // entries no top-level await precedes first render, so resolving in a
+  // render-time useMemo crashes with `__wbindgen_malloc` undefined before
+  // the provider's own init effect ever runs. Resolve as state gated on
+  // `isReady` instead — by then the WebClient exists, so WASM is up.
+  const [defaultProver, setDefaultProver] =
+    useState<ReturnType<typeof resolveTransactionProver>>(null);
+  useEffect(() => {
+    if (!isReady) {
+      setDefaultProver(null);
+      return;
+    }
+    setDefaultProver(resolveTransactionProver(resolvedConfig));
+  }, [
+    isReady,
+    resolvedConfig.prover,
+    resolvedConfig.proverTimeoutMs,
+    resolvedConfig.proverUrls?.devnet,
+    resolvedConfig.proverUrls?.testnet,
+  ]);
 
   // Exposed for advanced consumers who need to serialize custom multi-step
   // operations against the client. Built-in hooks no longer use this since
