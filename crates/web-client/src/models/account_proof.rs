@@ -4,10 +4,9 @@ use alloc::vec::Vec;
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::StorageSlotName;
-use miden_client::asset::Asset as NativeAsset;
+use miden_client::asset::{AccountStorageHeader, Asset as NativeAsset};
 use miden_client::block::BlockNumber;
 use miden_client::rpc::domain::account::{AccountProof as NativeAccountProof, StorageMapEntries};
-use miden_protocol::account::AccountStorageHeader;
 
 use super::account_code::AccountCode;
 use super::account_header::AccountHeader;

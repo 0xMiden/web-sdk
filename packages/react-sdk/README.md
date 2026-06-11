@@ -22,8 +22,6 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 npm install @miden-sdk/react @miden-sdk/miden-sdk
 # or
 pnpm add @miden-sdk/react @miden-sdk/miden-sdk
-# or
-pnpm add @miden-sdk/react @miden-sdk/miden-sdk
 ```
 
 ## Testing
@@ -961,6 +959,92 @@ function SwapForm() {
   return (
     <button onClick={handleSwap} disabled={isLoading}>
       {isLoading ? `Creating Swap (${stage})...` : 'Create Swap Offer'}
+    </button>
+  );
+}
+```
+
+#### `usePswapCreate()`
+
+Create a partial-swap (PSWAP) note. Unlike `useSwap`, a PSWAP can be filled by
+multiple consumers — each fill emits a payback note to the creator and, on a
+partial fill, a remainder PSWAP note carrying the unfilled portion. Use this
+when you want an offer that lives on-chain and can be matched piecemeal.
+
+```tsx
+import { usePswapCreate } from '@miden-sdk/react';
+
+function CreatePswapForm() {
+  const { pswapCreate, isLoading, stage } = usePswapCreate();
+
+  const handleCreate = async () => {
+    await pswapCreate({
+      accountId: '0xmywallet...',
+      offeredFaucetId: '0xtokenA...',
+      offeredAmount: 100n,
+      requestedFaucetId: '0xtokenB...',
+      requestedAmount: 50n,
+      // noteType, paybackNoteType — default 'private'
+    });
+  };
+
+  return (
+    <button onClick={handleCreate} disabled={isLoading}>
+      {isLoading ? `Creating PSWAP (${stage})...` : 'Create PSWAP'}
+    </button>
+  );
+}
+```
+
+#### `usePswapConsume()`
+
+Fill an existing PSWAP note in whole or in part. The consumer supplies
+`fillAmount` of the requested asset and receives a proportional share of the
+offered asset. The `note` field accepts a hex string ID, a `NoteId` object,
+an `InputNoteRecord`, or a `Note` — strings and `NoteId`s are looked up from
+the local store; records and `Note`s are used directly.
+
+```tsx
+import { usePswapConsume } from '@miden-sdk/react';
+
+function FillPswapButton({ accountId, note }: Props) {
+  const { pswapConsume, isLoading, stage } = usePswapConsume();
+
+  const handleFill = async () => {
+    await pswapConsume({
+      accountId,
+      note, // string | NoteId | InputNoteRecord | Note
+      fillAmount: 25n,
+    });
+  };
+
+  return (
+    <button onClick={handleFill} disabled={isLoading}>
+      {isLoading ? stage : 'Fill PSWAP'}
+    </button>
+  );
+}
+```
+
+#### `usePswapCancel()`
+
+Cancel a PSWAP note as its creator and reclaim the unfilled offered asset.
+The submitting account must be the original creator; the WASM builder
+enforces this at request-build time.
+
+```tsx
+import { usePswapCancel } from '@miden-sdk/react';
+
+function CancelPswapButton({ accountId, note }: Props) {
+  const { pswapCancel, isLoading, stage } = usePswapCancel();
+
+  const handleCancel = async () => {
+    await pswapCancel({ accountId, note });
+  };
+
+  return (
+    <button onClick={handleCancel} disabled={isLoading}>
+      {isLoading ? stage : 'Cancel PSWAP'}
     </button>
   );
 }

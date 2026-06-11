@@ -62,6 +62,7 @@ const ciShardProjects = process.env.CI
           "test/new_transactions_send_and_custom.test.ts",
           "test/new_transactions_mint_and_misc.test.ts",
           "test/swap_transactions.test.ts",
+          "test/pswap_transactions.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -102,6 +103,7 @@ const ciShardProjects = process.env.CI
           "test/compile_and_contract.test.ts",
           "test/package.test.ts",
           "test/mockchain.test.ts",
+          "test/no_auth_consume.test.ts",
           "test/miden_array.test.ts",
           "test/miden_client_api.test.ts",
           "test/address.test.ts",
@@ -195,6 +197,7 @@ export default defineConfig({
         // Browser-only variants — napi versions live in *.node.test.ts
         "test/miden_client_api.test.ts",
         "test/compile_and_contract.test.ts",
+        "test/no_auth_consume.test.ts", // uses mockTest (browser-only)
         // Browser-only tests preserved from `next` that use exportStore /
         // importStore / waitForBlocks / isolatedClient (all browser-only).
         "test/*.browser.test.ts",

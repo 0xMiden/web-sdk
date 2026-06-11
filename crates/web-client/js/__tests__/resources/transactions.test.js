@@ -73,6 +73,15 @@ function makeInner(overrides = {}) {
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
+    newPswapCreateTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("pswapCreateRequest"),
+    newPswapConsumeTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("pswapConsumeRequest"),
+    newPswapCancelTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("pswapCancelRequest"),
     getTransactions: vi.fn().mockResolvedValue([]),
     getInputNote: vi
       .fn()
@@ -467,6 +476,116 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("pswapCreate", () => {
+    it("builds pswap create request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.pswapCreate({
+        account: "0xaccHex",
+        offer: { token: "0xofferedToken", amount: 100 },
+        request: { token: "0xwantedToken", amount: 25 },
+        type: "public",
+      });
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        BigInt(100),
+        expect.anything(),
+        BigInt(25),
+        "Public",
+        "Public" // paybackNoteType defaults to type
+      );
+      expect(result.txId).toBeDefined();
+    });
+
+    it("uses paybackType when provided", async () => {
+      const { resource, inner } = makeResource();
+      await resource.pswapCreate({
+        account: "0xaccHex",
+        offer: { token: "0xofferedToken", amount: 100 },
+        request: { token: "0xwantedToken", amount: 25 },
+        type: "public",
+        paybackType: "private",
+      });
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        BigInt(100),
+        expect.anything(),
+        BigInt(25),
+        "Public",
+        "Private"
+      );
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const { resource, inner } = makeResource();
+      const waitSpy = vi
+        .spyOn(resource, "waitFor")
+        .mockResolvedValue(undefined);
+      await resource.pswapCreate({
+        account: "0xaccHex",
+        offer: { token: "0xofferedToken", amount: 100 },
+        request: { token: "0xwantedToken", amount: 25 },
+        type: "public",
+        waitForConfirmation: true,
+      });
+      expect(waitSpy).toHaveBeenCalled();
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalled();
+    });
+  });
+
+  describe("pswapConsume", () => {
+    it("builds pswap consume request and defaults noteFillAmount to 0", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.pswapConsume({
+        account: "0xaccHex",
+        note: "0xpswapNote",
+        fillAmount: 10,
+      });
+      // String note input is resolved via getInputNote(...).toNote().
+      expect(inner.getInputNote).toHaveBeenCalledWith("0xpswapNote");
+      expect(inner.newPswapConsumeTransactionRequest).toHaveBeenCalledWith(
+        "noteFromRecord",
+        expect.anything(),
+        BigInt(10),
+        BigInt(0)
+      );
+      expect(result.txId).toBeDefined();
+    });
+
+    it("forwards an explicit noteFillAmount", async () => {
+      const { resource, inner } = makeResource();
+      await resource.pswapConsume({
+        account: "0xaccHex",
+        note: "0xpswapNote",
+        fillAmount: 10,
+        noteFillAmount: 4n,
+      });
+      expect(inner.newPswapConsumeTransactionRequest).toHaveBeenCalledWith(
+        "noteFromRecord",
+        expect.anything(),
+        BigInt(10),
+        BigInt(4)
+      );
+    });
+  });
+
+  describe("pswapCancel", () => {
+    it("builds pswap cancel request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.pswapCancel({
+        account: "0xaccHex",
+        note: "0xpswapNote",
+      });
+      expect(inner.getInputNote).toHaveBeenCalledWith("0xpswapNote");
+      expect(inner.newPswapCancelTransactionRequest).toHaveBeenCalledWith(
+        "noteFromRecord",
+        expect.anything() // creator account id
+      );
+      expect(result.txId).toBeDefined();
+    });
+  });
+
   describe("preview", () => {
     it("builds send request for preview", async () => {
       const { resource, inner } = makeResource();
@@ -516,6 +635,42 @@ describe("TransactionsResource", () => {
         type: "public",
       });
       expect(inner.newSwapTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds pswap create request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "pswapCreate",
+        account: "0xacc",
+        offer: { token: "0xoffered", amount: 100 },
+        request: { token: "0xwanted", amount: 25 },
+        type: "public",
+      });
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds pswap consume request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "pswapConsume",
+        account: "0xacc",
+        note: "0xpswapNote",
+        fillAmount: 10,
+      });
+      expect(inner.newPswapConsumeTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds pswap cancel request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "pswapCancel",
+        account: "0xacc",
+        note: "0xpswapNote",
+      });
+      expect(inner.newPswapCancelTransactionRequest).toHaveBeenCalled();
       expect(inner.executeForSummary).toHaveBeenCalled();
     });
 

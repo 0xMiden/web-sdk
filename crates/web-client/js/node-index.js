@@ -77,7 +77,6 @@ export const NoteVisibility = Object.freeze({
 export const StorageMode = Object.freeze({
   Public: "public",
   Private: "private",
-  Network: "network",
 });
 
 // ── Re-exports ───────────────────────────────────────────────────────

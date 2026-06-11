@@ -72,10 +72,11 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "newBlockNums")]
     pub new_block_nums: Vec<u32>,
 
-    /// Flattened byte array containing partial blockchain peaks used for merkle tree
-    /// verification.
-    #[wasm_bindgen(js_name = "flattenedPartialBlockChainPeaks")]
-    pub flattened_partial_blockchain_peaks: FlattenedU8Vec,
+    /// Serialized MMR peaks at the new sync height (single set for the whole update).
+    /// Written onto the chain-tip block's `blockHeaders` row (the one whose
+    /// `blockNum` matches `block_num`) and read back by `getCurrentBlockchainPeaks`.
+    #[wasm_bindgen(js_name = "partialBlockchainPeaks")]
+    pub partial_blockchain_peaks: Vec<u8>,
 
     /// For each block in this update, stores a boolean (as u8) indicating whether
     /// that block contains notes relevant to this client. Index i corresponds to
@@ -91,9 +92,10 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "serializedNodes")]
     pub serialized_nodes: Vec<String>,
 
-    /// IDs of note tags that should be removed from the client's local state.
-    #[wasm_bindgen(js_name = "committedNoteIds")]
-    pub committed_note_ids: Vec<String>,
+    /// Details-commitment hex of committed notes whose tracking tags
+    /// (`NoteTagSource::Note`) should be removed from the client's local state.
+    #[wasm_bindgen(js_name = "committedNoteTagSources")]
+    pub committed_note_tag_sources: Vec<String>,
 
     /// Input notes for this state update in serialized form.
     #[wasm_bindgen(js_name = "serializedInputNotes")]

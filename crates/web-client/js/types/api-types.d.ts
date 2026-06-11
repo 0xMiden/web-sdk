@@ -102,16 +102,20 @@ export type NoteVisibility = "public" | "private";
 
 /**
  * User-friendly storage mode constants.
- * Use `StorageMode.Public`, `StorageMode.Private`, or `StorageMode.Network` instead of raw strings.
+ * Use `StorageMode.Public` or `StorageMode.Private` instead of raw strings.
+ *
+ * The `"network"` storage mode was removed in the migration to miden-client
+ * PR #2214 — the 0.15 protocol surface no longer has a separate
+ * network-account flag (network execution is now driven by the calling
+ * surface, not the account's storage mode).
  */
 export declare const StorageMode: {
   readonly Public: "public";
   readonly Private: "private";
-  readonly Network: "network";
 };
 
 /** Union of valid StorageMode string values. */
-export type StorageMode = "public" | "private" | "network";
+export type StorageMode = "public" | "private";
 
 /**
  * Library linking mode for script compilation.
@@ -241,6 +245,8 @@ export interface WalletCreateOptions {
 export interface FaucetCreateOptions {
   /** Use `AccountType.FungibleFaucet` or `AccountType.NonFungibleFaucet`. */
   type: AccountTypeValue;
+  /** Human-readable token name. Defaults to `symbol` when omitted. */
+  name?: string;
   symbol: string;
   decimals: number;
   maxSupply: number | bigint;
@@ -378,6 +384,41 @@ export interface SwapOptions extends TransactionOptions {
   paybackType?: NoteVisibility;
 }
 
+/**
+ * Options for {@link TransactionsResource.pswapCreate}. V1 PSWAP notes carry
+ * no attachment, so there is no `attachment` field.
+ */
+export interface PswapCreateOptions extends TransactionOptions {
+  /** Account that creates the partial-swap (PSWAP) note. */
+  account: AccountRef;
+  /** Fungible asset offered by the creator. */
+  offer: Asset;
+  /** Fungible asset requested in exchange. */
+  request: Asset;
+  /** Visibility of the PSWAP note itself. */
+  type?: NoteVisibility;
+  /** Visibility of the payback note fillers emit to the creator. Defaults to `public`. */
+  paybackType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions extends TransactionOptions {
+  /** Consumer account filling the PSWAP note. */
+  account: AccountRef;
+  /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
+  note: NoteInput;
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
+  fillAmount: number | bigint;
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
+  noteFillAmount?: number | bigint;
+}
+
+export interface PswapCancelOptions extends TransactionOptions {
+  /** Creator account reclaiming the offered asset. */
+  account: AccountRef;
+  /** PSWAP note to cancel — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
+  note: NoteInput;
+}
+
 export interface ExecuteOptions extends TransactionOptions {
   /** Account executing the custom script. */
   account: AccountRef;
@@ -438,6 +479,29 @@ export interface PreviewSwapOptions {
   paybackType?: NoteVisibility;
 }
 
+export interface PreviewPswapCreateOptions {
+  operation: "pswapCreate";
+  account: AccountRef;
+  offer: Asset;
+  request: Asset;
+  type?: NoteVisibility;
+  paybackType?: NoteVisibility;
+}
+
+export interface PreviewPswapConsumeOptions {
+  operation: "pswapConsume";
+  account: AccountRef;
+  note: NoteInput;
+  fillAmount: number | bigint;
+  noteFillAmount?: number | bigint;
+}
+
+export interface PreviewPswapCancelOptions {
+  operation: "pswapCancel";
+  account: AccountRef;
+  note: NoteInput;
+}
+
 export interface PreviewCustomOptions {
   operation: "custom";
   account: AccountRef;
@@ -449,6 +513,9 @@ export type PreviewOptions =
   | PreviewMintOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
+  | PreviewPswapCreateOptions
+  | PreviewPswapConsumeOptions
+  | PreviewPswapCancelOptions
   | PreviewCustomOptions;
 
 /** Status values reported during waitFor polling. */
@@ -655,6 +722,31 @@ export interface TransactionsResource {
    */
   swap(options: SwapOptions): Promise<TransactionSubmitResult>;
   /**
+   * Create a partial-swap (PSWAP) note offering one fungible asset for
+   * another. Unlike `swap`, the resulting note can be filled by multiple
+   * consumers; each fill emits a payback note to the creator and, on a
+   * partial fill, a remainder PSWAP note carrying the unfilled amount.
+   *
+   * @param options - Creator, offered asset, requested asset, and visibility.
+   */
+  pswapCreate(options: PswapCreateOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Consume (fully or partially fill) an existing PSWAP note. The consumer
+   * supplies `fillAmount` of the requested asset and receives a proportional
+   * share of the offered asset. A full fill (`fillAmount` equal to the
+   * note's requested amount) produces only the payback note; a partial fill
+   * also produces a remainder PSWAP note.
+   *
+   * @param options - Consumer account, PSWAP note, and fill amount.
+   */
+  pswapConsume(options: PswapConsumeOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Cancel a PSWAP note as the creator and reclaim the offered asset.
+   *
+   * @param options - Creator account and PSWAP note to cancel.
+   */
+  pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
+  /**
    * Consume all available notes for an account, up to an optional limit.
    * Returns the count of remaining notes for pagination.
    *
@@ -742,8 +834,13 @@ export interface NotesResource {
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
+   * @returns The imported note's id (hex) when the file carries metadata (a
+   *   note id or a full note with proof); for a details-only file, which has no
+   *   note id yet, the note's details commitment (hex) is returned instead.
+   *   In both cases the value is a hex string, not a `NoteId` object — pass it
+   *   to {@link NoteId.fromHex} if a `NoteId` instance is required.
    */
-  import(noteFile: NoteFile): Promise<NoteId>;
+  import(noteFile: NoteFile): Promise<string>;
   /**
    * Export a note to a {@link NoteFile} for transfer or backup.
    *

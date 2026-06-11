@@ -20,6 +20,7 @@ test.describe("get_input_note", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -50,6 +51,7 @@ test.describe("get_input_note", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -194,6 +196,7 @@ test.describe("get_input_note", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -333,6 +336,7 @@ test.describe("get_input_note", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -433,7 +437,8 @@ test.describe("get_input_note", () => {
       const fetchedNote = fetchedNotes[0].note;
       const tag = fetchedNotes[0].metadata.tag();
 
-      const syncInfo = await rpcClient.syncNotes(0, undefined, [tag]);
+      const chainTip = await intClient.getSyncHeight();
+      const syncInfo = await rpcClient.syncNotes(0, chainTip, [tag]);
       const blocks = syncInfo.blocks();
       const syncedNotes = syncInfo.notes();
       const syncedNoteIds = syncedNotes.map((synced) =>
@@ -466,7 +471,7 @@ test.describe("get_input_note", () => {
         syncedNoteIds,
         syncedBlockNoteIds,
         consumedNoteId: createdNoteId,
-        chainTip: syncInfo.chainTip(),
+        chainTip,
         blockTo: syncInfo.blockTo(),
         compatBlockNum: compatBlockHeader?.blockNum(),
         firstBlockNum: blocks[0]?.blockHeader().blockNum(),
@@ -531,6 +536,7 @@ test.describe("get_input_notes", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -656,6 +662,7 @@ test.describe("get_consumable_notes", () => {
         sdk.AccountStorageMode.private(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -762,6 +769,7 @@ test.describe("get_consumable_notes", () => {
         const faucet = await intClient.newFaucet(
           sdk.AccountStorageMode.private(),
           false,
+          "DAG",
           "DAG",
           8,
           sdk.u64(10000000),
@@ -883,6 +891,7 @@ test.describe("get_consumable_notes", () => {
       const senderFaucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -1061,6 +1070,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),
@@ -1252,6 +1262,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),

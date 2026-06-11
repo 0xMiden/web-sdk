@@ -78,6 +78,7 @@ export function useCreateFaucet(): UseCreateFaucetResult {
           const createdFaucet = await client.newFaucet(
             storageMode,
             false, // nonFungible - currently only fungible faucets supported
+            options.tokenName ?? options.tokenSymbol,
             options.tokenSymbol,
             decimals,
             BigInt(options.maxSupply),
@@ -118,15 +119,13 @@ export function useCreateFaucet(): UseCreateFaucetResult {
 }
 
 function getStorageMode(
-  mode: "private" | "public" | "network"
+  mode: "private" | "public"
 ): ReturnType<typeof AccountStorageMode.private> {
   switch (mode) {
     case "private":
       return AccountStorageMode.private();
     case "public":
       return AccountStorageMode.public();
-    case "network":
-      return AccountStorageMode.network();
     default:
       return AccountStorageMode.private();
   }

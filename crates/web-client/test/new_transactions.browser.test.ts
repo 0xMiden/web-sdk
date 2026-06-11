@@ -112,6 +112,7 @@ export const discardedTransaction = async (
       window.AccountStorageMode.private(),
       false,
       "DAG",
+      "DAG",
       8,
       BigInt(10000000),
       window.AuthScheme.AuthRpoFalcon512

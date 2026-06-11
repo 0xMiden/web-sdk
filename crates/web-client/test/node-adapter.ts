@@ -232,6 +232,7 @@ function wrapClient(client: any, storeName?: string): any {
         return (
           mode: any,
           nonFungible: any,
+          name: any,
           symbol: any,
           decimals: any,
           maxSupply: any,
@@ -241,6 +242,7 @@ function wrapClient(client: any, storeName?: string): any {
           target.newFaucet(
             mode,
             nonFungible,
+            name,
             symbol,
             decimals,
             toNum(maxSupply),
@@ -549,9 +551,6 @@ export async function setupNodeGlobals(
       NonFungibleFaucet: "NonFungibleFaucet",
       ImmutableContract: "ImmutableContract",
       MutableContract: "MutableContract",
-      // Also keep the napi enum values for tests that use the low-level API
-      RegularAccountUpdatableCode: sdk.AccountType?.RegularAccountUpdatableCode,
-      RegularAccountImmutableCode: sdk.AccountType?.RegularAccountImmutableCode,
     },
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
