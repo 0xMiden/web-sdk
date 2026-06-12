@@ -1,2 +1,21 @@
-[target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+# NOTE: previously this file held the unconditional MT-specific
+# `[target.wasm32-unknown-unknown].rustflags` (atomics + bulk-memory +
+# mutable-globals target features, --shared-memory + --import-memory linker
+# flags, TLS export flags, max-memory cap, panic=abort, getrandom_backend).
+#
+# Moved out because those flags break the single-threaded ST build:
+# stable cargo's prebuilt rust-std-wasm32 has atomics DISABLED, so any code
+# path using std atomics fails at link time with `atomic operations are not
+# supported in this build` once `+atomics` is on.
+#
+# The MT-only flags are now passed per-invocation by the rollup driver
+# (crates/web-client/rollup.config.js), via `--config
+# target.wasm32-unknown-unknown.rustflags=[...]` in `extraArgs.cargo`. The
+# `cargo +nightly build -Z build-std=std,panic_abort` invocation in the
+# rollup's MT build path picks them up and rebuilds std with our target
+# features active. The ST build invocation passes none of these flags and
+# uses the precompiled stable std.
+#
+# We keep this file present (rather than deleting) as a documentation
+# anchor: anyone adding a new wasm32-wide setting should put it in the
+# rollup driver, not here.
