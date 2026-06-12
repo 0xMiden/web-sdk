@@ -240,6 +240,7 @@ export interface ITag {
   tag: string;
   sourceNoteId?: string;
   sourceAccountId?: string;
+  sourceSubscriptionKey?: string;
 }
 
 export interface IForeignAccountCode {

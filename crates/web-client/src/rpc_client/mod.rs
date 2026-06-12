@@ -247,7 +247,9 @@ impl RpcClient {
     /// the full storage map data with pagination support.
     ///
     /// @param `block_from` - The starting block number.
-    /// @param `block_to` - Optional ending block number. When `undefined`, syncs to chain tip.
+    /// @param `block_to` - Optional ending block number. When `undefined`, the current chain tip
+    ///   is fetched with an extra RPC call and used as the bound (the node rejects values greater
+    ///   than the tip).
     /// @param `account_id` - The account to sync storage maps for.
     #[js_export(js_name = "syncStorageMaps")]
     pub async fn sync_storage_maps(
@@ -258,7 +260,16 @@ impl RpcClient {
     ) -> Result<StorageMapInfo, JsErr> {
         let native_id: miden_client::account::AccountId = account_id.into();
         let block_from = BlockNumber::from(block_from);
-        let block_to = block_to.map(BlockNumber::from);
+        let block_to = if let Some(block_to) = block_to {
+            BlockNumber::from(block_to)
+        } else {
+            let (chain_tip, _) = self
+                .inner
+                .get_block_header_by_number(None, false)
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to fetch chain tip"))?;
+            chain_tip.block_num()
+        };
 
         let info = self
             .inner

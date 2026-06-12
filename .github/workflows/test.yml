@@ -19,10 +19,10 @@ env:
   # against the client manifests as cryptic 'invalid wire type' decode errors
   # on the client side (e.g. Digest fields encoded as bytes vs fixed64), or
   # 'accept header validation failed' if the protocol version differs.
-  # The web-sdk's `next` branch tracks miden-client's `next` (0.15.0 series,
-  # no tagged release yet), so we pin to the exact commit pinned in Cargo.lock
-  # rather than a moving branch ref so cache keys stay stable.
-  MIDEN_CLIENT_REF: 733720a7ce5886a390c848402b61079be1e6aa38
+  # Pinned to the commit of the miden-client v0.15.0 release tag, matching the
+  # miden-client 0.15.0 crates.io dep in Cargo.toml. A commit sha (not the tag
+  # name) keeps cache keys stable.
+  MIDEN_CLIENT_REF: 02a3212b001abad6192e6c8c0c7167076a75280e
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's

@@ -39,6 +39,7 @@ use miden_client::store::{
     NoteFilter,
     OutputNoteRecord,
     PartialBlockchainFilter,
+    SettingMutation,
     Store,
     StoreError,
     TransactionFilter,
@@ -459,6 +460,13 @@ impl Store for IdxdbStore {
 
     async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
         self.list_setting_keys().await
+    }
+
+    async fn apply_settings_mutations(
+        &self,
+        mutations: Vec<SettingMutation>,
+    ) -> Result<(), StoreError> {
+        self.apply_settings_mutations(mutations).await
     }
 }
 
