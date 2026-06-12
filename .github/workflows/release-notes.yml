@@ -1,0 +1,60 @@
+# When a GitHub release is published, replace the (often empty / auto-
+# generated) release body with the matching version section from
+# CHANGELOG.md.
+#
+# - Tag name is normalized: a leading "v" is stripped before matching
+#   against `## <version>` headings in CHANGELOG.md.
+# - If no matching section is found, the workflow logs a warning and
+#   leaves the existing release body untouched (no failure — releases
+#   shouldn't be blocked on missing changelog entries; the changelog
+#   gate at PR time is where that's enforced).
+# - Runs on `published` only, not `created` / `prereleased`, to avoid
+#   stomping over manual edits made between draft and publish.
+
+name: release-notes
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  populate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Extract changelog section for ${{ github.event.release.tag_name }}
+        id: extract
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/extract-changelog-section.sh
+          BODY=$(./scripts/extract-changelog-section.sh "$TAG_NAME" || true)
+          if [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+            echo "::warning::No CHANGELOG.md section found for ${TAG_NAME} — leaving release body untouched."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          # Multiline output via heredoc-style delimiter.
+          {
+            echo "body<<__CHANGELOG_EOF__"
+            printf '%s' "$BODY"
+            echo
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update release body
+        if: steps.extract.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          BODY: ${{ steps.extract.outputs.body }}
+        run: |
+          gh release edit "$TAG_NAME" --notes "$BODY" --repo "${{ github.repository }}"

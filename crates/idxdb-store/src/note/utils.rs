@@ -6,6 +6,7 @@ use miden_client::Word;
 use miden_client::account::AccountId;
 use miden_client::note::{
     NoteAssets,
+    NoteAttachments,
     NoteDetails,
     NoteMetadata,
     NoteRecipient,
@@ -38,10 +39,13 @@ use crate::promise::await_js_value;
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug)]
 pub struct SerializedInputNoteData {
+    #[wasm_bindgen(js_name = "detailsCommitment")]
+    pub details_commitment: String,
     #[wasm_bindgen(js_name = "noteId")]
-    pub note_id: String,
+    pub note_id: Option<String>,
     #[wasm_bindgen(js_name = "noteAssets")]
     pub note_assets: Vec<u8>,
+    pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "serialNumber")]
     pub serial_number: Vec<u8>,
     pub inputs: Vec<u8>,
@@ -70,6 +74,7 @@ pub struct SerializedOutputNoteData {
     pub note_id: String,
     #[wasm_bindgen(js_name = "noteAssets")]
     pub note_assets: Vec<u8>,
+    pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "recipientDigest")]
     pub recipient_digest: String,
     pub metadata: Vec<u8>,
@@ -84,13 +89,27 @@ pub struct SerializedOutputNoteData {
 // ================================================================================================
 
 pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNoteData {
-    let note_id = note.id().to_hex().clone();
+    // The details commitment is the IndexedDB row key. It is always present,
+    // even for partial / metadata-less notes that lack a `NoteId`, so two
+    // distinct partial notes never collide and a partial note that later gains
+    // its `NoteId` updates the same row instead of creating a duplicate.
+    let details_commitment = note.details_commitment().to_hex();
+    // The note id is only known once the note carries metadata; persist it as a
+    // secondary index used for id-based lookups.
+    let note_id = note.id().map(|id| id.to_hex());
     let note_assets = note.assets().to_bytes();
+    // Attachments contribute to the note metadata commitment, so they must be
+    // persisted to faithfully reconstruct a note whose id/nullifier match the
+    // on-chain note (see `parse_input_note_idxdb_object`).
+    let attachments = note.attachments().to_bytes();
 
     let details = note.details();
     let serial_number = details.serial_num().to_bytes();
     let inputs = details.storage().to_bytes();
-    let nullifier = details.nullifier().to_hex();
+    // Nullifier now lives on `InputNoteRecord` (not `NoteDetails`) and is
+    // optional for partial notes; persist as empty string to mirror the
+    // existing not-null column shape.
+    let nullifier = note.nullifier().map(|n| n.to_hex()).unwrap_or_default();
 
     let recipient = details.recipient();
     let note_script: Vec<u8> = recipient.script().to_bytes();
@@ -105,8 +124,10 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     let consumer_account_id = note.consumer_account().map(AccountId::to_hex);
 
     SerializedInputNoteData {
+        details_commitment,
         note_id,
         note_assets,
+        attachments,
         serial_number,
         inputs,
         note_script_root,
@@ -126,8 +147,10 @@ pub async fn upsert_input_note_tx(db_id: &str, note: &InputNoteRecord) -> Result
 
     let promise = idxdb_upsert_input_note(
         db_id,
+        serialized_data.details_commitment,
         serialized_data.note_id,
         serialized_data.note_assets,
+        serialized_data.attachments,
         serialized_data.serial_number,
         serialized_data.inputs,
         serialized_data.note_script_root,
@@ -150,7 +173,7 @@ pub async fn upsert_note_script_tx(
     note_script: &NoteScript,
 ) -> Result<(), StoreError> {
     let note_script_bytes = note_script.to_bytes();
-    let note_script_root = note_script.root().into();
+    let note_script_root = note_script.root().to_string();
 
     let promise = idxdb_upsert_note_script(db_id, note_script_root, note_script_bytes);
     await_js_value(promise, "failed to upsert note script").await?;
@@ -159,8 +182,12 @@ pub async fn upsert_note_script_tx(
 }
 
 pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutputNoteData {
-    let note_id = note.id().to_hex().clone();
+    let note_id = note.id().to_hex();
     let note_assets = note.assets().to_bytes();
+    // Attachments contribute to the note metadata commitment, so they must be
+    // persisted to faithfully reconstruct a note whose id/nullifier match the
+    // on-chain note (see `parse_output_note_idxdb_object`).
+    let attachments = note.attachments().to_bytes();
     let recipient_digest = note.recipient_digest().to_hex();
     let metadata = note.metadata().to_bytes();
 
@@ -172,6 +199,7 @@ pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutput
     SerializedOutputNoteData {
         note_id,
         note_assets,
+        attachments,
         recipient_digest,
         metadata,
         nullifier,
@@ -188,6 +216,7 @@ pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Resu
         db_id,
         serialized_data.note_id,
         serialized_data.note_assets,
+        serialized_data.attachments,
         serialized_data.recipient_digest,
         serialized_data.metadata,
         serialized_data.nullifier,
@@ -199,12 +228,27 @@ pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Resu
     Ok(())
 }
 
+/// Decodes the serialized `NoteAttachments` bytes persisted on a note row.
+///
+/// A row written by this store always carries a serialized `NoteAttachments`
+/// (empty or not). Empty bytes only occur for a row that predates the
+/// attachments column; the 0.14 -> 0.15 store reset normally drops such rows,
+/// but decode them as an empty `NoteAttachments` rather than erroring so a
+/// stale row never makes a note permanently unreadable.
+fn decode_attachments(bytes: &[u8]) -> Result<NoteAttachments, StoreError> {
+    if bytes.is_empty() {
+        return Ok(NoteAttachments::default());
+    }
+    Ok(NoteAttachments::read_from_bytes(bytes)?)
+}
+
 pub fn parse_input_note_idxdb_object(
     note_idxdb: InputNoteIdxdbObject,
 ) -> Result<InputNoteRecord, StoreError> {
     // Merge the info that comes from the input notes table and the notes script table
     let InputNoteIdxdbObject {
         assets,
+        attachments,
         serial_number,
         inputs,
         serialized_note_script,
@@ -220,13 +264,16 @@ pub fn parse_input_note_idxdb_object(
     let recipient = NoteRecipient::new(serial_number, script, inputs);
 
     let details = NoteDetails::new(assets, recipient);
+    // Attachments feed the note metadata commitment, so the persisted bytes are
+    // required to reconstruct a record whose id/nullifier match the on-chain note.
+    let attachments = decode_attachments(&attachments)?;
 
     let state = InputNoteState::read_from_bytes(&state)?;
     let created_at = created_at
         .parse::<u64>()
         .map_err(|_| StoreError::QueryError("Failed to parse created_at timestamp".to_string()))?;
 
-    Ok(InputNoteRecord::new(details, Some(created_at), state))
+    Ok(InputNoteRecord::new(details, attachments, Some(created_at), state))
 }
 
 pub fn parse_output_note_idxdb_object(
@@ -236,6 +283,9 @@ pub fn parse_output_note_idxdb_object(
     let note_assets = NoteAssets::read_from_bytes(&note_idxdb.assets)?;
     let recipient = Word::try_from(note_idxdb.recipient_digest)?;
     let state = OutputNoteState::read_from_bytes(&note_idxdb.state)?;
+    // Attachments feed the note metadata commitment, so the persisted bytes are
+    // required to reconstruct a record whose id/nullifier match the on-chain note.
+    let attachments = decode_attachments(&note_idxdb.attachments)?;
 
     Ok(OutputNoteRecord::new(
         recipient,
@@ -243,6 +293,7 @@ pub fn parse_output_note_idxdb_object(
         note_metadata,
         state,
         note_idxdb.expected_height.into(),
+        attachments,
     ))
 }
 

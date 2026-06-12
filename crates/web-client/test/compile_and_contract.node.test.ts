@@ -349,7 +349,7 @@ test.describe("compile.noteScript()", () => {
 // ════════════════════════════════════════════════════════════════
 
 test.describe("accounts.create() — ImmutableContract / MutableContract", () => {
-  test("ImmutableContract: isUpdatable=false, isPublic=true, isRegularAccount=true", async ({
+  test("ImmutableContract: isPublic=true, isRegularAccount=true", async ({
     sdk,
   }) => {
     const MidenClient = await createMidenClient(sdk);
@@ -375,12 +375,13 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
     expect(account.isFaucet()).toBe(false);
     expect(account.isRegularAccount()).toBe(true);
-    expect(account.isUpdatable()).toBe(false);
     expect(account.isPublic()).toBe(true);
     expect(account.isNew()).toBe(true);
   });
 
-  test("MutableContract: isUpdatable=true, isPublic=true", async ({ sdk }) => {
+  test("MutableContract: isPublic=true, isRegularAccount=true", async ({
+    sdk,
+  }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
     const client = await MidenClient.createMock();
@@ -402,7 +403,6 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
       components: [component],
     });
 
-    expect(account.isUpdatable()).toBe(true);
     expect(account.isPublic()).toBe(true);
     expect(account.isRegularAccount()).toBe(true);
   });
@@ -497,7 +497,6 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
     const authComp =
       sdk.AccountComponent.createAuthComponentFromSecretKey(auth2);
     const built = new sdk.AccountBuilder(seed)
-      .accountType(2 /* RegularAccountImmutableCode */)
       .storageMode(sdk.AccountStorageMode.public())
       .withAuthComponent(authComp)
       .withComponent(component2)

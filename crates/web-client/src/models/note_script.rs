@@ -1,7 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::PrettyPrint;
-use miden_client::note::NoteScript as NativeNoteScript;
-use miden_standards::note::StandardNote;
+use miden_client::note::{NoteScript as NativeNoteScript, StandardNote};
 
 use super::word::Word;
 use crate::js_error_with_context;
@@ -53,7 +52,7 @@ impl NoteScript {
 
     /// Returns the MAST root of this script.
     pub fn root(&self) -> Word {
-        self.0.root().into()
+        miden_client::Word::from(self.0.root()).into()
     }
 
     /// Creates a `NoteScript` from the given `Package`.

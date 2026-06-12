@@ -9,6 +9,7 @@ test.describe("basic fungible faucet", () => {
       const newFaucet = await client.newFaucet(
         sdk.AccountStorageMode.tryFromStr("public"),
         false,
+        "DAG Token",
         "DAG",
         8,
         sdk.u64(10000000),

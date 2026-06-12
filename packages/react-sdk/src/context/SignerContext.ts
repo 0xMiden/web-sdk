@@ -27,7 +27,7 @@ export type SignCallback = (
  * @param pubKey - Public key commitment bytes
  * @returns Promise resolving to the secret key bytes
  */
-export type GetKeyCallback = (pubKey: Uint8Array) => Promise<Uint8Array>;
+type GetKeyCallback = (pubKey: Uint8Array) => Promise<Uint8Array>;
 
 /**
  * Insert-key callback for WebClient.createClientWithExternalKeystore.
@@ -36,10 +36,7 @@ export type GetKeyCallback = (pubKey: Uint8Array) => Promise<Uint8Array>;
  * @param pubKey - Public key commitment bytes
  * @param secretKey - Secret key bytes to store
  */
-export type InsertKeyCallback = (
-  pubKey: Uint8Array,
-  secretKey: Uint8Array
-) => void;
+type InsertKeyCallback = (pubKey: Uint8Array, secretKey: Uint8Array) => void;
 
 /**
  * Account type for signer accounts.

@@ -30,7 +30,7 @@ test.describe("get_account tests", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const nonExistingAccountId = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x69817bcc6fb9f99127c2245f6979c5"
       );
 
       const retrieved = await client.getAccount(nonExistingAccountId);
@@ -138,7 +138,7 @@ test.describe("account public commitments", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const accountId = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x69817bcc6fb9f99127c2245f6979c5"
       );
 
       const sk1 = sdk.AuthSecretKey.ecdsaWithRNG(null);
@@ -179,7 +179,7 @@ test.describe("account public commitments", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const accountId = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x69817bcc6fb9f99127c2245f6979c5"
       );
       let commitmentsLength;
       try {
@@ -217,7 +217,7 @@ test.describe("account public commitments", () => {
   }) => {
     const result = await run(async ({ client, sdk }) => {
       const accountId1 = sdk.AccountId.fromHex(
-        "0x69817bcc6fb9f99027c2245f6979c5"
+        "0x69817bcc6fb9f99127c2245f6979c5"
       );
 
       const sk1 = sdk.AuthSecretKey.ecdsaWithRNG(null);
@@ -230,7 +230,7 @@ test.describe("account public commitments", () => {
         await client.keystore.getCommitments(accountId1);
 
       const accountId2 = sdk.AccountId.fromHex(
-        "0x79817bcc6fb9f99027c2245f6979ef"
+        "0x79817bcc6fb9f99127c2245f6979ef"
       );
 
       const sk3 = sdk.AuthSecretKey.rpoFalconWithRNG(null);
@@ -362,6 +362,7 @@ test.describe("getAccountByKeyCommitment tests", () => {
       const faucet = await client.newFaucet(
         sdk.AccountStorageMode.private(),
         false,
+        "TST",
         "TST",
         8,
         sdk.u64(10000000),

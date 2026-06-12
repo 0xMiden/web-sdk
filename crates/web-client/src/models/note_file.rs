@@ -37,13 +37,18 @@ impl NoteFile {
         }
     }
 
-    /// Returns the note ID for any `NoteFile` variant.
+    /// Returns the note ID when the file carries one.
+    ///
+    /// Migration note (miden-client PR #2214): `NoteDetails::id()` was
+    /// removed (computing the ID now requires `NoteMetadata`), so the
+    /// `NoteDetails`-only variant cannot synthesize one without extra
+    /// information. Returns `None` in that case.
     #[js_export(js_name = "noteId")]
-    pub fn note_id(&self) -> NoteId {
+    pub fn note_id(&self) -> Option<NoteId> {
         match &self.inner {
-            NativeNoteFile::NoteId(note_id) => (*note_id).into(),
-            NativeNoteFile::NoteDetails { details, .. } => details.id().into(),
-            NativeNoteFile::NoteWithProof(note, _) => note.id().into(),
+            NativeNoteFile::NoteId(note_id) => Some((*note_id).into()),
+            NativeNoteFile::NoteWithProof(note, _) => Some(note.id().into()),
+            NativeNoteFile::NoteDetails { .. } => None,
         }
     }
 
@@ -92,11 +97,14 @@ impl NoteFile {
     }
 
     /// Returns the note nullifier when present.
+    ///
+    /// Migration note (miden-client PR #2214): `NoteDetails::nullifier()`
+    /// was removed (the nullifier moved onto `InputNoteRecord` and is
+    /// optional there), so the `NoteDetails`-only variant returns `None`.
     pub fn nullifier(&self) -> Option<String> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { details, .. } => Some(details.nullifier().to_hex()),
             NativeNoteFile::NoteWithProof(note, _) => Some(note.nullifier().to_hex()),
-            NativeNoteFile::NoteId(_) => None,
+            NativeNoteFile::NoteDetails { .. } | NativeNoteFile::NoteId(_) => None,
         }
     }
 

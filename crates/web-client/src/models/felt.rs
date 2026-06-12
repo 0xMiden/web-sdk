@@ -2,7 +2,7 @@ use js_export_macro::js_export;
 use miden_client::Felt as NativeFelt;
 
 use crate::models::miden_arrays::FeltArray;
-use crate::platform::{js_u64_to_u64, u64_to_js_u64};
+use crate::platform::{JsErr, from_str_err, js_u64_to_u64, u64_to_js_u64};
 
 /// Field element wrapper exposed to JavaScript.
 #[derive(Clone, Copy)]
@@ -12,9 +12,14 @@ pub struct Felt(NativeFelt);
 #[js_export]
 impl Felt {
     /// Creates a new field element.
+    ///
+    /// Returns an error if `value` is outside the field's representable
+    /// range (`Felt::new` is fallible on the 0.15 protocol surface).
     #[js_export(constructor)]
-    pub fn new(value: JsU64) -> Felt {
-        Felt(NativeFelt::new(js_u64_to_u64(value)))
+    pub fn new(value: JsU64) -> Result<Felt, JsErr> {
+        NativeFelt::new(js_u64_to_u64(value))
+            .map(Felt)
+            .map_err(|err| from_str_err(&format!("invalid Felt value: {err}")))
     }
 
     /// Returns the integer representation of the field element.
@@ -63,7 +68,7 @@ impl From<&Felt> for NativeFelt {
 
 /// Converts a `FeltArray` reference to a Vec of native Felt values.
 pub(crate) fn felt_array_to_native_vec(felt_array: &FeltArray) -> Vec<NativeFelt> {
-    Vec::from(felt_array).into_iter().map(Into::into).collect()
+    felt_array.iter().map(Into::into).collect()
 }
 
 impl_napi_from_value!(Felt);

@@ -7,6 +7,8 @@
  * Key adaptations:
  * - BigInt → Number for JsU64 params (napi uses f64, browser uses BigInt)
  * - syncState() → syncStateImpl()
+ * - syncChain() → syncChainImpl()
+ * - syncNoteTransport() → syncNoteTransportImpl()
  * - createMockClient() with no args → createMockClient(dbPath, keystorePath, ...)
  * - Fake page.evaluate() that runs callbacks directly
  */
@@ -116,7 +118,7 @@ function initSdk(): any {
   return rawSdk;
 }
 
-export const sdk = new Proxy(
+const sdk = new Proxy(
   {},
   {
     get(_target, prop) {
@@ -194,9 +196,13 @@ function wrapClient(client: any, storeName?: string): any {
       if (prop === "syncState") {
         return (...args: any[]) => target.syncStateImpl(...args);
       }
-      // syncStateWithTimeout — just calls syncState (no browser lock coordination needed)
-      if (prop === "syncStateWithTimeout") {
-        return (_timeoutMs?: number) => target.syncStateImpl();
+      // syncChain → syncChainImpl
+      if (prop === "syncChain") {
+        return (...args: any[]) => target.syncChainImpl(...args);
+      }
+      // syncNoteTransport → syncNoteTransportImpl
+      if (prop === "syncNoteTransport") {
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       }
       // storeName — used by MidenClient for lock coordination
       if (prop === "storeName") {
@@ -226,6 +232,7 @@ function wrapClient(client: any, storeName?: string): any {
         return (
           mode: any,
           nonFungible: any,
+          name: any,
           symbol: any,
           decimals: any,
           maxSupply: any,
@@ -235,6 +242,7 @@ function wrapClient(client: any, storeName?: string): any {
           target.newFaucet(
             mode,
             nonFungible,
+            name,
             symbol,
             decimals,
             toNum(maxSupply),
@@ -323,7 +331,7 @@ function tmpTestDir(): string {
 /**
  * Matches the browser's `window.MockWasmWebClient` interface.
  */
-export const MockWasmWebClient = {
+const MockWasmWebClient = {
   createClient: async (
     seed?: any,
     serializedMockChain?: any,
@@ -543,9 +551,6 @@ export async function setupNodeGlobals(
       NonFungibleFaucet: "NonFungibleFaucet",
       ImmutableContract: "ImmutableContract",
       MutableContract: "MutableContract",
-      // Also keep the napi enum values for tests that use the low-level API
-      RegularAccountUpdatableCode: sdk.AccountType?.RegularAccountUpdatableCode,
-      RegularAccountImmutableCode: sdk.AccountType?.RegularAccountImmutableCode,
     },
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),

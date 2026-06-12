@@ -104,8 +104,10 @@ interface FlattenedU8Vec {
 }
 
 interface SerializedInputNoteData {
-  noteId: string;
+  detailsCommitment: string;
+  noteId?: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   noteScriptRoot: string;
@@ -122,6 +124,7 @@ interface SerializedInputNoteData {
 interface SerializedOutputNoteData {
   noteId: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
   nullifier?: string;
@@ -157,12 +160,14 @@ interface JsAccountUpdate {
 interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
-  flattenedPartialBlockChainPeaks: FlattenedU8Vec;
+  /** Serialized MMR peaks at the new sync height. A single set per sync update,
+   *  written onto the chain-tip block's blockHeaders row. */
+  partialBlockchainPeaks: Uint8Array;
   newBlockNums: number[];
   blockHasRelevantNotes: Uint8Array;
   serializedNodeIds: string[];
   serializedNodes: string[];
-  committedNoteIds: string[];
+  committedNoteTagSources: string[];
   serializedInputNotes: SerializedInputNoteData[];
   serializedOutputNotes: SerializedOutputNoteData[];
   accountUpdates: JsAccountUpdate[];
@@ -177,12 +182,12 @@ export async function applyStateSync(
   const {
     blockNum,
     flattenedNewBlockHeaders,
-    flattenedPartialBlockChainPeaks,
+    partialBlockchainPeaks,
     newBlockNums,
     blockHasRelevantNotes,
     serializedNodeIds,
     serializedNodes,
-    committedNoteIds,
+    committedNoteTagSources,
     serializedInputNotes,
     serializedOutputNotes,
     accountUpdates,
@@ -190,9 +195,6 @@ export async function applyStateSync(
   } = stateUpdate;
 
   const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
-  const partialBlockchainPeaks = reconstructFlattenedVec(
-    flattenedPartialBlockChainPeaks
-  );
 
   const tablesToAccess = [
     db.stateSync,
@@ -220,8 +222,10 @@ export async function applyStateSync(
         serializedInputNotes.map((note) => {
           return upsertInputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.serialNumber,
             note.inputs,
             note.noteScriptRoot,
@@ -242,6 +246,7 @@ export async function applyStateSync(
             dbId,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.recipientDigest,
             note.metadata,
             note.nullifier,
@@ -297,15 +302,23 @@ export async function applyStateSync(
       ),
       updateSyncHeight(tx, blockNum),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
-      updateCommittedNoteTags(tx, committedNoteIds),
+      updateCommittedNoteTags(tx, committedNoteTagSources),
       Promise.all(
         newBlockHeaders.map((newBlockHeader, i) => {
+          // Peaks are attached only to the chain-tip block (the one whose
+          // blockNum matches the new sync height). That row is always
+          // present in this iteration because `partial_blockchain_updates`
+          // includes the chain tip header by construction.
+          // TODO: potentially move this to be under the sync state info table
+          // as currently done in SQLite
+          const peaks =
+            newBlockNums[i] === blockNum ? partialBlockchainPeaks : undefined;
           return updateBlockHeader(
             tx,
             newBlockNums[i],
             newBlockHeader,
-            partialBlockchainPeaks[i],
-            blockHasRelevantNotes[i] == 1
+            blockHasRelevantNotes[i] == 1,
+            peaks
           );
         })
       ),
@@ -313,9 +326,12 @@ export async function applyStateSync(
   });
 }
 
+/**
+ * Advances `stateSync.blockNum` only when moving forward. Mirrors SQLite's
+ * `UPDATE blockchain_checkpoint ... WHERE block_num < ?`.
+ */
 async function updateSyncHeight(tx: Transaction, blockNum: number) {
   try {
-    // Only update if moving forward to prevent race conditions
     const current = await (
       tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
     ).stateSync.get(1);
@@ -335,15 +351,15 @@ async function updateBlockHeader(
   tx: Transaction,
   blockNum: number,
   blockHeader: Uint8Array,
-  partialBlockchainPeaks: Uint8Array,
-  hasClientNotes: boolean
+  hasClientNotes: boolean,
+  partialBlockchainPeaks: Uint8Array | undefined
 ) {
   try {
-    const data = {
+    const data: IBlockHeader = {
       blockNum: blockNum,
       header: blockHeader,
-      partialBlockchainPeaks,
       hasClientNotes: hasClientNotes.toString(),
+      ...(partialBlockchainPeaks !== undefined && { partialBlockchainPeaks }),
     };
 
     const existingBlockHeader = await (
@@ -392,14 +408,14 @@ async function updatePartialBlockchainNodes(
 
 async function updateCommittedNoteTags(
   tx: Transaction,
-  inputNoteIds: string[]
+  committedNoteTagSources: string[]
 ) {
   try {
-    for (let i = 0; i < inputNoteIds.length; i++) {
-      const noteId = inputNoteIds[i];
+    for (let i = 0; i < committedNoteTagSources.length; i++) {
+      const tagSource = committedNoteTagSources[i];
       await (tx as Transaction & { tags: Dexie.Table }).tags
         .where("sourceNoteId")
-        .equals(noteId)
+        .equals(tagSource)
         .delete();
     }
   } catch (error) {

@@ -280,19 +280,13 @@ describe("MidenStore", () => {
   });
 
   describe("selector hooks", () => {
-    it("should provide useClient selector", () => {
+    it("setClient stores the client and flips isReady", () => {
       const mockClient = createMockWebClient();
-      useMidenStore.getState().setClient(mockClient as any);
-
-      // Test via getState (since we can't use React hooks directly in tests)
-      expect(useMidenStore.getState().client).toBe(mockClient);
-    });
-
-    it("should provide useIsReady selector", () => {
       expect(useMidenStore.getState().isReady).toBe(false);
 
-      useMidenStore.getState().setClient(createMockWebClient() as any);
+      useMidenStore.getState().setClient(mockClient as any);
 
+      expect(useMidenStore.getState().client).toBe(mockClient);
       expect(useMidenStore.getState().isReady).toBe(true);
     });
 

@@ -12,8 +12,8 @@ import type {
  * Creates a mock AccountStorageMode.
  * Matches the SDK's AccountStorageMode interface.
  */
-export const createMockAccountStorageMode = (
-  mode: "private" | "public" | "network" = "public"
+const createMockAccountStorageMode = (
+  mode: "private" | "public" = "public"
 ) => ({
   toString: vi.fn(() => mode),
 });
@@ -37,7 +37,7 @@ export function createMockSignerAccountConfig(
  * Creates a mock sign callback function.
  * Returns a mock 67-byte signature (typical ECDSA signature size).
  */
-export function createMockSignCallback(): SignCallback {
+function createMockSignCallback(): SignCallback {
   return vi.fn().mockResolvedValue(new Uint8Array(67).fill(0xab));
 }
 
