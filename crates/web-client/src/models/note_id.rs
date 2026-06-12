@@ -1,8 +1,6 @@
 use js_export_macro::js_export;
-use miden_client::note::{NoteId as NativeNoteId, NoteMetadata as NativeNoteMetadata};
-use miden_protocol::note::NoteDetailsCommitment;
+use miden_client::note::NoteId as NativeNoteId;
 
-use super::note_metadata::NoteMetadata;
 use super::word::Word;
 use crate::js_error_with_context;
 use crate::platform::JsErr;
@@ -11,28 +9,29 @@ use crate::platform::JsErr;
 ///
 /// Note ID is computed as:
 ///
-/// > `hash(recipient, asset_commitment)`
+/// > `hash(details_commitment, metadata_commitment)`
 ///
-/// where `recipient` is defined as:
-///
-/// > `hash(hash(hash(serial_num, ZERO), script_root), input_commitment)`
-///
-/// This achieves the following properties:
-/// - Every note can be reduced to a single unique ID.
-/// - To compute a note ID, we do not need to know the note's `serial_num`. Knowing the hash of the
-///   `serial_num` (as well as script root, input commitment, and note assets) is sufficient.
+/// On the 0.15 protocol surface the upstream `NoteId::new` signature
+/// changed from `(recipient_digest, asset_commitment)` to
+/// `(NoteDetailsCommitment, &NoteMetadata)`. The JS API exposes
+/// `NoteId.fromRaw(word)` for constructing an ID from a pre-computed
+/// 32-byte commitment word (the previous two-Word constructor has no
+/// 0.15 equivalent).
 #[derive(Clone, Copy)]
 #[js_export]
 pub struct NoteId(NativeNoteId);
 
 #[js_export]
 impl NoteId {
-    /// Builds a note ID from the note details commitment and metadata.
-    #[js_export(constructor)]
-    pub fn new(details_commitment: &Word, metadata: &NoteMetadata) -> NoteId {
-        let details_commitment = NoteDetailsCommitment::from_raw(details_commitment.into());
-        let native_metadata: NativeNoteMetadata = metadata.into();
-        NoteId(NativeNoteId::new(details_commitment, &native_metadata))
+    /// Builds a note ID from its raw commitment word.
+    ///
+    /// `word` must already encode the final note-ID commitment — the
+    /// metadata-mixing that the previous 2-Word constructor did is no
+    /// longer part of the protocol surface.
+    #[js_export(js_name = "fromRaw")]
+    pub fn from_raw(word: &Word) -> NoteId {
+        let native_word: miden_client::Word = word.into();
+        NoteId(NativeNoteId::from_raw(native_word))
     }
 
     /// Parses a note ID from its hex encoding.

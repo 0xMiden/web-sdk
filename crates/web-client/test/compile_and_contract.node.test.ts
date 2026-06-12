@@ -349,7 +349,9 @@ test.describe("compile.noteScript()", () => {
 // ════════════════════════════════════════════════════════════════
 
 test.describe("accounts.create() — ImmutableContract / MutableContract", () => {
-  test("ImmutableContract: isPublic=true, isNew=true", async ({ sdk }) => {
+  test("ImmutableContract: isPublic=true, isRegularAccount=true", async ({
+    sdk,
+  }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
     const client = await MidenClient.createMock();
@@ -371,11 +373,15 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
       components: [component],
     });
 
+    expect(account.isFaucet()).toBe(false);
+    expect(account.isRegularAccount()).toBe(true);
     expect(account.isPublic()).toBe(true);
     expect(account.isNew()).toBe(true);
   });
 
-  test("MutableContract: isPublic=true", async ({ sdk }) => {
+  test("MutableContract: isPublic=true, isRegularAccount=true", async ({
+    sdk,
+  }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
     const client = await MidenClient.createMock();
@@ -398,6 +404,7 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
     });
 
     expect(account.isPublic()).toBe(true);
+    expect(account.isRegularAccount()).toBe(true);
   });
 
   test("ImmutableContract defaults to public storage when storage is omitted", async ({

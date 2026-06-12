@@ -13,25 +13,30 @@ pub struct Word(NativeWord);
 impl Word {
     /// Creates a word from four numeric values.
     ///
-    /// Throws if any value does not fit in the base field.
+    /// Each input must be a canonical field element, i.e. strictly less than the field modulus.
+    /// `Felt::new` (now fallible on the 0.15 surface) errors out on inputs at or beyond the
+    /// modulus; the error is surfaced to JS.
     #[js_export(constructor)]
     pub fn new(u64_vec: Vec<JsU64>) -> Result<Word, JsErr> {
-        assert!(u64_vec.len() == 4, "Word requires exactly 4 elements, got {}", u64_vec.len());
+        if u64_vec.len() != 4 {
+            return Err(from_str_err(&format!(
+                "Word requires exactly 4 elements, got {}",
+                u64_vec.len()
+            )));
+        }
         let fixed_array_u64: [u64; 4] = u64_vec
             .into_iter()
             .map(js_u64_to_u64)
             .collect::<Vec<u64>>()
             .try_into()
-            .expect("Word requires exactly 4 elements");
+            .expect("length checked above");
         let native_felt_vec: [NativeFelt; 4] = fixed_array_u64
             .iter()
-            .map(|&v| {
-                NativeFelt::new(v)
-                    .map_err(|_| from_str_err("Word element does not fit in the base field"))
-            })
-            .collect::<Result<Vec<NativeFelt>, JsErr>>()?
+            .map(|&v| NativeFelt::new(v))
+            .collect::<Result<Vec<NativeFelt>, _>>()
+            .map_err(|err| from_str_err(&format!("invalid field element: {err}")))?
             .try_into()
-            .expect("Word requires exactly 4 field elements");
+            .expect("length checked above");
         Ok(Word(native_felt_vec.into()))
     }
 

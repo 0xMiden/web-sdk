@@ -396,14 +396,21 @@ export const swapTransaction = async (
         consumeTransaction1Result.executedTransaction().id().toHex()
       );
 
-      // Consuming payback note for account A
-
-      let consumablePaybackNotes = await client.getConsumableNotes(undefined);
-      if (consumablePaybackNotes.length === 0) {
-        throw new Error(`Payback note not found`);
+      // Consuming payback note for account A. Account B's consume of the swap
+      // note emits the payback note; derive its id from that transaction's
+      // output notes (NoteDetails no longer exposes id()).
+      noteId = consumeTransaction1Result
+        .executedTransaction()
+        .outputNotes()
+        .notes()[0]
+        .id()
+        .toString();
+      inputNoteRecord = await client.getInputNote(noteId);
+      if (!inputNoteRecord) {
+        throw new Error(`Note with ID ${noteId} not found`);
       }
 
-      note = consumablePaybackNotes[0].inputNoteRecord().toNote();
+      note = inputNoteRecord.toNote();
       let txRequest2 = client.newConsumeTransactionRequest([note]);
 
       let consumeTransaction2Result =
@@ -466,6 +473,8 @@ export interface NewAccountTestResult {
   vaultCommitment: string;
   storageCommitment: string;
   codeCommitment: string;
+  isFaucet: boolean;
+  isRegularAccount: boolean;
   isPublic: boolean;
   isPrivate: boolean;
   isIdPublic: boolean;
@@ -533,6 +542,8 @@ export const createNewWallet = async (
         vaultCommitment: newWallet.vault().root().toHex(),
         storageCommitment: newWallet.storage().commitment().toHex(),
         codeCommitment: newWallet.code().commitment().toHex(),
+        isFaucet: newWallet.isFaucet(),
+        isRegularAccount: newWallet.isRegularAccount(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
         isIdPublic: newWallet.id().isPublic(),
@@ -586,6 +597,8 @@ export const createNewFaucet = async (
         vaultCommitment: newFaucet.vault().root().toHex(),
         storageCommitment: newFaucet.storage().commitment().toHex(),
         codeCommitment: newFaucet.code().commitment().toHex(),
+        isFaucet: newFaucet.isFaucet(),
+        isRegularAccount: newFaucet.isRegularAccount(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
         isIdPublic: newFaucet.id().isPublic(),

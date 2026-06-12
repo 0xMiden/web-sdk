@@ -43,7 +43,12 @@ impl InputNote {
         self.0.note().into()
     }
 
-    /// Returns the commitment to the note ID and metadata.
+    /// Returns the commitment to the note (its ID).
+    ///
+    /// Migration note (miden-client PR #2214): `Note::commitment()` was
+    /// removed on the 0.15 surface — the note ID *is* the commitment (it
+    /// hashes details + metadata). Return the underlying `NoteId` as a
+    /// `Word` so the JS API contract is unchanged.
     pub fn commitment(&self) -> Word {
         self.0.note().id().as_word().into()
     }

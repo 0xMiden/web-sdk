@@ -50,11 +50,8 @@ impl CommittedNote {
     }
 
     /// Returns the note metadata.
-    ///
-    /// If only metadata headers are available, the returned metadata contains
-    /// the sender, note type, and tag without attachment payload.
     pub fn metadata(&self) -> NoteMetadata {
-        (*self.0.metadata()).into()
+        self.0.metadata().into()
     }
 
     /// Returns the inclusion proof for this note.

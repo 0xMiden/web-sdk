@@ -154,6 +154,16 @@ describe("initializeSignerAccount", () => {
       );
     });
 
+    it("does not forward accountType to the builder (0.15 collapses it into storageMode)", async () => {
+      const config = createMockSignerAccountConfig({
+        accountType: "RegularAccountUpdatableCode",
+      });
+
+      await initializeSignerAccount(mockClient, config);
+
+      expect(mockBuilder.accountType).not.toHaveBeenCalled();
+    });
+
     it("should set storage mode from config", async () => {
       const mockStorageMode = { toString: () => "public" };
       const config = createMockSignerAccountConfig({
@@ -186,16 +196,6 @@ describe("initializeSignerAccount", () => {
     it("should try importAccountById for public accounts", async () => {
       const config = createMockSignerAccountConfig({
         storageMode: { toString: () => "public" } as any,
-      });
-
-      await initializeSignerAccount(mockClient, config);
-
-      expect(mockClient.importAccountById).toHaveBeenCalledWith(mockAccountId);
-    });
-
-    it("should try importAccountById for network accounts", async () => {
-      const config = createMockSignerAccountConfig({
-        storageMode: { toString: () => "network" } as any,
       });
 
       await initializeSignerAccount(mockClient, config);
@@ -413,9 +413,11 @@ describe("initializeSignerAccount", () => {
       expect(mockClient.syncState).toHaveBeenCalledTimes(2);
     });
 
-    it("swallows 'already being tracked' on import in the fast path", async () => {
+    it("tolerates the ACCOUNT_ALREADY_TRACKED error code in the fast path", async () => {
       mockClient.importAccountById.mockRejectedValueOnce(
-        new Error("account 0x123 is already being tracked")
+        Object.assign(new Error("account 0x123 is already being tracked"), {
+          code: "ACCOUNT_ALREADY_TRACKED",
+        })
       );
       const config = createMockSignerAccountConfig({
         importAccountId: "0xalreadytracked",
@@ -427,16 +429,40 @@ describe("initializeSignerAccount", () => {
       expect(mockClient.syncState).toHaveBeenCalledTimes(2);
     });
 
-    it("rethrows non-'already tracked' errors in the fast path", async () => {
+    it("tolerates a fresh account (ACCOUNT_NOT_FOUND_ON_CHAIN) so the provider doesn't error", async () => {
+      // A brand-new wallet's account isn't registered on-chain yet, so
+      // importAccountById rejects with this code. This must NOT throw — otherwise
+      // MidenProvider errors out and the user can't build the first transaction
+      // that would register the account (a catch-22). Detection is by the typed
+      // `code`, not the message text (deliberately generic here to prove that).
       mockClient.importAccountById.mockRejectedValueOnce(
-        new Error("permission denied")
+        Object.assign(new Error("opaque wasm failure"), {
+          code: "ACCOUNT_NOT_FOUND_ON_CHAIN",
+        })
+      );
+      const config = createMockSignerAccountConfig({
+        importAccountId: "0xfreshaccount",
+      });
+
+      const result = await initializeSignerAccount(mockClient, config);
+
+      expect(result).toBe("0xfreshaccount");
+      expect(AccountBuilder).not.toHaveBeenCalled();
+      expect(mockClient.syncState).toHaveBeenCalledTimes(2);
+    });
+
+    it("rethrows errors without a tolerated code in the fast path", async () => {
+      // No `code` — even a message mentioning the network must rethrow, since
+      // detection is code-based, not message-based.
+      mockClient.importAccountById.mockRejectedValueOnce(
+        new Error("account 0xboom not found on the network")
       );
       const config = createMockSignerAccountConfig({
         importAccountId: "0xboom",
       });
 
       await expect(initializeSignerAccount(mockClient, config)).rejects.toThrow(
-        "permission denied"
+        "not found on the network"
       );
     });
   });

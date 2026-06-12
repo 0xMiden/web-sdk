@@ -72,7 +72,7 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
 }
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, partialBlockchainPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteIds, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, partialBlockchainPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.stateSync,
@@ -125,7 +125,7 @@ export async function applyStateSync(dbId, stateUpdate) {
             }))),
             updateSyncHeight(tx, blockNum),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
-            updateCommittedNoteTags(tx, committedNoteIds),
+            updateCommittedNoteTags(tx, committedNoteTagSources),
             Promise.all(newBlockHeaders.map((newBlockHeader, i) => {
                 // Peaks are attached only to the chain-tip block (the one whose
                 // blockNum matches the new sync height). That row is always
@@ -193,13 +193,13 @@ async function updatePartialBlockchainNodes(tx, nodeIndexes, nodes) {
         logWebStoreError(err, "Failed to update partial blockchain nodes");
     }
 }
-async function updateCommittedNoteTags(tx, inputNoteIds) {
+async function updateCommittedNoteTags(tx, committedNoteTagSources) {
     try {
-        for (let i = 0; i < inputNoteIds.length; i++) {
-            const noteId = inputNoteIds[i];
+        for (let i = 0; i < committedNoteTagSources.length; i++) {
+            const tagSource = committedNoteTagSources[i];
             await tx.tags
                 .where("sourceNoteId")
-                .equals(noteId)
+                .equals(tagSource)
                 .delete();
         }
     }

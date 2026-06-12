@@ -1,29 +1,32 @@
 use js_export_macro::js_export;
-use miden_client::note::{
-    NoteAttachments as NativeNoteAttachments,
-    NoteMetadata as NativeNoteMetadata,
-    PartialNoteMetadata as NativePartialNoteMetadata,
-};
+use miden_client::note::{NoteAttachments, NoteMetadata as NativeNoteMetadata};
+use miden_protocol::note::PartialNoteMetadata;
 
 use super::account_id::AccountId;
 use super::{NoteTag, NoteType};
 
 /// Metadata associated with a note.
 ///
-/// This metadata includes the sender, note type, tag, and an optional attachment.
-/// Attachments provide additional context about how notes should be processed.
+/// 0.15 protocol surface: `NoteMetadata` is now constructed from a
+/// [`PartialNoteMetadata`] (sender / `note_type` / tag) plus a `NoteAttachments`
+/// collection — the previous `with_tag` / `with_attachment` / `attachment`
+/// methods on `NoteMetadata` were moved (`with_tag` lives on
+/// `PartialNoteMetadata`) or removed (`with_attachment` / `attachment`).
+/// The JS constructor narrows back to the common case of an
+/// attachment-less metadata.
 #[derive(Clone)]
 #[js_export]
 pub struct NoteMetadata(NativeNoteMetadata);
 
 #[js_export]
 impl NoteMetadata {
-    /// Creates metadata for a note.
+    /// Creates metadata for a note with no attachments.
     #[js_export(constructor)]
     pub fn new(sender: &AccountId, note_type: NoteType, note_tag: &NoteTag) -> NoteMetadata {
-        let partial = NativePartialNoteMetadata::new(sender.into(), note_type.into())
-            .with_tag(note_tag.into());
-        NoteMetadata(NativeNoteMetadata::new(partial, &NativeNoteAttachments::default()))
+        let partial =
+            PartialNoteMetadata::new(sender.into(), note_type.into()).with_tag(note_tag.into());
+        let native = NativeNoteMetadata::new(partial, &NoteAttachments::default());
+        NoteMetadata(native)
     }
 
     /// Returns the account that created the note.
@@ -42,12 +45,9 @@ impl NoteMetadata {
         self.0.note_type().into()
     }
 
-    /// Sets the tag for this metadata and returns the updated metadata.
-    #[js_export(js_name = "withTag")]
-    pub fn with_tag(&self, tag: &NoteTag) -> NoteMetadata {
-        let partial = (*self.0.partial_metadata()).with_tag(tag.into());
-        NoteMetadata(NativeNoteMetadata::new(partial, &NativeNoteAttachments::default()))
-    }
+    // NOTE: `attachment()`, `withTag()`, `withAttachment()` were removed in
+    // the migration to miden-client PR #2214 — see this module's struct doc
+    // for the rationale. Construct a fresh `NoteMetadata` instead.
 }
 
 // CONVERSIONS

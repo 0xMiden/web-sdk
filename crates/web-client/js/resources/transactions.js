@@ -40,7 +40,7 @@ export class TransactionsResource {
           new wasm.FungibleAsset(faucetId, BigInt(opts.amount)),
         ]),
         noteType,
-        undefined
+        new wasm.NoteAttachment()
       );
 
       // NoteArray constructor consumes its elements; use push(&note) to keep
@@ -177,6 +177,72 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  /** Create a partial-swap (PSWAP) note. See {@link PswapCreateOptions}. */
+  async pswapCreate(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildPswapCreateRequest(
+      opts,
+      wasm
+    );
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /** Consume (fully or partially fill) a PSWAP note. See {@link PswapConsumeOptions}. */
+  async pswapConsume(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildPswapConsumeRequest(
+      opts,
+      wasm
+    );
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /** Cancel a PSWAP note as its creator and reclaim the offered asset. See {@link PswapCancelOptions}. */
+  async pswapCancel(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildPswapCancelRequest(
+      opts,
+      wasm
+    );
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
   async preview(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -199,6 +265,27 @@ export class TransactionsResource {
       }
       case "swap": {
         ({ accountId, request } = await this.#buildSwapRequest(opts, wasm));
+        break;
+      }
+      case "pswapCreate": {
+        ({ accountId, request } = await this.#buildPswapCreateRequest(
+          opts,
+          wasm
+        ));
+        break;
+      }
+      case "pswapConsume": {
+        ({ accountId, request } = await this.#buildPswapConsumeRequest(
+          opts,
+          wasm
+        ));
+        break;
+      }
+      case "pswapCancel": {
+        ({ accountId, request } = await this.#buildPswapCancelRequest(
+          opts,
+          wasm
+        ));
         break;
       }
       case "custom": {
@@ -353,7 +440,10 @@ export class TransactionsResource {
       }
 
       try {
-        await this.#inner.syncStateWithTimeout(0);
+        // Chain-only sync is sufficient: confirmation only needs on-chain
+        // state, and skipping NTL keeps polling alive when the note
+        // transport endpoint is unavailable.
+        await this.#inner.syncChain();
       } catch {
         // Sync may fail transiently; continue polling
       }
@@ -483,6 +573,53 @@ export class TransactionsResource {
       BigInt(opts.request.amount),
       noteType,
       paybackNoteType
+    );
+    return { accountId, request };
+  }
+
+  async #buildPswapCreateRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const offeredFaucetId = resolveAccountRef(opts.offer.token, wasm);
+    const requestedFaucetId = resolveAccountRef(opts.request.token, wasm);
+    const noteType = resolveNoteType(opts.type, wasm);
+    const paybackNoteType = resolveNoteType(
+      opts.paybackType ?? opts.type,
+      wasm
+    );
+
+    const request = await this.#inner.newPswapCreateTransactionRequest(
+      accountId,
+      offeredFaucetId,
+      BigInt(opts.offer.amount),
+      requestedFaucetId,
+      BigInt(opts.request.amount),
+      noteType,
+      paybackNoteType
+    );
+    return { accountId, request };
+  }
+
+  async #buildPswapConsumeRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const note = await this.#resolveNoteInput(opts.note);
+    const noteFillAmount = opts.noteFillAmount ?? 0n;
+
+    const request = await this.#inner.newPswapConsumeTransactionRequest(
+      note,
+      accountId,
+      BigInt(opts.fillAmount),
+      BigInt(noteFillAmount)
+    );
+    return { accountId, request };
+  }
+
+  async #buildPswapCancelRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const note = await this.#resolveNoteInput(opts.note);
+
+    const request = await this.#inner.newPswapCancelTransactionRequest(
+      note,
+      accountId
     );
     return { accountId, request };
   }

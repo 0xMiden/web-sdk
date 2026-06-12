@@ -11,53 +11,114 @@ export interface NoteAttachmentData {
 }
 
 /**
- * Decode a note's attachment. Returns null if no attachment.
+ * Decode a note's attachment payload back into the bigint values that
+ * `createNoteAttachment` packed in.
  *
- * Note: protocol 0.15 removed attachment content from `NoteMetadata` (only
- * attachment *headers* are carried there), so reading attachment payloads back
- * from a note record is not currently exposed by the SDK. This returns null
- * until an attachment accessor is added to `InputNoteRecord`.
+ * On the 0.15 protocol surface the full attachment content (the packed words)
+ * lives on the note record (`InputNoteRecord.attachments()`), not on
+ * `NoteMetadata`. This reads the note's first attachment and flattens its
+ * words back into a `bigint[]`, the inverse of `createNoteAttachment`.
+ *
+ * - No attachments → `null`.
+ * - An all-zero payload (regardless of word count) → `null`. This covers the
+ *   placeholder produced by `emptyAttachment()` (a single all-zero word) and
+ *   matches the pre-0.15 behavior where a `None`-kind attachment decoded to
+ *   `null`.
+ * - Otherwise → `{ values, kind }` where `kind` is `"word"` for a single-word
+ *   attachment and `"array"` for multi-word content.
+ *
+ * The returned `values` include the trailing-zero padding `createNoteAttachment`
+ * added to reach word boundaries; consumers that need the original unpadded
+ * values should strip trailing zeros.
  */
 export function readNoteAttachment(
-  _note: InputNoteRecord
+  note: InputNoteRecord
 ): NoteAttachmentData | null {
-  return null;
+  try {
+    const attachments = note.attachments?.();
+    if (!attachments || attachments.length === 0) return null;
+
+    const words = attachments[0]!.toWords();
+    if (words.length === 0) return null;
+
+    const values: bigint[] = [];
+    for (const word of words) {
+      for (const value of word.toU64s()) {
+        values.push(BigInt(value as number | bigint));
+      }
+    }
+
+    // An all-zero payload (e.g. the `emptyAttachment()` placeholder) is the
+    // 0.15 stand-in for "no attachment"; surface it as null so callers see the
+    // same thing they did pre-migration for a None-kind attachment.
+    if (values.every((value) => value === 0n)) return null;
+
+    return { values, kind: words.length === 1 ? "word" : "array" };
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Encode values into a NoteAttachment.
+ * Encode bigint values into a `NoteAttachment`.
  *
- * In protocol 0.15 a note attachment's content is a list of words, so values
- * are packed into 4-element words (padded with trailing 0n to a word boundary).
- * `readNoteAttachment` would return raw values including padding, so consumers
- * should strip trailing zeros if they need the original unpadded values.
+ * - 0 values → falls back to `emptyAttachment()` (a single zero-Word
+ *   attachment with the `none` scheme). On the 0.15 protocol surface there
+ *   is no native "empty" attachment; this preserves the pre-migration
+ *   "default attachment when caller has no payload" behavior at the cost
+ *   of one trivial word.
+ * - 1..=4 values → padded to 4 elements and wrapped as a single Word via
+ *   `NoteAttachment.fromWord(scheme, word)`.
+ * - >4 values → padded to a multiple of 4, chunked into Words, and wrapped
+ *   via `NoteAttachment.fromWords(scheme, words)`.
  *
- * Returns `undefined` for empty input, because protocol 0.15 has no empty
- * attachment (an attachment must carry at least one word). Pass the result
- * straight through to the note builders, which treat `undefined` as no
- * attachment.
+ * Values are padded to word boundaries (multiples of 4) with trailing `0n`.
  */
 export function createNoteAttachment(
   values: bigint[] | Uint8Array | number[]
-): NoteAttachment | undefined {
+): NoteAttachment {
   const bigints: bigint[] = [];
   for (let i = 0; i < values.length; i++) {
-    bigints.push(BigInt(values[i]));
+    bigints.push(BigInt(values[i]!));
   }
 
   if (bigints.length === 0) {
-    return undefined;
+    return emptyAttachment();
+  }
+
+  const scheme = NoteAttachmentScheme.none();
+
+  if (bigints.length <= 4) {
+    while (bigints.length < 4) {
+      bigints.push(0n);
+    }
+    const word = new Word(BigUint64Array.from(bigints));
+    return NoteAttachment.fromWord(scheme, word);
   }
 
   while (bigints.length % 4 !== 0) {
     bigints.push(0n);
   }
-
   const words: Word[] = [];
   for (let i = 0; i < bigints.length; i += 4) {
     words.push(new Word(BigUint64Array.from(bigints.slice(i, i + 4))));
   }
+  return NoteAttachment.fromWords(scheme, words);
+}
 
+/**
+ * Build a placeholder `NoteAttachment` for code paths that previously used
+ * the now-private `new NoteAttachment()` empty constructor.
+ *
+ * The 0.15 protocol surface requires every note to carry at least one
+ * attachment word; this helper produces a single-Word attachment with the
+ * `none` scheme and all-zero content, which is the closest semantic to the
+ * pre-0.15 "no attachment" notion while keeping `Note.createP2IDNote`
+ * happy. Consumers that explicitly want a payload should call
+ * `createNoteAttachment` with their values instead.
+ */
+export function emptyAttachment(): NoteAttachment {
   const scheme = NoteAttachmentScheme.none();
-  return NoteAttachment.withWords(scheme, words);
+  const word = new Word(BigUint64Array.from([0n, 0n, 0n, 0n]));
+  return NoteAttachment.fromWord(scheme, word);
 }

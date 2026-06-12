@@ -138,6 +138,8 @@ export async function createNodeIntegrationClient(
 /**
  * Wraps a napi WebClient to normalize differences with the browser SDK:
  * - syncState() → syncStateImpl()
+ * - syncChain() → syncChainImpl()
+ * - syncNoteTransport() → syncNoteTransportImpl()
  * - null → undefined for Option<T> returns
  */
 export function wrapNodeClient(rawClient: any, rawSdk: any): any {
@@ -171,6 +173,12 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       }
       if (prop === "syncState") {
         return (...args: any[]) => target.syncStateImpl(...args);
+      }
+      if (prop === "syncChain") {
+        return (...args: any[]) => target.syncChainImpl(...args);
+      }
+      if (prop === "syncNoteTransport") {
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       }
       if (prop === "proveBlock") {
         return async () => {
@@ -608,10 +616,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             noteTypeB
           );
           const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-          const swapTxId = await c.submitNewTransaction(
-            accountAId,
-            swapRequest
-          );
+          await c.submitNewTransaction(accountAId, swapRequest);
           await c.proveBlock();
           await c.syncState();
 
@@ -622,17 +627,28 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             throw new Error(`Swap note ${swapNoteId} not found`);
           const swapNote = swapNoteRecord.toNote();
           const consumeReq1 = c.newConsumeTransactionRequest([swapNote]);
-          await c.submitNewTransaction(accountBId, consumeReq1);
+          const consumeTxId1 = await c.submitNewTransaction(
+            accountBId,
+            consumeReq1
+          );
           await c.proveBlock();
           await c.syncState();
 
-          // Consume payback note for account A
-          const consumablePaybackNotes = await c.getConsumableNotes(undefined);
-          if (consumablePaybackNotes.length === 0)
-            throw new Error(`Payback note not found`);
-          const paybackNote = consumablePaybackNotes[0]
-            .inputNoteRecord()
-            .toNote();
+          // Account B's consume of the swap note emits the payback note that
+          // account A consumes. Derive its id from the consume transaction's
+          // output notes (NoteDetails no longer exposes id()).
+          const [consumeTxRecord1] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId1])
+          );
+          const paybackNoteId = consumeTxRecord1
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+          const paybackNoteRecord = await c.getInputNote(paybackNoteId);
+          if (!paybackNoteRecord)
+            throw new Error(`Payback note ${paybackNoteId} not found`);
+          const paybackNote = paybackNoteRecord.toNote();
           const consumeReq2 = c.newConsumeTransactionRequest([paybackNote]);
           await c.submitNewTransaction(accountAId, consumeReq2);
           await c.proveBlock();
@@ -656,6 +672,290 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
               amount: asset.amount().toString(),
             }));
           return { accountAAssets, accountBAssets };
+        },
+
+        mockPswapFullFill: async (
+          creatorId,
+          fillerId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          pswapNoteType,
+          paybackNoteType
+        ) => {
+          const c = window.client;
+          const vaultAssets = (account) =>
+            account
+              ?.vault()
+              .fungibleAssets()
+              .map((asset) => ({
+                assetId: asset.faucetId().toString(),
+                amount: asset.amount().toString(),
+              }));
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+          const pbNoteType =
+            paybackNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            pbNoteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const consumeRequest = c.newPswapConsumeTransactionRequest(
+            pswapNoteRecord.toNote(),
+            fillerId,
+            BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
+            BigInt(0)
+          );
+          // Submit the fill but leave the block unproven: the creator consumes
+          // the payback note in the same block below. A private payback note
+          // carries a PSWAP attachment that the store cannot reconstruct from
+          // chain data once committed, so it must be consumed as a same-block
+          // unauthenticated note using the full note emitted here.
+          const consumeTxId = await c.submitNewTransaction(
+            fillerId,
+            consumeRequest
+          );
+
+          const [consumeTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId])
+          );
+          const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+          // A full fill produces exactly one payback note (no remainder PSWAP note).
+          if (consumeOutputNotes.length !== 1) {
+            throw new Error(
+              `Expected exactly one payback note from a full fill, got ${consumeOutputNotes.length}`
+            );
+          }
+          // Creator consumes the payback note carrying the requested asset, in
+          // the same block the filler created it, using the full note emitted by
+          // the filler's consume transaction (a private payback note's PSWAP
+          // attachment cannot be rebuilt from the store once committed).
+          const paybackNote = consumeOutputNotes[0].intoFull();
+          if (!paybackNote)
+            throw new Error("Payback note is not available in full form");
+          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
+          await c.submitNewTransaction(creatorId, paybackConsume);
+          await c.proveBlock();
+          await c.syncState();
+
+          return {
+            creatorAssets: vaultAssets(await c.getAccount(creatorId)),
+            fillerAssets: vaultAssets(await c.getAccount(fillerId)),
+            consumeOutputNoteCount: consumeOutputNotes.length,
+          };
+        },
+
+        mockPswapPartialFill: async (
+          creatorId,
+          fillerId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          fillAmount,
+          pswapNoteType,
+          paybackNoteType
+        ) => {
+          const c = window.client;
+          const vaultAssets = (account) =>
+            account
+              ?.vault()
+              .fungibleAssets()
+              .map((asset) => ({
+                assetId: asset.faucetId().toString(),
+                amount: asset.amount().toString(),
+              }));
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+          const pbNoteType =
+            paybackNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            pbNoteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const consumeRequest = c.newPswapConsumeTransactionRequest(
+            pswapNoteRecord.toNote(),
+            fillerId,
+            BigInt(fillAmount),
+            BigInt(0)
+          );
+          // Submit the fill but leave the block unproven: the creator consumes
+          // the payback note in the same block below. A private payback note
+          // carries a PSWAP attachment that the store cannot reconstruct from
+          // chain data once committed, so it must be consumed as a same-block
+          // unauthenticated note using the full note emitted here.
+          const consumeTxId = await c.submitNewTransaction(
+            fillerId,
+            consumeRequest
+          );
+
+          const [consumeTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([consumeTxId])
+          );
+          const consumeOutputNotes = consumeTxRecord.outputNotes().notes();
+
+          // A partial fill emits a payback note plus a remainder PSWAP note.
+          if (consumeOutputNotes.length !== 2) {
+            throw new Error(
+              `Expected a payback note and a remainder PSWAP note from a partial fill, got ${consumeOutputNotes.length}`
+            );
+          }
+
+          // The remainder PSWAP note carries the offered asset; the payback
+          // note carries the requested asset destined for the creator.
+          const offeredFaucetStr = offeredFaucetId.toString();
+          let paybackOutputNote;
+          let remainderOfferedAmount;
+          for (const note of consumeOutputNotes) {
+            const asset = note.assets()?.fungibleAssets()[0];
+            if (asset && asset.faucetId().toString() === offeredFaucetStr) {
+              remainderOfferedAmount = asset.amount().toString();
+            } else {
+              paybackOutputNote = note;
+            }
+          }
+          if (!paybackOutputNote)
+            throw new Error("Payback note not found in consume output");
+
+          // Consume the full payback note emitted by the filler's consume
+          // transaction, in the same block it was created; a private payback
+          // note's PSWAP attachment cannot be rebuilt from the store once
+          // committed.
+          const paybackNote = paybackOutputNote.intoFull();
+          if (!paybackNote)
+            throw new Error("Payback note is not available in full form");
+          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
+          await c.submitNewTransaction(creatorId, paybackConsume);
+          await c.proveBlock();
+          await c.syncState();
+
+          return {
+            creatorAssets: vaultAssets(await c.getAccount(creatorId)),
+            fillerAssets: vaultAssets(await c.getAccount(fillerId)),
+            consumeOutputNoteCount: consumeOutputNotes.length,
+            remainderOfferedAmount,
+          };
+        },
+
+        mockPswapCancel: async (
+          creatorId,
+          offeredFaucetId,
+          offeredAmount,
+          requestedFaucetId,
+          requestedAmount,
+          pswapNoteType
+        ) => {
+          const c = window.client;
+          const noteType =
+            pswapNoteType === "public"
+              ? window.NoteType.Public
+              : window.NoteType.Private;
+
+          const createRequest = await c.newPswapCreateTransactionRequest(
+            creatorId,
+            offeredFaucetId,
+            BigInt(offeredAmount),
+            requestedFaucetId,
+            BigInt(requestedAmount),
+            noteType,
+            noteType
+          );
+          const createTxId = await c.submitNewTransaction(
+            creatorId,
+            createRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [createTxRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([createTxId])
+          );
+          const pswapNoteId = createTxRecord
+            .outputNotes()
+            .notes()[0]
+            .id()
+            .toString();
+
+          const pswapNoteRecord = await c.getInputNote(pswapNoteId);
+          if (!pswapNoteRecord)
+            throw new Error(`PSWAP note ${pswapNoteId} not found`);
+          const cancelRequest = c.newPswapCancelTransactionRequest(
+            pswapNoteRecord.toNote(),
+            creatorId
+          );
+          await c.submitNewTransaction(creatorId, cancelRequest);
+          await c.proveBlock();
+          await c.syncState();
+
+          const creator = await c.getAccount(creatorId);
+          const creatorAssets = creator
+            ?.vault()
+            .fungibleAssets()
+            .map((asset) => ({
+              assetId: asset.faucetId().toString(),
+              amount: asset.amount().toString(),
+            }));
+          return { creatorAssets };
         },
 
         executeAndApplyTransaction: async (
@@ -789,6 +1089,70 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
         assetBAmount,
         swapNoteType,
         paybackNoteType
+      ),
+    mockPswapFullFill: (
+      creatorId: any,
+      fillerId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      pswapNoteType?: string,
+      paybackNoteType?: string
+    ) =>
+      h.mockPswapFullFill(
+        client,
+        sdk,
+        creatorId,
+        fillerId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        pswapNoteType,
+        paybackNoteType
+      ),
+    mockPswapPartialFill: (
+      creatorId: any,
+      fillerId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      fillAmount: number,
+      pswapNoteType?: string,
+      paybackNoteType?: string
+    ) =>
+      h.mockPswapPartialFill(
+        client,
+        sdk,
+        creatorId,
+        fillerId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        fillAmount,
+        pswapNoteType,
+        paybackNoteType
+      ),
+    mockPswapCancel: (
+      creatorId: any,
+      offeredFaucetId: any,
+      offeredAmount: number,
+      requestedFaucetId: any,
+      requestedAmount: number,
+      pswapNoteType?: string
+    ) =>
+      h.mockPswapCancel(
+        client,
+        sdk,
+        creatorId,
+        offeredFaucetId,
+        offeredAmount,
+        requestedFaucetId,
+        requestedAmount,
+        pswapNoteType
       ),
     executeAndApplyTransaction: (accountId: any, req: any, prover?: any) =>
       executeAndApplyTransaction(client, sdk, accountId, req, prover),

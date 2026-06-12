@@ -281,12 +281,15 @@ describe("AccountsResource", () => {
       ).toHaveBeenCalledWith("authKey");
       expect(wasm.AccountBuilder).toHaveBeenCalledWith(seed);
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.accountType).toHaveBeenCalledWith(0); // ImmutableCode
+      // 0.15 has no code-mutability flag: visibility comes from storageMode and
+      // the builder's accountType() is never invoked for contracts.
+      expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
+      expect(builderInstance.accountType).not.toHaveBeenCalled();
       expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
       expect(result).toEqual({ id: expect.any(Function) });
     });
 
-    it("creates mutable contract when type='MutableContract'", async () => {
+    it("creates contract when type='MutableContract'", async () => {
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(2);
       await resource.create({
@@ -296,7 +299,9 @@ describe("AccountsResource", () => {
         components: ["comp1"],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.accountType).toHaveBeenCalledWith(1); // UpdatableCode
+      expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
+      expect(builderInstance.accountType).not.toHaveBeenCalled();
+      expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
     });
 
     it("creates contract when opts.components is present (no type)", async () => {

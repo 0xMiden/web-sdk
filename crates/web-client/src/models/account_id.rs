@@ -137,6 +137,10 @@ impl AccountId {
         Ok(AccountId(native_account_id))
     }
 
+    // An `AccountId` only encodes storage visibility, so `isPublic` / `isPrivate`
+    // are the only predicates here. Faucet detection needs the account's code and
+    // lives on `Account` (`isFaucet` / `isRegularAccount`).
+
     /// Returns true if the account uses public storage.
     #[js_export(js_name = "isPublic")]
     pub fn js_is_public(&self) -> bool {

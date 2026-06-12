@@ -28,7 +28,6 @@ test.describe("new_wallet tests (browser-only)", () => {
     await expect(async () => {
       await createNewWallet(page, {
         storageMode: StorageMode.PUBLIC,
-        mutable: false,
         authSchemeId: 2,
         clientSeed: clientSeed2,
         isolatedClient: true,

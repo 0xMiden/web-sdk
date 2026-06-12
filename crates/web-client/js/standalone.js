@@ -33,13 +33,16 @@ export function createP2IDNote(opts) {
   const target = resolveAccountRef(opts.to, wasm);
   const noteAssets = buildNoteAssets(opts.assets, wasm);
   const noteType = resolveNoteType(opts.type, wasm);
+  const attachment = opts.attachment
+    ? new wasm.NoteAttachment(opts.attachment)
+    : new wasm.NoteAttachment([]);
 
   return wasm.Note.createP2IDNote(
     sender,
     target,
     noteAssets,
     noteType,
-    opts.attachment
+    attachment
   );
 }
 
@@ -55,6 +58,9 @@ export function createP2IDENote(opts) {
   const target = resolveAccountRef(opts.to, wasm);
   const noteAssets = buildNoteAssets(opts.assets, wasm);
   const noteType = resolveNoteType(opts.type, wasm);
+  const attachment = opts.attachment
+    ? new wasm.NoteAttachment(opts.attachment)
+    : new wasm.NoteAttachment([]);
 
   return wasm.Note.createP2IDENote(
     sender,
@@ -63,7 +69,7 @@ export function createP2IDENote(opts) {
     opts.reclaimAfter,
     opts.timelockUntil,
     noteType,
-    opts.attachment
+    attachment
   );
 }
 

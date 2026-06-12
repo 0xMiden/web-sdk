@@ -12,11 +12,14 @@ pub struct Felt(NativeFelt);
 #[js_export]
 impl Felt {
     /// Creates a new field element.
+    ///
+    /// Returns an error if `value` is outside the field's representable
+    /// range (`Felt::new` is fallible on the 0.15 protocol surface).
     #[js_export(constructor)]
     pub fn new(value: JsU64) -> Result<Felt, JsErr> {
-        let native_felt = NativeFelt::new(js_u64_to_u64(value))
-            .map_err(|_| from_str_err("value does not fit in the base field"))?;
-        Ok(Felt(native_felt))
+        NativeFelt::new(js_u64_to_u64(value))
+            .map(Felt)
+            .map_err(|err| from_str_err(&format!("invalid Felt value: {err}")))
     }
 
     /// Returns the integer representation of the field element.

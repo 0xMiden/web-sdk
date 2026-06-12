@@ -62,6 +62,7 @@ const ciShardProjects = process.env.CI
           "test/new_transactions_send_and_custom.test.ts",
           "test/new_transactions_mint_and_misc.test.ts",
           "test/swap_transactions.test.ts",
+          "test/pswap_transactions.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -98,6 +99,7 @@ const ciShardProjects = process.env.CI
         name: "ci-shard-4-compile-and-misc",
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
+          "test/eager_entry.test.ts",
           "test/fpi.test.ts",
           "test/compile_and_contract.test.ts",
           "test/package.test.ts",
@@ -111,6 +113,7 @@ const ciShardProjects = process.env.CI
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
           "test/transactions.test.ts",
+          "test/with_inner_web_client_reentrancy.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -200,6 +203,19 @@ export default defineConfig({
         // Browser-only tests preserved from `next` that use exportStore /
         // importStore / waitForBlocks / isolatedClient (all browser-only).
         "test/*.browser.test.ts",
+        // wasm-bindgen toJSON regression test (#150): asserts on
+        // idxdb-store's Js* classes and the wasm-bindgen WebClient on
+        // `window` — none of which exist under the napi binding.
+        "test/no_wasm_reentry_via_tojson.test.ts",
+        // _withInnerWebClient re-entrancy (#152): exercises the browser
+        // worker-shim chain mechanics (_serializeWasmCall, the
+        // _withInnerLockDepth counter, chain release on rejection). The
+        // napi client has no JS call chain — serialization happens in
+        // Rust — so the escape hatch and its tests are browser-only.
+        "test/with_inner_web_client_reentrancy.test.ts",
+        // Eager-vs-lazy entry contract: dynamic browser imports of
+        // dist/st/{eager,index}.js via the page fixture.
+        "test/eager_entry.test.ts",
       ],
       // Skip specific browser-only tests by name.
       // Tests that request the `page` fixture must be listed here because
@@ -232,12 +248,23 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   // FIXME: Modularise test server constants (localhost, port)
+  //
+  // Serves dist/st/ (the canonical published layout for the
+  // single-threaded variant). Integration tests that go through
+  // `page.evaluate(() => import('./index.js'))` resolve against
+  // dist/st/index.js, the same JS bundle consumers get when they
+  // import `@miden-sdk/miden-sdk/lazy`. The MT variant (dist/mt/) is
+  // covered by separate eager_entry / mt-specific tests when they
+  // exist; running the full integration suite against dist/mt/ would
+  // require a cross-origin-isolated test page (COOP+COEP headers via
+  // http-server flags), out of scope for this round.
+  //
   // Skip webServer when running only Node.js tests (no browser/dist needed)
   ...(process.env.SKIP_WEB_SERVER
     ? {}
     : {
         webServer: {
-          command: "npx http-server ./dist -a localhost -p 8080",
+          command: "npx http-server ./dist/st -a localhost -p 8080",
           url: "http://localhost:8080",
           reuseExistingServer: true,
         },

@@ -96,7 +96,6 @@ describe("useMultiSend", () => {
         submitProvenTransaction: vi.fn().mockResolvedValue(100),
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
-        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
       });
 
       mockUseMiden.mockReturnValue({

@@ -82,13 +82,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const wallet = await client.accounts.create();
 
         return {
-          hasId: wallet.id() != null,
-          isPrivate: wallet.isPrivate(),
+          isFaucet: wallet.isFaucet(),
+          isRegularAccount: wallet.isRegularAccount(),
         };
       });
 
-      expect(result.hasId).toBe(true);
-      expect(result.isPrivate).toBe(true);
+      expect(result.isFaucet).toBe(false);
+      expect(result.isRegularAccount).toBe(true);
     }
   );
 
@@ -105,12 +105,12 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       });
 
       return {
-        hasId: faucet.id() != null,
+        isFaucet: faucet.isFaucet(),
         isPublic: faucet.isPublic(),
       };
     });
 
-    expect(result.hasId).toBe(true);
+    expect(result.isFaucet).toBe(true);
     expect(result.isPublic).toBe(true);
   });
 
@@ -1102,14 +1102,14 @@ nodeTest.describe("MidenClient API - Integration", () => {
         const accounts = await client.accounts.list();
 
         return {
-          walletHasId: wallet.id() != null,
-          faucetHasId: faucet.id() != null,
+          walletIsFaucet: wallet.isFaucet(),
+          faucetIsFaucet: faucet.isFaucet(),
           accountCount: accounts.length,
         };
       });
 
-      expect(result.walletHasId).toBe(true);
-      expect(result.faucetHasId).toBe(true);
+      expect(result.walletIsFaucet).toBe(false);
+      expect(result.faucetIsFaucet).toBe(true);
       expect(result.accountCount).toBe(2);
     }
   );

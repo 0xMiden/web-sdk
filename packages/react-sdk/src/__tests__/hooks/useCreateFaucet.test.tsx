@@ -163,16 +163,7 @@ describe("useCreateFaucet", () => {
         });
       });
 
-      // Test public
-      await act(async () => {
-        await result.current.createFaucet({
-          tokenSymbol: "C",
-          maxSupply: 100n,
-          storageMode: "public",
-        });
-      });
-
-      expect(mockClient.newFaucet).toHaveBeenCalledTimes(3);
+      expect(mockClient.newFaucet).toHaveBeenCalledTimes(2);
     });
 
     it("should refresh accounts list after creation", async () => {

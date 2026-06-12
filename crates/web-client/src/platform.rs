@@ -73,8 +73,12 @@ impl<T> AsyncCell<T> {
         Self(std::cell::RefCell::new(val))
     }
 
-    pub fn lock(&self) -> impl std::future::Future<Output = std::cell::RefMut<'_, T>> {
-        std::future::ready(self.0.borrow_mut())
+    // `unknown_lints` keeps this compiling across the floating `+nightly` clippy
+    // CI uses: older toolchains know only `unused_async`, newer ones added
+    // `unused_async_trait_impl`. The async is intentional, so both are allowed.
+    #[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
+    pub async fn lock(&self) -> std::cell::RefMut<'_, T> {
+        self.0.borrow_mut()
     }
 
     /// Synchronous shared borrow (browser-only, single-threaded).

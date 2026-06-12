@@ -58,8 +58,12 @@ impl AccountBuilder {
         self.clone()
     }
 
-    // TODO: AccountStorageMode as Enum
     /// Sets the storage mode (public/private) for the account.
+    ///
+    /// The 0.15 protocol surface collapsed `AccountStorageMode` and `AccountType` into a
+    /// single 2-way `AccountType` flag: setting the storage mode IS setting the account
+    /// type. Calling both `accountType()` and `storageMode()` on the same builder is the
+    /// last-write-wins on the underlying flag. Method kept for JS-surface back-compat.
     #[js_export(js_name = "storageMode")]
     pub fn storage_mode(&mut self, storage_mode: &AccountStorageMode) -> Self {
         self.0 = self.0.clone().account_type(storage_mode.into());

@@ -68,8 +68,8 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     const wallet = await client.accounts.create();
 
-    expect(wallet.id() != null).toBe(true);
-    expect(wallet.isPrivate()).toBe(true);
+    expect(wallet.isFaucet()).toBe(false);
+    expect(wallet.isRegularAccount()).toBe(true);
   });
 
   test("accounts.create faucet", async ({ sdk }) => {
@@ -85,7 +85,7 @@ test.describe("MidenClient API - Mock Chain", () => {
       storage: "public",
     });
 
-    expect(faucet.id() != null).toBe(true);
+    expect(faucet.isFaucet()).toBe(true);
     expect(faucet.isPublic()).toBe(true);
   });
 

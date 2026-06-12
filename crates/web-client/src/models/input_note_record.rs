@@ -4,6 +4,7 @@ use miden_client::store::InputNoteRecord as NativeInputNoteRecord;
 use miden_client::transaction::InputNote as NativeInputNote;
 
 use super::input_note_state::InputNoteState;
+use super::note_attachment::NoteAttachment;
 use super::note_details::NoteDetails;
 use super::note_id::NoteId;
 use super::note_inclusion_proof::NoteInclusionProof;
@@ -31,10 +32,11 @@ pub struct InputNoteRecord(NativeInputNoteRecord);
 
 #[js_export]
 impl InputNoteRecord {
-    /// Returns the note ID, when the note's metadata is known.
+    /// Returns the note ID when available.
     ///
-    /// Metadata-less expected notes have no note ID; use `detailsCommitment` as a stable
-    /// identifier in that case.
+    /// Migration note (miden-client PR #2214): `InputNoteRecord::id()`
+    /// returns `Option<NoteId>` — partial / metadata-less notes have no
+    /// metadata-bearing ID yet.
     pub fn id(&self) -> Option<NoteId> {
         self.0.id().map(Into::into)
     }
@@ -54,6 +56,17 @@ impl InputNoteRecord {
         self.0.metadata().map(Into::into)
     }
 
+    /// Returns the note's attachments.
+    ///
+    /// On the 0.15 surface the full attachment content (the packed words) lives
+    /// on the note record itself rather than on `NoteMetadata` (which only
+    /// carries the attachment headers). This exposes that content so JS callers
+    /// can decode payloads packed via the `createNoteAttachment` helper. An
+    /// empty array means the note carries no attachments.
+    pub fn attachments(&self) -> Vec<NoteAttachment> {
+        self.0.attachments().iter().map(Into::into).collect()
+    }
+
     /// Returns the note commitment (id + metadata), if available.
     pub fn commitment(&self) -> Option<Word> {
         self.0.commitment().map(Into::into)
@@ -71,9 +84,12 @@ impl InputNoteRecord {
         self.0.consumer_transaction_id().map(ToString::to_string)
     }
 
-    /// Returns the nullifier for this note.
-    pub fn nullifier(&self) -> String {
-        self.0.nullifier().to_hex()
+    /// Returns the nullifier for this note when available.
+    ///
+    /// Migration note (miden-client PR #2214): `InputNoteRecord::nullifier()`
+    /// returns `Option<Nullifier>` — partial notes have no nullifier yet.
+    pub fn nullifier(&self) -> Option<String> {
+        self.0.nullifier().map(|n| n.to_hex())
     }
 
     /// Returns true if the record contains authentication data (proof).

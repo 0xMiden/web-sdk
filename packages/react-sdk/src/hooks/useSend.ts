@@ -12,7 +12,7 @@ import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
-import { createNoteAttachment } from "../utils/noteAttachment";
+import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
@@ -162,7 +162,7 @@ export function useSend(): UseSendResult {
               toId,
               assets,
               noteType,
-              undefined
+              emptyAttachment()
             );
 
             // NoteArray constructor consumes its elements; use push(&note)
@@ -182,7 +182,7 @@ export function useSend(): UseSendResult {
                 )
               : await client.submitNewTransaction(execFromId, txRequest);
 
-            return { txId: txId.toString(), note: p2idNote } as SendResult;
+            return { txId: txId.toHex(), note: p2idNote } as SendResult;
           });
 
           setStage("complete");
@@ -255,7 +255,6 @@ export function useSend(): UseSendResult {
         // Save txId hex BEFORE applyTransaction, which consumes the WASM
         // pointer inside txResult (and any child objects like TransactionId).
         const txIdHex = txResult.id().toHex();
-        const txIdString = txResult.id().toString();
 
         // For private notes, extract the full note BEFORE applyTransaction
         // consumes the WASM pointers.
@@ -289,7 +288,7 @@ export function useSend(): UseSendResult {
         }
 
         const sendResult: SendResult = {
-          txId: txIdString,
+          txId: txIdHex,
           note: null,
         };
 

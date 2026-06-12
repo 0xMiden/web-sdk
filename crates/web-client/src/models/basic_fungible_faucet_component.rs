@@ -1,4 +1,5 @@
 use js_export_macro::js_export;
+use miden_client::Felt as NativeFelt;
 use miden_client::account::Account as NativeAccount;
 use miden_client::account::component::FungibleFaucet as NativeFungibleFaucet;
 
@@ -19,9 +20,10 @@ pub struct BasicFungibleFaucetComponent(NativeFungibleFaucet);
 impl BasicFungibleFaucetComponent {
     /// Extracts faucet metadata from an account.
     #[js_export(js_name = "fromAccount")]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn from_account(account: Account) -> Result<Self, JsErr> {
         let native_account: NativeAccount = account.into();
-        let faucet = NativeFungibleFaucet::try_from(native_account.storage()).map_err(|e| {
+        let faucet = NativeFungibleFaucet::try_from(&native_account).map_err(|e| {
             js_error_with_context(e, "failed to get basic fungible faucet details from account")
         })?;
         Ok(Self(faucet))
@@ -29,7 +31,7 @@ impl BasicFungibleFaucetComponent {
 
     /// Returns the faucet's token symbol.
     pub fn symbol(&self) -> TokenSymbol {
-        self.0.symbol().clone().into()
+        self.0.symbol().into()
     }
 
     /// Returns the number of decimal places for the token.
@@ -40,6 +42,6 @@ impl BasicFungibleFaucetComponent {
     /// Returns the maximum token supply.
     #[js_export(js_name = "maxSupply")]
     pub fn max_supply(&self) -> Felt {
-        miden_client::Felt::from(self.0.max_supply()).into()
+        NativeFelt::from(self.0.max_supply()).into()
     }
 }

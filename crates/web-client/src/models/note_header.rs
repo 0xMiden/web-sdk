@@ -3,7 +3,6 @@ use miden_client::note::NoteHeader as NativeNoteHeader;
 
 use super::note_id::NoteId;
 use super::note_metadata::NoteMetadata;
-use super::word::Word;
 
 /// Holds the strictly required, public information of a note.
 ///
@@ -26,11 +25,10 @@ impl NoteHeader {
         self.0.metadata().into()
     }
 
-    /// Returns the commitment to the note's metadata.
-    #[js_export(js_name = "metadataCommitment")]
-    pub fn metadata_commitment(&self) -> Word {
-        self.0.metadata().to_commitment().into()
-    }
+    // `toCommitment` was removed in the migration to miden-client PR #2214 —
+    // `NoteHeader::to_commitment` is no longer part of the 0.15 protocol
+    // surface. Compute a commitment from `id().toString()` or related
+    // commitment-bearing accessors on the underlying note types if needed.
 }
 
 // CONVERSIONS

@@ -1,21 +1,24 @@
 use js_export_macro::js_export;
-use miden_client::note::{
-    NoteId as NativeNoteId,
-    NoteInclusionProof as NativeNoteInclusionProof,
-    NoteMetadata as NativeNoteMetadata,
-};
 
 use crate::models::NoteType;
 use crate::models::input_note::InputNote;
 use crate::models::note::Note;
+use crate::models::note_attachment::NoteAttachment;
 use crate::models::note_id::NoteId;
 use crate::models::note_inclusion_proof::NoteInclusionProof;
 use crate::models::note_metadata::NoteMetadata;
 
 /// Wrapper for a note fetched over RPC.
 ///
-/// It contains the note identifier, metadata and inclusion proof. The note details are only
-/// present for public notes.
+/// It carries the note ID, public metadata, and inclusion proof. The full note body is only
+/// present for public notes; for private notes only the header-shaped fields and inclusion
+/// proof are available — the body lives off-chain.
+///
+/// 0.15 protocol surface: the on-chain `NoteHeader` now commits to a
+/// `NoteDetailsCommitment` rather than the `NoteId`, so a `NoteHeader` can no longer be
+/// reconstructed from header-shaped fields alone for private notes. We therefore expose
+/// the constituent fields (`noteId`, `metadata`) directly on `FetchedNote` instead of a
+/// `header` getter.
 #[derive(Clone)]
 #[js_export]
 pub struct FetchedNote {
@@ -23,6 +26,7 @@ pub struct FetchedNote {
     metadata: NoteMetadata,
     inclusion_proof: NoteInclusionProof,
     note: Option<Note>,
+    attachments: Vec<NoteAttachment>,
 }
 
 // Internal methods accessible from Rust code (not processed by napi/wasm_bindgen).
@@ -30,6 +34,27 @@ impl FetchedNote {
     /// The full note data (internal Rust access).
     pub(crate) fn note(&self) -> Option<Note> {
         self.note.clone()
+    }
+
+    /// Builds a `FetchedNote` including its attachments (internal Rust access).
+    ///
+    /// 0.15 returns the note's attachment content over RPC for both public notes (carried on
+    /// the `Note` body) and private notes (alongside the metadata / inclusion proof), so the
+    /// fetch path can surface them here even when the note body itself is private.
+    pub(crate) fn with_attachments(
+        note_id: NoteId,
+        metadata: NoteMetadata,
+        inclusion_proof: NoteInclusionProof,
+        note: Option<Note>,
+        attachments: Vec<NoteAttachment>,
+    ) -> FetchedNote {
+        FetchedNote {
+            note_id,
+            metadata,
+            inclusion_proof,
+            note,
+            attachments,
+        }
     }
 }
 
@@ -43,7 +68,15 @@ impl FetchedNote {
         inclusion_proof: NoteInclusionProof,
         note: Option<Note>,
     ) -> FetchedNote {
-        FetchedNote { note_id, metadata, inclusion_proof, note }
+        // The JS constructor doesn't take attachments; the RPC fetch path uses
+        // `with_attachments` to populate them. A directly JS-constructed note starts with none.
+        FetchedNote {
+            note_id,
+            metadata,
+            inclusion_proof,
+            note,
+            attachments: Vec::new(),
+        }
     }
 
     // GETTERS
@@ -60,6 +93,16 @@ impl FetchedNote {
     #[js_export(getter)]
     pub fn metadata(&self) -> NoteMetadata {
         self.metadata.clone()
+    }
+
+    /// The note's attachments.
+    ///
+    /// 0.15 returns attachment content over RPC for both public and private notes, so this is
+    /// populated even when the note body itself is private. An empty array means the note
+    /// carries no attachments.
+    #[js_export(getter)]
+    pub fn attachments(&self) -> Vec<NoteAttachment> {
+        self.attachments.clone()
     }
 
     /// The full [`Note`] data.
@@ -95,22 +138,5 @@ impl FetchedNote {
     #[js_export(js_name = "asInputNote")]
     pub fn as_input_note(&self) -> Option<InputNote> {
         self.note().map(|note| InputNote::authenticated(&note, &self.inclusion_proof))
-    }
-}
-
-impl FetchedNote {
-    /// Create a `FetchedNote` from its native parts (internal use).
-    pub(super) fn from_parts(
-        note_id: NativeNoteId,
-        metadata: NativeNoteMetadata,
-        note: Option<Note>,
-        inclusion_proof: NativeNoteInclusionProof,
-    ) -> Self {
-        FetchedNote {
-            note_id: note_id.into(),
-            metadata: metadata.into(),
-            note,
-            inclusion_proof: inclusion_proof.into(),
-        }
     }
 }

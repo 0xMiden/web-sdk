@@ -136,27 +136,6 @@ describe("useCreateWallet", () => {
       expect(mockClient.newWallet).toHaveBeenCalled();
     });
 
-    it("should create wallet with network storage mode", async () => {
-      const mockWallet = createMockAccount();
-      const mockClient = createMockWebClient({
-        newWallet: vi.fn().mockResolvedValue(mockWallet),
-        getAccounts: vi.fn().mockResolvedValue([]),
-      });
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-      });
-
-      const { result } = renderHook(() => useCreateWallet());
-
-      await act(async () => {
-        await result.current.createWallet({ storageMode: "public" });
-      });
-
-      expect(mockClient.newWallet).toHaveBeenCalled();
-    });
-
     it("should refresh accounts list after creation", async () => {
       const mockWallet = createMockAccount();
       const mockAccounts = [createMockAccountHeader()];

@@ -17,6 +17,8 @@ test.describe("new_wallet tests", () => {
         vaultRoot: newWallet.vault().root().toHex(),
         storageCommitment: newWallet.storage().commitment().toHex(),
         codeCommitment: newWallet.code().commitment().toHex(),
+        isFaucet: newWallet.isFaucet(),
+        isRegularAccount: newWallet.isRegularAccount(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
         idIsPublic: newWallet.id().isPublic(),
@@ -29,6 +31,8 @@ test.describe("new_wallet tests", () => {
     expect(result.vaultRoot.startsWith("0x")).toBe(true);
     expect(result.storageCommitment.startsWith("0x")).toBe(true);
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
+    expect(result.isFaucet).toEqual(false);
+    expect(result.isRegularAccount).toEqual(true);
     expect(result.isPublic).toEqual(false);
     expect(result.isPrivate).toEqual(true);
     expect(result.idIsPublic).toEqual(false);
@@ -48,6 +52,8 @@ test.describe("new_wallet tests", () => {
         vaultRoot: newWallet.vault().root().toHex(),
         storageCommitment: newWallet.storage().commitment().toHex(),
         codeCommitment: newWallet.code().commitment().toHex(),
+        isFaucet: newWallet.isFaucet(),
+        isRegularAccount: newWallet.isRegularAccount(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
         idIsPublic: newWallet.id().isPublic(),
@@ -60,6 +66,8 @@ test.describe("new_wallet tests", () => {
     expect(result.vaultRoot.startsWith("0x")).toBe(true);
     expect(result.storageCommitment.startsWith("0x")).toBe(true);
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
+    expect(result.isFaucet).toEqual(false);
+    expect(result.isRegularAccount).toEqual(true);
     expect(result.isPublic).toEqual(true);
     expect(result.isPrivate).toEqual(false);
     expect(result.idIsPublic).toEqual(true);
@@ -79,6 +87,8 @@ test.describe("new_wallet tests", () => {
         vaultRoot: newWallet.vault().root().toHex(),
         storageCommitment: newWallet.storage().commitment().toHex(),
         codeCommitment: newWallet.code().commitment().toHex(),
+        isFaucet: newWallet.isFaucet(),
+        isRegularAccount: newWallet.isRegularAccount(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
         idIsPublic: newWallet.id().isPublic(),
@@ -91,6 +101,8 @@ test.describe("new_wallet tests", () => {
     expect(result.vaultRoot.startsWith("0x")).toBe(true);
     expect(result.storageCommitment.startsWith("0x")).toBe(true);
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
+    expect(result.isFaucet).toEqual(false);
+    expect(result.isRegularAccount).toEqual(true);
     expect(result.isPublic).toEqual(false);
     expect(result.isPrivate).toEqual(true);
     expect(result.idIsPublic).toEqual(false);
@@ -110,6 +122,8 @@ test.describe("new_wallet tests", () => {
         vaultRoot: newWallet.vault().root().toHex(),
         storageCommitment: newWallet.storage().commitment().toHex(),
         codeCommitment: newWallet.code().commitment().toHex(),
+        isFaucet: newWallet.isFaucet(),
+        isRegularAccount: newWallet.isRegularAccount(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
         idIsPublic: newWallet.id().isPublic(),
@@ -122,6 +136,8 @@ test.describe("new_wallet tests", () => {
     expect(result.vaultRoot.startsWith("0x")).toBe(true);
     expect(result.storageCommitment.startsWith("0x")).toBe(true);
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
+    expect(result.isFaucet).toEqual(false);
+    expect(result.isRegularAccount).toEqual(true);
     expect(result.isPublic).toEqual(true);
     expect(result.isPrivate).toEqual(false);
     expect(result.idIsPublic).toEqual(true);
@@ -150,6 +166,8 @@ test.describe("new_faucet tests", () => {
         vaultRoot: newFaucet.vault().root().toHex(),
         storageCommitment: newFaucet.storage().commitment().toHex(),
         codeCommitment: newFaucet.code().commitment().toHex(),
+        isFaucet: newFaucet.isFaucet(),
+        isRegularAccount: newFaucet.isRegularAccount(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
         idIsPublic: newFaucet.id().isPublic(),
@@ -162,6 +180,8 @@ test.describe("new_faucet tests", () => {
     expect(result.vaultRoot.startsWith("0x")).toBe(true);
     expect(result.storageCommitment.startsWith("0x")).toBe(true);
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
+    expect(result.isFaucet).toEqual(true);
+    expect(result.isRegularAccount).toEqual(false);
     expect(result.isPublic).toEqual(false);
     expect(result.isPrivate).toEqual(true);
     expect(result.idIsPublic).toEqual(false);
@@ -186,6 +206,8 @@ test.describe("new_faucet tests", () => {
         vaultRoot: newFaucet.vault().root().toHex(),
         storageCommitment: newFaucet.storage().commitment().toHex(),
         codeCommitment: newFaucet.code().commitment().toHex(),
+        isFaucet: newFaucet.isFaucet(),
+        isRegularAccount: newFaucet.isRegularAccount(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
         idIsPublic: newFaucet.id().isPublic(),
@@ -198,6 +220,8 @@ test.describe("new_faucet tests", () => {
     expect(result.vaultRoot.startsWith("0x")).toBe(true);
     expect(result.storageCommitment.startsWith("0x")).toBe(true);
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
+    expect(result.isFaucet).toEqual(true);
+    expect(result.isRegularAccount).toEqual(false);
     expect(result.isPublic).toEqual(true);
     expect(result.isPrivate).toEqual(false);
     expect(result.idIsPublic).toEqual(true);

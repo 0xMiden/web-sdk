@@ -89,6 +89,11 @@ impl AccountComponent {
     }
 
     /// Marks the component as supporting all account types.
+    ///
+    /// The 0.15 protocol collapsed the per-account-type flag set on
+    /// `AccountComponentMetadata::new` — every component now applies to every account type
+    /// implicitly, so this method's job is to re-derive the metadata under the new
+    /// (name-only) constructor while keeping the JS API surface stable.
     #[js_export(js_name = "withSupportsAllTypes")]
     pub fn with_supports_all_types(&self) -> Self {
         let code = self.0.component_code().clone();

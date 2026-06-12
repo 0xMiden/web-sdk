@@ -149,8 +149,12 @@ const createMockWord = (hex: string = "0xword") => ({
   toFelts: vi.fn(() => []),
 });
 
+// Real WASM `TransactionId` exposes only `toHex()` (no `to_string` binding) —
+// callers that reach for `.toString()` hit Object.prototype's default and get
+// "[object Object]" (issue #83). Mirror that here so any future hook that
+// regresses to `.toString()` fails the unit tests instead of silently passing.
 export const createMockTransactionId = (id: string = "0xtx123") => ({
-  toString: vi.fn(() => id),
+  toString: vi.fn(() => "[object Object]"),
   toHex: vi.fn(() => id),
   asElements: vi.fn(() => []),
   asBytes: vi.fn(() => new Uint8Array()),
@@ -231,6 +235,15 @@ export const createMockWebClient = (
     newSwapTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),
+    newPswapCreateTransactionRequest: vi
+      .fn()
+      .mockReturnValue(createMockTransactionRequest()),
+    newPswapConsumeTransactionRequest: vi
+      .fn()
+      .mockReturnValue(createMockTransactionRequest()),
+    newPswapCancelTransactionRequest: vi
+      .fn()
+      .mockReturnValue(createMockTransactionRequest()),
     submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
     submitNewTransactionWithProver: vi
       .fn()
@@ -241,7 +254,20 @@ export const createMockWebClient = (
     proveTransaction: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
-    sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+    sendPrivateNote: vi.fn(async (note: unknown, _addr: unknown) => {
+      // Any method call against a moved wasm-bindgen handle crashes with
+      // "null pointer passed to rust"; mirror that here so move-after-use
+      // bugs (e.g. building a NoteArray via Vec<Note> ctor then re-reading
+      // the source notes) are caught in unit tests.
+      if (
+        note &&
+        typeof note === "object" &&
+        (note as { _live?: boolean })._live === false
+      ) {
+        throw new Error("null pointer passed to rust");
+      }
+      return undefined;
+    }),
     importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue(createMockAccount()),
@@ -287,6 +313,9 @@ type MockWebClientType = {
   newSendTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
+  newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
+  newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;
+  newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;

@@ -431,10 +431,14 @@ impl Store for IdxdbStore {
         address: Address,
         account_id: AccountId,
     ) -> Result<(), StoreError> {
+        // Tag registration moved upstream — `Self::add_note_tag` is the
+        // caller's responsibility per the new trait contract.
         self.insert_address(address, &account_id).await
     }
 
     async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+        // Tag removal moved upstream — `Self::remove_note_tag` is the
+        // caller's responsibility per the new trait contract.
         self.remove_address(address).await
     }
 

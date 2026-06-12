@@ -200,8 +200,11 @@ function buildStreamedNote(
   noteFirstSeen: Map<string, number>
 ): StreamedNote | null {
   try {
-    const id = record.id()?.toString();
-    if (!id) return null;
+    // `InputNoteRecord.id()` is `NoteId | undefined` on the 0.15 surface —
+    // partial / metadata-less notes are skipped from the streamed view.
+    const rawId = record.id();
+    if (!rawId) return null;
+    const id = rawId.toString();
 
     // Extract sender
     const metadata = record.metadata?.();

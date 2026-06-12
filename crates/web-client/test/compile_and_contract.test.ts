@@ -412,7 +412,9 @@ test.describe("compile.noteScript()", () => {
 // ════════════════════════════════════════════════════════════════
 
 test.describe("accounts.create() — ImmutableContract / MutableContract", () => {
-  test("ImmutableContract: isPublic=true, isNew=true", async ({ page }) => {
+  test("ImmutableContract: isPublic=true, isRegularAccount=true", async ({
+    page,
+  }) => {
     const result = await page.evaluate(
       async ({ code, slotName }) => {
         const client = await window.MidenClient.createMock();
@@ -435,6 +437,8 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
         });
 
         return {
+          isFaucet: account.isFaucet(),
+          isRegularAccount: account.isRegularAccount(),
           isPublic: account.isPublic(),
           isNew: account.isNew(),
         };
@@ -442,11 +446,15 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
       { code: COUNTER_CODE, slotName: COUNTER_SLOT_NAME }
     );
 
+    expect(result.isFaucet).toBe(false);
+    expect(result.isRegularAccount).toBe(true);
     expect(result.isPublic).toBe(true);
     expect(result.isNew).toBe(true);
   });
 
-  test("MutableContract: isPublic=true", async ({ page }) => {
+  test("MutableContract: isPublic=true, isRegularAccount=true", async ({
+    page,
+  }) => {
     const result = await page.evaluate(
       async ({ code, slotName }) => {
         const client = await window.MidenClient.createMock();
@@ -470,12 +478,14 @@ test.describe("accounts.create() — ImmutableContract / MutableContract", () =>
 
         return {
           isPublic: account.isPublic(),
+          isRegularAccount: account.isRegularAccount(),
         };
       },
       { code: COUNTER_CODE, slotName: COUNTER_SLOT_NAME }
     );
 
     expect(result.isPublic).toBe(true);
+    expect(result.isRegularAccount).toBe(true);
   });
 
   test("ImmutableContract defaults to public storage when storage is omitted", async ({

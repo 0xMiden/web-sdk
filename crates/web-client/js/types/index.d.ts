@@ -141,7 +141,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportUrl?: string,
     seed?: Uint8Array,
     storeName?: string,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -152,11 +153,13 @@ export declare class WasmWebClient extends WasmWebClientBase {
     getKeyCb?: GetKeyCallback,
     insertKeyCb?: InsertKeyCallback,
     signCb?: SignCallback,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;
-  syncStateWithTimeout(timeoutMs: number): Promise<SyncSummary>;
+  syncChain(): Promise<SyncSummary>;
+  syncNoteTransport(): Promise<void>;
   setSignCb(signCb: SignCallback | null | undefined): void;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   terminate(): void;
