@@ -165,6 +165,7 @@ test.describe("MockWebClient Integration", () => {
         (window as any).AccountStorageMode.private(),
         false,
         "TEST",
+        "TEST",
         8,
         BigInt(1000000),
         (window as any).AuthScheme.AuthRpoFalcon512
@@ -250,6 +251,7 @@ test.describe("MockWebClient Integration", () => {
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
         false,
+        "TOKEN",
         "TOKEN",
         8,
         BigInt(10000000),
@@ -342,6 +344,7 @@ test.describe("MockWebClient Integration", () => {
       const faucet = await client.newFaucet(
         (window as any).AccountStorageMode.private(),
         false,
+        "SEND",
         "SEND",
         8,
         BigInt(10000000),

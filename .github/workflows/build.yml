@@ -72,7 +72,12 @@ jobs:
       - name: Install Rust toolchain
         run: rustup update --no-self-update
       - name: Add wasm32-unknown-unknown target
-        run: rustup target add wasm32-unknown-unknown
+        run: |
+          rustup target add wasm32-unknown-unknown
+          # Stable wasm32 std for the ST rollup path (RUSTUP_TOOLCHAIN=stable
+          # is set inside crates/web-client/rollup.config.js for the ST build).
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
       # `make build-wasm` invokes `pnpm --filter web_store run build` for
       # the idxdb-store TS bindings before the Rust WASM build runs. Need
       # pnpm + node + a populated workspace install in scope.

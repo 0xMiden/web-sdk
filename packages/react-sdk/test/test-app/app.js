@@ -120,6 +120,7 @@ const TestHarness = () => {
           AccountStorageMode.private(),
           false,
           "TEST",
+          "TEST",
           8,
           BigInt(1000000),
           AuthScheme.AuthRpoFalcon512

@@ -409,6 +409,9 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |
+| `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
+| `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` — `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
+| `usePswapCancel()` | `pswapCancel({ accountId, note })` — creator only, reclaims unfilled offered asset | `TransactionResult` |
 | `useTransaction()` | `transact({ ... })` | `TransactionResult` (custom tx) |
 | `useExecuteProgram()` | `execute(...)` | program output |
 | `useCompile()` | `compile({ source })` | `{ component, txScript, noteScript }` |

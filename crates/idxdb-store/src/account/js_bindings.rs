@@ -172,7 +172,10 @@ extern "C" {
 // ================================================================================================
 
 /// An object that contains a serialized vault asset.
-#[wasm_bindgen(getter_with_clone, inspectable)]
+///
+/// `inspectable` is intentionally omitted — see the note on
+/// `JsAccountUpdate` for the full rationale (#2183).
+#[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsVaultAsset {
@@ -197,7 +200,10 @@ impl JsVaultAsset {
 // ================================================================================================
 
 /// A JavaScript representation of a storage slot in an account.
-#[wasm_bindgen(getter_with_clone, inspectable)]
+///
+/// `inspectable` is intentionally omitted — see the note on
+/// `JsAccountUpdate` for the full rationale (#2183).
+#[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsStorageSlot {
@@ -226,7 +232,10 @@ impl JsStorageSlot {
 // ================================================================================================
 
 /// A JavaScript representation of a storage map entry in an account.
-#[wasm_bindgen(getter_with_clone, inspectable)]
+///
+/// `inspectable` is intentionally omitted — see the note on
+/// `JsAccountUpdate` for the full rationale (#2183).
+#[wasm_bindgen(getter_with_clone)]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsStorageMapEntry {

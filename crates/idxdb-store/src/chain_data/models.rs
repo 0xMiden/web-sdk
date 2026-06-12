@@ -11,8 +11,6 @@ pub struct BlockHeaderIdxdbObject {
     pub block_num: u32,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub header: Vec<u8>,
-    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
-    pub partial_blockchain_peaks: Vec<u8>,
     pub has_client_notes: bool,
 }
 
@@ -27,9 +25,15 @@ pub struct PartialBlockchainNodeIdxdbObject {
     pub node: String,
 }
 
+/// Blockchain peaks at the current sync height. Resolved by looking up the
+/// `blockHeaders` row at `stateSync.blockNum` — that row's
+/// `partialBlockchainPeaks` column holds the peaks captured when the block was
+/// the chain tip. `peaks` is `None` before the first sync (or if the chain-tip
+/// row was inserted via backfill and never received peaks).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PartialBlockchainPeaksIdxdbObject {
+    pub block_num: u32,
     #[serde(deserialize_with = "base64_to_vec_u8_optional", default)]
     pub peaks: Option<Vec<u8>>,
 }

@@ -92,6 +92,7 @@ describe("AccountsResource", () => {
         type: 0,
         storage: "public",
         auth: "falcon",
+        name: "US Dollar",
         symbol: "USD",
         decimals: 2,
         maxSupply: 1000000,
@@ -100,6 +101,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false, // not NonFungibleFaucet for type=0
+        "US Dollar",
         "USD",
         2,
         BigInt(1000000),
@@ -108,7 +110,7 @@ describe("AccountsResource", () => {
       expect(result).toBe("newFaucetResult");
     });
 
-    it("creates fungible faucet when type='FungibleFaucet'", async () => {
+    it("falls back to symbol when name is omitted", async () => {
       const resource = makeResource();
       await resource.create({
         type: "FungibleFaucet",
@@ -121,6 +123,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false,
+        "FOO", // name defaults to symbol
         "FOO",
         0,
         BigInt(500),
@@ -134,6 +137,7 @@ describe("AccountsResource", () => {
         type: 1,
         storage: "public",
         auth: "falcon",
+        name: "Collectible",
         symbol: "NFT",
         decimals: 0,
         maxSupply: 1,
@@ -141,6 +145,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         true, // NonFungibleFaucet
+        "Collectible",
         "NFT",
         0,
         BigInt(1),
@@ -154,6 +159,7 @@ describe("AccountsResource", () => {
         type: "NonFungibleFaucet",
         storage: "public",
         auth: "falcon",
+        name: "Collectible",
         symbol: "NFT",
         decimals: 0,
         maxSupply: 1,
@@ -161,6 +167,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         true,
+        "Collectible",
         "NFT",
         0,
         BigInt(1),
@@ -173,7 +180,8 @@ describe("AccountsResource", () => {
       await resource.create({
         type: 0,
         auth: "falcon",
-        symbol: "T",
+        name: "Test Token",
+        symbol: "TST",
         decimals: 0,
         maxSupply: 1,
         // no storage specified — should default to "public"
@@ -187,14 +195,16 @@ describe("AccountsResource", () => {
         type: 0,
         storage: "public",
         auth: "ecdsa",
-        symbol: "T",
+        name: "Test Token",
+        symbol: "TST",
         decimals: 0,
         maxSupply: 1,
       });
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false,
-        "T",
+        "Test Token",
+        "TST",
         0,
         BigInt(1),
         1 // ecdsa
@@ -325,12 +335,15 @@ describe("AccountsResource", () => {
       ).toHaveBeenCalledWith("authKey");
       expect(wasm.AccountBuilder).toHaveBeenCalledWith(seed);
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.accountType).toHaveBeenCalledWith(0); // ImmutableCode
+      // 0.15 has no code-mutability flag: visibility comes from storageMode and
+      // the builder's accountType() is never invoked for contracts.
+      expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
+      expect(builderInstance.accountType).not.toHaveBeenCalled();
       expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
       expect(result).toEqual({ id: expect.any(Function) });
     });
 
-    it("creates mutable contract when type='MutableContract'", async () => {
+    it("creates contract when type='MutableContract'", async () => {
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(2);
       await resource.create({
@@ -340,7 +353,9 @@ describe("AccountsResource", () => {
         components: ["comp1"],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.accountType).toHaveBeenCalledWith(1); // UpdatableCode
+      expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
+      expect(builderInstance.accountType).not.toHaveBeenCalled();
+      expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
     });
 
     it("creates contract when opts.components is present (no type)", async () => {
