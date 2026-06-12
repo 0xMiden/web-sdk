@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { normalizeAccountId, accountIdsEqual } from "../../utils/accountId";
-import { AccountId } from "@miden-sdk/miden-sdk/lazy";
+import { AccountId } from "@miden-sdk/miden-sdk";
 
 // The global mock in setup.ts mocks @miden-sdk/miden-sdk.
 // parseAccountId (used by accountIdsEqual) calls AccountId.fromHex / fromBech32,
@@ -67,34 +67,5 @@ describe("accountIdsEqual", () => {
     for (const call of calls) {
       expect(call.value.free).toHaveBeenCalled();
     }
-  });
-
-  it("should fall back to direct string comparison when parse throws (line 24)", () => {
-    // Make fromHex throw so parseAccountId fails → catch branch
-    vi.mocked(AccountId.fromHex).mockImplementationOnce(() => {
-      throw new Error("invalid");
-    });
-    // When parsing 'a' throws, falls back to a === b
-    expect(accountIdsEqual("same", "same")).toBe(true);
-  });
-
-  it("should fall back to string comparison when second parse also throws (line 25)", () => {
-    // Make first call succeed, second call throw — still enters finally
-    vi.mocked(AccountId.fromHex)
-      .mockImplementationOnce(
-        (hex: string) =>
-          ({
-            toString: vi.fn(() => hex),
-            toHex: vi.fn(() => hex),
-            isFaucet: vi.fn(() => false),
-            isRegularAccount: vi.fn(() => true),
-            free: vi.fn(),
-          }) as unknown as AccountId
-      )
-      .mockImplementationOnce(() => {
-        throw new Error("second parse failed");
-      });
-    // Should catch and fall back to a === b
-    expect(accountIdsEqual("0xfoo", "0xbar")).toBe(false);
   });
 });

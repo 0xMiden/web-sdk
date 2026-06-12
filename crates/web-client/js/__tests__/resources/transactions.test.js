@@ -67,13 +67,21 @@ function makeInner(overrides = {}) {
   return {
     executeTransaction: vi.fn().mockResolvedValue(txResult),
     proveTransaction: vi.fn().mockResolvedValue("provenTx"),
-    proveTransactionWithProver: vi.fn().mockResolvedValue("provenTxWithProver"),
     submitProvenTransaction: vi.fn().mockResolvedValue(100),
     applyTransaction: vi.fn().mockResolvedValue(undefined),
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
+    newPswapCreateTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("pswapCreateRequest"),
+    newPswapConsumeTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("pswapConsumeRequest"),
+    newPswapCancelTransactionRequest: vi
+      .fn()
+      .mockResolvedValue("pswapCancelRequest"),
     getTransactions: vi.fn().mockResolvedValue([]),
     getInputNote: vi
       .fn()
@@ -81,7 +89,8 @@ function makeInner(overrides = {}) {
     getConsumableNotes: vi.fn().mockResolvedValue([]),
     executeForSummary: vi.fn().mockResolvedValue("summary"),
     executeProgram: vi.fn().mockResolvedValue("programResult"),
-    syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+    syncState: vi.fn().mockResolvedValue(undefined),
+    syncChain: vi.fn().mockResolvedValue(undefined),
     _txResult: txResult,
     ...overrides,
   };
@@ -149,7 +158,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 30000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
 
@@ -163,7 +172,7 @@ describe("TransactionsResource", () => {
         type: "public",
         amount: 100,
       });
-      expect(inner.proveTransactionWithProver).toHaveBeenCalledWith(
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
         expect.anything(),
         prover
       );
@@ -181,7 +190,7 @@ describe("TransactionsResource", () => {
         amount: 100,
         prover: callProver,
       });
-      expect(inner.proveTransactionWithProver).toHaveBeenCalledWith(
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
         expect.anything(),
         callProver
       );
@@ -467,6 +476,116 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("pswapCreate", () => {
+    it("builds pswap create request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.pswapCreate({
+        account: "0xaccHex",
+        offer: { token: "0xofferedToken", amount: 100 },
+        request: { token: "0xwantedToken", amount: 25 },
+        type: "public",
+      });
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        BigInt(100),
+        expect.anything(),
+        BigInt(25),
+        "Public",
+        "Public" // paybackNoteType defaults to type
+      );
+      expect(result.txId).toBeDefined();
+    });
+
+    it("uses paybackType when provided", async () => {
+      const { resource, inner } = makeResource();
+      await resource.pswapCreate({
+        account: "0xaccHex",
+        offer: { token: "0xofferedToken", amount: 100 },
+        request: { token: "0xwantedToken", amount: 25 },
+        type: "public",
+        paybackType: "private",
+      });
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        BigInt(100),
+        expect.anything(),
+        BigInt(25),
+        "Public",
+        "Private"
+      );
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const { resource, inner } = makeResource();
+      const waitSpy = vi
+        .spyOn(resource, "waitFor")
+        .mockResolvedValue(undefined);
+      await resource.pswapCreate({
+        account: "0xaccHex",
+        offer: { token: "0xofferedToken", amount: 100 },
+        request: { token: "0xwantedToken", amount: 25 },
+        type: "public",
+        waitForConfirmation: true,
+      });
+      expect(waitSpy).toHaveBeenCalled();
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalled();
+    });
+  });
+
+  describe("pswapConsume", () => {
+    it("builds pswap consume request and defaults noteFillAmount to 0", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.pswapConsume({
+        account: "0xaccHex",
+        note: "0xpswapNote",
+        fillAmount: 10,
+      });
+      // String note input is resolved via getInputNote(...).toNote().
+      expect(inner.getInputNote).toHaveBeenCalledWith("0xpswapNote");
+      expect(inner.newPswapConsumeTransactionRequest).toHaveBeenCalledWith(
+        "noteFromRecord",
+        expect.anything(),
+        BigInt(10),
+        BigInt(0)
+      );
+      expect(result.txId).toBeDefined();
+    });
+
+    it("forwards an explicit noteFillAmount", async () => {
+      const { resource, inner } = makeResource();
+      await resource.pswapConsume({
+        account: "0xaccHex",
+        note: "0xpswapNote",
+        fillAmount: 10,
+        noteFillAmount: 4n,
+      });
+      expect(inner.newPswapConsumeTransactionRequest).toHaveBeenCalledWith(
+        "noteFromRecord",
+        expect.anything(),
+        BigInt(10),
+        BigInt(4)
+      );
+    });
+  });
+
+  describe("pswapCancel", () => {
+    it("builds pswap cancel request and submits", async () => {
+      const { resource, inner } = makeResource();
+      const result = await resource.pswapCancel({
+        account: "0xaccHex",
+        note: "0xpswapNote",
+      });
+      expect(inner.getInputNote).toHaveBeenCalledWith("0xpswapNote");
+      expect(inner.newPswapCancelTransactionRequest).toHaveBeenCalledWith(
+        "noteFromRecord",
+        expect.anything() // creator account id
+      );
+      expect(result.txId).toBeDefined();
+    });
+  });
+
   describe("preview", () => {
     it("builds send request for preview", async () => {
       const { resource, inner } = makeResource();
@@ -516,6 +635,42 @@ describe("TransactionsResource", () => {
         type: "public",
       });
       expect(inner.newSwapTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds pswap create request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "pswapCreate",
+        account: "0xacc",
+        offer: { token: "0xoffered", amount: 100 },
+        request: { token: "0xwanted", amount: 25 },
+        type: "public",
+      });
+      expect(inner.newPswapCreateTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds pswap consume request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "pswapConsume",
+        account: "0xacc",
+        note: "0xpswapNote",
+        fillAmount: 10,
+      });
+      expect(inner.newPswapConsumeTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds pswap cancel request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "pswapCancel",
+        account: "0xacc",
+        note: "0xpswapNote",
+      });
+      expect(inner.newPswapCancelTransactionRequest).toHaveBeenCalled();
       expect(inner.executeForSummary).toHaveBeenCalled();
     });
 
@@ -667,7 +822,7 @@ describe("TransactionsResource", () => {
       const { resource, inner } = makeResource();
       const request = { type: "request" };
       await resource.submit("0xaccHex", request, { prover });
-      expect(inner.proveTransactionWithProver).toHaveBeenCalledWith(
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
         expect.anything(),
         prover
       );
@@ -838,7 +993,7 @@ describe("TransactionsResource", () => {
     it("throws timeout when transaction takes too long", async () => {
       const { resource } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([]),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+        syncChain: vi.fn().mockResolvedValue(undefined),
       });
       await expect(
         resource.waitFor("0xtxHex", { timeout: 1, interval: 0 })
@@ -880,14 +1035,14 @@ describe("TransactionsResource", () => {
       expect(txIdObj.toHex).toHaveBeenCalled();
     });
 
-    it("continues polling when syncStateWithTimeout throws", async () => {
+    it("continues polling when syncChain throws", async () => {
       const committedStatus = {
         isCommitted: () => true,
         isDiscarded: () => false,
       };
       let syncCount = 0;
       const { resource } = makeResource({
-        syncStateWithTimeout: vi.fn().mockImplementation(() => {
+        syncChain: vi.fn().mockImplementation(() => {
           if (syncCount++ === 0) throw new Error("sync fail");
           return Promise.resolve();
         }),
@@ -943,7 +1098,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.note).toBe("p2idNote");
     });
   });
@@ -966,7 +1121,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });
@@ -987,7 +1142,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });
@@ -1013,7 +1168,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.consumed).toBe(1);
     });
   });
@@ -1036,7 +1191,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
     });
   });
 
@@ -1056,7 +1211,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });

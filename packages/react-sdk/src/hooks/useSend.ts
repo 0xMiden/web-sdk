@@ -4,16 +4,15 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
   TransactionRequestBuilder,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
-import { createNoteAttachment } from "../utils/noteAttachment";
+import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
@@ -107,7 +106,6 @@ export function useSend(): UseSendResult {
           const resolvedAmount = await runExclusiveSafe(async () => {
             const fromId = parseAccountId(options.from);
             const account = await client.getAccount(fromId);
-            /* v8 ignore next 1 — account-not-found path inside sendAll; mocks always return an account */
             if (!account) throw new Error("Account not found");
             const assetIdObj = parseAccountId(options.assetId);
             const balance = account.vault?.()?.getBalance?.(assetIdObj);
@@ -164,7 +162,7 @@ export function useSend(): UseSendResult {
               toId,
               assets,
               noteType,
-              new NoteAttachment()
+              emptyAttachment()
             );
 
             // NoteArray constructor consumes its elements; use push(&note)
@@ -222,7 +220,7 @@ export function useSend(): UseSendResult {
               .withOwnOutputNotes(new NoteArray([note]))
               .build();
           } else {
-            txRequest = client.newSendTransactionRequest(
+            txRequest = await client.newSendTransactionRequest(
               fromAccountId,
               toAccountId,
               assetIdObj,
@@ -244,9 +242,7 @@ export function useSend(): UseSendResult {
         const provenTransaction = await proveWithFallback(
           (resolvedProver) =>
             runExclusiveSafe(() =>
-              resolvedProver
-                ? client.proveTransactionWithProver(txResult, resolvedProver)
-                : client.proveTransaction(txResult)
+              client.proveTransaction(txResult, resolvedProver)
             ),
           proverConfig
         );
@@ -307,7 +303,6 @@ export function useSend(): UseSendResult {
         setError(error);
         setStage("idle");
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
         isBusyRef.current = false;
@@ -335,8 +330,6 @@ export function useSend(): UseSendResult {
 
 function extractFullNote(txResult: unknown): Note | null {
   try {
-    /* v8 ignore next 14 — optional-chain branches on executedTransaction / outputNotes /
-     * notes / intoFull require specific WASM transaction shapes not present in mocks. */
     const executedTx = (
       txResult as { executedTransaction?: () => unknown }
     ).executedTransaction?.() as {

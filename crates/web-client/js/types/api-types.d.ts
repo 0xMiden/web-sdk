@@ -84,25 +84,9 @@ export declare const AuthScheme: {
 };
 
 /**
- * Union of all string values in the AuthScheme const. Merges with the
- * `AuthScheme` value so `authScheme?: AuthScheme` resolves to
- * `"falcon" | "ecdsa"` in type position while `AuthScheme.Falcon` /
- * `AuthScheme.ECDSA` still work in value position.
+ * Union of all values in the AuthScheme const.
  */
-export type AuthScheme = (typeof AuthScheme)[keyof typeof AuthScheme];
-
-/** @deprecated Alias for `AuthScheme` (the string union). */
-export type AuthSchemeType = AuthScheme;
-
-/**
- * Resolves an `AuthScheme` string to the numeric value expected by low-level
- * wasm-bindgen methods such as
- * `AccountComponent.createAuthComponentFromCommitment(commitment, scheme)`.
- *
- * @param scheme - `AuthScheme.Falcon` or `AuthScheme.ECDSA`. Defaults to `"falcon"`.
- * @returns The numeric AuthScheme enum value.
- */
-export declare function resolveAuthScheme(scheme?: AuthScheme): number;
+export type AuthSchemeType = (typeof AuthScheme)[keyof typeof AuthScheme];
 
 /**
  * User-friendly note visibility constants.
@@ -118,16 +102,20 @@ export type NoteVisibility = "public" | "private";
 
 /**
  * User-friendly storage mode constants.
- * Use `StorageMode.Public`, `StorageMode.Private`, or `StorageMode.Network` instead of raw strings.
+ * Use `StorageMode.Public` or `StorageMode.Private` instead of raw strings.
+ *
+ * The `"network"` storage mode was removed in the migration to miden-client
+ * PR #2214 — the 0.15 protocol surface no longer has a separate
+ * network-account flag (network execution is now driven by the calling
+ * surface, not the account's storage mode).
  */
 export declare const StorageMode: {
   readonly Public: "public";
   readonly Private: "private";
-  readonly Network: "network";
 };
 
 /** Union of valid StorageMode string values. */
-export type StorageMode = "public" | "private" | "network";
+export type StorageMode = "public" | "private";
 
 /**
  * Library linking mode for script compilation.
@@ -147,26 +135,21 @@ export type Linking = "dynamic" | "static";
 export type AccountType = (typeof AccountType)[keyof typeof AccountType];
 
 /**
- * Account type constants with numeric values matching the WASM `AccountType` enum.
- * Includes SDK-friendly aliases (e.g. `MutableWallet`) that map to the same
- * numeric values. These values work with both `accounts.create()` and the
- * low-level `AccountBuilder.accountType()`.
+ * Faucet-kind selectors for `accounts.create({ type })`.
+ *
+ * These are NOT the low-level WASM `AccountType` enum. As of protocol 0.15 that
+ * enum encodes only account visibility (`Private` / `Public`), which the
+ * low-level builder sets via `AccountBuilder.storageMode()`. Wallets and
+ * contracts are not selected by a `type` value: a wallet is the default, and a
+ * contract is any `accounts.create()` call that passes `components`.
  */
 export declare const AccountType: {
-  // WASM-compatible values
   readonly FungibleFaucet: 0;
   readonly NonFungibleFaucet: 1;
-  readonly RegularAccountImmutableCode: 2;
-  readonly RegularAccountUpdatableCode: 3;
-  // SDK-friendly aliases
-  readonly MutableWallet: 3;
-  readonly ImmutableWallet: 2;
-  readonly ImmutableContract: 2;
-  readonly MutableContract: 3;
 };
 
 /** Union of valid AccountType numeric values. */
-export type AccountTypeValue = 0 | 1 | 2 | 3;
+export type AccountTypeValue = 0 | 1;
 
 // ════════════════════════════════════════════════════════════════
 // Client options
@@ -203,6 +186,8 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
+  /** Enable debug mode for transaction execution (default: false). */
+  debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
     getKey: GetKeyCallback;
@@ -253,15 +238,16 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 // Account types
 // ════════════════════════════════════════════════════════════════
 
-/** Create a wallet, faucet, or contract. Discriminated by `type` field. */
+/**
+ * Create a wallet, faucet, or contract. A faucet sets `type`, a contract
+ * passes `components`, and a wallet is the default (neither).
+ */
 export type CreateAccountOptions =
   | WalletCreateOptions
   | FaucetCreateOptions
   | ContractCreateOptions;
 
 export interface WalletCreateOptions {
-  /** Account type. Defaults to `AccountType.MutableWallet`. */
-  type?: AccountTypeValue;
   storage?: StorageMode;
   auth?: AuthSchemeType;
   seed?: string | Uint8Array;
@@ -270,6 +256,8 @@ export interface WalletCreateOptions {
 export interface FaucetCreateOptions {
   /** Use `AccountType.FungibleFaucet` or `AccountType.NonFungibleFaucet`. */
   type: AccountTypeValue;
+  /** Human-readable token name. Defaults to `symbol` when omitted. */
+  name?: string;
   symbol: string;
   decimals: number;
   maxSupply: number | bigint;
@@ -278,8 +266,6 @@ export interface FaucetCreateOptions {
 }
 
 export interface ContractCreateOptions {
-  /** Use `AccountType.ImmutableContract` or `AccountType.MutableContract`. */
-  type?: AccountTypeValue;
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
   /** Auth secret key. Required. */
@@ -303,15 +289,13 @@ export interface AccountDetails {
  *
  * - `AccountRef` (string, AccountId, Account, AccountHeader) — Import a public account by ID (fetches state from the network).
  * - `{ file: AccountFile }` — Import from a previously exported account file (works for both public and private accounts).
- * - `{ seed, type?, auth? }` — Reconstruct a **public** account from its init seed. **Does not work for private accounts** — use the account file workflow instead.
+ * - `{ seed, auth? }` — Reconstruct a **public** account from its init seed. **Does not work for private accounts** — use the account file workflow instead.
  */
 export type ImportAccountInput =
   | AccountRef
   | { file: AccountFile }
   | {
       seed: Uint8Array;
-      /** Account type. Defaults to `AccountType.MutableWallet`. */
-      type?: AccountTypeValue;
       auth?: AuthSchemeType;
     };
 
@@ -407,6 +391,41 @@ export interface SwapOptions extends TransactionOptions {
   paybackType?: NoteVisibility;
 }
 
+/**
+ * Options for {@link TransactionsResource.pswapCreate}. V1 PSWAP notes carry
+ * no attachment, so there is no `attachment` field.
+ */
+export interface PswapCreateOptions extends TransactionOptions {
+  /** Account that creates the partial-swap (PSWAP) note. */
+  account: AccountRef;
+  /** Fungible asset offered by the creator. */
+  offer: Asset;
+  /** Fungible asset requested in exchange. */
+  request: Asset;
+  /** Visibility of the PSWAP note itself. */
+  type?: NoteVisibility;
+  /** Visibility of the payback note fillers emit to the creator. Defaults to `public`. */
+  paybackType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions extends TransactionOptions {
+  /** Consumer account filling the PSWAP note. */
+  account: AccountRef;
+  /** PSWAP note to consume — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
+  note: NoteInput;
+  /** Requested-asset amount the consumer supplies from its own vault; a partial amount emits a remainder PSWAP note. */
+  fillAmount: number | bigint;
+  /** Requested-asset amount supplied by other in-flight notes in the same tx. Defaults to `0`; leave unset normally. */
+  noteFillAmount?: number | bigint;
+}
+
+export interface PswapCancelOptions extends TransactionOptions {
+  /** Creator account reclaiming the offered asset. */
+  account: AccountRef;
+  /** PSWAP note to cancel — accepts a note id (hex), `NoteId`, `InputNoteRecord`, or `Note`. */
+  note: NoteInput;
+}
+
 export interface ExecuteOptions extends TransactionOptions {
   /** Account executing the custom script. */
   account: AccountRef;
@@ -467,11 +486,44 @@ export interface PreviewSwapOptions {
   paybackType?: NoteVisibility;
 }
 
+export interface PreviewPswapCreateOptions {
+  operation: "pswapCreate";
+  account: AccountRef;
+  offer: Asset;
+  request: Asset;
+  type?: NoteVisibility;
+  paybackType?: NoteVisibility;
+}
+
+export interface PreviewPswapConsumeOptions {
+  operation: "pswapConsume";
+  account: AccountRef;
+  note: NoteInput;
+  fillAmount: number | bigint;
+  noteFillAmount?: number | bigint;
+}
+
+export interface PreviewPswapCancelOptions {
+  operation: "pswapCancel";
+  account: AccountRef;
+  note: NoteInput;
+}
+
+export interface PreviewCustomOptions {
+  operation: "custom";
+  account: AccountRef;
+  request: TransactionRequest;
+}
+
 export type PreviewOptions =
   | PreviewSendOptions
   | PreviewMintOptions
   | PreviewConsumeOptions
-  | PreviewSwapOptions;
+  | PreviewSwapOptions
+  | PreviewPswapCreateOptions
+  | PreviewPswapConsumeOptions
+  | PreviewPswapCancelOptions
+  | PreviewCustomOptions;
 
 /** Status values reported during waitFor polling. */
 export type WaitStatus = "pending" | "submitted" | "committed";
@@ -551,12 +603,6 @@ export interface MockOptions {
   serializedNoteTransport?: Uint8Array;
 }
 
-/** Versioned store snapshot for backup/restore. */
-export interface StoreSnapshot {
-  version: number;
-  data: unknown;
-}
-
 // ════════════════════════════════════════════════════════════════
 // Swap tag options
 // ════════════════════════════════════════════════════════════════
@@ -573,10 +619,11 @@ export interface BuildSwapTagOptions {
 
 export interface AccountsResource {
   /**
-   * Create a new wallet, faucet, or contract account. Defaults to a mutable
-   * wallet if no options are provided.
+   * Create a new wallet, faucet, or contract account. Defaults to a wallet
+   * if no options are provided.
    *
-   * @param options - Account creation options discriminated by `type` field.
+   * @param options - Account creation options. A faucet sets `type`, a
+   * contract passes `components`, and a wallet is the default.
    */
   create(options?: CreateAccountOptions): Promise<Account>;
   /**
@@ -683,6 +730,31 @@ export interface TransactionsResource {
    */
   swap(options: SwapOptions): Promise<TransactionSubmitResult>;
   /**
+   * Create a partial-swap (PSWAP) note offering one fungible asset for
+   * another. Unlike `swap`, the resulting note can be filled by multiple
+   * consumers; each fill emits a payback note to the creator and, on a
+   * partial fill, a remainder PSWAP note carrying the unfilled amount.
+   *
+   * @param options - Creator, offered asset, requested asset, and visibility.
+   */
+  pswapCreate(options: PswapCreateOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Consume (fully or partially fill) an existing PSWAP note. The consumer
+   * supplies `fillAmount` of the requested asset and receives a proportional
+   * share of the offered asset. A full fill (`fillAmount` equal to the
+   * note's requested amount) produces only the payback note; a partial fill
+   * also produces a remainder PSWAP note.
+   *
+   * @param options - Consumer account, PSWAP note, and fill amount.
+   */
+  pswapConsume(options: PswapConsumeOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Cancel a PSWAP note as the creator and reclaim the offered asset.
+   *
+   * @param options - Creator account and PSWAP note to cancel.
+   */
+  pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
+  /**
    * Consume all available notes for an account, up to an optional limit.
    * Returns the count of remaining notes for pagination.
    *
@@ -770,8 +842,13 @@ export interface NotesResource {
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
+   * @returns The imported note's id (hex) when the file carries metadata (a
+   *   note id or a full note with proof); for a details-only file, which has no
+   *   note id yet, the note's details commitment (hex) is returned instead.
+   *   In both cases the value is a hex string, not a `NoteId` object — pass it
+   *   to {@link NoteId.fromHex} if a `NoteId` instance is required.
    */
-  import(noteFile: NoteFile): Promise<NoteId>;
+  import(noteFile: NoteFile): Promise<string>;
   /**
    * Export a note to a {@link NoteFile} for transfer or backup.
    *
@@ -970,8 +1047,12 @@ export declare class MidenClient {
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
 
-  /** Syncs the client state with the Miden node. */
-  sync(options?: { timeout?: number }): Promise<SyncSummary>;
+  /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
+  sync(): Promise<SyncSummary>;
+  /** Syncs on-chain state only (no NTL fetch). */
+  syncChain(): Promise<SyncSummary>;
+  /** Fetches private notes from the Note Transport Layer. */
+  syncNoteTransport(): Promise<void>;
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
   /**
@@ -996,6 +1077,11 @@ export declare class MidenClient {
    * happened yet). Useful for recovering structured metadata (e.g. a
    * `reason: 'locked'` property) that the kernel-level `auth::request`
    * diagnostic would otherwise erase.
+   *
+   * Meaningful only with `useWorker: false` (the worker shim's keystore
+   * lives in the worker WASM instance, so this reads `null` there). On
+   * the Node.js binding it always returns `null` — signing goes through
+   * the filesystem keystore, never a JS callback.
    */
   lastAuthError(): unknown;
   /** Returns the client-level default prover. */
@@ -1004,16 +1090,16 @@ export declare class MidenClient {
   terminate(): void;
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
-  storeIdentifier(): string;
+  storeIdentifier(): Promise<string>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
-  proveBlock(): void;
+  proveBlock(): Promise<void>;
   /** Returns true if this client uses a mock chain. */
   usesMockChain(): boolean;
   /** Serializes the mock chain state for snapshot/restore in tests. */
-  serializeMockChain(): Uint8Array;
+  serializeMockChain(): Promise<Uint8Array>;
   /** Serializes the mock note transport node state. */
-  serializeMockNoteTransportNode(): Uint8Array;
+  serializeMockNoteTransportNode(): Promise<Uint8Array>;
 
   [Symbol.dispose](): void;
   [Symbol.asyncDispose](): Promise<void>;

@@ -6,8 +6,8 @@ import {
   useSyncStateStore,
   useNoteFirstSeenStore,
 } from "../store/MidenStore";
-import { NoteFilter } from "@miden-sdk/miden-sdk/lazy";
-import type { InputNoteRecord } from "@miden-sdk/miden-sdk/lazy";
+import { NoteFilter } from "@miden-sdk/miden-sdk";
+import type { InputNoteRecord } from "@miden-sdk/miden-sdk";
 import type {
   StreamedNote,
   UseNoteStreamOptions,
@@ -122,8 +122,6 @@ export function useNoteStream(
     if (sender) {
       try {
         normalizedSender = normalizeAccountId(sender);
-        /* v8 ignore next 4 — normalizeAccountId wraps all errors internally via toBech32AccountId;
-         * this catch body is a safety net that cannot be triggered in tests. */
       } catch {
         normalizedSender = sender;
       }
@@ -202,12 +200,15 @@ function buildStreamedNote(
   noteFirstSeen: Map<string, number>
 ): StreamedNote | null {
   try {
-    const id = record.id().toString();
+    // `InputNoteRecord.id()` is `NoteId | undefined` on the 0.15 surface —
+    // partial / metadata-less notes are skipped from the streamed view.
+    const rawId = record.id();
+    if (!rawId) return null;
+    const id = rawId.toString();
 
     // Extract sender
     const metadata = record.metadata?.();
     const senderHex = metadata?.sender?.()?.toString?.();
-    /* v8 ignore next 1 — empty-string fallback when note has no sender; tests always provide a sender */
     const sender = senderHex ? toBech32AccountId(senderHex) : "";
 
     // Extract assets
@@ -215,7 +216,6 @@ function buildStreamedNote(
     let primaryAmount = 0n;
     try {
       const details = record.details();
-      /* v8 ignore next 1 — null-coalescing fallback for assets; mock details always return a list */
       const assetsList = details?.assets?.().fungibleAssets?.() ?? [];
       for (const asset of assetsList) {
         const assetId = asset.faucetId().toString();
@@ -231,11 +231,9 @@ function buildStreamedNote(
 
     // Decode attachment
     const attachmentData = readNoteAttachment(record);
-    /* v8 ignore next 1 — attachment.values path requires a note with real attachment data */
     const attachment = attachmentData ? attachmentData.values : null;
 
     // First seen timestamp
-    /* v8 ignore next 1 — Date.now() fallback; setNotes always populates noteFirstSeen before this runs */
     const firstSeenAt = noteFirstSeen.get(id) ?? Date.now();
 
     return {

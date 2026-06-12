@@ -1,5 +1,7 @@
 use miden_client::auth::{
-    AuthSecretKey, PublicKeyCommitment, Signature as NativeSignature,
+    AuthSecretKey,
+    PublicKeyCommitment,
+    Signature as NativeSignature,
     SigningInputs as NativeSigningInputs,
 };
 use miden_client::keystore::KeyStoreError;
@@ -107,7 +109,7 @@ pub(crate) struct SignCallback(pub(crate) Function);
 /// Error returned by [`SignCallback::sign`]. Carries both the typed
 /// [`AuthenticationError`] expected by miden-tx and the raw [`JsValue`]
 /// thrown by the JS callback (when any), so callers can record it for
-/// later inspection via [`WebClient::last_auth_error`].
+/// later inspection via [`crate::WebClient::last_auth_error`].
 pub(crate) struct SignCallbackError {
     pub(crate) auth_err: AuthenticationError,
     /// Raw `JsValue` thrown by the callback, or [`JsValue::NULL`] if the
@@ -169,7 +171,7 @@ impl SignCallback {
             .dyn_ref::<Uint8Array>()
             .ok_or_else(|| SignCallbackError::from_str("sign callback must return a Uint8Array"))?;
 
-        let signature = Signature::deserialize(bytes).map_err(|err| {
+        let signature = Signature::deserialize(bytes.clone()).map_err(|err| {
             SignCallbackError::from_msg(format!("Failed to decode callback signature: {err:?}"))
         })?;
         Ok(signature.into())

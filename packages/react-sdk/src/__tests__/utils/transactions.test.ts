@@ -1,277 +1,183 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   waitForTransactionCommit,
   extractFullNotes,
   extractFullNote,
 } from "../../utils/transactions";
+import { NoteType } from "@miden-sdk/miden-sdk";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const passthrough = <T>(fn: () => Promise<T>) => fn();
 
-type MockRecord = {
-  id: () => { toHex: () => string };
-  transactionStatus: () => {
-    isPending: () => boolean;
-    isCommitted: () => boolean;
-    isDiscarded: () => boolean;
+const makeClient = (
+  status: "committed" | "pending" | "discarded",
+  options: { firstCalls?: number } = {}
+) => {
+  let calls = 0;
+  return {
+    syncState: vi.fn().mockResolvedValue(undefined),
+    getTransactions: vi.fn().mockImplementation(() => {
+      calls += 1;
+      // Optionally return no record for the first N calls (to simulate the
+      // record showing up later).
+      if (options.firstCalls && calls <= options.firstCalls) {
+        return Promise.resolve([]);
+      }
+      return Promise.resolve([
+        {
+          id: () => ({ toHex: () => "0xtx" }),
+          transactionStatus: () => ({
+            isPending: () => status === "pending",
+            isCommitted: () => status === "committed",
+            isDiscarded: () => status === "discarded",
+          }),
+        },
+      ]);
+    }),
   };
 };
 
-const makeRecord = (
-  id: string,
-  status: "pending" | "committed" | "discarded"
-): MockRecord => ({
-  id: () => ({ toHex: () => id }),
-  transactionStatus: () => ({
-    isPending: () => status === "pending",
-    isCommitted: () => status === "committed",
-    isDiscarded: () => status === "discarded",
-  }),
-});
-
-const makeClient = (records: MockRecord[]) => ({
-  syncState: vi.fn().mockResolvedValue(undefined),
-  getTransactions: vi.fn().mockResolvedValue(records),
-});
-
-// ---------------------------------------------------------------------------
-// waitForTransactionCommit
-// ---------------------------------------------------------------------------
-
 describe("waitForTransactionCommit", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("should resolve immediately when transaction is already committed", async () => {
-    const txId = { toString: () => "0xtx", toHex: () => "0xtx" } as any;
-    const client = makeClient([makeRecord("0xtx", "committed")]);
-    const runExclusive = <T>(fn: () => Promise<T>) => fn();
-
+  it("resolves immediately when the tx is already committed", async () => {
+    const client = makeClient("committed");
+    const txId = { toHex: () => "0xtx" } as never;
     await expect(
-      waitForTransactionCommit(client, runExclusive, txId, 5_000, 100)
+      waitForTransactionCommit(client, passthrough, txId, 100, 10)
     ).resolves.toBeUndefined();
-
     expect(client.syncState).toHaveBeenCalledTimes(1);
   });
 
-  it("should throw when transaction is discarded", async () => {
-    const txId = { toString: () => "0xtx", toHex: () => "0xtx" } as any;
-    const client = makeClient([makeRecord("0xtx", "discarded")]);
-    const runExclusive = <T>(fn: () => Promise<T>) => fn();
-
+  it("throws when the tx becomes discarded", async () => {
+    const client = makeClient("discarded");
+    const txId = { toHex: () => "0xtx" } as never;
     await expect(
-      waitForTransactionCommit(client, runExclusive, txId, 5_000, 1)
-    ).rejects.toThrow("Transaction was discarded before commit");
+      waitForTransactionCommit(client, passthrough, txId, 100, 10)
+    ).rejects.toThrow("discarded before commit");
   });
 
-  it("should poll until committed", async () => {
-    const txId = { toString: () => "0xtx", toHex: () => "0xtx" } as any;
-    let callCount = 0;
-    const client = {
-      syncState: vi.fn().mockResolvedValue(undefined),
-      getTransactions: vi.fn().mockImplementation(async () => {
-        callCount++;
-        // Return committed on the 3rd call
-        return [makeRecord("0xtx", callCount >= 3 ? "committed" : "pending")];
-      }),
-    };
-    const runExclusive = <T>(fn: () => Promise<T>) => fn();
-
+  it("times out when the tx stays pending past maxWaitMs", async () => {
+    const client = makeClient("pending");
+    const txId = { toHex: () => "0xtx" } as never;
     await expect(
-      waitForTransactionCommit(client, runExclusive, txId, 10_000, 1)
+      waitForTransactionCommit(client, passthrough, txId, 30, 10)
+    ).rejects.toThrow("Timeout waiting for transaction commit");
+  });
+
+  it("polls until the tx record appears, then commits", async () => {
+    // First two getTransactions calls return [], third returns committed.
+    const client = makeClient("committed", { firstCalls: 2 });
+    const txId = { toHex: () => "0xtx" } as never;
+    await expect(
+      waitForTransactionCommit(client, passthrough, txId, 200, 10)
     ).resolves.toBeUndefined();
-
-    expect(callCount).toBeGreaterThanOrEqual(3);
+    expect(client.getTransactions).toHaveBeenCalledTimes(3);
   });
 
-  it("should throw timeout when no record found within maxWait", async () => {
-    const txId = { toString: () => "0xtx", toHex: () => "0xtx" } as any;
-    const client = {
-      syncState: vi.fn().mockResolvedValue(undefined),
-      getTransactions: vi.fn().mockResolvedValue([]), // empty — no matching record
-    };
-    const runExclusive = <T>(fn: () => Promise<T>) => fn();
-
-    await expect(
-      waitForTransactionCommit(client, runExclusive, txId, 5, 1)
-    ).rejects.toThrow("Timeout waiting for transaction commit");
-  });
-
-  it("should throw timeout when transaction stays pending beyond maxWait", async () => {
-    const txId = { toString: () => "0xtx", toHex: () => "0xtx" } as any;
-    const client = makeClient([makeRecord("0xtx", "pending")]);
-    const runExclusive = <T>(fn: () => Promise<T>) => fn();
-
-    await expect(
-      waitForTransactionCommit(client, runExclusive, txId, 5, 1)
-    ).rejects.toThrow("Timeout waiting for transaction commit");
+  it("calls runExclusiveSafe for sync + getTransactions on every tick", async () => {
+    const client = makeClient("committed");
+    const exclusiveMock = vi.fn((fn: () => Promise<unknown>) => fn());
+    // vi.fn() can't preserve a generic signature on a single overload, so we
+    // cast a separate reference for the runExclusive parameter while keeping
+    // the Mock typing for the assertion below.
+    const exclusive = exclusiveMock as unknown as <T>(
+      fn: () => Promise<T>
+    ) => Promise<T>;
+    const txId = { toHex: () => "0xtx" } as never;
+    await waitForTransactionCommit(client, exclusive, txId, 50, 10);
+    // One sync + one getTransactions per tick; one tick suffices.
+    expect(exclusiveMock).toHaveBeenCalledTimes(2);
   });
 });
 
-// ---------------------------------------------------------------------------
-// extractFullNotes
-// ---------------------------------------------------------------------------
-
 describe("extractFullNotes", () => {
-  it("should return empty array for null/undefined txResult", () => {
-    expect(extractFullNotes(null)).toEqual([]);
-    expect(extractFullNotes(undefined)).toEqual([]);
-  });
-
-  it("should return empty array when executedTransaction is missing", () => {
+  it("returns [] when the tx result has no executedTransaction", () => {
     expect(extractFullNotes({})).toEqual([]);
   });
 
-  it("should return empty array when outputNotes is missing", () => {
+  it("returns [] when accessor throws", () => {
     const txResult = {
-      executedTransaction: () => ({}),
-    };
+      executedTransaction: () => {
+        throw new Error("boom");
+      },
+    } as never;
     expect(extractFullNotes(txResult)).toEqual([]);
   });
 
-  it("should return empty array when notes list is empty", () => {
+  it("returns [] when there are no output notes", () => {
     const txResult = {
       executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [],
-        }),
+        outputNotes: () => ({ notes: () => [] }),
       }),
-    };
+    } as never;
     expect(extractFullNotes(txResult)).toEqual([]);
   });
 
-  it("should extract private notes via intoFull", async () => {
-    // NoteType.Private = 2 per the mock in setup.ts
-    const PRIVATE = 2;
-    const fullNote = { id: () => "0xnote" };
+  it("filters only Private notes that intoFull() can resolve", () => {
+    const fullPrivate = { kind: "private-note" } as never;
     const txResult = {
       executedTransaction: () => ({
         outputNotes: () => ({
           notes: () => [
+            // Public note — skipped.
             {
-              noteType: () => PRIVATE,
-              intoFull: () => fullNote,
+              noteType: () => NoteType.Public,
+              intoFull: () => ({ kind: "public-note" }),
             },
-          ],
-        }),
-      }),
-    };
-    const results = extractFullNotes(txResult);
-    expect(results).toEqual([fullNote]);
-  });
-
-  it("should skip public notes (noteType !== Private)", () => {
-    // NoteType.Public = 1 per the mock in setup.ts
-    const PUBLIC = 1;
-    const txResult = {
-      executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [
+            // Private note that intoFull resolves.
             {
-              noteType: () => PUBLIC,
-              intoFull: () => ({ id: () => "0xpublic" }),
+              noteType: () => NoteType.Private,
+              intoFull: () => fullPrivate,
             },
-          ],
-        }),
-      }),
-    };
-    expect(extractFullNotes(txResult)).toEqual([]);
-  });
-
-  it("should skip notes where intoFull returns null", () => {
-    const PRIVATE = 2;
-    const txResult = {
-      executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [
+            // Private note where intoFull returns null (also skipped).
             {
-              noteType: () => PRIVATE,
+              noteType: () => NoteType.Private,
               intoFull: () => null,
             },
           ],
         }),
       }),
-    };
-    expect(extractFullNotes(txResult)).toEqual([]);
-  });
-
-  it("should return empty array on thrown error", () => {
-    const txResult = {
-      executedTransaction: () => {
-        throw new Error("WASM error");
-      },
-    };
-    expect(extractFullNotes(txResult)).toEqual([]);
+    } as never;
+    expect(extractFullNotes(txResult)).toEqual([fullPrivate]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// extractFullNote
-// ---------------------------------------------------------------------------
-
 describe("extractFullNote", () => {
-  it("should return null for null/undefined input", () => {
-    expect(extractFullNote(null)).toBeNull();
-    expect(extractFullNote(undefined)).toBeNull();
-  });
-
-  it("should return null when executedTransaction is missing", () => {
-    expect(extractFullNote({})).toBeNull();
-  });
-
-  it("should return null when notes list is empty", () => {
+  it("returns null when there are no notes", () => {
     const txResult = {
-      executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [],
-        }),
-      }),
-    };
+      executedTransaction: () => ({ outputNotes: () => ({ notes: () => [] }) }),
+    } as never;
     expect(extractFullNote(txResult)).toBeNull();
   });
 
-  it("should return the first note via intoFull", () => {
-    const fullNote = { id: () => "0xnote1" };
-    const txResult = {
-      executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [{ intoFull: () => fullNote }],
-        }),
-      }),
-    };
-    expect(extractFullNote(txResult)).toBe(fullNote);
-  });
-
-  it("should return null when intoFull returns null", () => {
-    const txResult = {
-      executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [{ intoFull: () => null }],
-        }),
-      }),
-    };
-    expect(extractFullNote(txResult)).toBeNull();
-  });
-
-  it("should return null when intoFull is missing on note", () => {
-    const txResult = {
-      executedTransaction: () => ({
-        outputNotes: () => ({
-          notes: () => [{}],
-        }),
-      }),
-    };
-    expect(extractFullNote(txResult)).toBeNull();
-  });
-
-  it("should return null on thrown error", () => {
+  it("returns null when the accessor throws", () => {
     const txResult = {
       executedTransaction: () => {
         throw new Error("boom");
       },
-    };
+    } as never;
+    expect(extractFullNote(txResult)).toBeNull();
+  });
+
+  it("returns the first note's intoFull() result", () => {
+    const note = { kind: "first-note" } as never;
+    const txResult = {
+      executedTransaction: () => ({
+        outputNotes: () => ({
+          notes: () => [
+            { intoFull: () => note },
+            { intoFull: () => ({ kind: "second-note" }) },
+          ],
+        }),
+      }),
+    } as never;
+    expect(extractFullNote(txResult)).toBe(note);
+  });
+
+  it("returns null when intoFull() returns null", () => {
+    const txResult = {
+      executedTransaction: () => ({
+        outputNotes: () => ({ notes: () => [{ intoFull: () => null }] }),
+      }),
+    } as never;
     expect(extractFullNote(txResult)).toBeNull();
   });
 });

@@ -83,7 +83,7 @@ export function resolveNoteType(type, wasm) {
 /**
  * Resolves a storage mode string to a WASM AccountStorageMode instance.
  *
- * @param {string | undefined} mode - "private", "public", or "network". Defaults to "private".
+ * @param {string | undefined} mode - "private" or "public". Defaults to "private".
  * @param {object} wasm - The WASM module.
  * @returns {AccountStorageMode} The storage mode instance.
  */
@@ -91,75 +91,33 @@ export function resolveStorageMode(mode, wasm) {
   switch (mode) {
     case "public":
       return wasm.AccountStorageMode.public();
-    case "network":
-      return wasm.AccountStorageMode.network();
     case "private":
     case undefined:
     case null:
       return wasm.AccountStorageMode.private();
     default:
       throw new Error(
-        `Unknown storage mode: "${mode}". Expected "private", "public", or "network".`
+        `Unknown storage mode: "${mode}". Expected "private" or "public".`
       );
   }
 }
 
 /**
- * Resolves an auth scheme string to a WASM `AuthScheme` enum numeric value.
+ * Resolves an auth scheme string to a WASM AuthScheme enum value.
  *
- * The public `AuthScheme` constant exposes SDK-friendly strings
- * (`"falcon"` / `"ecdsa"`), but low-level wasm-bindgen methods such as
- * `AccountComponent.createAuthComponentFromCommitment(commitment, scheme)`
- * expect the numeric variant from the Rust `AuthScheme` enum. This helper
- * bridges the two so callers never touch wasm-bindgen internals directly.
- *
- * `wasm` is optional: when provided (by internal callers who already have
- * the module loaded), the numeric value is read from the binding itself,
- * keeping the mapping robust if wasm-bindgen ever renumbers the enum. When
- * omitted (public callers who don't have a handle to the WASM module), the
- * hardcoded discriminants below are used — these are pinned to the Rust
- * enum order by a cross-check test in `test/account_component.test.ts`.
- *
- * @param {"falcon" | "ecdsa" | undefined} scheme - Defaults to `"falcon"`.
- * @param {object} [wasm] - Optional WASM module handle.
- * @returns {number} The AuthScheme enum numeric value (1 or 2).
+ * @param {string | undefined} scheme - "falcon" or "ecdsa". Defaults to "falcon".
+ * @param {object} wasm - The WASM module.
+ * @returns {number} The AuthScheme enum value.
  */
 export function resolveAuthScheme(scheme, wasm) {
   if (scheme === "ecdsa") {
-    return wasm?.AuthScheme?.AuthEcdsaK256Keccak ?? 1;
+    return wasm.AuthScheme.AuthEcdsaK256Keccak;
   }
   if (scheme === "falcon" || scheme == null) {
-    return wasm?.AuthScheme?.AuthRpoFalcon512 ?? 2;
+    return wasm.AuthScheme.AuthRpoFalcon512;
   }
   throw new Error(
     `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
-  );
-}
-
-/**
- * Resolves an AccountType value to a boolean `mutable` flag
- * for the underlying WASM `newWallet()` / `importPublicAccountFromSeed()` calls.
- *
- * Accepts the numeric WASM enum values (2 = immutable, 3 = mutable) or the
- * legacy string aliases ("MutableWallet", "ImmutableWallet"). Defaults to
- * mutable when undefined.
- *
- * @param {number | string | undefined} accountType
- * @returns {boolean} Whether the account code is mutable.
- */
-export function resolveAccountMutability(accountType) {
-  if (
-    accountType == null ||
-    accountType === "MutableWallet" ||
-    accountType === 3
-  ) {
-    return true;
-  }
-  if (accountType === "ImmutableWallet" || accountType === 2) {
-    return false;
-  }
-  throw new Error(
-    `Unknown wallet account type: "${accountType}". Expected AccountType.MutableWallet (3) or AccountType.ImmutableWallet (2).`
   );
 }
 

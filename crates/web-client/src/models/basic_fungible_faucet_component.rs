@@ -1,29 +1,32 @@
+use js_export_macro::js_export;
+use miden_client::Felt as NativeFelt;
 use miden_client::account::Account as NativeAccount;
-use miden_client::account::component::BasicFungibleFaucet as NativeBasicFungibleFaucet;
-use wasm_bindgen::prelude::*;
+use miden_client::account::component::FungibleFaucet as NativeFungibleFaucet;
 
 use super::account::Account;
 use super::felt::Felt;
 use super::token_symbol::TokenSymbol;
 use crate::js_error_with_context;
+use crate::platform::JsErr;
 
 /// Provides metadata for a basic fungible faucet account component.
-#[wasm_bindgen]
-pub struct BasicFungibleFaucetComponent(NativeBasicFungibleFaucet);
+///
+/// Reads the on-chain [`FungibleFaucet`] component for the account, which holds the
+/// per-token info (symbol/decimals/maxSupply).
+#[js_export]
+pub struct BasicFungibleFaucetComponent(NativeFungibleFaucet);
 
-#[wasm_bindgen]
+#[js_export]
 impl BasicFungibleFaucetComponent {
     /// Extracts faucet metadata from an account.
-    #[wasm_bindgen(js_name = "fromAccount")]
-    pub fn from_account(account: Account) -> Result<Self, JsValue> {
+    #[js_export(js_name = "fromAccount")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn from_account(account: Account) -> Result<Self, JsErr> {
         let native_account: NativeAccount = account.into();
-        let native_faucet = NativeBasicFungibleFaucet::try_from(native_account).map_err(|e| {
-            js_error_with_context(
-                e,
-                "failed to get basic fungible faucet details from account",
-            )
+        let faucet = NativeFungibleFaucet::try_from(&native_account).map_err(|e| {
+            js_error_with_context(e, "failed to get basic fungible faucet details from account")
         })?;
-        Ok(native_faucet.into())
+        Ok(Self(faucet))
     }
 
     /// Returns the faucet's token symbol.
@@ -37,23 +40,8 @@ impl BasicFungibleFaucetComponent {
     }
 
     /// Returns the maximum token supply.
-    #[wasm_bindgen(js_name = "maxSupply")]
+    #[js_export(js_name = "maxSupply")]
     pub fn max_supply(&self) -> Felt {
-        self.0.max_supply().into()
-    }
-}
-
-// CONVERSIONS
-// ================================================================================================
-
-impl From<NativeBasicFungibleFaucet> for BasicFungibleFaucetComponent {
-    fn from(native_basic_fungible_faucet: NativeBasicFungibleFaucet) -> Self {
-        BasicFungibleFaucetComponent(native_basic_fungible_faucet)
-    }
-}
-
-impl From<BasicFungibleFaucetComponent> for NativeBasicFungibleFaucet {
-    fn from(basic_fungible_faucet: BasicFungibleFaucetComponent) -> Self {
-        basic_fungible_faucet.0
+        NativeFelt::from(self.0.max_supply()).into()
     }
 }

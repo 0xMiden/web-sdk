@@ -41,6 +41,9 @@ export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
+export { usePswapCreate } from "./hooks/usePswapCreate";
+export { usePswapConsume } from "./hooks/usePswapConsume";
+export { usePswapCancel } from "./hooks/usePswapCancel";
 export { useTransaction } from "./hooks/useTransaction";
 export { useExecuteProgram } from "./hooks/useExecuteProgram";
 export { useCompile } from "./hooks/useCompile";
@@ -86,6 +89,9 @@ export type {
   MintOptions,
   ConsumeOptions,
   SwapOptions,
+  PswapCreateOptions,
+  PswapConsumeOptions,
+  PswapCancelOptions,
   ExecuteTransactionOptions,
   TransactionResult,
   ExecuteProgramOptions,
@@ -128,7 +134,11 @@ export type {
 export { DEFAULTS, AuthScheme } from "./types";
 
 // Utilities
-export { toBech32AccountId } from "./utils/accountBech32";
+export {
+  toBech32AccountId,
+  installAccountBech32,
+  ensureAccountBech32,
+} from "./utils/accountBech32";
 export { formatAssetAmount, parseAssetAmount } from "./utils/amounts";
 export { getNoteSummary, formatNoteSummary } from "./utils/notes";
 export { normalizeAccountId, accountIdsEqual } from "./utils/accountId";
@@ -160,6 +170,9 @@ export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
+export type { UsePswapCreateResult } from "./hooks/usePswapCreate";
+export type { UsePswapConsumeResult } from "./hooks/usePswapConsume";
+export type { UsePswapCancelResult } from "./hooks/usePswapCancel";
 export type { UseTransactionResult } from "./hooks/useTransaction";
 export type { UseExportStoreResult } from "./hooks/useExportStore";
 export type {

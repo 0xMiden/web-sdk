@@ -75,11 +75,16 @@ async function insertNote(
     consumerAccountId?: string;
     scriptRoot?: string;
     nullifier?: string;
+    detailsCommitment?: string;
   } = {}
 ) {
   await upsertInputNote(
     dbId,
+    // The details commitment is the primary key. Default it to the noteId so
+    // each distinct note in these tests lands in its own row.
+    opts.detailsCommitment ?? noteId,
     noteId,
+    DUMMY_BYTES,
     DUMMY_BYTES,
     DUMMY_BYTES,
     DUMMY_BYTES,
@@ -481,6 +486,8 @@ describe("getInputNotes", () => {
     await upsertInputNote(
       dbId,
       "note-no-script",
+      "note-no-script",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -647,7 +654,9 @@ describe("getOutputNotes", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-1",
       "out-1",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "recipient1",
       DUMMY_BYTES,
@@ -658,7 +667,9 @@ describe("getOutputNotes", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-2",
       "out-2",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "recipient2",
       DUMMY_BYTES,
@@ -675,7 +686,9 @@ describe("getOutputNotes", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-state3",
       "out-state3",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r1",
       DUMMY_BYTES,
@@ -686,7 +699,9 @@ describe("getOutputNotes", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-state4",
       "out-state4",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r2",
       DUMMY_BYTES,
@@ -704,7 +719,9 @@ describe("getOutputNotes", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-processed",
       "out-processed",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "recipient-x",
       DUMMY_BYTES,
@@ -738,7 +755,9 @@ describe("getOutputNotesFromIds", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-id-1",
       "out-id-1",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r1",
       DUMMY_BYTES,
@@ -749,7 +768,9 @@ describe("getOutputNotesFromIds", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-id-2",
       "out-id-2",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r2",
       DUMMY_BYTES,
@@ -780,7 +801,9 @@ describe("getOutputNotesFromNullifiers", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-null-1",
       "out-null-1",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r1",
       DUMMY_BYTES,
@@ -791,7 +814,9 @@ describe("getOutputNotesFromNullifiers", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-null-2",
       "out-null-2",
+      DUMMY_BYTES,
       DUMMY_BYTES,
       "r2",
       DUMMY_BYTES,
@@ -814,6 +839,78 @@ describe("getOutputNotesFromNullifiers", () => {
 });
 
 // ================================================================================================
+// input note keying by details commitment
+// ================================================================================================
+
+describe("input note keying", () => {
+  it("keeps a single row when a partial note later gains its noteId", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const commitment = "details-commitment-1";
+
+    // First upsert: a partial note with no noteId yet (e.g. imported by details).
+    await upsertInputNote(
+      dbId,
+      commitment,
+      undefined,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_SCRIPT_ROOT,
+      DUMMY_BYTES,
+      "nullifier-1",
+      "created-at-1",
+      STATE_EXPECTED,
+      DUMMY_BYTES,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    // Second upsert: the same note (same details commitment) now carries its
+    // noteId. It must update the existing row rather than insert a duplicate.
+    await upsertInputNote(
+      dbId,
+      commitment,
+      "note-id-1",
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_SCRIPT_ROOT,
+      DUMMY_BYTES,
+      "nullifier-1",
+      "created-at-1",
+      STATE_COMMITTED,
+      DUMMY_BYTES,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    expect(await db.inputNotes.count()).toBe(1);
+    const row = await db.inputNotes.get(commitment);
+    expect(row).toBeDefined();
+    expect(row!.noteId).toBe("note-id-1");
+
+    // The note is now reachable by its noteId via the secondary index.
+    const byId = await getInputNotesFromIds(dbId, ["note-id-1"]);
+    expect(byId).toHaveLength(1);
+  });
+
+  it("stores distinct rows for notes with distinct details commitments", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    await insertNote(dbId, "note-a", { detailsCommitment: "commitment-a" });
+    await insertNote(dbId, "note-b", { detailsCommitment: "commitment-b" });
+
+    expect(await db.inputNotes.count()).toBe(2);
+  });
+});
+
+// ================================================================================================
 // upsertInputNote with provided transaction
 // ================================================================================================
 
@@ -831,6 +928,8 @@ describe("upsertInputNote with external transaction", () => {
         await upsertInputNote(
           dbId,
           "tx-note-1",
+          "tx-note-1",
+          DUMMY_BYTES,
           DUMMY_BYTES,
           DUMMY_BYTES,
           DUMMY_BYTES,
@@ -869,7 +968,9 @@ describe("upsertOutputNote with external transaction", () => {
       async (tx) => {
         await upsertOutputNote(
           dbId,
+          "dc-out-tx-1",
           "out-tx-1",
+          DUMMY_BYTES,
           DUMMY_BYTES,
           "recipient-tx",
           DUMMY_BYTES,
@@ -949,6 +1050,8 @@ describe("error paths: unregistered dbId re-throws", () => {
       upsertInputNote(
         BAD_DB,
         "note-1",
+        "note-1",
+        DUMMY_BYTES,
         DUMMY_BYTES,
         DUMMY_BYTES,
         DUMMY_BYTES,

@@ -34,7 +34,6 @@ test.describe("Store Isolation Tests", () => {
 
       await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
@@ -79,7 +78,6 @@ test.describe("Store Isolation Tests", () => {
 
       const wallet = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const walletId = wallet.id().toString();
@@ -118,12 +116,10 @@ test.describe("Store Isolation Tests", () => {
 
       await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
@@ -165,17 +161,14 @@ test.describe("Store Isolation Tests", () => {
       await Promise.all([
         client1.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         ),
         client1.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         ),
         client2.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         ),
       ]);
@@ -214,23 +207,19 @@ test.describe("Store Isolation Tests", () => {
 
       const wallet1a = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const wallet1b = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const wallet1c = await client1.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 
       const wallet2a = await client2.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
 

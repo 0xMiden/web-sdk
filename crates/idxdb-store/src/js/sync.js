@@ -12,6 +12,10 @@ export async function getNoteTags(dbId) {
                 record.sourceNoteId == "" ? undefined : record.sourceNoteId;
             record.sourceAccountId =
                 record.sourceAccountId == "" ? undefined : record.sourceAccountId;
+            record.sourceSubscriptionKey =
+                record.sourceSubscriptionKey == ""
+                    ? undefined
+                    : record.sourceSubscriptionKey;
             return record;
         });
         return processedRecords;
@@ -38,7 +42,7 @@ export async function getSyncHeight(dbId) {
         logWebStoreError(error, "Error fetching sync height");
     }
 }
-export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
+export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
         let tagArray = new Uint8Array(tag);
@@ -47,23 +51,29 @@ export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
             tag: tagBase64,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
             sourceAccountId: sourceAccountId ? sourceAccountId : "",
+            sourceSubscriptionKey: sourceSubscriptionKey ? sourceSubscriptionKey : "",
         });
     }
     catch (error) {
         logWebStoreError(error, "Failed to add note tag");
     }
 }
-export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
+export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
         let tagArray = new Uint8Array(tag);
         let tagBase64 = uint8ArrayToBase64(tagArray);
+        const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
         return await db.tags
             .where({
             tag: tagBase64,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
             sourceAccountId: sourceAccountId ? sourceAccountId : "",
         })
+            // Filtered in JS rather than via the `where` clause: rows written
+            // before the column existed lack the property entirely, and a
+            // `where` equality on `""` would never match them.
+            .and((record) => (record.sourceSubscriptionKey ?? "") == subscriptionKey)
             .delete();
     }
     catch (error) {
@@ -72,9 +82,8 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
 }
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, flattenedPartialBlockChainPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteIds, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, partialBlockchainPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
-    const partialBlockchainPeaks = reconstructFlattenedVec(flattenedPartialBlockChainPeaks);
     const tablesToAccess = [
         db.stateSync,
         db.inputNotes,
@@ -97,10 +106,10 @@ export async function applyStateSync(dbId, stateUpdate) {
     return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
         await Promise.all([
             Promise.all(serializedInputNotes.map((note) => {
-                return upsertInputNote(dbId, note.noteId, note.noteAssets, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
+                return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
             })),
             Promise.all(serializedOutputNotes.map((note) => {
-                return upsertOutputNote(dbId, note.noteId, note.noteAssets, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
             })),
             Promise.all(transactionUpdates.map((transactionRecord) => {
                 let promises = [
@@ -126,16 +135,26 @@ export async function applyStateSync(dbId, stateUpdate) {
             }))),
             updateSyncHeight(tx, blockNum),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
-            updateCommittedNoteTags(tx, committedNoteIds),
+            updateCommittedNoteTags(tx, committedNoteTagSources),
             Promise.all(newBlockHeaders.map((newBlockHeader, i) => {
-                return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, partialBlockchainPeaks[i], blockHasRelevantNotes[i] == 1);
+                // Peaks are attached only to the chain-tip block (the one whose
+                // blockNum matches the new sync height). That row is always
+                // present in this iteration because `partial_blockchain_updates`
+                // includes the chain tip header by construction.
+                // TODO: potentially move this to be under the sync state info table
+                // as currently done in SQLite
+                const peaks = newBlockNums[i] === blockNum ? partialBlockchainPeaks : undefined;
+                return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1, peaks);
             })),
         ]);
     });
 }
+/**
+ * Advances `stateSync.blockNum` only when moving forward. Mirrors SQLite's
+ * `UPDATE blockchain_checkpoint ... WHERE block_num < ?`.
+ */
 async function updateSyncHeight(tx, blockNum) {
     try {
-        // Only update if moving forward to prevent race conditions
         const current = await tx.stateSync.get(1);
         if (!current || current.blockNum < blockNum) {
             await tx.stateSync.update(1, {
@@ -147,13 +166,13 @@ async function updateSyncHeight(tx, blockNum) {
         logWebStoreError(error, "Failed to update sync height");
     }
 }
-async function updateBlockHeader(tx, blockNum, blockHeader, partialBlockchainPeaks, hasClientNotes) {
+async function updateBlockHeader(tx, blockNum, blockHeader, hasClientNotes, partialBlockchainPeaks) {
     try {
         const data = {
             blockNum: blockNum,
             header: blockHeader,
-            partialBlockchainPeaks,
             hasClientNotes: hasClientNotes.toString(),
+            ...(partialBlockchainPeaks !== undefined && { partialBlockchainPeaks }),
         };
         const existingBlockHeader = await tx.blockHeaders.get(blockNum);
         if (!existingBlockHeader) {
@@ -184,13 +203,13 @@ async function updatePartialBlockchainNodes(tx, nodeIndexes, nodes) {
         logWebStoreError(err, "Failed to update partial blockchain nodes");
     }
 }
-async function updateCommittedNoteTags(tx, inputNoteIds) {
+async function updateCommittedNoteTags(tx, committedNoteTagSources) {
     try {
-        for (let i = 0; i < inputNoteIds.length; i++) {
-            const noteId = inputNoteIds[i];
+        for (let i = 0; i < committedNoteTagSources.length; i++) {
+            const tagSource = committedNoteTagSources[i];
             await tx.tags
                 .where("sourceNoteId")
-                .equals(noteId)
+                .equals(tagSource)
                 .delete();
         }
     }

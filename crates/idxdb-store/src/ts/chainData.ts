@@ -5,7 +5,6 @@ export async function insertBlockHeader(
   dbId: string,
   blockNum: number,
   header: Uint8Array,
-  partialBlockchainPeaks: Uint8Array,
   hasClientNotes: boolean
 ) {
   try {
@@ -13,7 +12,6 @@ export async function insertBlockHeader(
     const data = {
       blockNum: blockNum,
       header,
-      partialBlockchainPeaks,
       hasClientNotes: hasClientNotes.toString(),
     };
 
@@ -22,12 +20,8 @@ export async function insertBlockHeader(
     // says so. Two callers hit this:
     //   - Genesis flow — no existing row; the add succeeds.
     //   - `get_and_store_authenticated_block` for a past block — a row
-    //     written by `applyStateSync` typically already exists. Overwriting
-    //     it would clobber the correct historical peaks (popcount ==
-    //     block_num) with peaks from the caller's current `PartialMmr`
-    //     forest (popcount == current sync height). Later reads of those
-    //     peaks trip `MmrPeaks::new`'s InvalidPeaks validation and wedge
-    //     sync for the rest of the session.
+    //     written by `applyStateSync` typically already exists. We keep that
+    //     row untouched.
     //
     // The `has_client_notes` upgrade is load-bearing: `get_tracked_block_
     // header_numbers` filters by this flag to seed `tracked_leaves`, which
@@ -91,14 +85,10 @@ export async function getBlockHeaders(dbId: string, blockNumbers: number[]) {
           return null;
         } else {
           const headerBase64 = uint8ArrayToBase64(result.header);
-          const partialBlockchainPeaksBase64 = uint8ArrayToBase64(
-            result.partialBlockchainPeaks
-          );
 
           return {
             blockNum: result.blockNum,
             header: headerBase64,
-            partialBlockchainPeaks: partialBlockchainPeaksBase64,
             hasClientNotes: result.hasClientNotes === "true",
           };
         }
@@ -123,14 +113,9 @@ export async function getTrackedBlockHeaders(dbId: string) {
       allMatchingRecords.map((record) => {
         const headerBase64 = uint8ArrayToBase64(record.header);
 
-        const partialBlockchainPeaksBase64 = uint8ArrayToBase64(
-          record.partialBlockchainPeaks
-        );
-
         return {
           blockNum: record.blockNum,
           header: headerBase64,
-          partialBlockchainPeaks: partialBlockchainPeaksBase64,
           hasClientNotes: record.hasClientNotes === "true",
         };
       })
@@ -155,27 +140,30 @@ export async function getTrackedBlockHeaderNumbers(dbId: string) {
   }
 }
 
-export async function getPartialBlockchainPeaksByBlockNum(
-  dbId: string,
-  blockNum: number
-) {
+/**
+ * Returns the blockchain peaks at the current sync height. Peaks live on the
+ * `blockHeaders` row at `stateSync.blockNum` — the block that was the chain
+ * tip when its sync ran. Returns `{ blockNum, peaks: undefined }` if the
+ * stateSync row is missing or if that block was inserted via backfill
+ * (which leaves `partialBlockchainPeaks` unset).
+ */
+export async function getCurrentBlockchainPeaks(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    const blockHeader = await db.blockHeaders.get(blockNum);
-    if (blockHeader == undefined) {
-      return {
-        peaks: undefined,
-      };
+    const stateSyncRow = await db.stateSync.get(1);
+    if (stateSyncRow == undefined) {
+      return { blockNum: 0, peaks: undefined };
     }
-    const partialBlockchainPeaksBase64 = uint8ArrayToBase64(
-      blockHeader.partialBlockchainPeaks
-    );
-
+    const header = await db.blockHeaders.get(stateSyncRow.blockNum);
+    if (header == undefined || header.partialBlockchainPeaks == undefined) {
+      return { blockNum: stateSyncRow.blockNum, peaks: undefined };
+    }
     return {
-      peaks: partialBlockchainPeaksBase64,
+      blockNum: stateSyncRow.blockNum,
+      peaks: uint8ArrayToBase64(header.partialBlockchainPeaks),
     };
   } catch (err) {
-    logWebStoreError(err, "Failed to get partial blockchain peaks");
+    logWebStoreError(err, "Failed to get current blockchain peaks");
   }
 }
 
@@ -220,25 +208,53 @@ export async function getPartialBlockchainNodesUpToInOrderIndex(
   }
 }
 
-export async function pruneIrrelevantBlocks(dbId: string) {
+export async function pruneIrrelevantBlocks(
+  dbId: string,
+  blocksToUntrack: number[],
+  nodeIdsToRemove: string[]
+) {
   try {
     const db = getDatabase(dbId);
-    const syncHeight = await db.stateSync.get(1);
+    const numericNodeIds = nodeIdsToRemove.map(Number);
 
+    const syncHeight = await db.stateSync.get(1);
     if (syncHeight == undefined) {
       throw Error("SyncHeight is undefined -- is the state sync table empty?");
     }
 
-    const allMatchingRecords = await db.blockHeaders
-      .where("hasClientNotes")
-      .equals("false")
-      .and(
-        (record) =>
-          record.blockNum !== 0 && record.blockNum !== syncHeight.blockNum
-      )
-      .toArray();
+    await db.dexie.transaction(
+      "rw",
+      db.blockHeaders,
+      db.partialBlockchainNodes,
+      async () => {
+        // 1. Delete stale MMR authentication nodes.
+        if (numericNodeIds.length > 0) {
+          await db.partialBlockchainNodes.bulkDelete(numericNodeIds);
+        }
 
-    await db.blockHeaders.bulkDelete(allMatchingRecords.map((r) => r.blockNum));
+        // 2. Mark untracked blocks as irrelevant.
+        if (blocksToUntrack.length > 0) {
+          await db.blockHeaders
+            .where("blockNum")
+            .anyOf(blocksToUntrack)
+            .modify({ hasClientNotes: "false" });
+        }
+
+        // 3. Delete irrelevant block headers.
+        const allMatchingRecords = await db.blockHeaders
+          .where("hasClientNotes")
+          .equals("false")
+          .and(
+            (record) =>
+              record.blockNum !== 0 && record.blockNum !== syncHeight.blockNum
+          )
+          .toArray();
+
+        await db.blockHeaders.bulkDelete(
+          allMatchingRecords.map((r) => r.blockNum)
+        );
+      }
+    );
   } catch (err) {
     logWebStoreError(err, "Failed to prune irrelevant blocks");
   }

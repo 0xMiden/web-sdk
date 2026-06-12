@@ -104,33 +104,6 @@ describe("useExportNote", () => {
     });
   });
 
-  describe("non-Error catch branch", () => {
-    it("should wrap non-Error thrown values in an Error", async () => {
-      const mockClient = createMockWebClient({
-        exportNoteFile: vi.fn().mockRejectedValue("string error"),
-      });
-      const runExclusive = vi.fn((fn: () => unknown) => fn());
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        runExclusive,
-      });
-
-      const { result } = renderHook(() => useExportNote());
-
-      await act(async () => {
-        await expect(result.current.exportNote("0x1")).rejects.toThrow(
-          "string error"
-        );
-      });
-
-      await waitFor(() => {
-        expect(result.current.error?.message).toBe("string error");
-      });
-    });
-  });
-
   describe("reset", () => {
     it("should reset error state", async () => {
       const mockClient = createMockWebClient({

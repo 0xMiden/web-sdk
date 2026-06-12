@@ -41,7 +41,7 @@ for (const filePath of requiredFiles) {
 
 if (missingFiles.length > 0) {
   console.error(
-    "Method classification check failed because expected files are missing. Run `pnpm build` first."
+    "Method classification check failed because expected files are missing. Run `yarn build` first."
   );
   for (const filePath of missingFiles) {
     console.error(`- ${filePath}`);
@@ -186,8 +186,10 @@ const allowedUnclassified = new Set([
   "createClient",
   "createClientWithExternalKeystore",
   "createMockClient",
-  // Internal impl method called directly by syncState wrappers
+  // Internal impl methods called directly by sync wrappers
   "syncStateImpl",
+  "syncChainImpl",
+  "syncNoteTransportImpl",
 ]);
 
 const unclassified = [...wasmMethods].filter(

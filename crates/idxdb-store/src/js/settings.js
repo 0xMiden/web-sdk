@@ -57,3 +57,27 @@ export async function listSettingKeys(dbId) {
         logWebStoreError(error, `Error listing setting keys`);
     }
 }
+export async function applySettingsMutations(dbId, mutations) {
+    try {
+        const db = getDatabase(dbId);
+        await db.dexie.transaction("rw", db.settings, async () => {
+            for (const mutation of mutations) {
+                if (mutation.kind === "set") {
+                    if (mutation.value === undefined) {
+                        throw new Error(`Setting mutation "set" for key ${mutation.key} is missing a value`);
+                    }
+                    await db.settings.put({ key: mutation.key, value: mutation.value });
+                }
+                else if (mutation.kind === "remove") {
+                    await db.settings.where("key").equals(mutation.key).delete();
+                }
+                else {
+                    throw new Error(`Unknown setting mutation kind: ${mutation.kind}`);
+                }
+            }
+        });
+    }
+    catch (error) {
+        logWebStoreError(error, "Error applying settings mutations");
+    }
+}

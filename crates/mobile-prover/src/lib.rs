@@ -14,9 +14,18 @@
 //! web-sdk's `JsCallbackTransactionProver`: input is
 //! `TransactionInputs::to_bytes()`, output is `ProvenTransaction::to_bytes()`.
 //! Hosts can swap between dispatchers without changing serialization.
+//!
+//! The wire format is NOT stable across protocol versions: the 0.15 protocol
+//! changed both `TransactionInputs` and `ProvenTransaction` serialization, so
+//! a native library built from this crate only interoperates with an SDK
+//! pinned to the same miden-client line. Hosts must rebuild and ship the
+//! native binary together with every SDK protocol bump.
 
 use miden_client::transaction::{
-    LocalTransactionProver, ProvenTransaction, ProvingOptions, TransactionInputs,
+    LocalTransactionProver,
+    ProvenTransaction,
+    ProvingOptions,
+    TransactionInputs,
 };
 use miden_client::utils::{Deserializable, Serializable};
 
@@ -40,15 +49,12 @@ enum Status {
 ///
 /// # Safety
 ///
-/// - `input_ptr` must point to `input_len` initialized bytes that decode
-///   as a `miden_client::transaction::TransactionInputs` (the same byte
-///   format the gRPC `RemoteTransactionProver` and the JS
-///   `TransactionProver.newCallbackProver` callback consume).
-/// - `output_buf_ptr` must point to a writable region of at least
-///   `output_buf_cap` bytes.
-/// - `output_written` must point to a writable `usize`. On every return
-///   path (success or `BufferTooSmall`) it is set to the number of bytes
-///   that would be / were written.
+/// - `input_ptr` must point to `input_len` initialized bytes that decode as a
+///   `miden_client::transaction::TransactionInputs` (the same byte format the gRPC
+///   `RemoteTransactionProver` and the JS `TransactionProver.newCallbackProver` callback consume).
+/// - `output_buf_ptr` must point to a writable region of at least `output_buf_cap` bytes.
+/// - `output_written` must point to a writable `usize`. On every return path (success or
+///   `BufferTooSmall`) it is set to the number of bytes that would be / were written.
 ///
 /// Returns one of the variants of `Status` (cast to `i32`). On `Ok`,
 /// `output_written` is the number of bytes the host should slice from
@@ -70,7 +76,7 @@ pub unsafe extern "C" fn miden_prove_transaction(
             // SAFETY: caller-asserted output_written validity.
             unsafe { *output_written = 0 };
             return Status::BadInput as i32;
-        }
+        },
     };
 
     let prover = LocalTransactionProver::new(ProvingOptions::default());
@@ -83,7 +89,7 @@ pub unsafe extern "C" fn miden_prove_transaction(
         Err(_) => {
             unsafe { *output_written = 0 };
             return Status::ProveFailed as i32;
-        }
+        },
     };
 
     let serialized = proven.to_bytes();

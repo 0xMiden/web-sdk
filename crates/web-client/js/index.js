@@ -1,10 +1,6 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
-import {
-  acquireSyncLock,
-  releaseSyncLock,
-  releaseSyncLockWithError,
-} from "./syncLock.js";
+import { withSyncLock } from "./syncLock.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
@@ -14,41 +10,18 @@ import {
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
-import { resolveAuthScheme } from "./utils.js";
-export { resolveAuthScheme };
+import {
+  installStorageView,
+  StorageView,
+  StorageResult,
+  wordToBigInt,
+} from "./storageView.js";
 export * from "../Cargo.toml";
 
-// Override the auto-generated wasm-bindgen array constructors with
-// wrappers that build via push() instead of taking Vec<T> by value.
-// Without this override, e.g. `new NoteArray([note])` silently moves the
-// underlying Rust value out of the caller's `note` handle, and any later
-// method call on `note` panics with "null pointer passed to rust".
-// See ./safe-arrays.js for the full rationale.
-export {
-  AccountArray,
-  AccountIdArray,
-  FeltArray,
-  ForeignAccountArray,
-  NoteAndArgsArray,
-  NoteArray,
-  NoteIdAndArgsArray,
-  NoteRecipientArray,
-  OutputNoteArray,
-  StorageSlotArray,
-  TransactionScriptInputPairArray,
-} from "./safe-arrays.js";
-
 export const AccountType = Object.freeze({
-  // WASM-compatible numeric values — usable with AccountBuilder directly
+  // Faucet-kind selectors for accounts.create({ type }).
   FungibleFaucet: 0,
   NonFungibleFaucet: 1,
-  RegularAccountImmutableCode: 2,
-  RegularAccountUpdatableCode: 3,
-  // SDK-friendly aliases (same numeric values as their WASM equivalents)
-  MutableWallet: 3,
-  ImmutableWallet: 2,
-  ImmutableContract: 2,
-  MutableContract: 3,
 });
 
 export const AuthScheme = Object.freeze({
@@ -64,7 +37,6 @@ export const NoteVisibility = Object.freeze({
 export const StorageMode = Object.freeze({
   Public: "public",
   Private: "private",
-  Network: "network",
 });
 
 export const Linking = Object.freeze({
@@ -75,37 +47,34 @@ export const Linking = Object.freeze({
 export { MidenClient };
 export { CompilerResource };
 export { createP2IDNote, createP2IDENote, buildSwapTag };
+export { StorageView, StorageResult, wordToBigInt };
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
-export { WebClient as WasmWebClient, MockWebClient as MockWasmWebClient };
+export {
+  WebClient as WasmWebClient,
+  MockWebClient as MockWasmWebClient,
+  MockWebClient,
+  withSyncLock,
+};
 
 // Method classification sets — used by scripts/check-method-classification.js to ensure
 // every WASM export is explicitly categorised. Update when adding new WASM methods.
 //
-// Note on `SYNC_METHODS`: the classifier is "synchronous in JS" — i.e.
-// `pub fn ...` in Rust, not `pub async fn ...`. Two sub-cases:
-//   1. Factory methods that return a non-Promise value (`accountReader`
-//      returns `AccountReader`; the transaction-request builders return
-//      `TransactionRequestBuilder`; `createCodeBuilder` returns a builder).
-//      Wrapping these in `_serializeWasmCall` would turn their return
-//      value into `Promise<T>` and break callers that use the result
-//      immediately (e.g. `const reader = client.accountReader(id);
-//      await reader.nonce();`).
-//   2. Sync methods that still take `&mut self` in Rust (`proveBlock`,
-//      `serializeMockChain`, `setDebugMode`). Safe to opt out because JS
-//      is single-threaded — the event loop cannot interleave another
-//      call during their synchronous execution, so the RefCell borrow
-//      is always released before any other borrow can start.
-// Do NOT move a sync-in-JS method into `WRITE_METHODS` / `READ_METHODS`
-// just because it takes `&mut self` or `&self`; wrapping changes its
-// return shape and breaks every caller.
+// Naming note: "SYNC_METHODS" is a historical misnomer. This set groups methods
+// that are forwarded transparently to the underlying WASM via the Proxy in
+// `createClientProxy` — meaning they don't need an explicit JS-class wrapper
+// here. It does NOT mean "the method is synchronous"; several entries
+// (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
+// `async fn` in Rust because they take the client's RNG via an async lock.
 const SYNC_METHODS = new Set([
-  "accountReader",
   "buildSwapTag",
   "createCodeBuilder",
   "lastAuthError",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCreateTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "proveBlock",
@@ -117,6 +86,7 @@ const SYNC_METHODS = new Set([
 ]);
 
 const WRITE_METHODS = new Set([
+  "addAccountSecretKeyToWebStore",
   "addTag",
   "executeForSummary",
   "executeProgram",
@@ -139,7 +109,10 @@ const WRITE_METHODS = new Set([
 ]);
 
 const READ_METHODS = new Set([
+  "accountReader",
   "exportAccountFile",
+  "getAccountAuthByPubKeyCommitment",
+  "getAccountByKeyCommitment",
   "exportNoteFile",
   "exportStore",
   "getAccount",
@@ -152,6 +125,7 @@ const READ_METHODS = new Set([
   "getInputNotes",
   "getOutputNote",
   "getOutputNotes",
+  "getPublicKeyCommitmentsOfAccount",
   "getSetting",
   "getSyncHeight",
   "getTransactions",
@@ -162,10 +136,9 @@ const READ_METHODS = new Set([
 
 const MOCK_STORE_NAME = "mock_client_db";
 
-// `SYNC_METHODS` is read by `createClientProxy` to decide whether a
-// proxy-fallback call should stay synchronous. `WRITE_METHODS` /
-// `READ_METHODS` are consulted only by the CI lint (see
-// scripts/check-method-classification.js); suppress unused-variable
+// SYNC_METHODS is consumed by `createClientProxy`; WRITE_METHODS and
+// READ_METHODS exist solely for the CI lint check
+// (scripts/check-method-classification.js); suppress unused-variable
 // warnings for those two.
 void WRITE_METHODS;
 void READ_METHODS;
@@ -224,6 +197,9 @@ const ensureWasm = async () => {
         }
         // Set WASM module for standalone utilities
         _setStandaloneWasm(module);
+        // Install StorageView: account.storage() now returns a developer-friendly
+        // wrapper that makes getItem() work correctly for StorageMap slots.
+        installStorageView(module);
       }
       return module;
     });
@@ -268,16 +244,6 @@ export const getWasmOrThrow = async () => {
 /**
  * Create a Proxy that forwards missing properties to the underlying WASM
  * WebClient.
- *
- * Async proxy-fallback methods (every WASM method that borrows the
- * WebClient's RefCell — reads included, since `&self` and `&mut self` both
- * trip wasm-bindgen's "recursive use of an object detected" panic if
- * another borrow is live) are routed through `_serializeWasmCall` so they
- * queue on the same chain as the explicitly-wrapped methods.
- *
- * `SYNC_METHODS` opts out: they are synchronous in JS and wrapping them
- * would change their return type to `Promise<T>`, which is a breaking
- * change for consumers that use them as plain getters or builders.
  */
 function createClientProxy(instance) {
   return new Proxy(instance, {
@@ -288,6 +254,12 @@ function createClientProxy(instance) {
       if (target.wasmWebClient && prop in target.wasmWebClient) {
         const value = target.wasmWebClient[prop];
         if (typeof value === "function") {
+          // SYNC_METHODS are safe to bind raw (synchronous in JS, or
+          // documented exceptions). Everything else holds the WASM
+          // client's internal RefCell across its awaits, so it MUST join
+          // `_serializeWasmCall` — an unserialized fallback overlapping
+          // any in-flight call panics with "RefCell already borrowed"
+          // and poisons the instance for every later call.
           if (typeof prop === "string" && SYNC_METHODS.has(prop)) {
             return value.bind(target.wasmWebClient);
           }
@@ -442,10 +414,19 @@ class WebClient {
         this.loadedResolver = resolve;
       });
 
-      // Create a promise that resolves when the worker signals that it is fully initialized.
-      this.ready = new Promise((resolve) => {
+      // Create a promise that resolves when the worker signals that it is
+      // fully initialized, and rejects if initialization fails. Every
+      // worker-forwarded method awaits `ready` first, so an init failure must
+      // reject it — otherwise those calls would await a promise that never
+      // settles and hang forever.
+      this.ready = new Promise((resolve, reject) => {
         this.readyResolver = resolve;
+        this.readyRejecter = reject;
       });
+      // Init can fail before any caller awaits `ready`; this no-op handler
+      // suppresses the unhandledrejection event without consuming the
+      // rejection for real awaiters.
+      this.ready.catch(() => {});
 
       // Listen for messages from the worker.
       this.worker.addEventListener("message", async (event) => {
@@ -509,6 +490,21 @@ class WebClient {
           } else {
             resolve(result);
           }
+          return;
+        }
+
+        // An error with no request attached comes from worker initialization
+        // (INIT is the only requestId-less action that can fail). Reject
+        // `ready` so queued and future method calls fail with the real cause
+        // instead of awaiting forever.
+        if (error && !requestId) {
+          const workerError =
+            error instanceof Error ? error : deserializeError(error);
+          console.error(
+            "WebClient: worker initialization failed:",
+            workerError
+          );
+          this.readyRejecter(workerError);
         }
       });
 
@@ -799,21 +795,17 @@ class WebClient {
 
   // ----- Explicitly Wrapped Methods (Worker-Forwarded) -----
 
-  async newWallet(storageMode, mutable, authSchemeId, seed) {
+  async newWallet(storageMode, authSchemeId, seed) {
     return this._serializeWasmCall(async () => {
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(
-        storageMode,
-        mutable,
-        authSchemeId,
-        seed
-      );
+      return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
     });
   }
 
   async newFaucet(
     storageMode,
     nonFungible,
+    tokenName,
     tokenSymbol,
     decimals,
     maxSupply,
@@ -824,6 +816,7 @@ class WebClient {
       return await wasmWebClient.newFaucet(
         storageMode,
         nonFungible,
+        tokenName,
         tokenSymbol,
         decimals,
         maxSupply,
@@ -948,12 +941,10 @@ class WebClient {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
-          return prover
-            ? await wasmWebClient.proveTransactionWithProver(
-                transactionResult,
-                prover
-              )
-            : await wasmWebClient.proveTransaction(transactionResult);
+          return await wasmWebClient.proveTransaction(
+            transactionResult,
+            prover
+          );
         }
 
         const wasm = await getWasmOrThrow();
@@ -974,15 +965,6 @@ class WebClient {
         throw error;
       }
     });
-  }
-
-  // Delegates to `proveTransaction`, which already routes through
-  // `_serializeWasmCall` and dispatches to the WASM `proveTransactionWithProver`
-  // binding when `prover` is present. Kept as a wrapper (rather than elided)
-  // so the method classification lint sees an explicit match for the WASM
-  // method name.
-  async proveTransactionWithProver(transactionResult, prover) {
-    return this.proveTransaction(transactionResult, prover);
   }
 
   async applyTransaction(transactionResult, submissionHeight) {
@@ -1015,7 +997,7 @@ class WebClient {
   }
 
   /**
-   * Syncs the client state with the node.
+   * Syncs the client (NTL followed by chain sync, failing fast on either).
    *
    * This method coordinates concurrent sync calls using the Web Locks API when available,
    * with an in-process mutex fallback for older browsers. If a sync is already in progress,
@@ -1024,62 +1006,86 @@ class WebClient {
    * @returns {Promise<SyncSummary>} The sync summary
    */
   async syncState() {
-    return this.syncStateWithTimeout(0);
-  }
-
-  /**
-   * Syncs the client state with the node with an optional timeout.
-   *
-   * This method coordinates concurrent sync calls using the Web Locks API when available,
-   * with an in-process mutex fallback for older browsers. If a sync is already in progress,
-   * subsequent callers will wait and receive the same result (coalescing behavior).
-   *
-   * @param {number} timeoutMs - Timeout in milliseconds (0 = no timeout)
-   * @returns {Promise<SyncSummary>} The sync summary
-   */
-  async syncStateWithTimeout(timeoutMs = 0) {
-    // Use storeName as the database ID for lock coordination
     const dbId = this.storeName || "default";
+    const methodId = MethodName.SYNC_STATE;
 
     try {
-      // Acquire the sync lock (coordinates concurrent calls)
-      const lockHandle = await acquireSyncLock(dbId, timeoutMs);
-
-      if (!lockHandle.acquired) {
-        // We're coalescing - return the result from the in-progress sync
-        return lockHandle.coalescedResult;
-      }
-
-      // We acquired the lock - perform the sync. Wrap the actual WASM
-      // call in _serializeWasmCall so it can't race with any other
-      // mutating method (executeTransaction, submitNewTransaction, etc.)
-      // on the same WebClient. The outer coalescing lock stays in place
-      // so concurrent syncState callers still share one in-flight sync.
-      try {
-        const result = await this._serializeWasmCall(async () => {
+      // The sync lock coalesces concurrent sync callers; the inner
+      // `_serializeWasmCall` keeps the WASM phase from racing any other
+      // serialized method on this instance. Lock order is always
+      // sync lock → chain, so the two can't deadlock.
+      return await withSyncLock(dbId, methodId, async () =>
+        this._serializeWasmCall(async () => {
           if (!this.worker) {
             const wasmWebClient = await this.getWasmWebClient();
             return await wasmWebClient.syncStateImpl();
           }
           const wasm = await getWasmOrThrow();
-          const serializedSyncSummaryBytes = await this.callMethodWithWorker(
-            MethodName.SYNC_STATE
-          );
+          const serializedSyncSummaryBytes =
+            await this.callMethodWithWorker(methodId);
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        });
-
-        // Release the lock with the result
-        releaseSyncLock(dbId, result);
-        return result;
-      } catch (error) {
-        // Release the lock with the error
-        releaseSyncLockWithError(dbId, error);
-        throw error;
-      }
+        })
+      );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetches private notes from the Note Transport Layer.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncNoteTransport() {
+    const dbId = this.storeName || "default";
+    const methodId = MethodName.SYNC_NOTE_TRANSPORT;
+
+    try {
+      await withSyncLock(dbId, methodId, async () =>
+        this._serializeWasmCall(async () => {
+          if (!this.worker) {
+            const wasmWebClient = await this.getWasmWebClient();
+            await wasmWebClient.syncNoteTransportImpl();
+          } else {
+            await this.callMethodWithWorker(methodId);
+          }
+        })
+      );
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncNoteTransport:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs on-chain state only (no NTL fetch).
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    const dbId = this.storeName || "default";
+    const methodId = MethodName.SYNC_CHAIN;
+
+    try {
+      return await withSyncLock(dbId, methodId, async () =>
+        this._serializeWasmCall(async () => {
+          if (!this.worker) {
+            const wasmWebClient = await this.getWasmWebClient();
+            return await wasmWebClient.syncChainImpl();
+          }
+          const wasm = await getWasmOrThrow();
+          const serializedSyncSummaryBytes =
+            await this.callMethodWithWorker(methodId);
+          return wasm.SyncSummary.deserialize(
+            new Uint8Array(serializedSyncSummaryBytes)
+          );
+        })
+      );
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncChain:", error);
       throw error;
     }
   }
@@ -1115,9 +1121,23 @@ class MockWebClient extends WebClient {
   }
 
   initializeWorker() {
+    // Pass `numThreads` exactly like the real INIT path: every prove runs
+    // inside the worker's own WASM instance, and rayon's pool is
+    // per-instance — without this, mock-client proving (including the
+    // integration suite) silently runs single-threaded.
+    let numThreads = 1;
+    try {
+      if (
+        typeof self !== "undefined" &&
+        self.crossOriginIsolated &&
+        navigator?.hardwareConcurrency
+      ) {
+        numThreads = navigator.hardwareConcurrency;
+      }
+    } catch {}
     this.worker.postMessage({
       action: WorkerAction.INIT_MOCK,
-      args: [this.seed, this.logLevel],
+      args: [this.seed, this.logLevel, numThreads],
     });
   }
 
@@ -1147,9 +1167,9 @@ class MockWebClient extends WebClient {
     // Wait for the underlying wasmWebClient to be initialized.
     const wasmWebClient = await instance.getWasmWebClient();
     await wasmWebClient.createMockClient(
-      seed,
-      serializedMockChain,
-      serializedMockNoteTransportNode
+      seed ?? null,
+      serializedMockChain ?? null,
+      serializedMockNoteTransportNode ?? null
     );
 
     // Wait for the worker to be ready
@@ -1168,57 +1188,125 @@ class MockWebClient extends WebClient {
    * @returns {Promise<SyncSummary>} The sync summary
    */
   async syncState() {
-    return this.syncStateWithTimeout(0);
-  }
-
-  /**
-   * Syncs the mock client state with an optional timeout.
-   *
-   * @param {number} timeoutMs - Timeout in milliseconds (0 = no timeout)
-   * @returns {Promise<SyncSummary>} The sync summary
-   */
-  async syncStateWithTimeout(timeoutMs = 0) {
     const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_STATE;
 
     try {
-      const lockHandle = await acquireSyncLock(dbId, timeoutMs);
+      return await withSyncLock(dbId, methodId, async () =>
+        this._serializeWasmCall(async () => {
+          const wasmWebClient = await this.getWasmWebClient();
 
-      if (!lockHandle.acquired) {
-        return lockHandle.coalescedResult;
-      }
+          if (!this.worker) {
+            return await wasmWebClient.syncStateImpl();
+          }
 
-      try {
-        let result;
-        const wasmWebClient = await this.getWasmWebClient();
-
-        if (!this.worker) {
-          result = await wasmWebClient.syncStateImpl();
-        } else {
-          let serializedMockChain = wasmWebClient.serializeMockChain().buffer;
-          let serializedMockNoteTransportNode =
-            wasmWebClient.serializeMockNoteTransportNode().buffer;
+          const serializedMockChain = (await wasmWebClient.serializeMockChain())
+            .buffer;
+          const serializedMockNoteTransportNode = (
+            await wasmWebClient.serializeMockNoteTransportNode()
+          ).buffer;
 
           const wasm = await getWasmOrThrow();
-
           const serializedSyncSummaryBytes = await this.callMethodWithWorker(
             MethodName.SYNC_STATE_MOCK,
             serializedMockChain,
             serializedMockNoteTransportNode
           );
-
-          result = wasm.SyncSummary.deserialize(
+          return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        }
-
-        releaseSyncLock(dbId, result);
-        return result;
-      } catch (error) {
-        releaseSyncLockWithError(dbId, error);
-        throw error;
-      }
+        })
+      );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs only the on-chain mock state (no note transport fetch).
+   *
+   * In worker mode, the main-thread mock chain + note-transport-node state
+   * is serialized and shipped to the worker before the sync, so a prior
+   * `proveBlock()` on the main thread is reflected in the worker's WASM
+   * client. The no-worker path uses the main-thread WASM client directly.
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_CHAIN;
+
+    try {
+      return await withSyncLock(dbId, methodId, async () =>
+        this._serializeWasmCall(async () => {
+          const wasmWebClient = await this.getWasmWebClient();
+
+          if (!this.worker) {
+            return await wasmWebClient.syncChainImpl();
+          }
+
+          const serializedMockChain = (await wasmWebClient.serializeMockChain())
+            .buffer;
+          const serializedMockNoteTransportNode = (
+            await wasmWebClient.serializeMockNoteTransportNode()
+          ).buffer;
+
+          const wasm = await getWasmOrThrow();
+          const serializedSyncSummaryBytes = await this.callMethodWithWorker(
+            MethodName.SYNC_CHAIN_MOCK,
+            serializedMockChain,
+            serializedMockNoteTransportNode
+          );
+          return wasm.SyncSummary.deserialize(
+            new Uint8Array(serializedSyncSummaryBytes)
+          );
+        })
+      );
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncChain:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Syncs only the mock note-transport state (no chain fetch).
+   *
+   * Mirrors {@link MockWebClient#syncChain}: in worker mode, the
+   * main-thread mock chain + note-transport-node state is serialized
+   * and shipped to the worker first.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncNoteTransport() {
+    const dbId = this.storeName || "mock";
+    const methodId = MethodName.SYNC_NOTE_TRANSPORT;
+
+    try {
+      await withSyncLock(dbId, methodId, async () =>
+        this._serializeWasmCall(async () => {
+          const wasmWebClient = await this.getWasmWebClient();
+
+          if (!this.worker) {
+            await wasmWebClient.syncNoteTransportImpl();
+            return;
+          }
+
+          const serializedMockChain = (await wasmWebClient.serializeMockChain())
+            .buffer;
+          const serializedMockNoteTransportNode = (
+            await wasmWebClient.serializeMockNoteTransportNode()
+          ).buffer;
+
+          await this.callMethodWithWorker(
+            MethodName.SYNC_NOTE_TRANSPORT_MOCK,
+            serializedMockChain,
+            serializedMockNoteTransportNode
+          );
+        })
+      );
+    } catch (error) {
+      console.error("INDEX.JS: Error in syncNoteTransport:", error);
       throw error;
     }
   }
@@ -1232,9 +1320,11 @@ class MockWebClient extends WebClient {
       const wasmWebClient = await this.getWasmWebClient();
       const wasm = await getWasmOrThrow();
       const serializedTransactionRequest = transactionRequest.serialize();
-      const serializedMockChain = wasmWebClient.serializeMockChain().buffer;
-      const serializedMockNoteTransportNode =
-        wasmWebClient.serializeMockNoteTransportNode().buffer;
+      const serializedMockChain = (await wasmWebClient.serializeMockChain())
+        .buffer;
+      const serializedMockNoteTransportNode = (
+        await wasmWebClient.serializeMockNoteTransportNode()
+      ).buffer;
 
       const result = await this.callMethodWithWorker(
         MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
@@ -1286,9 +1376,11 @@ class MockWebClient extends WebClient {
       const wasm = await getWasmOrThrow();
       const serializedTransactionRequest = transactionRequest.serialize();
       const proverPayload = prover.serialize();
-      const serializedMockChain = wasmWebClient.serializeMockChain().buffer;
-      const serializedMockNoteTransportNode =
-        wasmWebClient.serializeMockNoteTransportNode().buffer;
+      const serializedMockChain = (await wasmWebClient.serializeMockChain())
+        .buffer;
+      const serializedMockNoteTransportNode = (
+        await wasmWebClient.serializeMockNoteTransportNode()
+      ).buffer;
 
       const result = await this.callMethodWithWorker(
         MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,

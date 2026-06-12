@@ -88,92 +88,54 @@ test.describe("Sync Lock Tests", () => {
     });
   });
 
-  test.describe("Timeout Behavior", () => {
-    test("syncStateWithTimeout with 0 timeout works like syncState", async ({
-      page,
-    }) => {
-      const result = await page.evaluate(async () => {
-        const client = window.client;
-
-        const result1 = await client.syncState();
-        const result2 = await client.syncStateWithTimeout(0);
-
-        return {
-          blockNum1: result1.blockNum(),
-          blockNum2: result2.blockNum(),
-        };
-      });
-
-      expect(typeof result.blockNum1).toBe("number");
-      expect(typeof result.blockNum2).toBe("number");
-    });
-
-    test("syncStateWithTimeout with positive timeout succeeds", async ({
-      page,
-    }) => {
-      const result = await page.evaluate(async () => {
-        const client = window.client;
-
-        // Use a generous timeout
-        const result = await client.syncStateWithTimeout(30000);
-
-        return {
-          blockNum: result.blockNum(),
-          committedNotes: result.committedNotes().length,
-          consumedNotes: result.consumedNotes().length,
-        };
-      });
-
-      expect(typeof result.blockNum).toBe("number");
-      expect(result.blockNum).toBeGreaterThanOrEqual(0);
-    });
-
-    test("concurrent syncs with timeout all complete", async ({ page }) => {
-      const result = await page.evaluate(async () => {
-        const client = window.client;
-
-        const syncPromises = [
-          client.syncStateWithTimeout(30000),
-          client.syncStateWithTimeout(30000),
-          client.syncStateWithTimeout(30000),
-        ];
-
-        const results = await Promise.all(syncPromises);
-        const blockNums = results.map((r) => r.blockNum());
-
-        return {
-          blockNums,
-          allSame: blockNums.every((n) => n === blockNums[0]),
-        };
-      });
-
-      expect(result.blockNums.length).toBe(3);
-      expect(result.allSame).toBe(true);
-    });
-  });
-
   test.describe("Error Handling", () => {
-    test("sync after failed sync works correctly", async ({ page }) => {
-      // This test ensures that the lock is properly released after an error
+    test("withSyncLock cleans up inFlight after fn rejects", async ({
+      page,
+    }) => {
+      // After fn rejects, the in-flight entry must be cleared so that a later
+      // call with the same (dbId, methodId) starts a fresh execution. Without
+      // this, a single failure would permanently coalesce all subsequent
+      // callers onto the rejected promise and no further sync could run.
       const result = await page.evaluate(async () => {
-        const client = window.client;
+        const dbId = "withSyncLock-cleanup-test";
+        const methodId = "syncTest";
 
-        // First successful sync
-        const result1 = await client.syncState();
+        let firstRan = 0;
+        let secondRan = 0;
 
-        // Another successful sync (verifies lock was released)
-        const result2 = await client.syncState();
+        let firstError: Error | null = null;
+        try {
+          await window.withSyncLock(dbId, methodId, async () => {
+            firstRan++;
+            throw new Error("forced failure");
+          });
+        } catch (err) {
+          firstError = err as Error;
+        }
+
+        const secondResult = await window.withSyncLock(
+          dbId,
+          methodId,
+          async () => {
+            secondRan++;
+            return "second-success";
+          }
+        );
 
         return {
-          blockNum1: result1.blockNum(),
-          blockNum2: result2.blockNum(),
+          firstErrorMessage: firstError?.message,
+          firstRan,
+          secondRan,
+          secondResult,
         };
       });
 
-      expect(typeof result.blockNum1).toBe("number");
-      expect(typeof result.blockNum2).toBe("number");
-      // Block numbers should be monotonically non-decreasing
-      expect(result.blockNum2).toBeGreaterThanOrEqual(result.blockNum1);
+      expect(result.firstErrorMessage).toBe("forced failure");
+      expect(result.firstRan).toBe(1);
+      // The second fn must actually execute — proves the in-flight entry was
+      // cleared after the first rejection rather than coalescing onto it.
+      expect(result.secondRan).toBe(1);
+      expect(result.secondResult).toBe("second-success");
     });
   });
 
@@ -302,7 +264,6 @@ test.describe("Sync Lock Tests", () => {
         // Create a wallet before syncing
         const wallet = await client.newWallet(
           window.AccountStorageMode.private(),
-          true,
           window.AuthScheme.AuthRpoFalcon512
         );
         const walletId = wallet.id().toString();
@@ -577,7 +538,7 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       for (let i = 0; i < 3; i++) {
         try {
-          const result = await client.syncStateWithTimeout(30000);
+          const result = await client.syncState();
           results.push(result.blockNum());
         } catch (e) {
           results.push(-1); // Mark failures
@@ -691,10 +652,10 @@ test.describe("Sync Lock Timeout Race Condition", () => {
 
       // Fire many concurrent syncs with various timeouts
       const promises = [
-        client.syncStateWithTimeout(50000),
-        client.syncStateWithTimeout(50000),
         client.syncState(),
-        client.syncStateWithTimeout(50000),
+        client.syncState(),
+        client.syncState(),
+        client.syncState(),
         client.syncState(),
       ];
 
@@ -739,21 +700,20 @@ test.describe("Sync Lock Timeout Race Condition", () => {
       // Create an account to track state consistency
       const wallet = await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512
       );
       const walletId = wallet.id().toString();
 
       // Do several syncs with timeouts
       for (let i = 0; i < 3; i++) {
-        await client.syncStateWithTimeout(30000);
+        await client.syncState();
       }
 
       // Do concurrent syncs
       await Promise.all([
         client.syncState(),
         client.syncState(),
-        client.syncStateWithTimeout(30000),
+        client.syncState(),
       ]);
 
       // Verify account state is still consistent
@@ -808,182 +768,5 @@ test.describe("Sync Lock Performance", () => {
     // Concurrent syncs should complete at least as fast as sequential
     // (likely faster due to coalescing)
     expect(result.fasterOrEqual).toBe(true);
-  });
-});
-
-test.describe("WASM Call Serialization", () => {
-  // Reproduces the race reported against the React SDK v0.14 migration in
-  // the `miden-frontend-template` (Vite + React) repo. `useIncrementCounter`
-  // held an ~2–4s `runExclusive` block that overlapped the provider's
-  // `autoSyncInterval` timer (15s default). Proxy-fallback reads like
-  // `getAccount` / `getAccounts` went straight to wasm-bindgen unserialised,
-  // racing the timer-driven `syncState()` on the shared WebClient RefCell
-  // and panicking with `"recursive use of an object detected which would
-  // lead to unsafe aliasing in rust"`.
-
-  const isRecursivePanic = (msg: unknown): boolean =>
-    typeof msg === "string" && msg.includes("recursive use of an object");
-
-  test("proxy-fallback read does not panic when syncState is in flight", async ({
-    page,
-  }) => {
-    const result = await page.evaluate(async () => {
-      const client = window.client;
-
-      // Fire the explicitly-wrapped syncState alongside proxy-fallback reads.
-      // Without the fix, `getAccounts` / `getSyncHeight` bypass the
-      // _serializeWasmCall chain and collide with syncState on the RefCell.
-      const results = await Promise.allSettled([
-        client.syncState(),
-        client.getAccounts(),
-        client.getSyncHeight(),
-        client.getAccounts(),
-      ]);
-
-      return {
-        total: results.length,
-        fulfilled: results.filter((r) => r.status === "fulfilled").length,
-        errors: results
-          .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-          .map((r) => r.reason?.message ?? String(r.reason)),
-      };
-    });
-
-    expect(result.errors.filter(isRecursivePanic)).toEqual([]);
-    expect(result.fulfilled).toBe(result.total);
-  });
-
-  test("many concurrent proxy-fallback reads do not panic", async ({
-    page,
-  }) => {
-    // Stress test: without serialization, N concurrent reads will collide on
-    // the RefCell. With the chain, they queue cleanly.
-    const result = await page.evaluate(async () => {
-      const client = window.client;
-      const promises = Array(10)
-        .fill(null)
-        .flatMap(() => [client.getAccounts(), client.getSyncHeight()]);
-
-      const results = await Promise.allSettled(promises);
-      return {
-        total: results.length,
-        fulfilled: results.filter((r) => r.status === "fulfilled").length,
-        errors: results
-          .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-          .map((r) => r.reason?.message ?? String(r.reason)),
-      };
-    });
-
-    expect(result.errors.filter(isRecursivePanic)).toEqual([]);
-    expect(result.fulfilled).toBe(result.total);
-  });
-
-  test("importAccountById racing syncState does not panic", async ({
-    page,
-  }) => {
-    // Mirrors the exact `useIncrementCounter.ts::loadCount` shape:
-    //   if (!(await client.getAccount(id))) await client.importAccountById(id);
-    //   await client.syncState();
-    //   await client.getAccount(id);
-    // We run these concurrently (not sequentially) to stress the race. The
-    // import may reject against the node ("account not found") — that's fine,
-    // the assertion is specifically about the recursive-use panic.
-    const result = await page.evaluate(async () => {
-      const client = window.client;
-
-      // Freshly created account id that the node won't have — importAccountById
-      // will exercise the WASM + network path and likely reject.
-      const wallet = await client.newWallet(
-        window.AccountStorageMode.private(),
-        true,
-        window.AuthScheme.AuthRpoFalcon512
-      );
-      const id = wallet.id();
-
-      const settle = (p: Promise<unknown>) =>
-        p.then(
-          () => null,
-          (e) => (e?.message ?? String(e)) as string
-        );
-
-      const errors = await Promise.all([
-        settle(client.getAccount(id)),
-        settle(client.importAccountById(id)),
-        settle(client.syncState()),
-        settle(client.getAccount(id)),
-        settle(client.getAccountStorage(id)),
-      ]);
-
-      return { errors: errors.filter((e): e is string => e !== null) };
-    });
-
-    expect(result.errors.filter(isRecursivePanic)).toEqual([]);
-  });
-
-  test("newWallet racing proxy-fallback reads does not panic", async ({
-    page,
-  }) => {
-    // Mirrors "clicking increment right as the timer fires": an in-flight
-    // mutating call (account creation here — stands in for `executeTransaction`,
-    // which needs a real TransactionRequest to build) overlapping a
-    // proxy-fallback read and a syncState.
-    const result = await page.evaluate(async () => {
-      const client = window.client;
-
-      const settle = (p: Promise<unknown>) =>
-        p.then(
-          () => null,
-          (e) => (e?.message ?? String(e)) as string
-        );
-
-      const errors = await Promise.all([
-        settle(
-          client.newWallet(
-            window.AccountStorageMode.private(),
-            true,
-            window.AuthScheme.AuthRpoFalcon512
-          )
-        ),
-        settle(client.syncState()),
-        settle(client.getAccounts()),
-        settle(client.getSyncHeight()),
-      ]);
-
-      return { errors: errors.filter((e): e is string => e !== null) };
-    });
-
-    expect(result.errors.filter(isRecursivePanic)).toEqual([]);
-  });
-
-  test("waitForIdle blocks until the in-flight serialized call settles", async ({
-    page,
-  }) => {
-    // Must use a method that goes DIRECTLY through `_serializeWasmCall`
-    // (e.g. `newWallet`) — `syncState` awaits `acquireSyncLock` BEFORE
-    // populating the chain, so the chain is still empty in the same task
-    // turn that `waitForIdle()` reads it, causing `waitForIdle` to resolve
-    // immediately regardless of the in-flight sync.
-    const result = await page.evaluate(async () => {
-      const client = window.client;
-
-      let walletDone = false;
-      const walletPromise = client
-        .newWallet(
-          window.AccountStorageMode.private(),
-          true,
-          window.AuthScheme.AuthRpoFalcon512
-        )
-        .finally(() => {
-          walletDone = true;
-        });
-
-      await client.waitForIdle();
-      const walletDoneWhenIdleResolved = walletDone;
-      await walletPromise;
-
-      return { walletDoneWhenIdleResolved };
-    });
-
-    expect(result.walletDoneWhenIdleResolved).toBe(true);
   });
 });

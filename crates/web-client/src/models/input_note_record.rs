@@ -1,9 +1,10 @@
+use js_export_macro::js_export;
 use miden_client::note::Note as NativeNote;
 use miden_client::store::InputNoteRecord as NativeInputNoteRecord;
 use miden_client::transaction::InputNote as NativeInputNote;
-use wasm_bindgen::prelude::*;
 
 use super::input_note_state::InputNoteState;
+use super::note_attachment::NoteAttachment;
 use super::note_details::NoteDetails;
 use super::note_id::NoteId;
 use super::note_inclusion_proof::NoteInclusionProof;
@@ -12,6 +13,7 @@ use super::word::Word;
 use crate::js_error_with_context;
 use crate::models::input_note::InputNote;
 use crate::models::note::Note;
+use crate::platform::JsErr;
 
 /// Represents a Note of which the Store can keep track and retrieve.
 ///
@@ -25,14 +27,18 @@ use crate::models::note::Note;
 /// Notes can also be consumed as unauthenticated notes, where their existence is verified by the
 /// network.
 #[derive(Clone)]
-#[wasm_bindgen]
+#[js_export]
 pub struct InputNoteRecord(NativeInputNoteRecord);
 
-#[wasm_bindgen]
+#[js_export]
 impl InputNoteRecord {
-    /// Returns the note ID.
-    pub fn id(&self) -> NoteId {
-        self.0.id().into()
+    /// Returns the note ID when available.
+    ///
+    /// Migration note (miden-client PR #2214): `InputNoteRecord::id()`
+    /// returns `Option<NoteId>` — partial / metadata-less notes have no
+    /// metadata-bearing ID yet.
+    pub fn id(&self) -> Option<NoteId> {
+        self.0.id().map(Into::into)
     }
 
     /// Returns the current processing state for this note.
@@ -50,49 +56,63 @@ impl InputNoteRecord {
         self.0.metadata().map(Into::into)
     }
 
+    /// Returns the note's attachments.
+    ///
+    /// On the 0.15 surface the full attachment content (the packed words) lives
+    /// on the note record itself rather than on `NoteMetadata` (which only
+    /// carries the attachment headers). This exposes that content so JS callers
+    /// can decode payloads packed via the `createNoteAttachment` helper. An
+    /// empty array means the note carries no attachments.
+    pub fn attachments(&self) -> Vec<NoteAttachment> {
+        self.0.attachments().iter().map(Into::into).collect()
+    }
+
     /// Returns the note commitment (id + metadata), if available.
     pub fn commitment(&self) -> Option<Word> {
         self.0.commitment().map(Into::into)
     }
 
     /// Returns the inclusion proof when the note is authenticated.
-    #[wasm_bindgen(js_name = "inclusionProof")]
+    #[js_export(js_name = "inclusionProof")]
     pub fn inclusion_proof(&self) -> Option<NoteInclusionProof> {
         self.0.inclusion_proof().map(Into::into)
     }
 
     /// Returns the transaction ID that consumed this note, if any.
-    #[wasm_bindgen(js_name = "consumerTransactionId")]
+    #[js_export(js_name = "consumerTransactionId")]
     pub fn consumer_transaction_id(&self) -> Option<String> {
         self.0.consumer_transaction_id().map(ToString::to_string)
     }
 
-    /// Returns the nullifier for this note.
-    pub fn nullifier(&self) -> String {
-        self.0.nullifier().to_hex()
+    /// Returns the nullifier for this note when available.
+    ///
+    /// Migration note (miden-client PR #2214): `InputNoteRecord::nullifier()`
+    /// returns `Option<Nullifier>` — partial notes have no nullifier yet.
+    pub fn nullifier(&self) -> Option<String> {
+        self.0.nullifier().map(|n| n.to_hex())
     }
 
     /// Returns true if the record contains authentication data (proof).
-    #[wasm_bindgen(js_name = "isAuthenticated")]
+    #[js_export(js_name = "isAuthenticated")]
     pub fn is_authenticated(&self) -> bool {
         self.0.is_authenticated()
     }
 
     /// Returns true if the note has already been consumed.
-    #[wasm_bindgen(js_name = "isConsumed")]
+    #[js_export(js_name = "isConsumed")]
     pub fn is_consumed(&self) -> bool {
         self.0.is_consumed()
     }
 
     /// Returns true if the note is currently being processed.
-    #[wasm_bindgen(js_name = "isProcessing")]
+    #[js_export(js_name = "isProcessing")]
     pub fn is_processing(&self) -> bool {
         self.0.is_processing()
     }
 
     /// Converts the record into an `InputNote` (including proof when available).
-    #[wasm_bindgen(js_name = "toInputNote")]
-    pub fn to_input_note(&self) -> Result<InputNote, JsValue> {
+    #[js_export(js_name = "toInputNote")]
+    pub fn to_input_note(&self) -> Result<InputNote, JsErr> {
         let input_note: NativeInputNote = self.0.clone().try_into().map_err(|err| {
             js_error_with_context(err, "could not create InputNote from InputNoteRecord")
         })?;
@@ -100,8 +120,8 @@ impl InputNoteRecord {
     }
 
     /// Converts the record into a `Note` (including proof when available).
-    #[wasm_bindgen(js_name = "toNote")]
-    pub fn to_note(&self) -> Result<Note, JsValue> {
+    #[js_export(js_name = "toNote")]
+    pub fn to_note(&self) -> Result<Note, JsErr> {
         let note: NativeNote = self.0.clone().try_into().map_err(|err| {
             js_error_with_context(err, "could not create InputNote from InputNoteRecord")
         })?;
@@ -123,3 +143,5 @@ impl From<&NativeInputNoteRecord> for InputNoteRecord {
         InputNoteRecord(native_note.clone())
     }
 }
+
+impl_napi_from_value!(InputNoteRecord);

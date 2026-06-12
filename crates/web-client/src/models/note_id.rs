@@ -1,48 +1,49 @@
+use js_export_macro::js_export;
 use miden_client::note::NoteId as NativeNoteId;
-use wasm_bindgen::prelude::*;
 
 use super::word::Word;
 use crate::js_error_with_context;
+use crate::platform::JsErr;
 
 /// Returns a unique identifier of a note, which is simultaneously a commitment to the note.
 ///
 /// Note ID is computed as:
 ///
-/// > `hash(recipient, asset_commitment)`
+/// > `hash(details_commitment, metadata_commitment)`
 ///
-/// where `recipient` is defined as:
-///
-/// > `hash(hash(hash(serial_num, ZERO), script_root), input_commitment)`
-///
-/// This achieves the following properties:
-/// - Every note can be reduced to a single unique ID.
-/// - To compute a note ID, we do not need to know the note's `serial_num`. Knowing the hash of the
-///   `serial_num` (as well as script root, input commitment, and note assets) is sufficient.
+/// On the 0.15 protocol surface the upstream `NoteId::new` signature
+/// changed from `(recipient_digest, asset_commitment)` to
+/// `(NoteDetailsCommitment, &NoteMetadata)`. The JS API exposes
+/// `NoteId.fromRaw(word)` for constructing an ID from a pre-computed
+/// 32-byte commitment word (the previous two-Word constructor has no
+/// 0.15 equivalent).
 #[derive(Clone, Copy)]
-#[wasm_bindgen]
+#[js_export]
 pub struct NoteId(NativeNoteId);
 
-#[wasm_bindgen]
+#[js_export]
 impl NoteId {
-    /// Builds a note ID from the recipient and asset commitments.
-    #[wasm_bindgen(constructor)]
-    pub fn new(recipient_digest: &Word, asset_commitment_digest: &Word) -> NoteId {
-        NoteId(NativeNoteId::new(
-            recipient_digest.into(),
-            asset_commitment_digest.into(),
-        ))
+    /// Builds a note ID from its raw commitment word.
+    ///
+    /// `word` must already encode the final note-ID commitment — the
+    /// metadata-mixing that the previous 2-Word constructor did is no
+    /// longer part of the protocol surface.
+    #[js_export(js_name = "fromRaw")]
+    pub fn from_raw(word: &Word) -> NoteId {
+        let native_word: miden_client::Word = word.into();
+        NoteId(NativeNoteId::from_raw(native_word))
     }
 
     /// Parses a note ID from its hex encoding.
-    #[wasm_bindgen(js_name = "fromHex")]
-    pub fn from_hex(hex: &str) -> Result<NoteId, JsValue> {
-        let native_note_id = NativeNoteId::try_from_hex(hex)
+    #[js_export(js_name = "fromHex")]
+    pub fn from_hex(hex: String) -> Result<NoteId, JsErr> {
+        let native_note_id = NativeNoteId::try_from_hex(&hex)
             .map_err(|err| js_error_with_context(err, "error instantiating NoteId from hex"))?;
         Ok(NoteId(native_note_id))
     }
 
     /// Returns the canonical hex representation of the note ID.
-    #[wasm_bindgen(js_name = "toString")]
+    #[js_export(js_name = "toString")]
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         self.0.to_string()
@@ -75,3 +76,5 @@ impl From<&NoteId> for NativeNoteId {
         note_id.0
     }
 }
+
+impl_napi_from_value!(NoteId);

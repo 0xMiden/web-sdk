@@ -110,4 +110,75 @@ describe("KeystoreResource", () => {
       );
     });
   });
+
+  // ── Fallback paths (next): when inner.keystore is undefined, the
+  // resource methods route through the older direct-on-inner methods
+  // that the napi binding still provides. The fallback path is only
+  // present on next; main always has inner.keystore.
+  describe("fallback paths (no inner.keystore)", () => {
+    let innerNoKs;
+    let resourceNoKs;
+
+    beforeEach(() => {
+      innerNoKs = {
+        addAccountSecretKeyToWebStore: vi.fn().mockResolvedValue("inserted-fb"),
+        getAccountAuthByPubKeyCommitment: vi
+          .fn()
+          .mockResolvedValue("key-data-fb"),
+        getPublicKeyCommitmentsOfAccount: vi
+          .fn()
+          .mockResolvedValue(["c1-fb", "c2-fb"]),
+        getAccountByKeyCommitment: vi.fn(),
+      };
+      resourceNoKs = new KeystoreResource(innerNoKs, client);
+    });
+
+    it("insert falls back to addAccountSecretKeyToWebStore", async () => {
+      const result = await resourceNoKs.insert("accountId", "secretKey");
+      expect(innerNoKs.addAccountSecretKeyToWebStore).toHaveBeenCalledWith(
+        "accountId",
+        "secretKey"
+      );
+      expect(result).toBe("inserted-fb");
+    });
+
+    it("get falls back to getAccountAuthByPubKeyCommitment", async () => {
+      const result = await resourceNoKs.get("commitment");
+      expect(innerNoKs.getAccountAuthByPubKeyCommitment).toHaveBeenCalledWith(
+        "commitment"
+      );
+      expect(result).toBe("key-data-fb");
+    });
+
+    it("remove throws (no fallback)", async () => {
+      await expect(resourceNoKs.remove("c")).rejects.toThrow(
+        /remove\(\) is not supported/
+      );
+    });
+
+    it("getCommitments falls back to getPublicKeyCommitmentsOfAccount", async () => {
+      const result = await resourceNoKs.getCommitments("accountId");
+      expect(innerNoKs.getPublicKeyCommitmentsOfAccount).toHaveBeenCalledWith(
+        "accountId"
+      );
+      expect(result).toEqual(["c1-fb", "c2-fb"]);
+    });
+
+    it("getAccountId falls back to getAccountByKeyCommitment(...).id()", async () => {
+      const fakeAccount = { id: vi.fn().mockReturnValue("acc-fb") };
+      innerNoKs.getAccountByKeyCommitment.mockResolvedValue(fakeAccount);
+      const result = await resourceNoKs.getAccountId("commitment");
+      expect(innerNoKs.getAccountByKeyCommitment).toHaveBeenCalledWith(
+        "commitment"
+      );
+      expect(fakeAccount.id).toHaveBeenCalled();
+      expect(result).toBe("acc-fb");
+    });
+
+    it("getAccountId returns undefined when no account is found", async () => {
+      innerNoKs.getAccountByKeyCommitment.mockResolvedValue(null);
+      const result = await resourceNoKs.getAccountId("commitment");
+      expect(result).toBeUndefined();
+    });
+  });
 });

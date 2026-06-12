@@ -1,13 +1,16 @@
+use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{
-    AccountVaultDelta as NativeAccountVaultDelta, FungibleAssetDelta as NativeFungibleAssetDelta,
+    AccountVaultDelta as NativeAccountVaultDelta,
+    AssetVaultKey,
+    FungibleAsset as NativeFungibleAsset,
+    FungibleAssetDelta as NativeFungibleAssetDelta,
 };
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::js_sys::Uint8Array;
 
 use crate::models::account_id::AccountId;
 use crate::models::fungible_asset::FungibleAsset;
-use crate::utils::{deserialize_from_uint8array, serialize_to_uint8array};
+use crate::platform::{JsBytes, JsErr};
+use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// `AccountVaultDelta` stores the difference between the initial and final account vault states.
 ///
@@ -16,23 +19,23 @@ use crate::utils::{deserialize_from_uint8array, serialize_to_uint8array};
 /// - `non_fungible`: a binary tree map of non-fungible assets that were added to or removed from
 ///   the account vault.
 #[derive(Clone)]
-#[wasm_bindgen]
+#[js_export]
 pub struct AccountVaultDelta(NativeAccountVaultDelta);
 
-#[wasm_bindgen]
+#[js_export]
 impl AccountVaultDelta {
     /// Serializes the vault delta into bytes.
-    pub fn serialize(&self) -> Uint8Array {
-        serialize_to_uint8array(&self.0)
+    pub fn serialize(&self) -> JsBytes {
+        serialize_to_bytes(&self.0)
     }
 
     /// Deserializes a vault delta from bytes.
-    pub fn deserialize(bytes: &Uint8Array) -> Result<AccountVaultDelta, JsValue> {
-        deserialize_from_uint8array::<NativeAccountVaultDelta>(bytes).map(AccountVaultDelta)
+    pub fn deserialize(bytes: JsBytes) -> Result<AccountVaultDelta, JsErr> {
+        deserialize_from_bytes::<NativeAccountVaultDelta>(&bytes).map(AccountVaultDelta)
     }
 
     /// Returns true if no assets are changed.
-    #[wasm_bindgen(js_name = "isEmpty")]
+    #[js_export(js_name = "isEmpty")]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -43,50 +46,60 @@ impl AccountVaultDelta {
     }
 
     /// Returns the fungible assets that increased.
-    #[wasm_bindgen(js_name = "addedFungibleAssets")]
+    #[js_export(js_name = "addedFungibleAssets")]
     pub fn added_fungible_assets(&self) -> Vec<FungibleAsset> {
         self.0
             .fungible()
             .iter()
             .filter(|&(_, &value)| value > 0)
-            .map(|(vault_key, &diff)| {
-                FungibleAsset::new(&vault_key.faucet_id().into(), diff.unsigned_abs())
+            .filter_map(|(vault_key, &diff)| {
+                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
             })
             .collect()
     }
 
     /// Returns the fungible assets that decreased.
-    #[wasm_bindgen(js_name = "removedFungibleAssets")]
+    #[js_export(js_name = "removedFungibleAssets")]
     pub fn removed_fungible_assets(&self) -> Vec<FungibleAsset> {
         self.0
             .fungible()
             .iter()
             .filter(|&(_, &value)| value < 0)
-            .map(|(vault_key, &diff)| {
-                FungibleAsset::new(&vault_key.faucet_id().into(), diff.unsigned_abs())
+            .filter_map(|(vault_key, &diff)| {
+                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
             })
             .collect()
     }
 }
 
+/// Rebuilds a fungible asset from a vault-delta entry, preserving the vault key's callback flag.
+///
+/// The callback flag is part of the asset's vault-key and value encoding, so dropping it would
+/// report an asset that differs from the one the kernel encoded (e.g. for agglayer-minted assets).
+fn fungible_asset_from_delta(vault_key: &AssetVaultKey, amount: u64) -> Option<FungibleAsset> {
+    NativeFungibleAsset::new(vault_key.faucet_id(), amount)
+        .ok()
+        .map(|asset| asset.with_callbacks(vault_key.callback_flag()).into())
+}
+
 /// A single fungible asset change in the vault delta.
 #[derive(Clone)]
-#[wasm_bindgen]
+#[js_export]
 pub struct FungibleAssetDeltaItem {
     faucet_id: AccountId,
     amount: i64,
 }
 
-#[wasm_bindgen]
+#[js_export]
 impl FungibleAssetDeltaItem {
     /// Returns the faucet ID this delta refers to.
-    #[wasm_bindgen(getter, js_name = "faucetId")]
+    #[js_export(getter, js_name = "faucetId")]
     pub fn faucet_id(&self) -> AccountId {
         self.faucet_id
     }
 
     /// Returns the signed amount change (positive adds assets, negative removes).
-    #[wasm_bindgen(getter)]
+    #[js_export(getter)]
     pub fn amount(&self) -> i64 {
         self.amount
     }
@@ -103,37 +116,41 @@ impl From<(&miden_client::asset::AssetVaultKey, &i64)> for FungibleAssetDeltaIte
 
 /// Aggregated fungible deltas keyed by faucet ID.
 #[derive(Clone)]
-#[wasm_bindgen]
+#[js_export]
 pub struct FungibleAssetDelta(NativeFungibleAssetDelta);
 
-#[wasm_bindgen]
+#[js_export]
 impl FungibleAssetDelta {
     /// Serializes the fungible delta into bytes.
-    pub fn serialize(&self) -> Uint8Array {
-        serialize_to_uint8array(&self.0)
+    pub fn serialize(&self) -> JsBytes {
+        serialize_to_bytes(&self.0)
     }
 
     /// Deserializes a fungible delta from bytes.
-    pub fn deserialize(bytes: &Uint8Array) -> Result<FungibleAssetDelta, JsValue> {
-        deserialize_from_uint8array::<NativeFungibleAssetDelta>(bytes).map(FungibleAssetDelta)
+    pub fn deserialize(bytes: JsBytes) -> Result<FungibleAssetDelta, JsErr> {
+        deserialize_from_bytes::<NativeFungibleAssetDelta>(&bytes).map(FungibleAssetDelta)
     }
 
     /// Returns true if no fungible assets are affected.
-    #[wasm_bindgen(js_name = "isEmpty")]
+    #[js_export(js_name = "isEmpty")]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
     /// Returns the delta amount for a given faucet, if present.
+    ///
+    /// Matches by faucet id so the delta is found regardless of the asset's
+    /// callback flag.
     pub fn amount(&self, faucet_id: &AccountId) -> Option<i64> {
         let native_faucet_id: NativeAccountId = faucet_id.into();
-        let vault_key = miden_protocol::asset::AssetVaultKey::new_fungible(native_faucet_id)
-            .expect("faucet_id should be a fungible faucet");
-        self.0.amount(&vault_key)
+        self.0
+            .iter()
+            .find(|(vault_key, _)| vault_key.faucet_id() == native_faucet_id)
+            .map(|(_, &amount)| amount)
     }
 
     /// Returns the number of distinct fungible assets in the delta.
-    #[wasm_bindgen(js_name = "numAssets")]
+    #[js_export(js_name = "numAssets")]
     pub fn num_assets(&self) -> usize {
         self.0.num_assets()
     }

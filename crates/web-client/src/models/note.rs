@@ -1,3 +1,4 @@
+use js_export_macro::js_export;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::crypto::RandomCoin;
@@ -6,8 +7,6 @@ use miden_client::{Felt as NativeFelt, Word as NativeWord};
 use miden_standards::note::{P2ideNote, P2ideNoteStorage};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::js_sys::Uint8Array;
 
 use super::NoteType;
 use super::account_id::AccountId;
@@ -19,41 +18,48 @@ use super::note_recipient::NoteRecipient;
 use super::note_script::NoteScript;
 use super::word::Word;
 use crate::js_error_with_context;
-use crate::utils::{deserialize_from_uint8array, serialize_to_uint8array};
+use crate::platform::{JsBytes, JsErr};
+use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// A note bundles public metadata with private details: assets, script, inputs, and a serial number
 /// grouped into a recipient. The public identifier (`NoteId`) commits to those
 /// details, while the nullifier stays hidden until the note is consumed. Assets move by
 /// transferring them into the note; the script and inputs define how and when consumption can
 /// happen. See `NoteRecipient` for the shape of the recipient data.
-#[wasm_bindgen]
+#[js_export]
 #[derive(Clone)]
 pub struct Note(pub(crate) NativeNote);
 
-#[wasm_bindgen]
+#[js_export]
 impl Note {
     /// Creates a new note from the provided assets, metadata, and recipient.
-    #[wasm_bindgen(constructor)]
+    ///
+    /// Migration note (miden-client PR #2214): `Note::new` now takes a
+    /// `PartialNoteMetadata` (not `NoteMetadata`). Extract the partial
+    /// fields from the JS-side `NoteMetadata` and reconstruct.
+    #[js_export(constructor)]
     pub fn new(
         note_assets: &NoteAssets,
         note_metadata: &NoteMetadata,
         note_recipient: &NoteRecipient,
     ) -> Note {
-        Note(NativeNote::new(
-            note_assets.into(),
-            note_metadata.into(),
-            note_recipient.into(),
-        ))
+        let native_metadata: miden_client::note::NoteMetadata = note_metadata.into();
+        let partial = miden_protocol::note::PartialNoteMetadata::new(
+            native_metadata.sender(),
+            native_metadata.note_type(),
+        )
+        .with_tag(native_metadata.tag());
+        Note(NativeNote::new(note_assets.into(), partial, note_recipient.into()))
     }
 
     /// Serializes the note into bytes.
-    pub fn serialize(&self) -> Uint8Array {
-        serialize_to_uint8array(&self.0)
+    pub fn serialize(&self) -> JsBytes {
+        serialize_to_bytes(&self.0)
     }
 
     /// Deserializes a note from its byte representation.
-    pub fn deserialize(bytes: &Uint8Array) -> Result<Note, JsValue> {
-        deserialize_from_uint8array::<NativeNote>(bytes).map(Note)
+    pub fn deserialize(bytes: JsBytes) -> Result<Note, JsErr> {
+        deserialize_from_bytes::<NativeNote>(&bytes).map(Note)
     }
 
     /// Returns the unique identifier of the note.
@@ -61,14 +67,19 @@ impl Note {
         self.0.id().into()
     }
 
-    /// Returns the commitment to the note ID and metadata.
+    /// Returns the commitment to the note (its ID).
+    ///
+    /// Migration note (miden-client PR #2214): `Note::commitment()` was
+    /// removed on the 0.15 surface — the note ID is the commitment. Return
+    /// the underlying `NoteId` as a `Word` so the JS API contract is
+    /// unchanged.
     pub fn commitment(&self) -> Word {
-        self.0.commitment().into()
+        self.0.id().as_word().into()
     }
 
     /// Returns the public metadata associated with the note.
     pub fn metadata(&self) -> NoteMetadata {
-        self.0.metadata().clone().into()
+        (*self.0.metadata()).into()
     }
 
     /// Returns the recipient who can consume this note.
@@ -89,36 +100,39 @@ impl Note {
     /// Returns the note nullifier as a word.
     pub fn nullifier(&self) -> Word {
         let nullifier = self.0.nullifier();
-        let elements: [miden_client::Felt; 4] = nullifier
-            .as_elements()
-            .try_into()
-            .expect("nullifier has 4 elements");
+        let elements: [miden_client::Felt; 4] =
+            nullifier.as_elements().try_into().expect("nullifier has 4 elements");
         let native_word: NativeWord = NativeWord::from(&elements);
         native_word.into()
     }
 
     /// Builds a standard P2ID note that targets the specified account.
-    #[wasm_bindgen(js_name = "createP2IDNote")]
+    #[js_export(js_name = "createP2IDNote")]
     pub fn create_p2id_note(
         sender: &AccountId,
         target: &AccountId,
         assets: &NoteAssets,
         note_type: NoteType,
         attachment: &NoteAttachment,
-    ) -> Result<Self, JsValue> {
+    ) -> Result<Self, JsErr> {
         let mut rng = StdRng::from_os_rng();
         let coin_seed: [u64; 4] = rng.random();
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new).into());
+        // `coin_seed` is freshly random `u64`s; values at or beyond the modulus would only
+        // happen with vanishing probability and `new_unchecked` is what the upstream Rust
+        // client uses in the same spot.
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
+
+        let native_attachment: miden_client::note::NoteAttachment = attachment.into();
 
         let native_note = P2idNote::create(
             sender.into(),
             target.into(),
             native_assets,
             note_type.into(),
-            attachment.into(),
+            native_attachment.into(),
             &mut rng,
         )
         .map_err(|err| js_error_with_context(err, "create p2id note"))?;
@@ -127,7 +141,7 @@ impl Note {
     }
 
     /// Builds a P2IDE note that can be reclaimed or timelocked based on block heights.
-    #[wasm_bindgen(js_name = "createP2IDENote")]
+    #[js_export(js_name = "createP2IDENote")]
     pub fn create_p2ide_note(
         sender: &AccountId,
         target: &AccountId,
@@ -136,10 +150,11 @@ impl Note {
         timelock_height: Option<u32>,
         note_type: NoteType,
         attachment: &NoteAttachment,
-    ) -> Result<Self, JsValue> {
+    ) -> Result<Self, JsErr> {
         let mut rng = StdRng::from_os_rng();
         let coin_seed: [u64; 4] = rng.random();
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new).into());
+        // See `create_p2id_note` for why `new_unchecked` is fine here.
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
@@ -150,12 +165,14 @@ impl Note {
             timelock_height.map(NativeBlockNumber::from),
         );
 
+        let native_attachment: miden_client::note::NoteAttachment = attachment.into();
+
         let native_note = P2ideNote::create(
             sender.into(),
             storage,
             native_assets,
             note_type.into(),
-            attachment.into(),
+            native_attachment.into(),
             &mut rng,
         )
         .map_err(|err| js_error_with_context(err, "create p2ide note"))?;
@@ -193,12 +210,14 @@ impl From<&Note> for NativeNote {
 
 impl From<crate::models::miden_arrays::NoteArray> for Vec<NativeNote> {
     fn from(note_array: crate::models::miden_arrays::NoteArray) -> Self {
-        note_array.__inner.into_iter().map(Into::into).collect()
+        note_array.into_iter().map(Into::into).collect()
     }
 }
 
 impl From<&crate::models::miden_arrays::NoteArray> for Vec<NativeNote> {
     fn from(note_array: &crate::models::miden_arrays::NoteArray) -> Self {
-        note_array.__inner.iter().cloned().map(Into::into).collect()
+        note_array.iter().cloned().map(Into::into).collect()
     }
 }
+
+impl_napi_from_value!(Note);

@@ -158,7 +158,7 @@ export class MidenClient {
         options.keystore.getKey,
         options.keystore.insertKey,
         options.keystore.sign,
-        undefined,
+        options?.debugMode,
         useWorker
       );
     } else {
@@ -167,7 +167,7 @@ export class MidenClient {
         noteTransportUrl,
         seed,
         options?.storeName,
-        undefined,
+        options?.debugMode,
         useWorker
       );
     }
@@ -286,15 +286,34 @@ export class MidenClient {
   }
 
   /**
-   * Syncs the client state with the Miden node.
+   * Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain
+   * state with the Miden node. Fails fast on either.
    *
-   * @param {object} [opts] - Sync options.
-   * @param {number} [opts.timeout] - Timeout in milliseconds (0 = no timeout).
    * @returns {Promise<SyncSummary>} The sync summary.
    */
-  async sync(opts) {
+  async sync() {
     this.assertNotTerminated();
-    return await this.#inner.syncStateWithTimeout(opts?.timeout ?? 0);
+    return await this.#inner.syncState();
+  }
+
+  /**
+   * Syncs on-chain state only (no NTL fetch).
+   *
+   * @returns {Promise<SyncSummary>}
+   */
+  async syncChain() {
+    this.assertNotTerminated();
+    return await this.#inner.syncChain();
+  }
+
+  /**
+   * Fetches private notes from the Note Transport Layer.
+   *
+   * @returns {Promise<void>}
+   */
+  async syncNoteTransport() {
+    this.assertNotTerminated();
+    return await this.#inner.syncNoteTransport();
   }
 
   /**
@@ -348,6 +367,13 @@ export class MidenClient {
    * otherwise erase. Call immediately after catching a failed
    * `transactions.submit` / `transactions.send` / `transactions.consume`.
    *
+   * Meaningful only with `useWorker: false`: under the worker shim the
+   * sign callback fires against the worker's WASM keystore, while this
+   * accessor reads the main-thread instance — which never signed — so it
+   * returns `null`. Consumers that need this signal (e.g. external
+   * keystores with lock-aware sign callbacks) already require
+   * `useWorker: false` for the callback to be reachable at all.
+   *
    * @returns {any} The raw thrown value, or `null`.
    */
   lastAuthError() {
@@ -376,9 +402,9 @@ export class MidenClient {
    *
    * @returns {string} The store identifier.
    */
-  storeIdentifier() {
+  async storeIdentifier() {
     this.assertNotTerminated();
-    return this.#inner.storeIdentifier();
+    return await this.#inner.storeIdentifier();
   }
 
   // ── Mock-only methods ──

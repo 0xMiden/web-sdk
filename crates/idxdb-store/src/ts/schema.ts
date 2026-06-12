@@ -141,6 +141,7 @@ export interface IAccount {
   accountSeed?: Uint8Array;
   accountCommitment: string;
   locked: boolean;
+  watched: boolean;
 }
 
 export interface IHistoricalAccount {
@@ -154,6 +155,7 @@ export interface IHistoricalAccount {
   accountSeed?: Uint8Array;
   accountCommitment: string;
   locked: boolean;
+  watched: boolean;
 }
 
 export interface IAddress {
@@ -176,13 +178,15 @@ export interface ITransactionScript {
 }
 
 export interface IInputNote {
-  noteId: string;
+  detailsCommitment: string;
+  noteId?: string;
   stateDiscriminant: number;
   assets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   scriptRoot: string;
-  nullifier: string;
+  nullifier?: string;
   serializedCreatedAt: string;
   state: Uint8Array;
   consumedBlockHeight?: number;
@@ -191,9 +195,11 @@ export interface IInputNote {
 }
 
 export interface IOutputNote {
+  detailsCommitment: string;
   noteId: string;
   recipientDigest: string;
   assets: Uint8Array;
+  attachments: Uint8Array;
   metadata: Uint8Array;
   stateDiscriminant: number;
   nullifier?: string;
@@ -214,7 +220,13 @@ export interface IStateSync {
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  partialBlockchainPeaks: Uint8Array;
+  /** Serialized MMR peaks at this block's forest. Set only on rows that were
+   *  the chain tip when their corresponding sync ran — `applyStateSync`
+   *  writes peaks to the row where `blockNum === state_sync.block_num`.
+   *  Backfilled blocks (`insertBlockHeader` from `get_and_store_authenticated_block`)
+   *  leave this undefined. `getCurrentBlockchainPeaks` reads the row at
+   *  the current `stateSync.blockNum`. */
+  partialBlockchainPeaks?: Uint8Array;
   hasClientNotes: string;
 }
 
@@ -228,6 +240,7 @@ export interface ITag {
   tag: string;
   sourceNoteId?: string;
   sourceAccountId?: string;
+  sourceSubscriptionKey?: string;
 }
 
 export interface IForeignAccountCode {
@@ -303,12 +316,14 @@ const V1_STORES: Record<string, string> = {
   [Table.Transactions]: indexes("id", "statusVariant"),
   [Table.TransactionScripts]: indexes("scriptRoot"),
   [Table.InputNotes]: indexes(
+    "detailsCommitment",
     "noteId",
     "nullifier",
     "stateDiscriminant",
     "[consumedBlockHeight+consumedTxOrder+noteId]"
   ),
   [Table.OutputNotes]: indexes(
+    "detailsCommitment",
     "noteId",
     "recipientDigest",
     "stateDiscriminant",

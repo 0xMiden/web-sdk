@@ -5,7 +5,7 @@ import type {
   AccountHeader,
   InputNoteRecord,
   ConsumableNoteRecord,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 import type { SyncState, MidenConfig, AssetMetadata } from "../types";
 
 interface MidenStoreState {
@@ -147,7 +147,10 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       const newFirstSeen = new Map<string, number>();
       for (const note of notes) {
         try {
-          const id = note.id().toString();
+          // `id()` is `NoteId | undefined` on the 0.15 surface; `!` lets the
+          // `.toString()` of `undefined` fall into the surrounding `catch`
+          // (which already drops the note from the bookkeeping map).
+          const id = note.id()!.toString();
           newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
         } catch {
           // Skip if id() fails
@@ -160,7 +163,10 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
     set((state) => {
       const safeId = (n: InputNoteRecord): string | null => {
         try {
-          return n.id().toString();
+          // `id()` is `NoteId | undefined`; `!` lets the `.toString()` of
+          // `undefined` fall into the catch (mirroring how every other id-
+          // bearing throw is handled here).
+          return n.id()!.toString();
         } catch {
           return null;
         }
@@ -185,10 +191,12 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       const newFirstSeen = new Map<string, number>();
       for (const note of notes) {
         try {
-          const id = note.id().toString();
+          // `id()` is `NoteId | undefined` on the 0.15 surface; `!` lets the
+          // `.toString()` of `undefined` fall into the surrounding `catch`
+          // (which already drops the note from the bookkeeping map).
+          const id = note.id()!.toString();
           // Preserve existing timestamp or record new one
           newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
-          /* v8 ignore next 3 — note.id() throwing requires a malformed note; mocks always return valid IDs */
         } catch {
           // Skip
         }
@@ -202,7 +210,8 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
     set((state) => {
       const safeId = (n: ConsumableNoteRecord): string | null => {
         try {
-          return n.inputNoteRecord().id().toString();
+          // `id()` is `NoteId | undefined`; see `setNotesIfChanged`.
+          return n.inputNoteRecord().id()!.toString();
         } catch {
           return null;
         }
@@ -243,14 +252,10 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
 }));
 
 // Selector hooks for optimal re-renders
-export const useClient = () => useMidenStore((state) => state.client);
-export const useIsReady = () => useMidenStore((state) => state.isReady);
 export const useSignerConnected = () =>
   useMidenStore((state) => state.signerConnected);
 export const useIsInitializing = () =>
   useMidenStore((state) => state.isInitializing);
-export const useInitError = () => useMidenStore((state) => state.initError);
-export const useConfig = () => useMidenStore((state) => state.config);
 export const useSyncStateStore = () => useMidenStore((state) => state.sync);
 export const useAccountsStore = () => useMidenStore((state) => state.accounts);
 export const useNotesStore = () => useMidenStore((state) => state.notes);

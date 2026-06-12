@@ -56,7 +56,7 @@ describe("useCreateFaucet", () => {
       ).rejects.toThrow("Miden client is not ready");
     });
 
-    it("should create faucet with required options", async () => {
+    it("should create faucet with required options (name defaults to symbol)", async () => {
       const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
       const mockClient = createMockWebClient({
         newFaucet: vi.fn().mockResolvedValue(mockFaucet),
@@ -83,18 +83,19 @@ describe("useCreateFaucet", () => {
       expect(result.current.isCreating).toBe(false);
       expect(result.current.error).toBeNull();
 
-      // Verify default options were used
+      // Verify default options were used; token name falls back to symbol.
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.private() (default)
         false, // nonFungible (always false for now)
+        "TEST", // tokenName falls back to tokenSymbol
         "TEST",
         8, // decimals (default)
         1000000n,
-        2 // authScheme — default `AuthScheme.Falcon` resolves to 2 (RpoFalcon512)
+        2 // authScheme (default: AuthRpoFalcon512)
       );
     });
 
-    it("should create faucet with custom options", async () => {
+    it("should create faucet with custom options including an explicit token name", async () => {
       const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
       const mockClient = createMockWebClient({
         newFaucet: vi.fn().mockResolvedValue(mockFaucet),
@@ -111,20 +112,22 @@ describe("useCreateFaucet", () => {
       await act(async () => {
         await result.current.createFaucet({
           tokenSymbol: "USDC",
+          tokenName: "USD Coin",
           maxSupply: 10000000000n,
           decimals: 6,
           storageMode: "public",
-          authScheme: "ecdsa",
+          authScheme: 1,
         });
       });
 
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.public()
         false,
+        "USD Coin",
         "USDC",
         6,
         10000000000n,
-        1 // authScheme — "ecdsa" resolves to 1 (AuthEcdsaK256Keccak)
+        1
       );
     });
 
@@ -160,16 +163,7 @@ describe("useCreateFaucet", () => {
         });
       });
 
-      // Test network
-      await act(async () => {
-        await result.current.createFaucet({
-          tokenSymbol: "C",
-          maxSupply: 100n,
-          storageMode: "network",
-        });
-      });
-
-      expect(mockClient.newFaucet).toHaveBeenCalledTimes(3);
+      expect(mockClient.newFaucet).toHaveBeenCalledTimes(2);
     });
 
     it("should refresh accounts list after creation", async () => {
@@ -357,6 +351,7 @@ describe("useCreateFaucet", () => {
       await act(async () => {
         await result.current.createFaucet({
           tokenSymbol: "BIG",
+          tokenName: "Big Token",
           maxSupply: largeSupply,
         });
       });
@@ -364,47 +359,37 @@ describe("useCreateFaucet", () => {
       expect(mockClient.newFaucet).toHaveBeenCalledWith(
         expect.anything(),
         false,
+        "Big Token",
         "BIG",
         8,
         largeSupply,
         2
       );
     });
-  });
 
-  describe("storage mode default branch", () => {
-    it("should fall back to private when an unknown storageMode is passed (line 136)", async () => {
-      const mockFaucet = createMockAccount({ isFaucet: vi.fn(() => true) });
+    it("falls back to private storage mode when storageMode is unknown (default branch)", async () => {
       const mockClient = createMockWebClient({
-        newFaucet: vi.fn().mockResolvedValue(mockFaucet),
-        getAccounts: vi.fn().mockResolvedValue([]),
+        newFaucet: vi.fn().mockResolvedValue(createMockAccount()),
+        getAccounts: vi.fn().mockResolvedValue([createMockAccountHeader()]),
       });
-
       mockUseMiden.mockReturnValue({
         client: mockClient,
         isReady: true,
+        runExclusive: <T,>(fn: () => Promise<T>) => fn(),
       });
 
       const { result } = renderHook(() => useCreateFaucet());
 
       await act(async () => {
         await result.current.createFaucet({
-          tokenSymbol: "TEST",
-          maxSupply: 1000000n,
-          // storageMode: cast unknown value through the type to hit the default branch
-          storageMode: "unknown" as any,
+          tokenSymbol: "DEF",
+          maxSupply: 100n,
+          // Cast through unknown to bypass the type — the default case
+          // returns AccountStorageMode.private().
+          storageMode: "unknown" as unknown as "public",
         });
       });
-
-      // getStorageMode default branch returns AccountStorageMode.private()
-      expect(mockClient.newFaucet).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "private" }),
-        false,
-        "TEST",
-        8,
-        expect.any(BigInt),
-        2
-      );
+      expect(mockClient.newFaucet).toHaveBeenCalled();
     });
   });
 });

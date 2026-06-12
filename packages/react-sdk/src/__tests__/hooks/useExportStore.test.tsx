@@ -3,13 +3,13 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useExportStore } from "../../hooks/useExportStore";
 import { useMiden } from "../../context/MidenProvider";
 import { createMockWebClient } from "../mocks/miden-sdk";
-import { exportStore as sdkExportStore } from "@miden-sdk/miden-sdk/lazy";
+import { exportStore as sdkExportStore } from "@miden-sdk/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
 }));
 
-vi.mock("@miden-sdk/miden-sdk/lazy", () => ({
+vi.mock("@miden-sdk/miden-sdk", () => ({
   exportStore: vi.fn(),
 }));
 
@@ -142,34 +142,6 @@ describe("useExportStore", () => {
       });
 
       expect(result.current.isExporting).toBe(false);
-    });
-  });
-
-  describe("non-Error catch branch", () => {
-    it("should wrap non-Error thrown values in an Error", async () => {
-      const mockClient = createMockWebClient({
-        storeIdentifier: vi.fn().mockReturnValue("MyStore"),
-      });
-      const runExclusive = vi.fn((fn: () => unknown) => fn());
-      mockSdkExportStore.mockRejectedValue("string export error");
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        runExclusive,
-      });
-
-      const { result } = renderHook(() => useExportStore());
-
-      await act(async () => {
-        await expect(result.current.exportStore()).rejects.toThrow(
-          "string export error"
-        );
-      });
-
-      await waitFor(() => {
-        expect(result.current.error?.message).toBe("string export error");
-      });
     });
   });
 

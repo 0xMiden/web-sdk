@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { exportStore as sdkExportStore } from "@miden-sdk/miden-sdk/lazy";
+import { exportStore as sdkExportStore } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 
 export interface UseExportStoreResult {
@@ -49,14 +49,13 @@ export function useExportStore(): UseExportStoreResult {
     setError(null);
 
     try {
-      const storeName = client.storeIdentifier();
+      const storeName = await client.storeIdentifier();
       const snapshot = await runExclusive(() => sdkExportStore(storeName));
       return snapshot;
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       setError(error);
       throw error;
-      /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
     } finally {
       setIsExporting(false);
     }

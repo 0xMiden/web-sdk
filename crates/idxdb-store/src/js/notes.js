@@ -70,6 +70,32 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
         logWebStoreError(err, "Failed to get output notes from nullifiers");
     }
 }
+export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitments) {
+    try {
+        const db = getDatabase(dbId);
+        let notes = await db.inputNotes
+            .where("detailsCommitment")
+            .anyOf(detailsCommitments)
+            .toArray();
+        return await processInputNotes(dbId, notes);
+    }
+    catch (err) {
+        logWebStoreError(err, "Failed to get input notes from details commitments");
+    }
+}
+export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitments) {
+    try {
+        const db = getDatabase(dbId);
+        let notes = await db.outputNotes
+            .where("detailsCommitment")
+            .anyOf(detailsCommitments)
+            .toArray();
+        return await processOutputNotes(notes);
+    }
+    catch (err) {
+        logWebStoreError(err, "Failed to get output notes from details commitments");
+    }
+}
 export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
@@ -87,7 +113,9 @@ export async function getUnspentInputNoteNullifiers(dbId) {
             .where("stateDiscriminant")
             .anyOf([2, 4, 5])
             .toArray();
-        return notes.map((note) => note.nullifier);
+        return notes
+            .map((note) => note.nullifier)
+            .filter((nullifier) => nullifier != null);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get unspent input note nullifiers");
@@ -106,17 +134,20 @@ export async function getNoteScript(dbId, scriptRoot) {
         logWebStoreError(err, "Failed to get note script from root");
     }
 }
-export async function upsertInputNote(dbId, noteId, assets, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
+export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, attachments, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
             const data = {
-                noteId,
+                detailsCommitment,
+                // noteId/nullifier are only known once the note's metadata is available.
+                noteId: noteId ?? undefined,
                 assets,
+                attachments,
                 serialNumber,
                 inputs,
                 scriptRoot,
-                nullifier,
+                nullifier: nullifier ?? undefined,
                 state,
                 stateDiscriminant,
                 serializedCreatedAt,
@@ -135,7 +166,7 @@ export async function upsertInputNote(dbId, noteId, assets, serialNumber, inputs
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
-            logWebStoreError(error, `Error inserting note: ${noteId}`);
+            logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
         }
     };
     if (tx)
@@ -200,13 +231,15 @@ export async function getInputNoteByOffset(dbId, states, consumerAccountId, bloc
         logWebStoreError(err, "Failed to get input note by offset");
     }
 }
-export async function upsertOutputNote(dbId, noteId, assets, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
+export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
             const data = {
+                detailsCommitment,
                 noteId,
                 assets,
+                attachments,
                 recipientDigest,
                 metadata,
                 nullifier: nullifier ? nullifier : undefined,
@@ -218,7 +251,7 @@ export async function upsertOutputNote(dbId, noteId, assets, recipientDigest, me
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
-            logWebStoreError(error, `Error inserting note: ${noteId}`);
+            logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
         }
     };
     if (tx)
@@ -239,6 +272,7 @@ async function processInputNotes(dbId, notes) {
             }
         }
         const stateBase64 = uint8ArrayToBase64(note.state);
+        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
             assets: assetsBase64,
             serialNumber: serialNumberBase64,
@@ -246,6 +280,7 @@ async function processInputNotes(dbId, notes) {
             createdAt: note.serializedCreatedAt,
             serializedNoteScript: serializedNoteScriptBase64,
             state: stateBase64,
+            attachments: attachmentsBase64,
         };
     }));
 }
@@ -254,12 +289,14 @@ async function processOutputNotes(notes) {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
         const stateBase64 = uint8ArrayToBase64(note.state);
+        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
             assets: assetsBase64,
             recipientDigest: note.recipientDigest,
             metadata: metadataBase64,
             expectedHeight: note.expectedHeight,
             state: stateBase64,
+            attachments: attachmentsBase64,
         };
     }));
 }

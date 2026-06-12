@@ -1,6 +1,6 @@
+use js_export_macro::js_export;
 use miden_client::note::{Note as NativeNote, NoteInclusionProof as NativeNoteInclusionProof};
 use miden_client::transaction::InputNote as NativeInputNote;
-use wasm_bindgen::prelude::*;
 
 use super::note::Note;
 use super::note_id::NoteId;
@@ -10,10 +10,10 @@ use super::word::Word;
 
 /// Note supplied as an input to a transaction, optionally with authentication data.
 #[derive(Clone)]
-#[wasm_bindgen]
+#[js_export]
 pub struct InputNote(pub(crate) NativeInputNote);
 
-#[wasm_bindgen]
+#[js_export]
 impl InputNote {
     /// Creates an authenticated input note from a note and its inclusion proof.
     ///
@@ -43,9 +43,14 @@ impl InputNote {
         self.0.note().into()
     }
 
-    /// Returns the commitment to the note ID and metadata.
+    /// Returns the commitment to the note (its ID).
+    ///
+    /// Migration note (miden-client PR #2214): `Note::commitment()` was
+    /// removed on the 0.15 surface — the note ID *is* the commitment (it
+    /// hashes details + metadata). Return the underlying `NoteId` as a
+    /// `Word` so the JS API contract is unchanged.
     pub fn commitment(&self) -> Word {
-        self.0.note().commitment().into()
+        self.0.note().id().as_word().into()
     }
 
     /// Returns the inclusion proof if the note is authenticated.

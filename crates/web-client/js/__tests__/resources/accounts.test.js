@@ -21,7 +21,6 @@ function makeWasm(overrides = {}) {
     AccountStorageMode: {
       public: vi.fn().mockReturnValue("public"),
       private: vi.fn().mockReturnValue("private"),
-      network: vi.fn().mockReturnValue("network"),
     },
     AuthScheme: {
       AuthEcdsaK256Keccak: 1,
@@ -92,6 +91,7 @@ describe("AccountsResource", () => {
         type: 0,
         storage: "public",
         auth: "falcon",
+        name: "US Dollar",
         symbol: "USD",
         decimals: 2,
         maxSupply: 1000000,
@@ -100,6 +100,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false, // not NonFungibleFaucet for type=0
+        "US Dollar",
         "USD",
         2,
         BigInt(1000000),
@@ -108,7 +109,7 @@ describe("AccountsResource", () => {
       expect(result).toBe("newFaucetResult");
     });
 
-    it("creates fungible faucet when type='FungibleFaucet'", async () => {
+    it("falls back to symbol when name is omitted", async () => {
       const resource = makeResource();
       await resource.create({
         type: "FungibleFaucet",
@@ -121,6 +122,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false,
+        "FOO", // name defaults to symbol
         "FOO",
         0,
         BigInt(500),
@@ -134,6 +136,7 @@ describe("AccountsResource", () => {
         type: 1,
         storage: "public",
         auth: "falcon",
+        name: "Collectible",
         symbol: "NFT",
         decimals: 0,
         maxSupply: 1,
@@ -141,6 +144,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         true, // NonFungibleFaucet
+        "Collectible",
         "NFT",
         0,
         BigInt(1),
@@ -154,6 +158,7 @@ describe("AccountsResource", () => {
         type: "NonFungibleFaucet",
         storage: "public",
         auth: "falcon",
+        name: "Collectible",
         symbol: "NFT",
         decimals: 0,
         maxSupply: 1,
@@ -161,6 +166,7 @@ describe("AccountsResource", () => {
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         true,
+        "Collectible",
         "NFT",
         0,
         BigInt(1),
@@ -173,7 +179,8 @@ describe("AccountsResource", () => {
       await resource.create({
         type: 0,
         auth: "falcon",
-        symbol: "T",
+        name: "Test Token",
+        symbol: "TST",
         decimals: 0,
         maxSupply: 1,
         // no storage specified — should default to "public"
@@ -187,14 +194,16 @@ describe("AccountsResource", () => {
         type: 0,
         storage: "public",
         auth: "ecdsa",
-        symbol: "T",
+        name: "Test Token",
+        symbol: "TST",
         decimals: 0,
         maxSupply: 1,
       });
       expect(inner.newFaucet).toHaveBeenCalledWith(
         "public",
         false,
-        "T",
+        "Test Token",
+        "TST",
         0,
         BigInt(1),
         1 // ecdsa
@@ -203,88 +212,34 @@ describe("AccountsResource", () => {
   });
 
   describe("create — wallet", () => {
-    it("creates a mutable wallet by default (no type)", async () => {
+    it("creates a wallet by default (no type)", async () => {
       const resource = makeResource();
       const result = await resource.create({});
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        true,
-        2,
-        undefined
-      );
+      expect(inner.newWallet).toHaveBeenCalledWith("private", 2, undefined);
       expect(result).toBe("newWalletResult");
-    });
-
-    it("creates a mutable wallet when type='MutableWallet'", async () => {
-      const resource = makeResource();
-      await resource.create({ type: "MutableWallet" });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        true,
-        2,
-        undefined
-      );
-    });
-
-    it("creates an immutable wallet when type='ImmutableWallet'", async () => {
-      const resource = makeResource();
-      await resource.create({ type: "ImmutableWallet" });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        false,
-        2,
-        undefined
-      );
     });
 
     it("hashes string seed and passes it to newWallet", async () => {
       const resource = makeResource();
       await resource.create({ seed: "my seed" });
       const callArgs = inner.newWallet.mock.calls[0];
-      // 4th arg should be a Uint8Array (hashed seed)
-      expect(callArgs[3]).toBeInstanceOf(Uint8Array);
-      expect(callArgs[3]).toHaveLength(32);
+      // 3rd arg should be a Uint8Array (hashed seed)
+      expect(callArgs[2]).toBeInstanceOf(Uint8Array);
+      expect(callArgs[2]).toHaveLength(32);
     });
 
     it("passes through Uint8Array seed unchanged", async () => {
       const seed = new Uint8Array(32).fill(5);
       const resource = makeResource();
       await resource.create({ seed });
-      expect(inner.newWallet.mock.calls[0][3]).toBe(seed);
+      expect(inner.newWallet.mock.calls[0][2]).toBe(seed);
     });
 
     it("uses public storage when specified", async () => {
       const resource = makeResource();
       await resource.create({ storage: "public" });
       expect(wasm.AccountStorageMode.public).toHaveBeenCalled();
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "public",
-        true,
-        2,
-        undefined
-      );
-    });
-
-    it("creates mutable wallet when type=3", async () => {
-      const resource = makeResource();
-      await resource.create({ type: 3 });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        true,
-        2,
-        undefined
-      );
-    });
-
-    it("creates immutable wallet when type=2", async () => {
-      const resource = makeResource();
-      await resource.create({ type: 2 });
-      expect(inner.newWallet).toHaveBeenCalledWith(
-        "private",
-        false,
-        2,
-        undefined
-      );
+      expect(inner.newWallet).toHaveBeenCalledWith("public", 2, undefined);
     });
   });
 
@@ -318,29 +273,34 @@ describe("AccountsResource", () => {
         type: "ImmutableContract",
         seed,
         auth: "authKey",
-        components: [],
+        components: ["comp1"],
       });
       expect(
         wasm.AccountComponent.createAuthComponentFromSecretKey
       ).toHaveBeenCalledWith("authKey");
       expect(wasm.AccountBuilder).toHaveBeenCalledWith(seed);
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.accountType).toHaveBeenCalledWith(0); // ImmutableCode
+      // 0.15 has no code-mutability flag: visibility comes from storageMode and
+      // the builder's accountType() is never invoked for contracts.
+      expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
+      expect(builderInstance.accountType).not.toHaveBeenCalled();
       expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
       expect(result).toEqual({ id: expect.any(Function) });
     });
 
-    it("creates mutable contract when type='MutableContract'", async () => {
+    it("creates contract when type='MutableContract'", async () => {
       const resource = makeResource();
       const seed = new Uint8Array(32).fill(2);
       await resource.create({
         type: "MutableContract",
         seed,
         auth: "authKey",
-        components: [],
+        components: ["comp1"],
       });
       const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.accountType).toHaveBeenCalledWith(1); // UpdatableCode
+      expect(builderInstance.storageMode).toHaveBeenCalledWith("public");
+      expect(builderInstance.accountType).not.toHaveBeenCalled();
+      expect(inner.newAccountWithSecretKey).toHaveBeenCalled();
     });
 
     it("creates contract when opts.components is present (no type)", async () => {
@@ -354,17 +314,32 @@ describe("AccountsResource", () => {
       expect(builderInstance.withComponent).toHaveBeenCalledWith("comp1");
     });
 
-    it("defaults opts.components to [] when not specified", async () => {
+    it("rejects empty components array (auth-only contracts not allowed)", async () => {
       const resource = makeResource();
-      // ImmutableContract with no components — tests the `opts.components ?? []` branch
-      await resource.create({
-        type: "ImmutableContract",
-        seed: new Uint8Array(32),
-        auth: "authKey",
-        // no components specified
-      });
-      const builderInstance = wasm.AccountBuilder.mock.results[0].value;
-      expect(builderInstance.withComponent).not.toHaveBeenCalled();
+      await expect(
+        resource.create({
+          type: "ImmutableContract",
+          seed: new Uint8Array(32),
+          auth: "authKey",
+          components: [],
+        })
+      ).rejects.toThrow(
+        /Contract accounts require at least one non-auth procedure/
+      );
+    });
+
+    it("rejects when components is missing entirely", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.create({
+          type: "ImmutableContract",
+          seed: new Uint8Array(32),
+          auth: "authKey",
+          // no components
+        })
+      ).rejects.toThrow(
+        /Contract accounts require at least one non-auth procedure/
+      );
     });
   });
 
@@ -551,22 +526,9 @@ describe("AccountsResource", () => {
       const result = await resource.import({ seed });
       expect(inner.importPublicAccountFromSeed).toHaveBeenCalledWith(
         seed,
-        true, // mutable default
         2 // falcon
       );
       expect(result).toBe("seedImport");
-    });
-
-    it("imports seed with explicit ImmutableWallet type", async () => {
-      inner.importPublicAccountFromSeed.mockResolvedValue("seedImport");
-      const seed = new Uint8Array(32);
-      const resource = makeResource();
-      await resource.import({ seed, type: "ImmutableWallet" });
-      expect(inner.importPublicAccountFromSeed).toHaveBeenCalledWith(
-        seed,
-        false,
-        2
-      );
     });
 
     it("fallback: imports plain object as AccountRef", async () => {

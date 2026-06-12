@@ -1,4 +1,4 @@
-// Eager entry point for @miden-sdk/miden-sdk.
+// Eager entry point for @miden-sdk/miden-sdk (browser builds).
 //
 // Awaits WASM initialization at module top level, so importing this module
 // guarantees that any wasm-bindgen constructor (`new RpcClient(...)`,
@@ -6,7 +6,10 @@
 // is safe to call synchronously on the next line. No explicit
 // `await MidenClient.ready()` / `isReady` gate is required.
 //
-// This is the default entry (`@miden-sdk/miden-sdk` → `./dist/eager.js`).
+// This is the default entry for browser bundlers (`@miden-sdk/miden-sdk`
+// → `./dist/eager.js`). Node.js consumers resolve the `node` exports
+// condition instead and get the napi binding via `./js/node-index.js`,
+// bypassing this file entirely.
 //
 // When NOT to use this entry:
 // - **Capacitor mobile apps** (Miden Wallet iOS/Android): Capacitor's

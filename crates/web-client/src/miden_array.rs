@@ -1,13 +1,43 @@
+#[cfg(feature = "browser")]
 use thiserror::Error;
+
+#[cfg(feature = "browser")]
 #[derive(Debug, Error)]
 pub enum ArrayError {
     #[error("out of bounds access -- tried to access at index: {index} with length {length}")]
     OutOfBounds { index: usize, length: usize },
 }
-/// Generates JS-exportable arrays that will run within the WASM
-/// memory space. Also, since we're always cloning and not exposing
-/// the inner vec as public, this new wrapper array should avoid
-/// potential borrowing issues when interacting between JS and WASM.
+
+/// Implements `FromNapiValue` for napi class types that have `FromNapiRef` + `Clone`.
+///
+/// napi-rs v3 generates `FromNapiRef` (borrow) for `#[napi]` class types but NOT
+/// `FromNapiValue` (by-value). This macro bridges the gap so these types can be used
+/// as by-value parameters and inside `Vec<T>` parameters.
+#[cfg(feature = "nodejs")]
+macro_rules! impl_napi_from_value {
+    ($t:ty) => {
+        impl napi::bindgen_prelude::FromNapiValue for $t {
+            unsafe fn from_napi_value(
+                env: napi::bindgen_prelude::sys::napi_env,
+                napi_val: napi::bindgen_prelude::sys::napi_value,
+            ) -> napi::Result<Self> {
+                let ref_val = unsafe {
+                    <$t as napi::bindgen_prelude::FromNapiRef>::from_napi_ref(env, napi_val)?
+                };
+                Ok(ref_val.clone())
+            }
+        }
+    };
+}
+
+/// No-op for browser builds.
+#[cfg(feature = "browser")]
+macro_rules! impl_napi_from_value {
+    ($t:ty) => {};
+}
+
+/// Browser variant: Generates JS-exportable array wrapper types using `wasm_bindgen`.
+#[cfg(feature = "browser")]
 macro_rules! declare_js_miden_arrays {
     ($(($miden_type_name:path) -> $miden_type_array_name:ident),+ $(,)?) => {
     pub mod miden_arrays {
@@ -45,20 +75,14 @@ macro_rules! declare_js_miden_arrays {
                     }
                 }
 
-                /// Replace the element at `index`. Borrows + clones the input
-                /// (mirrors `push`), so the caller's JS handle remains valid
-                /// after the call. Without this borrow, passing `elem` by
-                /// value would move the underlying Rust value out of the
-                /// caller's JS handle and any subsequent method on it would
-                /// panic with `"null pointer passed to rust"`.
                 #[wasm_bindgen(js_name = "replaceAt")]
                 pub fn replace_at(
                     &mut self,
                     index: usize,
-                    elem: &$miden_type_name,
+                    elem: $miden_type_name,
                 ) -> Result<(), wasm_bindgen::JsValue> {
                     if let Some(value_at_index) = self.__inner.get_mut(index) {
-                        *value_at_index = elem.clone();
+                        *value_at_index = elem;
                         Ok(())
                     } else {
                         let err =
@@ -79,6 +103,30 @@ macro_rules! declare_js_miden_arrays {
                 }
             }
 
+            impl $miden_type_array_name {
+                pub fn iter(&self) -> core::slice::Iter<'_, $miden_type_name> {
+                    self.__inner.iter()
+                }
+            }
+
+            impl IntoIterator for $miden_type_array_name {
+                type Item = $miden_type_name;
+                type IntoIter = alloc::vec::IntoIter<$miden_type_name>;
+
+                fn into_iter(self) -> Self::IntoIter {
+                    self.__inner.into_iter()
+                }
+            }
+
+            impl<'a> IntoIterator for &'a $miden_type_array_name {
+                type Item = &'a $miden_type_name;
+                type IntoIter = core::slice::Iter<'a, $miden_type_name>;
+
+                fn into_iter(self) -> Self::IntoIter {
+                    self.__inner.iter()
+                }
+            }
+
             impl From<$miden_type_array_name> for Vec<$miden_type_name> {
                 fn from(array: $miden_type_array_name) -> Self {
                     return array.__inner;
@@ -94,6 +142,143 @@ macro_rules! declare_js_miden_arrays {
             impl From<Vec<$miden_type_name>> for $miden_type_array_name {
                 fn from(vec: Vec<$miden_type_name>) -> Self {
                     Self::new(Some(vec))
+                }
+            }
+        )+
+    }
+    };
+}
+
+/// Node.js variant: Creates newtype wrapper structs around `Vec<T>` that implement
+/// `FromNapiRef` and `FromNapiValue`, allowing them to be used as `&ArrayType` parameters
+/// in `#[napi]` functions. The wrappers deref to `Vec<T>` for ergonomic access.
+#[cfg(feature = "nodejs")]
+macro_rules! declare_js_miden_arrays {
+    ($(($miden_type_name:path) -> $miden_type_array_name:ident),+ $(,)?) => {
+    pub mod miden_arrays {
+        $(
+            #[derive(Clone)]
+            pub struct $miden_type_array_name(pub(crate) Vec<$miden_type_name>);
+
+            impl std::ops::Deref for $miden_type_array_name {
+                type Target = Vec<$miden_type_name>;
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+
+            impl std::ops::DerefMut for $miden_type_array_name {
+                fn deref_mut(&mut self) -> &mut Self::Target {
+                    &mut self.0
+                }
+            }
+
+            impl From<$miden_type_array_name> for Vec<$miden_type_name> {
+                fn from(array: $miden_type_array_name) -> Self {
+                    array.0
+                }
+            }
+
+            impl From<&$miden_type_array_name> for Vec<$miden_type_name> {
+                fn from(array: &$miden_type_array_name) -> Self {
+                    array.0.clone()
+                }
+            }
+
+            impl From<Vec<$miden_type_name>> for $miden_type_array_name {
+                fn from(vec: Vec<$miden_type_name>) -> Self {
+                    Self(vec)
+                }
+            }
+
+            impl $miden_type_array_name {
+                pub fn iter(&self) -> std::slice::Iter<'_, $miden_type_name> {
+                    self.0.iter()
+                }
+            }
+
+            impl IntoIterator for $miden_type_array_name {
+                type Item = $miden_type_name;
+                type IntoIter = std::vec::IntoIter<$miden_type_name>;
+
+                fn into_iter(self) -> Self::IntoIter {
+                    self.0.into_iter()
+                }
+            }
+
+            impl<'a> IntoIterator for &'a $miden_type_array_name {
+                type Item = &'a $miden_type_name;
+                type IntoIter = std::slice::Iter<'a, $miden_type_name>;
+
+                fn into_iter(self) -> Self::IntoIter {
+                    self.0.iter()
+                }
+            }
+
+            impl napi::bindgen_prelude::TypeName for $miden_type_array_name {
+                fn type_name() -> &'static str {
+                    concat!("Array<", stringify!($miden_type_name), ">")
+                }
+
+                fn value_type() -> napi::ValueType {
+                    napi::ValueType::Object
+                }
+            }
+
+            impl napi::bindgen_prelude::TypeName for &$miden_type_array_name {
+                fn type_name() -> &'static str {
+                    concat!("Array<", stringify!($miden_type_name), ">")
+                }
+
+                fn value_type() -> napi::ValueType {
+                    napi::ValueType::Object
+                }
+            }
+
+            impl napi::bindgen_prelude::TypeName for &mut $miden_type_array_name {
+                fn type_name() -> &'static str {
+                    concat!("Array<", stringify!($miden_type_name), ">")
+                }
+
+                fn value_type() -> napi::ValueType {
+                    napi::ValueType::Object
+                }
+            }
+
+            impl napi::bindgen_prelude::ValidateNapiValue for $miden_type_array_name {
+                unsafe fn validate(
+                    env: napi::bindgen_prelude::sys::napi_env,
+                    napi_val: napi::bindgen_prelude::sys::napi_value,
+                ) -> napi::Result<napi::bindgen_prelude::sys::napi_value> {
+                    unsafe { <Vec<$miden_type_name> as napi::bindgen_prelude::ValidateNapiValue>::validate(env, napi_val) }
+                }
+            }
+
+            impl napi::bindgen_prelude::FromNapiValue for $miden_type_array_name {
+                unsafe fn from_napi_value(
+                    env: napi::bindgen_prelude::sys::napi_env,
+                    napi_val: napi::bindgen_prelude::sys::napi_value,
+                ) -> napi::Result<Self> {
+                    let vec = unsafe { <Vec<$miden_type_name> as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, napi_val)? };
+                    Ok(Self(vec))
+                }
+            }
+
+            impl napi::bindgen_prelude::ToNapiValue for $miden_type_array_name {
+                unsafe fn to_napi_value(
+                    env: napi::bindgen_prelude::sys::napi_env,
+                    val: Self,
+                ) -> napi::Result<napi::bindgen_prelude::sys::napi_value> {
+                    unsafe { <Vec<$miden_type_name> as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, val.0) }
+                }
+            }
+
+            impl napi::bindgen_prelude::ToNapiValue for &$miden_type_array_name {
+                unsafe fn to_napi_value(
+                    env: napi::bindgen_prelude::sys::napi_env,
+                    val: Self,
+                ) -> napi::Result<napi::bindgen_prelude::sys::napi_value> {
+                    unsafe { <Vec<$miden_type_name> as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, val.0.clone()) }
                 }
             }
         )+

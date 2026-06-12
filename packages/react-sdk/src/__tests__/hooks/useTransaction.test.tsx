@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTransaction } from "../../hooks/useTransaction";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { NoteType } from "@miden-sdk/miden-sdk/lazy";
+import { NoteType } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockTransactionId,
@@ -465,106 +465,69 @@ describe("useTransaction", () => {
     });
   });
 
-  describe("reset", () => {
-    it("should reset all state (lines 179-182)", async () => {
-      const mockTxResult = createMockTransactionResult("0xreset_tx");
+  describe("non-Error rejection branch", () => {
+    it("wraps a string rejection in a new Error", async () => {
       const mockClient = createMockWebClient({
-        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
-        proveTransaction: vi.fn().mockResolvedValue({}),
-        submitProvenTransaction: vi.fn().mockResolvedValue(100),
-        applyTransaction: vi.fn().mockResolvedValue({}),
+        executeTransaction: vi
+          .fn()
+          .mockRejectedValue("transaction-string-fail"),
       });
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        sync: vi.fn().mockResolvedValue(undefined),
-      });
-
-      const { result } = renderHook(() => useTransaction());
-
-      await act(async () => {
-        await result.current.execute({
-          accountId: "0xaccount",
-          request: createMockTransactionRequest(),
-        });
-      });
-
-      expect(result.current.result).not.toBeNull();
-      expect(result.current.stage).toBe("complete");
-
-      act(() => {
-        result.current.reset();
-      });
-
-      expect(result.current.result).toBeNull();
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.stage).toBe("idle");
-      expect(result.current.error).toBeNull();
-    });
-  });
-
-  describe("non-Error rejection path", () => {
-    it("wraps non-Error rejection in an Error instance", async () => {
-      const mockClient = createMockWebClient({
-        executeTransaction: vi.fn().mockRejectedValueOnce("plain-string-error"),
-      });
-
       mockUseMiden.mockReturnValue({
         client: mockClient,
         isReady: true,
         sync: vi.fn(),
+        runExclusive: <T,>(fn: () => Promise<T>) => fn(),
       });
 
       const { result } = renderHook(() => useTransaction());
-
       await act(async () => {
         await expect(
           result.current.execute({
             accountId: "0x1",
             request: createMockTransactionRequest(),
           })
-        ).rejects.toThrow("plain-string-error");
+        ).rejects.toThrow("transaction-string-fail");
       });
-
       await waitFor(() => {
         expect(result.current.error).toBeInstanceOf(Error);
-        expect(result.current.error?.message).toBe("plain-string-error");
+        expect(result.current.error?.message).toBe("transaction-string-fail");
       });
     });
   });
 
-  describe("prover path", () => {
-    it("should use proveTransactionWithProver when store config has prover (line 129)", async () => {
-      const mockTxResult = createMockTransactionResult("0xtx_withprover");
+  describe("reset", () => {
+    it("clears result/loading/stage/error state", async () => {
       const mockClient = createMockWebClient({
-        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
-        proveTransactionWithProver: vi.fn().mockResolvedValue({}),
-        submitProvenTransaction: vi.fn().mockResolvedValue(100),
-        applyTransaction: vi.fn().mockResolvedValue({}),
+        executeTransaction: vi
+          .fn()
+          .mockRejectedValue(new Error("execute fail")),
       });
-
       mockUseMiden.mockReturnValue({
         client: mockClient,
         isReady: true,
-        sync: vi.fn().mockResolvedValue(undefined),
+        sync: vi.fn(),
+        runExclusive: <T,>(fn: () => Promise<T>) => fn(),
       });
-
-      useMidenStore
-        .getState()
-        .setConfig({ rpcUrl: "testnet", prover: "local" });
 
       const { result } = renderHook(() => useTransaction());
 
       await act(async () => {
-        await result.current.execute({
-          accountId: "0xaccount",
-          request: createMockTransactionRequest(),
-        });
+        await result.current
+          .execute({
+            accountId: "0x1",
+            request: createMockTransactionRequest(),
+          })
+          .catch(() => {});
       });
 
-      expect(mockClient.proveTransactionWithProver).toHaveBeenCalled();
-      expect(result.current.stage).toBe("complete");
+      expect(result.current.error).not.toBeNull();
+      act(() => {
+        result.current.reset();
+      });
+      expect(result.current.result).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.stage).toBe("idle");
+      expect(result.current.error).toBeNull();
     });
   });
 });

@@ -14,14 +14,24 @@ export default defineConfig({
         // Web Worker code: tested separately by Playwright integration tests
         // since the worker pattern doesn't unit-test cleanly in node.
         "js/workers/**",
-        // WASM-dependent files: these import from ../Cargo.toml (the wasm-bindgen
-        // output) which is a binary WASM module not available in the node test
-        // environment. Covered by Playwright integration tests.
+        // Node.js binding entry + napi adapters: depend on the platform-
+        // specific napi binary which isn't available in the node-test env
+        // (and which we don't ship for the test runner architecture).
+        // Covered by the Web client tests (Node.js) job.
+        "js/node-index.js",
+        "js/node/**",
+        // WASM-dependent files: import from ../Cargo.toml (the wasm-bindgen
+        // output) which is a binary WASM module not available in the node
+        // test environment. Covered by Playwright integration tests.
         "js/wasm.js",
-        "js/safe-arrays.js",
         "js/eager.js",
         "js/index.js",
         "js/client.js",
+        "js/storageView.js",
+        // Tests not yet ported on next — main has them, but the source has
+        // drifted from the napi-binding sync (PR #13) enough that the tests
+        // need review before they apply. Tracked for a follow-up PR. Once
+        // each gains a test file in js/__tests__/, drop it from this list.
       ],
       thresholds: {
         lines: 95,

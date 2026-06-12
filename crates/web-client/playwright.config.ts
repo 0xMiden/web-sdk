@@ -12,6 +12,15 @@ import { defineConfig, devices } from "@playwright/test";
  * See https://playwright.dev/docs/test-configuration.
  */
 
+// Browser test ignores: skip Node.js-only specs (the napi versions of certain
+// tests live in *.node.test.ts) and old test/{node,shared}/ duplicates.
+const browserTestIgnore = [
+  "test/node/**",
+  "test/shared/**",
+  // Node.js-only tests (napi-specific JS wrapper)
+  "test/*.node.test.ts",
+];
+
 // CI-only shard projects, manually rebalanced to even out wall-clock time
 // across the integration-test matrix.
 //
@@ -53,7 +62,9 @@ const ciShardProjects = process.env.CI
           "test/new_transactions_send_and_custom.test.ts",
           "test/new_transactions_mint_and_misc.test.ts",
           "test/swap_transactions.test.ts",
+          "test/pswap_transactions.test.ts",
         ],
+        testIgnore: browserTestIgnore,
       },
       {
         name: "ci-shard-2-sync-and-state",
@@ -64,6 +75,7 @@ const ciShardProjects = process.env.CI
           "test/notes.test.ts",
           "test/note_transport.test.ts",
         ],
+        testIgnore: browserTestIgnore,
       },
       {
         name: "ci-shard-3-accounts-and-keys",
@@ -81,19 +93,21 @@ const ciShardProjects = process.env.CI
           "test/import.test.ts",
           "test/store_isolation.test.ts",
         ],
+        testIgnore: browserTestIgnore,
       },
       {
         name: "ci-shard-4-compile-and-misc",
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
+          "test/eager_entry.test.ts",
           "test/fpi.test.ts",
           "test/compile_and_contract.test.ts",
           "test/package.test.ts",
           "test/mockchain.test.ts",
+          "test/no_auth_consume.test.ts",
           "test/miden_array.test.ts",
           "test/miden_client_api.test.ts",
           "test/address.test.ts",
-          "test/eager_entry.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
@@ -101,6 +115,7 @@ const ciShardProjects = process.env.CI
           "test/transactions.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
         ],
+        testIgnore: browserTestIgnore,
       },
     ]
   : [];
@@ -148,20 +163,66 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       testMatch: "*.test.ts",
+      testIgnore: browserTestIgnore,
     },
 
     // CI-only manually-balanced shard projects (definitions above the
     // defineConfig call).
     ...ciShardProjects,
 
-    // {
-    //   name: "firefox",
-    //   use: { ...devices["Desktop Firefox"] },
-    // },
-
     {
       name: "webkit",
       use: { ...devices["Desktop Safari"] },
+      testIgnore: browserTestIgnore,
+    },
+
+    // Node.js project: exercises the napi binding against a mock chain.
+    // Uses the same .test.ts files as the browser projects but skips the
+    // ones that depend on browser-only globals (IndexedDB, WASM-array
+    // `.length()`, exportStore/importStore, etc). The corresponding
+    // `*.node.test.ts` files are the napi-specific variants.
+    {
+      name: "nodejs",
+      testDir: "./test",
+      testMatch: "**/*.test.ts",
+      // Skip browser-only and WASM-specific tests
+      testIgnore: [
+        "test/store_isolation*",
+        "test/sync_lock*",
+        "test/import_export*",
+        "test/remote_keystore*",
+        "test/package*", // TestUtils (createMockSerialized*) is browser-only
+        "test/miden_array*", // WASM array .length() method not available in Node.js
+        "test/shared/**", // Old format duplicates (ported to root test/)
+        "test/node/**", // Old format duplicates (ported to root test/)
+        "test/remote_prover_transactions*", // Old browser format for chromium CI
+        // Browser-only variants — napi versions live in *.node.test.ts
+        "test/miden_client_api.test.ts",
+        "test/compile_and_contract.test.ts",
+        "test/no_auth_consume.test.ts", // uses mockTest (browser-only)
+        // Browser-only tests preserved from `next` that use exportStore /
+        // importStore / waitForBlocks / isolatedClient (all browser-only).
+        "test/*.browser.test.ts",
+        // wasm-bindgen toJSON regression test (#150): asserts on
+        // idxdb-store's Js* classes and the wasm-bindgen WebClient on
+        // `window` — none of which exist under the napi binding.
+        "test/no_wasm_reentry_via_tojson.test.ts",
+        // _withInnerWebClient re-entrancy (#152): exercises the browser
+        // worker-shim chain mechanics (_serializeWasmCall, the
+        // _withInnerLockDepth counter, chain release on rejection). The
+        // napi client has no JS call chain — serialization happens in
+        // Rust — so the escape hatch and its tests are browser-only.
+        "test/with_inner_web_client_reentrancy.test.ts",
+        // Eager-vs-lazy entry contract: dynamic browser imports of
+        // dist/st/{eager,index}.js via the page fixture.
+        "test/eager_entry.test.ts",
+      ],
+      // Skip specific browser-only tests by name.
+      // Tests that request the `page` fixture must be listed here because
+      // Playwright launches the browser for the fixture BEFORE test.skip()
+      // in the test body can run.
+      grepInvert:
+        /exportStore|importStore|reads updated state after a mutating|accounts\.insert stores a pre-built/,
     },
 
     /* Test against mobile viewports. */
@@ -197,9 +258,15 @@ export default defineConfig({
   // exist; running the full integration suite against dist/mt/ would
   // require a cross-origin-isolated test page (COOP+COEP headers via
   // http-server flags), out of scope for this round.
-  webServer: {
-    command: "npx http-server ./dist/st -a localhost -p 8080",
-    url: "http://localhost:8080",
-    reuseExistingServer: true,
-  },
+  //
+  // Skip webServer when running only Node.js tests (no browser/dist needed)
+  ...(process.env.SKIP_WEB_SERVER
+    ? {}
+    : {
+        webServer: {
+          command: "npx http-server ./dist/st -a localhost -p 8080",
+          url: "http://localhost:8080",
+          reuseExistingServer: true,
+        },
+      }),
 });

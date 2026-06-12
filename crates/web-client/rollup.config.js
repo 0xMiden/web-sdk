@@ -343,7 +343,13 @@ const mtOnlyCargoArgs = isMt
 // and atomics-enabled std requires recompiling std from rust-src.
 const baseCargoArgs = [
   "--features",
-  "testing",
+  // `browser` must be passed explicitly: the build runs with
+  // `--no-default-features`, and the wasm_bindgen surface (plus the
+  // idxdb-store backend) is gated behind the `browser` feature on the
+  // dual browser/nodejs crate. Atomics-related rustflags are NOT part of
+  // the base args — the ST variant must load in non-cross-origin-isolated
+  // contexts on stable Rust; the MT variant adds them via mtOnlyCargoArgs.
+  "browser,testing",
   "--no-default-features",
   // Always include line-tables-only debug info for readable stack traces.
   ...cargoArgsLineTablesDebug,

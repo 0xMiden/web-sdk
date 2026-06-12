@@ -2,7 +2,6 @@ import {
   resolveAccountRef,
   resolveStorageMode,
   resolveAuthScheme,
-  resolveAccountMutability,
   hashSeed,
 } from "../utils.js";
 
@@ -34,6 +33,7 @@ export class AccountsResource {
       return await this.#inner.newFaucet(
         storageMode,
         type === 1 || type === "NonFungibleFaucet",
+        opts.name ?? opts.symbol,
         opts.symbol,
         opts.decimals,
         BigInt(opts.maxSupply),
@@ -46,17 +46,11 @@ export class AccountsResource {
     ) {
       return await this.#createContract(opts, wasm);
     } else {
-      // Default: wallet (mutable or immutable based on type)
-      const mutable = resolveAccountMutability(opts?.type);
+      // Default: wallet
       const storageMode = resolveStorageMode(opts?.storage ?? "private", wasm);
       const authScheme = resolveAuthScheme(opts?.auth, wasm);
       const seed = opts?.seed ? await hashSeed(opts.seed) : undefined;
-      return await this.#inner.newWallet(
-        storageMode,
-        mutable,
-        authScheme,
-        seed
-      );
+      return await this.#inner.newWallet(storageMode, authScheme, seed);
     }
   }
 
@@ -66,21 +60,24 @@ export class AccountsResource {
     if (!opts.auth)
       throw new Error("Contract creation requires an 'auth' (AuthSecretKey)");
 
-    // Default to immutable when type is omitted (safer for contracts)
-    const mutable = opts.type === "MutableContract" || opts.type === 3;
-    const accountTypeEnum = mutable
-      ? wasm.AccountType.RegularAccountUpdatableCode
-      : wasm.AccountType.RegularAccountImmutableCode;
     const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
     const authComponent =
       wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
 
+    // Schema commitment from `build()` is not a substitute for contract code; require explicit
+    // `components` so auth-only contracts are rejected at this layer.
+    const components = opts.components ?? [];
+    if (components.length === 0) {
+      throw new Error(
+        "Contract accounts require at least one non-auth procedure: pass at least one entry in `components`."
+      );
+    }
+
     let builder = new wasm.AccountBuilder(opts.seed)
-      .accountType(accountTypeEnum)
       .storageMode(storageMode)
       .withAuthComponent(authComponent);
 
-    for (const component of opts.components ?? []) {
+    for (const component of components) {
       builder = builder.withComponent(component);
     }
 
@@ -122,7 +119,9 @@ export class AccountsResource {
     if (!account) {
       throw new Error(`Account not found: ${id.toString()}`);
     }
-    const keys = await this.#inner.keystore.getCommitments(id);
+    const keys = this.#inner.keystore
+      ? await this.#inner.keystore.getCommitments(id)
+      : await this.#inner.getPublicKeyCommitmentsOfAccount(id);
     return {
       account,
       vault: account.vault(),
@@ -137,7 +136,7 @@ export class AccountsResource {
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(accountRef, wasm);
     const faucetId = resolveAccountRef(tokenRef, wasm);
-    const reader = this.#inner.accountReader(accountId);
+    const reader = await this.#inner.accountReader(accountId);
     return await reader.getBalance(faucetId);
   }
 
@@ -174,10 +173,8 @@ export class AccountsResource {
     if (input.seed) {
       // Import public account from seed
       const authScheme = resolveAuthScheme(input.auth, wasm);
-      const mutable = resolveAccountMutability(input.type);
       return await this.#inner.importPublicAccountFromSeed(
         input.seed,
-        mutable,
         authScheme
       );
     }

@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { TransactionFilter } from "@miden-sdk/miden-sdk/lazy";
-import type {
-  TransactionId,
-  TransactionRecord,
-} from "@miden-sdk/miden-sdk/lazy";
+import { TransactionFilter } from "@miden-sdk/miden-sdk";
+import type { TransactionId, TransactionRecord } from "@miden-sdk/miden-sdk";
 import { useMiden } from "../context/MidenProvider";
 import { useSyncStateStore } from "../store/MidenStore";
 import type {
@@ -148,7 +145,6 @@ function buildFilter(
 
   return {
     filter: TransactionFilter.all(),
-    /* v8 ignore next 1 — idsHex is always non-null when ids is non-empty; ?? [] is a safety net */
     localFilterHexes: idsHex ?? [],
   };
 }

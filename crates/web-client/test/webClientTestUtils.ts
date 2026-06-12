@@ -46,7 +46,7 @@ export const mintTransaction = async (
       const targetAccountId = window.AccountId.fromHex(_targetAccountId);
       const faucetAccountId = window.AccountId.fromHex(_faucetAccountId);
 
-      const mintTransactionRequest = client.newMintTransactionRequest(
+      const mintTransactionRequest = await client.newMintTransactionRequest(
         targetAccountId,
         faucetAccountId,
         _publicNote ? window.NoteType.Public : window.NoteType.Private,
@@ -116,7 +116,7 @@ export const mintPublicTransaction = async (
       const targetAccountId = window.AccountId.fromHex(_targetAccountId);
       const faucetAccountId = window.AccountId.fromHex(_faucetAccountId);
 
-      const mintTransactionRequest = client.newMintTransactionRequest(
+      const mintTransactionRequest = await client.newMintTransactionRequest(
         targetAccountId,
         faucetAccountId,
         window.NoteType.Public,
@@ -205,7 +205,7 @@ export const sendTransaction = async (
       const targetAccountId = window.AccountId.fromHex(_targetAccountId);
       const faucetAccountId = window.AccountId.fromHex(_faucetAccountId);
 
-      let mintTransactionRequest = client.newMintTransactionRequest(
+      let mintTransactionRequest = await client.newMintTransactionRequest(
         senderAccountId,
         faucetAccountId,
         window.NoteType.Private,
@@ -248,7 +248,7 @@ export const sendTransaction = async (
           prover
         );
 
-      let sendTransactionRequest = client.newSendTransactionRequest(
+      let sendTransactionRequest = await client.newSendTransactionRequest(
         senderAccountId,
         targetAccountId,
         faucetAccountId,
@@ -351,7 +351,7 @@ export const swapTransaction = async (
 
       // Swap transaction
 
-      let swapTransactionRequest = client.newSwapTransactionRequest(
+      let swapTransactionRequest = await client.newSwapTransactionRequest(
         accountAId,
         assetAFaucetId,
         _assetAAmount,
@@ -362,9 +362,6 @@ export const swapTransaction = async (
       );
 
       let expectedOutputNotes = swapTransactionRequest.expectedOutputOwnNotes();
-      let expectedPaybackNoteDetails = swapTransactionRequest
-        .expectedFutureNotes()
-        .map((futureNote) => futureNote.noteDetails);
 
       let swapTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -399,9 +396,15 @@ export const swapTransaction = async (
         consumeTransaction1Result.executedTransaction().id().toHex()
       );
 
-      // Consuming payback note for account A
-
-      noteId = expectedPaybackNoteDetails[0].id().toString();
+      // Consuming payback note for account A. Account B's consume of the swap
+      // note emits the payback note; derive its id from that transaction's
+      // output notes (NoteDetails no longer exposes id()).
+      noteId = consumeTransaction1Result
+        .executedTransaction()
+        .outputNotes()
+        .notes()[0]
+        .id()
+        .toString();
       inputNoteRecord = await client.getInputNote(noteId);
       if (!inputNoteRecord) {
         throw new Error(`Note with ID ${noteId} not found`);
@@ -472,18 +475,14 @@ export interface NewAccountTestResult {
   codeCommitment: string;
   isFaucet: boolean;
   isRegularAccount: boolean;
-  isUpdatable: boolean;
   isPublic: boolean;
   isPrivate: boolean;
-  isNetwork: boolean;
   isIdPublic: boolean;
   isIdPrivate: boolean;
-  isIdNetwork: boolean;
   isNew: boolean;
 }
 interface createNewWalletParams {
   storageMode: StorageMode;
-  mutable: boolean;
   authSchemeId: number;
   clientSeed?: Uint8Array;
   isolatedClient?: boolean;
@@ -495,7 +494,6 @@ export const createNewWallet = async (
   testingPage: Page,
   {
     storageMode,
-    mutable,
     authSchemeId,
     clientSeed,
     isolatedClient,
@@ -509,7 +507,6 @@ export const createNewWallet = async (
   return await testingPage.evaluate(
     async ({
       storageMode,
-      mutable,
       authSchemeId,
       _serializedWalletSeed,
       _serializedClientSeed,
@@ -535,7 +532,6 @@ export const createNewWallet = async (
 
       const newWallet = await client.newWallet(
         accountStorageMode,
-        mutable,
         authSchemeId,
         _walletSeed
       );
@@ -548,19 +544,15 @@ export const createNewWallet = async (
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         isIdPublic: newWallet.id().isPublic(),
         isIdPrivate: newWallet.id().isPrivate(),
-        isIdNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     },
     {
       storageMode: storageMode,
-      mutable: mutable,
       authSchemeId: authSchemeId,
       _serializedClientSeed: serializedClientSeed,
       isolatedClient: isolatedClient,
@@ -594,6 +586,7 @@ export const createNewFaucet = async (
         accountStorageMode,
         nonFungible,
         tokenSymbol,
+        tokenSymbol,
         decimals,
         maxSupply,
         authSchemeId
@@ -606,13 +599,10 @@ export const createNewFaucet = async (
         codeCommitment: newFaucet.code().commitment().toHex(),
         isFaucet: newFaucet.isFaucet(),
         isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         isIdPublic: newFaucet.id().isPublic(),
         isIdPrivate: newFaucet.id().isPrivate(),
-        isIdNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     },
@@ -886,12 +876,12 @@ export const setupWalletAndFaucet = async (
     const client = window.client;
     const account = await client.newWallet(
       window.AccountStorageMode.private(),
-      true,
       window.AuthScheme.AuthRpoFalcon512
     );
     const faucetAccount = await client.newFaucet(
       window.AccountStorageMode.private(),
       false,
+      "DAG",
       "DAG",
       8,
       BigInt(10000000),

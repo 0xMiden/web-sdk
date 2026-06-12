@@ -1,4 +1,4 @@
-import { AuthScheme } from "@miden-sdk/miden-sdk/lazy";
+import { AuthScheme } from "@miden-sdk/miden-sdk";
 import type { AccountRef } from "../utils/accountParsing";
 import type {
   WasmWebClient as WebClient,
@@ -19,9 +19,10 @@ import type {
   NoteId,
   AccountStorageMode,
   Note,
+  NoteInput,
   NoteVisibility,
   StorageMode,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 
 // Re-export SDK types for convenience
 export { AuthScheme };
@@ -168,7 +169,16 @@ export interface SyncState {
 // Account types
 export interface AccountsResult {
   accounts: AccountHeader[];
+  /**
+   * @deprecated Protocol 0.15 removed faucet-vs-wallet from the account id, so
+   * accounts can no longer be split from headers alone. `wallets` mirrors
+   * `accounts`. Use `accounts` and detect faucets per-account from its components.
+   */
   wallets: AccountHeader[];
+  /**
+   * @deprecated Always empty as of protocol 0.15 (see `wallets`). Detect faucets
+   * per-account from its components instead.
+   */
   faucets: AccountHeader[];
   isLoading: boolean;
   error: Error | null;
@@ -258,9 +268,7 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Whether code can be updated. Default: true */
-  mutable?: boolean;
-  /** Auth scheme. Default: `AuthScheme.Falcon` */
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
   /** Initial seed for deterministic account ID */
   initSeed?: Uint8Array;
@@ -270,13 +278,15 @@ export interface CreateWalletOptions {
 export interface CreateFaucetOptions {
   /** Token symbol (e.g., "TEST") */
   tokenSymbol: string;
+  /** Human-readable token name. Defaults to `tokenSymbol` when omitted. */
+  tokenName?: string;
   /** Number of decimals. Default: 8 */
   decimals?: number;
   /** Maximum supply */
   maxSupply: bigint | number;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: `AuthScheme.Falcon` */
+  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
 }
 
@@ -293,7 +303,6 @@ export type ImportAccountOptions =
   | {
       type: "seed";
       seed: Uint8Array;
-      mutable?: boolean;
       authScheme?: AuthScheme;
     };
 
@@ -409,6 +418,58 @@ export interface SwapOptions {
   paybackNoteType?: NoteVisibility;
 }
 
+// PSWAP options — partial-swap notes can be filled by multiple consumers.
+export interface PswapCreateOptions {
+  /** Account that creates the PSWAP note */
+  accountId: AccountRef;
+  /** Faucet ID of the offered asset */
+  offeredFaucetId: AccountRef;
+  /** Amount being offered */
+  offeredAmount: bigint | number;
+  /** Faucet ID of the requested asset */
+  requestedFaucetId: AccountRef;
+  /** Amount being requested */
+  requestedAmount: bigint | number;
+  /** Visibility of the PSWAP note. Default: private */
+  noteType?: NoteVisibility;
+  /** Visibility of the payback note. Default: private */
+  paybackNoteType?: NoteVisibility;
+}
+
+export interface PswapConsumeOptions {
+  /** Consumer account filling the PSWAP note */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to consume. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
+  /**
+   * Amount of the requested asset the consumer is providing from its own
+   * vault. Receives a proportional share of the offered asset; partial fills
+   * also produce a remainder PSWAP note carrying the unfilled portion.
+   */
+  fillAmount: bigint | number;
+  /**
+   * Amount of the requested asset supplied by other (in-flight) notes routed
+   * into the same transaction. Defaults to `0`; most callers should leave
+   * this unset.
+   */
+  noteFillAmount?: bigint | number;
+}
+
+export interface PswapCancelOptions {
+  /** Creator account reclaiming the offered asset */
+  accountId: AccountRef;
+  /**
+   * PSWAP note to cancel. Accepts a hex string ID, `NoteId` object,
+   * `InputNoteRecord`, or `Note` — string/NoteId values are looked up from
+   * the local store; record/Note values are used directly.
+   */
+  note: NoteInput;
+}
+
 // Arbitrary transaction options
 export interface ExecuteTransactionOptions {
   /** Account ID the transaction applies to */
@@ -513,7 +574,6 @@ export interface UseSessionAccountOptions {
   /** Wallet creation options */
   walletOptions?: {
     storageMode?: "private" | "public";
-    mutable?: boolean;
     authScheme?: AuthScheme;
   };
   /** Polling interval for funding note detection (ms). Default: 3000 */
@@ -551,8 +611,7 @@ export const DEFAULTS = {
   RPC_URL: undefined, // Will use SDK's testnet default
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
-  WALLET_MUTABLE: true,
-  AUTH_SCHEME: AuthScheme.Falcon,
+  AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,
 } as const;

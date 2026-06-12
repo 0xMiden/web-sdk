@@ -4,11 +4,10 @@ import {
   FungibleAsset,
   Note,
   NoteAssets,
-  NoteAttachment,
   NoteType,
   NoteArray,
   TransactionRequestBuilder,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 import type {
   MultiSendOptions,
   TransactionStage,
@@ -16,7 +15,7 @@ import type {
 } from "../types";
 import { DEFAULTS } from "../types";
 import { parseAccountId, parseAddress } from "../utils/accountParsing";
-import { createNoteAttachment } from "../utils/noteAttachment";
+import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError, assertSignerConnected } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
@@ -123,7 +122,7 @@ export function useMultiSend(): UseMultiSendResult {
             const noteAttachment =
               attachment !== undefined && attachment !== null
                 ? createNoteAttachment(attachment)
-                : new NoteAttachment();
+                : emptyAttachment();
             const note = Note.createP2IDNote(
               iterSenderId,
               receiverId,
@@ -159,9 +158,7 @@ export function useMultiSend(): UseMultiSendResult {
         const provenTransaction = await proveWithFallback(
           (resolvedProver) =>
             runExclusiveDirect(() =>
-              resolvedProver
-                ? client.proveTransactionWithProver(txResult, resolvedProver)
-                : client.proveTransaction(txResult)
+              client.proveTransaction(txResult, resolvedProver)
             ),
           proverConfig
         );
@@ -210,7 +207,6 @@ export function useMultiSend(): UseMultiSendResult {
         setError(error);
         setStage("idle");
         throw error;
-        /* v8 ignore next 1 — V8 counts } finally { as a branch for the exception-entry path */
       } finally {
         setIsLoading(false);
         isBusyRef.current = false;

@@ -35,7 +35,6 @@ export async function waitForWalletDetection(
     };
 
     const timer = setTimeout(() => {
-      /* v8 ignore next 1 — race-condition guard: timer fires after settle() ran; requires precise timing */
       if (settled) return;
       settled = true;
       adapter.off("readyStateChange", onReady);

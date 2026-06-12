@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import type {
   AccountStorageMode,
   AccountComponent,
-} from "@miden-sdk/miden-sdk/lazy";
+} from "@miden-sdk/miden-sdk";
 
 // SIGNER CONTEXT
 // ================================================================================================
@@ -55,9 +55,13 @@ export type SignerAccountType =
 export interface SignerAccountConfig {
   /** Public key commitment (for auth component) */
   publicKeyCommitment: Uint8Array;
-  /** Account type */
-  accountType: SignerAccountType;
-  /** Storage mode (public/private/network) */
+  /**
+   * @deprecated Ignored as of protocol 0.15. Code mutability and faucet/wallet
+   * account types are no longer encoded in the account, so this value has no
+   * effect on the built account and is safe to omit.
+   */
+  accountType?: SignerAccountType;
+  /** Storage mode (public or private) */
   storageMode: AccountStorageMode;
   /** Optional seed for deterministic account ID */
   accountSeed?: Uint8Array;

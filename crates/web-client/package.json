@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.14.11",
+  "version": "0.15.0",
   "description": "Miden Wasm SDK",
   "license": "MIT",
   "repository": {
@@ -20,6 +20,10 @@
   "types": "./dist/st/index.d.ts",
   "exports": {
     ".": {
+      "node": {
+        "types": "./dist/st/index.d.ts",
+        "default": "./js/node-index.js"
+      },
       "import": {
         "types": "./dist/st/index.d.ts",
         "default": "./dist/st/eager.js"
@@ -49,6 +53,12 @@
     "dist",
     "lazy",
     "mt",
+    "js/node-index.js",
+    "js/node",
+    "js/client.js",
+    "js/standalone.js",
+    "js/utils.js",
+    "js/resources",
     "../LICENSE.md"
   ],
   "scripts": {
@@ -80,9 +90,9 @@
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@rollup/plugin-commonjs": "^25.0.7",
-    "@vitest/coverage-v8": "^3.0.0",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@types/node": "^24.9.2",
+    "@vitest/coverage-v8": "^3.0.0",
     "@wasm-tool/rollup-plugin-rust": "^3.0.3",
     "binaryen": "^129.0.0",
     "cross-env": "^7.0.3",

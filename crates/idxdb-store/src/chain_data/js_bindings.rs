@@ -31,11 +31,8 @@ extern "C" {
         max_in_order_index: String,
     ) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = getPartialBlockchainPeaksByBlockNum)]
-    pub fn idxdb_get_partial_blockchain_peaks_by_block_num(
-        db_id: &str,
-        block_num: u32,
-    ) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
+    pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
 
     // INSERTS
     // ================================================================================================
@@ -45,7 +42,6 @@ extern "C" {
         db_id: &str,
         block_num: u32,
         header: Vec<u8>,
-        partial_blockchain_peaks: Vec<u8>,
         has_client_notes: bool,
     ) -> js_sys::Promise;
 
@@ -60,5 +56,9 @@ extern "C" {
     // ================================================================================================
 
     #[wasm_bindgen(js_name = pruneIrrelevantBlocks)]
-    pub fn idxdb_prune_irrelevant_blocks(db_id: &str) -> js_sys::Promise;
+    pub fn idxdb_prune_irrelevant_blocks(
+        db_id: &str,
+        blocks_to_untrack: Vec<u32>,
+        node_ids_to_remove: Vec<String>,
+    ) -> js_sys::Promise;
 }

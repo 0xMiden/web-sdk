@@ -2,124 +2,124 @@ import { describe, it, expect } from "vitest";
 import { formatAssetAmount, parseAssetAmount } from "../../utils/amounts";
 
 describe("formatAssetAmount", () => {
-  it("should return raw number as string when no decimals given", () => {
-    expect(formatAssetAmount(1000n)).toBe("1000");
+  it("returns the bigint as string when decimals is omitted", () => {
+    expect(formatAssetAmount(12345n)).toBe("12345");
   });
 
-  it("should return raw number as string when decimals is 0", () => {
-    expect(formatAssetAmount(500n, 0)).toBe("500");
+  it("returns the bigint as string when decimals is 0", () => {
+    expect(formatAssetAmount(12345n, 0)).toBe("12345");
   });
 
-  it("should return raw number as string when decimals is negative", () => {
-    expect(formatAssetAmount(500n, -1)).toBe("500");
+  it("returns the bigint as string when decimals is negative", () => {
+    expect(formatAssetAmount(12345n, -1)).toBe("12345");
   });
 
-  it("should accept a plain number as amount", () => {
-    expect(formatAssetAmount(42, 0)).toBe("42");
+  it("converts a number argument to bigint", () => {
+    expect(formatAssetAmount(42)).toBe("42");
   });
 
-  it("should format whole number with decimals (no fractional part)", () => {
-    // 1_0000_0000 with 8 decimals → 1
-    expect(formatAssetAmount(100_000_000n, 8)).toBe("1");
+  it("formats with no fractional part as whole number", () => {
+    // 100 with 2 decimals = 1.00 → "1"
+    expect(formatAssetAmount(100n, 2)).toBe("1");
   });
 
-  it("should format with fractional part", () => {
-    // 150_000_000 with 8 decimals → 1.5
-    expect(formatAssetAmount(150_000_000n, 8)).toBe("1.5");
+  it("formats with fractional part", () => {
+    // 12345 with 2 decimals = 123.45
+    expect(formatAssetAmount(12345n, 2)).toBe("123.45");
   });
 
-  it("should strip trailing zeros from fractional part", () => {
-    // 1_010_000_00 with 8 decimals → 1.01
-    expect(formatAssetAmount(101_000_000n, 8)).toBe("1.01");
+  it("strips trailing zeros from fractional part", () => {
+    // 12300 with 2 decimals = 123.00 → "123"
+    expect(formatAssetAmount(12300n, 2)).toBe("123");
+    // 12340 with 2 decimals = 123.40 → "123.4"
+    expect(formatAssetAmount(12340n, 2)).toBe("123.4");
   });
 
-  it("should handle zero amount", () => {
-    expect(formatAssetAmount(0n, 8)).toBe("0");
+  it("pads short fractional with leading zeros", () => {
+    // 105 with 4 decimals = 0.0105
+    expect(formatAssetAmount(105n, 4)).toBe("0.0105");
   });
 
-  it("should handle 2-decimal format", () => {
-    // 150 with 2 decimals → 1.5
-    expect(formatAssetAmount(150n, 2)).toBe("1.5");
+  it("handles very large bigint", () => {
+    expect(formatAssetAmount(1_000_000_000_000n, 6)).toBe("1000000");
   });
 
-  it("should pad fraction correctly", () => {
-    // 1_000_001 with 6 decimals → 1.000001
-    expect(formatAssetAmount(1_000_001n, 6)).toBe("1.000001");
-  });
-
-  it("should handle sub-unit amounts (less than 1 whole unit)", () => {
-    // 500_000 with 8 decimals → 0.005
-    expect(formatAssetAmount(500_000n, 8)).toBe("0.005");
+  it("handles zero", () => {
+    expect(formatAssetAmount(0n, 6)).toBe("0");
+    expect(formatAssetAmount(0n)).toBe("0");
   });
 });
 
 describe("parseAssetAmount", () => {
-  it("should parse whole number with no decimals", () => {
-    expect(parseAssetAmount("1000")).toBe(1000n);
-  });
-
-  it("should parse whole number with decimals=0", () => {
-    expect(parseAssetAmount("42", 0)).toBe(42n);
-  });
-
-  it("should throw when input is empty", () => {
+  it("throws on empty input", () => {
     expect(() => parseAssetAmount("")).toThrow("Amount is required");
     expect(() => parseAssetAmount("   ")).toThrow("Amount is required");
   });
 
-  it("should throw when decimal point in no-decimals mode", () => {
-    expect(() => parseAssetAmount("1.5", 0)).toThrow(
-      "Amount must be a whole number"
+  it("parses whole number when decimals is omitted", () => {
+    expect(parseAssetAmount("123")).toBe(123n);
+  });
+
+  it("parses whole number when decimals is 0", () => {
+    expect(parseAssetAmount("123", 0)).toBe(123n);
+  });
+
+  it("rejects fractional input when decimals is omitted", () => {
+    expect(() => parseAssetAmount("1.5")).toThrow("must be a whole number");
+  });
+
+  it("rejects fractional input when decimals is 0", () => {
+    expect(() => parseAssetAmount("1.5", 0)).toThrow("must be a whole number");
+  });
+
+  it("rejects more than one decimal point", () => {
+    expect(() => parseAssetAmount("1.2.3", 2)).toThrow(
+      "too many decimal points"
     );
-    expect(() => parseAssetAmount("1.5")).toThrow(
-      "Amount must be a whole number"
+  });
+
+  it("rejects fractional with too many decimals", () => {
+    expect(() => parseAssetAmount("1.234", 2)).toThrow(
+      "too many decimal places"
     );
   });
 
-  it("should parse decimal amount", () => {
-    // "1.5" with 8 decimals → 150_000_000
-    expect(parseAssetAmount("1.5", 8)).toBe(150_000_000n);
+  it("parses whole-only with explicit decimals", () => {
+    expect(parseAssetAmount("123", 2)).toBe(12300n);
   });
 
-  it("should parse amount with no fractional part when decimals given", () => {
-    expect(parseAssetAmount("1", 8)).toBe(100_000_000n);
+  it("parses whole.fraction with full decimals", () => {
+    // 123.45 with 2 decimals → 12345
+    expect(parseAssetAmount("123.45", 2)).toBe(12345n);
   });
 
-  it("should parse '.5' (empty whole part) with decimals", () => {
+  it("parses fractional with fewer decimals than allowed (right-pads)", () => {
+    // 1.5 with 4 decimals → 15000
+    expect(parseAssetAmount("1.5", 4)).toBe(15000n);
+  });
+
+  it("parses .5 (no whole part)", () => {
     expect(parseAssetAmount(".5", 2)).toBe(50n);
   });
 
-  it("should throw for too many decimal points", () => {
-    expect(() => parseAssetAmount("1.2.3", 8)).toThrow(
-      "Amount has too many decimal points"
-    );
+  it("parses 5. (no fractional part after dot)", () => {
+    expect(parseAssetAmount("5.", 2)).toBe(500n);
   });
 
-  it("should throw when fraction exceeds decimals precision", () => {
-    // 3 decimal places but only 2 allowed
-    expect(() => parseAssetAmount("1.123", 2)).toThrow(
-      "Amount has too many decimal places"
-    );
+  it("trims surrounding whitespace", () => {
+    expect(parseAssetAmount("  42  ", 0)).toBe(42n);
   });
 
-  it("should handle trailing zeros in fraction", () => {
-    // "1.50" with 2 decimals → 150
-    expect(parseAssetAmount("1.50", 2)).toBe(150n);
-  });
-
-  it("should handle fractional part shorter than decimals (right-pad)", () => {
-    // "1.5" with 6 decimals → 1_500_000
-    expect(parseAssetAmount("1.5", 6)).toBe(1_500_000n);
-  });
-
-  it("should trim whitespace from input", () => {
-    expect(parseAssetAmount("  100  ", 0)).toBe(100n);
-  });
-
-  it("should round-trip with formatAssetAmount", () => {
-    const original = 123_456_789n;
-    const formatted = formatAssetAmount(original, 8);
-    const parsed = parseAssetAmount(formatted, 8);
-    expect(parsed).toBe(original);
+  it("round-trips with formatAssetAmount", () => {
+    const cases: Array<[string, number]> = [
+      ["123.45", 2],
+      ["1000000", 6],
+      ["0.0001", 4],
+      ["999", 0],
+    ];
+    for (const [input, decimals] of cases) {
+      const parsed = parseAssetAmount(input, decimals);
+      expect(formatAssetAmount(parsed, decimals)).toBe(input);
+    }
   });
 });

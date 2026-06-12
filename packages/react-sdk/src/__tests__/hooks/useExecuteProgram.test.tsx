@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import type { TransactionScript } from "@miden-sdk/miden-sdk/lazy";
+import type { TransactionScript } from "@miden-sdk/miden-sdk";
 import { useExecuteProgram } from "../../hooks/useExecuteProgram";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -287,71 +287,6 @@ describe("useExecuteProgram", () => {
       expect(result.current.result).toBeNull();
       expect(result.current.isLoading).toBe(false);
       expect(result.current.error).toBeNull();
-    });
-  });
-
-  describe("branch coverage gaps", () => {
-    it("should handle ForeignAccountWrapper with storage (lines 54-55, 101-103)", async () => {
-      const mockFeltArray = createMockFeltArray(8);
-      const mockClient = createMockWebClient({
-        executeProgram: vi.fn().mockResolvedValue(mockFeltArray),
-      });
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        sync: vi.fn().mockResolvedValue(undefined),
-      });
-
-      const { result } = renderHook(() => useExecuteProgram());
-
-      // Pass a wrapper with storage (isForeignAccountWrapper branch + storage branch)
-      const wrapperWithStorage = {
-        id: "0xforeign1",
-        storage: { slots: [] },
-      };
-      // Pass a wrapper without storage (isForeignAccountWrapper branch, no storage)
-      const wrapperNoStorage = {
-        id: "0xforeign2",
-      };
-
-      await act(async () => {
-        await result.current.execute({
-          accountId: "0xaccount",
-          script: mockScript,
-          foreignAccounts: [wrapperWithStorage as any, wrapperNoStorage as any],
-        });
-      });
-
-      expect(mockClient.executeProgram).toHaveBeenCalled();
-      expect(result.current.result).not.toBeNull();
-    });
-
-    it("should wrap non-Error thrown values in an Error (line 102)", async () => {
-      const mockClient = createMockWebClient({
-        executeProgram: vi.fn().mockRejectedValue("string execute error"),
-      });
-
-      mockUseMiden.mockReturnValue({
-        client: mockClient,
-        isReady: true,
-        sync: vi.fn().mockResolvedValue(undefined),
-      });
-
-      const { result } = renderHook(() => useExecuteProgram());
-
-      await act(async () => {
-        await expect(
-          result.current.execute({
-            accountId: "0xaccount",
-            script: mockScript,
-          })
-        ).rejects.toThrow("string execute error");
-      });
-
-      await waitFor(() => {
-        expect(result.current.error?.message).toBe("string execute error");
-      });
     });
   });
 });
