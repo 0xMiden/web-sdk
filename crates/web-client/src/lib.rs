@@ -77,6 +77,110 @@ mod web_keystore_db;
 #[cfg(feature = "browser")]
 pub use web_keystore::WebKeyStore;
 
+// The multi-threaded build is meaningful only for the browser WASM target —
+// wasm-bindgen-rayon bootstraps its thread pool over Web Workers, which do
+// not exist under the napi Node.js binding (Node-side parallelism comes from
+// the native tokio/rayon stack instead).
+#[cfg(all(feature = "mt-threads", feature = "nodejs"))]
+compile_error!("feature \"mt-threads\" is browser-only and cannot be combined with \"nodejs\"");
+
+// Re-export wasm-bindgen-rayon's `init_thread_pool` ONLY in the multi-threaded
+// build. JS callers MUST `await initThreadPool(navigator.hardwareConcurrency)`
+// once on the main thread (or inside the worker that owns the WebClient)
+// before any transaction proving runs. Without this call the rayon global
+// thread pool spawns zero threads on wasm32 and every `par_iter(...)` falls
+// through to a sequential loop — i.e. you've shipped multi-threaded WASM
+// that runs single-threaded. In the single-threaded build (no `mt-threads`
+// feature), wasm-bindgen-rayon isn't a dependency, the prover paths use
+// p3-maybe-rayon's sequential fallback, and `initThreadPool` doesn't exist
+// to call.
+#[cfg(feature = "mt-threads")]
+pub use wasm_bindgen_rayon::init_thread_pool;
+
+// MT bring-up diagnostics — gated behind `testing` so they don't ship in
+// production WASM bundles. Useful during initial wiring of a new MT host
+// or when investigating "why is my MT prove not faster" regressions; not
+// needed at runtime by normal consumers. Enable with
+// `--features mt-threads,testing` to surface them on the wasm-bindgen API.
+
+/// How many rayon worker threads are visible from THIS WASM instance's view of
+/// the global rayon pool. Diagnostic only — the value should equal whatever
+/// `initThreadPool(n)` was called with. If it's 1, rayon is in single-threaded
+/// fallback (workers never spawned, or spawned in a different WASM instance).
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "rayonThreadCount")]
+pub fn rayon_thread_count() -> usize {
+    rayon::current_num_threads()
+}
+
+/// Synthetic parallel benchmark: sums 0..n via `par_iter()` on the global
+/// rayon pool. Returns elapsed micros. If the pool is actually multi-threaded,
+/// large `n` should scale ~linearly with thread count. Diagnostic for
+/// confirming whether rayon is dispatching work at all.
+//
+// `cast_precision_loss` is intentional: this is a synthetic FP-mix workload
+// to defeat constant-folding and exercise rayon's dispatch — we don't care
+// about precision, only about CPU work being divided across threads.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "parallelSumBench")]
+#[allow(clippy::cast_precision_loss)]
+pub fn parallel_sum_bench(n: u64) -> u64 {
+    use rayon::prelude::*;
+    // Don't actually need timing on the Rust side — caller times it. We
+    // return the sum to defeat the optimizer. Use an FP-mix workload so
+    // it's not trivially constant-folded.
+    let s: f64 = (0..n).into_par_iter().map(|i| ((i as f64).sqrt() * 1.0001).sin().abs()).sum();
+    s.to_bits()
+}
+
+/// MT diagnostics: report which rayon threads execute a tiny par_iter when
+/// dispatched from a plain synchronous wasm export. `outer` is the calling
+/// thread's pool index (-1 = external), `inside` the distinct pool indexes
+/// that ran chunks.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "mtProbeSync")]
+pub fn mt_probe_sync() -> String {
+    mt_probe_body()
+}
+
+/// Same probe, but exported as an async fn so it runs inside a
+/// wasm-bindgen-futures task — mirroring the context `proveTransaction`
+/// executes in. Divergence between the two reveals whether the futures
+/// context breaks rayon dispatch.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "mtProbeAsync")]
+pub async fn mt_probe_async() -> String {
+    mt_probe_body()
+}
+
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+fn mt_probe_body() -> String {
+    use rayon::prelude::*;
+    let outer = rayon::current_thread_index().map_or(-1, |i| i as i32);
+    let inside: std::collections::BTreeSet<i32> = (0..100_000)
+        .into_par_iter()
+        .map(|i| {
+            // Enough per-item work that rayon actually splits.
+            let _ = core::hint::black_box((i as f64).sqrt().sin());
+            rayon::current_thread_index().map_or(-1, |i| i as i32)
+        })
+        .collect();
+    format!("outer={outer} inside={inside:?}")
+}
+
+/// Single-threaded version of `parallel_sum_bench` for direct comparison.
+/// Same workload, plain `iter()` — bypasses rayon entirely. Needs to live
+/// on the WASM side rather than be reimplemented in JS so the workload is
+/// bit-for-bit identical to `parallel_sum_bench` (same libm, same FP
+/// determinism, same constant-folding resistance).
+#[cfg(all(feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "sequentialSumBench")]
+#[allow(clippy::cast_precision_loss)]
+pub fn sequential_sum_bench(n: u64) -> u64 {
+    let s: f64 = (0..n).map(|i| ((i as f64).sqrt() * 1.0001).sin().abs()).sum();
+    s.to_bits()
+}
+
 #[cfg(feature = "browser")]
 const BASE_STORE_NAME: &str = "MidenClientDB";
 
@@ -219,6 +323,37 @@ impl WebClient {
             .cloned()
             .ok_or_else(|| JsValue::from_str("Client not initialized"))?;
         Ok(keystore_api::WebKeystoreApi::new(ks))
+    }
+
+    /// Returns the raw JS value that the most recent sign-callback invocation
+    /// threw, or `null` if the last sign call succeeded (or no call has
+    /// happened yet).
+    ///
+    /// Combined with the serialized-call discipline enforced at the JS
+    /// `WebClient` wrapper, this lets a caller that caught a failed
+    /// `executeTransaction` / `submitNewTransaction` recover the original
+    /// JS error the signing callback threw — preserving any structured
+    /// metadata (e.g. a `reason: 'locked'` property) that the kernel-level
+    /// `auth::request` diagnostic would otherwise have erased.
+    ///
+    /// # Usage (TS)
+    /// ```ts
+    /// try {
+    ///   await client.submitNewTransaction(acc, req);
+    /// } catch (e) {
+    ///   const authErr = client.lastAuthError();
+    ///   if (authErr && authErr.reason === 'locked') {
+    ///     // wait for unlock, then retry
+    ///   }
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = "lastAuthError")]
+    pub fn last_auth_error(&self) -> JsValue {
+        let guard = self.inner.borrow();
+        match guard.as_ref().and_then(|c| c.authenticator()) {
+            Some(keystore) => keystore.last_sign_error(),
+            None => JsValue::NULL,
+        }
     }
 
     /// Creates a new `WebClient` instance with the specified configuration.
@@ -479,7 +614,9 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
         None => StdRng::from_os_rng(),
     };
     let coin_seed: [u64; 4] = rng.random();
-    Ok(RandomCoin::new(coin_seed.map(Felt::new).into()))
+    // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
+    // vanishing and `new_unchecked` matches the upstream Rust client's usage.
+    Ok(RandomCoin::new(coin_seed.map(Felt::new_unchecked).into()))
 }
 
 // ERROR HANDLING HELPERS
@@ -497,6 +634,12 @@ where
         let js_error: JsValue = JsError::new(&error_message).into();
         if let Some(help) = help {
             let _ = Reflect::set(&js_error, &JsValue::from_str("help"), &JsValue::from_str(&help));
+        }
+        // Stable, machine-readable code for the ClientError variants JS callers
+        // branch on, so they don't have to match the (changeable) message text.
+        // The worker shim's serializeError already forwards `code`.
+        if let Some(code) = code_from_error(&err) {
+            let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }
         js_error
     }
@@ -528,4 +671,21 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
     }
 
     err.source().and_then(hint_from_error)
+}
+
+/// Maps the typed [`ClientError`] variants that JS callers need to distinguish
+/// to stable string codes (exposed as the `code` property on the thrown JS
+/// error). Only the variants consumers branch on are mapped; everything else
+/// returns `None`.
+#[cfg(feature = "browser")]
+fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        return match client_error {
+            ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
+            ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            _ => None,
+        };
+    }
+
+    err.source().and_then(code_from_error)
 }

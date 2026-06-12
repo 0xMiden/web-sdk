@@ -2,5 +2,16 @@
 *.yml
 *.yaml
 
+# Build / tooling output
+**/dist/**
+**/target/**
+**/node_modules/**
+
+# Generated TypeScript declarations
+**/*.d.ts
+
 # Generated JS (codegen)
 crates/idxdb-store/src/js/**
+
+# Vendored docs
+docs/**

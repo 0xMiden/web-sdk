@@ -33,7 +33,7 @@ export function normalizeArg(val) {
 /**
  * Wraps a napi class so constructor and static method args are normalized.
  */
-export function wrapClass(Cls) {
+function wrapClass(Cls) {
   if (!Cls) return Cls;
   const Wrapper = function (...args) {
     return new Cls(...args.map(normalizeArg));
@@ -61,7 +61,8 @@ export function wrapClass(Cls) {
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
  * - syncState() -> syncStateImpl() (no browser lock coordination needed)
- * - syncStateWithTimeout() -> syncStateImpl() (timeout not applicable)
+ * - syncChain() -> syncChainImpl()
+ * - syncNoteTransport() -> syncNoteTransportImpl()
  * - null -> undefined for Option<T> returns
  * - BigInt/Uint8Array args normalized
  */
@@ -71,8 +72,11 @@ export function wrapClient(rawClient, storeName) {
       if (prop === "syncState") {
         return (...args) => target.syncStateImpl(...args);
       }
-      if (prop === "syncStateWithTimeout") {
-        return (_timeoutMs) => target.syncStateImpl();
+      if (prop === "syncChain") {
+        return () => target.syncChainImpl();
+      }
+      if (prop === "syncNoteTransport") {
+        return () => target.syncNoteTransportImpl();
       }
       if (prop === "storeName") {
         return storeName || "default";
@@ -90,6 +94,21 @@ export function wrapClient(rawClient, storeName) {
       // onStateChanged is browser-only (uses BroadcastChannel)
       if (prop === "onStateChanged") {
         return () => undefined;
+      }
+      // waitForIdle drains the browser SDK's detached `_serializeWasmCall`
+      // chain. The napi binding has no such chain — every call is awaited
+      // directly by its caller and serialized inside Rust — so there is
+      // nothing in flight by the time a caller could invoke this. Resolve
+      // immediately to keep the cross-platform MidenClient surface intact.
+      if (prop === "waitForIdle") {
+        return () => Promise.resolve();
+      }
+      // lastAuthError surfaces the raw value a JS sign callback threw.
+      // The Node binding signs with FilesystemKeyStore (no JS callback can
+      // ever run), so "no sign error" is the semantically correct answer,
+      // not a stub.
+      if (prop === "lastAuthError") {
+        return () => null;
       }
       if (prop === "newWallet") {
         return (mode, mutable, authScheme, seed) => {
@@ -126,7 +145,7 @@ export function wrapClient(rawClient, storeName) {
  * - Converts null -> undefined for Option<T> returns
  * - Aliases static methods
  */
-export function patchSdkPrototypes(rawSdk) {
+function patchSdkPrototypes(rawSdk) {
   // snake_case aliases for instance methods
   /* eslint-disable camelcase */
   for (const [cls, aliases] of [
@@ -176,7 +195,7 @@ export function patchSdkPrototypes(rawSdk) {
  * typed wrappers (NoteAndArgsArray, FeltArray, etc.). These polyfills
  * let `new sdk.FeltArray([a, b])` work on Node.js by returning a plain array.
  */
-export function makeArrayPolyfills() {
+function makeArrayPolyfills() {
   function polyfill(items) {
     const arr =
       items === undefined || items === null

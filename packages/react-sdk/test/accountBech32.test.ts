@@ -149,6 +149,7 @@ test.describe("accountBech32 utilities (Playwright)", () => {
         (window as any).AccountStorageMode.private(),
         false,
         "TEST",
+        "TEST",
         8,
         BigInt(1_000_000),
         (window as any).AuthScheme.AuthRpoFalcon512

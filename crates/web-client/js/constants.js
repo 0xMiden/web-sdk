@@ -1,6 +1,7 @@
 export const WorkerAction = Object.freeze({
   INIT: "init",
   INIT_MOCK: "initMock",
+  INIT_THREAD_POOL: "initThreadPool",
   CALL_METHOD: "callMethod",
   EXECUTE_CALLBACK: "executeCallback",
 });
@@ -22,4 +23,8 @@ export const MethodName = Object.freeze({
   SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK: "submitNewTransactionWithProverMock",
   SYNC_STATE: "syncState",
   SYNC_STATE_MOCK: "syncStateMock",
+  SYNC_CHAIN: "syncChain",
+  SYNC_CHAIN_MOCK: "syncChainMock",
+  SYNC_NOTE_TRANSPORT: "syncNoteTransport",
+  SYNC_NOTE_TRANSPORT_MOCK: "syncNoteTransportMock",
 });

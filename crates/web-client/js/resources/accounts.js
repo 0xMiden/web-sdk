@@ -34,6 +34,7 @@ export class AccountsResource {
       return await this.#inner.newFaucet(
         storageMode,
         type === 1 || type === "NonFungibleFaucet",
+        opts.name ?? opts.symbol,
         opts.symbol,
         opts.decimals,
         BigInt(opts.maxSupply),
@@ -66,11 +67,9 @@ export class AccountsResource {
     if (!opts.auth)
       throw new Error("Contract creation requires an 'auth' (AuthSecretKey)");
 
-    // Default to immutable when type is omitted (safer for contracts)
-    const mutable = opts.type === "MutableContract" || opts.type === 3;
-    const accountTypeEnum = mutable
-      ? wasm.AccountType.RegularAccountUpdatableCode
-      : wasm.AccountType.RegularAccountImmutableCode;
+    // The 0.15 protocol has no code-mutability distinction, so the `type`
+    // ("ImmutableContract" / "MutableContract") only steers routing here; the
+    // account's on-chain visibility is set entirely by `storageMode`.
     const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
     const authComponent =
       wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
@@ -85,7 +84,6 @@ export class AccountsResource {
     }
 
     let builder = new wasm.AccountBuilder(opts.seed)
-      .accountType(accountTypeEnum)
       .storageMode(storageMode)
       .withAuthComponent(authComponent);
 

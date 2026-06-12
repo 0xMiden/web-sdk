@@ -1,0 +1,30 @@
+# Verifies that PRs touch CHANGELOG.md. Inspired by miden-client's
+# changelog gate, in turn inspired by tarides/changelog-check-action.
+#
+# Pass condition: root CHANGELOG.md differs from the PR base.
+# Override: apply the "no changelog" label on the PR. Trivial changes
+# (typos, internal refactors, CI-only edits) carry the label and skip.
+
+name: changelog
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check for changes in changelog
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          NO_CHANGELOG_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'no changelog') }}
+        run: ./scripts/check-changelog.sh
+        shell: bash

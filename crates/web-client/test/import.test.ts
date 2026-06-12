@@ -26,6 +26,7 @@ test.describe("import from seed", () => {
         sdk.AccountStorageMode.public(),
         false,
         "DAG",
+        "DAG",
         8,
         sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -172,6 +173,7 @@ test.describe("import public account by id", () => {
       const faucet = await intClient.newFaucet(
         sdk.AccountStorageMode.public(),
         false,
+        "DAG",
         "DAG",
         8,
         sdk.u64(10000000),

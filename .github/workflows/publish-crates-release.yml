@@ -36,11 +36,13 @@ jobs:
       - name: Preflight - publish dry run
         continue-on-error: true
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd crates/idxdb-store
           cargo publish --dry-run
           cd ../web-client
+          cargo publish --dry-run
+          cd ../mobile-prover
           cargo publish --dry-run
 
       - name: Cleanup cargo package artifacts (after dry-run)
@@ -50,14 +52,21 @@ jobs:
 
       - name: Publish idxdb-store
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd crates/idxdb-store
           cargo publish
 
       - name: Publish web-client
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd crates/web-client
+          cargo publish
+
+      - name: Publish mobile-prover
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/mobile-prover
           cargo publish
