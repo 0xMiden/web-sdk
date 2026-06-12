@@ -1,7 +1,8 @@
 use js_export_macro::js_export;
 use miden_client::account::component::BasicWallet;
 use miden_client::account::{
-    AccountBuilder as NativeAccountBuilder, AccountBuilderSchemaCommitmentExt,
+    AccountBuilder as NativeAccountBuilder,
+    AccountBuilderSchemaCommitmentExt,
 };
 use miden_client::auth::NoAuth;
 

@@ -6,7 +6,9 @@ use core::time::Duration;
 use js_export_macro::js_export;
 use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
-    LocalTransactionProver, ProvingOptions, TransactionProver as TransactionProverTrait,
+    LocalTransactionProver,
+    ProvingOptions,
+    TransactionProver as TransactionProverTrait,
 };
 #[cfg(feature = "browser")]
 use miden_client::transaction::{ProvenTransaction, TransactionInputs, TransactionProverError};

@@ -2,7 +2,8 @@ use alloc::string::String;
 
 use js_export_macro::js_export;
 use miden_client::account::{
-    StorageMapKey as NativeStorageMapKey, StorageSlotName as NativeStorageSlotName,
+    StorageMapKey as NativeStorageMapKey,
+    StorageSlotName as NativeStorageSlotName,
 };
 use miden_client::rpc::domain::account::AccountStorageRequirements as NativeAccountStorageRequirements;
 

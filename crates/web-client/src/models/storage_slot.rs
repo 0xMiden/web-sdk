@@ -1,6 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::account::{
-    StorageSlot as NativeStorageSlot, StorageSlotName as NativeStorageSlotName,
+    StorageSlot as NativeStorageSlot,
+    StorageSlotName as NativeStorageSlotName,
 };
 
 use crate::models::storage_map::StorageMap;

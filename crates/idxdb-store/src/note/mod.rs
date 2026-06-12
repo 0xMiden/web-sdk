@@ -6,7 +6,12 @@ use miden_client::Word;
 use miden_client::account::AccountId;
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
-    InputNoteRecord, InputNoteState, NoteFilter, OutputNoteRecord, OutputNoteState, StoreError,
+    InputNoteRecord,
+    InputNoteState,
+    NoteFilter,
+    OutputNoteRecord,
+    OutputNoteState,
+    StoreError,
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::{Array, Promise};
@@ -17,9 +22,14 @@ use crate::promise::await_js;
 
 mod js_bindings;
 use js_bindings::{
-    idxdb_get_input_note_by_offset, idxdb_get_input_notes, idxdb_get_input_notes_from_ids,
-    idxdb_get_input_notes_from_nullifiers, idxdb_get_note_script, idxdb_get_output_notes,
-    idxdb_get_output_notes_from_ids, idxdb_get_output_notes_from_nullifiers,
+    idxdb_get_input_note_by_offset,
+    idxdb_get_input_notes,
+    idxdb_get_input_notes_from_ids,
+    idxdb_get_input_notes_from_nullifiers,
+    idxdb_get_note_script,
+    idxdb_get_output_notes,
+    idxdb_get_output_notes_from_ids,
+    idxdb_get_output_notes_from_nullifiers,
     idxdb_get_unspent_input_note_nullifiers,
 };
 
@@ -28,7 +38,9 @@ use models::{InputNoteIdxdbObject, NoteScriptIdxdbObject, OutputNoteIdxdbObject}
 
 pub(crate) mod utils;
 use utils::{
-    parse_input_note_idxdb_object, parse_note_script_idxdb_object, parse_output_note_idxdb_object,
+    parse_input_note_idxdb_object,
+    parse_note_script_idxdb_object,
+    parse_output_note_idxdb_object,
     upsert_input_note_tx,
 };
 

@@ -1,6 +1,8 @@
 use js_export_macro::js_export;
 use miden_client::account::{
-    AccountStorage as NativeAccountStorage, StorageSlotContent, StorageSlotName,
+    AccountStorage as NativeAccountStorage,
+    StorageSlotContent,
+    StorageSlotName,
 };
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
