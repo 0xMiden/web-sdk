@@ -407,10 +407,19 @@ class WebClient {
         this.loadedResolver = resolve;
       });
 
-      // Create a promise that resolves when the worker signals that it is fully initialized.
-      this.ready = new Promise((resolve) => {
+      // Create a promise that resolves when the worker signals that it is
+      // fully initialized, and rejects if initialization fails. Every
+      // worker-forwarded method awaits `ready` first, so an init failure must
+      // reject it — otherwise those calls would await a promise that never
+      // settles and hang forever.
+      this.ready = new Promise((resolve, reject) => {
         this.readyResolver = resolve;
+        this.readyRejecter = reject;
       });
+      // Init can fail before any caller awaits `ready`; this no-op handler
+      // suppresses the unhandledrejection event without consuming the
+      // rejection for real awaiters.
+      this.ready.catch(() => {});
 
       // Listen for messages from the worker.
       this.worker.addEventListener("message", async (event) => {
@@ -474,6 +483,21 @@ class WebClient {
           } else {
             resolve(result);
           }
+          return;
+        }
+
+        // An error with no request attached comes from worker initialization
+        // (INIT is the only requestId-less action that can fail). Reject
+        // `ready` so queued and future method calls fail with the real cause
+        // instead of awaiting forever.
+        if (error && !requestId) {
+          const workerError =
+            error instanceof Error ? error : deserializeError(error);
+          console.error(
+            "WebClient: worker initialization failed:",
+            workerError
+          );
+          this.readyRejecter(workerError);
         }
       });
 
