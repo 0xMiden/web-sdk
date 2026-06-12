@@ -116,6 +116,8 @@ struct BatchNoteTag {
     source_note_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_subscription_key: Option<String>,
 }
 
 /// Serializable representation of the TS `JsBatchUpdatePayload` interface.
@@ -628,15 +630,18 @@ impl IdxdbStore {
             .new_tags()
             .iter()
             .map(|tag_record| {
-                let (source_note_id, source_account_id) = match &tag_record.source {
-                    NoteTagSource::Note(note_id) => (Some(note_id.to_hex()), None),
-                    NoteTagSource::Account(acc_id) => (None, Some(acc_id.to_hex())),
-                    NoteTagSource::User => (None, None),
-                };
+                let (source_note_id, source_account_id, source_subscription_key) =
+                    match &tag_record.source {
+                        NoteTagSource::Note(note_id) => (Some(note_id.to_hex()), None, None),
+                        NoteTagSource::Account(acc_id) => (None, Some(acc_id.to_hex()), None),
+                        NoteTagSource::Subscription(key) => (None, None, Some(key.to_hex())),
+                        NoteTagSource::User => (None, None, None),
+                    };
                 BatchNoteTag {
                     tag: tag_record.tag.to_bytes(),
                     source_note_id,
                     source_account_id,
+                    source_subscription_key,
                 }
             })
             .collect();

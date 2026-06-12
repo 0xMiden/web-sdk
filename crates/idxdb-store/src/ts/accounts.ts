@@ -39,6 +39,7 @@ export async function getAllAccountHeaders(dbId: string) {
       locked: record.locked,
       committed: record.committed,
       accountCommitment: record.accountCommitment || "",
+      watched: record.watched ?? false,
     }));
 
     return resultObject;
@@ -68,6 +69,7 @@ export async function getAccountHeader(dbId: string, accountId: string) {
       codeRoot: record.codeRoot,
       accountSeed: seedToBase64(record.accountSeed),
       locked: record.locked,
+      watched: record.watched ?? false,
     };
   } catch (error) {
     logWebStoreError(
@@ -100,6 +102,7 @@ export async function getAccountHeaderByCommitment(
       codeRoot: record.codeRoot,
       accountSeed: seedToBase64(record.accountSeed),
       locked: record.locked,
+      watched: record.watched ?? false,
     };
   } catch (error) {
     logWebStoreError(
@@ -463,6 +466,7 @@ export async function applyTransactionDelta(
             accountSeed: oldHeader.accountSeed,
             accountCommitment: oldHeader.accountCommitment,
             locked: oldHeader.locked,
+            watched: oldHeader.watched ?? false,
           });
         }
 
@@ -476,6 +480,7 @@ export async function applyTransactionDelta(
           accountSeed: undefined,
           accountCommitment: commitment,
           locked: false,
+          watched: oldHeader?.watched ?? false,
         } as IAccount);
       }
     );
@@ -788,6 +793,7 @@ export async function applyFullAccountState(
             accountSeed: oldHeader.accountSeed,
             accountCommitment: oldHeader.accountCommitment,
             locked: oldHeader.locked,
+            watched: oldHeader.watched ?? false,
           });
         }
 
@@ -801,6 +807,7 @@ export async function applyFullAccountState(
           accountSeed,
           accountCommitment,
           locked: false,
+          watched: oldHeader?.watched ?? false,
         } as IAccount);
       }
     );
@@ -819,7 +826,8 @@ export async function upsertAccountRecord(
   nonce: string,
   committed: boolean,
   commitment: string,
-  accountSeed: Uint8Array | undefined
+  accountSeed: Uint8Array | undefined,
+  watched: boolean
 ) {
   try {
     const db = getDatabase(dbId);
@@ -833,6 +841,7 @@ export async function upsertAccountRecord(
       accountSeed,
       accountCommitment: commitment,
       locked: false,
+      watched,
     };
 
     await db.latestAccountHeaders.put(data as IAccount);

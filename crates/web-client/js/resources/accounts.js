@@ -2,7 +2,6 @@ import {
   resolveAccountRef,
   resolveStorageMode,
   resolveAuthScheme,
-  resolveAccountMutability,
   hashSeed,
 } from "../utils.js";
 
@@ -47,17 +46,11 @@ export class AccountsResource {
     ) {
       return await this.#createContract(opts, wasm);
     } else {
-      // Default: wallet (mutable or immutable based on type)
-      const mutable = resolveAccountMutability(opts?.type);
+      // Default: wallet
       const storageMode = resolveStorageMode(opts?.storage ?? "private", wasm);
       const authScheme = resolveAuthScheme(opts?.auth, wasm);
       const seed = opts?.seed ? await hashSeed(opts.seed) : undefined;
-      return await this.#inner.newWallet(
-        storageMode,
-        mutable,
-        authScheme,
-        seed
-      );
+      return await this.#inner.newWallet(storageMode, authScheme, seed);
     }
   }
 
@@ -67,9 +60,6 @@ export class AccountsResource {
     if (!opts.auth)
       throw new Error("Contract creation requires an 'auth' (AuthSecretKey)");
 
-    // The 0.15 protocol has no code-mutability distinction, so the `type`
-    // ("ImmutableContract" / "MutableContract") only steers routing here; the
-    // account's on-chain visibility is set entirely by `storageMode`.
     const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
     const authComponent =
       wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
@@ -183,10 +173,8 @@ export class AccountsResource {
     if (input.seed) {
       // Import public account from seed
       const authScheme = resolveAuthScheme(input.auth, wasm);
-      const mutable = resolveAccountMutability(input.type);
       return await this.#inner.importPublicAccountFromSeed(
         input.seed,
-        mutable,
         authScheme
       );
     }

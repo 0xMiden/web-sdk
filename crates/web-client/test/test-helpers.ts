@@ -49,7 +49,6 @@ export async function setupWalletAndFaucet(
 }> {
   const wallet = await client.newWallet(
     sdk.AccountStorageMode.private(),
-    true,
     sdk.AuthScheme.AuthRpoFalcon512
   );
   const faucet = await client.newFaucet(
@@ -725,12 +724,12 @@ function wrapClientForMidenClient(
       if (prop === "wasmWebClient") return target;
       if (prop === "proveBlock") return async () => target.proveBlock();
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, mutable, authScheme, normSeed ?? null);
+          return target.newWallet(mode, authScheme, normSeed ?? null);
         };
       }
       if (prop === "newFaucet") {

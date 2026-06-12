@@ -33,6 +33,7 @@ extern "C" {
         tag: Vec<u8>,
         source_note_id: Option<String>,
         source_account_id: Option<String>,
+        source_subscription_key: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyStateSync)]
@@ -46,6 +47,7 @@ extern "C" {
         tag: Vec<u8>,
         source_note_id: Option<String>,
         source_account_id: Option<String>,
+        source_subscription_key: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = discardTransactions)]

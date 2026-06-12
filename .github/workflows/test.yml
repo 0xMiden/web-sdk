@@ -15,14 +15,15 @@ env:
   RUST_CACHE_KEY: rust-cache-2026.02.18
   # Pin the miden-client version used for test infrastructure.
   # MUST match the miden-client + miden-protocol versions in Cargo.lock — the
-  # node-builder serves protos using the schema of this ref, and a mismatch
-  # against the client manifests as cryptic 'invalid wire type' decode errors
-  # on the client side (e.g. Digest fields encoded as bytes vs fixed64), or
-  # 'accept header validation failed' if the protocol version differs.
-  # The web-sdk's `next` branch tracks miden-client's `next` (0.15.0 series,
-  # no tagged release yet), so we pin to the exact commit pinned in Cargo.lock
-  # rather than a moving branch ref so cache keys stay stable.
-  MIDEN_CLIENT_REF: 733720a7ce5886a390c848402b61079be1e6aa38
+  # test node binaries are cargo-installed at the node rev pinned in this
+  # ref's Cargo.lock, and a schema mismatch against the client manifests as
+  # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
+  # fields encoded as bytes vs fixed64), or 'accept header validation failed'
+  # if the protocol version differs.
+  # Pinned to the commit of the miden-client v0.15.0 release tag, matching the
+  # miden-client 0.15.0 crates.io dep in Cargo.toml. A commit sha (not the tag
+  # name) keeps cache keys stable.
+  MIDEN_CLIENT_REF: 02a3212b001abad6192e6c8c0c7167076a75280e
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -589,9 +590,14 @@ jobs:
       - name: Build React SDK
         run: pnpm --filter @miden-sdk/react run build
 
-  # Build test infrastructure from miden-client repo
-  build-node-builder:
-    name: Build node-builder
+  # Build test infrastructure from miden-client repo. miden-client's
+  # scripts/start-test-node.sh cargo-installs the standalone node executables
+  # (miden-validator, miden-node, miden-ntx-builder, miden-remote-prover) at
+  # the node rev pinned in its Cargo.lock, and builds the gen-genesis fixture
+  # generator from its test-node-genesis crate. This job pre-builds both
+  # pieces so the consumer jobs only download and start them.
+  build-test-node:
+    name: Build test node
     runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes]
     if: needs.changes.outputs.non_docs == 'true'
@@ -603,62 +609,60 @@ jobs:
           ref: ${{ env.MIDEN_CLIENT_REF }}
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
-      - name: Restore node-builder binary
-        id: cache-node-builder
+      - name: Resolve node revision
+        id: node-rev
+        run: echo "rev=$(./scripts/start-test-node.sh --print-rev)" >> "$GITHUB_OUTPUT"
+      - name: Restore test node binaries
+        id: cache-test-node
         uses: actions/cache@v4
         with:
-          path: target/release/testing-node-builder
-          key: ${{ runner.os }}-node-builder-${{ env.MIDEN_CLIENT_REF }}-${{ hashFiles('Cargo.lock', 'crates/testing/node-builder/**/*') }}
-      - name: Install Rust
-        if: steps.cache-node-builder.outputs.cache-hit != 'true'
-        run: rustup update --no-self-update
-      - name: Build node-builder
-        if: steps.cache-node-builder.outputs.cache-hit != 'true'
-        run: cargo build --release --package node-builder --locked
-      - name: Upload node-builder binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: node-builder-binary
-          path: target/release/testing-node-builder
-
-  build-remote-prover:
-    name: Build remote-prover
-    runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes]
-    # Remote prover tests are slow (~14 min) and rarely affected by typical PR
-    # changes. Skip on PRs unless explicitly opted in via the
-    # 'run-remote-prover' label; always run on push to main/next.
-    # Also gated on `non_docs` so docs-only changes never trigger this.
-    if: |
-      needs.changes.outputs.non_docs == 'true' && (
-        github.event_name == 'push' ||
-        contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
-      )
-    steps:
-      - name: Checkout miden-client for test infra
-        uses: actions/checkout@v6
-        with:
-          repository: 0xMiden/miden-client
-          ref: ${{ env.MIDEN_CLIENT_REF }}
-      - name: Cleanup large tools for build space
-        uses: ./.github/actions/cleanup-runner
-      - name: Restore remote-prover binary
-        id: cache-remote-prover
+          path: target/test-node/install
+          key: ${{ runner.os }}-test-node-${{ steps.node-rev.outputs.rev }}
+      # Persistent cargo-install build dir so a node rev bump recompiles only
+      # the crates that changed; the restore-keys prefix seeds the incremental
+      # build from the previous rev.
+      - name: Restore test node build dir
+        if: steps.cache-test-node.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
-          path: target/release/testing-remote-prover
-          key: ${{ runner.os }}-prover-${{ env.MIDEN_CLIENT_REF }}-${{ hashFiles('Cargo.lock', 'crates/testing/prover/**/*') }}
+          path: target/test-node/build
+          key: ${{ runner.os }}-test-node-build-${{ steps.node-rev.outputs.rev }}
+          restore-keys: |
+            ${{ runner.os }}-test-node-build-
+      # Warm the cache consumed by every job that starts the node:
+      # start-test-node.sh unconditionally runs
+      # `cargo build --release -p test-node-genesis`, so the consumer jobs
+      # restore this target dir to make that build a near-no-op. Cargo does
+      # not mtime-check immutable registry sources, so the heavy dependency
+      # artifacts stay fresh across checkouts; only the small
+      # test-node-genesis crate itself recompiles.
+      - name: Restore gen-genesis build cache
+        id: cache-gen-genesis
+        uses: actions/cache@v4
+        with:
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Install Rust
-        if: steps.cache-remote-prover.outputs.cache-hit != 'true'
+        if: steps.cache-test-node.outputs.cache-hit != 'true' || steps.cache-gen-genesis.outputs.cache-hit != 'true'
         run: rustup update --no-self-update
-      - name: Build remote-prover
-        if: steps.cache-remote-prover.outputs.cache-hit != 'true'
-        run: cargo build --release --package testing-remote-prover --locked
-      - name: Upload remote-prover binary
+      - name: Build node binaries
+        if: steps.cache-test-node.outputs.cache-hit != 'true'
+        run: ./scripts/start-test-node.sh --install-only
+      - name: Build gen-genesis
+        if: steps.cache-gen-genesis.outputs.cache-hit != 'true'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+        run: cargo build --release -p test-node-genesis --bin gen-genesis
+      - name: Upload test node binaries
         uses: actions/upload-artifact@v4
         with:
-          name: remote-prover-binary
-          path: target/release/testing-remote-prover
+          name: test-node-artifact
+          # `.crates.toml` records the installed rev; start-test-node.sh reads
+          # it in the consumer jobs to confirm the downloaded binaries match
+          # the pinned rev (otherwise it would try to cargo-install them from
+          # scratch).
+          include-hidden-files: true
+          path: target/test-node/install
 
   test-web-client-nodejs:
     # Builds miden-client-web with --features nodejs (napi-rs binding) and
@@ -668,7 +672,7 @@ jobs:
     # before the split.
     name: Web client tests (Node.js)
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-node-builder]
+    needs: [build-test-node]
     env:
       SCCACHE_GHA_ENABLED: "true"
     steps:
@@ -721,20 +725,33 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Download node-builder binary
+      - name: Checkout miden-client for test node
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/miden-client
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+          path: miden-client
+      - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
-          name: node-builder-binary
-          path: ./bin
+          name: test-node-artifact
+          path: miden-client/target/test-node/install
+      - name: Restore test node permissions
+        run: chmod +x miden-client/target/test-node/install/bin/*
+      - name: Restore gen-genesis build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Start test node
-        # `sleep 4 && pgrep` only proves the process is alive, not that
-        # tonic's gRPC dispatcher is serving. The kernel completes TCP
-        # handshakes the moment TcpListener::bind() runs, but the actual
-        # `serve_with_incoming(...)` call happens seconds later — so a
-        # /dev/tcp probe would also race. The real signal is "the server
-        # responded with ANY HTTP status to a real POST" — see
-        # scripts/wait-for-grpc.sh.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
+        # start-test-node.sh builds gen-genesis (near-no-op with the restored
+        # cache), bootstraps a fresh genesis, launches the validator,
+        # sequencer, ntx-builder and tx prover, and only returns once the
+        # node RPC answers on 57291.
+        working-directory: miden-client
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+        run: ./scripts/start-test-node.sh --background
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -755,7 +772,7 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk exec playwright test --project=nodejs --workers=1
       - name: Stop test node
         if: always()
-        run: pkill -f testing-node-builder || true
+        run: ./miden-client/scripts/stop-test-node.sh
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -768,7 +785,7 @@ jobs:
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes, build-web-client-dist-folder, build-node-builder]
+    needs: [changes, build-web-client-dist-folder, build-test-node]
     if: needs.changes.outputs.non_docs == 'true'
     strategy:
       fail-fast: false
@@ -801,20 +818,33 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Download node-builder binary
+      - name: Checkout miden-client for test node
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/miden-client
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+          path: miden-client
+      - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
-          name: node-builder-binary
-          path: ./bin
+          name: test-node-artifact
+          path: miden-client/target/test-node/install
+      - name: Restore test node permissions
+        run: chmod +x miden-client/target/test-node/install/bin/*
+      - name: Restore gen-genesis build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Start test node
-        # `sleep 4 && pgrep` only proves the process is alive, not that
-        # tonic's gRPC dispatcher is serving. The kernel completes TCP
-        # handshakes the moment TcpListener::bind() runs, but the actual
-        # `serve_with_incoming(...)` call happens seconds later — so a
-        # /dev/tcp probe would also race. The real signal is "the server
-        # responded with ANY HTTP status to a real POST" — see
-        # scripts/wait-for-grpc.sh.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
+        # start-test-node.sh builds gen-genesis (near-no-op with the restored
+        # cache), bootstraps a fresh genesis, launches the validator,
+        # sequencer, ntx-builder and tx prover, and only returns once the
+        # node RPC answers on 57291.
+        working-directory: miden-client
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+        run: ./scripts/start-test-node.sh --background
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -833,14 +863,16 @@ jobs:
           if-no-files-found: ignore
       - name: Stop test node
         if: always()
-        run: pkill -f testing-node-builder || true
+        run: ./miden-client/scripts/stop-test-node.sh
 
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes, build-web-client-dist-folder, build-node-builder, build-remote-prover]
-    # Same opt-in rule as build-remote-prover. The job needs the prover binary,
-    # so it can only run when build-remote-prover ran too.
+    needs: [changes, build-web-client-dist-folder, build-test-node]
+    # Remote prover tests are slow (~14 min) and rarely affected by typical PR
+    # changes. Skip on PRs unless explicitly opted in via the
+    # 'run-remote-prover' label; always run on push to main/next.
+    # Also gated on `non_docs` so docs-only changes never trigger this.
     if: |
       needs.changes.outputs.non_docs == 'true' && (
         github.event_name == 'push' ||
@@ -870,29 +902,32 @@ jobs:
 
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Download node-builder binary
+      - name: Checkout miden-client for test node
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/miden-client
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+          path: miden-client
+      - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
-          name: node-builder-binary
-          path: ./bin
-      - name: Download remote-prover binary
-        uses: actions/download-artifact@v4
+          name: test-node-artifact
+          path: miden-client/target/test-node/install
+      - name: Restore test node permissions
+        run: chmod +x miden-client/target/test-node/install/bin/*
+      - name: Restore gen-genesis build cache
+        uses: actions/cache/restore@v4
         with:
-          name: remote-prover-binary
-          path: ./bin
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Start test node
-        # `sleep 4 && pgrep` only proves the process is alive, not that
-        # tonic's gRPC dispatcher is serving. The kernel completes TCP
-        # handshakes the moment TcpListener::bind() runs, but the actual
-        # `serve_with_incoming(...)` call happens seconds later — so a
-        # /dev/tcp probe would also race. The real signal is "the server
-        # responded with ANY HTTP status to a real POST" — see
-        # scripts/wait-for-grpc.sh.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
-      - name: Start prover
-        # Same gRPC probe as the node-builder above; remote-prover's
-        # `serve_with_incoming` window has the same race.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-remote-prover 50051
+        # start-test-node.sh launches the tx prover (miden-remote-prover on
+        # 50051) along with the validator, sequencer and ntx-builder, so no
+        # separate prover build or start step is needed.
+        working-directory: miden-client
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+        run: ./scripts/start-test-node.sh --background
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
@@ -901,10 +936,7 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci:remote_prover
       - name: Stop test node
         if: always()
-        run: pkill -f testing-node-builder || true
-      - name: Stop miden-prover
-        if: always()
-        run: pkill -f testing-remote-prover || true
+        run: ./miden-client/scripts/stop-test-node.sh
 
   # Publishes the aggregate Vitest line-coverage % to a JSON file on the
   # `badges` branch so shields.io can render a live badge in README.md.

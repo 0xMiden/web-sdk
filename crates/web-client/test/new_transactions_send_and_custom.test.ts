@@ -14,7 +14,6 @@ test.describe("send transaction tests", () => {
       const { wallet: sender, faucet } = await helpers.setupWalletAndFaucet();
       const target = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -54,7 +53,6 @@ test.describe("send transaction tests", () => {
       const { wallet: sender, faucet } = await helpers.setupWalletAndFaucet();
       const receiver = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -113,7 +111,6 @@ test.describe("custom transaction tests", () => {
     await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
@@ -308,7 +305,6 @@ test.describe("custom transaction tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
@@ -455,7 +451,6 @@ test.describe("custom transaction with multiple output notes", () => {
       const amount = sdk.u64(10);
       const target = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -525,7 +520,6 @@ test.describe("custom transaction with multiple output notes", () => {
       const amount = sdk.u64(10);
       const target = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

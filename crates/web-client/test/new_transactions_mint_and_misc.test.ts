@@ -585,7 +585,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
 
         const targetAccount = await client.newWallet(
           sdk.AccountStorageMode.private(),
-          false,
           sdk.AuthScheme.AuthRpoFalcon512
         );
 
@@ -710,7 +709,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
       const result = await run(async ({ client, sdk }) => {
         const senderAccount = await client.newWallet(
           sdk.AccountStorageMode.private(),
-          false,
           sdk.AuthScheme.AuthRpoFalcon512
         );
 

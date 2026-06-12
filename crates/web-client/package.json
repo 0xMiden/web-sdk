@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.15.0-alpha.7",
+  "version": "0.15.0",
   "description": "Miden Wasm SDK",
   "license": "MIT",
   "repository": {

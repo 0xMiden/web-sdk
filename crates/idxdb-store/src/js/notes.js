@@ -70,6 +70,32 @@ export async function getOutputNotesFromNullifiers(dbId, nullifiers) {
         logWebStoreError(err, "Failed to get output notes from nullifiers");
     }
 }
+export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitments) {
+    try {
+        const db = getDatabase(dbId);
+        let notes = await db.inputNotes
+            .where("detailsCommitment")
+            .anyOf(detailsCommitments)
+            .toArray();
+        return await processInputNotes(dbId, notes);
+    }
+    catch (err) {
+        logWebStoreError(err, "Failed to get input notes from details commitments");
+    }
+}
+export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitments) {
+    try {
+        const db = getDatabase(dbId);
+        let notes = await db.outputNotes
+            .where("detailsCommitment")
+            .anyOf(detailsCommitments)
+            .toArray();
+        return await processOutputNotes(notes);
+    }
+    catch (err) {
+        logWebStoreError(err, "Failed to get output notes from details commitments");
+    }
+}
 export async function getOutputNotesFromIds(dbId, noteIds) {
     try {
         const db = getDatabase(dbId);
@@ -87,7 +113,9 @@ export async function getUnspentInputNoteNullifiers(dbId) {
             .where("stateDiscriminant")
             .anyOf([2, 4, 5])
             .toArray();
-        return notes.map((note) => note.nullifier);
+        return notes
+            .map((note) => note.nullifier)
+            .filter((nullifier) => nullifier != null);
     }
     catch (err) {
         logWebStoreError(err, "Failed to get unspent input note nullifiers");
@@ -111,19 +139,15 @@ export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, a
     const doWork = async (t) => {
         try {
             const data = {
-                // The details commitment is the primary key. It is always present, even
-                // for partial notes lacking a noteId, so a partial note that later gains
-                // its noteId updates the same row instead of inserting a duplicate.
                 detailsCommitment,
-                // Convert null -> undefined so Dexie omits the noteId secondary index
-                // for partial notes that don't have one yet.
+                // noteId/nullifier are only known once the note's metadata is available.
                 noteId: noteId ?? undefined,
                 assets,
                 attachments,
                 serialNumber,
                 inputs,
                 scriptRoot,
-                nullifier,
+                nullifier: nullifier ?? undefined,
                 state,
                 stateDiscriminant,
                 serializedCreatedAt,
@@ -208,11 +232,12 @@ export async function getInputNoteByOffset(dbId, states, consumerAccountId, bloc
         logWebStoreError(err, "Failed to get input note by offset");
     }
 }
-export async function upsertOutputNote(dbId, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
+export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, attachments, recipientDigest, metadata, nullifier, expectedHeight, stateDiscriminant, state, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
             const data = {
+                detailsCommitment,
                 noteId,
                 assets,
                 attachments,
@@ -227,7 +252,7 @@ export async function upsertOutputNote(dbId, noteId, assets, attachments, recipi
             /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
         }
         catch (error) {
-            logWebStoreError(error, `Error inserting note: ${noteId}`);
+            logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
             throw error;
         }
     };
@@ -239,7 +264,6 @@ async function processInputNotes(dbId, notes) {
     const db = getDatabase(dbId);
     return await Promise.all(notes.map(async (note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
-        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
         const inputsBase64 = uint8ArrayToBase64(note.inputs);
         let serializedNoteScriptBase64 = undefined;
@@ -250,30 +274,31 @@ async function processInputNotes(dbId, notes) {
             }
         }
         const stateBase64 = uint8ArrayToBase64(note.state);
+        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
             assets: assetsBase64,
-            attachments: attachmentsBase64,
             serialNumber: serialNumberBase64,
             inputs: inputsBase64,
             createdAt: note.serializedCreatedAt,
             serializedNoteScript: serializedNoteScriptBase64,
             state: stateBase64,
+            attachments: attachmentsBase64,
         };
     }));
 }
 async function processOutputNotes(notes) {
     return await Promise.all(notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
-        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         const metadataBase64 = uint8ArrayToBase64(note.metadata);
         const stateBase64 = uint8ArrayToBase64(note.state);
+        const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
         return {
             assets: assetsBase64,
-            attachments: attachmentsBase64,
             recipientDigest: note.recipientDigest,
             metadata: metadataBase64,
             expectedHeight: note.expectedHeight,
             state: stateBase64,
+            attachments: attachmentsBase64,
         };
     }));
 }

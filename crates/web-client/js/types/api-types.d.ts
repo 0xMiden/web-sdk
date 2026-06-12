@@ -135,26 +135,21 @@ export type Linking = "dynamic" | "static";
 export type AccountType = (typeof AccountType)[keyof typeof AccountType];
 
 /**
- * Account type constants with numeric values matching the WASM `AccountType` enum.
- * Includes SDK-friendly aliases (e.g. `MutableWallet`) that map to the same
- * numeric values. These values work with both `accounts.create()` and the
- * low-level `AccountBuilder.accountType()`.
+ * Faucet-kind selectors for `accounts.create({ type })`.
+ *
+ * These are NOT the low-level WASM `AccountType` enum. As of protocol 0.15 that
+ * enum encodes only account visibility (`Private` / `Public`), which the
+ * low-level builder sets via `AccountBuilder.storageMode()`. Wallets and
+ * contracts are not selected by a `type` value: a wallet is the default, and a
+ * contract is any `accounts.create()` call that passes `components`.
  */
 export declare const AccountType: {
-  // WASM-compatible values
   readonly FungibleFaucet: 0;
   readonly NonFungibleFaucet: 1;
-  readonly RegularAccountImmutableCode: 2;
-  readonly RegularAccountUpdatableCode: 3;
-  // SDK-friendly aliases
-  readonly MutableWallet: 3;
-  readonly ImmutableWallet: 2;
-  readonly ImmutableContract: 2;
-  readonly MutableContract: 3;
 };
 
 /** Union of valid AccountType numeric values. */
-export type AccountTypeValue = 0 | 1 | 2 | 3;
+export type AccountTypeValue = 0 | 1;
 
 // ════════════════════════════════════════════════════════════════
 // Client options
@@ -243,15 +238,16 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 // Account types
 // ════════════════════════════════════════════════════════════════
 
-/** Create a wallet, faucet, or contract. Discriminated by `type` field. */
+/**
+ * Create a wallet, faucet, or contract. A faucet sets `type`, a contract
+ * passes `components`, and a wallet is the default (neither).
+ */
 export type CreateAccountOptions =
   | WalletCreateOptions
   | FaucetCreateOptions
   | ContractCreateOptions;
 
 export interface WalletCreateOptions {
-  /** Account type. Defaults to `AccountType.MutableWallet`. */
-  type?: AccountTypeValue;
   storage?: StorageMode;
   auth?: AuthSchemeType;
   seed?: string | Uint8Array;
@@ -270,8 +266,6 @@ export interface FaucetCreateOptions {
 }
 
 export interface ContractCreateOptions {
-  /** Use `AccountType.ImmutableContract` or `AccountType.MutableContract`. */
-  type?: AccountTypeValue;
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
   /** Auth secret key. Required. */
@@ -295,15 +289,13 @@ export interface AccountDetails {
  *
  * - `AccountRef` (string, AccountId, Account, AccountHeader) — Import a public account by ID (fetches state from the network).
  * - `{ file: AccountFile }` — Import from a previously exported account file (works for both public and private accounts).
- * - `{ seed, type?, auth? }` — Reconstruct a **public** account from its init seed. **Does not work for private accounts** — use the account file workflow instead.
+ * - `{ seed, auth? }` — Reconstruct a **public** account from its init seed. **Does not work for private accounts** — use the account file workflow instead.
  */
 export type ImportAccountInput =
   | AccountRef
   | { file: AccountFile }
   | {
       seed: Uint8Array;
-      /** Account type. Defaults to `AccountType.MutableWallet`. */
-      type?: AccountTypeValue;
       auth?: AuthSchemeType;
     };
 
@@ -696,10 +688,11 @@ export interface BuildSwapTagOptions {
 
 export interface AccountsResource {
   /**
-   * Create a new wallet, faucet, or contract account. Defaults to a mutable
-   * wallet if no options are provided.
+   * Create a new wallet, faucet, or contract account. Defaults to a wallet
+   * if no options are provided.
    *
-   * @param options - Account creation options discriminated by `type` field.
+   * @param options - Account creation options. A faucet sets `type`, a
+   * contract passes `components`, and a wallet is the default.
    */
   create(options?: CreateAccountOptions): Promise<Account>;
   /**

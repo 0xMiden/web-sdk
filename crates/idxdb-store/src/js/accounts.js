@@ -29,6 +29,7 @@ export async function getAllAccountHeaders(dbId) {
             locked: record.locked,
             committed: record.committed,
             accountCommitment: record.accountCommitment || "",
+            watched: record.watched ?? false,
         }));
         return resultObject;
     }
@@ -55,6 +56,7 @@ export async function getAccountHeader(dbId, accountId) {
             codeRoot: record.codeRoot,
             accountSeed: seedToBase64(record.accountSeed),
             locked: record.locked,
+            watched: record.watched ?? false,
         };
     }
     catch (error) {
@@ -79,6 +81,7 @@ export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
             codeRoot: record.codeRoot,
             accountSeed: seedToBase64(record.accountSeed),
             locked: record.locked,
+            watched: record.watched ?? false,
         };
     }
     catch (error) {
@@ -362,6 +365,7 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                     accountSeed: oldHeader.accountSeed,
                     accountCommitment: oldHeader.accountCommitment,
                     locked: oldHeader.locked,
+                    watched: oldHeader.watched ?? false,
                 });
             }
             await db.latestAccountHeaders.put({
@@ -374,6 +378,7 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                 accountSeed: undefined,
                 accountCommitment: commitment,
                 locked: false,
+                watched: oldHeader?.watched ?? false,
             });
         });
     }
@@ -599,6 +604,7 @@ export async function applyFullAccountState(dbId, accountState) {
                     accountSeed: oldHeader.accountSeed,
                     accountCommitment: oldHeader.accountCommitment,
                     locked: oldHeader.locked,
+                    watched: oldHeader.watched ?? false,
                 });
             }
             await db.latestAccountHeaders.put({
@@ -611,6 +617,7 @@ export async function applyFullAccountState(dbId, accountState) {
                 accountSeed,
                 accountCommitment,
                 locked: false,
+                watched: oldHeader?.watched ?? false,
             });
         });
     }
@@ -619,7 +626,7 @@ export async function applyFullAccountState(dbId, accountState) {
         throw error;
     }
 }
-export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed) {
+export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed, watched) {
     try {
         const db = getDatabase(dbId);
         const data = {
@@ -632,6 +639,7 @@ export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot
             accountSeed,
             accountCommitment: commitment,
             locked: false,
+            watched,
         };
         await db.latestAccountHeaders.put(data);
     }

@@ -9,7 +9,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -45,7 +44,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.public(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -81,7 +79,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -117,7 +114,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.public(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -297,7 +293,6 @@ test.describe("AccountStorage.getMapEntries tests", () => {
 
       const account = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

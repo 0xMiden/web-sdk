@@ -173,15 +173,20 @@ export async function applyTransactionBatch(dbId, payloads) {
                 const tagBase64 = uint8ArrayToBase64(tagArray);
                 const sourceNoteId = tagEntry.sourceNoteId ?? "";
                 const sourceAccountId = tagEntry.sourceAccountId ?? "";
-                // Check for existing tag to avoid duplicates (mirrors the Rust add_note_tag logic)
+                const sourceSubscriptionKey = tagEntry.sourceSubscriptionKey ?? "";
+                // Check for existing tag to avoid duplicates (mirrors the Rust add_note_tag logic).
+                // sourceSubscriptionKey is unindexed, so filter on it in memory — distinct
+                // subscriptions may share a tag and must remain separate rows.
                 const existing = await db.tags
                     .where({ tag: tagBase64, sourceNoteId, sourceAccountId })
+                    .filter((t) => (t.sourceSubscriptionKey ?? "") === sourceSubscriptionKey)
                     .first();
                 if (!existing) {
                     await db.tags.add({
                         tag: tagBase64,
                         sourceNoteId,
                         sourceAccountId,
+                        sourceSubscriptionKey,
                     });
                 }
             }

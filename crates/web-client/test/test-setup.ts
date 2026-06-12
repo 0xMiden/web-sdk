@@ -12,7 +12,7 @@
  *   test("creates a wallet", async ({ run }) => {
  *     const result = await run(async ({ client, sdk }) => {
  *       const wallet = await client.newWallet(
- *         sdk.AccountStorageMode.private(), true, sdk.AuthScheme.AuthRpoFalcon512
+ *         sdk.AccountStorageMode.private(), sdk.AuthScheme.AuthRpoFalcon512
  *       );
  *       return { id: wallet.id().toString() };
  *     });
@@ -187,17 +187,12 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
         };
       }
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          const result = target.newWallet(
-            mode,
-            mutable,
-            authScheme,
-            normSeed ?? null
-          );
+          const result = target.newWallet(mode, authScheme, normSeed ?? null);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
           }
@@ -478,7 +473,6 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const c = window.client;
           const wallet = await c.newWallet(
             window.AccountStorageMode.private(),
-            true,
             window.AuthScheme.AuthRpoFalcon512
           );
           const faucet = await c.newFaucet(
