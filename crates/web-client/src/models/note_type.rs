@@ -7,13 +7,13 @@ use miden_client::note::NoteType as NativeNoteType;
 #[repr(u8)]
 pub enum NoteType {
     /// Notes with this type have only their hash published to the network.
-    Private = 0b10,
+    Private = 0,
 
     /// Notes with this type are fully shared with the network.
-    Public = 0b01,
+    Public = 1,
 }
 
-// Compile-time check to keep enum values aligned.
+// Compile-time check to keep enum values aligned with `miden_client::note::NoteType`.
 const _: () = {
     assert!(NativeNoteType::Private as u8 == NoteType::Private as u8);
     assert!(NativeNoteType::Public as u8 == NoteType::Public as u8);
