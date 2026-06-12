@@ -259,7 +259,7 @@ test.describe("export and import note", () => {
             account2.id(),
             new window.NoteAssets([]),
             window.NoteType.Public,
-            undefined
+            new window.NoteAttachment()
           );
           return window.NoteFile.fromOutputNote(
             window.OutputNote.full(p2IdNote)

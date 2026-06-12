@@ -34,7 +34,7 @@ test("transport basic", async ({ run }) => {
       recipientAccount.id(),
       noteAssets,
       sdk.NoteType.Private,
-      undefined
+      new sdk.NoteAttachment()
     );
 
     // No notes before sending

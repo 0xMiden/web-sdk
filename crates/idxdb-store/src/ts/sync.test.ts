@@ -737,6 +737,7 @@ describe("sync", () => {
           blockNum: 5,
           serializedOutputNotes: [
             {
+              detailsCommitment: "commitment-out-1",
               noteId: "out-note-1",
               noteAssets: new Uint8Array([0x01, 0x02]),
               attachments: new Uint8Array([0x00]),
@@ -771,6 +772,7 @@ describe("sync", () => {
           blockNum: 5,
           serializedOutputNotes: [
             {
+              detailsCommitment: "commitment-out-a",
               noteId: "out-a",
               noteAssets: new Uint8Array([0x01]),
               attachments: new Uint8Array([0x00]),
@@ -782,6 +784,7 @@ describe("sync", () => {
               state: new Uint8Array([0x03]),
             },
             {
+              detailsCommitment: "commitment-out-b",
               noteId: "out-b",
               noteAssets: new Uint8Array([0x04]),
               attachments: new Uint8Array([0x00]),

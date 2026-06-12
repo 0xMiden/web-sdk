@@ -134,7 +134,7 @@ describe("useMultiSend", () => {
         expect.anything(),
         expect.anything(),
         NoteType.Private,
-        undefined
+        expect.anything()
       );
     });
 
@@ -173,7 +173,7 @@ describe("useMultiSend", () => {
         expect.anything(),
         expect.anything(),
         NoteType.Public,
-        undefined
+        expect.anything()
       );
       expect(mockClient.sendPrivateNote).not.toHaveBeenCalled();
     });

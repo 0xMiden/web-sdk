@@ -21,7 +21,6 @@ function makeWasm(overrides = {}) {
     AccountStorageMode: {
       public: vi.fn().mockReturnValue("public"),
       private: vi.fn().mockReturnValue("private"),
-      network: vi.fn().mockReturnValue("network"),
     },
     AuthScheme: {
       AuthEcdsaK256Keccak: 1,

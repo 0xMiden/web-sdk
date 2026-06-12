@@ -29,7 +29,6 @@ function makeWasm(overrides = {}) {
     AccountStorageMode: {
       public: vi.fn().mockReturnValue("StorageModePublic"),
       private: vi.fn().mockReturnValue("StorageModePrivate"),
-      network: vi.fn().mockReturnValue("StorageModeNetwork"),
     },
     AuthScheme: {
       AuthEcdsaK256Keccak: 1,
@@ -182,9 +181,10 @@ describe("resolveStorageMode", () => {
     expect(wasm.AccountStorageMode.public).toHaveBeenCalled();
   });
 
-  it("returns network storage mode", () => {
-    expect(resolveStorageMode("network", wasm)).toBe("StorageModeNetwork");
-    expect(wasm.AccountStorageMode.network).toHaveBeenCalled();
+  it("throws for the removed network mode", () => {
+    expect(() => resolveStorageMode("network", wasm)).toThrow(
+      'Unknown storage mode: "network"'
+    );
   });
 
   it("returns private storage mode for 'private'", () => {

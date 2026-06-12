@@ -1139,7 +1139,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
         targetId,
         noteAssets,
         sdk.NoteType.Public,
-        undefined
+        new sdk.NoteAttachment()
       );
 
       let ownNotes;
@@ -1331,7 +1331,7 @@ test.describe("createP2IDNote and createP2IDENote", () => {
         null,
         null,
         sdk.NoteType.Public,
-        undefined
+        new sdk.NoteAttachment()
       );
 
       let ownNotes;
