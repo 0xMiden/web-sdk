@@ -176,9 +176,11 @@ export interface ITransactionScript {
 }
 
 export interface IInputNote {
-  noteId: string;
+  detailsCommitment: string;
+  noteId?: string;
   stateDiscriminant: number;
   assets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   scriptRoot: string;
@@ -194,6 +196,7 @@ export interface IOutputNote {
   noteId: string;
   recipientDigest: string;
   assets: Uint8Array;
+  attachments: Uint8Array;
   metadata: Uint8Array;
   stateDiscriminant: number;
   nullifier?: string;
@@ -309,6 +312,7 @@ const V1_STORES: Record<string, string> = {
   [Table.Transactions]: indexes("id", "statusVariant"),
   [Table.TransactionScripts]: indexes("scriptRoot"),
   [Table.InputNotes]: indexes(
+    "detailsCommitment",
     "noteId",
     "nullifier",
     "stateDiscriminant",

@@ -1,16 +1,19 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::component::{
-    AccountComponent as NativeAccountComponent, AccountComponentMetadata,
+    AccountComponent as NativeAccountComponent,
+    AccountComponentMetadata,
 };
 use miden_client::account::{
-    AccountComponentCode as NativeAccountComponentCode, AccountType,
+    AccountComponentCode as NativeAccountComponentCode,
     StorageSlot as NativeStorageSlot,
 };
 use miden_client::assembly::{Library as NativeLibrary, MastNodeExt};
 use miden_client::auth::{
-    AuthSchemeId as NativeAuthSchemeId, AuthSecretKey as NativeSecretKey,
-    AuthSingleSig as NativeSingleSig, PublicKeyCommitment,
+    AuthSchemeId as NativeAuthSchemeId,
+    AuthSecretKey as NativeSecretKey,
+    AuthSingleSig as NativeSingleSig,
+    PublicKeyCommitment,
 };
 use miden_client::vm::Package as NativePackage;
 
@@ -79,19 +82,24 @@ impl AccountComponent {
         NativeAccountComponent::new(
             native_account_code,
             native_slots,
-            AccountComponentMetadata::new("custom", AccountType::all()),
+            AccountComponentMetadata::new("custom"),
         )
         .map(AccountComponent)
         .map_err(|e| js_error_with_context(e, "Failed to compile account component"))
     }
 
     /// Marks the component as supporting all account types.
+    ///
+    /// The 0.15 protocol collapsed the per-account-type flag set on
+    /// `AccountComponentMetadata::new` — every component now applies to every account type
+    /// implicitly, so this method's job is to re-derive the metadata under the new
+    /// (name-only) constructor while keeping the JS API surface stable.
     #[js_export(js_name = "withSupportsAllTypes")]
     pub fn with_supports_all_types(&self) -> Self {
         let code = self.0.component_code().clone();
         let slots = self.0.storage_slots().to_vec();
         let name = self.0.metadata().name();
-        let metadata = AccountComponentMetadata::new(name, AccountType::all());
+        let metadata = AccountComponentMetadata::new(name);
         AccountComponent(
             NativeAccountComponent::new(code, slots, metadata)
                 .expect("reconstructing component with updated metadata should not fail"),
@@ -197,7 +205,7 @@ impl AccountComponent {
         NativeAccountComponent::new(
             native_library,
             native_slots,
-            AccountComponentMetadata::new("custom", AccountType::all()),
+            AccountComponentMetadata::new("custom"),
         )
         .map(AccountComponent)
         .map_err(|e| js_error_with_context(e, "Failed to create account component from package"))
@@ -216,7 +224,7 @@ impl AccountComponent {
         NativeAccountComponent::new(
             native_library,
             native_slots,
-            AccountComponentMetadata::new("custom", AccountType::all()),
+            AccountComponentMetadata::new("custom"),
         )
         .map(AccountComponent)
         .map_err(|e| js_error_with_context(e, "Failed to create account component from library"))

@@ -102,16 +102,20 @@ export type NoteVisibility = "public" | "private";
 
 /**
  * User-friendly storage mode constants.
- * Use `StorageMode.Public`, `StorageMode.Private`, or `StorageMode.Network` instead of raw strings.
+ * Use `StorageMode.Public` or `StorageMode.Private` instead of raw strings.
+ *
+ * The `"network"` storage mode was removed in the migration to miden-client
+ * PR #2214 — the 0.15 protocol surface no longer has a separate
+ * network-account flag (network execution is now driven by the calling
+ * surface, not the account's storage mode).
  */
 export declare const StorageMode: {
   readonly Public: "public";
   readonly Private: "private";
-  readonly Network: "network";
 };
 
 /** Union of valid StorageMode string values. */
-export type StorageMode = "public" | "private" | "network";
+export type StorageMode = "public" | "private";
 
 /**
  * Library linking mode for script compilation.
@@ -195,6 +199,21 @@ export interface ClientOptions {
     insertKey: InsertKeyCallback;
     sign: SignCallback;
   };
+  /**
+   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Defaults to `true` — leave it that way in browsers/extensions so the UI
+   * stays responsive while WASM is busy.
+   *
+   * Set to `false` when:
+   * - You pass a `CallbackProver` via `TransactionProver.newCallbackProver(jsFn)`.
+   *   The worker boundary serializes the prover with `TransactionProver.serialize()`,
+   *   which has no encoding for the callback variant and silently downgrades
+   *   to `"local"` — your callback would never fire.
+   * - You're embedding the client in a single-WebView native shell (iOS/Android
+   *   Capacitor host, Tauri, Electron preload), where the UI thread isn't
+   *   competing with the WASM thread anyway.
+   */
+  useWorker?: boolean;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -830,8 +849,13 @@ export interface NotesResource {
    * Import a note from a {@link NoteFile}.
    *
    * @param noteFile - The note file to import.
+   * @returns The imported note's id (hex) when the file carries metadata (a
+   *   note id or a full note with proof); for a details-only file, which has no
+   *   note id yet, the note's details commitment (hex) is returned instead.
+   *   In both cases the value is a hex string, not a `NoteId` object — pass it
+   *   to {@link NoteId.fromHex} if a `NoteId` instance is required.
    */
-  import(noteFile: NoteFile): Promise<NoteId>;
+  import(noteFile: NoteFile): Promise<string>;
   /**
    * Export a note to a {@link NoteFile} for transfer or backup.
    *
@@ -1012,6 +1036,15 @@ export declare class MidenClient {
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
   static createMock(options?: MockOptions): Promise<MidenClient>;
+  /**
+   * Resolves once the WASM module is initialized and safe to use.
+   *
+   * Idempotent and shared across callers — concurrent invocations await the
+   * same in-flight promise, and post-init callers resolve immediately.
+   * Primarily useful on the `/lazy` entry (Next.js / Capacitor) where no
+   * top-level await runs at import time; harmless on the eager entry.
+   */
+  static ready(): Promise<void>;
 
   readonly accounts: AccountsResource;
   readonly transactions: TransactionsResource;
@@ -1021,10 +1054,43 @@ export declare class MidenClient {
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
 
-  /** Syncs the client state with the Miden node. */
-  sync(options?: { timeout?: number }): Promise<SyncSummary>;
+  /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
+  sync(): Promise<SyncSummary>;
+  /** Syncs on-chain state only (no NTL fetch). */
+  syncChain(): Promise<SyncSummary>;
+  /** Fetches private notes from the Note Transport Layer. */
+  syncNoteTransport(): Promise<void>;
   /** Returns the current sync height. */
   getSyncHeight(): Promise<number>;
+  /**
+   * Resolves once every serialized WASM call that was already on the
+   * internal call chain when `waitForIdle()` was called (execute, submit,
+   * prove, apply, sync, or account creation) has settled. Use this from
+   * callers that need to perform a non-WASM-side action — e.g. clearing
+   * an in-memory auth key on wallet lock — after the kernel finishes, so
+   * its auth callback doesn't race with the key being cleared. Does NOT
+   * wait for calls enqueued after `waitForIdle()` returns.
+   *
+   * Caveat for `sync`: a `syncState` blocked on its sync lock (Web
+   * Locks) has not yet reached the internal chain, so `waitForIdle`
+   * does not await it. Other serialized methods are always observed.
+   *
+   * Returns immediately if nothing was in flight.
+   */
+  waitForIdle(): Promise<void>;
+  /**
+   * Returns the raw JS value that the most recent sign-callback invocation
+   * threw, or `null` if the last sign call succeeded (or no call has
+   * happened yet). Useful for recovering structured metadata (e.g. a
+   * `reason: 'locked'` property) that the kernel-level `auth::request`
+   * diagnostic would otherwise erase.
+   *
+   * Meaningful only with `useWorker: false` (the worker shim's keystore
+   * lives in the worker WASM instance, so this reads `null` there). On
+   * the Node.js binding it always returns `null` — signing goes through
+   * the filesystem keystore, never a JS callback.
+   */
+  lastAuthError(): unknown;
   /** Returns the client-level default prover. */
   readonly defaultProver: TransactionProver | null;
   /** Terminates the underlying Web Worker. After this, all method calls throw. */

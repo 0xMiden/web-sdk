@@ -1,8 +1,11 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{
-    AccountVaultDelta as NativeAccountVaultDelta, AssetVaultKey,
-    FungibleAsset as NativeFungibleAsset, FungibleAssetDelta as NativeFungibleAssetDelta,
+    AccountVaultDelta as NativeAccountVaultDelta,
+    AssetCallbackFlag,
+    AssetVaultKey,
+    FungibleAsset as NativeFungibleAsset,
+    FungibleAssetDelta as NativeFungibleAssetDelta,
 };
 
 use crate::models::account_id::AccountId;
@@ -136,10 +139,13 @@ impl FungibleAssetDelta {
     }
 
     /// Returns the delta amount for a given faucet, if present.
+    ///
+    /// The vault key here is the one used by the fungible-delta tree, which the upstream
+    /// surface keys with `AssetCallbackFlag::Disabled` — fungible balance deltas don't run
+    /// asset callbacks. `new_fungible` on the 0.15 surface is infallible.
     pub fn amount(&self, faucet_id: &AccountId) -> Option<i64> {
         let native_faucet_id: NativeAccountId = faucet_id.into();
-        let vault_key = AssetVaultKey::new_fungible(native_faucet_id)
-            .expect("faucet_id should be a fungible faucet");
+        let vault_key = AssetVaultKey::new_fungible(native_faucet_id, AssetCallbackFlag::Disabled);
         self.0.amount(&vault_key)
     }
 

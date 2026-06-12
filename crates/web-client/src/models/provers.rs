@@ -1,3 +1,5 @@
+use alloc::format;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::time::Duration;
 
@@ -6,6 +8,16 @@ use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
     LocalTransactionProver, ProvingOptions, TransactionProver as TransactionProverTrait,
 };
+#[cfg(feature = "browser")]
+use miden_client::transaction::{ProvenTransaction, TransactionInputs, TransactionProverError};
+#[cfg(feature = "browser")]
+use miden_client::utils::{Deserializable, Serializable};
+#[cfg(feature = "browser")]
+use wasm_bindgen::prelude::*;
+#[cfg(feature = "browser")]
+use wasm_bindgen_futures::JsFuture;
+#[cfg(feature = "browser")]
+use wasm_bindgen_futures::js_sys::{Function, Promise, Uint8Array};
 
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64};
 
@@ -142,3 +154,108 @@ impl From<Arc<dyn TransactionProverTrait + Send + Sync>> for TransactionProver {
 }
 
 impl_napi_from_value!(TransactionProver);
+
+// ────────────────────────────────────────────────────────────────────────
+// JsCallbackTransactionProver — delegates prove() to a JS function.
+// ────────────────────────────────────────────────────────────────────────
+//
+// Browser-only: the callback is a `js_sys::Function`, which has no napi
+// representation — the Node.js binding gets local/remote provers only.
+
+/// Browser-only constructors that cannot go through `js_export` because
+/// their parameter types exist only in the wasm-bindgen world.
+#[cfg(feature = "browser")]
+#[wasm_bindgen]
+impl TransactionProver {
+    /// Creates a prover that delegates `prove()` to a JavaScript callback.
+    ///
+    /// The callback receives the serialized [`TransactionInputs`] as a
+    /// `Uint8Array` and must return a `Promise<Uint8Array>` resolving to a
+    /// serialized [`ProvenTransaction`] (same encoding the gRPC remote
+    /// prover uses: `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes`
+    /// out).
+    ///
+    /// Use case: routing prove to a native iOS / Android plugin
+    /// (`@miden/native-prover`) so mobile builds skip WASM prove entirely
+    /// — `WKWebView` can't be made cross-origin-isolated reliably and the
+    /// MT WASM bundle can't instantiate without `SharedArrayBuffer`, so the
+    /// host wraps a native Rust prover (built with the same `miden_tx`
+    /// crate) and exposes a JS-shaped callback over the Capacitor bridge.
+    ///
+    /// The SDK does NOT serialize the prover for persistence across
+    /// reloads (unlike `newRemoteProver`), since the callback is a
+    /// runtime JS reference. Hosts must recreate the prover on every
+    /// page load.
+    #[wasm_bindgen(js_name = "newCallbackProver")]
+    pub fn new_callback_prover(callback: Function) -> TransactionProver {
+        let prover = JsCallbackTransactionProver { callback };
+        TransactionProver {
+            prover: Arc::new(prover),
+            endpoint: None,
+            timeout: None,
+        }
+    }
+}
+
+/// [`TransactionProverTrait`] adapter that dispatches `prove()` to a JS
+/// callback returning a `Promise<Uint8Array>`. See
+/// [`TransactionProver::newCallbackProver`].
+#[cfg(feature = "browser")]
+pub(crate) struct JsCallbackTransactionProver {
+    callback: Function,
+}
+
+// `Function` / `JsValue` are not `Send`/`Sync`, but the SDK only runs on
+// the single-threaded WASM main context. Mirrors the same pattern
+// `WebKeyStore`'s `JsCallbacks` uses for its own JS-held callbacks.
+#[cfg(feature = "browser")]
+unsafe impl Send for JsCallbackTransactionProver {}
+#[cfg(feature = "browser")]
+unsafe impl Sync for JsCallbackTransactionProver {}
+
+#[cfg(feature = "browser")]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl TransactionProverTrait for JsCallbackTransactionProver {
+    async fn prove(
+        &self,
+        tx_inputs: TransactionInputs,
+    ) -> Result<ProvenTransaction, TransactionProverError> {
+        // Wire format matches the existing gRPC `RemoteTransactionProver`:
+        // `tx_inputs.to_bytes()` in, `ProvenTransaction::read_from_bytes(..)`
+        // out. Keeping these identical means a native prover plugin can be
+        // re-used unchanged behind either dispatcher.
+        let serialized = tx_inputs.to_bytes();
+        let input_arr = Uint8Array::from(serialized.as_slice());
+
+        let call_result =
+            self.callback.call1(&JsValue::NULL, &input_arr.into()).map_err(|err| {
+                TransactionProverError::other(format!(
+                    "callback prover threw at invocation: {err:?}"
+                ))
+            })?;
+
+        let resolved = if let Some(promise) = call_result.dyn_ref::<Promise>() {
+            JsFuture::from(promise.clone()).await.map_err(|err| {
+                TransactionProverError::other(format!("callback prover promise rejected: {err:?}"))
+            })?
+        } else {
+            call_result
+        };
+
+        let bytes = resolved
+            .dyn_ref::<Uint8Array>()
+            .ok_or_else(|| {
+                TransactionProverError::other(
+                    "callback prover must resolve to Uint8Array".to_string(),
+                )
+            })?
+            .to_vec();
+
+        ProvenTransaction::read_from_bytes(&bytes).map_err(|err| {
+            TransactionProverError::other(format!(
+                "callback prover returned undecodable ProvenTransaction: {err:?}"
+            ))
+        })
+    }
+}

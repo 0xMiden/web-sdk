@@ -1,9 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::{
-    Account as NativeAccount, AccountInterfaceExt, AccountType as NativeAccountType,
-};
-use miden_client::transaction::AccountInterface;
+use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
+use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -68,22 +66,20 @@ impl Account {
         self.0.code().into()
     }
 
-    /// Returns true if the account is a faucet.
+    // Faucet-ness is encoded in the account's code, so it is derived from the
+    // account's component interface rather than from its `AccountId`.
+
+    /// Returns true if the account exposes a fungible-faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
-        self.0.is_faucet()
+        let interface = AccountInterface::from_account(&self.0);
+        interface.components().contains(&AccountComponentInterface::FungibleFaucet)
     }
 
-    /// Returns true if the account is a regular account (immutable or updatable code).
+    /// Returns true if the account is a regular (non-faucet) account.
     #[js_export(js_name = "isRegularAccount")]
     pub fn is_regular_account(&self) -> bool {
-        self.0.is_regular_account()
-    }
-
-    /// Returns true if the account can update its code.
-    #[js_export(js_name = "isUpdatable")]
-    pub fn is_updatable(&self) -> bool {
-        matches!(self.0.account_type(), NativeAccountType::RegularAccountUpdatableCode)
+        !self.is_faucet()
     }
 
     /// Returns true if the account exposes public storage.
@@ -96,12 +92,6 @@ impl Account {
     #[js_export(js_name = "isPrivate")]
     pub fn is_private(&self) -> bool {
         self.0.is_private()
-    }
-
-    /// Returns true if this is a network-owned account.
-    #[js_export(js_name = "isNetwork")]
-    pub fn is_network(&self) -> bool {
-        self.0.is_network()
     }
 
     /// Returns true if the account has not yet been committed to the chain.

@@ -4,6 +4,7 @@ use miden_client::auth::{
     AuthMultisig as NativeAuthMultisig, AuthMultisigConfig as NativeAuthMultisigConfig,
     AuthSchemeId as NativeAuthSchemeId, PublicKeyCommitment,
 };
+use miden_protocol::account::AccountProcedureRoot;
 
 use crate::js_error_with_context;
 use crate::models::account_component::AccountComponent;
@@ -75,7 +76,7 @@ impl AuthFalcon512RpoMultisigConfig {
             .into_iter()
             .map(|entry| {
                 let proc_root: NativeWord = entry.proc_root.into();
-                (proc_root, entry.threshold)
+                (AccountProcedureRoot::from_raw(proc_root), entry.threshold)
             })
             .collect();
 
@@ -113,7 +114,7 @@ impl AuthFalcon512RpoMultisigConfig {
             .proc_thresholds()
             .iter()
             .map(|(proc_root, threshold)| ProcedureThreshold {
-                proc_root: (*proc_root).into(),
+                proc_root: proc_root.as_word().into(),
                 threshold: *threshold,
             })
             .collect()

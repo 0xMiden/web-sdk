@@ -1,6 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::block::BlockHeader as NativeBlockHeader;
 
+use super::account_id::AccountId;
 use super::word::Word;
 
 /// Public header for a block, containing commitments to the chain state and the proof attesting to
@@ -90,6 +91,17 @@ impl BlockHeader {
     /// Returns the block timestamp.
     pub fn timestamp(&self) -> u32 {
         self.0.timestamp()
+    }
+
+    /// Returns the account ID of the fungible faucet whose assets are accepted as the native
+    /// asset of the blockchain (i.e. the asset used for paying transaction verification fees).
+    ///
+    /// This is stored on-chain as part of the block's fee parameters, which means consumers can
+    /// discover the native faucet by reading any block header rather than hardcoding it per
+    /// network.
+    #[js_export(js_name = "feeFaucetId")]
+    pub fn fee_faucet_id(&self) -> AccountId {
+        self.0.fee_parameters().fee_faucet_id().into()
     }
 }
 

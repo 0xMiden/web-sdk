@@ -4,7 +4,7 @@ use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote, NoteAttachment};
+use miden_client::note::{BlockNumber, Note as NativeNote};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
@@ -210,12 +210,16 @@ impl WebClient {
                     &pswap_transaction_data,
                     note_type.into(),
                     payback_note_type.into(),
-                    // V1 limitation: PSWAP notes always use the default (empty)
-                    // attachment — it is not yet exposed to JS callers. Follow-up:
-                    // surface an optional `attachment` field on PswapCreateOptions
-                    // in a non-breaking way. Until then, do not change this default
+                    // V1 limitation: PSWAP notes always use no attachment — it
+                    // is not yet exposed to JS callers. Follow-up: surface an
+                    // optional `attachment` field on PswapCreateOptions in a
+                    // non-breaking way. Until then, do not change this `None`
                     // without bumping existing PSWAP note compatibility.
-                    NoteAttachment::default(),
+                    //
+                    // (`NoteAttachment::default()` no longer exists on the
+                    // 0.15 surface — `Option::None` is the new way to say
+                    // "no attachment".)
+                    None,
                     client.rng(),
                 )
                 .map_err(|err| {
@@ -429,6 +433,12 @@ impl WebClient {
 
     /// Generates a transaction proof using either the provided prover or the client's default
     /// prover if none is supplied.
+    ///
+    /// With an explicit prover this is a pure computation over the `TransactionResult` and does
+    /// not touch client state, so it works on a bare `WebClient` that never ran
+    /// `createClient()`. "Prover-only" hosts rely on this — e.g. a `chrome.offscreen` document
+    /// that proves on its own rayon thread pool. Only the default-prover fallback requires an
+    /// initialized client.
     #[js_export(js_name = "proveTransaction")]
     pub async fn prove_transaction(
         &self,
@@ -443,12 +453,19 @@ impl WebClient {
                 .map_err(|err| js_error_with_context(err, "failed to prove transaction"));
         }
 
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let prover_arc =
-            prover.map_or_else(|| client.prover(), |custom_prover| custom_prover.get_prover());
+        // Resolve the prover up front and release the inner-client lock before the
+        // (potentially multi-second) prove: the proof itself needs no client state, so other
+        // client calls must not block on it.
+        let prover_arc = if let Some(custom_prover) = prover {
+            custom_prover.get_prover()
+        } else {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+            client.prover()
+        };
 
-        let fut = Box::pin(client.prove_transaction_with(transaction_result.native(), prover_arc));
+        let executed_transaction = transaction_result.native().executed_transaction().clone();
+        let fut = Box::pin(async move { prover_arc.prove(executed_transaction.into()).await });
         maybe_wrap_send(fut)
             .await
             .map(Into::into)

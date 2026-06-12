@@ -1,19 +1,42 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::account::{
-    Account, AccountCode, AccountHeader, AccountId, AccountIdError, AccountStorage, Address,
-    PartialAccount, PartialStorage, PartialStorageMap, StorageMap, StorageMapKey, StorageSlot,
-    StorageSlotName, StorageSlotType,
+    Account,
+    AccountCode,
+    AccountHeader,
+    AccountId,
+    AccountIdError,
+    AccountStorage,
+    Address,
+    PartialAccount,
+    PartialStorage,
+    PartialStorageMap,
+    StorageMap,
+    StorageMapKey,
+    StorageSlot,
+    StorageSlotName,
+    StorageSlotType,
 };
 use miden_client::asset::{
-    AccountStorageHeader, Asset, AssetVault, AssetVaultKey, AssetWitness, PartialVault,
-    StorageMapWitness, StorageSlotHeader,
+    AccountStorageHeader,
+    Asset,
+    AssetVault,
+    AssetVaultKey,
+    AssetWitness,
+    PartialVault,
+    StorageMapWitness,
+    StorageSlotHeader,
 };
 use miden_client::crypto::MerkleError;
 use miden_client::store::{
-    AccountRecord, AccountRecordData, AccountStatus, AccountStorageFilter, StoreError,
+    AccountRecord,
+    AccountRecordData,
+    AccountStatus,
+    AccountStorageFilter,
+    ClientAccountType,
+    StoreError,
 };
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{AccountError, Felt, Word};
@@ -22,30 +45,48 @@ use super::IdxdbStore;
 use crate::account::js_bindings::idxdb_get_account_addresses;
 use crate::account::models::AddressIdxdbObject;
 use crate::account::utils::{
-    insert_account_address, parse_account_address_idxdb_object, remove_account_address,
+    insert_account_address,
+    parse_account_address_idxdb_object,
+    remove_account_address,
 };
 use crate::promise::{await_js, await_js_value};
 
 mod js_bindings;
 pub use js_bindings::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
 use js_bindings::{
-    idxdb_get_account_code, idxdb_get_account_header, idxdb_get_account_header_by_commitment,
-    idxdb_get_account_headers, idxdb_get_account_ids, idxdb_get_account_storage,
-    idxdb_get_account_storage_maps, idxdb_get_account_vault_assets, idxdb_get_foreign_account_code,
-    idxdb_lock_account, idxdb_prune_account_history, idxdb_undo_account_states,
+    idxdb_get_account_code,
+    idxdb_get_account_header,
+    idxdb_get_account_header_by_commitment,
+    idxdb_get_account_headers,
+    idxdb_get_account_ids,
+    idxdb_get_account_storage,
+    idxdb_get_account_storage_maps,
+    idxdb_get_account_vault_assets,
+    idxdb_get_foreign_account_code,
+    idxdb_lock_account,
+    idxdb_prune_account_history,
+    idxdb_undo_account_states,
     idxdb_upsert_foreign_account_code,
 };
 
 mod models;
 use models::{
-    AccountAssetIdxdbObject, AccountCodeIdxdbObject, AccountRecordIdxdbObject,
-    AccountStorageIdxdbObject, ForeignAccountCodeIdxdbObject, StorageMapEntryIdxdbObject,
+    AccountAssetIdxdbObject,
+    AccountCodeIdxdbObject,
+    AccountRecordIdxdbObject,
+    AccountStorageIdxdbObject,
+    ForeignAccountCodeIdxdbObject,
+    StorageMapEntryIdxdbObject,
 };
 
 pub(crate) mod utils;
 use utils::{
-    apply_full_account_state, parse_account_record_idxdb_object, upsert_account_asset_vault,
-    upsert_account_code, upsert_account_record, upsert_account_storage,
+    apply_full_account_state,
+    parse_account_record_idxdb_object,
+    upsert_account_asset_vault,
+    upsert_account_code,
+    upsert_account_record,
+    upsert_account_storage,
 };
 
 impl IdxdbStore {
@@ -157,7 +198,11 @@ impl IdxdbStore {
         )?;
 
         let account_data = AccountRecordData::Full(account);
-        Ok(Some(AccountRecord::new(account_data, status)))
+        // TODO(pr-a-followup): persist `ClientAccountType` and read it back
+        // here. Defaulting to `Native` for the API migration — every account
+        // currently held by an IndexedDB-backed client is one this client
+        // owns and executes transactions for, which matches `Native`.
+        Ok(Some(AccountRecord::new(account_data, status, ClientAccountType::Native)))
     }
 
     pub(crate) async fn get_minimal_partial_account(
@@ -204,7 +249,8 @@ impl IdxdbStore {
         )?;
 
         let account_data = AccountRecordData::Partial(partial_account);
-        Ok(Some(AccountRecord::new(account_data, status)))
+        // See `get_account` for the `ClientAccountType::Native` rationale.
+        Ok(Some(AccountRecord::new(account_data, status, ClientAccountType::Native)))
     }
 
     pub(super) async fn get_account_code(&self, root: Word) -> Result<AccountCode, StoreError> {
@@ -293,6 +339,19 @@ impl IdxdbStore {
                         ));
                     },
                 }
+            },
+            AccountStorageFilter::SlotNames(names) => {
+                // The sync delta path narrows storage reads to a small set of
+                // value-slot names; only return slots whose names match. Slots
+                // not present in `names` are silently skipped — a multi-name
+                // request is naturally a "best effort" load (in contrast to
+                // single-`SlotName`, which errors on a missing name).
+                let wanted: BTreeSet<&str> =
+                    names.iter().map(miden_client::account::StorageSlotName::as_str).collect();
+                account_storage_idxdb
+                    .into_iter()
+                    .filter(|s| wanted.contains(s.slot_name.as_str()))
+                    .collect()
             },
         };
 

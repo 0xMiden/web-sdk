@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = ["crates/idxdb-store", "crates/js-export-macro", "crates/web-client"]
+members = ["crates/idxdb-store", "crates/js-export-macro", "crates/mobile-prover", "crates/web-client"]
 
 [workspace.package]
 authors      = ["miden contributors"]
@@ -43,9 +43,16 @@ idxdb-store = { default-features = false, package = "miden-idxdb-store", path = 
 miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/miden-client.git" }
 
-# TODO: remove once AccountProcedureRoot, NoteAttachmentContent, P2ideNote, P2ideNoteStorage are re-exported from miden-client.
-miden-protocol  = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
-miden-standards = { branch = "next", default-features = false, git = "https://github.com/0xMiden/protocol.git" }
+# Held at 0.15.0 in Cargo.lock to match the miden-protocol that miden-client
+# `next` pins transitively — and that the CI node-builder is compiled against
+# (see MIDEN_CLIENT_REF in .github/workflows/test.yml). Do NOT let it float
+# ahead of that pin: a client/node miden-protocol mismatch makes the node's
+# gRPC responses fail to deserialize ("invalid field element") and breaks every
+# integration test that syncs.
+# TODO: drop the direct dep once AccountProcedureRoot, NoteDetailsCommitment,
+# PartialNoteMetadata are re-exported from miden-client.
+miden-protocol  = { default-features = false, version = "0.15" }
+miden-standards = { default-features = false, version = "0.15" }
 
 # External dependencies
 async-trait = { version = "0.1" }

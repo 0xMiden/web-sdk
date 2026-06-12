@@ -119,15 +119,13 @@ export function useCreateFaucet(): UseCreateFaucetResult {
 }
 
 function getStorageMode(
-  mode: "private" | "public" | "network"
+  mode: "private" | "public"
 ): ReturnType<typeof AccountStorageMode.private> {
   switch (mode) {
     case "private":
       return AccountStorageMode.private();
     case "public":
       return AccountStorageMode.public();
-    case "network":
-      return AccountStorageMode.network();
     default:
       return AccountStorageMode.private();
   }

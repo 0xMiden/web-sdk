@@ -15,7 +15,13 @@ use alloc::vec::Vec;
 use base64::Engine;
 use base64::engine::general_purpose;
 use miden_client::account::{
-    Account, AccountCode, AccountHeader, AccountId, AccountStorage, Address, StorageMapKey,
+    Account,
+    AccountCode,
+    AccountHeader,
+    AccountId,
+    AccountStorage,
+    Address,
+    StorageMapKey,
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetVault, AssetVaultKey, AssetWitness, StorageMapWitness};
@@ -23,8 +29,18 @@ use miden_client::block::BlockHeader;
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
-    AccountRecord, AccountSmtForest, AccountStatus, AccountStorageFilter, BlockRelevance,
-    InputNoteRecord, NoteFilter, OutputNoteRecord, PartialBlockchainFilter, Store, StoreError,
+    AccountRecord,
+    AccountSmtForest,
+    AccountStatus,
+    AccountStorageFilter,
+    BlockRelevance,
+    ClientAccountType,
+    InputNoteRecord,
+    NoteFilter,
+    OutputNoteRecord,
+    PartialBlockchainFilter,
+    Store,
+    StoreError,
     TransactionFilter,
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
@@ -300,6 +316,11 @@ impl Store for IdxdbStore {
         &self,
         account: &Account,
         initial_address: Address,
+        // TODO(pr-a-followup): persist `ClientAccountType` on the account
+        // header row and surface it through `get_account` / `get_account_header`.
+        // Discarded here for the API migration — every account currently
+        // tracked by the IndexedDB store is a `Native` one.
+        _client_account_type: ClientAccountType,
     ) -> Result<(), StoreError> {
         self.insert_account(account, initial_address).await
     }
@@ -414,23 +435,14 @@ impl Store for IdxdbStore {
         address: Address,
         account_id: AccountId,
     ) -> Result<(), StoreError> {
-        let derived_note_tag = address.to_note_tag();
-        let note_tag_record = NoteTagRecord::with_account_source(derived_note_tag, account_id);
-        let success = self.add_note_tag(note_tag_record).await?;
-        if !success {
-            return Err(StoreError::NoteTagAlreadyTracked(u64::from(derived_note_tag.as_u32())));
-        }
+        // Tag registration moved upstream — `Self::add_note_tag` is the
+        // caller's responsibility per the new trait contract.
         self.insert_address(address, &account_id).await
     }
 
-    async fn remove_address(
-        &self,
-        address: Address,
-        account_id: AccountId,
-    ) -> Result<(), StoreError> {
-        let derived_note_tag = address.to_note_tag();
-        let note_tag_record = NoteTagRecord::with_account_source(derived_note_tag, account_id);
-        self.remove_note_tag(note_tag_record).await?;
+    async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+        // Tag removal moved upstream — `Self::remove_note_tag` is the
+        // caller's responsibility per the new trait contract.
         self.remove_address(address).await
     }
 

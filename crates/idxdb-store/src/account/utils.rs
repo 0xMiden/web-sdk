@@ -3,11 +3,25 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::account::{
-    Account, AccountCode, AccountDelta, AccountHeader, AccountId, AccountStorage, Address,
-    StorageMap, StorageSlotContent, StorageSlotName, StorageSlotType,
+    Account,
+    AccountCode,
+    AccountDelta,
+    AccountHeader,
+    AccountId,
+    AccountStorage,
+    Address,
+    StorageMap,
+    StorageSlotContent,
+    StorageSlotName,
+    StorageSlotType,
 };
 use miden_client::asset::{
-    Asset, AssetVault, AssetVaultKey, FungibleAsset, NonFungibleDeltaAction,
+    Asset,
+    AssetAmount,
+    AssetVault,
+    AssetVaultKey,
+    FungibleAsset,
+    NonFungibleDeltaAction,
 };
 use miden_client::store::{AccountSmtForest, AccountStatus, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
@@ -16,9 +30,16 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
 use super::js_bindings::{
-    JsStorageMapEntry, JsStorageSlot, JsVaultAsset, idxdb_apply_full_account_state,
-    idxdb_apply_transaction_delta, idxdb_upsert_account_code, idxdb_upsert_account_record,
-    idxdb_upsert_account_storage, idxdb_upsert_storage_map_entries, idxdb_upsert_vault_assets,
+    JsStorageMapEntry,
+    JsStorageSlot,
+    JsVaultAsset,
+    idxdb_apply_full_account_state,
+    idxdb_apply_transaction_delta,
+    idxdb_upsert_account_code,
+    idxdb_upsert_account_record,
+    idxdb_upsert_account_storage,
+    idxdb_upsert_storage_map_entries,
+    idxdb_upsert_vault_assets,
 };
 use crate::account::js_bindings::idxdb_insert_account_address;
 use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
@@ -134,7 +155,8 @@ pub fn parse_account_record_idxdb_object(
 
     let account_header = AccountHeader::new(
         native_account_id,
-        Felt::new(native_nonce),
+        Felt::new(native_nonce)
+            .map_err(|err| StoreError::ParsingError(format!("invalid nonce: {err}")))?,
         Word::try_from(&account_header_idxdb.vault_root)?,
         Word::try_from(&account_header_idxdb.storage_root)?,
         Word::try_from(&account_header_idxdb.code_root)?,
@@ -211,9 +233,12 @@ pub fn compute_vault_delta(
 
     // Process fungible deltas
     for (vault_key, delta_amount) in delta.vault().fungible().iter() {
-        // Preserve the vault key's callback flag: it is part of the asset's vault key and
-        // value encoding, so dropping it would make the locally recomputed vault root diverge
-        // from the kernel's (this matches `AssetVault::apply_delta` in miden-protocol).
+        // Preserve the vault key's `AssetCallbackFlag`: it is part of the
+        // asset's vault-key and value encoding, so dropping it makes the
+        // recomputed vault root diverge from the kernel's (a
+        // `ConflictingRoots` error) for callback-bearing assets. Mirrors
+        // miden-protocol's `AssetVault::apply_delta` and the sqlite-store fix
+        // in miden-client #2225.
         let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?
             .with_callbacks(vault_key.callback_flag());
 
@@ -228,7 +253,7 @@ pub fn compute_vault_delta(
             None => delta_asset,
         };
 
-        if asset.amount() > 0 {
+        if asset.amount() > AssetAmount::ZERO {
             updated_assets.push(Asset::Fungible(asset));
         } else {
             removed_vault_keys.push(asset.vault_key());

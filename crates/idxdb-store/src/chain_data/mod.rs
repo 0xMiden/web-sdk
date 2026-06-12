@@ -161,7 +161,7 @@ impl IdxdbStore {
         if let Some(peaks) = peaks {
             let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks)?;
 
-            return MmrPeaks::new(Forest::new(block_num as usize), mmr_peaks_nodes)
+            return MmrPeaks::new(Forest::new(block_num as usize)?, mmr_peaks_nodes)
                 .map_err(StoreError::MmrError);
         }
 

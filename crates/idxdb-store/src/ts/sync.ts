@@ -104,8 +104,10 @@ interface FlattenedU8Vec {
 }
 
 interface SerializedInputNoteData {
-  noteId: string;
+  detailsCommitment: string;
+  noteId?: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   noteScriptRoot: string;
@@ -122,6 +124,7 @@ interface SerializedInputNoteData {
 interface SerializedOutputNoteData {
   noteId: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
   nullifier?: string;
@@ -164,7 +167,7 @@ interface JsStateSyncUpdate {
   blockHasRelevantNotes: Uint8Array;
   serializedNodeIds: string[];
   serializedNodes: string[];
-  committedNoteIds: string[];
+  committedNoteTagSources: string[];
   serializedInputNotes: SerializedInputNoteData[];
   serializedOutputNotes: SerializedOutputNoteData[];
   accountUpdates: JsAccountUpdate[];
@@ -184,7 +187,7 @@ export async function applyStateSync(
     blockHasRelevantNotes,
     serializedNodeIds,
     serializedNodes,
-    committedNoteIds,
+    committedNoteTagSources,
     serializedInputNotes,
     serializedOutputNotes,
     accountUpdates,
@@ -219,8 +222,10 @@ export async function applyStateSync(
         serializedInputNotes.map((note) => {
           return upsertInputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.serialNumber,
             note.inputs,
             note.noteScriptRoot,
@@ -241,6 +246,7 @@ export async function applyStateSync(
             dbId,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.recipientDigest,
             note.metadata,
             note.nullifier,
@@ -296,7 +302,7 @@ export async function applyStateSync(
       ),
       updateSyncHeight(tx, blockNum),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
-      updateCommittedNoteTags(tx, committedNoteIds),
+      updateCommittedNoteTags(tx, committedNoteTagSources),
       Promise.all(
         newBlockHeaders.map((newBlockHeader, i) => {
           // Peaks are attached only to the chain-tip block (the one whose
@@ -402,14 +408,14 @@ async function updatePartialBlockchainNodes(
 
 async function updateCommittedNoteTags(
   tx: Transaction,
-  inputNoteIds: string[]
+  committedNoteTagSources: string[]
 ) {
   try {
-    for (let i = 0; i < inputNoteIds.length; i++) {
-      const noteId = inputNoteIds[i];
+    for (let i = 0; i < committedNoteTagSources.length; i++) {
+      const tagSource = committedNoteTagSources[i];
       await (tx as Transaction & { tags: Dexie.Table }).tags
         .where("sourceNoteId")
-        .equals(noteId)
+        .equals(tagSource)
         .delete();
     }
   } catch (error) {

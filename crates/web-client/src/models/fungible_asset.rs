@@ -25,7 +25,8 @@ impl FungibleAsset {
 
     /// Returns the amount of fungible units.
     pub fn amount(&self) -> JsU64 {
-        u64_to_js_u64(self.0.amount())
+        // `FungibleAsset::amount()` now returns `AssetAmount`, not `u64`.
+        u64_to_js_u64(self.0.amount().as_u64())
     }
 
     /// Returns the faucet account that minted this asset.
