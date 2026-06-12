@@ -49,6 +49,7 @@ pub struct SerializedInputNoteData {
     #[wasm_bindgen(js_name = "noteAssets")]
     #[serde(with = "serde_bytes")]
     pub note_assets: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "serialNumber")]
     #[serde(with = "serde_bytes")]
@@ -86,6 +87,7 @@ pub struct SerializedOutputNoteData {
     #[wasm_bindgen(js_name = "noteAssets")]
     #[serde(with = "serde_bytes")]
     pub note_assets: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "recipientDigest")]
     pub recipient_digest: String,

@@ -55,8 +55,10 @@ function buildPayload(suffix: string) {
     },
     inputNotes: [
       {
+        detailsCommitment: `details-${suffix}`,
         noteId: `note-${suffix}`,
         noteAssets: dummy,
+        attachments: dummy,
         serialNumber: dummy,
         inputs: dummy,
         noteScriptRoot: `script-root-${suffix}`,

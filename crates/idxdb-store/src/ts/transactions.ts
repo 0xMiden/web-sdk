@@ -227,8 +227,10 @@ interface JsBatchNoteTag {
 }
 
 interface SerializedInputNoteData {
+  detailsCommitment: string;
   noteId: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   noteScriptRoot: string;
@@ -243,8 +245,10 @@ interface SerializedInputNoteData {
 }
 
 interface SerializedOutputNoteData {
+  detailsCommitment: string;
   noteId: string;
   noteAssets: Uint8Array;
+  attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
   nullifier?: string;
@@ -333,8 +337,10 @@ export async function applyTransactionBatch(
         for (const note of payload.inputNotes) {
           await upsertInputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.serialNumber,
             note.inputs,
             note.noteScriptRoot,
@@ -351,8 +357,10 @@ export async function applyTransactionBatch(
         for (const note of payload.outputNotes) {
           await upsertOutputNote(
             dbId,
+            note.detailsCommitment,
             note.noteId,
             note.noteAssets,
+            note.attachments,
             note.recipientDigest,
             note.metadata,
             note.nullifier,
