@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.0 (TBD)
+## 0.15.0 (2026-06-12)
 
 ### Enhancements
 
