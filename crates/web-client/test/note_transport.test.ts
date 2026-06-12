@@ -12,13 +12,11 @@ test("transport basic", async ({ run }) => {
     // Create accounts on the same client
     const senderAccount = await mockClient.newWallet(
       sdk.AccountStorageMode.private(),
-      true,
       sdk.AuthScheme.AuthRpoFalcon512,
       senderSeed
     );
     const recipientAccount = await mockClient.newWallet(
       sdk.AccountStorageMode.private(),
-      true,
       sdk.AuthScheme.AuthRpoFalcon512,
       recipientSeed
     );

@@ -12,6 +12,10 @@ export async function getNoteTags(dbId) {
                 record.sourceNoteId == "" ? undefined : record.sourceNoteId;
             record.sourceAccountId =
                 record.sourceAccountId == "" ? undefined : record.sourceAccountId;
+            record.sourceSubscriptionKey =
+                record.sourceSubscriptionKey == ""
+                    ? undefined
+                    : record.sourceSubscriptionKey;
             return record;
         });
         return processedRecords;
@@ -38,7 +42,7 @@ export async function getSyncHeight(dbId) {
         logWebStoreError(error, "Error fetching sync height");
     }
 }
-export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
+export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
         let tagArray = new Uint8Array(tag);
@@ -47,23 +51,29 @@ export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
             tag: tagBase64,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
             sourceAccountId: sourceAccountId ? sourceAccountId : "",
+            sourceSubscriptionKey: sourceSubscriptionKey ? sourceSubscriptionKey : "",
         });
     }
     catch (error) {
         logWebStoreError(error, "Failed to add note tag");
     }
 }
-export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId) {
+export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
         let tagArray = new Uint8Array(tag);
         let tagBase64 = uint8ArrayToBase64(tagArray);
+        const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
         return await db.tags
             .where({
             tag: tagBase64,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
             sourceAccountId: sourceAccountId ? sourceAccountId : "",
         })
+            // Filtered in JS rather than via the `where` clause: rows written
+            // before the column existed lack the property entirely, and a
+            // `where` equality on `""` would never match them.
+            .and((record) => (record.sourceSubscriptionKey ?? "") == subscriptionKey)
             .delete();
     }
     catch (error) {
@@ -99,7 +109,7 @@ export async function applyStateSync(dbId, stateUpdate) {
                 return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
             })),
             Promise.all(serializedOutputNotes.map((note) => {
-                return upsertOutputNote(dbId, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
             })),
             Promise.all(transactionUpdates.map((transactionRecord) => {
                 let promises = [

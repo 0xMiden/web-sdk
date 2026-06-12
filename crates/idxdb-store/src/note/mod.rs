@@ -1,4 +1,3 @@
-use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -13,6 +12,7 @@ use miden_client::store::{
     OutputNoteState,
     StoreError,
 };
+use miden_protocol::note::NoteDetailsCommitment;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::{Array, Promise};
 
@@ -24,10 +24,12 @@ mod js_bindings;
 use js_bindings::{
     idxdb_get_input_note_by_offset,
     idxdb_get_input_notes,
+    idxdb_get_input_notes_from_details_commitments,
     idxdb_get_input_notes_from_ids,
     idxdb_get_input_notes_from_nullifiers,
     idxdb_get_note_script,
     idxdb_get_output_notes,
+    idxdb_get_output_notes_from_details_commitments,
     idxdb_get_output_notes_from_ids,
     idxdb_get_output_notes_from_nullifiers,
     idxdb_get_unspent_input_note_nullifiers,
@@ -53,23 +55,10 @@ impl IdxdbStore {
             await_js(filter.to_input_notes_promise(self.db_id()), "failed to get input notes")
                 .await?;
 
-        let notes = input_notes_idxdb
+        input_notes_idxdb
             .into_iter()
-            .map(parse_input_note_idxdb_object)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // `to_input_notes_promise` returns the unfiltered set for the
-        // `DetailsCommitments` filter. Narrow it in Rust by comparing each
-        // record's details commitment against the requested set.
-        if let NoteFilter::DetailsCommitments(commitments) = &filter {
-            let wanted: BTreeSet<_> = commitments.iter().copied().collect();
-            return Ok(notes
-                .into_iter()
-                .filter(|note| wanted.contains(&note.details_commitment()))
-                .collect());
-        }
-
-        Ok(notes)
+            .map(parse_input_note_idxdb_object) // Simplified closure
+            .collect::<Result<Vec<_>, _>>() // Collect results into a single Result
     }
 
     pub(crate) async fn get_output_notes(
@@ -80,28 +69,10 @@ impl IdxdbStore {
             await_js(filter.to_output_note_promise(self.db_id()), "failed to get output notes")
                 .await?;
 
-        let notes = output_notes_idxdb
+        output_notes_idxdb
             .into_iter()
-            .map(parse_output_note_idxdb_object)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Same in-Rust post-filter as `get_input_notes` for the
-        // `DetailsCommitments` variant. Unlike input notes — which are keyed by
-        // `detailsCommitment` and bounded to the small set of expected notes —
-        // output notes have no `detailsCommitment` index, so this loads the full
-        // output-note table and filters in Rust. That set is unbounded (it grows
-        // with every emitted note), so if `DetailsCommitments` lookups on output
-        // notes become hot, persist a `detailsCommitment` column on the output
-        // store and add a secondary index to scope the fetch.
-        if let NoteFilter::DetailsCommitments(commitments) = &filter {
-            let wanted: BTreeSet<_> = commitments.iter().copied().collect();
-            return Ok(notes
-                .into_iter()
-                .filter(|note| wanted.contains(&note.details_commitment()))
-                .collect());
-        }
-
-        Ok(notes)
+            .map(parse_output_note_idxdb_object) // Simplified closure
+            .collect::<Result<Vec<_>, _>>() // Collect results into a single Result
     }
 
     pub(crate) async fn get_note_script(
@@ -248,12 +219,11 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_input_notes_from_nullifiers(db_id, nullifiers_as_str)
             },
-            // `detailsCommitment` is the input-notes primary key, so an
-            // index-scoped fetch is possible; we deliberately load every input
-            // note here and let `get_input_notes` filter by commitment in Rust,
-            // keeping a single parse/filter path. Revisit if this set grows
-            // large. (Output notes have no such index, see below.)
-            NoteFilter::DetailsCommitments(_) => idxdb_get_input_notes(db_id, vec![]),
+            NoteFilter::DetailsCommitments(commitments) => {
+                let commitments_as_str: Vec<String> =
+                    commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
+                idxdb_get_input_notes_from_details_commitments(db_id, commitments_as_str)
+            },
         }
     }
 
@@ -305,9 +275,11 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_output_notes_from_nullifiers(db_id, nullifiers_as_str)
             },
-            // No `detailsCommitment` index on the IndexedDB store, so load all
-            // output notes and let the caller filter by commitment in Rust.
-            NoteFilter::DetailsCommitments(_) => idxdb_get_output_notes(db_id, vec![]),
+            NoteFilter::DetailsCommitments(commitments) => {
+                let commitments_as_str: Vec<String> =
+                    commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
+                idxdb_get_output_notes_from_details_commitments(db_id, commitments_as_str)
+            },
         }
     }
 }

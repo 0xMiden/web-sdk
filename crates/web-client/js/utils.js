@@ -83,7 +83,7 @@ export function resolveNoteType(type, wasm) {
 /**
  * Resolves a storage mode string to a WASM AccountStorageMode instance.
  *
- * @param {string | undefined} mode - "private", "public", or "network". Defaults to "private".
+ * @param {string | undefined} mode - "private" or "public". Defaults to "private".
  * @param {object} wasm - The WASM module.
  * @returns {AccountStorageMode} The storage mode instance.
  */
@@ -91,15 +91,13 @@ export function resolveStorageMode(mode, wasm) {
   switch (mode) {
     case "public":
       return wasm.AccountStorageMode.public();
-    case "network":
-      return wasm.AccountStorageMode.network();
     case "private":
     case undefined:
     case null:
       return wasm.AccountStorageMode.private();
     default:
       throw new Error(
-        `Unknown storage mode: "${mode}". Expected "private", "public", or "network".`
+        `Unknown storage mode: "${mode}". Expected "private" or "public".`
       );
   }
 }
@@ -120,33 +118,6 @@ export function resolveAuthScheme(scheme, wasm) {
   }
   throw new Error(
     `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
-  );
-}
-
-/**
- * Resolves an AccountType value to a boolean `mutable` flag
- * for the underlying WASM `newWallet()` / `importPublicAccountFromSeed()` calls.
- *
- * Accepts the numeric WASM enum values (2 = immutable, 3 = mutable) or the
- * legacy string aliases ("MutableWallet", "ImmutableWallet"). Defaults to
- * mutable when undefined.
- *
- * @param {number | string | undefined} accountType
- * @returns {boolean} Whether the account code is mutable.
- */
-export function resolveAccountMutability(accountType) {
-  if (
-    accountType == null ||
-    accountType === "MutableWallet" ||
-    accountType === 3
-  ) {
-    return true;
-  }
-  if (accountType === "ImmutableWallet" || accountType === 2) {
-    return false;
-  }
-  throw new Error(
-    `Unknown wallet account type: "${accountType}". Expected AccountType.MutableWallet (3) or AccountType.ImmutableWallet (2).`
   );
 }
 

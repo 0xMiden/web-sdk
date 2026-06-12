@@ -9,6 +9,7 @@ import {
   insertSetting,
   removeSetting,
   listSettingKeys,
+  applySettingsMutations,
 } from "./settings.js";
 
 let dbCounter = 0;
@@ -115,5 +116,75 @@ describe("settings", () => {
 
   it("listSettingKeys throws on Dexie error", async () => {
     await expect(listSettingKeys("never-opened")).rejects.toThrow();
+  });
+
+  describe("applySettingsMutations", () => {
+    it("applies a batch of set and remove mutations", async () => {
+      const dbId = await openTestDb();
+      await insertSetting(dbId, "to-remove", new Uint8Array([9]));
+
+      await applySettingsMutations(dbId, [
+        { kind: "set", key: "k1", value: new Uint8Array([1]) },
+        { kind: "set", key: "k2", value: new Uint8Array([2]) },
+        { kind: "remove", key: "to-remove" },
+      ]);
+
+      expect(await getSetting(dbId, "k1")).toEqual({
+        key: "k1",
+        value: "AQ==",
+      });
+      expect(await getSetting(dbId, "k2")).toEqual({
+        key: "k2",
+        value: "Ag==",
+      });
+      expect(await getSetting(dbId, "to-remove")).toBeNull();
+    });
+
+    it("overwrites an existing key via a set mutation", async () => {
+      const dbId = await openTestDb();
+      await insertSetting(dbId, "k1", new Uint8Array([1]));
+
+      await applySettingsMutations(dbId, [
+        { kind: "set", key: "k1", value: new Uint8Array([2]) },
+      ]);
+
+      const got = await getSetting(dbId, "k1");
+      expect(got!.value).toBe("Ag==");
+    });
+
+    it("removing a missing key is a no-op", async () => {
+      const dbId = await openTestDb();
+      await applySettingsMutations(dbId, [{ kind: "remove", key: "nope" }]);
+      expect(await getSetting(dbId, "nope")).toBeNull();
+    });
+
+    it("is atomic: a failing mutation rolls back earlier ones in the batch", async () => {
+      const dbId = await openTestDb();
+
+      await expect(
+        applySettingsMutations(dbId, [
+          { kind: "set", key: "k1", value: new Uint8Array([1]) },
+          { kind: "bogus", key: "k2" },
+        ])
+      ).rejects.toThrow();
+
+      expect(await getSetting(dbId, "k1")).toBeNull();
+    });
+
+    it("throws when a set mutation is missing a value", async () => {
+      const dbId = await openTestDb();
+      await expect(
+        applySettingsMutations(dbId, [{ kind: "set", key: "k1" }])
+      ).rejects.toThrow();
+      expect(await getSetting(dbId, "k1")).toBeNull();
+    });
+
+    it("throws on Dexie error (e.g., db not opened)", async () => {
+      await expect(
+        applySettingsMutations("never-opened", [
+          { kind: "set", key: "k", value: new Uint8Array([1]) },
+        ])
+      ).rejects.toThrow();
+    });
   });
 });

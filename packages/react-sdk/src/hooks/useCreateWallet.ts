@@ -32,7 +32,6 @@ export interface UseCreateWalletResult {
  *   const handleCreate = async () => {
  *     const newWallet = await createWallet({
  *       storageMode: 'private',
- *       mutable: true,
  *     });
  *     console.log('Created wallet:', newWallet.id().toString());
  *   };
@@ -71,13 +70,11 @@ export function useCreateWallet(): UseCreateWalletResult {
         const storageMode = getStorageMode(
           options.storageMode ?? DEFAULTS.STORAGE_MODE
         );
-        const mutable = options.mutable ?? DEFAULTS.WALLET_MUTABLE;
         const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
         const newWallet = await runExclusiveSafe(async () => {
           const createdWallet = await client.newWallet(
             storageMode,
-            mutable,
             authScheme,
             options.initSeed
           );

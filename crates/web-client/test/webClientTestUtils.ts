@@ -483,7 +483,6 @@ export interface NewAccountTestResult {
 }
 interface createNewWalletParams {
   storageMode: StorageMode;
-  mutable: boolean;
   authSchemeId: number;
   clientSeed?: Uint8Array;
   isolatedClient?: boolean;
@@ -495,7 +494,6 @@ export const createNewWallet = async (
   testingPage: Page,
   {
     storageMode,
-    mutable,
     authSchemeId,
     clientSeed,
     isolatedClient,
@@ -509,7 +507,6 @@ export const createNewWallet = async (
   return await testingPage.evaluate(
     async ({
       storageMode,
-      mutable,
       authSchemeId,
       _serializedWalletSeed,
       _serializedClientSeed,
@@ -535,7 +532,6 @@ export const createNewWallet = async (
 
       const newWallet = await client.newWallet(
         accountStorageMode,
-        mutable,
         authSchemeId,
         _walletSeed
       );
@@ -557,7 +553,6 @@ export const createNewWallet = async (
     },
     {
       storageMode: storageMode,
-      mutable: mutable,
       authSchemeId: authSchemeId,
       _serializedClientSeed: serializedClientSeed,
       isolatedClient: isolatedClient,
@@ -881,7 +876,6 @@ export const setupWalletAndFaucet = async (
     const client = window.client;
     const account = await client.newWallet(
       window.AccountStorageMode.private(),
-      true,
       window.AuthScheme.AuthRpoFalcon512
     );
     const faucetAccount = await client.newFaucet(

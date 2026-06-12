@@ -1,6 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::{AssetCallbackFlag, AssetVault as NativeAssetVault, AssetVaultKey};
+use miden_client::asset::AssetVault as NativeAssetVault;
 
 use super::account_id::AccountId;
 use super::fungible_asset::FungibleAsset;
@@ -30,21 +30,22 @@ impl AssetVault {
 
     /// Returns the balance for the given fungible faucet, or zero if absent.
     ///
-    /// `get_balance` on the 0.15 surface keys by `AssetVaultKey`, not `AccountId`, and
-    /// validates the composition. The callback flag is `Disabled` because fungible balance
-    /// reads don't run asset callbacks. Returns zero on lookup error (`Err` arms here would
-    /// indicate the key was constructed wrong, which can't happen for fungible keys built
-    /// this way).
-    ///
-    /// NOTE: the `AssetVaultKey` encodes the callback flag, so this reports only the balance
-    /// of callback-*disabled* fungible assets. Faucets built by this SDK omit transfer policies
-    /// and therefore mint callback-disabled assets, so this is exact for them; an asset minted
-    /// elsewhere with callbacks enabled would not be counted here.
+    /// Matches by faucet id across the vault's fungible assets, so the balance is
+    /// found regardless of the asset's callback flag.
     #[js_export(js_name = "getBalance")]
     pub fn get_balance(&self, faucet_id: &AccountId) -> u64 {
         let native_faucet_id: NativeAccountId = faucet_id.into();
-        let vault_key = AssetVaultKey::new_fungible(native_faucet_id, AssetCallbackFlag::Disabled);
-        self.0.get_balance(vault_key).map_or(0, u64::from)
+        self.0
+            .assets()
+            .filter_map(|asset| {
+                if asset.is_fungible() {
+                    Some(asset.unwrap_fungible())
+                } else {
+                    None
+                }
+            })
+            .find(|fungible| fungible.faucet_id() == native_faucet_id)
+            .map_or(0, |fungible| u64::from(fungible.amount()))
     }
 
     /// Returns the fungible assets contained in this vault.

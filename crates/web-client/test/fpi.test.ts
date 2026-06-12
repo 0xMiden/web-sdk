@@ -105,7 +105,6 @@ test.describe("fpi test", () => {
 
       let newAccount = await intClient.newWallet(
         sdk.AccountStorageMode.public(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
