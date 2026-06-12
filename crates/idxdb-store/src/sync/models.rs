@@ -22,4 +22,8 @@ pub struct NoteTagIdxdbObject {
     /// Hex of an [`miden_client::account::AccountId`] — set when the tag's
     /// source is [`miden_client::sync::NoteTagSource::Account`].
     pub source_account_id: Option<String>,
+    /// Hex of the subscription's anchoring [`miden_client::Word`] key — set
+    /// when the tag's source is
+    /// [`miden_client::sync::NoteTagSource::Subscription`].
+    pub source_subscription_key: Option<String>,
 }

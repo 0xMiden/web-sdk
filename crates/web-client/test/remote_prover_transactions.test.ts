@@ -111,7 +111,6 @@ test.describe("remote prover transaction tests", () => {
 
       const wallet = await client.newWallet(
         window.AccountStorageMode.private(),
-        false,
         window.AuthScheme.AuthRpoFalcon512
       );
 

@@ -141,6 +141,7 @@ export interface IAccount {
   accountSeed?: Uint8Array;
   accountCommitment: string;
   locked: boolean;
+  watched: boolean;
 }
 
 export interface IHistoricalAccount {
@@ -154,6 +155,7 @@ export interface IHistoricalAccount {
   accountSeed?: Uint8Array;
   accountCommitment: string;
   locked: boolean;
+  watched: boolean;
 }
 
 export interface IAddress {
@@ -184,7 +186,7 @@ export interface IInputNote {
   serialNumber: Uint8Array;
   inputs: Uint8Array;
   scriptRoot: string;
-  nullifier: string;
+  nullifier?: string;
   serializedCreatedAt: string;
   state: Uint8Array;
   consumedBlockHeight?: number;
@@ -193,6 +195,7 @@ export interface IInputNote {
 }
 
 export interface IOutputNote {
+  detailsCommitment: string;
   noteId: string;
   recipientDigest: string;
   assets: Uint8Array;
@@ -237,6 +240,7 @@ export interface ITag {
   tag: string;
   sourceNoteId?: string;
   sourceAccountId?: string;
+  sourceSubscriptionKey?: string;
 }
 
 export interface IForeignAccountCode {
@@ -319,6 +323,7 @@ const V1_STORES: Record<string, string> = {
     "[consumedBlockHeight+consumedTxOrder+noteId]"
   ),
   [Table.OutputNotes]: indexes(
+    "detailsCommitment",
     "noteId",
     "recipientDigest",
     "stateDiscriminant",

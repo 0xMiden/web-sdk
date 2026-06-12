@@ -8,7 +8,6 @@ test.describe("AccountReader tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const account = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

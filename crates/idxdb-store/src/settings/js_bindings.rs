@@ -18,4 +18,26 @@ extern "C" {
 
     #[wasm_bindgen(js_name = listSettingKeys)]
     pub fn idxdb_list_setting_keys(db_id: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = applySettingsMutations)]
+    pub fn idxdb_apply_settings_mutations(
+        db_id: &str,
+        mutations: Vec<JsSettingMutation>,
+    ) -> js_sys::Promise;
+}
+
+/// JS-facing form of a [`miden_client::store::SettingMutation`], applied as a
+/// single atomic batch by the `applySettingsMutations` function in
+/// `settings.js`.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct JsSettingMutation {
+    /// Either `"set"` or `"remove"`.
+    pub kind: String,
+
+    /// The `settings` key the mutation targets.
+    pub key: String,
+
+    /// The value to write. `Some` for `"set"`, `None` for `"remove"`.
+    pub value: Option<Vec<u8>>,
 }

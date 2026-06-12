@@ -95,15 +95,13 @@ impl WebClient {
     pub async fn new_wallet(
         &self,
         storage_mode: &AccountStorageMode,
-        mutable: bool,
         auth_scheme: AuthScheme,
         init_seed: Option<Vec<u8>>,
     ) -> Result<Account, JsErr> {
         self.maybe_sync_before_account_creation().await;
         let keystore = self.get_keystore().await?;
 
-        let (new_account, key_pair) =
-            generate_wallet(storage_mode, mutable, init_seed, auth_scheme).await?;
+        let (new_account, key_pair) = generate_wallet(storage_mode, init_seed, auth_scheme).await?;
 
         {
             let mut guard = self.get_mut_inner().await;

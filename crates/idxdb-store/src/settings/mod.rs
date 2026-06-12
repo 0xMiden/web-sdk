@@ -1,12 +1,14 @@
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use miden_client::store::StoreError;
+use miden_client::store::{SettingMutation, StoreError};
 
 mod js_bindings;
 mod models;
 
 use js_bindings::{
+    JsSettingMutation,
+    idxdb_apply_settings_mutations,
     idxdb_get_setting,
     idxdb_insert_setting,
     idxdb_list_setting_keys,
@@ -41,5 +43,30 @@ impl IdxdbStore {
         let promise = idxdb_list_setting_keys(self.db_id());
         let keys: Vec<String> = await_js(promise, "failed to list setting keys").await?;
         Ok(keys)
+    }
+
+    pub(crate) async fn apply_settings_mutations(
+        &self,
+        mutations: Vec<SettingMutation>,
+    ) -> Result<(), StoreError> {
+        let mutations: Vec<JsSettingMutation> = mutations
+            .into_iter()
+            .map(|mutation| match mutation {
+                SettingMutation::Set { key, value } => JsSettingMutation {
+                    kind: "set".to_string(),
+                    key,
+                    value: Some(value),
+                },
+                SettingMutation::Remove { key } => JsSettingMutation {
+                    kind: "remove".to_string(),
+                    key,
+                    value: None,
+                },
+            })
+            .collect();
+
+        let promise = idxdb_apply_settings_mutations(self.db_id(), mutations);
+        await_js_value(promise, "failed to apply settings mutations").await?;
+        Ok(())
     }
 }

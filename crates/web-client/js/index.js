@@ -19,16 +19,9 @@ import {
 export * from "../Cargo.toml";
 
 export const AccountType = Object.freeze({
-  // WASM-compatible numeric values — usable with AccountBuilder directly
+  // Faucet-kind selectors for accounts.create({ type }).
   FungibleFaucet: 0,
   NonFungibleFaucet: 1,
-  RegularAccountImmutableCode: 2,
-  RegularAccountUpdatableCode: 3,
-  // SDK-friendly aliases (same numeric values as their WASM equivalents)
-  MutableWallet: 3,
-  ImmutableWallet: 2,
-  ImmutableContract: 2,
-  MutableContract: 3,
 });
 
 export const AuthScheme = Object.freeze({
@@ -802,15 +795,10 @@ class WebClient {
 
   // ----- Explicitly Wrapped Methods (Worker-Forwarded) -----
 
-  async newWallet(storageMode, mutable, authSchemeId, seed) {
+  async newWallet(storageMode, authSchemeId, seed) {
     return this._serializeWasmCall(async () => {
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(
-        storageMode,
-        mutable,
-        authSchemeId,
-        seed
-      );
+      return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
     });
   }
 

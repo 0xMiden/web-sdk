@@ -169,7 +169,16 @@ export interface SyncState {
 // Account types
 export interface AccountsResult {
   accounts: AccountHeader[];
+  /**
+   * @deprecated Protocol 0.15 removed faucet-vs-wallet from the account id, so
+   * accounts can no longer be split from headers alone. `wallets` mirrors
+   * `accounts`. Use `accounts` and detect faucets per-account from its components.
+   */
   wallets: AccountHeader[];
+  /**
+   * @deprecated Always empty as of protocol 0.15 (see `wallets`). Detect faucets
+   * per-account from its components instead.
+   */
   faucets: AccountHeader[];
   isLoading: boolean;
   error: Error | null;
@@ -259,8 +268,6 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Whether code can be updated. Default: true */
-  mutable?: boolean;
   /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
   authScheme?: AuthScheme;
   /** Initial seed for deterministic account ID */
@@ -296,7 +303,6 @@ export type ImportAccountOptions =
   | {
       type: "seed";
       seed: Uint8Array;
-      mutable?: boolean;
       authScheme?: AuthScheme;
     };
 
@@ -568,7 +574,6 @@ export interface UseSessionAccountOptions {
   /** Wallet creation options */
   walletOptions?: {
     storageMode?: "private" | "public";
-    mutable?: boolean;
     authScheme?: AuthScheme;
   };
   /** Polling interval for funding note detection (ms). Default: 3000 */
@@ -606,7 +611,6 @@ export const DEFAULTS = {
   RPC_URL: undefined, // Will use SDK's testnet default
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
-  WALLET_MUTABLE: true,
   AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,

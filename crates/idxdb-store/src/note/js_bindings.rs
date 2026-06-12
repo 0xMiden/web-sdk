@@ -23,6 +23,12 @@ extern "C" {
         nullifiers: Vec<String>,
     ) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getInputNotesFromDetailsCommitments)]
+    pub fn idxdb_get_input_notes_from_details_commitments(
+        db_id: &str,
+        details_commitments: Vec<String>,
+    ) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getOutputNotes)]
     pub fn idxdb_get_output_notes(db_id: &str, states: Vec<u8>) -> js_sys::Promise;
 
@@ -33,6 +39,12 @@ extern "C" {
     pub fn idxdb_get_output_notes_from_nullifiers(
         db_id: &str,
         nullifiers: Vec<String>,
+    ) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = getOutputNotesFromDetailsCommitments)]
+    pub fn idxdb_get_output_notes_from_details_commitments(
+        db_id: &str,
+        details_commitments: Vec<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getUnspentInputNoteNullifiers)]
@@ -55,7 +67,7 @@ extern "C" {
         inputs: Vec<u8>,
         note_script_root: String,
         serialized_note_script: Vec<u8>,
-        nullifier: String,
+        nullifier: Option<String>,
         serialized_created_at: String,
         state_discriminant: u8,
         state: Vec<u8>,
@@ -77,6 +89,7 @@ extern "C" {
     #[wasm_bindgen(js_name = upsertOutputNote)]
     pub fn idxdb_upsert_output_note(
         db_id: &str,
+        details_commitment: String,
         note_id: String,
         assets: Vec<u8>,
         attachments: Vec<u8>,
