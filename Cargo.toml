@@ -37,8 +37,8 @@ codegen-units = 16
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.0" }
 
 # Miden client + the SQLite store backend its Node.js variant uses.
-miden-client              = { default-features = false, git = "https://github.com/0xMiden/miden-client.git", rev = "31b387d5ff006b442640275fdd8745062668df6c" }
-miden-client-sqlite-store = { default-features = false, git = "https://github.com/0xMiden/miden-client.git", rev = "31b387d5ff006b442640275fdd8745062668df6c" }
+miden-client              = { default-features = false, version = "0.15.0" }
+miden-client-sqlite-store = { default-features = false, version = "0.15.0" }
 
 # Must resolve in Cargo.lock to the same miden-protocol that miden-client
 # pins transitively, and that the CI node-builder is compiled against
