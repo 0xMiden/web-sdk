@@ -654,6 +654,7 @@ describe("getOutputNotes", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-1",
       "out-1",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -666,6 +667,7 @@ describe("getOutputNotes", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-2",
       "out-2",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -684,6 +686,7 @@ describe("getOutputNotes", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-state3",
       "out-state3",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -696,6 +699,7 @@ describe("getOutputNotes", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-state4",
       "out-state4",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -715,6 +719,7 @@ describe("getOutputNotes", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-processed",
       "out-processed",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -750,6 +755,7 @@ describe("getOutputNotesFromIds", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-id-1",
       "out-id-1",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -762,6 +768,7 @@ describe("getOutputNotesFromIds", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-id-2",
       "out-id-2",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -794,6 +801,7 @@ describe("getOutputNotesFromNullifiers", () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
       dbId,
+      "dc-out-null-1",
       "out-null-1",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -806,6 +814,7 @@ describe("getOutputNotesFromNullifiers", () => {
     );
     await upsertOutputNote(
       dbId,
+      "dc-out-null-2",
       "out-null-2",
       DUMMY_BYTES,
       DUMMY_BYTES,
@@ -959,6 +968,7 @@ describe("upsertOutputNote with external transaction", () => {
       async (tx) => {
         await upsertOutputNote(
           dbId,
+          "dc-out-tx-1",
           "out-tx-1",
           DUMMY_BYTES,
           DUMMY_BYTES,

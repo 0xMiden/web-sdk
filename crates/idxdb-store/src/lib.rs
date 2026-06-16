@@ -39,6 +39,7 @@ use miden_client::store::{
     NoteFilter,
     OutputNoteRecord,
     PartialBlockchainFilter,
+    SettingMutation,
     Store,
     StoreError,
     TransactionFilter,
@@ -316,13 +317,9 @@ impl Store for IdxdbStore {
         &self,
         account: &Account,
         initial_address: Address,
-        // TODO(pr-a-followup): persist `ClientAccountType` on the account
-        // header row and surface it through `get_account` / `get_account_header`.
-        // Discarded here for the API migration — every account currently
-        // tracked by the IndexedDB store is a `Native` one.
-        _client_account_type: ClientAccountType,
+        client_account_type: ClientAccountType,
     ) -> Result<(), StoreError> {
-        self.insert_account(account, initial_address).await
+        self.insert_account(account, initial_address, client_account_type).await
     }
 
     async fn update_account(&self, new_account_state: &Account) -> Result<(), StoreError> {
@@ -463,6 +460,13 @@ impl Store for IdxdbStore {
 
     async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
         self.list_setting_keys().await
+    }
+
+    async fn apply_settings_mutations(
+        &self,
+        mutations: Vec<SettingMutation>,
+    ) -> Result<(), StoreError> {
+        self.apply_settings_mutations(mutations).await
     }
 }
 

@@ -127,7 +127,6 @@ test.describe("MockWebClient Integration", () => {
 
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 
@@ -204,7 +203,6 @@ test.describe("MockWebClient Integration", () => {
       // Create a wallet
       await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 
@@ -245,7 +243,6 @@ test.describe("MockWebClient Integration", () => {
       // Create wallet and faucet
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
@@ -333,12 +330,10 @@ test.describe("MockWebClient Integration", () => {
       // Create sender, receiver, and faucet
       const sender = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const receiver = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
@@ -459,7 +454,6 @@ test.describe("MockWebClient Integration", () => {
       // Create some data
       await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 

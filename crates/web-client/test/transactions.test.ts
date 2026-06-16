@@ -196,7 +196,6 @@ test.describe("compile_tx_script tests", () => {
     const result = await run(async ({ client, sdk }) => {
       await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -224,7 +223,6 @@ test.describe("compile_tx_script tests", () => {
     const result = await run(async ({ client, sdk }) => {
       await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

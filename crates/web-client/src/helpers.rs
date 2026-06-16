@@ -30,7 +30,6 @@ use crate::platform::{JsErr, from_str_err};
 /// - If the seed is passed in and is not exactly 32 bytes
 pub(crate) async fn generate_wallet(
     storage_mode: &AccountStorageMode,
-    mutable: bool,
     seed: Option<Vec<u8>>,
     auth_scheme: AuthScheme,
 ) -> Result<(Account, AuthSecretKey), JsErr> {
@@ -61,10 +60,6 @@ pub(crate) async fn generate_wallet(
     let auth_component: AccountComponent =
         AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
 
-    // `mutable` has no effect: the protocol's `AccountType` is a 2-way
-    // `{ Private, Public }` storage flag with no code-mutability distinction.
-    // It is kept on the signature for API compatibility.
-    let _ = mutable;
     let mut init_seed = [0u8; 32];
     rng.fill_bytes(&mut init_seed);
 

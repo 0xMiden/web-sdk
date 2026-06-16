@@ -119,7 +119,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const hexId = wallet.id().toString();
@@ -180,7 +179,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const hexId = wallet.id().toString();
@@ -232,7 +230,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const hexId = wallet.id().toString();
@@ -261,7 +258,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const hexId = wallet.id().toString();
@@ -288,7 +284,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const hexId = wallet.id().toString();
@@ -315,7 +310,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
       const hexId = wallet.id().toString();
@@ -349,7 +343,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 
@@ -433,7 +426,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 
@@ -466,7 +458,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 
@@ -498,7 +489,6 @@ test.describe("accountBech32 utilities (Playwright)", () => {
       await client.syncState();
       const wallet = await client.newWallet(
         (window as any).AccountStorageMode.private(),
-        true,
         (window as any).AuthScheme.AuthRpoFalcon512
       );
 
