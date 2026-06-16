@@ -12,37 +12,71 @@ type AccountPrototype = {
   bech32id?: () => string;
 };
 
-const inferNetworkId = (): NetworkId => {
-  const { rpcUrl } = useMidenStore.getState().config;
-  if (!rpcUrl) {
-    return NetworkId.testnet();
+type KnownNetwork = "devnet" | "mainnet" | "testnet";
+
+// Pure (no WASM) resolution of the bech32 network from the configured endpoint.
+// Returns `null` when the network can't be confirmed, so callers fall back to
+// the raw account id rather than tagging it for the wrong network.
+const resolveNetworkName = (): KnownNetwork | null => {
+  const { isReady, config } = useMidenStore.getState();
+  const url = config.rpcUrl?.toLowerCase();
+
+  if (url) {
+    if (url.includes("devnet") || url.includes("mdev")) {
+      return "devnet";
+    }
+    if (url.includes("mainnet")) {
+      return "mainnet";
+    }
+    if (url.includes("testnet") || url.includes("mtst")) {
+      return "testnet";
+    }
+    if (url.includes("localhost") || url.includes("127.0.0.1")) {
+      // Local nodes run a devnet genesis (mdev prefix) by default.
+      return "devnet";
+    }
+    // A configured but unrecognized custom endpoint: we can't confirm the
+    // network, so don't guess testnet — leave it undetermined.
+    return null;
   }
 
-  const url = rpcUrl.toLowerCase();
-  if (url.includes("devnet") || url.includes("mdev")) {
-    return NetworkId.devnet();
-  }
-  if (url.includes("mainnet")) {
-    return NetworkId.mainnet();
-  }
-  if (url.includes("testnet") || url.includes("mtst")) {
-    return NetworkId.testnet();
-  }
+  // No endpoint configured. Before MidenProvider is ready the resolved rpcUrl
+  // hasn't landed in the store yet, so signal undetermined rather than tagging
+  // a (possibly devnet) account as testnet. Once ready with nothing configured,
+  // testnet is the accepted default — matching the WebClient/MidenProvider
+  // default.
+  return isReady ? "testnet" : null;
+};
 
-  return NetworkId.testnet();
+const makeNetworkId = (network: KnownNetwork): NetworkId => {
+  switch (network) {
+    case "devnet":
+      return NetworkId.devnet();
+    case "mainnet":
+      return NetworkId.mainnet();
+    case "testnet":
+      return NetworkId.testnet();
+  }
 };
 
 const toBech32FromAccountId = (id: AccountId): string => {
+  const network = resolveNetworkName();
+  // Network not yet determinable (provider initializing, or a custom endpoint):
+  // return the raw id rather than risk a wrong-network bech32 address.
+  if (!network) {
+    return id.toString();
+  }
+
   try {
     const address = Address.fromAccountId(id, "BasicWallet");
-    return address.toBech32(inferNetworkId());
+    return address.toBech32(makeNetworkId(network));
   } catch {
     // Fall through to AccountId conversion or string fallback.
   }
 
   try {
     const maybeBech32 = id.toBech32?.(
-      inferNetworkId(),
+      makeNetworkId(network),
       AccountInterface.BasicWallet
     );
     if (typeof maybeBech32 === "string") {
