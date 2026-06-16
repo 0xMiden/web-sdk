@@ -98,6 +98,7 @@ pub mod poseidon2;
 pub mod program;
 pub mod proven_transaction;
 pub mod provers;
+pub mod pswap_lineage_record;
 pub mod public_key;
 pub mod rpo256;
 pub mod signature;
