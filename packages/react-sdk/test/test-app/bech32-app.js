@@ -44,7 +44,7 @@ window.addEventListener("unhandledrejection", (event) => {
 // `WasmWebClient.createClient` (`(rpcUrl, noteTransportUrl, seed, ...)`).
 // Passing the rpcUrl through would feed it into `serializedMockChain` which
 // expects a Uint8Array — wasm-bindgen would crash. The tests don't need the
-// real rpcUrl on the client; they exercise inferNetworkId() via the store's
+// real rpcUrl on the client; they exercise resolveNetworkName() via the store's
 // config.rpcUrl which MidenProvider sets independently of createClient.
 const patchWebClient = () => {
   WasmWebClient.createClient = () => MockWebClient.createClient();
@@ -78,7 +78,7 @@ window.__bech32 = {
 };
 
 // -- Reads optional ?rpcUrl=<network> query parameter ------------------------
-// Allows a single HTML page to exercise different inferNetworkId() branches.
+// Allows a single HTML page to exercise different resolveNetworkName() branches.
 const getConfigFromQuery = () => {
   try {
     const params = new URLSearchParams(window.location.search);
