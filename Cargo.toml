@@ -9,7 +9,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.93"
-version      = "0.15.0"
+version      = "0.15.1"
 
 [profile.dev]
 codegen-units = 16
@@ -34,7 +34,7 @@ codegen-units = 16
 
 [workspace.dependencies]
 # Workspace crates
-idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.0" }
+idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.1" }
 
 # Miden client + the SQLite store backend its Node.js variant uses.
 miden-client              = { default-features = false, version = "0.15.0" }
