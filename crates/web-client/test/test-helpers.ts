@@ -49,7 +49,6 @@ export async function setupWalletAndFaucet(
 }> {
   const wallet = await client.newWallet(
     sdk.AccountStorageMode.private(),
-    true,
     sdk.AuthScheme.AuthRpoFalcon512
   );
   const faucet = await client.newFaucet(
@@ -705,7 +704,8 @@ function wrapClass(Cls: any): any {
 
 /**
  * Wraps a raw napi WebClient for MidenClient compatibility.
- * Handles syncState → syncStateImpl, BigInt → Number, null → undefined.
+ * Handles syncState → syncStateImpl (and the new split-sync siblings),
+ * BigInt → Number, null → undefined.
  */
 function wrapClientForMidenClient(
   rawClient: any,
@@ -716,17 +716,20 @@ function wrapClientForMidenClient(
     get(target, prop) {
       if (prop === "syncState")
         return (...args: any[]) => target.syncStateImpl(...args);
-      if (prop === "syncStateWithTimeout") return () => target.syncStateImpl();
+      if (prop === "syncChain")
+        return (...args: any[]) => target.syncChainImpl(...args);
+      if (prop === "syncNoteTransport")
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       if (prop === "storeName") return storeName || "mock";
       if (prop === "wasmWebClient") return target;
       if (prop === "proveBlock") return async () => target.proveBlock();
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, mutable, authScheme, normSeed ?? null);
+          return target.newWallet(mode, authScheme, normSeed ?? null);
         };
       }
       if (prop === "newFaucet") {

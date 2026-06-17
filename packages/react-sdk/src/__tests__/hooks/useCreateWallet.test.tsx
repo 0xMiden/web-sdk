@@ -80,7 +80,6 @@ describe("useCreateWallet", () => {
       // Verify default options were used
       expect(mockClient.newWallet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.private()
-        true, // mutable (default)
         2, // authScheme (default: AuthRpoFalcon512)
         undefined // initSeed
       );
@@ -104,7 +103,6 @@ describe("useCreateWallet", () => {
       await act(async () => {
         await result.current.createWallet({
           storageMode: "public",
-          mutable: false,
           authScheme: 1,
           initSeed,
         });
@@ -112,7 +110,6 @@ describe("useCreateWallet", () => {
 
       expect(mockClient.newWallet).toHaveBeenCalledWith(
         expect.anything(), // storageMode.public()
-        false,
         1,
         initSeed
       );

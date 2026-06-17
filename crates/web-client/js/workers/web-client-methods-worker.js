@@ -164,6 +164,14 @@ const methodHandlers = {
     const serializedSyncSummary = syncSummary.serialize();
     return serializedSyncSummary.buffer;
   },
+  [MethodName.SYNC_NOTE_TRANSPORT]: async () => {
+    await wasmWebClient.syncNoteTransportImpl();
+  },
+  [MethodName.SYNC_CHAIN]: async () => {
+    const syncSummary = await wasmWebClient.syncChainImpl();
+    const serializedSyncSummary = syncSummary.serialize();
+    return serializedSyncSummary.buffer;
+  },
   [MethodName.APPLY_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [serializedTransactionResult, submissionHeight] = args;
@@ -307,6 +315,36 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   return await methodHandlers[MethodName.SYNC_STATE]();
 };
 
+methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
+  let [serializedMockChain, serializedMockNoteTransportNode] = args;
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  return await methodHandlers[MethodName.SYNC_CHAIN]();
+};
+
+methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
+  let [serializedMockChain, serializedMockNoteTransportNode] = args;
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
+};
+
 methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
   const wasm = await getWasmOrThrow();
   let serializedMockNoteTransportNode = args.pop();
@@ -444,11 +482,22 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel] = args;
+      const [seed, logLevel, numThreads] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
         wasm.setupLogging(logLevel);
+      }
+
+      // Initialize rayon's pool inside THIS worker's WASM instance — same
+      // rationale as the INIT path above: all proving executes here, and a
+      // pool initialized in any other instance does not parallelize it.
+      if (
+        numThreads &&
+        numThreads > 1 &&
+        typeof wasm.initThreadPool === "function"
+      ) {
+        await wasm.initThreadPool(numThreads);
       }
 
       wasmWebClient = new wasm.WebClient();

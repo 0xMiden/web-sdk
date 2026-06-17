@@ -133,6 +133,41 @@ pub fn parallel_sum_bench(n: u64) -> u64 {
     s.to_bits()
 }
 
+/// MT diagnostics: report which rayon threads execute a tiny par_iter when
+/// dispatched from a plain synchronous wasm export. `outer` is the calling
+/// thread's pool index (-1 = external), `inside` the distinct pool indexes
+/// that ran chunks.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "mtProbeSync")]
+pub fn mt_probe_sync() -> String {
+    mt_probe_body()
+}
+
+/// Same probe, but exported as an async fn so it runs inside a
+/// wasm-bindgen-futures task — mirroring the context `proveTransaction`
+/// executes in. Divergence between the two reveals whether the futures
+/// context breaks rayon dispatch.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "mtProbeAsync")]
+pub async fn mt_probe_async() -> String {
+    mt_probe_body()
+}
+
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+fn mt_probe_body() -> String {
+    use rayon::prelude::*;
+    let outer = rayon::current_thread_index().map_or(-1, |i| i as i32);
+    let inside: std::collections::BTreeSet<i32> = (0..100_000)
+        .into_par_iter()
+        .map(|i| {
+            // Enough per-item work that rayon actually splits.
+            let _ = core::hint::black_box((i as f64).sqrt().sin());
+            rayon::current_thread_index().map_or(-1, |i| i as i32)
+        })
+        .collect();
+    format!("outer={outer} inside={inside:?}")
+}
+
 /// Single-threaded version of `parallel_sum_bench` for direct comparison.
 /// Same workload, plain `iter()` — bypasses rayon entirely. Needs to live
 /// on the WASM side rather than be reimplemented in JS so the workload is

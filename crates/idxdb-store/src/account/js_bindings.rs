@@ -98,6 +98,7 @@ extern "C" {
         committed: bool,
         commitment: String,
         account_seed: Option<Vec<u8>>,
+        watched: bool,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = insertAccountAddress)]

@@ -89,7 +89,8 @@ function makeInner(overrides = {}) {
     getConsumableNotes: vi.fn().mockResolvedValue([]),
     executeForSummary: vi.fn().mockResolvedValue("summary"),
     executeProgram: vi.fn().mockResolvedValue("programResult"),
-    syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+    syncState: vi.fn().mockResolvedValue(undefined),
+    syncChain: vi.fn().mockResolvedValue(undefined),
     _txResult: txResult,
     ...overrides,
   };
@@ -157,7 +158,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 30000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
 
@@ -992,7 +993,7 @@ describe("TransactionsResource", () => {
     it("throws timeout when transaction takes too long", async () => {
       const { resource } = makeResource({
         getTransactions: vi.fn().mockResolvedValue([]),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+        syncChain: vi.fn().mockResolvedValue(undefined),
       });
       await expect(
         resource.waitFor("0xtxHex", { timeout: 1, interval: 0 })
@@ -1034,14 +1035,14 @@ describe("TransactionsResource", () => {
       expect(txIdObj.toHex).toHaveBeenCalled();
     });
 
-    it("continues polling when syncStateWithTimeout throws", async () => {
+    it("continues polling when syncChain throws", async () => {
       const committedStatus = {
         isCommitted: () => true,
         isDiscarded: () => false,
       };
       let syncCount = 0;
       const { resource } = makeResource({
-        syncStateWithTimeout: vi.fn().mockImplementation(() => {
+        syncChain: vi.fn().mockImplementation(() => {
           if (syncCount++ === 0) throw new Error("sync fail");
           return Promise.resolve();
         }),
@@ -1097,7 +1098,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.note).toBe("p2idNote");
     });
   });
@@ -1120,7 +1121,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });
@@ -1141,7 +1142,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });
@@ -1167,7 +1168,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.consumed).toBe(1);
     });
   });
@@ -1190,7 +1191,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
     });
   });
 
@@ -1210,7 +1211,7 @@ describe("TransactionsResource", () => {
         waitForConfirmation: true,
         timeout: 5000,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });

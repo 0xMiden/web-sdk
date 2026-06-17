@@ -55,7 +55,6 @@ test.describe("remote keystore", () => {
         );
       await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512,
         undefined
       );
@@ -103,7 +102,6 @@ test.describe("remote keystore", () => {
 
       const wallet = await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512,
         undefined
       );
@@ -182,7 +180,6 @@ test.describe("remote keystore", () => {
 
       const wallet = await client.newWallet(
         window.AccountStorageMode.private(),
-        true,
         window.AuthScheme.AuthRpoFalcon512,
         undefined
       );

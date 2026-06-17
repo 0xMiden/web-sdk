@@ -219,11 +219,36 @@ describe("sync", () => {
         tag: toBase64(new Uint8Array([0x0a])),
         sourceNoteId: "",
         sourceAccountId: "",
+        sourceSubscriptionKey: "",
       });
       const tags = await getNoteTags(dbId);
       expect(tags).toHaveLength(1);
       expect(tags![0].sourceNoteId).toBeUndefined();
       expect(tags![0].sourceAccountId).toBeUndefined();
+      expect(tags![0].sourceSubscriptionKey).toBeUndefined();
+    });
+
+    it("returns the sourceSubscriptionKey for subscription tags", async () => {
+      const dbId = await openTestDb();
+      await addNoteTag(dbId, new Uint8Array([0x03]), "", "", "0xsubkey");
+      const tags = await getNoteTags(dbId);
+      expect(tags).toHaveLength(1);
+      expect(tags![0].sourceSubscriptionKey).toBe("0xsubkey");
+      expect(tags![0].sourceNoteId).toBeUndefined();
+      expect(tags![0].sourceAccountId).toBeUndefined();
+    });
+
+    it("leaves sourceSubscriptionKey undefined on rows written before the column existed", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await db.tags.add({
+        tag: toBase64(new Uint8Array([0x0b])),
+        sourceNoteId: "",
+        sourceAccountId: "",
+      });
+      const tags = await getNoteTags(dbId);
+      expect(tags).toHaveLength(1);
+      expect(tags![0].sourceSubscriptionKey).toBeUndefined();
     });
 
     it("returns multiple tags in insertion order", async () => {
@@ -266,6 +291,16 @@ describe("sync", () => {
       const stored = await db.tags.toArray();
       expect(stored[0].sourceNoteId).toBe("");
       expect(stored[0].sourceAccountId).toBe("");
+      expect(stored[0].sourceSubscriptionKey).toBe("");
+    });
+
+    it("stores the sourceSubscriptionKey when provided", async () => {
+      const dbId = await openTestDb();
+      await addNoteTag(dbId, new Uint8Array([0x01]), "", "", "0xsubkey");
+
+      const db = getDatabase(dbId);
+      const stored = await db.tags.toArray();
+      expect(stored[0].sourceSubscriptionKey).toBe("0xsubkey");
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
@@ -327,6 +362,56 @@ describe("sync", () => {
         undefined,
         undefined
       );
+      expect(deleted).toBe(1);
+    });
+
+    it("removes only the subscription tag matching the key, leaving a same-tag user row intact", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x06]);
+      await addNoteTag(dbId, tagBytes, "", "");
+      await addNoteTag(dbId, tagBytes, "", "", "0xsub-1");
+
+      const deleted = await removeNoteTag(
+        dbId,
+        tagBytes,
+        undefined,
+        undefined,
+        "0xsub-1"
+      );
+      expect(deleted).toBe(1);
+
+      const db = getDatabase(dbId);
+      const remaining = await db.tags.toArray();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].sourceSubscriptionKey).toBe("");
+    });
+
+    it("returns 0 when the subscription key does not match", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x07]);
+      await addNoteTag(dbId, tagBytes, "", "", "0xsub-1");
+
+      const deleted = await removeNoteTag(
+        dbId,
+        tagBytes,
+        undefined,
+        undefined,
+        "0xsub-other"
+      );
+      expect(deleted).toBe(0);
+    });
+
+    it("removes rows written before the sourceSubscriptionKey column existed", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x08]);
+      const db = getDatabase(dbId);
+      await db.tags.add({
+        tag: toBase64(tagBytes),
+        sourceNoteId: "",
+        sourceAccountId: "",
+      });
+
+      const deleted = await removeNoteTag(dbId, tagBytes);
       expect(deleted).toBe(1);
     });
 
@@ -797,6 +882,7 @@ describe("sync", () => {
           blockNum: 5,
           serializedOutputNotes: [
             {
+              detailsCommitment: "commitment-out-1",
               noteId: "out-note-1",
               noteAssets: new Uint8Array([0x01, 0x02]),
               attachments: new Uint8Array([0x00]),
@@ -831,6 +917,7 @@ describe("sync", () => {
           blockNum: 5,
           serializedOutputNotes: [
             {
+              detailsCommitment: "commitment-out-a",
               noteId: "out-a",
               noteAssets: new Uint8Array([0x01]),
               attachments: new Uint8Array([0x00]),
@@ -842,6 +929,7 @@ describe("sync", () => {
               state: new Uint8Array([0x03]),
             },
             {
+              detailsCommitment: "commitment-out-b",
               noteId: "out-b",
               noteAssets: new Uint8Array([0x04]),
               attachments: new Uint8Array([0x00]),

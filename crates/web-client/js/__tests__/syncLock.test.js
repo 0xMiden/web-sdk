@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  hasWebLocks,
-  acquireSyncLock,
-  releaseSyncLock,
-  releaseSyncLockWithError,
-} from "../syncLock.js";
+import { hasWebLocks, withSyncLock } from "../syncLock.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -18,7 +13,6 @@ function uniqueDb() {
 describe("hasWebLocks", () => {
   it("returns false when navigator is undefined", () => {
     const orig = globalThis.navigator;
-    // Can't delete navigator in strict mode; use defineProperty
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
       value: undefined,
@@ -69,7 +63,7 @@ describe("hasWebLocks", () => {
     const orig = globalThis.navigator;
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
-      value: { locks: { request: vi.fn() } },
+      value: { locks: { request: () => {} } },
     });
     try {
       expect(hasWebLocks()).toBe(true);
@@ -82,114 +76,202 @@ describe("hasWebLocks", () => {
   });
 });
 
-// ── acquireSyncLock / releaseSyncLock (no Web Locks) ─────────────────────────
+// ── withSyncLock — Web-Locks-unavailable path ─────────────────────────────────
+//
+// In the node-test env, `navigator` is undefined, so `hasWebLocks()` returns
+// false and `withSyncLock` runs `fn` directly (relying on the WASM-level
+// mutex to serialize across methods within the tab). These tests cover that
+// branch; the Web-Locks branch is exercised by the Playwright integration
+// suite under `crates/web-client/test/sync_lock.test.ts`.
 
-// In a node environment, navigator.locks is unavailable, so we test the
-// in-process fallback path throughout this suite.
-
-describe("acquireSyncLock — in-process fallback (no Web Locks)", () => {
-  it("acquires immediately when no sync in progress", async () => {
-    const dbId = uniqueDb();
-    const result = await acquireSyncLock(dbId);
-    expect(result.acquired).toBe(true);
-    releaseSyncLock(dbId, "done"); // cleanup
+describe("withSyncLock — in-process fallback (no Web Locks)", () => {
+  beforeEach(() => {
+    // Sanity check: vitest runs in node, navigator is absent or stripped of
+    // navigator.locks. If a future config change breaks this assumption,
+    // these tests need to mock navigator.locks to remain in-process.
+    expect(hasWebLocks()).toBe(false);
   });
 
-  it("coalesces: waiter receives the same result as the releaser", async () => {
+  it("runs fn and resolves with its result", async () => {
     const dbId = uniqueDb();
-    // Acquire first
-    const { acquired } = await acquireSyncLock(dbId);
-    expect(acquired).toBe(true);
-
-    // Second call while in-progress — should wait
-    const waiterPromise = acquireSyncLock(dbId);
-
-    // Release with a result
-    releaseSyncLock(dbId, "syncResult");
-
-    const waiterResult = await waiterPromise;
-    expect(waiterResult.acquired).toBe(false);
-    expect(waiterResult.coalescedResult).toBe("syncResult");
+    const result = await withSyncLock(dbId, "syncState", async () => "ok");
+    expect(result).toBe("ok");
   });
 
-  it("coalesces error: waiter rejects with the same error", async () => {
+  it("propagates fn rejections to the caller", async () => {
     const dbId = uniqueDb();
-    await acquireSyncLock(dbId);
-
-    const waiterPromise = acquireSyncLock(dbId);
-    const err = new Error("sync failed");
-    releaseSyncLockWithError(dbId, err);
-
-    await expect(waiterPromise).rejects.toThrow("sync failed");
+    const err = new Error("boom");
+    await expect(
+      withSyncLock(dbId, "syncState", async () => {
+        throw err;
+      })
+    ).rejects.toBe(err);
   });
 
-  it("allows re-acquire after releaseSyncLock", async () => {
+  it("coalesces concurrent calls on the same (dbId, methodId): all share one fn invocation", async () => {
     const dbId = uniqueDb();
-    await acquireSyncLock(dbId);
-    releaseSyncLock(dbId, "first");
+    const fn = vi.fn(async () => "shared");
 
-    const second = await acquireSyncLock(dbId);
-    expect(second.acquired).toBe(true);
-    releaseSyncLock(dbId, "second");
+    const [a, b, c] = await Promise.all([
+      withSyncLock(dbId, "syncState", fn),
+      withSyncLock(dbId, "syncState", fn),
+      withSyncLock(dbId, "syncState", fn),
+    ]);
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect([a, b, c]).toEqual(["shared", "shared", "shared"]);
   });
 
-  it("multiple waiters all receive the same result", async () => {
+  it("coalesces error: concurrent waiters all reject with the same error", async () => {
     const dbId = uniqueDb();
-    await acquireSyncLock(dbId);
+    const err = new Error("shared-fail");
+    const fn = vi.fn(async () => {
+      throw err;
+    });
 
-    const w1 = acquireSyncLock(dbId);
-    const w2 = acquireSyncLock(dbId);
+    const results = await Promise.allSettled([
+      withSyncLock(dbId, "syncState", fn),
+      withSyncLock(dbId, "syncState", fn),
+    ]);
 
-    releaseSyncLock(dbId, "sharedResult");
+    expect(fn).toHaveBeenCalledTimes(1);
+    for (const r of results) {
+      expect(r.status).toBe("rejected");
+      expect(r.reason).toBe(err);
+    }
+  });
 
-    const [r1, r2] = await Promise.all([w1, w2]);
-    expect(r1.coalescedResult).toBe("sharedResult");
-    expect(r2.coalescedResult).toBe("sharedResult");
+  it("clears the in-flight slot after fn resolves: a subsequent call invokes fn fresh", async () => {
+    const dbId = uniqueDb();
+    const fn = vi.fn(async () => "ok");
+
+    await withSyncLock(dbId, "syncState", fn);
+    await withSyncLock(dbId, "syncState", fn);
+
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the in-flight slot after fn rejects: a subsequent call invokes fn fresh", async () => {
+    const dbId = uniqueDb();
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first"))
+      .mockResolvedValueOnce("second");
+
+    await expect(withSyncLock(dbId, "syncState", fn)).rejects.toThrow("first");
+    await expect(withSyncLock(dbId, "syncState", fn)).resolves.toBe("second");
+
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not coalesce calls with different methodIds on the same dbId", async () => {
+    const dbId = uniqueDb();
+    const fnA = vi.fn(async () => "A");
+    const fnB = vi.fn(async () => "B");
+
+    const [a, b] = await Promise.all([
+      withSyncLock(dbId, "syncState", fnA),
+      withSyncLock(dbId, "syncNoteTransport", fnB),
+    ]);
+
+    expect(fnA).toHaveBeenCalledTimes(1);
+    expect(fnB).toHaveBeenCalledTimes(1);
+    expect(a).toBe("A");
+    expect(b).toBe("B");
+  });
+
+  it("serializes calls with different methodIds on the same dbId (no overlap)", async () => {
+    // Browser WebClient uses a synchronous RefCell, so overlapping
+    // cross-method borrows would throw the "recursive use" aliasing error.
+    // Without Web Locks we serialize per-dbId via the in-process chain.
+    const dbId = uniqueDb();
+    const events = [];
+    let releaseA;
+    const gateA = new Promise((r) => (releaseA = r));
+
+    const fnA = vi.fn(async () => {
+      events.push("start-A");
+      await gateA;
+      events.push("finish-A");
+      return "A";
+    });
+    const fnB = vi.fn(async () => {
+      events.push("start-B");
+      events.push("finish-B");
+      return "B";
+    });
+
+    const pA = withSyncLock(dbId, "syncState", fnA);
+    const pB = withSyncLock(dbId, "syncNoteTransport", fnB);
+
+    // Yield enough microtasks for fnA to enter; fnB must still be queued.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(events).toEqual(["start-A"]);
+
+    releaseA();
+    await Promise.all([pA, pB]);
+
+    expect(events).toEqual(["start-A", "finish-A", "start-B", "finish-B"]);
+  });
+
+  it("runs the next queued call after a prior cross-method call rejects", async () => {
+    const dbId = uniqueDb();
+    const events = [];
+    const fnA = vi.fn(async () => {
+      events.push("A");
+      throw new Error("A-fail");
+    });
+    const fnB = vi.fn(async () => {
+      events.push("B");
+      return "B";
+    });
+
+    const pA = withSyncLock(dbId, "syncState", fnA);
+    const pB = withSyncLock(dbId, "syncNoteTransport", fnB);
+
+    await expect(pA).rejects.toThrow("A-fail");
+    await expect(pB).resolves.toBe("B");
+    expect(events).toEqual(["A", "B"]);
+  });
+
+  it("does not coalesce calls with the same methodId on different dbIds", async () => {
+    const dbA = uniqueDb();
+    const dbB = uniqueDb();
+    const fn = vi.fn(async () => "ok");
+
+    await Promise.all([
+      withSyncLock(dbA, "syncState", fn),
+      withSyncLock(dbB, "syncState", fn),
+    ]);
+
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("supports multiple waiters: all receive the same resolved value", async () => {
+    const dbId = uniqueDb();
+
+    let resolveFn;
+    const gate = new Promise((r) => (resolveFn = r));
+    const fn = vi.fn(() => gate);
+
+    const p1 = withSyncLock(dbId, "syncState", fn);
+    const p2 = withSyncLock(dbId, "syncState", fn);
+    const p3 = withSyncLock(dbId, "syncState", fn);
+
+    resolveFn("settled");
+
+    const [a, b, c] = await Promise.all([p1, p2, p3]);
+    expect([a, b, c]).toEqual(["settled", "settled", "settled"]);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("releaseSyncLock — edge cases", () => {
-  it("warns when called without an active sync (no-op)", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const dbId = uniqueDb();
-    releaseSyncLock(dbId, "orphan");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("no sync was in progress")
-    );
-    warnSpy.mockRestore();
-  });
-});
+// ── withSyncLock — Web-Locks path ─────────────────────────────────────────────
+//
+// Mock navigator.locks.request to verify withSyncLock requests an exclusive
+// lock on the right name and runs fn under that lock.
 
-describe("releaseSyncLockWithError — edge cases", () => {
-  it("warns when called without an active sync (no-op)", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const dbId = uniqueDb();
-    releaseSyncLockWithError(dbId, new Error("orphan error"));
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("no sync was in progress")
-    );
-    warnSpy.mockRestore();
-  });
-});
-
-describe("acquireSyncLock — timeout (no Web Locks fallback)", () => {
-  it("waiter times out when sync takes too long", async () => {
-    const dbId = uniqueDb();
-    // Acquire the lock (first caller)
-    await acquireSyncLock(dbId);
-
-    // Second caller with a very short timeout
-    const waiterPromise = acquireSyncLock(dbId, 10);
-    await expect(waiterPromise).rejects.toThrow("timed out");
-
-    // Cleanup
-    releaseSyncLock(dbId, "late result");
-  }, 3000);
-});
-
-// ── Web Locks path (mocked) ───────────────────────────────────────────────────
-
-describe("acquireSyncLock — Web Locks path", () => {
+describe("withSyncLock — Web-Locks path", () => {
   let origNavigator;
 
   beforeEach(() => {
@@ -203,154 +285,56 @@ describe("acquireSyncLock — Web Locks path", () => {
     });
   });
 
-  it("acquires via Web Locks when available", async () => {
-    const dbId = uniqueDb();
-    let lockCallback;
-
-    // Mock navigator.locks to capture the callback
-    const mockLocks = {
-      request: vi.fn().mockImplementation((_name, _opts, callback) => {
-        return new Promise((resolve) => {
-          lockCallback = () => {
-            const result = callback();
-            result.then(resolve);
-          };
-        });
-      }),
-    };
+  function installLocksMock(impl) {
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
-      value: { locks: mockLocks },
+      value: { locks: { request: impl } },
+    });
+  }
+
+  it("requests an exclusive lock named 'miden-sync-<dbId>' and runs fn under it", async () => {
+    const dbId = uniqueDb();
+    const calls = [];
+    installLocksMock(async (name, opts, fn) => {
+      calls.push({ name, opts });
+      return fn();
     });
 
-    const lockPromise = acquireSyncLock(dbId);
-    // Simulate lock grant by calling the callback
-    lockCallback();
-    const result = await lockPromise;
-    expect(result.acquired).toBe(true);
-    releaseSyncLock(dbId, "done");
+    const result = await withSyncLock(dbId, "syncState", async () => "ok");
+
+    expect(result).toBe("ok");
+    expect(calls).toEqual([
+      { name: `miden-sync-${dbId}`, opts: { mode: "exclusive" } },
+    ]);
   });
 
-  it("times out when lock is not granted within timeoutMs (Web Locks path)", async () => {
+  it("propagates fn rejections through the lock", async () => {
     const dbId = uniqueDb();
+    const err = new Error("inside-lock");
+    installLocksMock(async (_name, _opts, fn) => fn());
 
-    // Lock request never calls its callback (lock is never granted)
-    const mockLocks = {
-      request: vi.fn().mockImplementation(() => new Promise(() => {})), // never resolves
-    };
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { locks: mockLocks },
-    });
-
-    await expect(acquireSyncLock(dbId, 10)).rejects.toThrow("timed out");
-  }, 3000);
-
-  it("notifies waiters when Web Locks timeout fires with a coalesced waiter", async () => {
-    const dbId = uniqueDb();
-
-    // Lock never granted — so the timeout fires for both acquirer and waiters
-    const mockLocks = {
-      request: vi.fn().mockImplementation(() => new Promise(() => {})),
-    };
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { locks: mockLocks },
-    });
-
-    // First acquire with a short timeout
-    const p1 = acquireSyncLock(dbId, 15);
-    // While p1 is in-progress (before timeout fires), add a waiter
-    const p2 = acquireSyncLock(dbId, 1000);
-
-    // Both should reject — p1 from timeout, p2 from waiter rejection
-    await expect(p1).rejects.toThrow("timed out");
-    await expect(p2).rejects.toThrow("timed out");
-  }, 3000);
-
-  it("clears timeout when Web Locks grant the lock before timeout fires", async () => {
-    const dbId = uniqueDb();
-    let lockCallback;
-
-    const mockLocks = {
-      request: vi.fn().mockImplementation((_name, _opts, callback) => {
-        return new Promise((resolve) => {
-          lockCallback = () => {
-            const result = callback();
-            result.then(resolve);
-          };
-        });
-      }),
-    };
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { locks: mockLocks },
-    });
-
-    // Pass a timeout so timeoutId is set, then grant lock before it fires
-    const lockPromise = acquireSyncLock(dbId, 5000);
-    // Grant the lock immediately (before 5000ms timeout)
-    lockCallback();
-    const result = await lockPromise;
-    expect(result.acquired).toBe(true);
-    releaseSyncLock(dbId, "done");
+    await expect(
+      withSyncLock(dbId, "syncState", async () => {
+        throw err;
+      })
+    ).rejects.toBe(err);
   });
 
-  it("rejects when Web Locks request rejects with Error object", async () => {
+  it("coalesces concurrent same-(dbId, methodId) calls: one lock acquisition", async () => {
     const dbId = uniqueDb();
+    const requested = vi.fn(async (_name, _opts, fn) => fn());
+    installLocksMock(requested);
 
-    const mockLocks = {
-      request: vi.fn().mockRejectedValue(new Error("locks unavailable")),
-    };
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { locks: mockLocks },
-    });
+    const fn = vi.fn(async () => "ok");
+    const [a, b] = await Promise.all([
+      withSyncLock(dbId, "syncState", fn),
+      withSyncLock(dbId, "syncState", fn),
+    ]);
 
-    await expect(acquireSyncLock(dbId)).rejects.toThrow("locks unavailable");
-  });
-
-  it("wraps non-Error rejection in a new Error", async () => {
-    const dbId = uniqueDb();
-
-    const mockLocks = {
-      request: vi.fn().mockRejectedValue("string rejection"), // not an Error object
-    };
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { locks: mockLocks },
-    });
-
-    await expect(acquireSyncLock(dbId)).rejects.toThrow("string rejection");
-  });
-
-  it("releaseSyncLockWithError calls state.releaseLock if set (Web Locks path)", async () => {
-    const dbId = uniqueDb();
-    let lockCallback;
-
-    const mockLocks = {
-      request: vi.fn().mockImplementation((_name, _opts, callback) => {
-        return new Promise((resolve) => {
-          lockCallback = () => {
-            const result = callback();
-            result.then(resolve);
-          };
-        });
-      }),
-    };
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { locks: mockLocks },
-    });
-
-    const lockPromise = acquireSyncLock(dbId);
-    lockCallback();
-    const acquired = await lockPromise;
-    expect(acquired.acquired).toBe(true);
-
-    // Now release with error — should invoke state.releaseLock
-    const err = new Error("sync error");
-    releaseSyncLockWithError(dbId, err);
-    // The lock was held via a releaseLock promise; calling releaseLock() resolves it
+    expect(a).toBe("ok");
+    expect(b).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(1);
+    // Coalesced: only one underlying lock request.
+    expect(requested).toHaveBeenCalledTimes(1);
   });
 });

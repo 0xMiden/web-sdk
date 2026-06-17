@@ -46,14 +46,12 @@ impl WebClient {
     pub async fn import_public_account_from_seed(
         &self,
         init_seed: Vec<u8>,
-        mutable: bool,
         auth_scheme: AuthScheme,
     ) -> Result<Account, JsErr> {
         let keystore = self.get_keystore().await?;
 
         let (generated_acct, key_pair) =
-            generate_wallet(&AccountStorageMode::public(), mutable, Some(init_seed), auth_scheme)
-                .await?;
+            generate_wallet(&AccountStorageMode::public(), Some(init_seed), auth_scheme).await?;
 
         let native_id = generated_acct.id();
 
