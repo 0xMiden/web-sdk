@@ -85,9 +85,10 @@ export class PswapResource {
    * the tracked lineage, so only the order id is required. Runs through the
    * same execute/prove/submit path as the other transaction helpers.
    *
-   * Throws synchronously (before submitting any transaction) when:
+   * Throws before submitting any transaction when:
    *   - no lineage is tracked for `orderId`, OR
-   *   - the lineage is in a terminal state (`FullyFilled` or `Reclaimed`).
+   *   - the lineage is in a terminal state (`FullyFilled` or `Reclaimed`,
+   *     guarded by the `buildPswapCancelByOrder` binding).
    *
    * Concurrency: the lineage-read, build, and submit steps below are not
    * atomic against external fills. If another consumer — or this client's own
@@ -103,30 +104,13 @@ export class PswapResource {
     this.#client.assertNotTerminated();
     const orderId = normalizeOrderId(opts.orderId);
 
+    // Fetch the lineage for the creator account (the cancel's submitter).
+    // The terminal-state guard is authoritative in the `buildPswapCancelByOrder`
+    // binding below, so it is not repeated here.
     const lineage = await this.#inner.getPswapLineage(orderId);
     if (!lineage) {
       throw new Error(`No PSWAP lineage tracked for order ${orderId}`);
     }
-
-    // PswapLineageState: 0 = Active, 1 = FullyFilled, 2 = Reclaimed.
-    // The terminal states have no fillable tip — `buildPswapCancelByOrder`
-    // would produce a request that the kernel rejects with the misleading
-    // "note already nullified" error after a full execute / prove / submit
-    // round trip. Cheap synchronous throw instead.
-    const state = lineage.state();
-    if (state !== 0) {
-      const stateName =
-        state === 1
-          ? "FullyFilled"
-          : state === 2
-            ? "Reclaimed"
-            : `unknown(${state})`;
-      throw new Error(
-        `Cannot cancel PSWAP order ${orderId}: lineage is ${stateName}; ` +
-          `only Active lineages can be cancelled.`
-      );
-    }
-
     const accountId = lineage.creatorAccountId();
 
     const request = await this.#inner.buildPswapCancelByOrder(orderId);
