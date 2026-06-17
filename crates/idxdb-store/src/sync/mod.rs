@@ -9,7 +9,6 @@ use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
     PartialBlockchainUpdates,
-    PublicAccountDelta,
     PublicAccountUpdate,
     StateSyncUpdate,
 };
@@ -371,33 +370,6 @@ impl IdxdbStore {
     ) -> Result<(), StoreError> {
         self.undo_account_states(account_commitments).await?;
         Ok(())
-    }
-
-    /// Converts a `PublicAccountDelta` (raw incremental RPC payload) into a protocol-level
-    /// `AccountDelta` by replaying the carried updates against the locally-stored account state.
-    /// Mirrors `apply_public_account_delta` in `sqlite-store`'s sync path.
-    async fn public_delta_to_account_delta(
-        &self,
-        public_delta: &PublicAccountDelta,
-    ) -> Result<AccountDelta, StoreError> {
-        let account_id = public_delta.id();
-        let local_header = self
-            .get_account_header(account_id)
-            .await?
-            .map(|(header, _)| header)
-            .ok_or(StoreError::AccountDataNotFound(account_id))?;
-        let local_storage = self
-            .get_account_storage(
-                account_id,
-                AccountStorageFilter::SlotNames(public_delta.value_slot_names()),
-            )
-            .await?;
-        let local_vault = self.get_account_vault(account_id).await?;
-        public_delta
-            .compute_account_delta(&local_header, &local_storage, &local_vault)
-            .map_err(|err| {
-                StoreError::DatabaseError(format!("failed to compute public account delta: {err}"))
-            })
     }
 }
 
