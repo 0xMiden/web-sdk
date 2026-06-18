@@ -121,7 +121,7 @@ impl WebClient {
             // than index blindly.
             None => commitments
                 .first()
-                .map(miden_protocol::note::NoteDetailsCommitment::to_hex)
+                .map(miden_client::note::NoteDetailsCommitment::to_hex)
                 .ok_or_else(|| from_str_err("import produced no note commitment")),
         }
     }

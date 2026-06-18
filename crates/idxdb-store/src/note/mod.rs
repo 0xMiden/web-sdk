@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::AccountId;
-use miden_client::note::{BlockNumber, NoteScript, Nullifier};
+use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteScript, Nullifier};
 use miden_client::store::{
     InputNoteRecord,
     InputNoteState,
@@ -12,7 +12,6 @@ use miden_client::store::{
     OutputNoteState,
     StoreError,
 };
-use miden_protocol::note::NoteDetailsCommitment;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys::{Array, Promise};
 
