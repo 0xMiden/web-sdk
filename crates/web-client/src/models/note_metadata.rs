@@ -1,5 +1,9 @@
 use js_export_macro::js_export;
-use miden_client::note::{NoteAttachments, NoteMetadata as NativeNoteMetadata, PartialNoteMetadata};
+use miden_client::note::{
+    NoteAttachments,
+    NoteMetadata as NativeNoteMetadata,
+    PartialNoteMetadata,
+};
 
 use super::account_id::AccountId;
 use super::{NoteTag, NoteType};

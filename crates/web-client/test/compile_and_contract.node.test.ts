@@ -626,107 +626,109 @@ test.describe("transactions.execute()", () => {
   // get_account_proof panics when resolving foreign accounts. This test
   // requires a real node or an enhanced mock that registers SDK-created
   // accounts in MockChain.committed_accounts.
-  test.fixme("execute() with foreignAccounts accepts a plain { id } wrapper", async ({
-    sdk,
-  }) => {
-    // Verifies that the wrapper-vs-WASM discrimination logic in execute() works:
-    // passing { id: accountId } (plain object) correctly resolves the account ref.
-    const MidenClient = await createMidenClient(sdk);
-    test.skip(!MidenClient, "requires napi binary (Node.js only)");
-    const client = await MidenClient.createMock();
+  test.fixme(
+    "execute() with foreignAccounts accepts a plain { id } wrapper",
+    async ({ sdk }) => {
+      // Verifies that the wrapper-vs-WASM discrimination logic in execute() works:
+      // passing { id: accountId } (plain object) correctly resolves the account ref.
+      const MidenClient = await createMidenClient(sdk);
+      test.skip(!MidenClient, "requires napi binary (Node.js only)");
+      const client = await MidenClient.createMock();
 
-    // Create a target contract (the "foreign" account)
-    const component = await client.compile.component({
-      code: COUNTER_CODE,
-      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
-    });
-    const seed1 = new Uint8Array(32);
-    seed1.fill(0x30);
-    const auth1 = sdk.AuthSecretKey.rpoFalconWithRNG(seed1);
-    const foreignContract = await client.accounts.create({
-      type: "ImmutableContract",
-      storage: "public",
-      seed: seed1,
-      auth: auth1,
-      components: [component],
-    });
+      // Create a target contract (the "foreign" account)
+      const component = await client.compile.component({
+        code: COUNTER_CODE,
+        slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+      });
+      const seed1 = new Uint8Array(32);
+      seed1.fill(0x30);
+      const auth1 = sdk.AuthSecretKey.rpoFalconWithRNG(seed1);
+      const foreignContract = await client.accounts.create({
+        type: "ImmutableContract",
+        storage: "public",
+        seed: seed1,
+        auth: auth1,
+        components: [component],
+      });
 
-    // Create a wallet that will execute the FPI-like script
-    const wallet = await client.accounts.create();
+      // Create a wallet that will execute the FPI-like script
+      const wallet = await client.accounts.create();
 
-    client.proveBlock();
-    await client.sync();
+      client.proveBlock();
+      await client.sync();
 
-    // A minimal script that just reads foreign account state (no mutation)
-    // Using truncate_stack to avoid leaving anything on the operand stack.
-    const script = await client.compile.txScript({
-      code: `
+      // A minimal script that just reads foreign account state (no mutation)
+      // Using truncate_stack to avoid leaving anything on the operand stack.
+      const script = await client.compile.txScript({
+        code: `
         use miden::core::sys
         begin
           exec.sys::truncate_stack
         end
       `,
-    });
+      });
 
-    // The key assertion: passing { id: foreignContract.id() } works
-    const { txId } = await client.transactions.execute({
-      account: wallet.id(),
-      script,
-      foreignAccounts: [{ id: foreignContract.id() }],
-    });
+      // The key assertion: passing { id: foreignContract.id() } works
+      const { txId } = await client.transactions.execute({
+        account: wallet.id(),
+        script,
+        foreignAccounts: [{ id: foreignContract.id() }],
+      });
 
-    expect(txId.toHex()).toBeDefined();
-    expect(txId.toHex().length).toBeGreaterThan(0);
-  });
+      expect(txId.toHex()).toBeDefined();
+      expect(txId.toHex().length).toBeGreaterThan(0);
+    }
+  );
 
   // Same mock limitation as above: SDK-created accounts are not in the mock
   // chain's committed list, causing get_account_proof to panic.
-  test.fixme("execute() with a bare AccountId as foreignAccount (non-wrapper path)", async ({
-    sdk,
-  }) => {
-    const MidenClient = await createMidenClient(sdk);
-    test.skip(!MidenClient, "requires napi binary (Node.js only)");
-    const client = await MidenClient.createMock();
+  test.fixme(
+    "execute() with a bare AccountId as foreignAccount (non-wrapper path)",
+    async ({ sdk }) => {
+      const MidenClient = await createMidenClient(sdk);
+      test.skip(!MidenClient, "requires napi binary (Node.js only)");
+      const client = await MidenClient.createMock();
 
-    const component = await client.compile.component({
-      code: COUNTER_CODE,
-      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
-    });
-    const seed = new Uint8Array(32);
-    seed.fill(0x40);
-    const auth = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
-    const foreignContract = await client.accounts.create({
-      type: "ImmutableContract",
-      storage: "public",
-      seed,
-      auth,
-      components: [component],
-    });
+      const component = await client.compile.component({
+        code: COUNTER_CODE,
+        slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+      });
+      const seed = new Uint8Array(32);
+      seed.fill(0x40);
+      const auth = sdk.AuthSecretKey.rpoFalconWithRNG(seed);
+      const foreignContract = await client.accounts.create({
+        type: "ImmutableContract",
+        storage: "public",
+        seed,
+        auth,
+        components: [component],
+      });
 
-    const wallet = await client.accounts.create();
+      const wallet = await client.accounts.create();
 
-    client.proveBlock();
-    await client.sync();
+      client.proveBlock();
+      await client.sync();
 
-    const script = await client.compile.txScript({
-      code: `
+      const script = await client.compile.txScript({
+        code: `
         use miden::core::sys
         begin
           exec.sys::truncate_stack
         end
       `,
-    });
+      });
 
-    // Pass the AccountId directly (not wrapped in { id })
-    const { txId } = await client.transactions.execute({
-      account: wallet.id(),
-      script,
-      foreignAccounts: [foreignContract.id()],
-    });
+      // Pass the AccountId directly (not wrapped in { id })
+      const { txId } = await client.transactions.execute({
+        account: wallet.id(),
+        script,
+        foreignAccounts: [foreignContract.id()],
+      });
 
-    expect(txId.toHex()).toBeDefined();
-    expect(txId.toHex().length).toBeGreaterThan(0);
-  });
+      expect(txId.toHex()).toBeDefined();
+      expect(txId.toHex().length).toBeGreaterThan(0);
+    }
+  );
 });
 
 // ════════════════════════════════════════════════════════════════
