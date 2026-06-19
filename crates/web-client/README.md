@@ -452,6 +452,45 @@ const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
 
+### Partial-Swap (PSWAP) Orders
+
+A partial-swap note offers one asset for another and can be filled by multiple
+counterparties over time — each partial fill pays the creator and leaves a
+remainder note carrying the unfilled balance. The client tracks that chain as a
+**lineage** keyed by a stable `orderId`, advancing it round by round as fills
+are discovered on sync.
+
+```typescript
+// Offer 100 of token A for 25 of token B.
+await client.transactions.pswapCreate({
+  account: wallet,
+  offer: { token: aToken, amount: 100n },
+  request: { token: bToken, amount: 25n }
+});
+await client.sync();
+
+// The order is tracked as a lineage keyed by a stable order id.
+const [lineage] = await client.pswap.lineagesFor(wallet);
+const orderId = lineage.orderId();
+console.log(lineage.remainingOffered().toString()); // unfilled offered balance
+
+// A counterparty fills part of the order:
+//   client.transactions.pswapConsume({ account, note, fillAmount });
+// On the next sync the lineage advances, and `remainingOffered()` shrinks.
+
+// Reclaim the unfilled remainder on the current tip, by stable order id.
+// `waitForConfirmation` blocks until the cancel commits AND a sync brings
+// the consumed-note update down; without it, the call resolves at submit
+// time and `pswap.lineage(orderId)` still reads `Active` until the next
+// sync. The lineage only transitions to `Reclaimed` once the chain sees
+// the cancel land.
+await client.pswap.cancelByOrder({ orderId, waitForConfirmation: true });
+```
+
+`client.pswap.lineages()` returns every order this client created;
+`client.pswap.lineage(orderId)` returns one order's lineage, or `null` if it is
+not tracked.
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:

@@ -394,6 +394,9 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useTransactionHistory(...)` | `transactions` | Local transaction log |
 | `useSessionAccount()` | `account` | The signer's connected account |
 | `useWaitForNotes(...)` | resolves when matching notes appear | Pull-style note waiting |
+| `usePswapLineages()` | `lineages` | All tracked PSWAP order lineages |
+| `usePswapLineagesFor(creator)` | `lineages` | Tracked PSWAP lineages for one creator |
+| `usePswapLineage(orderId)` | `lineage` | One tracked PSWAP lineage by stable order id |
 
 ### Mutation (write)
 | Hook | Action | Returns on success |
@@ -412,6 +415,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` — `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` — creator only, reclaims unfilled offered asset | `TransactionResult` |
+| `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` — creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
 | `useTransaction()` | `transact({ ... })` | `TransactionResult` (custom tx) |
 | `useExecuteProgram()` | `execute(...)` | program output |
 | `useCompile()` | `compile({ source })` | `{ component, txScript, noteScript }` |
