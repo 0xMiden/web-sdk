@@ -33,14 +33,17 @@ jobs:
         run: |
           rustup update --no-self-update
 
+      # Dry-run only the crates that resolve standalone. web-client is omitted: it depends on
+      # js-export-macro + idxdb-store, which aren't on crates.io until the publish steps below run,
+      # so it can't be dry-run before them.
       - name: Preflight - publish dry run
         continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cd crates/idxdb-store
+          cd crates/js-export-macro
           cargo publish --dry-run
-          cd ../web-client
+          cd ../idxdb-store
           cargo publish --dry-run
           cd ../mobile-prover
           cargo publish --dry-run
@@ -50,6 +53,15 @@ jobs:
         run: |
           rm -rf "$CARGO_TARGET_DIR/package" || true
 
+      # Publish in dependency order: js-export-macro and idxdb-store first, then web-client (which
+      # depends on both), then mobile-prover.
+      - name: Publish js-export-macro
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/js-export-macro
+          cargo publish
+
       - name: Publish idxdb-store
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -57,12 +69,15 @@ jobs:
           cd crates/idxdb-store
           cargo publish
 
+      # --no-verify: web-client is a wasm `cdylib` that does not build for the host target (its
+      # miden-client dependency is configured for wasm), so cargo's default host verify build
+      # fails. The crate is verified for wasm32 by the build and clippy-wasm CI jobs instead.
       - name: Publish web-client
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd crates/web-client
-          cargo publish
+          cargo publish --no-verify
 
       - name: Publish mobile-prover
         env:

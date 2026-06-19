@@ -75,8 +75,9 @@ miden-client    = { features = ["testing"], workspace = true }
 miden-protocol  = { workspace = true }
 miden-standards = { workspace = true }
 
-# Proc macro for dual wasm_bindgen/napi annotations
-js-export-macro = { path = "../js-export-macro" }
+# Proc macro for dual wasm_bindgen/napi annotations. Uses the workspace dep (path + version) so
+# `cargo publish` records a version for it instead of failing on a bare path dep.
+js-export-macro = { workspace = true }
 
 # Optional MT-only deps: pulled in by the `mt-threads` feature.
 # wasm-bindgen-rayon bootstraps a rayon thread pool over Web Workers backed
