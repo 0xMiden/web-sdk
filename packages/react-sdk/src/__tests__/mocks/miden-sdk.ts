@@ -188,6 +188,22 @@ export const createMockTransactionRequest = () => ({
   [Symbol.dispose]: vi.fn(),
 });
 
+// Mock PswapLineageRecord
+export const createMockPswapLineageRecord = (
+  orderId: string = "42",
+  overrides: Record<string, unknown> = {}
+) => ({
+  orderId: vi.fn(() => orderId),
+  creatorAccountId: vi.fn(() => createMockAccountId()),
+  remainingOffered: vi.fn(() => 100n),
+  remainingRequested: vi.fn(() => 50n),
+  currentDepth: vi.fn(() => 0),
+  currentTipNoteId: vi.fn(() => ({ toString: () => "0xtip" })),
+  state: vi.fn(() => 0),
+  free: vi.fn(),
+  ...overrides,
+});
+
 // Mock FeltArray
 export const createMockFeltArray = (length: number = 16) => ({
   length: vi.fn(() => length),
@@ -248,6 +264,15 @@ export const createMockWebClient = (
     submitNewTransactionWithProver: vi
       .fn()
       .mockResolvedValue(createMockTransactionId()),
+
+    // PSWAP lineage tracking
+    getPswapLineages: vi.fn().mockResolvedValue([]),
+    getPswapLineagesFor: vi.fn().mockResolvedValue([]),
+    getPswapLineage: vi.fn().mockResolvedValue(null),
+    buildPswapCancelByOrder: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+
     executeTransaction: vi
       .fn()
       .mockResolvedValue(createMockTransactionResult()),
@@ -318,6 +343,10 @@ type MockWebClientType = {
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
+  getPswapLineages: ReturnType<typeof vi.fn>;
+  getPswapLineagesFor: ReturnType<typeof vi.fn>;
+  getPswapLineage: ReturnType<typeof vi.fn>;
+  buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;

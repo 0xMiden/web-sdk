@@ -20,6 +20,8 @@ export {
   NoteFile,
   NoteId,
   NoteTag,
+  PswapLineageRecord,
+  PswapLineageState,
   RawOutputNote,
   OutputNoteRecord,
   SyncSummary,

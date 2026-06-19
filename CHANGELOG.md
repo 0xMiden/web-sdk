@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.2 (2026-06-19)
+
+### Enhancements
+
+* [FEATURE][web,react] PSWAP order-lineage tracking. The client persists a *lineage* per partially-fillable swap order — the chain of remainder notes a PSWAP leaves behind as it is filled round by round — keyed by a stable `orderId`. A new `pswap` resource on `MidenClient` exposes `pswap.lineages()`, `pswap.lineagesFor(creator)`, and `pswap.lineage(orderId)`, returning `PswapLineageRecord`s — `remainingOffered()` / `remainingRequested()` (the amounts still unfilled on the current tip), `currentDepth()`, `currentTipNoteId()`, and `state()` (`Active` / `FullyFilled` / `Reclaimed`) — plus `pswap.cancelByOrder(orderId)`, which reclaims the unfilled offered asset on the order's current tip (refused on a `FullyFilled` / `Reclaimed` order). Four React hooks expose the reads + cancel: `usePswapLineages`, `usePswapLineagesFor`, `usePswapLineage`, and `usePswapCancelByOrder`. ([#176](https://github.com/0xMiden/web-sdk/pull/176), companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231))
+
+### Changes
+
+* [behavior][web] `applyTransaction(...)` now persists through the high-level client apply path, so registered transaction observers (e.g. PSWAP lineage tracking) fire when a transaction is applied — previously the split prove/submit/apply pipeline persisted the update without firing any. For transactions unrelated to a tracked order the observer pass is a no-op. ([#176](https://github.com/0xMiden/web-sdk/pull/176))
+
 ## 0.15.1 (2026-06-19)
 
 ### Changes
