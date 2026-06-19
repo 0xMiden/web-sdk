@@ -36,11 +36,7 @@ codegen-units = 16
 # Workspace crates
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.0" }
 
-# Miden client + the SQLite store backend its Node.js variant uses.
-# Protocol/standards types (AccountProcedureRoot, NoteDetailsCommitment,
-# PartialNoteMetadata, P2ideNote, ...) are consumed via miden-client's public
-# re-exports rather than direct miden-protocol/miden-standards deps, so the
-# transitive miden-protocol rev can never float ahead of what the client pins.
+# Client crates
 miden-client              = { default-features = false, version = "0.15.0" }
 miden-client-sqlite-store = { default-features = false, version = "0.15.0" }
 
