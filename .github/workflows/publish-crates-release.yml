@@ -3,6 +3,14 @@ name: Publish Rust Crates on Release
 on:
   release:
     types: [published]
+  # Manual trigger to (re-)publish the crates from a chosen ref — used to recover when a release's
+  # crates-publish failed partway, or to catch crates.io up to a fix that landed after the tag.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch/tag/sha) to publish from. Defaults to the branch this run is dispatched on."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -19,14 +27,17 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.release.tag_name }}
+          # On a release event, the tag; on workflow_dispatch, the input ref (empty default falls
+          # back to the dispatched branch via the action's own default).
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
 
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
 
       - name: Log release info
         run: |
-          echo "Publishing release ${{ github.event.release.tag_name }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Release tag (if any): ${{ github.event.release.tag_name }}"
           echo "Commit: $(git rev-parse HEAD)"
 
       - name: Update Rust toolchain
