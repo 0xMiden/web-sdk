@@ -37,11 +37,8 @@ codegen-units = 16
 idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.0" }
 
 # Miden client + the SQLite store backend its Node.js variant uses.
-# TEMPORARY: PSWAP lineage tracking + cancel-by-order land in miden-client via the
-# vaibhav/pswap branch (PR 0xMiden/miden-client#2231); not yet in a published crate.
-# Tracking the branch head; revert to a crates.io version once the PSWAP API is released.
-miden-client              = { branch = "vaibhav/pswap", default-features = false, git = "https://github.com/inicio-labs/miden-client.git" }
-miden-client-sqlite-store = { branch = "vaibhav/pswap", default-features = false, git = "https://github.com/inicio-labs/miden-client.git" }
+miden-client              = { default-features = false, version = "0.15.2" }
+miden-client-sqlite-store = { default-features = false, version = "0.15.2" }
 
 # Must resolve in Cargo.lock to the same miden-protocol that miden-client
 # pins transitively, and that the CI node-builder is compiled against

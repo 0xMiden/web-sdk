@@ -472,7 +472,7 @@ await client.sync();
 // The order is tracked as a lineage keyed by a stable order id.
 const [lineage] = await client.pswap.lineagesFor(wallet);
 const orderId = lineage.orderId();
-console.log(lineage.remainingOffered().amount().toString()); // unfilled offered balance
+console.log(lineage.remainingOffered().toString()); // unfilled offered balance
 
 // A counterparty fills part of the order:
 //   client.transactions.pswapConsume({ account, note, fillAmount });

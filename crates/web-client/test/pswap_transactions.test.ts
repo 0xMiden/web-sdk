@@ -433,10 +433,8 @@ test.describe("pswap lineage tracking tests", () => {
         orderId,
         depth: Number(lineage.currentDepth()),
         state: Number(lineage.state()),
-        remainingOffered: lineage.remainingOffered().amount().toString(),
-        remainingRequested: lineage.remainingRequested().amount().toString(),
-        offeredFaucet: lineage.remainingOffered().faucetId().toString(),
-        requestedFaucet: lineage.remainingRequested().faucetId().toString(),
+        remainingOffered: lineage.remainingOffered().toString(),
+        remainingRequested: lineage.remainingRequested().toString(),
         creator: lineage.creatorAccountId().toString(),
         tip: lineage.currentTipNoteId().toString(),
         byIdOrderId: byId ? byId.orderId() : null,
@@ -445,8 +443,6 @@ test.describe("pswap lineage tracking tests", () => {
         byCreatorCount: byCreator.length,
         byCreatorOrderId: byCreator[0] ? byCreator[0].orderId() : null,
         byOtherCount: byOther.length,
-        offeredFaucetExpected: offeredFaucet.id().toString(),
-        requestedFaucetExpected: requestedFaucet.id().toString(),
         creatorExpected: creator.id().toString(),
       };
     });
@@ -460,10 +456,6 @@ test.describe("pswap lineage tracking tests", () => {
     expect(BigInt(result.remainingOffered)).toEqual(100n);
     expect(BigInt(result.remainingRequested)).toEqual(25n);
 
-    // The offered/requested faucets ride on the remaining-asset fields
-    // (chain-invariant across the order).
-    expect(result.offeredFaucet).toEqual(result.offeredFaucetExpected);
-    expect(result.requestedFaucet).toEqual(result.requestedFaucetExpected);
     expect(result.creator).toEqual(result.creatorExpected);
 
     // getPswapLineage(orderId) returns the same lineage.
@@ -540,8 +532,8 @@ test.describe("pswap lineage tracking tests", () => {
         depthBefore: Number(before.currentDepth()),
         depthAfter: Number(after.currentDepth()),
         stateAfter: Number(after.state()),
-        remainingOfferedAfter: after.remainingOffered().amount().toString(),
-        remainingRequestedAfter: after.remainingRequested().amount().toString(),
+        remainingOfferedAfter: after.remainingOffered().toString(),
+        remainingRequestedAfter: after.remainingRequested().toString(),
         tipAfter: after.currentTipNoteId().toString(),
       };
     });
@@ -616,8 +608,8 @@ test.describe("pswap lineage tracking tests", () => {
         depthBefore: Number(before.currentDepth()),
         depthAfter: Number(after.currentDepth()),
         stateAfter: Number(after.state()),
-        remainingOfferedAfter: after.remainingOffered().amount().toString(),
-        remainingRequestedAfter: after.remainingRequested().amount().toString(),
+        remainingOfferedAfter: after.remainingOffered().toString(),
+        remainingRequestedAfter: after.remainingRequested().toString(),
         tipAfter: after.currentTipNoteId().toString(),
       };
     });

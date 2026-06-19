@@ -5,8 +5,8 @@ use miden_client::pswap::{
 };
 
 use super::account_id::AccountId;
-use super::fungible_asset::FungibleAsset;
 use super::note_id::NoteId;
+use crate::platform::u64_to_js_u64;
 
 /// Lifecycle state of a PSWAP order.
 ///
@@ -44,19 +44,18 @@ impl PswapLineageRecord {
         self.0.creator_account_id().into()
     }
 
-    /// Offered asset still unfilled on the current tip. Carries the offered
-    /// faucet (chain-invariant across the order) and the remaining amount.
+    /// Offered amount still unfilled on the current tip. The offered faucet is
+    /// chain-invariant and recovered from the original PSWAP note when needed.
     #[js_export(js_name = "remainingOffered")]
-    pub fn remaining_offered(&self) -> FungibleAsset {
-        self.0.remaining_offered.into()
+    pub fn remaining_offered(&self) -> JsU64 {
+        u64_to_js_u64(self.0.remaining_offered.as_u64())
     }
 
-    /// Requested asset still outstanding on the current tip. Carries the
-    /// requested faucet (chain-invariant across the order) and the remaining
-    /// amount.
+    /// Requested amount still outstanding on the current tip. The requested
+    /// faucet is recovered from the original PSWAP note when needed.
     #[js_export(js_name = "remainingRequested")]
-    pub fn remaining_requested(&self) -> FungibleAsset {
-        self.0.remaining_requested.into()
+    pub fn remaining_requested(&self) -> JsU64 {
+        u64_to_js_u64(self.0.remaining_requested.as_u64())
     }
 
     /// Depth of the current tip: 0 for the original PSWAP, +1 per fill round.
@@ -74,18 +73,6 @@ impl PswapLineageRecord {
     /// Lifecycle state of the order.
     pub fn state(&self) -> PswapLineageState {
         self.0.state.into()
-    }
-
-    /// Block at which the lineage was first recorded.
-    #[js_export(js_name = "createdAtBlock")]
-    pub fn created_at_block(&self) -> u32 {
-        self.0.created_at_block.as_u32()
-    }
-
-    /// Block at which the lineage was last advanced.
-    #[js_export(js_name = "updatedAtBlock")]
-    pub fn updated_at_block(&self) -> u32 {
-        self.0.updated_at_block.as_u32()
     }
 }
 

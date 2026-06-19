@@ -20,7 +20,7 @@ import type { PswapLineagesResult } from "../types";
  *     <ul>
  *       {lineages.map((l) => (
  *         <li key={l.orderId()}>
- *           {l.orderId()} — {l.remainingOffered().amount().toString()} remaining
+ *           {l.orderId()} — {l.remainingOffered().toString()} remaining
  *         </li>
  *       ))}
  *     </ul>

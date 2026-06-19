@@ -17,6 +17,9 @@ impl WebClient {
             .as_mut()
             .ok_or_else(|| from_str_err("Client not initialized. Call createClient() first."))?;
 
+        // Relays without a block hint; `send_private_note_with_block_hint` exposes
+        // the hint for deterministic delivery and can be wired through later.
+        #[allow(deprecated)]
         client
             .send_private_note(note.into(), &address.into())
             .await

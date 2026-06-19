@@ -1135,7 +1135,7 @@ function OrderRow({ orderId }: { orderId: string }) {
   if (!lineage) return <span>Not tracked</span>;
   return (
     <span>
-      {lineage.orderId()} — {lineage.remainingOffered().amount().toString()} left,
+      {lineage.orderId()} — {lineage.remainingOffered().toString()} left,
       state {lineage.state()}
     </span>
   );

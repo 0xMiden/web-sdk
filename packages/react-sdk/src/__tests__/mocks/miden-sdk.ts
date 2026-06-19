@@ -200,8 +200,6 @@ export const createMockPswapLineageRecord = (
   currentDepth: vi.fn(() => 0),
   currentTipNoteId: vi.fn(() => ({ toString: () => "0xtip" })),
   state: vi.fn(() => 0),
-  createdAtBlock: vi.fn(() => 10),
-  updatedAtBlock: vi.fn(() => 20),
   free: vi.fn(),
   ...overrides,
 });
