@@ -2,9 +2,14 @@ use js_export_macro::js_export;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::crypto::RandomCoin;
-use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote};
+use miden_client::note::{
+    Note as NativeNote,
+    NoteAssets as NativeNoteAssets,
+    P2idNote,
+    P2ideNote,
+    P2ideNoteStorage,
+};
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
-use miden_standards::note::{P2ideNote, P2ideNoteStorage};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -44,7 +49,7 @@ impl Note {
         note_recipient: &NoteRecipient,
     ) -> Note {
         let native_metadata: miden_client::note::NoteMetadata = note_metadata.into();
-        let partial = miden_protocol::note::PartialNoteMetadata::new(
+        let partial = miden_client::note::PartialNoteMetadata::new(
             native_metadata.sender(),
             native_metadata.note_type(),
         )

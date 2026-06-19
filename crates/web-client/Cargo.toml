@@ -71,9 +71,7 @@ mt-threads = ["dep:rayon", "dep:wasm-bindgen-rayon", "miden-client/concurrent"]
 
 [dependencies]
 # Workspace dependencies
-miden-client    = { features = ["testing"], workspace = true }
-miden-protocol  = { workspace = true }
-miden-standards = { workspace = true }
+miden-client = { features = ["testing"], workspace = true }
 
 # Proc macro for dual wasm_bindgen/napi annotations. Uses the workspace dep (path + version) so
 # `cargo publish` records a version for it instead of failing on a bare path dep.

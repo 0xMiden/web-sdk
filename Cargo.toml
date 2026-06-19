@@ -39,20 +39,9 @@ codegen-units = 16
 idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.1" }
 js-export-macro = { path = "crates/js-export-macro", version = "0.15.1" }
 
-# Miden client + the SQLite store backend its Node.js variant uses.
+# Client crates
 miden-client              = { default-features = false, version = "0.15.2" }
 miden-client-sqlite-store = { default-features = false, version = "0.15.2" }
-
-# Must resolve in Cargo.lock to the same miden-protocol that miden-client
-# pins transitively, and that the CI node-builder is compiled against
-# (see MIDEN_CLIENT_REF in .github/workflows/test.yml). Do NOT let it float
-# ahead of that pin: a client/node miden-protocol mismatch makes the node's
-# gRPC responses fail to deserialize ("invalid field element") and breaks every
-# integration test that syncs.
-# TODO: drop the direct dep once AccountProcedureRoot, NoteDetailsCommitment,
-# PartialNoteMetadata are re-exported from miden-client.
-miden-protocol  = { default-features = false, version = "0.15" }
-miden-standards = { default-features = false, version = "0.15" }
 
 # External dependencies
 async-trait = { version = "0.1" }

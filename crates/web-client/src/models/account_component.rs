@@ -51,9 +51,9 @@ impl GetProceduresResultItem {
     }
 }
 
-impl From<(miden_protocol::account::AccountProcedureRoot, bool)> for GetProceduresResultItem {
+impl From<(miden_client::account::AccountProcedureRoot, bool)> for GetProceduresResultItem {
     fn from(
-        native_get_procedures_result_item: (miden_protocol::account::AccountProcedureRoot, bool),
+        native_get_procedures_result_item: (miden_client::account::AccountProcedureRoot, bool),
     ) -> Self {
         let digest_word: NativeWord = native_get_procedures_result_item.0.into();
         Self {
