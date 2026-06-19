@@ -125,6 +125,25 @@ describe("insertPartialBlockchainNodes", () => {
     expect(all).toHaveLength(0);
   });
 
+  it("deduplicates matching nodes in the same insert", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1", "1"], ["0xnode", "0xnode"]);
+    const db = getDatabase(dbId);
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toEqual([{ id: 1, node: "0xnode" }]);
+  });
+
+  it("rejects conflicting nodes in the same insert", async () => {
+    const dbId = await openTestDb();
+
+    await expect(
+      insertPartialBlockchainNodes(dbId, ["1", "1"], ["0xold", "0xnew"])
+    ).rejects.toThrow("Conflicting partial blockchain node at index 1");
+
+    const db = getDatabase(dbId);
+    expect(await db.partialBlockchainNodes.count()).toBe(0);
+  });
+
   it("rejects when ids and nodes arrays have different lengths", async () => {
     const dbId = await openTestDb();
     // The error is thrown, caught by the catch block, then re-thrown by
@@ -134,13 +153,26 @@ describe("insertPartialBlockchainNodes", () => {
     ).rejects.toThrow("ids and nodes arrays must be of the same length");
   });
 
-  it("overwrites existing nodes on re-insert (bulkPut semantics)", async () => {
+  it("accepts an existing node with the same value", async () => {
     const dbId = await openTestDb();
-    await insertPartialBlockchainNodes(dbId, ["1"], ["0xold"]);
-    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnew"]);
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnode"]);
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnode"]);
     const db = getDatabase(dbId);
     const node = await db.partialBlockchainNodes.get(1);
-    expect(node!.node).toBe("0xnew");
+    expect(node!.node).toBe("0xnode");
+  });
+
+  it("rejects a conflicting node and preserves the stored value", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xold"]);
+
+    await expect(
+      insertPartialBlockchainNodes(dbId, ["1"], ["0xnew"])
+    ).rejects.toThrow("Conflicting partial blockchain node at index 1");
+
+    const db = getDatabase(dbId);
+    const node = await db.partialBlockchainNodes.get(1);
+    expect(node!.node).toBe("0xold");
   });
 });
 

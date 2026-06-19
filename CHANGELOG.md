@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.3 (TBA)
+
+### Fixes
+
+* [FIX][web] IndexedDB sync now rejects conflicting partial blockchain MMR node values instead of silently overwriting an existing authentication node. Replaying the same index and value remains idempotent. ([#201](https://github.com/0xMiden/web-sdk/pull/201))
+
 ## 0.15.2 (2026-06-19)
 
 ### Enhancements

@@ -1,4 +1,5 @@
 import { getDatabase } from "./schema.js";
+import { addPartialBlockchainNodes } from "./partialBlockchainNodes.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
 export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes) {
     try {
@@ -51,7 +52,9 @@ export async function insertPartialBlockchainNodes(dbId, ids, nodes) {
             id: Number(ids[index]),
             node: node,
         }));
-        await db.partialBlockchainNodes.bulkPut(data);
+        await db.dexie.transaction("rw", db.partialBlockchainNodes, async () => {
+            await addPartialBlockchainNodes(db.partialBlockchainNodes, data);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to insert partial blockchain nodes");
