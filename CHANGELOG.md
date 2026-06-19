@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.1 (TBD)
+## 0.15.2 (2026-06-19)
 
 ### Enhancements
 
@@ -9,6 +9,12 @@
 ### Changes
 
 * [behavior][web] `applyTransaction(...)` now persists through the high-level client apply path, so registered transaction observers (e.g. PSWAP lineage tracking) fire when a transaction is applied — previously the split prove/submit/apply pipeline persisted the update without firing any. For transactions unrelated to a tracked order the observer pass is a no-op. ([#176](https://github.com/0xMiden/web-sdk/pull/176))
+
+## 0.15.1 (2026-06-19)
+
+### Changes
+
+* [web,react] Bumped the bundled `miden-client` to `0.15.2`. Notes imported from the note transport layer now honor a sender-provided block hint (`after_block_num`) when present, falling back to the 20-block lookback window otherwise. The bump also makes miden-client's PSWAP chain-tracking APIs (`pswap_lineages`, `build_pswap_cancel_by_order`, …) and `send_private_note_with_block_hint` available in the bundled core for later exposure, and re-exports `miden-agglayer`. No web/React API changes. (companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231), [0xMiden/miden-client#2262](https://github.com/0xMiden/miden-client/issues/2262), [0xMiden/miden-client#2253](https://github.com/0xMiden/miden-client/issues/2253))
 
 ## 0.15.0 (2026-06-12)
 
