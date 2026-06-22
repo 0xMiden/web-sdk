@@ -108,7 +108,7 @@ test.describe("send transaction tests", () => {
 
 test.describe("custom transaction tests", () => {
   test("custom transaction completes successfully", async ({ run }) => {
-    await run(async ({ client, sdk }) => {
+    const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -286,19 +286,31 @@ test.describe("custom transaction tests", () => {
       );
       adviceMap.insert(noteArgsCommitment2, new sdk.FeltArray(makeNoteArgs()));
 
-      const transactionRequest2 = new sdk.TransactionRequestBuilder()
+      // Build the request without an advice map, then attach the advice map to
+      // the already-built request via the request-level extendAdviceMap (issue
+      // #202). This mirrors a signer/guardian flow where advice (e.g. a
+      // signature) only becomes available after the request is constructed.
+      const baseRequest = new sdk.TransactionRequestBuilder()
         .withInputNotes(new sdk.NoteAndArgsArray([noteAndArgs]))
         .withCustomScript(transactionScript)
-        .extendAdviceMap(adviceMap)
         .build();
 
-      // Execute and Submit Transaction
+      // The getter exposes the (here empty) advice map carried by the request.
+      const adviceMapBeforeExtend = baseRequest.adviceMap();
+
+      const transactionRequest2 = baseRequest.extendAdviceMap(adviceMap);
+
+      // Execute and Submit Transaction. Proving consumes the merged advice map:
+      // the note script reads the note args back out of it, so a successful
+      // submission proves extendAdviceMap fed the merged entries to execution.
       await client.submitNewTransaction(wallet.id(), transactionRequest2);
       await client.proveBlock();
       await client.syncState();
 
-      return {};
+      return { adviceMapPresent: adviceMapBeforeExtend != null };
     });
+
+    expect(result.adviceMapPresent).toBe(true);
   });
 
   test("custom transaction fails with invalid assert", async ({ run }) => {

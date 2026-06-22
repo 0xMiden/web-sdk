@@ -12,6 +12,7 @@ export {
   AccountHeader,
   AccountId,
   AccountStorage,
+  AdviceMap,
   AssetVault,
   BasicFungibleFaucetComponent,
   Felt,
