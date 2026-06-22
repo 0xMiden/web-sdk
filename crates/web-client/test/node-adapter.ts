@@ -106,6 +106,11 @@ function initSdk(): any {
     "getMapItem",
   ]);
   patchNullToUndefined(rawSdk.NoteConsumability, ["consumableAfterBlock"]);
+  patchNullToUndefined(rawSdk.BasicFungibleFaucetComponent, [
+    "description",
+    "logoUri",
+    "externalLink",
+  ]);
 
   // Patch static methods (snake_case aliases for camelCase)
   if (rawSdk.NoteScript) {
