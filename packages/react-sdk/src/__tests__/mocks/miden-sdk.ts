@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import type { AdviceMap, TransactionRequest } from "@miden-sdk/miden-sdk";
 
 // Mock AccountId
 export const createMockAccountId = (id: string = "0x1234567890abcdef") => ({
@@ -183,9 +184,29 @@ export const createMockTransactionRequest = () => ({
   expectedFutureNotes: vi.fn(() => []),
   scriptArg: vi.fn(() => undefined),
   authArg: vi.fn(() => undefined),
+  adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
+  extendAdviceMap: vi.fn(
+    () => createMockTransactionRequest() as unknown as TransactionRequest
+  ),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
   [Symbol.dispose]: vi.fn(),
+});
+
+// Mock PswapLineageRecord
+export const createMockPswapLineageRecord = (
+  orderId: string = "42",
+  overrides: Record<string, unknown> = {}
+) => ({
+  orderId: vi.fn(() => orderId),
+  creatorAccountId: vi.fn(() => createMockAccountId()),
+  remainingOffered: vi.fn(() => 100n),
+  remainingRequested: vi.fn(() => 50n),
+  currentDepth: vi.fn(() => 0),
+  currentTipNoteId: vi.fn(() => ({ toString: () => "0xtip" })),
+  state: vi.fn(() => 0),
+  free: vi.fn(),
+  ...overrides,
 });
 
 // Mock FeltArray
@@ -248,6 +269,15 @@ export const createMockWebClient = (
     submitNewTransactionWithProver: vi
       .fn()
       .mockResolvedValue(createMockTransactionId()),
+
+    // PSWAP lineage tracking
+    getPswapLineages: vi.fn().mockResolvedValue([]),
+    getPswapLineagesFor: vi.fn().mockResolvedValue([]),
+    getPswapLineage: vi.fn().mockResolvedValue(null),
+    buildPswapCancelByOrder: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+
     executeTransaction: vi
       .fn()
       .mockResolvedValue(createMockTransactionResult()),
@@ -318,6 +348,10 @@ type MockWebClientType = {
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
+  getPswapLineages: ReturnType<typeof vi.fn>;
+  getPswapLineagesFor: ReturnType<typeof vi.fn>;
+  getPswapLineage: ReturnType<typeof vi.fn>;
+  buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;

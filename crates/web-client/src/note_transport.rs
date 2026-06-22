@@ -17,6 +17,11 @@ impl WebClient {
             .as_mut()
             .ok_or_else(|| from_str_err("Client not initialized. Call createClient() first."))?;
 
+        // The JS API does not expose a block hint, so the note is relayed without one and the
+        // recipient falls back to its lookback window. miden-client 0.15.2 deprecated the
+        // no-hint `send_private_note` in favour of `send_private_note_with_block_hint`; surfacing
+        // a `blockHint` parameter is a follow-up, so allow the no-hint path until then.
+        #[allow(deprecated)]
         client
             .send_private_note(note.into(), &address.into())
             .await

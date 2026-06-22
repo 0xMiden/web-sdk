@@ -1,10 +1,27 @@
 # Changelog
 
-## 0.15.1 (TBD)
+## 0.15.3 (TBD)
 
 ### Enhancements
 
 * [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
+
+## 0.15.2 (2026-06-22)
+
+### Enhancements
+
+* [FEATURE][web] `TransactionRequest.extendAdviceMap(adviceMap)` merges advice entries into an already-built request and returns a new request (last-write-wins on key collisions), and `TransactionRequest.adviceMap()` returns a copy of the request's advice map. This lets a signer/guardian flow inject advice (e.g. a signature) that only becomes available *after* the request object is constructed, without going back through the builder. ([#203](https://github.com/0xMiden/web-sdk/pull/203), closes [#202](https://github.com/0xMiden/web-sdk/issues/202))
+* [FEATURE][web,react] PSWAP order-lineage tracking. The client persists a *lineage* per partially-fillable swap order — the chain of remainder notes a PSWAP leaves behind as it is filled round by round — keyed by a stable `orderId`. A new `pswap` resource on `MidenClient` exposes `pswap.lineages()`, `pswap.lineagesFor(creator)`, and `pswap.lineage(orderId)`, returning `PswapLineageRecord`s — `remainingOffered()` / `remainingRequested()` (the amounts still unfilled on the current tip), `currentDepth()`, `currentTipNoteId()`, and `state()` (`Active` / `FullyFilled` / `Reclaimed`) — plus `pswap.cancelByOrder(orderId)`, which reclaims the unfilled offered asset on the order's current tip (refused on a `FullyFilled` / `Reclaimed` order). Four React hooks expose the reads + cancel: `usePswapLineages`, `usePswapLineagesFor`, `usePswapLineage`, and `usePswapCancelByOrder`. ([#176](https://github.com/0xMiden/web-sdk/pull/176), companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231))
+
+### Changes
+
+* [behavior][web] `applyTransaction(...)` now persists through the high-level client apply path, so registered transaction observers (e.g. PSWAP lineage tracking) fire when a transaction is applied — previously the split prove/submit/apply pipeline persisted the update without firing any. For transactions unrelated to a tracked order the observer pass is a no-op. ([#176](https://github.com/0xMiden/web-sdk/pull/176))
+
+## 0.15.1 (2026-06-19)
+
+### Changes
+
+* [web,react] Bumped the bundled `miden-client` to `0.15.2`. Notes imported from the note transport layer now honor a sender-provided block hint (`after_block_num`) when present, falling back to the 20-block lookback window otherwise. The bump also makes miden-client's PSWAP chain-tracking APIs (`pswap_lineages`, `build_pswap_cancel_by_order`, …) and `send_private_note_with_block_hint` available in the bundled core for later exposure, and re-exports `miden-agglayer`. No web/React API changes. (companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231), [0xMiden/miden-client#2262](https://github.com/0xMiden/miden-client/issues/2262), [0xMiden/miden-client#2253](https://github.com/0xMiden/miden-client/issues/2253))
 
 ## 0.15.0 (2026-06-12)
 
