@@ -13,6 +13,7 @@ export {
   AccountId,
   AccountStorage,
   AssetVault,
+  BasicFungibleFaucetComponent,
   Felt,
   InputNoteRecord,
   Note,

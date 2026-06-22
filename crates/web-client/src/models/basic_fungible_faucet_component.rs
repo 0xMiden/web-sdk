@@ -9,10 +9,13 @@ use super::token_symbol::TokenSymbol;
 use crate::js_error_with_context;
 use crate::platform::JsErr;
 
-/// Provides metadata for a basic fungible faucet account component.
+/// Provides metadata for a fungible faucet account component.
 ///
-/// Reads the on-chain [`FungibleFaucet`] component for the account, which holds the
-/// per-token info (symbol/decimals/maxSupply).
+/// Reads the on-chain `FungibleFaucet` component for the account, which holds the per-token
+/// info (symbol, decimals, supply, and the descriptive metadata). The same component backs both
+/// "basic" public faucets and network-style faucets — in the current protocol the distinction is
+/// a function of the surrounding account configuration (account type, auth, access control), not
+/// of the faucet component itself — so this reads metadata from either kind of faucet account.
 #[js_export]
 pub struct BasicFungibleFaucetComponent(NativeFungibleFaucet);
 
@@ -34,6 +37,12 @@ impl BasicFungibleFaucetComponent {
         self.0.symbol().into()
     }
 
+    /// Returns the human-readable token name.
+    #[js_export(js_name = "tokenName")]
+    pub fn token_name(&self) -> String {
+        self.0.token_name().as_str().to_string()
+    }
+
     /// Returns the number of decimal places for the token.
     pub fn decimals(&self) -> u8 {
         self.0.decimals()
@@ -43,5 +52,28 @@ impl BasicFungibleFaucetComponent {
     #[js_export(js_name = "maxSupply")]
     pub fn max_supply(&self) -> Felt {
         NativeFelt::from(self.0.max_supply()).into()
+    }
+
+    /// Returns the current token supply (the amount minted so far).
+    #[js_export(js_name = "tokenSupply")]
+    pub fn token_supply(&self) -> Felt {
+        NativeFelt::from(self.0.token_supply()).into()
+    }
+
+    /// Returns the optional free-form token description, or `undefined` when unset.
+    pub fn description(&self) -> Option<String> {
+        self.0.description().map(|d| d.as_str().to_string())
+    }
+
+    /// Returns the optional token logo URI, or `undefined` when unset.
+    #[js_export(js_name = "logoUri")]
+    pub fn logo_uri(&self) -> Option<String> {
+        self.0.logo_uri().map(|uri| uri.as_str().to_string())
+    }
+
+    /// Returns the optional external link (e.g. project website), or `undefined` when unset.
+    #[js_export(js_name = "externalLink")]
+    pub fn external_link(&self) -> Option<String> {
+        self.0.external_link().map(|link| link.as_str().to_string())
     }
 }

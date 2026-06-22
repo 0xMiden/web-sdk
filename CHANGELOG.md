@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.3 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `BasicFungibleFaucetComponent` now exposes the full token metadata of a fungible-faucet account: `tokenName()`, `tokenSupply()` (the amount minted so far, as a `Felt`), `description()`, `logoUri()`, and `externalLink()` — the optional descriptive fields return `undefined` when unset. These read the same on-chain `FungibleFaucet` component that already backed `symbol()` / `decimals()` / `maxSupply()`, so they work for both basic and network-style faucet accounts. In the 0.15 protocol the basic-vs-network distinction is a function of account configuration, not a separate component type, so a dedicated `NetworkFungibleFaucet` binding is unnecessary. ([#162](https://github.com/0xMiden/web-sdk/issues/162))
+
+```ts
+const faucet = BasicFungibleFaucetComponent.fromAccount(account);
+faucet.tokenName();               // "DAG Token"
+faucet.tokenSupply().toString();  // "0"
+faucet.description();             // string | undefined
+```
+
 ## 0.15.2 (2026-06-19)
 
 ### Enhancements

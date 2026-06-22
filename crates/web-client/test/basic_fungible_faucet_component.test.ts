@@ -2,6 +2,8 @@
 import { test, expect } from "./test-setup";
 
 test.describe("basic fungible faucet", () => {
+  // A single unified `FungibleFaucet` component backs both basic and network-style faucet
+  // accounts, so reading metadata from it covers either kind — see the component's rustdoc.
   test("creates a basic fungible faucet component from an account", async ({
     run,
   }) => {
@@ -21,13 +23,25 @@ test.describe("basic fungible faucet", () => {
 
       return {
         symbol: basicFungibleFaucet.symbol().toString(),
+        tokenName: basicFungibleFaucet.tokenName(),
         decimals: basicFungibleFaucet.decimals(),
         maxSupply: basicFungibleFaucet.maxSupply().toString(),
+        tokenSupply: basicFungibleFaucet.tokenSupply().toString(),
+        description: basicFungibleFaucet.description(),
+        logoUri: basicFungibleFaucet.logoUri(),
+        externalLink: basicFungibleFaucet.externalLink(),
       };
     });
     expect(result.symbol).toEqual("DAG");
+    expect(result.tokenName).toEqual("DAG Token");
     expect(result.decimals).toEqual(8);
     expect(result.maxSupply).toEqual("10000000");
+    // A freshly created faucet has not minted anything yet.
+    expect(result.tokenSupply).toEqual("0");
+    // The optional descriptive metadata is not set by `newFaucet`.
+    expect(result.description).toBeUndefined();
+    expect(result.logoUri).toBeUndefined();
+    expect(result.externalLink).toBeUndefined();
   });
 
   test("throws an error when creating a basic fungible faucet from a non-faucet account", async ({
