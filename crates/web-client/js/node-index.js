@@ -15,6 +15,7 @@ import {
   createMockWasmWebClient,
 } from "./node/client-factory.js";
 import { MidenClient } from "./client.js";
+import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
   createP2IDENote,
@@ -101,6 +102,17 @@ export function getWrappedSdk() {
   ensureInitialized();
   return _wrappedSdk;
 }
+
+// JS-layer exports the browser entry also provides (these are not napi classes,
+// so they can't go through `_reexport`). `CompilerResource` already backs
+// `MidenClient.compile` on Node, and `getWasmOrThrow` resolves to the wrapped
+// napi sdk — the Node analogue of the browser's WASM-module accessor. Both are
+// imported by `@miden-sdk/react` (e.g. `useCompile`).
+export { CompilerResource };
+export const getWasmOrThrow = async () => {
+  ensureInitialized();
+  return _wrappedSdk;
+};
 
 // Re-export commonly used SDK types from the napi module.
 // Uses a lazy getter pattern so the module is loaded on first access.
@@ -189,3 +201,120 @@ export const Package = /* @__PURE__*/ _reexport("Package");
 export const StorageMap = /* @__PURE__ */ _reexport("StorageMap");
 export const StorageSlot = /* @__PURE__ */ _reexport("StorageSlot");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
+
+// ── Remaining public surface (browser ↔ node export parity) ──────────
+// The node entry must re-export every public class the napi module exposes so
+// consumers (and @miden-sdk/react, which statically imports several of these)
+// can resolve any public type under the "node" export condition — not just the
+// hand-picked subset above. The browser entry gets these for free via a
+// generated `export *`; on Node each name must be listed because ESM named
+// exports can't be produced dynamically from a native addon. Completeness is
+// enforced by test/node_export_parity.node.test.ts — if a new WASM class is
+// added, that test fails until it is re-exported here.
+export const AccountBuilderResult = /* @__PURE__ */ _reexport(
+  "AccountBuilderResult"
+);
+export const AccountCode = /* @__PURE__ */ _reexport("AccountCode");
+export const AccountComponentCode = /* @__PURE__ */ _reexport(
+  "AccountComponentCode"
+);
+export const AccountDelta = /* @__PURE__ */ _reexport("AccountDelta");
+export const AccountProof = /* @__PURE__ */ _reexport("AccountProof");
+export const AccountReader = /* @__PURE__ */ _reexport("AccountReader");
+export const AccountStatus = /* @__PURE__ */ _reexport("AccountStatus");
+export const AccountStorageDelta = /* @__PURE__ */ _reexport(
+  "AccountStorageDelta"
+);
+export const AccountVaultDelta = /* @__PURE__ */ _reexport("AccountVaultDelta");
+export const AddressInterface = /* @__PURE__ */ _reexport("AddressInterface");
+export const AdviceInputs = /* @__PURE__ */ _reexport("AdviceInputs");
+export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
+export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
+  "AuthFalcon512RpoMultisigConfig"
+);
+export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
+  "BasicFungibleFaucetComponent"
+);
+export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");
+export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
+export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
+  "ConsumableNoteRecord"
+);
+export const ExecutedTransaction = /* @__PURE__ */ _reexport(
+  "ExecutedTransaction"
+);
+export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
+export const FetchedNote = /* @__PURE__ */ _reexport("FetchedNote");
+export const FungibleAssetDelta =
+  /* @__PURE__ */ _reexport("FungibleAssetDelta");
+export const FungibleAssetDeltaItem = /* @__PURE__ */ _reexport(
+  "FungibleAssetDeltaItem"
+);
+export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
+  "GetProceduresResultItem"
+);
+export const InputNote = /* @__PURE__ */ _reexport("InputNote");
+export const InputNoteRecord = /* @__PURE__ */ _reexport("InputNoteRecord");
+export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
+export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");
+export const Library = /* @__PURE__ */ _reexport("Library");
+export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
+export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
+  "NetworkNoteStatusInfo"
+);
+export const NetworkType = /* @__PURE__ */ _reexport("NetworkType");
+export const NoteAndArgs = /* @__PURE__ */ _reexport("NoteAndArgs");
+export const NoteAttachmentScheme = /* @__PURE__ */ _reexport(
+  "NoteAttachmentScheme"
+);
+export const NoteConsumability = /* @__PURE__ */ _reexport("NoteConsumability");
+export const NoteConsumptionStatus = /* @__PURE__ */ _reexport(
+  "NoteConsumptionStatus"
+);
+export const NoteDetails = /* @__PURE__ */ _reexport("NoteDetails");
+export const NoteDetailsAndTag = /* @__PURE__ */ _reexport("NoteDetailsAndTag");
+export const NoteHeader = /* @__PURE__ */ _reexport("NoteHeader");
+export const NoteIdAndArgs = /* @__PURE__ */ _reexport("NoteIdAndArgs");
+export const NoteInclusionProof =
+  /* @__PURE__ */ _reexport("NoteInclusionProof");
+export const NoteLocation = /* @__PURE__ */ _reexport("NoteLocation");
+export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");
+export const NoteSyncInfo = /* @__PURE__ */ _reexport("NoteSyncInfo");
+export const OutputNoteRecord = /* @__PURE__ */ _reexport("OutputNoteRecord");
+export const OutputNoteState = /* @__PURE__ */ _reexport("OutputNoteState");
+export const OutputNotes = /* @__PURE__ */ _reexport("OutputNotes");
+export const PartialNote = /* @__PURE__ */ _reexport("PartialNote");
+export const Poseidon2 = /* @__PURE__ */ _reexport("Poseidon2");
+export const ProcedureThreshold =
+  /* @__PURE__ */ _reexport("ProcedureThreshold");
+export const Program = /* @__PURE__ */ _reexport("Program");
+export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
+export const PswapLineageRecord =
+  /* @__PURE__ */ _reexport("PswapLineageRecord");
+export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
+export const SigningInputs = /* @__PURE__ */ _reexport("SigningInputs");
+export const SigningInputsType = /* @__PURE__ */ _reexport("SigningInputsType");
+export const SlotAndKeys = /* @__PURE__ */ _reexport("SlotAndKeys");
+export const SparseMerklePath = /* @__PURE__ */ _reexport("SparseMerklePath");
+export const StorageMapEntryJs = /* @__PURE__ */ _reexport("StorageMapEntryJs");
+export const StorageMapInfo = /* @__PURE__ */ _reexport("StorageMapInfo");
+export const StorageMapUpdate = /* @__PURE__ */ _reexport("StorageMapUpdate");
+export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");
+export const TransactionId = /* @__PURE__ */ _reexport("TransactionId");
+export const TransactionRecord = /* @__PURE__ */ _reexport("TransactionRecord");
+export const TransactionRequest =
+  /* @__PURE__ */ _reexport("TransactionRequest");
+export const TransactionScript = /* @__PURE__ */ _reexport("TransactionScript");
+export const TransactionScriptInputPair = /* @__PURE__ */ _reexport(
+  "TransactionScriptInputPair"
+);
+export const TransactionStatus = /* @__PURE__ */ _reexport("TransactionStatus");
+export const TransactionStoreUpdate = /* @__PURE__ */ _reexport(
+  "TransactionStoreUpdate"
+);
+export const TransactionSummary =
+  /* @__PURE__ */ _reexport("TransactionSummary");
+export const createAuthFalcon512RpoMultisig = /* @__PURE__ */ _reexport(
+  "createAuthFalcon512RpoMultisig"
+);
