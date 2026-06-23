@@ -1,16 +1,9 @@
 // @ts-nocheck
 // Node-only guard: the `node` export entry (js/node-index.js) must re-export
-// every public class the napi module exposes. The browser entry gets full
-// coverage for free via a generated `export *`, but ESM can't dynamically
-// re-export a native addon's members, so node-index.js lists each name by hand.
-// This test fails the moment the two drift — e.g. a new WASM class is added but
-// nobody adds it to node-index.js — which is exactly the regression that left
-// `BasicFungibleFaucetComponent` (and ~70 other types) unimportable from
-// `@miden-sdk/miden-sdk` under the `node` condition, breaking @miden-sdk/react.
-//
-// node-index.js initializes the native module on import, so both imports are
-// done lazily inside the test body (this file is only executed by the `nodejs`
-// project; other projects never load the native addon).
+// every public class the napi module exposes. ESM can't re-export a native
+// addon's members dynamically, so the entry lists them by hand; this test fails
+// if the two drift. node-index.js loads the native addon on import, so the
+// imports are done lazily in the test body (only the `nodejs` project runs it).
 import { test, expect } from "./test-setup";
 
 // napi exports the node entry intentionally surfaces under a different name or
