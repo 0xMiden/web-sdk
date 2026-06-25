@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { useMidenStore } from "../../store/MidenStore";
+import type { MidenConfig } from "../../types";
 
 // Shared mocks hoisted above vi.mock so the factory can reference them
-const { mockGetAccountDetails, mockFromAccount } = vi.hoisted(() => ({
-  mockGetAccountDetails: vi.fn(),
-  mockFromAccount: vi.fn(),
-}));
+const { mockGetAccountDetails, mockFromAccount, mockTestnet } = vi.hoisted(
+  () => ({
+    mockGetAccountDetails: vi.fn(),
+    mockFromAccount: vi.fn(),
+    mockTestnet: vi.fn(),
+  })
+);
 
 // Override the SDK mock for this file so we can control RpcClient behavior
 vi.mock("@miden-sdk/miden-sdk", () => {
@@ -22,9 +26,8 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     },
     Endpoint: class Endpoint {
       constructor(_url?: string) {}
-      static testnet() {
-        return new Endpoint();
-      }
+      // Surfaced as a spy so a re-introduced hardcoded fallback is caught.
+      static testnet = mockTestnet;
     },
     RpcClient: class RpcClient {
       constructor(_endpoint: unknown) {}
@@ -39,10 +42,19 @@ vi.mock("@miden-sdk/miden-sdk", () => {
 // Import after mocks are set up
 import { useAssetMetadata } from "../../hooks/useAssetMetadata";
 
+// A configured RPC endpoint. Asset metadata only fetches once the app has
+// selected an endpoint — the hook must never invent one.
+const RPC_URL = "https://rpc.devnet.miden.io";
+
 beforeEach(() => {
   useMidenStore.getState().reset();
+  useMidenStore.getState().setConfig({ rpcUrl: RPC_URL } as MidenConfig);
+  // A non-null client flips isReady=true (MidenStore.setClient), mirroring a
+  // fully-initialized provider. The hook gates RPC construction on this.
+  useMidenStore.getState().setClient({} as never);
   mockGetAccountDetails.mockReset();
   mockFromAccount.mockReset();
+  mockTestnet.mockReset();
 });
 
 describe("useAssetMetadata", () => {
@@ -54,6 +66,58 @@ describe("useAssetMetadata", () => {
   it("should return empty metadata for empty array", () => {
     const { result } = renderHook(() => useAssetMetadata([]));
     expect(result.current.assetMetadata.size).toBe(0);
+  });
+
+  it("defers until the client is ready, firing no RPC during init", async () => {
+    // The reported leak: before MidenProvider finishes initializing, isReady is
+    // false and the resolved rpcUrl isn't in the store yet. A devnet-configured
+    // app must not build a page-side client (and hit the testnet fallback) in
+    // this window.
+    useMidenStore.getState().setClient(null); // isReady = false
+    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucetInit"]));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockTestnet).not.toHaveBeenCalled();
+    expect(mockGetAccountDetails).not.toHaveBeenCalled();
+    expect(result.current.assetMetadata.has("0xfaucetInit")).toBe(false);
+  });
+
+  it("uses the configured endpoint and never the testnet fallback once ready", async () => {
+    // rpcUrl is devnet (beforeEach) and the client is ready: metadata resolves
+    // against the configured endpoint, never Endpoint.testnet().
+    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+    mockFromAccount.mockReturnValue({
+      symbol: () => ({ toString: () => "DEV" }),
+      decimals: () => 6,
+    });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucetDevnet"]));
+    await waitFor(() => {
+      expect(result.current.assetMetadata.get("0xfaucetDevnet")?.symbol).toBe(
+        "DEV"
+      );
+    });
+
+    expect(mockGetAccountDetails).toHaveBeenCalled();
+    expect(mockTestnet).not.toHaveBeenCalled();
+  });
+
+  it("still uses the testnet default when no endpoint is configured", async () => {
+    // The accepted default: with no rpcUrl configured at all, the page-side
+    // client matches the WebClient/MidenProvider testnet default rather than
+    // deferring forever.
+    useMidenStore.getState().setConfig({} as MidenConfig); // no rpcUrl
+    mockGetAccountDetails.mockResolvedValue({ account: () => null });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucetDefault"]));
+    await waitFor(() => {
+      expect(result.current.assetMetadata.has("0xfaucetDefault")).toBe(true);
+    });
+
+    expect(mockTestnet).toHaveBeenCalled();
+    expect(mockGetAccountDetails).toHaveBeenCalled();
   });
 
   it("should fetch metadata via RPC and store symbol and decimals", async () => {

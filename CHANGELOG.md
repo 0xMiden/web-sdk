@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][react] Page-side code no longer reaches the testnet default under a non-testnet (e.g. devnet) configuration. `useAssetMetadata` builds its own page-side `RpcClient` from the resolved `config.rpcUrl`, but ran during the window before `MidenProvider` populated the store — falling back to `Endpoint.testnet()` and firing `getAccountDetails` against testnet even when the consumer configured devnet (the WebClient/worker correctly used devnet while page-side asset-metadata calls hit testnet). It now gates `RpcClient` construction on `isReady` (the same pattern the default prover uses). `accountBech32`'s network resolution had the same shape: it tagged addresses for testnet whenever the network couldn't be confirmed (before the provider was ready, or for `localhost`/custom endpoints); it now derives the network from the resolved endpoint, treats local nodes as devnet, and returns the raw account id rather than a wrong-network bech32 string when the network is undetermined. In both cases the testnet default still applies only when no endpoint was configured at all. ([#189](https://github.com/0xMiden/web-sdk/pull/189))
+
 ## 0.15.0 (2026-06-12)
 
 ### Enhancements
