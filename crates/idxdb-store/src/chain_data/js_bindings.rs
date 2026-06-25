@@ -31,9 +31,6 @@ extern "C" {
         max_in_order_index: String,
     ) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
-    pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
-
     // INSERTS
     // ================================================================================================
 

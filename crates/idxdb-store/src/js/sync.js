@@ -27,7 +27,7 @@ export async function getNoteTags(dbId) {
 export async function getSyncHeight(dbId) {
     try {
         const db = getDatabase(dbId);
-        const record = await db.stateSync.get(1);
+        const record = await db.blockchainCheckpoint.get(1);
         if (record) {
             let data = {
                 blockNum: record.blockNum,
@@ -40,6 +40,25 @@ export async function getSyncHeight(dbId) {
     }
     catch (error) {
         logWebStoreError(error, "Error fetching sync height");
+    }
+}
+export async function getCurrentBlockchainPeaks(dbId) {
+    try {
+        const db = getDatabase(dbId);
+        const record = await db.blockchainCheckpoint.get(1);
+        if (!record || record.partialBlockchainPeaks.length === 0) {
+            return {
+                blockNum: record?.blockNum ?? 0,
+                peaks: uint8ArrayToBase64(new Uint8Array()),
+            };
+        }
+        return {
+            blockNum: record.blockNum,
+            peaks: uint8ArrayToBase64(record.partialBlockchainPeaks),
+        };
+    }
+    catch (error) {
+        logWebStoreError(error, "Error fetching current blockchain peaks");
     }
 }
 export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
@@ -82,10 +101,10 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, so
 }
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, partialBlockchainPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
-        db.stateSync,
+        db.blockchainCheckpoint,
         db.inputNotes,
         db.outputNotes,
         db.notesScripts,
@@ -133,46 +152,41 @@ export async function applyStateSync(dbId, stateUpdate) {
                 accountCommitment: accountUpdate.accountCommitment,
                 accountSeed: accountUpdate.accountSeed,
             }))),
-            updateSyncHeight(tx, blockNum),
+            updateSyncHeight(tx, blockNum, newPeaks),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
             updateCommittedNoteTags(tx, committedNoteTagSources),
             Promise.all(newBlockHeaders.map((newBlockHeader, i) => {
-                // Peaks are attached only to the chain-tip block (the one whose
-                // blockNum matches the new sync height). That row is always
-                // present in this iteration because `partial_blockchain_updates`
-                // includes the chain tip header by construction.
-                // TODO: potentially move this to be under the sync state info table
-                // as currently done in SQLite
-                const peaks = newBlockNums[i] === blockNum ? partialBlockchainPeaks : undefined;
-                return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1, peaks);
+                return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1);
             })),
         ]);
     });
 }
-/**
- * Advances `stateSync.blockNum` only when moving forward. Mirrors SQLite's
- * `UPDATE blockchain_checkpoint ... WHERE block_num < ?`.
- */
-async function updateSyncHeight(tx, blockNum) {
+async function updateSyncHeight(tx, blockNum, newPeaks) {
     try {
-        const current = await tx.stateSync.get(1);
+        // Only update if moving forward to prevent race conditions.
+        // Peaks travel with blockNum: skipping the height update also skips the
+        // peaks update, by design — a backward-going sync must not overwrite the
+        // newer peaks with older ones.
+        const current = await tx.blockchainCheckpoint.get(1);
         if (!current || current.blockNum < blockNum) {
-            await tx.stateSync.update(1, {
+            await tx.blockchainCheckpoint.update(1, {
                 blockNum: blockNum,
+                partialBlockchainPeaks: newPeaks,
             });
         }
     }
     catch (error) {
+        // logWebStoreError always re-throws, so a failure here aborts the whole
+        // Dexie rw transaction rather than silently committing a partial update.
         logWebStoreError(error, "Failed to update sync height");
     }
 }
-async function updateBlockHeader(tx, blockNum, blockHeader, hasClientNotes, partialBlockchainPeaks) {
+async function updateBlockHeader(tx, blockNum, blockHeader, hasClientNotes) {
     try {
         const data = {
             blockNum: blockNum,
             header: blockHeader,
             hasClientNotes: hasClientNotes.toString(),
-            ...(partialBlockchainPeaks !== undefined && { partialBlockchainPeaks }),
         };
         const existingBlockHeader = await tx.blockHeaders.get(blockNum);
         if (!existingBlockHeader) {

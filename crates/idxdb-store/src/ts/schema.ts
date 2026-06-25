@@ -65,7 +65,7 @@ enum Table {
   InputNotes = "inputNotes",
   OutputNotes = "outputNotes",
   NotesScripts = "notesScripts",
-  StateSync = "stateSync",
+  BlockchainCheckpoint = "blockchainCheckpoint",
   BlockHeaders = "blockHeaders",
   PartialBlockchainNodes = "partialBlockchainNodes",
   Tags = "tags",
@@ -212,21 +212,15 @@ export interface INotesScript {
   serializedNoteScript: Uint8Array;
 }
 
-export interface IStateSync {
+export interface IBlockchainCheckpoint {
   id: number;
   blockNum: number;
+  partialBlockchainPeaks: Uint8Array;
 }
 
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  /** Serialized MMR peaks at this block's forest. Set only on rows that were
-   *  the chain tip when their corresponding sync ran — `applyStateSync`
-   *  writes peaks to the row where `blockNum === state_sync.block_num`.
-   *  Backfilled blocks (`insertBlockHeader` from `get_and_store_authenticated_block`)
-   *  leave this undefined. `getCurrentBlockchainPeaks` reads the row at
-   *  the current `stateSync.blockNum`. */
-  partialBlockchainPeaks?: Uint8Array;
   hasClientNotes: string;
 }
 
@@ -330,7 +324,7 @@ const V1_STORES: Record<string, string> = {
     "nullifier"
   ),
   [Table.NotesScripts]: indexes("scriptRoot"),
-  [Table.StateSync]: indexes("id"),
+  [Table.BlockchainCheckpoint]: indexes("id"),
   [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
   [Table.PartialBlockchainNodes]: indexes("id"),
   [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -361,7 +355,7 @@ declare module "dexie" {
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
-    stateSync: Table<IStateSync, number>;
+    blockchainCheckpoint: Table<IBlockchainCheckpoint, number>;
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
@@ -387,7 +381,7 @@ export type MidenDexie = Dexie & {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
@@ -414,7 +408,7 @@ export class MidenDatabase {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
@@ -520,7 +514,9 @@ export class MidenDatabase {
     this.notesScripts = this.dexie.table<INotesScript, string>(
       Table.NotesScripts
     );
-    this.stateSync = this.dexie.table<IStateSync, number>(Table.StateSync);
+    this.blockchainCheckpoint = this.dexie.table<IBlockchainCheckpoint, number>(
+      Table.BlockchainCheckpoint
+    );
     this.blockHeaders = this.dexie.table<IBlockHeader, number>(
       Table.BlockHeaders
     );
@@ -535,9 +531,13 @@ export class MidenDatabase {
     this.settings = this.dexie.table<ISetting, string>(Table.Settings);
 
     this.dexie.on("populate", () => {
-      this.stateSync
-        .put({ id: 1, blockNum: 0 } as IStateSync)
-        /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+      this.blockchainCheckpoint
+        .put({
+          id: 1,
+          blockNum: 0,
+          partialBlockchainPeaks: new Uint8Array(),
+        } as IBlockchainCheckpoint)
+        /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::block::BlockHeader;
-use miden_client::crypto::{Forest, InOrderIndex, MmrPeaks};
+use miden_client::crypto::InOrderIndex;
 use miden_client::note::BlockNumber;
 use miden_client::store::{BlockRelevance, PartialBlockchainFilter, StoreError};
 use miden_client::utils::Deserializable;
@@ -15,7 +15,6 @@ use crate::promise::{await_js, await_js_value, await_ok};
 mod js_bindings;
 use js_bindings::{
     idxdb_get_block_headers,
-    idxdb_get_current_blockchain_peaks,
     idxdb_get_partial_blockchain_nodes,
     idxdb_get_partial_blockchain_nodes_all,
     idxdb_get_partial_blockchain_nodes_up_to_inorder_index,
@@ -27,11 +26,7 @@ use js_bindings::{
 };
 
 mod models;
-use models::{
-    BlockHeaderIdxdbObject,
-    PartialBlockchainNodeIdxdbObject,
-    PartialBlockchainPeaksIdxdbObject,
-};
+use models::{BlockHeaderIdxdbObject, PartialBlockchainNodeIdxdbObject};
 
 pub mod utils;
 use utils::{
@@ -158,23 +153,6 @@ impl IdxdbStore {
                 process_partial_blockchain_nodes_from_js_value(js_value)
             },
         }
-    }
-
-    pub(crate) async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
-        let promise = idxdb_get_current_blockchain_peaks(self.db_id());
-        let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
-            await_js(promise, "failed to get current blockchain peaks").await?;
-
-        let PartialBlockchainPeaksIdxdbObject { block_num, peaks } = peaks_idxdb;
-
-        if let Some(peaks) = peaks {
-            let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks)?;
-
-            return MmrPeaks::new(Forest::new(block_num as usize)?, mmr_peaks_nodes)
-                .map_err(StoreError::MmrError);
-        }
-
-        Ok(MmrPeaks::new(Forest::empty(), vec![])?)
     }
 
     pub(crate) async fn insert_partial_blockchain_nodes(
