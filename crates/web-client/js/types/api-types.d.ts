@@ -444,8 +444,6 @@ export interface BatchOptions {
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
   timeout?: number;
-  /** Override default prover. */
-  prover?: TransactionProver;
 }
 
 export interface BatchSubmitResult {

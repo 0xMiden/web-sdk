@@ -403,7 +403,9 @@ export class TransactionsResource {
    *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.
-   * @param {object} [options] - Optional settings (waitForConfirmation, timeout, prover).
+   * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
+   *   The batch is proved with the client's configured prover; the V1 batch API
+   *   has no per-call prover override.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async submitBatch(account, requests, options) {

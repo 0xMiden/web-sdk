@@ -1,10 +1,16 @@
 # Changelog
 
-## 0.15.3 (TBD)
+## 0.15.4 (TBD)
 
 ### Enhancements
 
 * [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
+
+## 0.15.3 (2026-06-25)
+
+### Fixes
+
+* [FIX][web,react] The `@miden-sdk/miden-sdk` **Node entry** (resolved via the `node` export condition — Next.js / Remix server builds, Vitest, and any bundler that prefers `node`) now re-exports the full public class surface, matching the browser entry. It previously shipped a hand-curated subset, so importing a class the subset omitted — e.g. `BasicFungibleFaucetComponent`, `TransactionRequest`, `InputNoteRecord`, `NoteAttachmentScheme`, `Poseidon2` — or using a `@miden-sdk/react` hook that imports one (`useAssetMetadata`, `useCompile`) — failed under Node resolution with `"'X' is not exported from '@miden-sdk/miden-sdk'"`, even though the type declarations advertised it. The JS-layer helpers `CompilerResource` and `getWasmOrThrow` are now exported on Node too. The Node re-export list is generated from the native module and checked in CI, so it stays in lockstep with the surface. ([#206](https://github.com/0xMiden/web-sdk/pull/206))
 
 ## 0.15.2 (2026-06-22)
 
