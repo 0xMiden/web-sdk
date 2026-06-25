@@ -15,13 +15,13 @@ export async function insertBlockHeader(
       hasClientNotes: hasClientNotes.toString(),
     };
 
-    // Mirror SQLite's `insert_block_header_tx`: do an INSERT OR IGNORE on the
+    // Mirror SQLite's `insert_block_header_tx`: INSERT OR IGNORE on the
     // row, then explicitly upgrade `has_client_notes` to true if the caller
     // says so. Two callers hit this:
     //   - Genesis flow — no existing row; the add succeeds.
     //   - `get_and_store_authenticated_block` for a past block — a row
-    //     written by `applyStateSync` typically already exists. We keep that
-    //     row untouched.
+    //     written by `applyStateSync` typically already exists, so the add
+    //     is ignored.
     //
     // The `has_client_notes` upgrade is load-bearing: `get_tracked_block_
     // header_numbers` filters by this flag to seed `tracked_leaves`, which
@@ -140,33 +140,6 @@ export async function getTrackedBlockHeaderNumbers(dbId: string) {
   }
 }
 
-/**
- * Returns the blockchain peaks at the current sync height. Peaks live on the
- * `blockHeaders` row at `stateSync.blockNum` — the block that was the chain
- * tip when its sync ran. Returns `{ blockNum, peaks: undefined }` if the
- * stateSync row is missing or if that block was inserted via backfill
- * (which leaves `partialBlockchainPeaks` unset).
- */
-export async function getCurrentBlockchainPeaks(dbId: string) {
-  try {
-    const db = getDatabase(dbId);
-    const stateSyncRow = await db.stateSync.get(1);
-    if (stateSyncRow == undefined) {
-      return { blockNum: 0, peaks: undefined };
-    }
-    const header = await db.blockHeaders.get(stateSyncRow.blockNum);
-    if (header == undefined || header.partialBlockchainPeaks == undefined) {
-      return { blockNum: stateSyncRow.blockNum, peaks: undefined };
-    }
-    return {
-      blockNum: stateSyncRow.blockNum,
-      peaks: uint8ArrayToBase64(header.partialBlockchainPeaks),
-    };
-  } catch (err) {
-    logWebStoreError(err, "Failed to get current blockchain peaks");
-  }
-}
-
 export async function getPartialBlockchainNodesAll(dbId: string) {
   try {
     const db = getDatabase(dbId);
@@ -217,9 +190,11 @@ export async function pruneIrrelevantBlocks(
     const db = getDatabase(dbId);
     const numericNodeIds = nodeIdsToRemove.map(Number);
 
-    const syncHeight = await db.stateSync.get(1);
+    const syncHeight = await db.blockchainCheckpoint.get(1);
     if (syncHeight == undefined) {
-      throw Error("SyncHeight is undefined -- is the state sync table empty?");
+      throw Error(
+        "SyncHeight is undefined -- is the blockchain_checkpoint table empty?"
+      );
     }
 
     await db.dexie.transaction(
