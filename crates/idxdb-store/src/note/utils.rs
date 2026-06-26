@@ -23,6 +23,7 @@ use miden_client::store::{
     StoreError,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::js_bindings::{
@@ -38,25 +39,32 @@ use crate::promise::await_js_value;
 // ================================================================================================
 
 #[wasm_bindgen(getter_with_clone)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerializedInputNoteData {
     #[wasm_bindgen(js_name = "detailsCommitment")]
     pub details_commitment: String,
     #[wasm_bindgen(js_name = "noteId")]
     pub note_id: Option<String>,
     #[wasm_bindgen(js_name = "noteAssets")]
+    #[serde(with = "serde_bytes")]
     pub note_assets: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "serialNumber")]
+    #[serde(with = "serde_bytes")]
     pub serial_number: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub inputs: Vec<u8>,
     #[wasm_bindgen(js_name = "noteScriptRoot")]
     pub note_script_root: String,
     #[wasm_bindgen(js_name = "noteScript")]
+    #[serde(with = "serde_bytes")]
     pub note_script: Vec<u8>,
     pub nullifier: Option<String>,
     #[wasm_bindgen(js_name = "stateDiscriminant")]
     pub state_discriminant: u8,
+    #[serde(with = "serde_bytes")]
     pub state: Vec<u8>,
     #[wasm_bindgen(js_name = "createdAt")]
     pub created_at: String,
@@ -69,23 +77,28 @@ pub struct SerializedInputNoteData {
 }
 
 #[wasm_bindgen(getter_with_clone)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerializedOutputNoteData {
     #[wasm_bindgen(js_name = "detailsCommitment")]
     pub details_commitment: String,
     #[wasm_bindgen(js_name = "noteId")]
     pub note_id: String,
     #[wasm_bindgen(js_name = "noteAssets")]
+    #[serde(with = "serde_bytes")]
     pub note_assets: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "recipientDigest")]
     pub recipient_digest: String,
+    #[serde(with = "serde_bytes")]
     pub metadata: Vec<u8>,
     pub nullifier: Option<String>,
     #[wasm_bindgen(js_name = "expectedHeight")]
     pub expected_height: u32,
     #[wasm_bindgen(js_name = "stateDiscriminant")]
     pub state_discriminant: u8,
+    #[serde(with = "serde_bytes")]
     pub state: Vec<u8>,
 }
 

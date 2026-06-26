@@ -197,17 +197,11 @@ impl Store for IdxdbStore {
         self.apply_transaction(tx_update).await
     }
 
-    /// `IndexedDB` cannot batch independent transactions atomically across the JS boundary,
-    /// so this implementation applies each update sequentially. A failure mid-batch leaves
-    /// earlier updates persisted.
     async fn apply_transaction_batch(
         &self,
         tx_updates: Vec<TransactionStoreUpdate>,
     ) -> Result<(), StoreError> {
-        for update in tx_updates {
-            self.apply_transaction(update).await?;
-        }
-        Ok(())
+        self.apply_transaction_batch_atomic(tx_updates).await
     }
 
     // NOTES
