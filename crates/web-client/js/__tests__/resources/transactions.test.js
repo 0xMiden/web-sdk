@@ -278,13 +278,17 @@ describe("TransactionsResource", () => {
       expect(wasm.EthAddress.fromHex).toHaveBeenCalledWith(
         "0x000000000000000000000000000000000000dEaD"
       );
+      // Pin the argument order — a sender/bridge/faucet swap is the highest-risk
+      // bug for this builder, so assert each position by its resolved id.
       expect(inner.newB2AggTransactionRequest).toHaveBeenCalledWith(
-        expect.anything(), // sender
-        expect.anything(), // bridge account
-        expect.anything(), // faucet
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xbridge" }),
+        expect.objectContaining({ hex: "0xfaucet" }),
         100n, // amount normalized to bigint
         1, // destination network
-        expect.anything() // EthAddress
+        expect.objectContaining({
+          hex: "0x000000000000000000000000000000000000dEaD",
+        })
       );
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
