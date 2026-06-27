@@ -97,6 +97,24 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  async bridge(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
   async consume(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -257,6 +275,10 @@ export class TransactionsResource {
       }
       case "mint": {
         ({ accountId, request } = await this.#buildMintRequest(opts, wasm));
+        break;
+      }
+      case "bridge": {
+        ({ accountId, request } = await this.#buildB2AggRequest(opts, wasm));
         break;
       }
       case "consume": {
@@ -656,6 +678,24 @@ export class TransactionsResource {
       accountId,
       noteType,
       amount
+    );
+    return { accountId, request };
+  }
+
+  async #buildB2AggRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
+    const faucetId = resolveAccountRef(opts.token, wasm);
+    const amount = BigInt(opts.amount);
+    const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
+
+    const request = await this.#inner.newB2AggTransactionRequest(
+      accountId,
+      bridgeAccountId,
+      faucetId,
+      amount,
+      opts.destinationNetwork,
+      destinationAddress
     );
     return { accountId, request };
   }

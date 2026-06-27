@@ -28,6 +28,9 @@ function makeWasm(overrides = {}) {
       fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
       fromBech32: vi.fn((b) => ({ bech32: b, toString: () => b })),
     },
+    EthAddress: {
+      fromHex: vi.fn((hex) => ({ hex, toHex: () => hex })),
+    },
     NoteType: { Public: "Public", Private: "Private" },
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
@@ -71,6 +74,7 @@ function makeInner(overrides = {}) {
     applyTransaction: vi.fn().mockResolvedValue(undefined),
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
+    newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     newPswapCreateTransactionRequest: vi
@@ -255,6 +259,57 @@ describe("TransactionsResource", () => {
       });
       expect(inner.newMintTransactionRequest).toHaveBeenCalled();
       expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+  });
+
+  describe("bridge", () => {
+    it("builds a B2AGG request and submits", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const result = await resource.bridge({
+        account: "0xsender",
+        bridgeAccount: "0xbridge",
+        token: "0xfaucet",
+        amount: 100,
+        destinationNetwork: 1,
+        destinationAddress: "0x000000000000000000000000000000000000dEaD",
+      });
+
+      expect(wasm.EthAddress.fromHex).toHaveBeenCalledWith(
+        "0x000000000000000000000000000000000000dEaD"
+      );
+      expect(inner.newB2AggTransactionRequest).toHaveBeenCalledWith(
+        expect.anything(), // sender
+        expect.anything(), // bridge account
+        expect.anything(), // faucet
+        100n, // amount normalized to bigint
+        1, // destination network
+        expect.anything() // EthAddress
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
+      const tx = { transactionStatus: () => committedStatus };
+      const { resource, inner } = makeResource({
+        getTransactions: vi.fn().mockResolvedValue([tx]),
+      });
+      const result = await resource.bridge({
+        account: "0xsender",
+        bridgeAccount: "0xbridge",
+        token: "0xfaucet",
+        amount: 100,
+        destinationNetwork: 1,
+        destinationAddress: "0x000000000000000000000000000000000000dEaD",
+        waitForConfirmation: true,
+        timeout: 5000,
+      });
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });
@@ -611,6 +666,21 @@ describe("TransactionsResource", () => {
         amount: 1,
       });
       expect(inner.newMintTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
+    it("builds bridge request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "bridge",
+        account: "0xsender",
+        bridgeAccount: "0xbridge",
+        token: "0xfaucet",
+        amount: 100,
+        destinationNetwork: 1,
+        destinationAddress: "0x000000000000000000000000000000000000dEaD",
+      });
+      expect(inner.newB2AggTransactionRequest).toHaveBeenCalled();
       expect(inner.executeForSummary).toHaveBeenCalled();
     });
 

@@ -523,6 +523,23 @@ await client.pswap.cancelByOrder({ orderId, waitForConfirmation: true });
 `client.pswap.lineage(orderId)` returns one order's lineage, or `null` if it is
 not tracked.
 
+### Bridge out (AggLayer)
+
+`client.transactions.bridge(...)` bridges a fungible asset out to another network via the AggLayer. It emits a single public B2AGG note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned network.
+
+```typescript
+await client.transactions.bridge({
+  account: wallet, // sender (executes the transaction)
+  bridgeAccount: bridge, // consumes the note and burns the asset
+  token: dagToken, // faucet of the asset being bridged
+  amount: 100n,
+  destinationNetwork: 1, // AggLayer-assigned network id
+  destinationAddress: "0x000000000000000000000000000000000000dEaD"
+});
+```
+
+The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:

@@ -12,6 +12,7 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Note Attachments** - Send and read arbitrary data payloads on notes via `useSend()` and `readNoteAttachment()`
 - **Temporal Note Tracking** - `useNoteStream()` tracks when notes first appear, with built-in filtering, handled-note exclusion, and phase snapshots
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
+- **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages

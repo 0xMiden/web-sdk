@@ -184,6 +184,7 @@ export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
   "ConsumableNoteRecord"
 );
 export const Endpoint = /* @__PURE__ */ _reexport("Endpoint");
+export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
 export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
