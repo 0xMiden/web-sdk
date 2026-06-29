@@ -33,6 +33,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     ]),
     newMintTransactionRequest: vi.fn().mockReturnValue({}),
     newSendTransactionRequest: vi.fn().mockReturnValue({}),
+    newB2AggTransactionRequest: vi.fn().mockReturnValue({}),
     newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
     newSwapTransactionRequest: vi.fn().mockReturnValue({}),
     submitNewTransaction: vi
@@ -119,6 +120,13 @@ vi.mock("@miden-sdk/miden-sdk", () => {
           toString: vi.fn(() => accountId.toString()),
         })
       ),
+    },
+    EthAddress: {
+      fromHex: vi.fn((hex: string) => ({
+        toHex: vi.fn(() => hex),
+        toString: vi.fn(() => hex),
+        free: vi.fn(),
+      })),
     },
     Endpoint,
     RpcClient,

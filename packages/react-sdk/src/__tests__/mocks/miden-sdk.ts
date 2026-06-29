@@ -250,6 +250,9 @@ export const createMockWebClient = (
     newSendTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),
+    newB2AggTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
     newConsumeTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),
@@ -341,6 +344,7 @@ type MockWebClientType = {
   getTransactions: ReturnType<typeof vi.fn>;
   newMintTransactionRequest: ReturnType<typeof vi.fn>;
   newSendTransactionRequest: ReturnType<typeof vi.fn>;
+  newB2AggTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;

@@ -110,7 +110,9 @@ impl NoteAttachment {
         }
 
         let words: Vec<NativeWord> = padded
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|chunk| {
                 let felts: [NativeFelt; 4] = chunk
                     .iter()

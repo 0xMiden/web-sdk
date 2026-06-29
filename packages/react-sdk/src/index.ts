@@ -42,6 +42,7 @@ export { useMultiSend } from "./hooks/useMultiSend";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
+export { useBridge } from "./hooks/useBridge";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
 export { usePswapCreate } from "./hooks/usePswapCreate";
@@ -91,6 +92,7 @@ export type {
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,
+  BridgeOptions,
   ConsumeOptions,
   SwapOptions,
   PswapCreateOptions,
@@ -176,6 +178,7 @@ export type { UseMultiSendResult } from "./hooks/useMultiSend";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
+export type { UseBridgeResult } from "./hooks/useBridge";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
 export type { UsePswapCreateResult } from "./hooks/usePswapCreate";

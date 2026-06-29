@@ -374,6 +374,21 @@ export interface MintOptions extends TransactionOptions {
   type?: NoteVisibility;
 }
 
+export interface BridgeOptions extends TransactionOptions {
+  /** Account that creates and funds the bridge note (the sender / executing account). */
+  account: AccountRef;
+  /** Bridge account that consumes the note and burns the bridged asset. */
+  bridgeAccount: AccountRef;
+  /** Faucet / token ID of the fungible asset to bridge. */
+  token: AccountRef;
+  /** Amount of the asset to bridge. */
+  amount: number | bigint;
+  /** AggLayer-assigned network ID of the destination chain. */
+  destinationNetwork: number;
+  /** Destination Ethereum address on the destination network (0x-prefixed hex). */
+  destinationAddress: string;
+}
+
 export interface ConsumeOptions extends TransactionOptions {
   account: AccountRef;
   notes: NoteInput | NoteInput[];
@@ -551,6 +566,16 @@ export interface PreviewMintOptions {
   type?: NoteVisibility;
 }
 
+export interface PreviewBridgeOptions {
+  operation: "bridge";
+  account: AccountRef;
+  bridgeAccount: AccountRef;
+  token: AccountRef;
+  amount: number | bigint;
+  destinationNetwork: number;
+  destinationAddress: string;
+}
+
 export interface PreviewConsumeOptions {
   operation: "consume";
   account: AccountRef;
@@ -598,6 +623,7 @@ export interface PreviewCustomOptions {
 export type PreviewOptions =
   | PreviewSendOptions
   | PreviewMintOptions
+  | PreviewBridgeOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
   | PreviewPswapCreateOptions
@@ -797,6 +823,15 @@ export interface TransactionsResource {
    * @param options - Mint options including the faucet, recipient, and amount.
    */
   mint(options: MintOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Bridge a fungible asset out to another network via the AggLayer. Emits a
+   * single public B2AGG (Bridge-to-AggLayer) note that the bridge account
+   * consumes, burning the asset so it can be claimed at the destination
+   * Ethereum address on the destination network.
+   *
+   * @param options - Sender, bridge account, token, amount, and destination.
+   */
+  bridge(options: BridgeOptions): Promise<TransactionSubmitResult>;
   /**
    * Consume one or more notes for an account.
    *

@@ -14,6 +14,7 @@ export {
   AccountStorage,
   AdviceMap,
   AssetVault,
+  EthAddress,
   Felt,
   InputNoteRecord,
   Note,
