@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## 0.15.4 (2026-06-29)
+
 ### Fixes
 
 * [FIX][web] `account.storage().getItem(slot)` / `getMapItem(...)` results (`StorageResult`) now forward `toU64s()`. The result is typed as a `Word` and already forwards `toFelts()` / `toHex()` / `toBigInt()`, but `toU64s()` was missing, so reading raw u64 elements off a storage value (e.g. `getItem(slot).toU64s()`) threw `toU64s is not a function` at runtime. This broke the OpenZeppelin multisig client's `AccountInspector` (run on every multisig-account `load`), and thus every guardian transaction. ([#194](https://github.com/0xMiden/web-sdk/pull/194))
-## 0.15.4 (TBD)
 
 ### Enhancements
 
