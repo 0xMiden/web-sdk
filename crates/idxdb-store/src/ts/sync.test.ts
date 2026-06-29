@@ -708,6 +708,39 @@ describe("sync", () => {
       expect(node!.node).toBe("first-data");
     });
 
+    it("deduplicates identical node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10", "10"],
+          serializedNodes: ["node-data", "node-data"],
+        })
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(1);
+      expect((await db.partialBlockchainNodes.get(10))!.node).toBe("node-data");
+    });
+
+    it("rejects conflicting node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 1,
+            serializedNodeIds: ["10", "10"],
+            serializedNodes: ["first-data", "second-data"],
+          })
+        )
+      ).rejects.toThrow(
+        "Conflicting partial blockchain node 10 within the same write"
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(0);
+    });
+
     it("is a no-op when serializedNodeIds is empty", async () => {
       const dbId = await openTestDb();
       // Should complete without error

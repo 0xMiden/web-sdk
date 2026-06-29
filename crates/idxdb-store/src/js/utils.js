@@ -39,18 +39,30 @@ export const logWebStoreError = (error, errorContext) => {
 // the stored value, and reject conflicting writes so the known-good value is
 // never silently overwritten.
 export const putPartialBlockchainNodesNoOverwrite = async (table, data) => {
-    const existing = await table.bulkGet(data.map((entry) => entry.id));
+    // Collapse duplicate indexes within the same batch up front: identical
+    // copies are deduplicated (a repeated index would otherwise make `bulkAdd`
+    // throw a key-collision error), and copies that disagree are rejected.
+    const unique = new Map();
+    for (const entry of data) {
+        const seen = unique.get(entry.id);
+        if (seen !== undefined && seen.node !== entry.node) {
+            throw new Error(`Conflicting partial blockchain node ${entry.id} within the same write`);
+        }
+        unique.set(entry.id, entry);
+    }
+    const records = [...unique.values()];
+    const existing = await table.bulkGet(records.map((entry) => entry.id));
     const toAdd = [];
-    for (let i = 0; i < data.length; i++) {
+    for (let i = 0; i < records.length; i++) {
         const current = existing[i];
         if (current === undefined) {
-            toAdd.push(data[i]);
+            toAdd.push(records[i]);
         }
-        else if (current.node !== data[i].node) {
-            throw new Error(`Refusing to overwrite partial blockchain node ${data[i].id}: ` +
+        else if (current.node !== records[i].node) {
+            throw new Error(`Refusing to overwrite partial blockchain node ${records[i].id}: ` +
                 `stored value differs from the new value`);
         }
-        // current.node === data[i].node: already stored, nothing to do.
+        // current.node === records[i].node: already stored, nothing to do.
     }
     if (toAdd.length > 0) {
         await table.bulkAdd(toAdd);

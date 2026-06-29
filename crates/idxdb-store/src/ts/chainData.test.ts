@@ -161,6 +161,25 @@ describe("insertPartialBlockchainNodes", () => {
     expect(node!.node).toBe("0xold");
   });
 
+  it("deduplicates identical node indexes within a single insert", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1", "1"], ["0xnode", "0xnode"]);
+    const db = getDatabase(dbId);
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toEqual([{ id: 1, node: "0xnode" }]);
+  });
+
+  it("rejects conflicting node indexes within a single insert", async () => {
+    const dbId = await openTestDb();
+    await expect(
+      insertPartialBlockchainNodes(dbId, ["1", "1"], ["0xold", "0xnew"])
+    ).rejects.toThrow(
+      "Conflicting partial blockchain node 1 within the same write"
+    );
+    const db = getDatabase(dbId);
+    expect(await db.partialBlockchainNodes.count()).toBe(0);
+  });
+
   it("inserts only the missing nodes when some indexes already exist", async () => {
     const dbId = await openTestDb();
     await insertPartialBlockchainNodes(dbId, ["1"], ["0xnode1"]);
