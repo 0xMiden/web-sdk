@@ -220,6 +220,17 @@ export class StorageResult {
   }
 
   /**
+   * Returns all four elements of the stored Word as a BigUint64Array.
+   * Pass-through to Word.toU64s() — ensures code that expects a Word-like
+   * object (e.g., `result.toU64s()[0]`) works on StorageResult.
+   * @returns {BigUint64Array}
+   */
+  toU64s() {
+    if (!this.#word) return new BigUint64Array();
+    return this.#word.toU64s();
+  }
+
+  /**
    * The first Felt of the stored Word.
    * Returns the WASM Felt object — use .asInt() to get its BigInt value.
    * @returns {Felt | undefined}

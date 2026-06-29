@@ -62,6 +62,9 @@ export declare class StorageResult {
   /** Returns all four Felts of the stored Word. Pass-through to Word.toFelts(). */
   toFelts(): Felt[];
 
+  /** Returns all four elements of the stored Word as a BigUint64Array. Pass-through to Word.toU64s(). */
+  toU64s(): BigUint64Array;
+
   /** The first Felt of the stored Word. */
   felt(): Felt | undefined;
 

@@ -62,6 +62,7 @@ test.describe("StorageView", () => {
         hasEntries: item?.entries !== undefined,
         hasWord: item?.word !== undefined,
         hasFelts: item?.toFelts()?.length,
+        u64sLen: item?.toU64s()?.length,
       };
     });
 
@@ -76,6 +77,7 @@ test.describe("StorageView", () => {
     expect(result.hasEntries).toBe(false);
     expect(result.hasWord).toBe(true);
     expect(result.hasFelts).toBe(4);
+    expect(result.u64sLen).toBe(4);
   });
 
   test("getItem() on a StorageMap slot returns a StorageResult with entries", async ({
