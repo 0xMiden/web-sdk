@@ -384,6 +384,7 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
     }
     catch (error) {
         logWebStoreError(error, `Error applying transaction delta`);
+        throw error;
     }
 }
 async function archiveAndReplaceStorageSlots(db, accountId, nonce, newSlots) {
@@ -622,6 +623,7 @@ export async function applyFullAccountState(dbId, accountState) {
     }
     catch (error) {
         logWebStoreError(error, `Error applying full account state`);
+        throw error;
     }
 }
 export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed, watched) {

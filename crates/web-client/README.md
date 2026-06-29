@@ -452,6 +452,94 @@ const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
 
+### Batch Operations
+
+Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+```typescript
+const { blockNumber } = await client.transactions.batch({
+  account: wallet,
+  operations: [
+    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", notes: pendingNotes },
+  ],
+  waitForConfirmation: true,
+});
+console.log(`Batch landed in block ${blockNumber}`);
+```
+
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
+
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+
+```typescript
+const { blockNumber } = await client.transactions.submitBatch(wallet, [
+  request1,
+  request2,
+]);
+```
+
+The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+
+### Partial-Swap (PSWAP) Orders
+
+A partial-swap note offers one asset for another and can be filled by multiple
+counterparties over time — each partial fill pays the creator and leaves a
+remainder note carrying the unfilled balance. The client tracks that chain as a
+**lineage** keyed by a stable `orderId`, advancing it round by round as fills
+are discovered on sync.
+
+```typescript
+// Offer 100 of token A for 25 of token B.
+await client.transactions.pswapCreate({
+  account: wallet,
+  offer: { token: aToken, amount: 100n },
+  request: { token: bToken, amount: 25n }
+});
+await client.sync();
+
+// The order is tracked as a lineage keyed by a stable order id.
+const [lineage] = await client.pswap.lineagesFor(wallet);
+const orderId = lineage.orderId();
+console.log(lineage.remainingOffered().toString()); // unfilled offered balance
+
+// A counterparty fills part of the order:
+//   client.transactions.pswapConsume({ account, note, fillAmount });
+// On the next sync the lineage advances, and `remainingOffered()` shrinks.
+
+// Reclaim the unfilled remainder on the current tip, by stable order id.
+// `waitForConfirmation` blocks until the cancel commits AND a sync brings
+// the consumed-note update down; without it, the call resolves at submit
+// time and `pswap.lineage(orderId)` still reads `Active` until the next
+// sync. The lineage only transitions to `Reclaimed` once the chain sees
+// the cancel land.
+await client.pswap.cancelByOrder({ orderId, waitForConfirmation: true });
+```
+
+`client.pswap.lineages()` returns every order this client created;
+`client.pswap.lineage(orderId)` returns one order's lineage, or `null` if it is
+not tracked.
+
+### Bridge out (AggLayer)
+
+`client.transactions.bridge(...)` bridges a fungible asset out to another network via the AggLayer. It emits a single public B2AGG note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned network.
+
+```typescript
+await client.transactions.bridge({
+  account: wallet, // sender (executes the transaction)
+  bridgeAccount: bridge, // consumes the note and burns the asset
+  token: dagToken, // faucet of the asset being bridged
+  amount: 100n,
+  destinationNetwork: 1, // AggLayer-assigned network id
+  destinationAddress: "0x000000000000000000000000000000000000dEaD"
+});
+```
+
+The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:

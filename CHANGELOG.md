@@ -5,6 +5,35 @@
 ### Fixes
 
 * [FIX][web] `account.storage().getItem(slot)` / `getMapItem(...)` results (`StorageResult`) now forward `toU64s()`. The result is typed as a `Word` and already forwards `toFelts()` / `toHex()` / `toBigInt()`, but `toU64s()` was missing, so reading raw u64 elements off a storage value (e.g. `getItem(slot).toU64s()`) threw `toU64s is not a function` at runtime. This broke the OpenZeppelin multisig client's `AccountInspector` (run on every multisig-account `load`), and thus every guardian transaction. ([#194](https://github.com/0xMiden/web-sdk/pull/194))
+## 0.15.4 (TBD)
+
+### Enhancements
+
+* [FEATURE][web,react] AggLayer bridge-out (B2AGG) note support. `client.transactions.bridge({ account, bridgeAccount, token, amount, destinationNetwork, destinationAddress })` bridges a fungible asset out to another network — emitting a single public B2AGG (Bridge-to-AggLayer) note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned `destinationNetwork`. The lower-level builders are also exposed: `Note.createB2AggNote(sender, bridgeAccount, assets, destinationNetwork, destinationAddress)` and `client.newB2AggTransactionRequest(...)`. A new `EthAddress` class carries the 20-byte destination address (`EthAddress.fromHex("0x…")` / `EthAddress.fromBytes(bytes)`, with `toHex()` / `toBytes()`). The `@miden-sdk/react` `useBridge()` hook wraps the build-and-submit flow: `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })`. Builds on the `miden-agglayer` re-export already present in the bundled `miden-client` — no new dependency. (closes [#173](https://github.com/0xMiden/web-sdk/issues/173))
+* [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
+
+## 0.15.3 (2026-06-25)
+
+### Fixes
+
+* [FIX][web,react] The `@miden-sdk/miden-sdk` **Node entry** (resolved via the `node` export condition — Next.js / Remix server builds, Vitest, and any bundler that prefers `node`) now re-exports the full public class surface, matching the browser entry. It previously shipped a hand-curated subset, so importing a class the subset omitted — e.g. `BasicFungibleFaucetComponent`, `TransactionRequest`, `InputNoteRecord`, `NoteAttachmentScheme`, `Poseidon2` — or using a `@miden-sdk/react` hook that imports one (`useAssetMetadata`, `useCompile`) — failed under Node resolution with `"'X' is not exported from '@miden-sdk/miden-sdk'"`, even though the type declarations advertised it. The JS-layer helpers `CompilerResource` and `getWasmOrThrow` are now exported on Node too. The Node re-export list is generated from the native module and checked in CI, so it stays in lockstep with the surface. ([#206](https://github.com/0xMiden/web-sdk/pull/206))
+
+## 0.15.2 (2026-06-22)
+
+### Enhancements
+
+* [FEATURE][web] `TransactionRequest.extendAdviceMap(adviceMap)` merges advice entries into an already-built request and returns a new request (last-write-wins on key collisions), and `TransactionRequest.adviceMap()` returns a copy of the request's advice map. This lets a signer/guardian flow inject advice (e.g. a signature) that only becomes available *after* the request object is constructed, without going back through the builder. ([#203](https://github.com/0xMiden/web-sdk/pull/203), closes [#202](https://github.com/0xMiden/web-sdk/issues/202))
+* [FEATURE][web,react] PSWAP order-lineage tracking. The client persists a *lineage* per partially-fillable swap order — the chain of remainder notes a PSWAP leaves behind as it is filled round by round — keyed by a stable `orderId`. A new `pswap` resource on `MidenClient` exposes `pswap.lineages()`, `pswap.lineagesFor(creator)`, and `pswap.lineage(orderId)`, returning `PswapLineageRecord`s — `remainingOffered()` / `remainingRequested()` (the amounts still unfilled on the current tip), `currentDepth()`, `currentTipNoteId()`, and `state()` (`Active` / `FullyFilled` / `Reclaimed`) — plus `pswap.cancelByOrder(orderId)`, which reclaims the unfilled offered asset on the order's current tip (refused on a `FullyFilled` / `Reclaimed` order). Four React hooks expose the reads + cancel: `usePswapLineages`, `usePswapLineagesFor`, `usePswapLineage`, and `usePswapCancelByOrder`. ([#176](https://github.com/0xMiden/web-sdk/pull/176), companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231))
+
+### Changes
+
+* [behavior][web] `applyTransaction(...)` now persists through the high-level client apply path, so registered transaction observers (e.g. PSWAP lineage tracking) fire when a transaction is applied — previously the split prove/submit/apply pipeline persisted the update without firing any. For transactions unrelated to a tracked order the observer pass is a no-op. ([#176](https://github.com/0xMiden/web-sdk/pull/176))
+
+## 0.15.1 (2026-06-19)
+
+### Changes
+
+* [web,react] Bumped the bundled `miden-client` to `0.15.2`. Notes imported from the note transport layer now honor a sender-provided block hint (`after_block_num`) when present, falling back to the 20-block lookback window otherwise. The bump also makes miden-client's PSWAP chain-tracking APIs (`pswap_lineages`, `build_pswap_cancel_by_order`, …) and `send_private_note_with_block_hint` available in the bundled core for later exposure, and re-exports `miden-agglayer`. No web/React API changes. (companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231), [0xMiden/miden-client#2262](https://github.com/0xMiden/miden-client/issues/2262), [0xMiden/miden-client#2253](https://github.com/0xMiden/miden-client/issues/2253))
 
 ## 0.15.0 (2026-06-12)
 

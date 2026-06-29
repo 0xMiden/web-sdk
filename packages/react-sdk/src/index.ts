@@ -29,6 +29,9 @@ export { useNoteStream } from "./hooks/useNoteStream";
 export { useTransactionHistory } from "./hooks/useTransactionHistory";
 export { useSyncState } from "./hooks/useSyncState";
 export { useAssetMetadata } from "./hooks/useAssetMetadata";
+export { usePswapLineages } from "./hooks/usePswapLineages";
+export { usePswapLineagesFor } from "./hooks/usePswapLineagesFor";
+export { usePswapLineage } from "./hooks/usePswapLineage";
 
 // Mutation Hooks
 export { useCreateWallet } from "./hooks/useCreateWallet";
@@ -39,11 +42,13 @@ export { useMultiSend } from "./hooks/useMultiSend";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
+export { useBridge } from "./hooks/useBridge";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
 export { usePswapCreate } from "./hooks/usePswapCreate";
 export { usePswapConsume } from "./hooks/usePswapConsume";
 export { usePswapCancel } from "./hooks/usePswapCancel";
+export { usePswapCancelByOrder } from "./hooks/usePswapCancelByOrder";
 export { useTransaction } from "./hooks/useTransaction";
 export { useExecuteProgram } from "./hooks/useExecuteProgram";
 export { useCompile } from "./hooks/useCompile";
@@ -87,11 +92,15 @@ export type {
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,
+  BridgeOptions,
   ConsumeOptions,
   SwapOptions,
   PswapCreateOptions,
   PswapConsumeOptions,
   PswapCancelOptions,
+  PswapCancelByOrderOptions,
+  PswapLineagesResult,
+  PswapLineageResult,
   ExecuteTransactionOptions,
   TransactionResult,
   ExecuteProgramOptions,
@@ -128,6 +137,7 @@ export type {
   NoteType,
   Note,
   AccountStorageMode,
+  PswapLineageRecord,
 } from "./types";
 
 // Default configuration values
@@ -168,11 +178,13 @@ export type { UseMultiSendResult } from "./hooks/useMultiSend";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
+export type { UseBridgeResult } from "./hooks/useBridge";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
 export type { UsePswapCreateResult } from "./hooks/usePswapCreate";
 export type { UsePswapConsumeResult } from "./hooks/usePswapConsume";
 export type { UsePswapCancelResult } from "./hooks/usePswapCancel";
+export type { UsePswapCancelByOrderResult } from "./hooks/usePswapCancelByOrder";
 export type { UseTransactionResult } from "./hooks/useTransaction";
 export type { UseExportStoreResult } from "./hooks/useExportStore";
 export type {
@@ -186,3 +198,6 @@ export type { UseExecuteProgramResult } from "./hooks/useExecuteProgram";
 export type { UseCompileResult } from "./hooks/useCompile";
 export type { UseSyncStateResult } from "./hooks/useSyncState";
 export type { UseTransactionHistoryResult } from "./hooks/useTransactionHistory";
+export type { UsePswapLineagesResult } from "./hooks/usePswapLineages";
+export type { UsePswapLineagesForResult } from "./hooks/usePswapLineagesFor";
+export type { UsePswapLineageResult } from "./hooks/usePswapLineage";

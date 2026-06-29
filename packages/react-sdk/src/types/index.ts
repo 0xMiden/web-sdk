@@ -22,6 +22,7 @@ import type {
   NoteInput,
   NoteVisibility,
   StorageMode,
+  PswapLineageRecord,
 } from "@miden-sdk/miden-sdk";
 
 // Re-export SDK types for convenience
@@ -41,6 +42,7 @@ export type {
   NoteType,
   Note,
   AccountStorageMode,
+  PswapLineageRecord,
 };
 
 export type { AccountRef } from "../utils/accountParsing";
@@ -392,6 +394,24 @@ export interface MintOptions {
   noteType?: NoteVisibility;
 }
 
+// Bridge (AggLayer bridge-out) options
+export interface BridgeOptions {
+  /** Account that creates and funds the bridge note (the sender) */
+  from: AccountRef;
+  /** Bridge account that consumes the note and burns the bridged assets */
+  bridgeAccount: AccountRef;
+  /** Faucet/token ID of the fungible asset to bridge */
+  assetId: AccountRef;
+  /** Amount of the asset to bridge */
+  amount: bigint | number;
+  /** AggLayer-assigned network ID of the destination chain */
+  destinationNetwork: number;
+  /** Destination Ethereum address on the destination network (0x-prefixed hex) */
+  destinationAddress: string;
+  /** Skip auto-sync after bridging. Default: false */
+  skipSync?: boolean;
+}
+
 // Consume options
 export interface ConsumeOptions {
   /** Account ID that will consume the notes */
@@ -468,6 +488,36 @@ export interface PswapCancelOptions {
    * the local store; record/Note values are used directly.
    */
   note: NoteInput;
+}
+
+// Cancel a PSWAP lineage by its stable order id — the creator account and
+// current tip note are resolved from the locally tracked lineage.
+export interface PswapCancelByOrderOptions {
+  /**
+   * Stable order id of the lineage to cancel (decimal string or bigint).
+   * `number` is not accepted: a PSWAP order id is `u64`-shaped and routinely
+   * exceeds `Number.MAX_SAFE_INTEGER`, which a JS `number` cannot represent
+   * without silent precision loss.
+   */
+  orderId: string | bigint;
+}
+
+// Result of the PSWAP lineage list query hooks.
+export interface PswapLineagesResult {
+  /** Tracked PSWAP lineages. */
+  lineages: PswapLineageRecord[];
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
+// Result of the single-lineage query hook.
+export interface PswapLineageResult {
+  /** The tracked lineage, or `null` if not tracked. */
+  lineage: PswapLineageRecord | null;
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
 }
 
 // Arbitrary transaction options

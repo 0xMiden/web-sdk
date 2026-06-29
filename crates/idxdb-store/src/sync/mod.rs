@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::{AccountId, StorageMap, StorageSlotType};
-use miden_client::note::{BlockNumber, NoteTag};
+use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
 use miden_client::store::{AccountStorageFilter, StoreError};
 use miden_client::sync::{
     NoteTagRecord,
@@ -13,7 +13,6 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
-use miden_protocol::note::NoteDetailsCommitment;
 
 use super::IdxdbStore;
 use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};

@@ -1,15 +1,22 @@
 use js_export_macro::js_export;
+use miden_client::agglayer::B2AggNote;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::crypto::RandomCoin;
-use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote};
+use miden_client::note::{
+    Note as NativeNote,
+    NoteAssets as NativeNoteAssets,
+    P2idNote,
+    P2ideNote,
+    P2ideNoteStorage,
+};
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
-use miden_standards::note::{P2ideNote, P2ideNoteStorage};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use super::NoteType;
 use super::account_id::AccountId;
+use super::eth_address::EthAddress;
 use super::note_assets::NoteAssets;
 use super::note_attachment::NoteAttachment;
 use super::note_id::NoteId;
@@ -44,7 +51,7 @@ impl Note {
         note_recipient: &NoteRecipient,
     ) -> Note {
         let native_metadata: miden_client::note::NoteMetadata = note_metadata.into();
-        let partial = miden_protocol::note::PartialNoteMetadata::new(
+        let partial = miden_client::note::PartialNoteMetadata::new(
             native_metadata.sender(),
             native_metadata.note_type(),
         )
@@ -176,6 +183,41 @@ impl Note {
             &mut rng,
         )
         .map_err(|err| js_error_with_context(err, "create p2ide note"))?;
+
+        Ok(native_note.into())
+    }
+
+    /// Builds a B2AGG (Bridge-to-AggLayer) note that bridges the given assets out to another
+    /// network via the `AggLayer`.
+    ///
+    /// The note is always public and is consumed by `bridge_account`, which burns the assets so
+    /// they can be claimed on the destination network at `destination_address` (an Ethereum
+    /// address on the AggLayer-assigned `destination_network`). The assets must be fungible assets
+    /// issued by a network faucet.
+    #[js_export(js_name = "createB2AggNote")]
+    pub fn create_b2agg_note(
+        sender: &AccountId,
+        bridge_account: &AccountId,
+        assets: &NoteAssets,
+        destination_network: u32,
+        destination_address: &EthAddress,
+    ) -> Result<Self, JsErr> {
+        let mut rng = StdRng::from_os_rng();
+        let coin_seed: [u64; 4] = rng.random();
+        // See `create_p2id_note` for why `new_unchecked` is fine here.
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+
+        let native_assets: NativeNoteAssets = assets.into();
+
+        let native_note = B2AggNote::create(
+            destination_network,
+            destination_address.into(),
+            native_assets,
+            bridge_account.into(),
+            sender.into(),
+            &mut rng,
+        )
+        .map_err(|err| js_error_with_context(err, "create b2agg note"))?;
 
         Ok(native_note.into())
     }
