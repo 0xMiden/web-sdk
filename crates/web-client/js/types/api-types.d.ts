@@ -821,7 +821,12 @@ export interface NotesResource {
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
   /**
-   * List notes that are available for consumption by a specific account.
+   * List notes consumable **right now** by a specific account.
+   *
+   * Excludes block-locked notes (status `consumableAfterBlock`), which are not
+   * yet usable — so every record returned is safe to act on immediately. Use
+   * {@link NotesResource.listConsumable} for the full set (now + block-locked)
+   * with consumability metadata.
    *
    * @param options - Options containing the account to check availability for.
    */
@@ -1059,6 +1064,18 @@ export declare class MidenClient {
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
+
+  /**
+   * Returns the low-level `WasmWebClient` this `MidenClient` already owns.
+   *
+   * Escape hatch for advanced consumers that need raw operations not yet on the
+   * high-level surface. **Borrow this instead of constructing a second
+   * `WasmWebClient` over the same store** — two live clients over one store
+   * don't share in-memory state, so notes synced through one aren't visible
+   * through the other (#169). The returned client is owned by this
+   * `MidenClient`; do not terminate it directly — call {@link MidenClient.terminate}.
+   */
+  rawWebClient(): WasmExports.WebClient;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;

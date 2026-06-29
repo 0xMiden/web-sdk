@@ -224,6 +224,29 @@ export class MidenClient {
     return await this.#inner.storeIdentifier();
   }
 
+  /**
+   * Returns the low-level `WasmWebClient` this `MidenClient` already owns.
+   *
+   * Escape hatch for advanced consumers (e.g. `@openzeppelin/miden-multisig-client`)
+   * that need raw operations not yet exposed on the high-level resource surface.
+   * **Borrow this instance instead of constructing a second `WasmWebClient` over
+   * the same store.** Two live WASM clients over one IndexedDB database don't share
+   * in-memory state, so writes (e.g. a synced note) made through one client are not
+   * reliably visible through the other — the "synced notes not found" dual-instance
+   * bug (#169). `getRawMidenClient` already reuses a `WasmWebClient` when handed one
+   * directly; hand it `midenClient.rawWebClient()` so it reuses this one.
+   *
+   * Lifecycle: the returned client is owned by this `MidenClient`. Do **not**
+   * `terminate()`/free it directly — call {@link MidenClient#terminate} instead,
+   * which tears down this shared instance.
+   *
+   * @returns {object} The underlying (proxy-wrapped) `WasmWebClient`.
+   */
+  rawWebClient() {
+    this.assertNotTerminated();
+    return this.#inner;
+  }
+
   // ── Mock-only methods ──
 
   /** Advances the mock chain by one block. Only available on mock clients. */

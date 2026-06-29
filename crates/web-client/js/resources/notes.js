@@ -35,18 +35,36 @@ export class NotesResource {
     return await this.#inner.getOutputNotes(filter);
   }
 
+  // Notes consumable RIGHT NOW by `account`, as `InputNoteRecord[]`.
+  //
+  // `getConsumableNotes()` also returns block-locked notes (status
+  // `consumableAfter`), which are not usable yet — so an API named "available"
+  // must exclude them, otherwise a caller acts on a note the chain will reject.
+  // A record is consumable-now when its consumability has no
+  // `consumableAfterBlock`; since `getConsumableNotes` only ever returns
+  // consumable notes, "no after-block" means now (never "never-consumable").
+  // Callers that need the block-locked notes, or the full per-account
+  // consumability metadata, use `listConsumable()`.
   async listAvailable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(opts.account, wasm);
     const consumable = await this.#inner.getConsumableNotes(accountId);
-    return consumable.map((c) => c.inputNoteRecord());
+    return consumable
+      .filter((c) =>
+        c
+          .noteConsumability()
+          .some((nc) => nc.consumptionStatus().consumableAfterBlock() == null)
+      )
+      .map((c) => c.inputNoteRecord());
   }
 
-  // Like `listAvailable`, but keeps each note's consumability metadata
-  // (`noteConsumability()`) instead of mapping it away. Callers that must
-  // distinguish consumable-now from block-locked notes (status
-  // `consumableAfterBlock`) need this; `listAvailable` cannot express it.
+  // Full consumability view: every note `getConsumableNotes()` returns —
+  // consumable-now AND block-locked — as `ConsumableNoteRecord[]` with
+  // `noteConsumability()` metadata intact (the status `consumableAfterBlock`).
+  // Unlike `listAvailable` (which keeps only consumable-now and maps each to an
+  // `inputNoteRecord()`), this preserves the metadata so callers can tell now
+  // from `consumableAfterBlock`, and which account each status belongs to.
   // Omit `account` (or pass null) to list notes consumable by any tracked
   // account — matching the underlying `getConsumableNotes(account?)`.
   async listConsumable(opts) {

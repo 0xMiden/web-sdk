@@ -177,15 +177,37 @@ describe("NotesResource", () => {
   });
 
   describe("listAvailable", () => {
-    it("resolves account and returns inputNoteRecord for each consumable", async () => {
-      const mockNote = { inputNoteRecord: vi.fn().mockReturnValue("record1") };
-      inner.getConsumableNotes.mockResolvedValue([mockNote]);
+    // A ConsumableNoteRecord whose consumability for the queried account is
+    // consumable-now (afterBlock null) or block-locked (afterBlock = a height).
+    const consumableNote = (record, afterBlock = null) => ({
+      inputNoteRecord: vi.fn().mockReturnValue(record),
+      noteConsumability: vi.fn().mockReturnValue([
+        {
+          consumptionStatus: () => ({
+            consumableAfterBlock: () => afterBlock,
+          }),
+        },
+      ]),
+    });
+
+    it("resolves account and returns inputNoteRecord for each consumable-now note", async () => {
+      inner.getConsumableNotes.mockResolvedValue([consumableNote("record1")]);
       const resource = makeResource();
       const result = await resource.listAvailable({
         account: "0xaccountHex",
       });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(result).toEqual(["record1"]);
+    });
+
+    it("excludes block-locked (consumableAfter) notes — the honest 'available now' semantics", async () => {
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("nowRecord"),
+        consumableNote("lockedRecord", 12345),
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: "0xacc" });
+      expect(result).toEqual(["nowRecord"]);
     });
 
     it("resolves bech32 account ref", async () => {
