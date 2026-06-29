@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.4 (TBD)
+
+### Fixes
+
+* [FIX][web] `miden-idxdb-store` no longer silently overwrites already-stored partial blockchain (`PartialMmr`) authentication nodes. Writing a known node index with the same value is accepted, but writing a different value for that index now rejects with an error and leaves the stored value intact, so a buggy or malicious sync path can't replace known-good MMR nodes. ([#193](https://github.com/0xMiden/web-sdk/issues/193))
+
 ## 0.15.0 (2026-06-12)
 
 ### Enhancements

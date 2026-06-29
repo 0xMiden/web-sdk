@@ -139,13 +139,40 @@ describe("insertPartialBlockchainNodes", () => {
     ).rejects.toThrow("ids and nodes arrays must be of the same length");
   });
 
-  it("overwrites existing nodes on re-insert (bulkPut semantics)", async () => {
+  it("accepts re-inserting the same node index with the same value", async () => {
     const dbId = await openTestDb();
-    await insertPartialBlockchainNodes(dbId, ["1"], ["0xold"]);
-    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnew"]);
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xsame"]);
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xsame"]);
     const db = getDatabase(dbId);
     const node = await db.partialBlockchainNodes.get(1);
-    expect(node!.node).toBe("0xnew");
+    expect(node!.node).toBe("0xsame");
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toHaveLength(1);
+  });
+
+  it("rejects a conflicting write and keeps the stored value", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xold"]);
+    await expect(
+      insertPartialBlockchainNodes(dbId, ["1"], ["0xnew"])
+    ).rejects.toThrow("Refusing to overwrite partial blockchain node 1");
+    const db = getDatabase(dbId);
+    const node = await db.partialBlockchainNodes.get(1);
+    expect(node!.node).toBe("0xold");
+  });
+
+  it("inserts only the missing nodes when some indexes already exist", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnode1"]);
+    await insertPartialBlockchainNodes(
+      dbId,
+      ["1", "2"],
+      ["0xnode1", "0xnode2"]
+    );
+    const db = getDatabase(dbId);
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toHaveLength(2);
+    expect((await db.partialBlockchainNodes.get(2))!.node).toBe("0xnode2");
   });
 });
 

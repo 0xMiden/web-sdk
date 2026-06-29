@@ -656,7 +656,32 @@ describe("sync", () => {
       expect(node!.node).toBe("node-data-42");
     });
 
-    it("overwrites an existing partial blockchain node (bulkPut)", async () => {
+    it("accepts re-writing an existing node with the same value", async () => {
+      const dbId = await openTestDb();
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 2,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+
+      const db = getDatabase(dbId);
+      const node = await db.partialBlockchainNodes.get(10);
+      expect(node!.node).toBe("same-data");
+    });
+
+    it("rejects a conflicting node write and keeps the stored value", async () => {
       const dbId = await openTestDb();
 
       await applyStateSync(
@@ -667,18 +692,20 @@ describe("sync", () => {
           serializedNodes: ["first-data"],
         })
       );
-      await applyStateSync(
-        dbId,
-        minimalStateUpdate({
-          blockNum: 2,
-          serializedNodeIds: ["10"],
-          serializedNodes: ["second-data"],
-        })
-      );
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 2,
+            serializedNodeIds: ["10"],
+            serializedNodes: ["second-data"],
+          })
+        )
+      ).rejects.toThrow("Refusing to overwrite partial blockchain node 10");
 
       const db = getDatabase(dbId);
       const node = await db.partialBlockchainNodes.get(10);
-      expect(node!.node).toBe("second-data");
+      expect(node!.node).toBe("first-data");
     });
 
     it("is a no-op when serializedNodeIds is empty", async () => {

@@ -1,5 +1,5 @@
 import { getDatabase } from "./schema.js";
-import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes) {
     try {
         const db = getDatabase(dbId);
@@ -51,7 +51,7 @@ export async function insertPartialBlockchainNodes(dbId, ids, nodes) {
             id: Number(ids[index]),
             node: node,
         }));
-        await db.partialBlockchainNodes.bulkPut(data);
+        await putPartialBlockchainNodesNoOverwrite(db.partialBlockchainNodes, data);
     }
     catch (err) {
         logWebStoreError(err, "Failed to insert partial blockchain nodes");
