@@ -69,6 +69,7 @@ export {
 const SYNC_METHODS = new Set([
   "buildSwapTag",
   "createCodeBuilder",
+  "endpoint",
   "lastAuthError",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
