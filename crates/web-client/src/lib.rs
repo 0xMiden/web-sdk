@@ -221,6 +221,9 @@ pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
+    // Cached at client creation from the RPC client's endpoint so page-side consumers can read it
+    // synchronously, without locking the async `inner` cell.
+    endpoint: std::sync::RwLock<Option<String>>,
 }
 
 // SAFETY: napi-rs with `tokio_rt` uses a multi-threaded tokio runtime, so async napi
@@ -268,6 +271,7 @@ impl WebClient {
             inner: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
+            endpoint: std::sync::RwLock::new(None),
         }
     }
 
@@ -277,6 +281,13 @@ impl WebClient {
         let guard = self.inner.lock().await;
         let client = guard.as_ref().ok_or_else(|| from_str_err("Client not initialized"))?;
         Ok(client.store_identifier().to_string())
+    }
+
+    /// Returns the node endpoint URL this client is configured to talk to, or `undefined` if the
+    /// client has not been created yet (or its transport doesn't track an endpoint).
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> Option<String> {
+        self.endpoint.read().expect("endpoint lock poisoned").clone()
     }
 
     #[js_export(js_name = "createCodeBuilder")]
@@ -470,6 +481,9 @@ impl WebClient {
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         debug_mode: Option<bool>,
     ) -> Result<(), JsValue> {
+        *self.endpoint.write().expect("endpoint lock poisoned") =
+            rpc_client.endpoint().map(str::to_string);
+
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
             .rng(Box::new(rng))
@@ -564,6 +578,9 @@ impl WebClient {
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
         debug_mode: Option<bool>,
     ) -> Result<(), JsErr> {
+        *self.endpoint.write().expect("endpoint lock poisoned") =
+            rpc_client.endpoint().map(str::to_string);
+
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()
                 .rpc(rpc_client)

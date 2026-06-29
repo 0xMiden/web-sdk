@@ -50,8 +50,15 @@ const fetchAssetMetadata = async (
 export function useAssetMetadata(assetIds: string[] = []) {
   const assetMetadata = useAssetMetadataStore();
   const setAssetMetadata = useMidenStore((state) => state.setAssetMetadata);
-  const rpcUrl = useMidenStore((state) => state.config.rpcUrl);
-  const rpcClient = useMemo(() => getRpcClient(rpcUrl), [rpcUrl]);
+  // Derive the endpoint from the live client (single source of truth) rather than a
+  // separately-stored config copy. `client` exists only once MidenProvider has finished
+  // initializing, so a configured app never reads an unset URL and falls back to testnet
+  // during the init window.
+  const client = useMidenStore((state) => state.client);
+  const rpcClient = useMemo(
+    () => (client ? getRpcClient(client.endpoint() ?? undefined) : null),
+    [client]
+  );
 
   const uniqueAssetIds = useMemo(
     () => Array.from(new Set(assetIds.filter(Boolean))),
