@@ -210,6 +210,21 @@ describe("NotesResource", () => {
       expect(result).toEqual(["nowRecord"]);
     });
 
+    it("keeps consumable-now notes regardless of authorization (afterBlock null ⇒ now)", async () => {
+      // Both `Consumable` and `ConsumableWithAuthorization` report
+      // `consumableAfterBlock() === null`, so both are kept. JS can't tell them
+      // apart (nor from never-consumable) — correctness relies on miden-client
+      // never returning never-consumable notes from getConsumableNotes; see the
+      // LOAD-BEARING UPSTREAM CONTRACT note in notes.js.
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("plainNow"),
+        consumableNote("withAuthNow"),
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: "0xacc" });
+      expect(result).toEqual(["plainNow", "withAuthNow"]);
+    });
+
     it("resolves bech32 account ref", async () => {
       inner.getConsumableNotes.mockResolvedValue([]);
       const resource = makeResource();

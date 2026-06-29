@@ -41,8 +41,19 @@ export class NotesResource {
   // `consumableAfter`), which are not usable yet — so an API named "available"
   // must exclude them, otherwise a caller acts on a note the chain will reject.
   // A record is consumable-now when its consumability has no
-  // `consumableAfterBlock`; since `getConsumableNotes` only ever returns
-  // consumable notes, "no after-block" means now (never "never-consumable").
+  // `consumableAfterBlock`.
+  //
+  // LOAD-BEARING UPSTREAM CONTRACT: JS `NoteConsumptionStatus` exposes only
+  // `consumableAfterBlock()`, so it cannot distinguish `Consumable` /
+  // `ConsumableWithAuthorization` (now) from `NeverConsumable` /
+  // `UnconsumableConditions` — all four return `null`. This filter is correct
+  // ONLY because miden-client's `NoteScreener::is_relevant` already strips the
+  // never-consumable variants before `getConsumableNotes` returns, so every
+  // record here is `Consumable` | `ConsumableWithAuthorization` | `ConsumableAfter`
+  // and `null` unambiguously means now. If a future miden-client surfaces a
+  // non-consumable status through `getConsumableNotes`, revisit this (and prefer
+  // exposing a real status discriminant on `NoteConsumptionStatus`).
+  //
   // Callers that need the block-locked notes, or the full per-account
   // consumability metadata, use `listConsumable()`.
   async listAvailable(opts) {

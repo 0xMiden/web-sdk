@@ -236,9 +236,11 @@ export class MidenClient {
    * bug (#169). `getRawMidenClient` already reuses a `WasmWebClient` when handed one
    * directly; hand it `midenClient.rawWebClient()` so it reuses this one.
    *
-   * Lifecycle: the returned client is owned by this `MidenClient`. Do **not**
-   * `terminate()`/free it directly — call {@link MidenClient#terminate} instead,
-   * which tears down this shared instance.
+   * Lifecycle (the hatch trades safety for access): the returned client is owned
+   * by this `MidenClient`. Do **not** `terminate()`/free it directly — call
+   * {@link MidenClient#terminate} instead, which tears down this shared instance.
+   * The terminate guard here only fires at borrow time, so a reference cached
+   * past `MidenClient.terminate()` is stale — re-borrow rather than holding one.
    *
    * @returns {object} The underlying (proxy-wrapped) `WasmWebClient`.
    */
