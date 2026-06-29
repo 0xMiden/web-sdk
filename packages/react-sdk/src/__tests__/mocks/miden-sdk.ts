@@ -203,6 +203,7 @@ export const createMockWebClient = (
   const defaultClient: MockWebClientType = {
     // Initialization
     createClient: vi.fn().mockResolvedValue(undefined),
+    endpoint: vi.fn(() => "https://rpc.devnet.miden.io"),
 
     // Account methods
     getAccounts: vi.fn().mockResolvedValue([]),
@@ -299,6 +300,7 @@ export const createMockWebClient = (
 
 type MockWebClientType = {
   createClient: ReturnType<typeof vi.fn>;
+  endpoint: ReturnType<typeof vi.fn>;
   getAccounts: ReturnType<typeof vi.fn>;
   getAccount: ReturnType<typeof vi.fn>;
   newWallet: ReturnType<typeof vi.fn>;

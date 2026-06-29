@@ -43,6 +43,11 @@ beforeEach(() => {
   useMidenStore.getState().reset();
   mockGetAccountDetails.mockReset();
   mockFromAccount.mockReset();
+  // useAssetMetadata derives the RPC endpoint from the live client, so it only fetches
+  // once a client exists. Provide one (the client carries its own endpoint).
+  useMidenStore.getState().setClient({
+    endpoint: () => "https://rpc.devnet.miden.io",
+  } as never);
 });
 
 describe("useAssetMetadata", () => {
@@ -149,6 +154,19 @@ describe("useAssetMetadata", () => {
     const meta = result.current.assetMetadata.get("0xfaucet5");
     expect(meta?.symbol).toBe("CACHED");
     expect(meta?.decimals).toBe(2);
+  });
+
+  it("defers fetching until a client exists (no RPC before the provider is ready)", async () => {
+    useMidenStore.getState().setClient(null);
+    mockGetAccountDetails.mockResolvedValue({ account: () => ({ id: "x" }) });
+
+    const { result } = renderHook(() => useAssetMetadata(["0xfaucet7"]));
+
+    // Give the effect a chance to run; with no client it must not fetch.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockGetAccountDetails).not.toHaveBeenCalled();
+    expect(result.current.assetMetadata.has("0xfaucet7")).toBe(false);
   });
 
   it("should filter out falsy asset IDs", () => {
