@@ -15,7 +15,11 @@ import {
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 
 import { applyFullAccountState } from "./accounts.js";
-import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+import {
+  logWebStoreError,
+  putPartialBlockchainNodesNoOverwrite,
+  uint8ArrayToBase64,
+} from "./utils.js";
 import { Transaction } from "dexie";
 import Dexie from "dexie";
 
@@ -428,10 +432,12 @@ async function updatePartialBlockchainNodes(
       id: Number(nodeIndexes[index]),
       node: node,
     }));
-    // Use bulkPut to add/overwrite the entries
-    await (
-      tx as Transaction & { partialBlockchainNodes: Dexie.Table }
-    ).partialBlockchainNodes.bulkPut(data);
+    // Insert missing nodes and reject conflicting writes
+    await putPartialBlockchainNodesNoOverwrite(
+      (tx as Transaction & { partialBlockchainNodes: Dexie.Table })
+        .partialBlockchainNodes,
+      data
+    );
   } catch (err) {
     logWebStoreError(err, "Failed to update partial blockchain nodes");
   }

@@ -2,7 +2,7 @@ import { getDatabase, } from "./schema.js";
 import { upsertTransactionRecord, insertTransactionScript, } from "./transactions.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 import { applyFullAccountState } from "./accounts.js";
-import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function getNoteTags(dbId) {
     try {
         const db = getDatabase(dbId);
@@ -210,8 +210,9 @@ async function updatePartialBlockchainNodes(tx, nodeIndexes, nodes) {
             id: Number(nodeIndexes[index]),
             node: node,
         }));
-        // Use bulkPut to add/overwrite the entries
-        await tx.partialBlockchainNodes.bulkPut(data);
+        // Insert missing nodes and reject conflicting writes
+        await putPartialBlockchainNodesNoOverwrite(tx
+            .partialBlockchainNodes, data);
     }
     catch (err) {
         logWebStoreError(err, "Failed to update partial blockchain nodes");

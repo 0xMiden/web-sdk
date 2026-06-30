@@ -1,5 +1,5 @@
 import { getDatabase } from "./schema.js";
-import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes) {
     try {
         const db = getDatabase(dbId);
@@ -51,7 +51,12 @@ export async function insertPartialBlockchainNodes(dbId, ids, nodes) {
             id: Number(ids[index]),
             node: node,
         }));
-        await db.partialBlockchainNodes.bulkPut(data);
+        // Wrap the read/check/add in a single transaction so the conflict check
+        // and the insert are atomic: a concurrent writer cannot slip a row in
+        // between the `bulkGet` and the `bulkAdd`.
+        await db.dexie.transaction("rw", db.partialBlockchainNodes, async () => {
+            await putPartialBlockchainNodesNoOverwrite(db.partialBlockchainNodes, data);
+        });
     }
     catch (err) {
         logWebStoreError(err, "Failed to insert partial blockchain nodes");
