@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.4 (TBD)
+## 0.16.0 (TBD)
 
 ### Fixes
 
