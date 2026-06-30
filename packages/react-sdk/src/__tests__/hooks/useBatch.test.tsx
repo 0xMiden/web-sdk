@@ -4,6 +4,7 @@ import { useBatch } from "../../hooks/useBatch";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import { createMockWebClient } from "../mocks/miden-sdk";
+import type { TransactionRequest } from "@miden-sdk/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
@@ -27,7 +28,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-const fakeRequest = (label: string) => ({ _label: label });
+const fakeRequest = (label: string) =>
+  ({ _label: label }) as unknown as TransactionRequest;
 
 describe("useBatch", () => {
   describe("initial state", () => {

@@ -369,7 +369,7 @@ export interface BatchItemInput {
   /** Local account that executes this transaction. */
   account: AccountRef;
   /** Pre-built `TransactionRequest`. */
-  request: unknown;
+  request: TransactionRequest;
 }
 
 export interface BatchOptions {
