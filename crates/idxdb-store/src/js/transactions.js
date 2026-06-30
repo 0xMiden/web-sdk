@@ -120,6 +120,15 @@ export async function upsertTransactionRecord(dbId, transactionId, details, bloc
         throw err;
     }
 }
+export async function upsertTransactionRecordWithScript(dbId, transactionId, details, blockNum, statusVariant, status, scriptRoot, txScript) {
+    const db = getDatabase(dbId);
+    await db.dexie.transaction("rw", [db.transactions, db.transactionScripts], async (tx) => {
+        if (scriptRoot && txScript) {
+            await insertTransactionScript(dbId, scriptRoot, txScript, tx);
+        }
+        await upsertTransactionRecord(dbId, transactionId, details, blockNum, statusVariant, status, scriptRoot, tx);
+    });
+}
 /**
  * Applies a batch of transaction updates atomically inside a single Dexie transaction.
  *

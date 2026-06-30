@@ -15,7 +15,7 @@ use miden_client::utils::Serializable;
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use super::js_bindings::{idxdb_insert_transaction_script, idxdb_upsert_transaction_record};
+use super::js_bindings::idxdb_upsert_transaction_record_with_script;
 use crate::promise::await_ok;
 
 // TYPES
@@ -111,12 +111,7 @@ pub(crate) async fn upsert_transaction_record(
 ) -> Result<(), StoreError> {
     let serialized_data = serialize_transaction_record(transaction);
 
-    if let Some(root) = serialized_data.script_root.clone() {
-        let promise = idxdb_insert_transaction_script(db_id, root, serialized_data.tx_script);
-        await_ok(promise, "failed to insert script").await?;
-    }
-
-    let promise = idxdb_upsert_transaction_record(
+    let promise = idxdb_upsert_transaction_record_with_script(
         db_id,
         serialized_data.id,
         serialized_data.details,
@@ -124,6 +119,7 @@ pub(crate) async fn upsert_transaction_record(
         serialized_data.status_variant,
         serialized_data.status,
         serialized_data.script_root,
+        serialized_data.tx_script,
     );
     await_ok(promise, "failed to insert transaction data").await?;
 
