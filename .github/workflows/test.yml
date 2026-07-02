@@ -677,6 +677,12 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. Required for changes that depend on Rust-side
+      # APIs not yet released to crates.io. Sticky comment owned by
+      # build.yml's build-wasm job; we don't post here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust
@@ -758,6 +764,10 @@ jobs:
           BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
           [ -n "$BINARY" ] || { echo "::error::napi binary not found"; exit 1; }
           cp "$BINARY" crates/web-client/miden_client_web.node
+      - name: Check node re-exports are in sync with the napi surface
+        env:
+          MIDEN_MODULE_PATH: ${{ github.workspace }}/crates/web-client/miden_client_web.node
+        run: pnpm --filter @miden-sdk/miden-sdk run check:node-reexports
       - name: Install Playwright (chromium not required, but install pulls deps)
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run nodejs Playwright project

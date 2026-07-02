@@ -71,6 +71,7 @@ const SYNC_METHODS = new Set([
   "buildSwapTag",
   "createCodeBuilder",
   "lastAuthError",
+  "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
   "newPswapCancelTransactionRequest",
@@ -106,6 +107,7 @@ const WRITE_METHODS = new Set([
   "removeSetting",
   "sendPrivateNote",
   "setSetting",
+  "submitNewTransactionBatch",
   "submitProvenTransaction",
 ]);
 

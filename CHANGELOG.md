@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.15.3 (TBD)
+## Unreleased
+
+### Fixes
+
+* [FIX][web] `account.storage().getItem(slot)` / `getMapItem(...)` results (`StorageResult`) now forward `toU64s()`. The result is typed as a `Word` and already forwards `toFelts()` / `toHex()` / `toBigInt()`, but `toU64s()` was missing, so reading raw u64 elements off a storage value (e.g. `getItem(slot).toU64s()`) threw `toU64s is not a function` at runtime. This broke the OpenZeppelin multisig client's `AccountInspector` (run on every multisig-account `load`), and thus every guardian transaction. ([#194](https://github.com/0xMiden/web-sdk/pull/194))
+## 0.15.4 (TBD)
 
 ### Enhancements
 
@@ -12,6 +17,15 @@ faucet.tokenName();               // "DAG Token"
 faucet.tokenSupply().toString();  // "0"
 faucet.description();             // string | undefined
 ```
+
+* [FEATURE][web,react] AggLayer bridge-out (B2AGG) note support. `client.transactions.bridge({ account, bridgeAccount, token, amount, destinationNetwork, destinationAddress })` bridges a fungible asset out to another network — emitting a single public B2AGG (Bridge-to-AggLayer) note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned `destinationNetwork`. The lower-level builders are also exposed: `Note.createB2AggNote(sender, bridgeAccount, assets, destinationNetwork, destinationAddress)` and `client.newB2AggTransactionRequest(...)`. A new `EthAddress` class carries the 20-byte destination address (`EthAddress.fromHex("0x…")` / `EthAddress.fromBytes(bytes)`, with `toHex()` / `toBytes()`). The `@miden-sdk/react` `useBridge()` hook wraps the build-and-submit flow: `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })`. Builds on the `miden-agglayer` re-export already present in the bundled `miden-client` — no new dependency. (closes [#173](https://github.com/0xMiden/web-sdk/issues/173))
+* [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
+
+## 0.15.3 (2026-06-25)
+
+### Fixes
+
+* [FIX][web,react] The `@miden-sdk/miden-sdk` **Node entry** (resolved via the `node` export condition — Next.js / Remix server builds, Vitest, and any bundler that prefers `node`) now re-exports the full public class surface, matching the browser entry. It previously shipped a hand-curated subset, so importing a class the subset omitted — e.g. `BasicFungibleFaucetComponent`, `TransactionRequest`, `InputNoteRecord`, `NoteAttachmentScheme`, `Poseidon2` — or using a `@miden-sdk/react` hook that imports one (`useAssetMetadata`, `useCompile`) — failed under Node resolution with `"'X' is not exported from '@miden-sdk/miden-sdk'"`, even though the type declarations advertised it. The JS-layer helpers `CompilerResource` and `getWasmOrThrow` are now exported on Node too. The Node re-export list is generated from the native module and checked in CI, so it stays in lockstep with the surface. ([#206](https://github.com/0xMiden/web-sdk/pull/206))
 
 ## 0.15.2 (2026-06-22)
 

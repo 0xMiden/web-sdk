@@ -394,6 +394,24 @@ export interface MintOptions {
   noteType?: NoteVisibility;
 }
 
+// Bridge (AggLayer bridge-out) options
+export interface BridgeOptions {
+  /** Account that creates and funds the bridge note (the sender) */
+  from: AccountRef;
+  /** Bridge account that consumes the note and burns the bridged assets */
+  bridgeAccount: AccountRef;
+  /** Faucet/token ID of the fungible asset to bridge */
+  assetId: AccountRef;
+  /** Amount of the asset to bridge */
+  amount: bigint | number;
+  /** AggLayer-assigned network ID of the destination chain */
+  destinationNetwork: number;
+  /** Destination Ethereum address on the destination network (0x-prefixed hex) */
+  destinationAddress: string;
+  /** Skip auto-sync after bridging. Default: false */
+  skipSync?: boolean;
+}
+
 // Consume options
 export interface ConsumeOptions {
   /** Account ID that will consume the notes */

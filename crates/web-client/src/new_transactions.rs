@@ -3,8 +3,9 @@ use alloc::collections::BTreeMap;
 use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
+use miden_client::agglayer::B2AggNote;
 use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote};
+use miden_client::note::{BlockNumber, Note as NativeNote, NoteAssets as NativeNoteAssets};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
@@ -22,6 +23,7 @@ use miden_client::transaction::{
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
+use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
 use crate::models::note::Note;
@@ -33,7 +35,8 @@ use crate::models::transaction_result::TransactionResult;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
-use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
+use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
+use crate::utils::deserialize_from_bytes;
 use crate::{WebClient, js_error_with_context};
 
 #[js_export]
@@ -115,6 +118,55 @@ impl WebClient {
             })?;
 
         Ok(send_transaction_request.into())
+    }
+
+    /// Builds a transaction request that bridges a fungible asset out to another network via the
+    /// `AggLayer`.
+    ///
+    /// The request emits a single public B2AGG (Bridge-to-AggLayer) note holding `amount` units of
+    /// the `faucet_id` asset. The note is consumed by `bridge_account_id`, which burns the asset so
+    /// it can be claimed at `destination_address` (an Ethereum address) on the AggLayer-assigned
+    /// `destination_network`.
+    #[js_export(js_name = "newB2AggTransactionRequest")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_b2agg_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        bridge_account_id: &AccountId,
+        faucet_id: &AccountId,
+        amount: JsU64,
+        destination_network: u32,
+        destination_address: &EthAddress,
+    ) -> Result<TransactionRequest, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let amount = js_u64_to_u64(amount);
+        let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
+            .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
+        let note_assets = NativeNoteAssets::new(vec![fungible_asset.into()])
+            .map_err(|err| js_error_with_context(err, "failed to create b2agg note assets"))?;
+
+        let b2agg_note = B2AggNote::create(
+            destination_network,
+            destination_address.into(),
+            note_assets,
+            bridge_account_id.into(),
+            sender_account_id.into(),
+            client.rng(),
+        )
+        .map_err(|err| js_error_with_context(err, "failed to create b2agg note"))?;
+
+        let b2agg_transaction_request = NativeTransactionRequestBuilder::new()
+            .own_output_notes(vec![b2agg_note])
+            .build()
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create b2agg transaction request")
+            })?;
+
+        Ok(b2agg_transaction_request.into())
     }
 
     #[js_export(js_name = "newSwapTransactionRequest")]
@@ -328,6 +380,51 @@ impl WebClient {
         self.apply_transaction(&transaction_result, submission_height).await?;
 
         Ok(tx_id)
+    }
+
+    /// Executes a batch of transactions against the specified account, proves them individually
+    /// and as a batch, submits the batch to the network, and atomically applies the per-tx
+    /// updates to the local store. Returns the block number the batch was accepted into.
+    ///
+    /// All transactions must target the same local account — the `account_id` argument.
+    /// Each element of `transaction_requests` is the serialized-bytes form of a
+    /// `TransactionRequest` (obtained via `tx_request.serialize()`)
+    // TODO V2: support multi-account batches
+    #[js_export(js_name = "submitNewTransactionBatch")]
+    pub async fn submit_new_transaction_batch(
+        &self,
+        account_id: &AccountId,
+        transaction_requests: Vec<JsBytes>,
+    ) -> Result<u32, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_account_id: miden_client::account::AccountId = account_id.into();
+
+        // Deserialize all requests up front so we fail early on malformed input.
+        let mut native_reqs: Vec<NativeTransactionRequest> =
+            Vec::with_capacity(transaction_requests.len());
+        for bytes in &transaction_requests {
+            let req = deserialize_from_bytes::<NativeTransactionRequest>(bytes).map_err(|err| {
+                from_str_err(&format!("failed to deserialize transaction request: {err:?}"))
+            })?;
+            native_reqs.push(req);
+        }
+
+        // `new_transaction_batch()` is now a synchronous builder constructor that takes no
+        // account id; the target account is supplied per-transaction via `push`. This wrapper
+        // keeps its single-account contract by pushing every request against `native_account_id`.
+        let mut builder = client.new_transaction_batch();
+
+        for native_req in native_reqs {
+            builder = maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
+        }
+
+        maybe_wrap_send(Box::pin(builder.submit()))
+            .await
+            .map(|block_number| block_number.as_u32())
+            .map_err(|err| js_error_with_context(err, "failed to submit transaction batch"))
     }
 
     /// Executes a transaction specified by the request against the specified account but does not

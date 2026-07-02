@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.15.2",
+  "version": "0.15.3",
   "description": "Miden Wasm SDK",
   "license": "MIT",
   "repository": {
@@ -71,6 +71,8 @@
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",
     "check:standalone-types": "node ./scripts/check-standalone-types.js",
+    "gen:node-reexports": "node ./scripts/gen-node-reexports.js",
+    "check:node-reexports": "node ./scripts/gen-node-reexports.js --check",
     "test:install": "pnpm exec playwright install --with-deps",
     "test:install:ci": "pnpm exec playwright install --with-deps chromium",
     "test": "pnpm exec playwright test",
