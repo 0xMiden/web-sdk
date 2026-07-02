@@ -21,7 +21,6 @@ use js_bindings::{
     idxdb_get_tracked_block_header_numbers,
     idxdb_get_tracked_block_headers,
     idxdb_insert_block_header,
-    idxdb_insert_partial_blockchain_nodes,
     idxdb_prune_irrelevant_blocks,
 };
 
@@ -41,12 +40,30 @@ impl IdxdbStore {
     pub(crate) async fn insert_block_header(
         &self,
         block_header: &BlockHeader,
+        nodes: &[(InOrderIndex, Word)],
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
         let SerializedBlockHeaderData { block_num, header, has_client_notes } =
             serialize_block_header(block_header, has_client_notes);
 
-        let promise = idxdb_insert_block_header(self.db_id(), block_num, header, has_client_notes);
+        let mut serialized_node_ids = Vec::new();
+        let mut serialized_nodes = Vec::new();
+        for (id, node) in nodes {
+            let SerializedPartialBlockchainNodeData { id, node } =
+                serialize_partial_blockchain_node(*id, *node)?;
+            serialized_node_ids.push(id);
+            serialized_nodes.push(node);
+        }
+
+        // Header + MMR nodes are persisted in one IndexedDB transaction (see `chainData.js`).
+        let promise = idxdb_insert_block_header(
+            self.db_id(),
+            block_num,
+            header,
+            has_client_notes,
+            serialized_node_ids,
+            serialized_nodes,
+        );
         await_ok(promise, "failed to insert block header").await?;
 
         Ok(())
@@ -153,29 +170,6 @@ impl IdxdbStore {
                 process_partial_blockchain_nodes_from_js_value(js_value)
             },
         }
-    }
-
-    pub(crate) async fn insert_partial_blockchain_nodes(
-        &self,
-        nodes: &[(InOrderIndex, Word)],
-    ) -> Result<(), StoreError> {
-        let mut serialized_node_ids = Vec::new();
-        let mut serialized_nodes = Vec::new();
-        for (id, node) in nodes {
-            let SerializedPartialBlockchainNodeData { id, node } =
-                serialize_partial_blockchain_node(*id, *node)?;
-            serialized_node_ids.push(id);
-            serialized_nodes.push(node);
-        }
-
-        let promise = idxdb_insert_partial_blockchain_nodes(
-            self.db_id(),
-            serialized_node_ids,
-            serialized_nodes,
-        );
-        await_ok(promise, "failed to insert partial blockchain nodes").await?;
-
-        Ok(())
     }
 
     pub(crate) async fn prune_irrelevant_blocks(
