@@ -423,6 +423,26 @@ console.log(faucet.id().toString());
 console.log(faucet.isFaucet()); // true
 ```
 
+### Read Faucet Metadata
+
+`BasicFungibleFaucetComponent` extracts the on-chain token metadata from a faucet account. The same
+component backs both basic and network-style faucets, so it works for either:
+
+```typescript
+import { BasicFungibleFaucetComponent } from "@miden-sdk/miden-sdk";
+
+const faucet = BasicFungibleFaucetComponent.fromAccount(account);
+
+faucet.symbol().toString();       // "DAG"
+faucet.tokenName();               // "DAG Token"
+faucet.decimals();                // 8
+faucet.maxSupply().toString();    // "10000000"
+faucet.tokenSupply().toString();  // amount minted so far, e.g. "0"
+faucet.description();             // string | undefined
+faucet.logoUri();                 // string | undefined
+faucet.externalLink();            // string | undefined
+```
+
 ### Send Tokens
 
 ```typescript
