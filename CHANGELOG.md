@@ -10,6 +10,15 @@
 
 ### Enhancements
 
+* [FEATURE][web] `BasicFungibleFaucetComponent` now exposes the full token metadata of a fungible-faucet account: `tokenName()`, `tokenSupply()` (the amount minted so far, as a `Felt`), `description()`, `logoUri()`, and `externalLink()` — the optional descriptive fields return `undefined` when unset. These read the same on-chain `FungibleFaucet` component that already backed `symbol()` / `decimals()` / `maxSupply()`, so they work for both basic and network-style faucet accounts. In the 0.15 protocol the basic-vs-network distinction is a function of account configuration, not a separate component type, so a dedicated `NetworkFungibleFaucet` binding is unnecessary. ([#162](https://github.com/0xMiden/web-sdk/issues/162))
+
+```ts
+const faucet = BasicFungibleFaucetComponent.fromAccount(account);
+faucet.tokenName();               // "DAG Token"
+faucet.tokenSupply().toString();  // "0"
+faucet.description();             // string | undefined
+```
+
 * [FEATURE][web,react] AggLayer bridge-out (B2AGG) note support. `client.transactions.bridge({ account, bridgeAccount, token, amount, destinationNetwork, destinationAddress })` bridges a fungible asset out to another network — emitting a single public B2AGG (Bridge-to-AggLayer) note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned `destinationNetwork`. The lower-level builders are also exposed: `Note.createB2AggNote(sender, bridgeAccount, assets, destinationNetwork, destinationAddress)` and `client.newB2AggTransactionRequest(...)`. A new `EthAddress` class carries the 20-byte destination address (`EthAddress.fromHex("0x…")` / `EthAddress.fromBytes(bytes)`, with `toHex()` / `toBytes()`). The `@miden-sdk/react` `useBridge()` hook wraps the build-and-submit flow: `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })`. Builds on the `miden-agglayer` re-export already present in the bundled `miden-client` — no new dependency. (closes [#173](https://github.com/0xMiden/web-sdk/issues/173))
 * [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
 
