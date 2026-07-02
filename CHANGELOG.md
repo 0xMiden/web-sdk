@@ -1,7 +1,5 @@
 # Changelog
 
-## Unreleased
-
 ## 0.15.4 (2026-06-29)
 
 ### Fixes
