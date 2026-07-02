@@ -51,4 +51,38 @@ describe("MidenProvider initialization", () => {
 
     expect(WebClient.createClient).toHaveBeenCalled();
   });
+
+  it("forwards debugMode to createClient when set", async () => {
+    render(
+      <MidenProvider
+        config={{ rpcUrl: "https://rpc.testnet.miden.io", debugMode: true }}
+      >
+        <StatusDisplay />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("true");
+    });
+
+    const createClient = vi.mocked(WebClient.createClient);
+    expect(createClient).toHaveBeenCalled();
+    // debugMode is the 5th positional argument (index 4).
+    expect(createClient.mock.calls.at(-1)?.[4]).toBe(true);
+  });
+
+  it("leaves debugMode undefined when not configured", async () => {
+    render(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <StatusDisplay />
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("true");
+    });
+
+    const createClient = vi.mocked(WebClient.createClient);
+    expect(createClient.mock.calls.at(-1)?.[4]).toBeUndefined();
+  });
 });

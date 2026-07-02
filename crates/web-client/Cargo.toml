@@ -30,6 +30,7 @@ browser = [
   "dep:wasm-bindgen",
   "dep:wasm-bindgen-futures",
   "dep:web-sys",
+  "miden-client/debug-output",
   "miden-client/tonic",
 ]
 default = ["browser"]

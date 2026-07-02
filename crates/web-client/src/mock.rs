@@ -25,7 +25,10 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         serialized_mock_chain: Option<Vec<u8>>,
         serialized_mock_note_transport_node: Option<Vec<u8>>,
+        debug_mode: Option<bool>,
     ) -> Result<String, JsErr> {
+        self.set_debug_mode(debug_mode);
+
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
                 Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {
@@ -82,7 +85,10 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         serialized_mock_chain: Option<Vec<u8>>,
         serialized_mock_note_transport_node: Option<Vec<u8>>,
+        debug_mode: Option<bool>,
     ) -> Result<String, JsErr> {
+        self.set_debug_mode(debug_mode);
+
         let mock_rpc_api = match serialized_mock_chain {
             Some(chain) => {
                 Arc::new(MockRpcApi::new(MockChain::read_from_bytes(&chain).map_err(|err| {

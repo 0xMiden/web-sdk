@@ -263,7 +263,7 @@ export function MidenProvider({
               signerContext.getKeyCb,
               signerContext.insertKeyCb,
               wrappedSignCb,
-              undefined,
+              resolvedConfig.debugMode,
               resolvedConfig.useWorker
             );
 
@@ -289,7 +289,7 @@ export function MidenProvider({
               resolvedConfig.noteTransportUrl,
               seed,
               undefined,
-              undefined,
+              resolvedConfig.debugMode,
               resolvedConfig.useWorker
             );
             if (cancelled) return;

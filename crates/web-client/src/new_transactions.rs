@@ -41,6 +41,17 @@ use crate::platform::{
 };
 use crate::{WebClient, js_error_with_context};
 
+/// Boxed execution future, so the debug-routing and plain executors — distinct opaque future
+/// types — can be selected between at a single call site.
+#[cfg(feature = "browser")]
+type BoxedExecution<'a> = core::pin::Pin<
+    alloc::boxed::Box<
+        dyn core::future::Future<
+                Output = Result<miden_client::transaction::TransactionResult, ClientError>,
+            > + 'a,
+    >,
+>;
+
 #[js_export]
 impl WebClient {
     #[js_export(js_name = "newMintTransactionRequest")]
@@ -371,6 +382,19 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        // Browser: when debug mode is on, run through the console-routing executor so `debug.*`
+        // output reaches the console. `miden-client` has no runtime debug toggle, so the choice is
+        // which executor to call.
+        #[cfg(feature = "browser")]
+        let fut: BoxedExecution<'_> = if self.debug_mode() {
+            Box::pin(client.execute_transaction_with_debugger::<crate::debug::ConsoleWriter>(
+                account_id.into(),
+                transaction_request.into(),
+            ))
+        } else {
+            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()))
+        };
+        #[cfg(not(feature = "browser"))]
         let fut =
             Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
         maybe_wrap_send(fut)
@@ -401,6 +425,17 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
+        // Browser: run through the console-routing executor (see `execute_transaction`).
+        #[cfg(feature = "browser")]
+        let fut: BoxedExecution<'_> = if self.debug_mode() {
+            Box::pin(client.execute_transaction_with_debugger::<crate::debug::ConsoleWriter>(
+                account_id.into(),
+                transaction_request.into(),
+            ))
+        } else {
+            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()))
+        };
+        #[cfg(not(feature = "browser"))]
         let fut =
             Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
         match maybe_wrap_send(fut).await {
@@ -440,15 +475,42 @@ impl WebClient {
                 })
                 .collect();
 
-        let result = client
+        // Browser: in debug mode, run through the console-routing executor so `debug.*` output
+        // reaches the console (the default handler writes to stdout, a no-op on wasm). Gated on
+        // the flag rather than always-on: that executor also routes the advice-stack and
+        // advice-map printers, which can expose witness data.
+        #[cfg(feature = "browser")]
+        let exec_result = if self.debug_mode() {
+            client
+                .execute_program_with_debugger::<crate::debug::ConsoleWriter>(
+                    account_id.into(),
+                    tx_script.into(),
+                    advice_inputs.into(),
+                    foreign_accounts_map,
+                )
+                .await
+        } else {
+            client
+                .execute_program(
+                    account_id.into(),
+                    tx_script.into(),
+                    advice_inputs.into(),
+                    foreign_accounts_map,
+                )
+                .await
+        };
+        #[cfg(not(feature = "browser"))]
+        let exec_result = client
             .execute_program(
                 account_id.into(),
                 tx_script.into(),
                 advice_inputs.into(),
                 foreign_accounts_map,
             )
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to execute program"))?;
+            .await;
+
+        let result =
+            exec_result.map_err(|err| js_error_with_context(err, "failed to execute program"))?;
 
         let felt_vec: Vec<Felt> = result.iter().map(|f| Felt::from(*f)).collect();
         Ok(felt_vec.into())

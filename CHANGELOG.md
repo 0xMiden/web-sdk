@@ -7,6 +7,11 @@
 * [BREAKING][web] Removed `notes.fetchPrivate({ mode: "all" })` (`WasmWebClient.fetchAllPrivateNotes`). `fetchPrivate()` now takes no arguments and always fetches incrementally from the stored pagination cursor. The full re-scan is no longer needed: historical notes for a newly tracked tag sit below the shared cursor and are now backfilled automatically during `sync()`, one tag at a time, so callers that previously reached for `mode: "all"` after adding a tag should just sync. Callers passing the option get a type error; the argument is otherwise ignored at runtime.
 * [CHANGE][web] `miden-client` and `miden-client-sqlite-store` are pinned to rust-sdk `c39d2f0`, 17 commits past the `0.16.0-alpha.1` release, which adds the `debug-output` feature (routing MASM `debug` print events to a custom sink). Inherited upstream changes include note-transport attachment support, a note-screener batch cache, and faster historical-note retrieval. Protocol-layer versions are unchanged (`miden-protocol` / `miden-standards` / `miden-tx` at `0.16.0-alpha.4`).
 
+### Enhancements
+
+* [FEATURE][web] `debugMode: true` surfaces `debug.*` MASM output in the **browser** console (previously browser debug output went nowhere). Output appears in the client's Web Worker console, or the page console when created with `useWorker: false`. This re-introduces `ClientOptions.debugMode`, which `0.16.0-alpha.1` removed: upstream has no runtime debug-mode toggle any more, so the flag now selects the debug-routing transaction executor per execution instead of configuring the client builder. It is browser-only — the Node SDK writes `debug.*` to process stdout regardless — and the routing executor also forwards the advice-stack and advice-map printers, which can expose witness data, so keep it off in production. ([#224](https://github.com/0xMiden/web-sdk/issues/224))
+* [FEATURE][react] `MidenConfig` accepts `debugMode?: boolean`, so `<MidenProvider config={{ debugMode: true }}>` routes `debug.*` output to the browser console, matching `ClientOptions.debugMode` on the web client. ([#224](https://github.com/0xMiden/web-sdk/issues/224))
+
 ## 0.16.0-alpha.1 (2026-07-19)
 
 ### Changes

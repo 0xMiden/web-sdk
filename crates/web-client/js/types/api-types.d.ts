@@ -187,6 +187,17 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
+  /**
+   * Route MASM `debug.*` output to the browser console (default: false). When enabled, browser
+   * builds execute through the debug-routing executor, so `debug.*` instructions in executed
+   * scripts print the VM state to the client's Web Worker console, or the page console with
+   * `useWorker: false`. That executor also routes the advice-stack and advice-map printers, which
+   * can expose witness data, and is markedly slower — leave it off in production.
+   *
+   * Browser-only. The Node SDK's default executor already writes `debug.*` to the process stdout
+   * regardless of this flag, so setting it changes nothing there.
+   */
+  debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
     getKey: GetKeyCallback;
@@ -596,6 +607,17 @@ export interface MockOptions {
   seed?: string | Uint8Array;
   serializedMockChain?: Uint8Array;
   serializedNoteTransport?: Uint8Array;
+  /**
+   * When `false`, run WASM calls on the current thread instead of the Web Worker. Required to
+   * observe `debugMode` output on the main-thread console (worker output goes to the worker
+   * console). Defaults to `true`.
+   */
+  useWorker?: boolean;
+  /**
+   * Enable the transaction executor's debug mode (default: false). When enabled, `debug.*` MASM
+   * instructions in executed scripts print to the browser console. See {@link ClientOptions.debugMode}.
+   */
+  debugMode?: boolean;
 }
 
 // ════════════════════════════════════════════════════════════════

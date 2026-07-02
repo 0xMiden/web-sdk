@@ -141,8 +141,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportUrl?: string,
     seed?: Uint8Array,
     storeName?: string,
-    logLevel?: LogLevel,
-    useWorker?: boolean
+    debugMode?: boolean,
+    useWorker?: boolean,
+    logLevel?: LogLevel
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -153,8 +154,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     getKeyCb?: GetKeyCallback,
     insertKeyCb?: InsertKeyCallback,
     signCb?: SignCallback,
-    logLevel?: LogLevel,
-    useWorker?: boolean
+    debugMode?: boolean,
+    useWorker?: boolean,
+    logLevel?: LogLevel
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;
@@ -171,7 +173,9 @@ export declare class MockWasmWebClient extends WasmWebClient {
     serializedMockChain?: Uint8Array,
     serializedMockNoteTransportNode?: Uint8Array,
     seed?: Uint8Array,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean,
+    debugMode?: boolean
   ): Promise<MockWasmWebClient>;
 
   proveBlock(): Promise<void>;

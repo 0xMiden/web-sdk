@@ -90,7 +90,6 @@ const WRITE_METHODS = new Set([
   "executeForSummary",
   "executeProgram",
   "fetchPrivateNotes",
-  "forceImportStore",
   "importAccountById",
   "importAccountFile",
   "importNoteFile",
@@ -346,6 +345,12 @@ class WebClient {
    *   Consumers that hand a `CallbackProver` (e.g. native iOS/Android plug-in
    *   provers in Capacitor apps, or any other JS-side prover bridge) need
    *   `useWorker: false` so the prover handle reaches the WASM binding intact.
+   * @param {boolean} [debugMode=false] - Enable the transaction executor's
+   *   debug mode. When enabled, `debug.*` MASM instructions in executed scripts
+   *   print the VM state — to the Node process stdout (Node build) or the
+   *   browser console (browser build: the Web Worker's console, or the page
+   *   console with `useWorker: false`). Debug-mode execution is markedly slower,
+   *   so leave this off outside of local debugging.
    */
   constructor(
     rpcUrl,
@@ -356,7 +361,8 @@ class WebClient {
     insertKeyCb,
     signCb,
     logLevel,
-    useWorker = true
+    useWorker = true,
+    debugMode = false
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -367,6 +373,7 @@ class WebClient {
     this.signCb = signCb;
     this.logLevel = logLevel;
     this.useWorker = useWorker !== false;
+    this.debugMode = debugMode === true;
 
     // Check if Web Workers are available AND the caller didn't opt out via
     // `useWorker: false`. The opt-out is load-bearing for `CallbackProver`
@@ -635,6 +642,7 @@ class WebClient {
         !!this.signCb,
         this.logLevel,
         numThreads,
+        this.debugMode,
       ],
     });
   }
@@ -662,10 +670,13 @@ class WebClient {
    * @param {string} noteTransportUrl - The note transport URL (optional).
    * @param {string} seed - The seed for the account.
    * @param {string | undefined} network - Optional name for the store. Setting this allows multiple clients to be used in the same browser.
-   * @param {string | undefined} logLevel - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none").
+   * @param {boolean} [debugMode=false] - Enable the transaction executor's
+   *   debug mode. `debug.*` output goes to the Node process stdout (Node build)
+   *   or the browser console (browser build). See the constructor doc for details.
    * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
    *   and run WASM calls on the current thread. Required for `CallbackProver`
    *   consumers (the worker path serializes the prover and loses the callback).
+   * @param {string | undefined} [logLevel] - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none"). Routes Rust tracing output to the browser console.
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
   static async createClient(
@@ -673,8 +684,9 @@ class WebClient {
     noteTransportUrl,
     seed,
     network,
-    logLevel,
-    useWorker = true
+    debugMode = false,
+    useWorker = true,
+    logLevel
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -686,7 +698,8 @@ class WebClient {
       undefined,
       undefined,
       logLevel,
-      useWorker
+      useWorker,
+      debugMode
     );
 
     // Set up logging on the main thread before creating the client.
@@ -697,7 +710,13 @@ class WebClient {
 
     // Wait for the underlying wasmWebClient to be initialized.
     const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, network);
+    await wasmWebClient.createClient(
+      rpcUrl,
+      noteTransportUrl,
+      seed,
+      network,
+      debugMode
+    );
 
     // Wait for the worker to be ready
     await instance.ready;
@@ -716,10 +735,13 @@ class WebClient {
    * @param {Function | undefined} getKeyCb - The get key callback.
    * @param {Function | undefined} insertKeyCb - The insert key callback.
    * @param {Function | undefined} signCb - The sign callback.
-   * @param {string | undefined} logLevel - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none").
+   * @param {boolean} [debugMode=false] - Enable the transaction executor's
+   *   debug mode. `debug.*` output goes to the Node process stdout (Node build)
+   *   or the browser console (browser build). See the constructor doc for details.
    * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
    *   and run WASM calls on the current thread. Required for `CallbackProver`
    *   consumers (the worker path serializes the prover and loses the callback).
+   * @param {string | undefined} [logLevel] - Optional log verbosity level ("error", "warn", "info", "debug", "trace", "off", or "none"). Routes Rust tracing output to the browser console.
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
   static async createClientWithExternalKeystore(
@@ -730,8 +752,9 @@ class WebClient {
     getKeyCb,
     insertKeyCb,
     signCb,
-    logLevel,
-    useWorker = true
+    debugMode = false,
+    useWorker = true,
+    logLevel
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -743,7 +766,8 @@ class WebClient {
       insertKeyCb,
       signCb,
       logLevel,
-      useWorker
+      useWorker,
+      debugMode
     );
 
     // Set up logging on the main thread before creating the client.
@@ -761,7 +785,8 @@ class WebClient {
       storeName,
       getKeyCb,
       insertKeyCb,
-      signCb
+      signCb,
+      debugMode
     );
 
     await instance.ready;
@@ -1105,7 +1130,7 @@ class WebClient {
 }
 
 class MockWebClient extends WebClient {
-  constructor(seed, logLevel) {
+  constructor(seed, logLevel, useWorker = true, debugMode = false) {
     super(
       null,
       null,
@@ -1114,7 +1139,9 @@ class MockWebClient extends WebClient {
       undefined,
       undefined,
       undefined,
-      logLevel
+      logLevel,
+      useWorker,
+      debugMode
     );
   }
 
@@ -1135,7 +1162,7 @@ class MockWebClient extends WebClient {
     } catch {}
     this.worker.postMessage({
       action: WorkerAction.INIT_MOCK,
-      args: [this.seed, this.logLevel, numThreads],
+      args: [this.seed, this.logLevel, numThreads, this.debugMode],
     });
   }
 
@@ -1145,16 +1172,22 @@ class MockWebClient extends WebClient {
    * @param serializedMockChain - Serialized mock chain data (optional). Will use an empty chain if not provided.
    * @param serializedMockNoteTransportNode - Serialized mock note transport node data (optional). Will use a new instance if not provided.
    * @param seed - The seed for the account (optional).
+   * @param logLevel - Optional log verbosity level.
+   * @param useWorker - When `false`, run WASM calls on the current thread (required to observe
+   *   `debugMode` output on the main-thread console).
+   * @param debugMode - Enable the transaction executor's debug mode.
    * @returns A promise that resolves to a MockWebClient.
    */
   static async createClient(
     serializedMockChain,
     serializedMockNoteTransportNode,
     seed,
-    logLevel
+    logLevel,
+    useWorker = true,
+    debugMode = false
   ) {
     // Construct the instance (synchronously).
-    const instance = new MockWebClient(seed, logLevel);
+    const instance = new MockWebClient(seed, logLevel, useWorker, debugMode);
 
     // Set up logging on the main thread before creating the client.
     if (logLevel) {
@@ -1167,7 +1200,8 @@ class MockWebClient extends WebClient {
     await wasmWebClient.createMockClient(
       seed ?? null,
       serializedMockChain ?? null,
-      serializedMockNoteTransportNode ?? null
+      serializedMockNoteTransportNode ?? null,
+      debugMode
     );
 
     // Wait for the worker to be ready

@@ -102,6 +102,12 @@ function App() {
 
         // Optional: prover selection ('local' | 'devnet' | 'testnet' | URL)
         // prover: 'local',
+
+        // Optional: route MASM `debug.*` output from executed scripts to the
+        // browser console. Browser-only: the Node SDK writes `debug.*` to
+        // process stdout regardless. The debug-routing executor also routes the
+        // advice printers (which can expose witness data) and is much slower.
+        // debugMode: true,
       }}
       // Optional: Custom loading component
       loadingComponent={<div>Loading Miden...</div>}

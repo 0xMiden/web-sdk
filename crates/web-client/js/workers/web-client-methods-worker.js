@@ -85,6 +85,7 @@ const serializeError = (error) => {
 // Global state variables.
 let wasmWebClient = null;
 let wasmSeed = null; // Seed for the WASM WebClient, if needed.
+let wasmDebugMode = false; // Debug mode for mock clients re-created in this worker.
 let ready = false; // Indicates if the worker is fully initialized.
 let messageQueue = []; // Queue for sequential processing.
 let processing = false; // Flag to ensure one message is processed at a time.
@@ -309,7 +310,8 @@ methodHandlers[MethodName.SYNC_STATE_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    wasmDebugMode
   );
 
   return await methodHandlers[MethodName.SYNC_STATE]();
@@ -324,7 +326,8 @@ methodHandlers[MethodName.SYNC_CHAIN_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    wasmDebugMode
   );
 
   return await methodHandlers[MethodName.SYNC_CHAIN]();
@@ -339,7 +342,8 @@ methodHandlers[MethodName.SYNC_NOTE_TRANSPORT_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    wasmDebugMode
   );
 
   return await methodHandlers[MethodName.SYNC_NOTE_TRANSPORT]();
@@ -358,7 +362,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_MOCK] = async (args) => {
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    wasmDebugMode
   );
 
   const result = await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION](args);
@@ -393,7 +398,8 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
   await wasmWebClient.createMockClient(
     wasmSeed,
     serializedMockChain,
-    serializedMockNoteTransportNode
+    serializedMockNoteTransportNode,
+    wasmDebugMode
   );
 
   const result =
@@ -431,6 +437,7 @@ async function processMessage(event) {
         hasSignCb,
         logLevel,
         numThreads,
+        debugMode,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -466,14 +473,16 @@ async function processMessage(event) {
           storeName,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
-          hasSignCb ? callbackProxies.sign : undefined
+          hasSignCb ? callbackProxies.sign : undefined,
+          debugMode
         );
       } else {
         await wasmWebClient.createClient(
           rpcUrl,
           noteTransportUrl,
           seed,
-          storeName
+          storeName,
+          debugMode
         );
       }
 
@@ -482,7 +491,7 @@ async function processMessage(event) {
       self.postMessage({ ready: true });
       return;
     } else if (action === WorkerAction.INIT_MOCK) {
-      const [seed, logLevel, numThreads] = args;
+      const [seed, logLevel, numThreads, debugMode] = args;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -501,9 +510,15 @@ async function processMessage(event) {
       }
 
       wasmWebClient = new wasm.WebClient();
-      await wasmWebClient.createMockClient(seed, undefined, undefined);
+      await wasmWebClient.createMockClient(
+        seed,
+        undefined,
+        undefined,
+        debugMode
+      );
 
       wasmSeed = seed;
+      wasmDebugMode = debugMode ?? false;
       ready = true;
       self.postMessage({ ready: true });
       return;

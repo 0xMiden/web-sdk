@@ -158,7 +158,7 @@ export class MidenClient {
         options.keystore.getKey,
         options.keystore.insertKey,
         options.keystore.sign,
-        undefined,
+        options?.debugMode,
         useWorker
       );
     } else {
@@ -167,7 +167,7 @@ export class MidenClient {
         noteTransportUrl,
         seed,
         options?.storeName,
-        undefined,
+        options?.debugMode,
         useWorker
       );
     }
@@ -272,7 +272,10 @@ export class MidenClient {
     const inner = await MockWebClientClass.createClient(
       options?.serializedMockChain,
       options?.serializedNoteTransport,
-      seed
+      seed,
+      options?.logLevel,
+      options?.useWorker,
+      options?.debugMode
     );
 
     const client = new MidenClient(inner, getWasm, null);

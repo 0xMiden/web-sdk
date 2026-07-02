@@ -47,6 +47,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use wasm_bindgen::prelude::*;
 
 pub mod account;
+#[cfg(feature = "browser")]
+pub(crate) mod debug;
 pub mod export;
 pub mod helpers;
 pub mod import;
@@ -221,6 +223,11 @@ pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
+    /// Selects the debug-routing transaction executor. `miden-client` has no runtime debug-mode
+    /// toggle, so the choice is made per execution at the call site rather than on the builder:
+    /// when set, browser builds run through `execute_transaction_with_debugger` so `debug.*` MASM
+    /// output reaches the console. Set once at client creation and only read afterwards.
+    debug_mode: core::sync::atomic::AtomicBool,
 }
 
 // SAFETY: napi-rs with `tokio_rt` uses a multi-threaded tokio runtime, so async napi
@@ -268,6 +275,7 @@ impl WebClient {
             inner: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
+            debug_mode: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -291,6 +299,21 @@ impl WebClient {
 
 // Internal helpers
 impl WebClient {
+    /// Records whether executions should route MASM `debug.*` output. Called once during client
+    /// creation.
+    pub(crate) fn set_debug_mode(&self, debug_mode: Option<bool>) {
+        self.debug_mode
+            .store(debug_mode.unwrap_or(false), core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether executions should route MASM `debug.*` output. Read at each execution call site to
+    /// pick between the plain and the debug-routing executor. Browser-only: Node.js builds get
+    /// `debug.*` on process stdout from the default executor, so nothing reads the flag there.
+    #[cfg(feature = "browser")]
+    pub(crate) fn debug_mode(&self) -> bool {
+        self.debug_mode.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     pub(crate) async fn get_mut_inner(
         &self,
     ) -> impl core::ops::DerefMut<Target = Option<Client<ClientAuth>>> + '_ {
@@ -365,6 +388,8 @@ impl WebClient {
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
+    /// * `debug_mode`: When `true`, `debug.*` MASM output from executed scripts is routed to the
+    ///   browser console. Defaults to `false`; debug-mode execution is markedly slower.
     #[wasm_bindgen(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -372,7 +397,10 @@ impl WebClient {
         node_note_transport_url: Option<String>,
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
+        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
+        self.set_debug_mode(debug_mode);
+
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
@@ -413,6 +441,8 @@ impl WebClient {
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
+    /// * `debug_mode`: When `true`, `debug.*` MASM output from executed scripts is routed to the
+    ///   browser console. Defaults to `false`; debug-mode execution is markedly slower.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -424,7 +454,10 @@ impl WebClient {
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
+        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
+        self.set_debug_mode(debug_mode);
+
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
@@ -500,7 +533,11 @@ impl WebClient {
     /// * `seed`: Optional seed for account initialization.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
+    /// * `debug_mode`: Accepted for parity with the browser build. `debug.*` MASM output already
+    ///   reaches the Node process stdout through the default executor, so this flag selects nothing
+    ///   here; only browser builds route output to a writer.
     #[napi(js_name = "createClient")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_client(
         &self,
         node_url: Option<String>,
@@ -508,7 +545,10 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         db_path: String,
         keystore_path: String,
+        debug_mode: Option<bool>,
     ) -> Result<String, JsErr> {
+        self.set_debug_mode(debug_mode);
+
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
         })?;

@@ -122,6 +122,17 @@ export interface MidenConfig {
    *   isn't competing with the WASM thread anyway.
    */
   useWorker?: boolean;
+  /**
+   * Route MASM `debug.*` output to the browser console (default: false). When enabled, browser
+   * builds execute through the debug-routing executor, so `debug.*` instructions in executed
+   * scripts print the VM state to the client's Web Worker console, or the page console with
+   * `useWorker: false`. That executor also routes the advice-stack and advice-map printers, which
+   * can expose witness data, and is markedly slower — leave it off in production.
+   *
+   * Browser-only. The Node SDK's default executor already writes `debug.*` to the process stdout
+   * regardless of this flag, so setting it changes nothing there.
+   */
+  debugMode?: boolean;
 }
 
 // Provider state

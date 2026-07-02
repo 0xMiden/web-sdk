@@ -466,6 +466,66 @@ client.terminate();
 } // client.terminate() called automatically
 ```
 
+### Debug mode
+
+Pass `debugMode: true` at client creation to route MASM debug output from
+executed scripts to the console. Debug printing goes through the
+`miden::core::debug` procedures (`print_stack`, `print_mem`, `print_adv_stack`,
+...), which emit events that the debug-routing executor forwards. Browser builds
+execute through a debug-routing executor when the flag is set; that executor
+also routes the advice-stack and advice-map printers, which can expose witness
+data, and is markedly slower, so leave the flag off in production.
+
+```typescript
+const client = await MidenClient.create({
+  rpcUrl: "devnet",
+  debugMode: true,
+});
+```
+
+Where that output appears depends on the build:
+
+- **Node** (`@miden-sdk/node-*`): written to the Node process stdout, so it
+  appears in the terminal running your app. The Node executor does this
+  unconditionally, so `debugMode` is accepted for parity but changes nothing
+  there.
+- **Browser** (`@miden-sdk/miden-sdk`, including the `/mt` bundle): written to
+  the browser console. When the client runs in its default Web Worker the
+  output appears in that worker's console; pass `useWorker: false` to run on the
+  main thread so it appears in the page console.
+
+For example, executing a script that calls `debug::print_stack`:
+
+```typescript
+const script = await client.compile.txScript({
+  code: `
+    use miden::core::debug
+    use miden::core::sys
+
+    @transaction_script
+    pub proc main
+      push.1.2.3
+      exec.debug::print_stack
+      exec.sys::truncate_stack
+    end
+  `,
+});
+await client.transactions.executeProgram({ account: accountId, script });
+```
+
+prints the top three stack elements to the console:
+
+```text
+Stack state in interval [0, 2] before step 2419:
+├── 0: 3
+├── 1: 2
+├── 2: 1
+└── (16 more items)
+```
+
+Debug-mode execution is markedly slower than normal execution, so keep it off in
+production and enable it only while debugging locally.
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
