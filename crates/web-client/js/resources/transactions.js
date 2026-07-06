@@ -79,6 +79,93 @@ export class TransactionsResource {
     return { txId, note: null, result };
   }
 
+  /**
+   * Builds a Public custom-script note carrying a NetworkAccountTarget
+   * attachment, submits it as an own output note, and optionally waits for
+   * confirmation. Provide exactly one of `recipient` or `script`.
+   */
+  async createNetworkNote(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (opts.recipient && opts.script) {
+      throw new Error(
+        "createNetworkNote requires exactly one of `recipient` or `script`, not both."
+      );
+    }
+
+    const senderId = resolveAccountRef(opts.account, wasm);
+
+    const target =
+      opts.target instanceof wasm.NetworkAccountTarget
+        ? opts.target
+        : new wasm.NetworkAccountTarget(
+            resolveAccountRef(opts.target, wasm),
+            opts.executionHint
+          );
+
+    const noteAssets = opts.assets
+      ? new wasm.NoteAssets(
+          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map(
+            (a) =>
+              new wasm.FungibleAsset(
+                resolveAccountRef(a.token, wasm),
+                BigInt(a.amount)
+              )
+          )
+        )
+      : new wasm.NoteAssets();
+
+    const metadata = new wasm.NoteMetadata(
+      senderId,
+      wasm.NoteType.Public,
+      wasm.NoteTag.withAccountTarget(target.targetId())
+    );
+
+    let recipient = opts.recipient;
+    if (!recipient) {
+      if (!opts.script) {
+        throw new Error(
+          "createNetworkNote requires either `recipient` or `script`."
+        );
+      }
+      const storage = new wasm.NoteStorage(opts.inputs ?? []);
+      recipient = wasm.NoteRecipient.fromScript(opts.script, storage);
+    }
+
+    const attachments = [target.toAttachment()];
+    if (opts.attachment) {
+      attachments.push(new wasm.NoteAttachment(opts.attachment));
+    }
+
+    const note = wasm.Note.withAttachments(
+      noteAssets,
+      metadata,
+      recipient,
+      attachments
+    );
+
+    // NoteArray constructor consumes its elements; use push(&note) to keep
+    // `note` valid so we can return it to the caller.
+    const ownOutputs = new wasm.NoteArray();
+    ownOutputs.push(note);
+    const request = new wasm.TransactionRequestBuilder()
+      .withOwnOutputNotes(ownOutputs)
+      .build();
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      senderId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, note, result };
+  }
+
   async mint(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
