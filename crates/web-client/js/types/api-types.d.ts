@@ -391,7 +391,7 @@ export interface NetworkNoteOptions extends TransactionOptions {
   /** Assets locked into the note. Optional — a note may carry no assets. */
   assets?: Asset | Asset[];
   /** Extra attachment payload appended AFTER the required `NetworkAccountTarget`. */
-  attachment?: Felt[];
+  attachment?: bigint[];
 }
 
 /** Result of {@link TransactionsResource.createNetworkNote}. */
