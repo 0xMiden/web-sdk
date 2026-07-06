@@ -4,8 +4,8 @@
 
 ### Enhancements
 
-* [FEATURE][web] `client.transactions.createNetworkNote(...)`, `Note.withAttachments/attachments/isNetworkNote`, `NetworkAccountTarget`, and standalone `buildNetworkNote` — create custom-script notes that target a public network account. (web-sdk#NN)
-* [FEATURE][react] `useCreateNetworkNote` — build + submit a custom-script network note. (web-sdk#NN)
+* [FEATURE][web] `client.transactions.createNetworkNote(...)`, `Note.withAttachments/attachments/isNetworkNote`, `NetworkAccountTarget`, and standalone `buildNetworkNote` — create custom-script notes that target a public network account. (web-sdk#230)
+* [FEATURE][react] `useCreateNetworkNote` — build + submit a custom-script network note. (web-sdk#230)
 
 ## 0.15.4 (2026-06-29)
 
