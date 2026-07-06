@@ -220,6 +220,16 @@ describe("resolveAuthScheme", () => {
     expect(resolveAuthScheme("falcon", wasm)).toBe(2);
   });
 
+  it("passes through the WASM ECDSA auth scheme numeric value", () => {
+    expect(resolveAuthScheme(wasm.AuthScheme.AuthEcdsaK256Keccak, wasm)).toBe(
+      1
+    );
+  });
+
+  it("passes through the WASM falcon auth scheme numeric value", () => {
+    expect(resolveAuthScheme(wasm.AuthScheme.AuthRpoFalcon512, wasm)).toBe(2);
+  });
+
   it("defaults to falcon for null", () => {
     expect(resolveAuthScheme(null, wasm)).toBe(2);
   });
@@ -239,7 +249,7 @@ describe("resolveAuthScheme", () => {
 
   it("throws for unknown scheme", () => {
     expect(() => resolveAuthScheme("rsa", wasm)).toThrow(
-      'Unknown auth scheme: "rsa"'
+      'Unknown auth scheme: "rsa". Expected "falcon", "ecdsa", or a WASM AuthScheme enum value.'
     );
   });
 });

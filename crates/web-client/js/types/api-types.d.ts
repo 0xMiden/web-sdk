@@ -78,10 +78,13 @@ export declare const MidenArrays: MidenArrayConstructors;
 /**
  * User-friendly auth scheme constants for MidenClient options.
  * Use `AuthScheme.Falcon` or `AuthScheme.ECDSA` instead of raw strings.
+ * The numeric aliases match the WASM AuthScheme enum for low-level clients.
  */
 export declare const AuthScheme: {
   readonly Falcon: "falcon";
   readonly ECDSA: "ecdsa";
+  readonly AuthRpoFalcon512: 2;
+  readonly AuthEcdsaK256Keccak: 1;
 };
 
 /**

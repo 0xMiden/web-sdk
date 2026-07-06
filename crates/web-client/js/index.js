@@ -16,6 +16,7 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
+import { resolveAuthScheme } from "./utils.js";
 export * from "../Cargo.toml";
 
 export const AccountType = Object.freeze({
@@ -27,6 +28,8 @@ export const AccountType = Object.freeze({
 export const AuthScheme = Object.freeze({
   Falcon: "falcon",
   ECDSA: "ecdsa",
+  AuthRpoFalcon512: 2,
+  AuthEcdsaK256Keccak: 1,
 });
 
 export const NoteVisibility = Object.freeze({
@@ -803,8 +806,10 @@ class WebClient {
 
   async newWallet(storageMode, authSchemeId, seed) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      const authScheme = resolveAuthScheme(authSchemeId, wasm);
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
+      return await wasmWebClient.newWallet(storageMode, authScheme, seed);
     });
   }
 
@@ -818,6 +823,8 @@ class WebClient {
     authSchemeId
   ) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      const authScheme = resolveAuthScheme(authSchemeId, wasm);
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newFaucet(
         storageMode,
@@ -826,7 +833,7 @@ class WebClient {
         tokenSymbol,
         decimals,
         maxSupply,
-        authSchemeId
+        authScheme
       );
     });
   }

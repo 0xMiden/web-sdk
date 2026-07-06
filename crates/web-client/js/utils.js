@@ -103,21 +103,25 @@ export function resolveStorageMode(mode, wasm) {
 }
 
 /**
- * Resolves an auth scheme string to a WASM AuthScheme enum value.
+ * Resolves an auth scheme selector to a WASM AuthScheme enum value.
  *
- * @param {string | undefined} scheme - "falcon" or "ecdsa". Defaults to "falcon".
+ * @param {string | number | undefined} scheme - "falcon", "ecdsa", or a WASM AuthScheme enum value. Defaults to "falcon".
  * @param {object} wasm - The WASM module.
  * @returns {number} The AuthScheme enum value.
  */
 export function resolveAuthScheme(scheme, wasm) {
-  if (scheme === "ecdsa") {
+  if (scheme === "ecdsa" || scheme === wasm.AuthScheme.AuthEcdsaK256Keccak) {
     return wasm.AuthScheme.AuthEcdsaK256Keccak;
   }
-  if (scheme === "falcon" || scheme == null) {
+  if (
+    scheme === "falcon" ||
+    scheme === wasm.AuthScheme.AuthRpoFalcon512 ||
+    scheme == null
+  ) {
     return wasm.AuthScheme.AuthRpoFalcon512;
   }
   throw new Error(
-    `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
+    `Unknown auth scheme: "${scheme}". Expected "falcon", "ecdsa", or a WASM AuthScheme enum value.`
   );
 }
 
