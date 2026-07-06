@@ -49,6 +49,7 @@ export { usePswapCreate } from "./hooks/usePswapCreate";
 export { usePswapConsume } from "./hooks/usePswapConsume";
 export { usePswapCancel } from "./hooks/usePswapCancel";
 export { usePswapCancelByOrder } from "./hooks/usePswapCancelByOrder";
+export { useCreateNetworkNote } from "./hooks/useCreateNetworkNote";
 export { useTransaction } from "./hooks/useTransaction";
 export { useExecuteProgram } from "./hooks/useExecuteProgram";
 export { useCompile } from "./hooks/useCompile";
@@ -187,6 +188,7 @@ export type { UsePswapCreateResult } from "./hooks/usePswapCreate";
 export type { UsePswapConsumeResult } from "./hooks/usePswapConsume";
 export type { UsePswapCancelResult } from "./hooks/usePswapCancel";
 export type { UsePswapCancelByOrderResult } from "./hooks/usePswapCancelByOrder";
+export type { UseCreateNetworkNoteResult } from "./hooks/useCreateNetworkNote";
 export type { UseTransactionResult } from "./hooks/useTransaction";
 export type { UseExportStoreResult } from "./hooks/useExportStore";
 export type {
