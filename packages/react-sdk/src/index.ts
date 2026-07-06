@@ -93,6 +93,8 @@ export type {
   WaitForNotesOptions,
   MintOptions,
   BridgeOptions,
+  CreateNetworkNoteOptions,
+  NetworkNoteResult,
   ConsumeOptions,
   SwapOptions,
   PswapCreateOptions,
