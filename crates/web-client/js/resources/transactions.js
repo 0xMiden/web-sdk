@@ -129,7 +129,9 @@ export class TransactionsResource {
           "createNetworkNote requires either `recipient` or `script`."
         );
       }
-      const storage = new wasm.NoteStorage(opts.inputs ?? []);
+      const storage = new wasm.NoteStorage(
+        new wasm.FeltArray(opts.inputs ?? [])
+      );
       recipient = wasm.NoteRecipient.fromScript(opts.script, storage);
     }
 

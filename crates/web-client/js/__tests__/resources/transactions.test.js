@@ -66,6 +66,7 @@ function makeWasm(overrides = {}) {
     NoteTag: { withAccountTarget: vi.fn(() => "networkTag") },
     NoteMetadata: vi.fn().mockImplementation(() => "metadata"),
     NoteStorage: vi.fn().mockImplementation(() => "storage"),
+    FeltArray: vi.fn().mockImplementation((items) => ({ feltArray: items })),
     NoteRecipient: { fromScript: vi.fn(() => "recipientFromScript") },
     __networkTarget: networkTarget,
     ...overrides,
@@ -303,7 +304,8 @@ describe("TransactionsResource", () => {
         "Public",
         "networkTag"
       );
-      expect(wasm.NoteStorage).toHaveBeenCalledWith([1n]);
+      expect(wasm.FeltArray).toHaveBeenCalledWith([1n]);
+      expect(wasm.NoteStorage).toHaveBeenCalledWith({ feltArray: [1n] });
       expect(wasm.NoteRecipient.fromScript).toHaveBeenCalledWith(
         "myScript",
         expect.anything() // NoteStorage instance

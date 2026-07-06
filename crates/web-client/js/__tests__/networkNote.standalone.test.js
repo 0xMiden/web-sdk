@@ -16,6 +16,7 @@ function makeWasm() {
     NoteTag: { withAccountTarget: vi.fn(() => "networkTag") },
     NoteMetadata: vi.fn().mockImplementation(() => "metadata"),
     NoteStorage: vi.fn().mockImplementation(() => "storage"),
+    FeltArray: vi.fn().mockImplementation((items) => ({ feltArray: items })),
     NoteRecipient: { fromScript: vi.fn(() => "recipientFromScript") },
     NoteAttachment: vi.fn().mockImplementation((v) => ({ attachment: v })),
     NoteAssets: vi.fn().mockImplementation(() => "noteAssets"),
