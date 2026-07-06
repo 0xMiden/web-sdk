@@ -45,8 +45,6 @@ export async function insertBlockHeader(
           }
         });
 
-        // Nodes: insert-if-missing with overwrite protection; a conflicting value throws and
-        // aborts the transaction, rolling back the header write too.
         await putPartialBlockchainNodesNoOverwrite(
           db.partialBlockchainNodes,
           nodeData
