@@ -36,8 +36,8 @@ export async function insertBlockHeader(
       db.blockHeaders,
       db.partialBlockchainNodes,
       async () => {
-        // Header: INSERT OR IGNORE, then one-way upgrade `has_client_notes` to true (load-bearing:
-        // `get_tracked_block_header_numbers` filters on it to seed forest-node tracking).
+        // Header: INSERT OR IGNORE, then one-way upgrade `has_client_notes` to true
+        // (`get_tracked_block_header_numbers` filters on it to seed forest-node tracking).
         await db.blockHeaders.add(headerData).catch(async (err: unknown) => {
           if (!isConstraintError(err)) throw err;
           if (hasClientNotes) {
