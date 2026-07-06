@@ -1,10 +1,13 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
+use miden_client::crypto::RandomCoin;
 use miden_client::note::{
     NoteRecipient as NativeNoteRecipient,
     NoteScript as NativeNoteScript,
     NoteStorage as NativeNoteStorage,
 };
+use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 use super::note_script::NoteScript;
 use super::note_storage::NoteStorage;
@@ -40,6 +43,20 @@ impl NoteRecipient {
             NativeNoteRecipient::new(native_serial_num, native_note_script, native_note_storage);
 
         NoteRecipient(native_note_recipient)
+    }
+
+    /// Creates a recipient from a script and storage, generating a fresh random
+    /// serial number (the secret that prevents double-spends).
+    #[js_export(js_name = "fromScript")]
+    pub fn from_script(note_script: &NoteScript, storage: &NoteStorage) -> NoteRecipient {
+        let mut rng = StdRng::from_os_rng();
+        let coin_seed: [u64; 4] = rng.random();
+        // See `Note::create_p2id_note` for why `new_unchecked` is fine here.
+        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        let serial_num: NativeWord = [rng.draw(), rng.draw(), rng.draw(), rng.draw()].into();
+
+        let native = NativeNoteRecipient::new(serial_num, note_script.into(), storage.into());
+        NoteRecipient(native)
     }
 
     /// Returns the digest of the recipient data (used in the note commitment).
