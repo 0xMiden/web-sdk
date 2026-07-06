@@ -117,6 +117,11 @@ function buildNoteAssets(assets, wasm) {
  */
 export function buildNetworkNote(opts) {
   const wasm = getWasm();
+  if (opts.recipient && opts.script) {
+    throw new Error(
+      "buildNetworkNote requires exactly one of `recipient` or `script`, not both."
+    );
+  }
   const sender = resolveAccountRef(opts.account, wasm);
 
   const target =

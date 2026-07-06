@@ -48,14 +48,30 @@ describe("buildNetworkNote", () => {
     );
   });
 
+  it("throws when both recipient and script are provided", () => {
+    expect(() =>
+      buildNetworkNote({
+        account: "0xs",
+        target: "0xt",
+        recipient: "customRecipient",
+        script: "myScript",
+      })
+    ).toThrow(/recipient.*script.*not both/i);
+  });
+
   it("builds a network note from a script (fresh recipient, Public, target tag)", () => {
+    const executionHint = "onBlockSlot";
     const note = buildNetworkNote({
       account: "0xs",
       target: "0xt",
+      executionHint,
       script: "myScript",
       inputs: [1n],
     });
-    expect(wasm.NetworkAccountTarget).toHaveBeenCalledOnce();
+    expect(wasm.NetworkAccountTarget).toHaveBeenCalledWith(
+      expect.anything(), // resolved account ref for "0xt"
+      executionHint
+    );
     expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith("targetIdObj");
     expect(wasm.NoteMetadata).toHaveBeenCalledWith(
       expect.anything(),
@@ -93,5 +109,42 @@ describe("buildNetworkNote", () => {
   it("defaults to empty assets when none provided", () => {
     buildNetworkNote({ account: "0xs", target: "0xt", script: "s" });
     expect(wasm.NoteAssets).toHaveBeenCalledWith(); // no args -> empty
+  });
+
+  it("threads provided assets into the note instead of an empty NoteAssets", () => {
+    buildNetworkNote({
+      account: "0xs",
+      target: "0xt",
+      script: "s",
+      assets: { token: "0xtoken", amount: 5 },
+    });
+    expect(wasm.FungibleAsset).toHaveBeenCalledWith(
+      expect.anything(), // resolved faucet AccountId
+      BigInt(5)
+    );
+    expect(wasm.NoteAssets).toHaveBeenCalledWith([expect.anything()]); // one FungibleAsset, not empty
+  });
+
+  it("uses a pre-built NetworkAccountTarget directly without reconstructing it", () => {
+    const preBuilt = Object.create(wasm.NetworkAccountTarget.prototype);
+    preBuilt.targetId = vi.fn(() => "preBuiltTargetId");
+    preBuilt.toAttachment = vi.fn(() => "preBuiltAttachment");
+
+    buildNetworkNote({
+      account: "0xs",
+      target: preBuilt,
+      script: "s",
+    });
+
+    expect(wasm.NetworkAccountTarget).not.toHaveBeenCalled();
+    expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
+      "preBuiltTargetId"
+    );
+    expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+      expect.anything(), // NoteAssets instance
+      expect.anything(), // NoteMetadata instance
+      expect.anything(), // recipient
+      ["preBuiltAttachment"]
+    );
   });
 });
