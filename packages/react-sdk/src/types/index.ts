@@ -21,6 +21,9 @@ import type {
   Note,
   NoteInput,
   NoteVisibility,
+  NoteExecutionHint,
+  NoteRecipient,
+  NoteScript,
   StorageMode,
   PswapLineageRecord,
 } from "@miden-sdk/miden-sdk";
@@ -392,6 +395,34 @@ export interface MintOptions {
   amount: bigint | number;
   /** Note type. Default: private */
   noteType?: NoteVisibility;
+}
+
+// Create-network-note options
+export interface CreateNetworkNoteOptions {
+  /** Account that creates, funds, and submits the note (executing sender). */
+  accountId: AccountRef;
+  /** The network account the note targets. */
+  target: AccountRef;
+  /** Execution hint. Defaults to `always`. */
+  executionHint?: NoteExecutionHint;
+  /** Recipient carrying the custom script (advanced; else pass `script`). */
+  recipient?: NoteRecipient;
+  /** Custom consumption script; the recipient is built for you. */
+  script?: NoteScript;
+  /** Note storage / inputs the script reads (used with `script`). */
+  inputs?: bigint[];
+  /** Single asset to lock into the note. Optional — omit for a zero-asset note. */
+  assetId?: AccountRef;
+  /** Amount for `assetId`. */
+  amount?: bigint | number;
+  /** Extra attachment payload appended after the NetworkAccountTarget. */
+  attachment?: bigint[] | Uint8Array | number[];
+}
+
+// Create-network-note result — mirrors SendResult (txId + built note)
+export interface NetworkNoteResult {
+  txId: string;
+  note: Note;
 }
 
 // Bridge (AggLayer bridge-out) options
