@@ -256,9 +256,11 @@ impl Store for IdxdbStore {
     async fn insert_block_header(
         &self,
         block_header: &BlockHeader,
+        nodes: &[(InOrderIndex, Word)],
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
-        self.insert_block_header(block_header, has_client_notes).await
+        self.insert_block_header(block_header, has_client_notes).await?;
+        self.insert_partial_blockchain_nodes(nodes).await
     }
 
     async fn get_block_headers(
@@ -281,13 +283,6 @@ impl Store for IdxdbStore {
         filter: PartialBlockchainFilter,
     ) -> Result<BTreeMap<InOrderIndex, Word>, StoreError> {
         self.get_partial_blockchain_nodes(filter).await
-    }
-
-    async fn insert_partial_blockchain_nodes(
-        &self,
-        nodes: &[(InOrderIndex, Word)],
-    ) -> Result<(), StoreError> {
-        self.insert_partial_blockchain_nodes(nodes).await
     }
 
     async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {

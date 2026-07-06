@@ -17,8 +17,14 @@ impl WebClient {
             .as_mut()
             .ok_or_else(|| from_str_err("Client not initialized. Call createClient() first."))?;
 
+        // Relay the client's current sync height as the block hint so the recipient gets
+        // deterministic delivery (scanning from that block) instead of a fixed lookback window.
+        let block_hint = client
+            .get_sync_height()
+            .await
+            .map_err(|e| js_error_with_context(e, "failed to read sync height"))?;
         client
-            .send_private_note(note.into(), &address.into())
+            .send_private_note_with_block_hint(note.into(), &address.into(), block_hint)
             .await
             .map_err(|e| js_error_with_context(e, "failed sending private note"))?;
 
