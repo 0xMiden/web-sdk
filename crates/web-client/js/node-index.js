@@ -207,6 +207,9 @@ export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");
 export const Library = /* @__PURE__ */ _reexport("Library");
 export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
+export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
+  "NetworkAccountTarget"
+);
 export const NetworkId = /* @__PURE__ */ _reexport("NetworkId");
 export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
   "NetworkNoteStatusInfo"
