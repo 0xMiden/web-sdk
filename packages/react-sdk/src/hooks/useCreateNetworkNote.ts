@@ -92,7 +92,7 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
           const metadata = new NoteMetadata(
             senderId,
             NoteType.Public,
-            NoteTag.withAccountTarget(parseAccountId(options.target))
+            NoteTag.withAccountTarget(target.targetId())
           );
 
           const recipient =
