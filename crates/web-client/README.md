@@ -560,6 +560,22 @@ await client.transactions.bridge({
 
 The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
 
+### Network Notes
+
+A network note is a Public note carrying a `NetworkAccountTarget` attachment; a public network account auto-consumes it once the note lands on-chain — no manual `consume` call needed on the target side.
+
+```typescript
+const { txId, note } = await client.transactions.createNetworkNote({
+  account: senderId,
+  target: networkAccountId,
+  script: myNoteScript, // or: recipient: myRecipient
+  waitForConfirmation: true,
+});
+console.log(note.isNetworkNote()); // true
+```
+
+Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:

@@ -165,6 +165,22 @@ await bridge({
 });
 ```
 
+### Create a Network Note
+```tsx
+const { createNetworkNote } = useCreateNetworkNote();
+
+// Builds a Public custom-script note carrying a NetworkAccountTarget
+// attachment; the targeted network account auto-consumes it on-chain.
+// Provide exactly one of `script` or `recipient`.
+const { txId, note } = await createNetworkNote({
+  accountId: senderAccountId,
+  target: networkAccountId,
+  script: myNoteScript, // or: recipient: myRecipient
+});
+
+note.isNetworkNote(); // true
+```
+
 ### Create Faucet
 ```tsx
 const { createFaucet } = useCreateFaucet();
@@ -427,6 +443,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
 | `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
+| `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |
 | `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
