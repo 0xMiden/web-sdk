@@ -69,3 +69,5 @@ impl From<NativeNoteExecutionHint> for NoteExecutionHint {
         NoteExecutionHint(native_note_execution_hint)
     }
 }
+
+impl_napi_from_value!(NoteExecutionHint);

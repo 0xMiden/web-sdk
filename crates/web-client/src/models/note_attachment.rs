@@ -209,3 +209,5 @@ impl From<&NoteAttachment> for NativeNoteAttachment {
         note_attachment.0.clone()
     }
 }
+
+impl_napi_from_value!(NoteAttachment);
