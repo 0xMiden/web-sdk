@@ -1,32 +1,35 @@
 import { getDatabase } from "./schema.js";
 import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
-export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes) {
+export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes, nodeIds, nodes) {
     try {
         const db = getDatabase(dbId);
-        const data = {
+        if (nodeIds.length !== nodes.length) {
+            throw new Error("nodeIds and nodes arrays must be of the same length");
+        }
+        const headerData = {
             blockNum: blockNum,
             header,
             hasClientNotes: hasClientNotes.toString(),
         };
-        // Mirror SQLite's `insert_block_header_tx`: INSERT OR IGNORE on the
-        // row, then explicitly upgrade `has_client_notes` to true if the caller
-        // says so. Two callers hit this:
-        //   - Genesis flow — no existing row; the add succeeds.
-        //   - `get_and_store_authenticated_block` for a past block — a row
-        //     written by `applyStateSync` typically already exists, so the add
-        //     is ignored.
-        //
-        // The `has_client_notes` upgrade is load-bearing: `get_tracked_block_
-        // header_numbers` filters by this flag to seed `tracked_leaves`, which
-        // `get_partial_blockchain_nodes(Forest)` relies on. A private-note
-        // import at a block previously synced as irrelevant must flip the flag
-        // to true or the auth paths won't be tracked.
-        await db.blockHeaders.add(data).catch(async (err) => {
-            if (!isConstraintError(err))
-                throw err;
-            if (hasClientNotes) {
-                await db.blockHeaders.update(blockNum, { hasClientNotes: "true" });
-            }
+        const nodeData = nodes.map((node, index) => ({
+            id: Number(nodeIds[index]),
+            node: node,
+        }));
+        // Persist the header and its MMR nodes in one transaction so a header is never stored
+        // without the nodes that rebuild its `PartialMmr` (mirrors miden-client's atomic insert).
+        await db.dexie.transaction("rw", db.blockHeaders, db.partialBlockchainNodes, async () => {
+            // Header: INSERT OR IGNORE, then one-way upgrade `has_client_notes` to true (load-bearing:
+            // `get_tracked_block_header_numbers` filters on it to seed forest-node tracking).
+            await db.blockHeaders.add(headerData).catch(async (err) => {
+                if (!isConstraintError(err))
+                    throw err;
+                if (hasClientNotes) {
+                    await db.blockHeaders.update(blockNum, { hasClientNotes: "true" });
+                }
+            });
+            // Nodes: insert-if-missing with overwrite protection; a conflicting value throws and
+            // aborts the transaction, rolling back the header write too.
+            await putPartialBlockchainNodesNoOverwrite(db.partialBlockchainNodes, nodeData);
         });
     }
     catch (err) {

@@ -9,6 +9,7 @@
 ### Fixes
 
 * [FIX][web] `miden-idxdb-store` no longer silently overwrites already-stored partial blockchain (`PartialMmr`) authentication nodes. Writing a known node index with the same value is accepted, but writing a different value for that index now rejects with an error and leaves the stored value intact, so a buggy or malicious sync path can't replace known-good MMR nodes. ([#193](https://github.com/0xMiden/web-sdk/issues/193))
+* [FIX][web] `miden-idxdb-store` now persists a tracked block header and its MMR authentication nodes in a single IndexedDB transaction. An interrupted sync (closed tab, crash, or failed write) could previously store the header without its nodes, leaving the client unable to rebuild its partial MMR, so sync then failed with `InconsistentPartialMmr` until the local database was cleared. ([#221](https://github.com/0xMiden/web-sdk/pull/221), client [#2294](https://github.com/0xMiden/rust-sdk/pull/2294))
 
 ## 0.15.0 (2026-06-12)
 
