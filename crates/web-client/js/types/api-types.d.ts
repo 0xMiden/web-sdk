@@ -30,6 +30,9 @@ import type {
   AccountStorageRequirements,
   TransactionScript,
   NoteScript,
+  NoteRecipient,
+  NoteExecutionHint,
+  NetworkAccountTarget,
   AdviceInputs,
   FeltArray,
   PswapLineageRecord,
@@ -354,6 +357,48 @@ export type SendOptions = SendOptionsDefault | SendOptionsReturnNote;
 export interface SendResult {
   txId: TransactionId;
   note: Note | null;
+  result: TransactionResult;
+}
+
+/**
+ * Options for {@link TransactionsResource.createNetworkNote} and the standalone
+ * {@link buildNetworkNote}. Builds a Public, custom-script note carrying a
+ * `NetworkAccountTarget` attachment so a public network account auto-consumes it.
+ *
+ * Provide exactly one of `recipient` or `script`.
+ */
+export interface NetworkNoteOptions extends TransactionOptions {
+  /** Account that creates, funds, and submits the note (the executing sender). */
+  account: AccountRef;
+  /**
+   * The network account the note targets. Any account reference, or a pre-built
+   * `NetworkAccountTarget`. Encoded as the note's `NetworkAccountTarget`
+   * attachment — this is what makes `isNetworkNote()` true.
+   */
+  target: AccountRef | NetworkAccountTarget;
+  /** Execution hint when `target` is an account reference. Defaults to `always`. */
+  executionHint?: NoteExecutionHint;
+  /**
+   * Recipient carrying the note's custom consumption script. Build with
+   * `new NoteRecipient(serialNum, noteScript, noteStorage)`, or omit and pass
+   * `script` to have the recipient built for you.
+   */
+  recipient?: NoteRecipient;
+  /** Custom consumption script; the recipient is built with a fresh serial number. */
+  script?: NoteScript;
+  /** Note storage / inputs the script reads (used with `script`). */
+  inputs?: Felt[];
+  /** Assets locked into the note. Optional — a note may carry no assets. */
+  assets?: Asset | Asset[];
+  /** Extra attachment payload appended AFTER the required `NetworkAccountTarget`. */
+  attachment?: Felt[];
+}
+
+/** Result of {@link TransactionsResource.createNetworkNote}. */
+export interface NetworkNoteResult {
+  txId: TransactionId;
+  /** The built network note (read its id / attachments). */
+  note: Note;
   result: TransactionResult;
 }
 
@@ -823,6 +868,13 @@ export interface TransactionsResource {
    * @param options - Mint options including the faucet, recipient, and amount.
    */
   mint(options: MintOptions): Promise<TransactionSubmitResult>;
+  /**
+   * Builds a Public custom-script note carrying a `NetworkAccountTarget`
+   * attachment, submits it as an own output note, and (optionally) waits for
+   * confirmation. The submitted note satisfies `Note.isNetworkNote()`, so a
+   * public network account will auto-consume it.
+   */
+  createNetworkNote(options: NetworkNoteOptions): Promise<NetworkNoteResult>;
   /**
    * Bridge a fungible asset out to another network via the AggLayer. Emits a
    * single public B2AGG (Bridge-to-AggLayer) note that the bridge account
@@ -1302,6 +1354,13 @@ export declare function createP2IDNote(
 export declare function createP2IDENote(
   options: P2IDEOptions
 ): ReturnType<WasmModule["Note"]["createP2IDENote"]>;
+
+/**
+ * Builds (without submitting) a Public custom-script note carrying a
+ * `NetworkAccountTarget` attachment. Provide exactly one of `recipient` or
+ * `script`.
+ */
+export declare function buildNetworkNote(opts: NetworkNoteOptions): Note;
 
 /** Builds a swap tag for note matching. Returns a NoteTag (use `.asU32()` for the numeric value). */
 export declare function buildSwapTag(
