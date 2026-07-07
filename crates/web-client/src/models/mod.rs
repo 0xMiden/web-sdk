@@ -69,6 +69,7 @@ pub mod input_note_state;
 pub mod input_notes;
 pub mod library;
 pub mod merkle_path;
+pub mod network_account_target;
 pub mod network_note_status;
 pub mod note;
 pub mod note_assets;

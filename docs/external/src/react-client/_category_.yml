@@ -1,0 +1,5 @@
+label: React SDK
+# Position relative to siblings under the Builder → Client section. Web
+# Client sits at position 2; React SDK takes 3 so it lands directly after.
+position: 3
+collapsed: true

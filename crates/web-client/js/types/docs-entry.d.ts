@@ -18,6 +18,7 @@ export {
   EthAddress,
   Felt,
   InputNoteRecord,
+  NetworkAccountTarget,
   Note,
   NoteExportFormat,
   NoteFile,

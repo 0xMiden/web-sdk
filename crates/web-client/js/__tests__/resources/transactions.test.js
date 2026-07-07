@@ -23,6 +23,10 @@ function makeTxRequestBuilder() {
 }
 
 function makeWasm(overrides = {}) {
+  const networkTarget = {
+    targetId: vi.fn(() => "targetIdObj"),
+    toAttachment: vi.fn(() => "targetAttachment"),
+  };
   return {
     AccountId: {
       fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
@@ -34,10 +38,11 @@ function makeWasm(overrides = {}) {
     NoteType: { Public: "Public", Private: "Private" },
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
+      withAttachments: vi.fn().mockReturnValue("networkNote"),
     },
     NoteAssets: vi.fn().mockReturnValue("noteAssets"),
     FungibleAsset: vi.fn().mockReturnValue("fungibleAsset"),
-    NoteAttachment: vi.fn().mockReturnValue("noteAttachment"),
+    NoteAttachment: vi.fn().mockImplementation((v) => ({ attachment: v })),
     NoteArray: vi.fn().mockImplementation(makeNoteArray),
     NoteAndArgs: vi.fn().mockImplementation((note, args) => ({ note, args })),
     NoteAndArgsArray: vi.fn().mockReturnValue("noteAndArgsArray"),
@@ -57,6 +62,14 @@ function makeWasm(overrides = {}) {
     ForeignAccountArray: vi.fn().mockReturnValue("foreignAccArray"),
     AccountStorageRequirements: vi.fn().mockReturnValue("storageReqs"),
     AdviceInputs: vi.fn().mockReturnValue("adviceInputs"),
+    NetworkAccountTarget: vi.fn().mockImplementation(() => networkTarget),
+    NoteTag: { withAccountTarget: vi.fn(() => "networkTag") },
+    NoteMetadata: vi.fn().mockImplementation(() => "metadata"),
+    NoteStorage: vi.fn().mockImplementation(() => "storage"),
+    FeltArray: vi.fn().mockImplementation((items) => ({ feltArray: items })),
+    Felt: vi.fn().mockImplementation((value) => ({ felt: value })),
+    NoteRecipient: { fromScript: vi.fn(() => "recipientFromScript") },
+    __networkTarget: networkTarget,
     ...overrides,
   };
 }
@@ -244,6 +257,164 @@ describe("TransactionsResource", () => {
       });
       expect(wasm.Note.createP2IDNote).toHaveBeenCalled();
       expect(result.note).toBe("p2idNote");
+      expect(result.txId).toBeDefined();
+    });
+  });
+
+  describe("createNetworkNote", () => {
+    it("throws when both recipient and script are provided", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+          recipient: "customRecipient",
+          script: "myScript",
+        })
+      ).rejects.toThrow(/recipient.*script.*not both/i);
+    });
+
+    it("throws when neither recipient nor script is provided", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+        })
+      ).rejects.toThrow(/recipient.*script/i);
+    });
+
+    it("builds a network note from a script (recipient path) and submits", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const result = await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "myScript",
+        inputs: [1n],
+      });
+
+      expect(wasm.NetworkAccountTarget).toHaveBeenCalledWith(
+        expect.anything(),
+        undefined
+      );
+      expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
+        "targetIdObj"
+      );
+      expect(wasm.NoteMetadata).toHaveBeenCalledWith(
+        expect.anything(),
+        "Public",
+        "networkTag"
+      );
+      expect(wasm.Felt).toHaveBeenCalledWith(1n);
+      expect(wasm.FeltArray).toHaveBeenCalledWith([{ felt: 1n }]);
+      expect(wasm.NoteStorage).toHaveBeenCalledWith({
+        feltArray: [{ felt: 1n }],
+      });
+      expect(wasm.NoteRecipient.fromScript).toHaveBeenCalledWith(
+        "myScript",
+        expect.anything() // NoteStorage instance
+      );
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(), // NoteAssets instance
+        expect.anything(), // NoteMetadata instance
+        "recipientFromScript",
+        ["targetAttachment"]
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.note).toBe("networkNote");
+      expect(result.txId).toBeDefined();
+    });
+
+    it("uses a pre-built recipient without building one from a script", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        recipient: "customRecipient",
+      });
+      expect(wasm.NoteRecipient.fromScript).not.toHaveBeenCalled();
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(), // NoteAssets instance
+        expect.anything(), // NoteMetadata instance
+        "customRecipient",
+        ["targetAttachment"]
+      );
+    });
+
+    it("appends an extra attachment after the required NetworkAccountTarget one", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        attachment: [9n],
+      });
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(), // NoteAssets instance
+        expect.anything(), // NoteMetadata instance
+        "recipientFromScript",
+        ["targetAttachment", { attachment: [9n] }]
+      );
+    });
+
+    it("threads assets into NoteAssets instead of defaulting to empty", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        assets: { token: "0xtoken", amount: 5 },
+      });
+      expect(wasm.FungibleAsset).toHaveBeenCalledWith(
+        expect.anything(),
+        BigInt(5)
+      );
+      expect(wasm.NoteAssets).toHaveBeenCalledWith([expect.anything()]);
+    });
+
+    it("uses a pre-built NetworkAccountTarget directly without reconstructing it", async () => {
+      const { resource, wasm } = makeResource();
+      const preBuilt = Object.create(wasm.NetworkAccountTarget.prototype);
+      preBuilt.targetId = vi.fn(() => "preBuiltTargetId");
+      preBuilt.toAttachment = vi.fn(() => "preBuiltAttachment");
+
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: preBuilt,
+        script: "s",
+      });
+
+      // Only the initial call from makeResource's implicit setup counts —
+      // assert it was not invoked again to build a new target for this call.
+      expect(wasm.NetworkAccountTarget).not.toHaveBeenCalled();
+      expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
+        "preBuiltTargetId"
+      );
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        ["preBuiltAttachment"]
+      );
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
+      const tx = { transactionStatus: () => committedStatus };
+      const { resource, inner } = makeResource({
+        getTransactions: vi.fn().mockResolvedValue([tx]),
+      });
+      const result = await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        waitForConfirmation: true,
+        timeout: 5000,
+      });
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });

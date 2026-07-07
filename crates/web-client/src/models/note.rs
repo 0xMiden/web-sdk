@@ -221,6 +221,52 @@ impl Note {
 
         Ok(native_note.into())
     }
+
+    /// Creates a note carrying the provided attachments, using the metadata's
+    /// sender / note type / tag (attachments on the metadata itself are ignored).
+    ///
+    /// # Errors
+    /// Errors if the attachment set is invalid (too many attachments or words).
+    #[js_export(js_name = "withAttachments")]
+    pub fn with_attachments(
+        note_assets: &NoteAssets,
+        note_metadata: &NoteMetadata,
+        note_recipient: &NoteRecipient,
+        attachments: Vec<NoteAttachment>,
+    ) -> Result<Note, JsErr> {
+        let native_metadata: miden_client::note::NoteMetadata = note_metadata.into();
+        let partial = miden_client::note::PartialNoteMetadata::new(
+            native_metadata.sender(),
+            native_metadata.note_type(),
+        )
+        .with_tag(native_metadata.tag());
+
+        let native_attachments: Vec<miden_client::note::NoteAttachment> =
+            attachments.iter().map(Into::into).collect();
+        let attachments = miden_client::note::NoteAttachments::new(native_attachments)
+            .map_err(|err| js_error_with_context(err, "build note attachments"))?;
+
+        Ok(Note(NativeNote::with_attachments(
+            note_assets.into(),
+            partial,
+            note_recipient.into(),
+            attachments,
+        )))
+    }
+
+    /// Returns the note's attachments.
+    #[js_export(js_name = "attachments")]
+    pub fn attachments(&self) -> Vec<NoteAttachment> {
+        self.0.attachments().iter().map(NoteAttachment::from).collect()
+    }
+
+    /// Returns true if the note is a network note (public + a valid
+    /// `NetworkAccountTarget` attachment).
+    #[js_export(js_name = "isNetworkNote")]
+    pub fn is_network_note(&self) -> bool {
+        use miden_client::note::standards::NetworkNoteExt;
+        self.0.is_network_note()
+    }
 }
 
 // CONVERSIONS
