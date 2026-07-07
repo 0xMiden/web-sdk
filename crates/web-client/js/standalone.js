@@ -163,6 +163,8 @@ function buildRecipient(opts, wasm) {
       "buildNetworkNote requires either `recipient` or `script`."
     );
   }
-  const storage = new wasm.NoteStorage(new wasm.FeltArray(opts.inputs ?? []));
+  const storage = new wasm.NoteStorage(
+    new wasm.FeltArray((opts.inputs ?? []).map((value) => new wasm.Felt(value)))
+  );
   return wasm.NoteRecipient.fromScript(opts.script, storage);
 }

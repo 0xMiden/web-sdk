@@ -37,6 +37,17 @@ test.describe("network note tests", () => {
         p2idScript,
         new sdk.NoteStorage(new sdk.FeltArray([]))
       );
+
+      // Regression guard for the resource/standalone builders: a non-empty
+      // `inputs` list must marshal bigints into `Felt` handles before
+      // `FeltArray` — a raw bigint throws `expected instance of Felt` against
+      // real WASM. Exercised here end-to-end, not through a mock.
+      const nonEmptyInputsRecipient = sdk.NoteRecipient.fromScript(
+        sdk.NoteScript.p2id(),
+        new sdk.NoteStorage(
+          new sdk.FeltArray([1n, 2n].map((v) => new sdk.Felt(v)))
+        )
+      );
       const note = sdk.Note.withAttachments(
         new sdk.NoteAssets([]),
         new sdk.NoteMetadata(
@@ -74,6 +85,7 @@ test.describe("network note tests", () => {
       return {
         builtIsNetworkNote,
         builtAttachmentCount,
+        nonEmptyInputsMarshaled: nonEmptyInputsRecipient != null,
         submittedNoteId,
         fetchedNoteIsPresent: fetchedNote != null,
         fetchedIsNetworkNote: fetchedNote ? fetchedNote.isNetworkNote() : null,
@@ -86,6 +98,8 @@ test.describe("network note tests", () => {
     // The built note is a valid network note before it ever touches the chain.
     expect(result.builtIsNetworkNote).toBe(true);
     expect(result.builtAttachmentCount).toBe(1);
+    // Non-empty `inputs` marshaled through Felt/FeltArray without throwing.
+    expect(result.nonEmptyInputsMarshaled).toBe(true);
     expect(typeof result.submittedNoteId).toBe("string");
     expect(result.submittedNoteId.length).toBeGreaterThan(0);
 

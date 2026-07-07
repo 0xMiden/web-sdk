@@ -387,7 +387,7 @@ export interface NetworkNoteOptions extends TransactionOptions {
   /** Custom consumption script; the recipient is built with a fresh serial number. */
   script?: NoteScript;
   /** Note storage / inputs the script reads (used with `script`). */
-  inputs?: Felt[];
+  inputs?: bigint[];
   /** Assets locked into the note. Optional — a note may carry no assets. */
   assets?: Asset | Asset[];
   /** Extra attachment payload appended AFTER the required `NetworkAccountTarget`. */

@@ -17,6 +17,7 @@ function makeWasm() {
     NoteMetadata: vi.fn().mockImplementation(() => "metadata"),
     NoteStorage: vi.fn().mockImplementation(() => "storage"),
     FeltArray: vi.fn().mockImplementation((items) => ({ feltArray: items })),
+    Felt: vi.fn().mockImplementation((value) => ({ felt: value })),
     NoteRecipient: { fromScript: vi.fn(() => "recipientFromScript") },
     NoteAttachment: vi.fn().mockImplementation((v) => ({ attachment: v })),
     NoteAssets: vi.fn().mockImplementation(() => "noteAssets"),
@@ -79,6 +80,8 @@ describe("buildNetworkNote", () => {
       "Public",
       "networkTag"
     );
+    expect(wasm.Felt).toHaveBeenCalledWith(1n);
+    expect(wasm.FeltArray).toHaveBeenCalledWith([{ felt: 1n }]);
     expect(wasm.NoteRecipient.fromScript).toHaveBeenCalledWith(
       "myScript",
       expect.anything() // NoteStorage instance

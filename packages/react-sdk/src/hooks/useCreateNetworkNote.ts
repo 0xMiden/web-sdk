@@ -124,14 +124,15 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
             .withOwnOutputNotes(ownOutputs)
             .build();
 
-          const execId = parseAccountId(options.accountId);
+          // Reuse `senderId` (NoteMetadata only borrows it) rather than
+          // re-parsing the same account id for submission.
           const txId = prover
             ? await client.submitNewTransactionWithProver(
-                execId,
+                senderId,
                 txRequest,
                 prover
               )
-            : await client.submitNewTransaction(execId, txRequest);
+            : await client.submitNewTransaction(senderId, txRequest);
 
           return { txId: txId.toHex(), note } as NetworkNoteResult;
         });

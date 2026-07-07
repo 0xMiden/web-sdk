@@ -130,7 +130,9 @@ export class TransactionsResource {
         );
       }
       const storage = new wasm.NoteStorage(
-        new wasm.FeltArray(opts.inputs ?? [])
+        new wasm.FeltArray(
+          (opts.inputs ?? []).map((value) => new wasm.Felt(value))
+        )
       );
       recipient = wasm.NoteRecipient.fromScript(opts.script, storage);
     }
