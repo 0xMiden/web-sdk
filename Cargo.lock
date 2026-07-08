@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "js-export-macro"
-version = "0.15.4"
+version = "0.15.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.15.4"
+version = "0.15.5"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.15.4"
+version = "0.15.5"
 dependencies = [
  "async-trait",
  "base64",
@@ -2167,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "miden-mobile-prover"
-version = "0.15.4"
+version = "0.15.5"
 dependencies = [
  "futures-executor",
  "miden-client",
