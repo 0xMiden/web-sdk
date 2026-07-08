@@ -20,10 +20,10 @@ env:
   # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
   # fields encoded as bytes vs fixed64), or 'accept header validation failed'
   # if the protocol version differs.
-  # Pinned to the commit of the miden-client v0.15.0 release tag, matching the
-  # miden-client 0.15.0 crates.io dep in Cargo.toml. A commit sha (not the tag
-  # name) keeps cache keys stable.
-  MIDEN_CLIENT_REF: 02a3212b001abad6192e6c8c0c7167076a75280e
+  # Pinned to the same miden-client `next` revision the Cargo.toml git dep points
+  # to, so the test-node and the client share one miden-protocol version. A commit
+  # sha (not a branch name) keeps cache keys stable.
+  MIDEN_CLIENT_REF: 08f49df55b0d919a8cc03d50231cc59b052825fc
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
