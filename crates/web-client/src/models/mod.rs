@@ -51,6 +51,7 @@ pub mod auth;
 pub mod auth_scheme;
 pub mod auth_secret_key;
 pub mod basic_fungible_faucet_component;
+pub mod batch_item;
 pub mod block_header;
 pub mod code_builder;
 pub mod committed_note;
