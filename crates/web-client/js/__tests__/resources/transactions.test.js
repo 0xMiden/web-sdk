@@ -1074,6 +1074,88 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("manual lifecycle — executeRequest / prove / submitProven / apply", () => {
+    it("executeRequest resolves the account and returns the raw TransactionResult", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "request" };
+      const result = await resource.executeRequest("0xaccHex", request);
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request
+      );
+      expect(result).toBe(inner._txResult);
+      // execute-only: nothing else in the pipeline runs
+      expect(inner.proveTransaction).not.toHaveBeenCalled();
+      expect(inner.submitProvenTransaction).not.toHaveBeenCalled();
+      expect(inner.applyTransaction).not.toHaveBeenCalled();
+    });
+
+    it("prove without a prover calls proveTransaction with the result only", async () => {
+      const { resource, inner } = makeResource();
+      const proven = await resource.prove(inner._txResult);
+      expect(inner.proveTransaction).toHaveBeenCalledWith(inner._txResult);
+      expect(proven).toBe("provenTx");
+    });
+
+    it("prove uses the per-call prover over client.defaultProver", async () => {
+      const defaultProver = { prove: vi.fn() };
+      const callProver = { prove: vi.fn() };
+      const { resource, inner } = makeResource({}, { defaultProver });
+      await resource.prove(inner._txResult, { prover: callProver });
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
+        inner._txResult,
+        callProver
+      );
+    });
+
+    it("prove falls back to client.defaultProver when set", async () => {
+      const defaultProver = { prove: vi.fn() };
+      const { resource, inner } = makeResource({}, { defaultProver });
+      await resource.prove(inner._txResult);
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
+        inner._txResult,
+        defaultProver
+      );
+    });
+
+    it("submitProven forwards proven + result and wraps the height", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+      });
+      const outcome = await resource.submitProven("provenTx", inner._txResult);
+      expect(inner.submitProvenTransaction).toHaveBeenCalledWith(
+        "provenTx",
+        inner._txResult
+      );
+      expect(outcome).toEqual({ blockNumber: 123 });
+    });
+
+    it("apply forwards result + blockNumber and returns the store update", async () => {
+      const { resource, inner } = makeResource({
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const update = await resource.apply(inner._txResult, 123);
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
+      expect(update).toBe("storeUpdate");
+    });
+
+    it("the split steps chain into the same pipeline submit() runs", async () => {
+      const { resource, inner, client } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(77),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const request = { type: "request" };
+      const result = await resource.executeRequest("0xaccHex", request);
+      const proven = await resource.prove(result);
+      const { blockNumber } = await resource.submitProven(proven, result);
+      const update = await resource.apply(result, blockNumber);
+      expect(blockNumber).toBe(77);
+      expect(update).toBe("storeUpdate");
+      // Each stage asserts liveness independently.
+      expect(client.assertNotTerminated).toHaveBeenCalledTimes(4);
+    });
+  });
+
   describe("list", () => {
     it("uses filter.all() when no query", async () => {
       const { resource, inner, wasm } = makeResource();

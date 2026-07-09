@@ -137,3 +137,28 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 ### `waitForConfirmation` semantics
 
 The V1 batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
+
+## Manual Transaction Lifecycle
+
+`client.transactions.submit(account, request)` runs the full pipeline — execute, prove, submit, apply — in one call. When you need to drive the stages yourself (benchmarking each step, handling errors per stage, or proving somewhere other than where you execute), the four steps are exposed individually:
+
+```typescript
+// 1. Execute — runs the request locally, nothing leaves the client.
+const result = await client.transactions.executeRequest(wallet, request);
+
+// 2. Prove — pure computation over the result; optional per-call prover.
+const proven = await client.transactions.prove(result, { prover: remoteProver });
+
+// 3. Submit — sends the proof to the network, returns the submission height.
+const { blockNumber } = await client.transactions.submitProven(proven, result);
+
+// 4. Apply — persists the state changes into the local store.
+await client.transactions.apply(result, blockNumber);
+```
+
+Notes on the split form:
+
+- **`executeRequest` does not persist anything.** Until `apply` runs, the local store doesn't know the transaction exists. If you stop after `submitProven`, the network has the transaction but your local state won't reflect it until the next sync.
+- **`prove` accepts an optional `{ prover }`** and otherwise falls back to the client's default prover (or the built-in local prover). With an explicit prover it is a pure computation and can run on a client that shares nothing with the executing one.
+- **`apply` fires transaction observers** (e.g. PSWAP lineage tracking), the same as the one-shot `submit` path.
+- **`submit` is equivalent** to running the four steps back to back — prefer it unless you need the seams.

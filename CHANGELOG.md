@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.6 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] Manual transaction lifecycle on `client.transactions` — `executeRequest(account, request)` → `prove(result, { prover? })` → `submitProven(proven, result)` → `apply(result, blockNumber)` expose the four stages that `submit()` runs in one call, so each step can be benchmarked and error-handled independently (closes [#233](https://github.com/0xMiden/web-sdk/issues/233)).
+
+```ts
+const result = await client.transactions.executeRequest(wallet, request);
+const proven = await client.transactions.prove(result);
+const { blockNumber } = await client.transactions.submitProven(proven, result);
+await client.transactions.apply(result, blockNumber);
+```
+
 ## 0.15.5 (2026-07-08)
 
 ### Enhancements

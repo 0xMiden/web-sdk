@@ -331,6 +331,59 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "manual lifecycle: executeRequest → prove → submitProven → apply",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.AccountType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const lowLevel = await window.MockWasmWebClient.createClient();
+        const mintRequest = await lowLevel.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(500)
+        );
+
+        // Drive the four lifecycle stages by hand instead of submit().
+        const txResult = await client.transactions.executeRequest(
+          faucet,
+          mintRequest
+        );
+        const txIdHex = txResult.id().toHex();
+        const proven = await client.transactions.prove(txResult);
+        const { blockNumber } = await client.transactions.submitProven(
+          proven,
+          txResult
+        );
+        await client.transactions.apply(txResult, blockNumber);
+
+        // apply() must have persisted the transaction into the local store.
+        const records = await client.transactions.list({ ids: [txIdHex] });
+
+        return {
+          txIdHex,
+          blockNumber,
+          listedCount: records.length,
+          listedId: records[0]?.id().toHex(),
+        };
+      });
+
+      expect(result.txIdHex.length).toBeGreaterThan(0);
+      expect(typeof result.blockNumber).toBe("number");
+      expect(result.blockNumber).toBeGreaterThanOrEqual(0);
+      expect(result.listedCount).toBe(1);
+      expect(result.listedId).toBe(result.txIdHex);
+    }
+  );
+
   // Regression test for #2011: the JS wrapper was building OutputNoteArray
   // while the WASM binding for withOwnOutputNotes switched to NoteArray,
   // causing `expected instance of NoteArray` at runtime.

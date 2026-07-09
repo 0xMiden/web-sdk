@@ -24,6 +24,7 @@ export {
   NoteFile,
   NoteId,
   NoteTag,
+  ProvenTransaction,
   PswapLineageRecord,
   PswapLineageState,
   RawOutputNote,
@@ -33,6 +34,8 @@ export {
   TransactionProver,
   TransactionRecord,
   TransactionRequest,
+  TransactionResult,
+  TransactionStoreUpdate,
   TransactionSummary,
   Word,
 } from "./crates/miden_client_web";

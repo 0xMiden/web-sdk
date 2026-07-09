@@ -645,6 +645,77 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Execute a transaction request against an account WITHOUT proving,
+   * submitting, or persisting anything. First step of the manual
+   * transaction lifecycle — pass the returned TransactionResult through
+   * `prove()`, `submitProven()`, and `apply()` to complete it, or use
+   * `submit()` to run all four steps in one call.
+   *
+   * @param {AccountRef} account - The account executing the transaction.
+   * @param {TransactionRequest} request - The pre-built transaction request.
+   * @returns {Promise<TransactionResult>} Execution artifacts consumed by the
+   *   later lifecycle stages.
+   */
+  async executeRequest(account, request) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(account, wasm);
+    return await this.#inner.executeTransaction(accountId, request);
+  }
+
+  /**
+   * Prove an executed transaction. Uses the per-call prover when provided,
+   * falling back to the client's default prover (or the built-in local
+   * prover if none is configured). Pure computation over the
+   * TransactionResult — touches neither the network nor the local store.
+   *
+   * @param {TransactionResult} result - Result returned by `executeRequest()`.
+   * @param {ProveOptions} [opts] - Optional per-call prover override.
+   * @returns {Promise<ProvenTransaction>} The transaction proof to submit.
+   */
+  async prove(result, opts) {
+    this.#client.assertNotTerminated();
+    const prover = opts?.prover ?? this.#client.defaultProver;
+    return prover
+      ? await this.#inner.proveTransaction(result, prover)
+      : await this.#inner.proveTransaction(result);
+  }
+
+  /**
+   * Submit a proven transaction to the network. Does NOT update the local
+   * store — call `apply()` with the returned block number to persist the
+   * state changes; skipping it leaves the local store out of sync until
+   * the next full sync.
+   *
+   * @param {ProvenTransaction} proven - Proof returned by `prove()`.
+   * @param {TransactionResult} result - The matching execution result.
+   * @returns {Promise<SubmitProvenResult>} The block height the transaction
+   *   was submitted at.
+   */
+  async submitProven(proven, result) {
+    this.#client.assertNotTerminated();
+    const blockNumber = await this.#inner.submitProvenTransaction(
+      proven,
+      result
+    );
+    return { blockNumber };
+  }
+
+  /**
+   * Persist a submitted transaction into the local store, firing registered
+   * transaction observers (e.g. PSWAP lineage tracking). Final step of the
+   * manual transaction lifecycle.
+   *
+   * @param {TransactionResult} result - The execution result that was submitted.
+   * @param {number} blockNumber - Submission height returned by `submitProven()`.
+   * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
+   */
+  async apply(result, blockNumber) {
+    this.#client.assertNotTerminated();
+    return await this.#inner.applyTransaction(result, blockNumber);
+  }
+
   async list(query) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
