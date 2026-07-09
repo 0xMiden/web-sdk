@@ -11,7 +11,7 @@ A pnpm monorepo holding the JS / WASM / React bits previously part of [`0xMiden/
 | `@miden-sdk/miden-sdk` | `crates/web-client/` (Rust + WASM + JS bindings) | npm |
 | `@miden-sdk/react` | `packages/react-sdk/` | npm |
 | `@miden-sdk/vite-plugin` | `packages/vite-plugin/` | npm |
-| `@miden-sdk/node-{darwin-arm64,darwin-x64,linux-x64-gnu}` | `packages/node-sdk-*` | npm (platform-specific native binaries; consumed via `optionalDependencies` on `@miden-sdk/miden-sdk`) |
+| `@miden-sdk/node-{darwin-arm64,darwin-x64,linux-x64-gnu,linux-x64-musl}` | `packages/node-sdk-*` | npm (platform-specific native binaries; consumed via `optionalDependencies` on `@miden-sdk/miden-sdk`. Linux ships both glibc (`-gnu`) and musl/Alpine (`-musl`) binaries; the loader picks by runtime libc, and the packages' `libc` field lets npm/pnpm install only the matching one) |
 | `miden-idxdb-store` | `crates/idxdb-store/` | crates.io |
 
 The `Cargo.toml` workspace dep `miden-client = "x.y.z"` pins compatibility with the upstream Rust crate. Changes to shared types (Account, Note, gRPC schema, …) usually need a coordinated PR in `0xMiden/miden-client` first.

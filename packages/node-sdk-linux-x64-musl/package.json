@@ -1,7 +1,7 @@
 {
-  "name": "@miden-sdk/node-linux-x64-gnu",
+  "name": "@miden-sdk/node-linux-x64-musl",
   "version": "0.15.5",
-  "description": "Miden Client SDK native module for Linux x64 (glibc)",
+  "description": "Miden Client SDK native module for Linux x64 (musl / Alpine)",
   "os": [
     "linux"
   ],
@@ -9,7 +9,7 @@
     "x64"
   ],
   "libc": [
-    "glibc"
+    "musl"
   ],
   "main": "miden_client_web.node",
   "files": [
@@ -19,6 +19,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",
-    "directory": "packages/node-sdk-linux-x64-gnu"
+    "directory": "packages/node-sdk-linux-x64-musl"
   }
 }
