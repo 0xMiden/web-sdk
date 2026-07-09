@@ -99,6 +99,9 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_publish_web == 'true'
     strategy:
+      # Independent legs: a musl cross-build failure must not cancel the
+      # glibc/darwin legs (which are the established, must-ship binaries).
+      fail-fast: false
       matrix:
         include:
           - os: macos-26
@@ -107,7 +110,16 @@ jobs:
             platform-package: node-sdk-darwin-x64
           - os: ubuntu-24.04
             platform-package: node-sdk-linux-x64-gnu
+          # musl / Alpine. Cross-compiled from the same ubuntu runner.
+          - os: ubuntu-24.04
+            platform-package: node-sdk-linux-x64-musl
+            rust-target: x86_64-unknown-linux-musl
     runs-on: ${{ matrix.os }}
+    # The musl binary is newer/best-effort: a cross-build hiccup should leave
+    # this leg green so the publish job still ships the glibc + darwin
+    # binaries and the WASM package. The publish loop skips any missing
+    # artifact, so a failed musl leg simply defers musl to the next release.
+    continue-on-error: ${{ matrix.rust-target == 'x86_64-unknown-linux-musl' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -117,8 +129,28 @@ jobs:
       - name: Install Rust
         run: rustup update --no-self-update
 
+      - name: Set up musl cross toolchain
+        if: ${{ matrix.rust-target }}
+        run: |
+          rustup target add ${{ matrix.rust-target }}
+          sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Build napi binary
+        if: ${{ !matrix.rust-target }}
         run: cargo build -p miden-client-web --no-default-features --features nodejs --release
+
+      - name: Build napi binary (musl cross)
+        if: ${{ matrix.rust-target }}
+        # Build a *dynamically* linked musl cdylib so a musl-linked Node
+        # (Alpine) can dlopen it against its own libc instead of a second,
+        # statically embedded copy. musl targets default to +crt-static, and a
+        # static CRT inside a shared object breaks dlopen — so disable it.
+        # Route C dependencies (e.g. libsqlite3-sys) through the musl C
+        # compiler that musl-tools provides.
+        env:
+          RUSTFLAGS: "-C target-feature=-crt-static"
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: cargo build -p miden-client-web --no-default-features --features nodejs --release --target ${{ matrix.rust-target }}
 
       - name: Prepare .node binary
         run: |
@@ -133,6 +165,20 @@ jobs:
             exit 1
           fi
           cp "$BINARY" "packages/${{ matrix.platform-package }}/miden_client_web.node"
+
+      - name: Verify musl binary loads on Alpine
+        if: ${{ matrix.rust-target }}
+        # A cross-compiled musl cdylib can link "successfully" yet fail to
+        # dlopen on a real musl runtime. Load the built addon inside
+        # node:alpine before publishing: if it can't load, this
+        # (continue-on-error) leg fails, the artifact is not uploaded, and the
+        # publish job skips musl — instead of shipping a broken binary that
+        # reintroduces the original "module not found" on Alpine.
+        run: |
+          docker run --rm \
+            -v "$PWD/packages/${{ matrix.platform-package }}:/pkg:ro" \
+            node:20-alpine \
+            node -e "require('/pkg/miden_client_web.node'); console.log('musl .node loaded on Alpine OK')"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -278,14 +324,28 @@ jobs:
         run: |
           WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
           DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
-          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu node-sdk-linux-x64-musl; do
+            if [ ! -f "artifacts/${pkg}/miden_client_web.node" ]; then
+              echo "::warning::No native binary artifact for ${pkg}; skipping its publish (its build leg produced none — see build-native-nodejs)."
+              continue
+            fi
             cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
             jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
             mv /tmp/pkg.json "packages/${pkg}/package.json"
             echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
-            cd "packages/${pkg}"
-            npm publish --tag "$DIST_TAG" --access public --provenance
-            cd ../..
+            ( cd "packages/${pkg}" && npm publish --tag "$DIST_TAG" --access public --provenance ) && continue
+            # Publish failed. musl is best-effort: it is the newest platform
+            # and its first-ever OIDC publish needs the trusted publisher for
+            # @miden-sdk/node-linux-x64-musl registered on npm (or a one-time
+            # manual publish). Defer it rather than wedging a release whose
+            # stable packages have already published. optionalDependencies
+            # tolerate a missing (404) version, so consumers are unaffected.
+            if [ "$pkg" = "node-sdk-linux-x64-musl" ]; then
+              echo "::warning::Publishing ${pkg} failed; deferring musl to the next release. First musl release? Register the trusted publisher for @miden-sdk/node-linux-x64-musl on npm (or publish it once manually)."
+              continue
+            fi
+            echo "::error::Publishing ${pkg} failed."
+            exit 1
           done
 
       - name: Inject Node.js optionalDependencies before web-client publish
@@ -299,6 +359,7 @@ jobs:
               '@miden-sdk/node-darwin-arm64': v,
               '@miden-sdk/node-darwin-x64': v,
               '@miden-sdk/node-linux-x64-gnu': v,
+              '@miden-sdk/node-linux-x64-musl': v,
             };
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             console.log('Injected optionalDependencies with version ' + v);

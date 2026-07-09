@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.6 (TBD)
+
+### Fixes
+
+* [FIX][web] The Node.js SDK now runs on **Alpine / musl Linux**. A new `@miden-sdk/node-linux-x64-musl` native binary is published and selected automatically by the runtime C library, so musl-based containers (a common ECS/Docker base image) no longer fail to import with `Miden napi module not found`; glibc hosts continue to use `@miden-sdk/node-linux-x64-gnu`. ([web-sdk#234](https://github.com/0xMiden/web-sdk/pull/234))
+* [FIX][web] When the Node.js native addon can't be loaded, the thrown error now reports the real cause — platform, arch, libc, the package it looked for, and the underlying failure of each resolution step — plus targeted fixes, instead of a generic "build it with cargo" message. An explicit `MIDEN_MODULE_PATH` is now authoritative: a bad path fails immediately rather than silently falling back to a different installed binary. ([web-sdk#234](https://github.com/0xMiden/web-sdk/pull/234))
+
 ## 0.15.5 (2026-07-08)
 
 ### Enhancements
