@@ -20,6 +20,11 @@ const networkCounterTransaction = async (
   deployedCounter?: string;
   finalCounter?: string;
   hasCounterComponent: boolean;
+  isNetworkAccount: boolean;
+  allowlist?: string[];
+  allowlistedNoteRoot: string;
+  senderIsNetworkAccount: boolean;
+  senderAllowlist?: string[];
 }> => {
   return await testingPage.evaluate(async () => {
     const COUNTER_SLOT_NAME = "miden::testing::counter_contract::counter";
@@ -98,6 +103,14 @@ const networkCounterTransaction = async (
       .build();
     await client.newAccount(built.account, false);
 
+    // Readback: the built account identifies as a network account and reports
+    // exactly the allowlisted note-script root.
+    const isNetworkAccount = built.account.isNetworkAccount();
+    const allowlist = built.account
+      .networkNoteAllowlist()
+      ?.map((root) => root.toHex());
+    const allowlistedNoteRoot = noteScript.root().toHex();
+
     // Scriptless deploy: the network-account auth component forbids tx scripts
     // and bumps the nonce on its own, so an empty transaction is enough to commit
     // the account on-chain. The counter is 0 after deployment.
@@ -123,6 +136,10 @@ const networkCounterTransaction = async (
       window.AuthScheme.AuthRpoFalcon512
     );
     await client.syncState();
+
+    // A plain wallet is not a network account (no allowlist slot).
+    const senderIsNetworkAccount = sender.isNetworkAccount();
+    const senderAllowlist = sender.networkNoteAllowlist();
 
     const target = new window.NetworkAccountTarget(built.account.id());
     const recipient = window.NoteRecipient.fromScript(
@@ -171,7 +188,16 @@ const networkCounterTransaction = async (
           .every((procedure) => code.hasProcedure(procedure.digest))
       : false;
 
-    return { deployedCounter, finalCounter, hasCounterComponent };
+    return {
+      deployedCounter,
+      finalCounter,
+      hasCounterComponent,
+      isNetworkAccount,
+      allowlist,
+      allowlistedNoteRoot,
+      senderIsNetworkAccount,
+      senderAllowlist,
+    };
   });
 };
 
@@ -182,8 +208,23 @@ test.describe("network transaction tests", () => {
     page,
   }) => {
     test.slow();
-    const { deployedCounter, finalCounter, hasCounterComponent } =
-      await networkCounterTransaction(page);
+    const {
+      deployedCounter,
+      finalCounter,
+      hasCounterComponent,
+      isNetworkAccount,
+      allowlist,
+      allowlistedNoteRoot,
+      senderIsNetworkAccount,
+      senderAllowlist,
+    } = await networkCounterTransaction(page);
+    // Readback: the built account identifies as a network account and its
+    // allowlist holds exactly the note-script root it was created with.
+    expect(isNetworkAccount).toBe(true);
+    expect(allowlist).toEqual([allowlistedNoteRoot]);
+    // A plain wallet is not a network account.
+    expect(senderIsNetworkAccount).toBe(false);
+    expect(senderAllowlist).toBeUndefined();
     // The scriptless deploy leaves the counter at 0 (empty once normalized) —
     // unlike the pre-0.15 flow, a network account cannot run a deploy script.
     expect(deployedCounter).toBeFalsy();

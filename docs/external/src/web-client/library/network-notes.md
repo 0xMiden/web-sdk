@@ -132,6 +132,20 @@ Only allowlist a transaction script whose effect is safe for **every** possible
 input — a root pins the script's code but not its arguments or advice inputs,
 which the (arbitrary) transaction submitter controls.
 
+## Detecting a network account
+
+`Account.isNetworkAccount()` reports whether an account is a network account
+(public, with the standardized allowlist slot), and
+`Account.networkNoteAllowlist()` returns the note-script roots it may consume —
+`undefined` for non-network accounts:
+
+```typescript
+if (account.isNetworkAccount()) {
+  const roots = account.networkNoteAllowlist(); // Word[]
+  console.log(roots.map((root) => root.toHex()));
+}
+```
+
 ## Building without submitting
 
 The standalone `buildNetworkNote(opts)` builds the same `Note` without

@@ -591,6 +591,8 @@ const { account } = new AccountBuilder(seed)
 
 The allowlist must be non-empty. The component bumps the nonce itself and by default forbids transaction scripts, so the account deploys and advances via scriptless transactions — it otherwise only advances by consuming allowlisted network notes (the node runs the transaction). An optional second argument allowlists transaction script roots (`TransactionScript.root()`) the account will execute; only allowlist scripts whose effect is safe for every possible input, since a root pins the code but not the submitter-controlled arguments.
 
+For readback, `account.isNetworkAccount()` reports whether an account carries the network allowlist slot, and `account.networkNoteAllowlist()` returns the allowed note-script roots (`undefined` for non-network accounts).
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
