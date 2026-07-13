@@ -259,8 +259,7 @@ impl Store for IdxdbStore {
         nodes: &[(InOrderIndex, Word)],
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
-        self.insert_block_header(block_header, has_client_notes).await?;
-        self.insert_partial_blockchain_nodes(nodes).await
+        self.insert_block_header(block_header, nodes, has_client_notes).await
     }
 
     async fn get_block_headers(
