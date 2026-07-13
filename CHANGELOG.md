@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.15.6 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `AccountComponent.createAuthComponentForNetworkAccount(allowedNoteScriptRoots)` builds the auth component for a **network account** — a public account the node auto-executes transactions for. Attach it to a public `AccountBuilder` alongside your business component; the note-script allowlist (each root from `NoteScript.root()`) is the standardized storage slot the node uses to identify the account as a network account and route matching network notes to it. The account consumes only allowlisted note scripts and runs no transaction scripts, so it deploys and advances via scriptless transactions. This completes the network-note flow added in 0.15.5 — you can now create the account that auto-consumes those notes. ([web-sdk#TBD](https://github.com/0xMiden/web-sdk))
+
+```ts
+const auth = AccountComponent.createAuthComponentForNetworkAccount([
+  noteScript.root(),
+]);
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(counterComponent)
+  .withAuthComponent(auth)
+  .build();
+```
+
 ## 0.15.5 (2026-07-08)
 
 ### Enhancements

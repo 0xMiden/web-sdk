@@ -1,8 +1,11 @@
+use alloc::collections::BTreeSet;
+
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::component::{
     AccountComponent as NativeAccountComponent,
     AccountComponentMetadata,
+    AuthNetworkAccount,
 };
 use miden_client::account::{
     AccountComponentCode as NativeAccountComponentCode,
@@ -15,6 +18,7 @@ use miden_client::auth::{
     AuthSingleSig as NativeSingleSig,
     PublicKeyCommitment,
 };
+use miden_client::note::NoteScriptRoot;
 use miden_client::vm::Package as NativePackage;
 
 use crate::js_error_with_context;
@@ -188,6 +192,36 @@ impl AccountComponent {
         let pkc = PublicKeyCommitment::from(native_word);
 
         Ok(AccountComponent::create_auth_component(pkc, auth_scheme))
+    }
+
+    /// Builds the auth component for a network account.
+    ///
+    /// A network account is a public account carrying this component: its
+    /// note-script allowlist is the standardized storage slot the node's
+    /// network-transaction builder inspects to identify the account as a network
+    /// account and route matching notes to it for auto-consumption. The account
+    /// may only consume notes whose script root is in `allowedNoteScriptRoots`
+    /// (obtain a root via `NoteScript.root()`), and — because the allowlist of
+    /// permitted transaction scripts is empty — it executes no transaction
+    /// scripts, so it deploys and advances via scriptless transactions only.
+    ///
+    /// # Errors
+    /// Errors if `allowedNoteScriptRoots` is empty: a network account with no
+    /// allowlisted note scripts could never consume a note.
+    #[js_export(js_name = "createAuthComponentForNetworkAccount")]
+    pub fn create_auth_component_for_network_account(
+        allowed_note_script_roots: Vec<Word>,
+    ) -> Result<AccountComponent, JsErr> {
+        let roots: BTreeSet<NoteScriptRoot> = allowed_note_script_roots
+            .into_iter()
+            .map(|root| NoteScriptRoot::from_raw(NativeWord::from(&root)))
+            .collect();
+
+        let auth = AuthNetworkAccount::with_allowed_notes(roots).map_err(|e| {
+            js_error_with_context(e, "Failed to create network account auth component")
+        })?;
+
+        Ok(AccountComponent(auth.into()))
     }
 
     /// Creates an account component from a compiled package and storage slots.

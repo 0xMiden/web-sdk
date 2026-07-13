@@ -72,6 +72,52 @@ const { note } = await client.transactions.createNetworkNote({
 note.attachments(); // [NetworkAccountTarget attachment, extra payload]
 ```
 
+## Creating a network account
+
+A network account is an ordinary **public** account carrying the network-account
+auth component. That component stores a note-script allowlist in a standardized
+storage slot; the node reads it to recognize the account as a network account
+and to decide which notes it may auto-consume. Build the component with
+`AccountComponent.createAuthComponentForNetworkAccount(allowedNoteScriptRoots)`
+and attach it to your account alongside its business logic:
+
+```typescript
+import {
+  AccountBuilder,
+  AccountComponent,
+  AccountStorageMode,
+  TransactionRequestBuilder,
+} from "@miden-sdk/miden-sdk";
+
+// The account may only consume notes whose script root is allowlisted, so
+// compile the note script the account expects and take its root. Reuse the
+// same compiled script when you build the network note (the roots must match).
+const auth = AccountComponent.createAuthComponentForNetworkAccount([
+  noteScript.root(),
+]);
+
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(myComponent)
+  .withAuthComponent(auth)
+  .build();
+
+await client.accounts.insert({ account });
+
+// The auth component forbids transaction scripts and bumps the nonce itself, so
+// an empty (scriptless) transaction is enough to commit the account on-chain.
+await client.transactions.submit(
+  account.id(),
+  new TransactionRequestBuilder().build()
+);
+```
+
+The allowlist must be non-empty — a network account with no allowlisted note
+scripts could never consume a note, so `createAuthComponentForNetworkAccount([])`
+throws. Because transaction scripts are disallowed, a network account only
+advances by consuming allowlisted network notes (the node runs the transaction)
+or via scriptless transactions.
+
 ## Building without submitting
 
 The standalone `buildNetworkNote(opts)` builds the same `Note` without
