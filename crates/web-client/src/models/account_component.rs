@@ -19,6 +19,7 @@ use miden_client::auth::{
     PublicKeyCommitment,
 };
 use miden_client::note::NoteScriptRoot;
+use miden_client::transaction::TransactionScriptRoot;
 use miden_client::vm::Package as NativePackage;
 
 use crate::js_error_with_context;
@@ -201,25 +202,40 @@ impl AccountComponent {
     /// network-transaction builder inspects to identify the account as a network
     /// account and route matching notes to it for auto-consumption. The account
     /// may only consume notes whose script root is in `allowedNoteScriptRoots`
-    /// (obtain a root via `NoteScript.root()`), and — because the allowlist of
-    /// permitted transaction scripts is empty — it executes no transaction
-    /// scripts, so it deploys and advances via scriptless transactions only.
+    /// (obtain a root via `NoteScript.root()`).
+    ///
+    /// `allowedTxScriptRoots` optionally allowlists transaction script roots
+    /// (from `TransactionScript.root()`) the account will execute. When omitted
+    /// or empty, the account permits no transaction scripts and deploys and
+    /// advances via scriptless transactions only. Allowlist a script root only
+    /// if the script's effect is safe for *every* possible input: a root pins
+    /// the script's code but not its arguments or advice inputs, which the
+    /// (arbitrary) transaction submitter controls.
     ///
     /// # Errors
     /// Errors if `allowedNoteScriptRoots` is empty: a network account with no
     /// allowlisted note scripts could never consume a note.
-    #[js_export(js_name = "createAuthComponentForNetworkAccount")]
-    pub fn create_auth_component_for_network_account(
+    #[js_export(js_name = "createNetworkAuth")]
+    pub fn create_network_auth(
         allowed_note_script_roots: Vec<Word>,
+        allowed_tx_script_roots: Option<Vec<Word>>,
     ) -> Result<AccountComponent, JsErr> {
-        let roots: BTreeSet<NoteScriptRoot> = allowed_note_script_roots
+        let note_roots: BTreeSet<NoteScriptRoot> = allowed_note_script_roots
             .into_iter()
             .map(|root| NoteScriptRoot::from_raw(NativeWord::from(&root)))
             .collect();
 
-        let auth = AuthNetworkAccount::with_allowed_notes(roots).map_err(|e| {
+        let mut auth = AuthNetworkAccount::with_allowed_notes(note_roots).map_err(|e| {
             js_error_with_context(e, "Failed to create network account auth component")
         })?;
+
+        if let Some(tx_roots) = allowed_tx_script_roots {
+            let tx_roots: BTreeSet<TransactionScriptRoot> = tx_roots
+                .into_iter()
+                .map(|root| TransactionScriptRoot::from_raw(NativeWord::from(&root)))
+                .collect();
+            auth = auth.with_allowed_tx_scripts(tx_roots);
+        }
 
         Ok(AccountComponent(auth.into()))
     }

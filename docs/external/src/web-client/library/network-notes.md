@@ -78,7 +78,7 @@ A network account is an ordinary **public** account carrying the network-account
 auth component. That component stores a note-script allowlist in a standardized
 storage slot; the node reads it to recognize the account as a network account
 and to decide which notes it may auto-consume. Build the component with
-`AccountComponent.createAuthComponentForNetworkAccount(allowedNoteScriptRoots)`
+`AccountComponent.createNetworkAuth(allowedNoteScriptRoots)`
 and attach it to your account alongside its business logic:
 
 ```typescript
@@ -92,7 +92,7 @@ import {
 // The account may only consume notes whose script root is allowlisted, so
 // compile the note script the account expects and take its root. Reuse the
 // same compiled script when you build the network note (the roots must match).
-const auth = AccountComponent.createAuthComponentForNetworkAccount([
+const auth = AccountComponent.createNetworkAuth([
   noteScript.root(),
 ]);
 
@@ -113,10 +113,24 @@ await client.transactions.submit(
 ```
 
 The allowlist must be non-empty — a network account with no allowlisted note
-scripts could never consume a note, so `createAuthComponentForNetworkAccount([])`
-throws. Because transaction scripts are disallowed, a network account only
+scripts could never consume a note, so `createNetworkAuth([])`
+throws. By default transaction scripts are disallowed, so a network account only
 advances by consuming allowlisted network notes (the node runs the transaction)
 or via scriptless transactions.
+
+An optional second argument allowlists transaction script roots (from
+`TransactionScript.root()`) the account will execute:
+
+```typescript
+const auth = AccountComponent.createNetworkAuth(
+  [myNoteScript.root()],
+  [myMaintenanceTxScript.root()]
+);
+```
+
+Only allowlist a transaction script whose effect is safe for **every** possible
+input — a root pins the script's code but not its arguments or advice inputs,
+which the (arbitrary) transaction submitter controls.
 
 ## Building without submitting
 

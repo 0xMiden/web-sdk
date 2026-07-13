@@ -579,7 +579,7 @@ Provide exactly one of `script` or `recipient`. Notes are always Public — the 
 To create the account on the receiving side, build a **public** account carrying the network-account auth component. Its note-script allowlist is the standardized storage slot the node uses to recognize a network account and route matching notes to it:
 
 ```typescript
-const auth = AccountComponent.createAuthComponentForNetworkAccount([
+const auth = AccountComponent.createNetworkAuth([
   myNoteScript.root(), // allowlist the note scripts this account may consume
 ]);
 const { account } = new AccountBuilder(seed)
@@ -589,7 +589,7 @@ const { account } = new AccountBuilder(seed)
   .build();
 ```
 
-The allowlist must be non-empty. The component forbids transaction scripts and bumps the nonce itself, so the account deploys and advances via scriptless transactions — it otherwise only advances by consuming allowlisted network notes (the node runs the transaction).
+The allowlist must be non-empty. The component bumps the nonce itself and by default forbids transaction scripts, so the account deploys and advances via scriptless transactions — it otherwise only advances by consuming allowlisted network notes (the node runs the transaction). An optional second argument allowlists transaction script roots (`TransactionScript.root()`) the account will execute; only allowlist scripts whose effect is safe for every possible input, since a root pins the code but not the submitter-controlled arguments.
 
 ### Cleanup
 

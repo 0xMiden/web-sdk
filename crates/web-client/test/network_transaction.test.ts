@@ -85,10 +85,9 @@ const networkCounterTransaction = async (
     // component. Its note-script allowlist is the standardized storage slot the
     // node inspects to identify the account as a network account and route
     // matching notes to it.
-    const networkAuth =
-      window.AccountComponent.createAuthComponentForNetworkAccount([
-        noteScript.root(),
-      ]);
+    const networkAuth = window.AccountComponent.createNetworkAuth([
+      noteScript.root(),
+    ]);
 
     const seed = new Uint8Array(32);
     crypto.getRandomValues(seed);
