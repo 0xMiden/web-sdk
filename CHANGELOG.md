@@ -4,12 +4,10 @@
 
 ### Enhancements
 
-* [FEATURE][web] `AccountComponent.createNetworkAuth(allowedNoteScriptRoots, allowedTxScriptRoots?)` builds the auth component for a **network account** — a public account the node auto-executes transactions for. Attach it to a public `AccountBuilder` alongside your business component; the note-script allowlist (each root from `NoteScript.root()`) is the standardized storage slot the node uses to identify the account as a network account and route matching network notes to it. The account consumes only allowlisted note scripts; transaction scripts are forbidden by default (deploy and advance via scriptless transactions), unless their roots (`TransactionScript.root()`) are allowlisted via the optional second argument. This completes the network-note flow added in 0.15.5 — you can now create the account that auto-consumes those notes. For readback, `Account.isNetworkAccount()` reports whether an account carries the allowlist slot, and `Account.networkNoteAllowlist()` returns the allowed note-script roots (`Word[]`, or `undefined` for non-network accounts). ([web-sdk#236](https://github.com/0xMiden/web-sdk/pull/236))
+* [FEATURE][web] `AccountComponent.createNetworkAuth(allowedNoteScriptRoots, allowedTxScriptRoots?)` builds the auth component for a network account — a public account the node auto-consumes network notes against. The note-script allowlist (roots from `NoteScript.root()`) must be non-empty; transaction scripts are forbidden unless allowlisted via the optional second argument. Readback: `Account.isNetworkAccount()` and `Account.networkNoteAllowlist()`. ([#236](https://github.com/0xMiden/web-sdk/pull/236))
 
 ```ts
-const auth = AccountComponent.createNetworkAuth([
-  noteScript.root(),
-]);
+const auth = AccountComponent.createNetworkAuth([noteScript.root()]);
 const { account } = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
   .withComponent(counterComponent)

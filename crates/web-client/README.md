@@ -576,12 +576,10 @@ console.log(note.isNetworkNote()); // true
 
 Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
 
-To create the account on the receiving side, build a **public** account carrying the network-account auth component. Its note-script allowlist is the standardized storage slot the node uses to recognize a network account and route matching notes to it:
+To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
 ```typescript
-const auth = AccountComponent.createNetworkAuth([
-  myNoteScript.root(), // allowlist the note scripts this account may consume
-]);
+const auth = AccountComponent.createNetworkAuth([myNoteScript.root()]);
 const { account } = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
   .withComponent(myComponent)
@@ -589,9 +587,7 @@ const { account } = new AccountBuilder(seed)
   .build();
 ```
 
-The allowlist must be non-empty. The component bumps the nonce itself and by default forbids transaction scripts, so the account deploys and advances via scriptless transactions — it otherwise only advances by consuming allowlisted network notes (the node runs the transaction). An optional second argument allowlists transaction script roots (`TransactionScript.root()`) the account will execute; only allowlist scripts whose effect is safe for every possible input, since a root pins the code but not the submitter-controlled arguments.
-
-For readback, `account.isNetworkAccount()` reports whether an account carries the network allowlist slot, and `account.networkNoteAllowlist()` returns the allowed note-script roots (`undefined` for non-network accounts).
+The allowlist must be non-empty. Transaction scripts are forbidden unless allowlisted via the optional second argument (`TransactionScript.root()`); the component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

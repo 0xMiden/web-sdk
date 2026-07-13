@@ -226,7 +226,7 @@ test.describe("network transaction tests", () => {
     expect(senderIsNetworkAccount).toBe(false);
     expect(senderAllowlist).toBeUndefined();
     // The scriptless deploy leaves the counter at 0 (empty once normalized) —
-    // unlike the pre-0.15 flow, a network account cannot run a deploy script.
+    // a network account cannot run a deploy script.
     expect(deployedCounter).toBeFalsy();
     // The node's network transaction consumed the note and bumped it to 1.
     expect(finalCounter).toEqual("1");
