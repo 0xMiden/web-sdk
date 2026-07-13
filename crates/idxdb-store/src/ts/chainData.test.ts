@@ -42,7 +42,7 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
   it("inserts a brand-new row when none exists (genesis path)", async () => {
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false, [], []);
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored).toBeDefined();
@@ -54,10 +54,10 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
     const dbId = await openTestDb();
 
     // Step 1: first insert stores header V1.
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false, [], []);
 
     // Step 2: second insert with a different payload must NOT replace V1.
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, true);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, true, [], []);
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.header).toEqual(HEADER_V1);
@@ -71,7 +71,7 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
     // path must match or `get_tracked_block_header_numbers` misses this block.
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false, [], []);
 
     let stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.hasClientNotes).toBe("false");
@@ -81,7 +81,9 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
       dbId,
       BLOCK_NUM,
       HEADER_V2, // (ignored — header stays HEADER_V1)
-      true
+      true,
+      [],
+      []
     );
 
     stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
@@ -97,12 +99,37 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
     // contain a client note, subsequent writes should not flip that back.
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, true);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, true, [], []);
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, false, [], []);
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.hasClientNotes).toBe("true");
+  });
+});
+
+describe("insertBlockHeader: MMR nodes + atomicity", () => {
+  it("persists the header and its MMR nodes atomically", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    // Header and its nodes are stored together.
+    await insertBlockHeader(
+      dbId,
+      4,
+      HEADER_V1,
+      false,
+      ["10", "20"],
+      ["0xa", "0xb"]
+    );
+    expect((await db.blockHeaders.get(4))!.header).toEqual(HEADER_V1);
+    expect((await db.partialBlockchainNodes.get(10))!.node).toBe("0xa");
+
+    // A conflicting node write fails and rolls back the header (one transaction).
+    await expect(
+      insertBlockHeader(dbId, 5, HEADER_V2, true, ["10"], ["0xz"])
+    ).rejects.toThrow("Refusing to overwrite partial blockchain node 10");
+    expect(await db.blockHeaders.get(5)).toBeUndefined();
   });
 });
 
@@ -208,8 +235,8 @@ describe("getBlockHeaders", () => {
 
   it("returns base64-encoded headers for existing blocks", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 1, HEADER_V1, false);
-    await insertBlockHeader(dbId, 2, HEADER_V2, true);
+    await insertBlockHeader(dbId, 1, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 2, HEADER_V2, true, [], []);
 
     const results = await getBlockHeaders(dbId, [1, 2]);
     expect(results).toHaveLength(2);
@@ -236,8 +263,8 @@ describe("getBlockHeaders", () => {
 describe("getTrackedBlockHeaders", () => {
   it("returns only blocks with hasClientNotes=true", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 10, HEADER_V1, false);
-    await insertBlockHeader(dbId, 20, HEADER_V2, true);
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 20, HEADER_V2, true, [], []);
 
     const results = await getTrackedBlockHeaders(dbId);
     expect(results).toHaveLength(1);
@@ -248,7 +275,7 @@ describe("getTrackedBlockHeaders", () => {
 
   it("returns empty array when no tracked blocks", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 10, HEADER_V1, false);
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
     const results = await getTrackedBlockHeaders(dbId);
     expect(results).toEqual([]);
   });
@@ -260,9 +287,9 @@ describe("getTrackedBlockHeaders", () => {
 describe("getTrackedBlockHeaderNumbers", () => {
   it("returns primary keys of tracked blocks only", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 5, HEADER_V1, true);
-    await insertBlockHeader(dbId, 6, HEADER_V2, false);
-    await insertBlockHeader(dbId, 7, HEADER_V1, true);
+    await insertBlockHeader(dbId, 5, HEADER_V1, true, [], []);
+    await insertBlockHeader(dbId, 6, HEADER_V2, false, [], []);
+    await insertBlockHeader(dbId, 7, HEADER_V1, true, [], []);
 
     const nums = await getTrackedBlockHeaderNumbers(dbId);
     expect(nums).toHaveLength(2);
@@ -365,10 +392,10 @@ describe("pruneIrrelevantBlocks", () => {
     });
 
     // Block 0 (genesis), block 5 (irrelevant), block 10 (sync height), block 20 (tracked)
-    await insertBlockHeader(dbId, 0, HEADER_V1, false);
-    await insertBlockHeader(dbId, 5, HEADER_V1, false); // should be pruned
-    await insertBlockHeader(dbId, 10, HEADER_V1, false); // sync height, keep
-    await insertBlockHeader(dbId, 20, HEADER_V2, true); // tracked, keep
+    await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 5, HEADER_V1, false, [], []); // should be pruned
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []); // sync height, keep
+    await insertBlockHeader(dbId, 20, HEADER_V2, true, [], []); // tracked, keep
 
     await pruneIrrelevantBlocks(dbId, [], []);
 
@@ -389,10 +416,10 @@ describe("pruneIrrelevantBlocks", () => {
       blockNum: 10,
       partialBlockchainPeaks: new Uint8Array(),
     });
-    await insertBlockHeader(dbId, 0, HEADER_V1, false);
-    await insertBlockHeader(dbId, 7, HEADER_V1, true); // tracked, will untrack
-    await insertBlockHeader(dbId, 10, HEADER_V1, false);
-    await insertBlockHeader(dbId, 20, HEADER_V2, true);
+    await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 7, HEADER_V1, true, [], []); // tracked, will untrack
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 20, HEADER_V2, true, [], []);
 
     await pruneIrrelevantBlocks(dbId, [7], []);
 
@@ -449,7 +476,7 @@ const BAD_DB = "does-not-exist-chaindata";
 describe("error paths: unregistered dbId re-throws", () => {
   it("insertBlockHeader rejects on bad dbId", async () => {
     await expect(
-      insertBlockHeader(BAD_DB, 1, new Uint8Array([1]), false)
+      insertBlockHeader(BAD_DB, 1, new Uint8Array([1]), false, [], [])
     ).rejects.toThrow();
   });
 
