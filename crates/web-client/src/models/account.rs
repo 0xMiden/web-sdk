@@ -102,9 +102,9 @@ impl Account {
     }
 
     /// Returns true if this is a network account.
-    /// 
+    ///
     /// A network account is a public account whose storage
-    /// carries the standardized network-account note-script allowlist slot. 
+    /// carries the standardized network-account note-script allowlist slot.
     #[js_export(js_name = "isNetworkAccount")]
     pub fn is_network_account(&self) -> bool {
         NetworkAccount::new(self.0.clone()).is_ok()
