@@ -72,6 +72,52 @@ const { note } = await client.transactions.createNetworkNote({
 note.attachments(); // [NetworkAccountTarget attachment, extra payload]
 ```
 
+## Creating a network account
+
+A network account is a **public** account carrying the network-account auth
+component, whose note-script allowlist tells the node which notes the account
+may auto-consume:
+
+```typescript
+import {
+  AccountBuilder,
+  AccountComponent,
+  AccountStorageMode,
+  TransactionRequestBuilder,
+} from "@miden-sdk/miden-sdk";
+
+// Reuse the same compiled note script when building the network note, so
+// the allowlisted root matches.
+const auth = AccountComponent.createNetworkAuth([noteScript.root()]);
+
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(myComponent)
+  .withAuthComponent(auth)
+  .build();
+
+await client.accounts.insert({ account });
+
+// The auth component bumps the nonce itself, so a scriptless transaction
+// commits the account on-chain.
+await client.transactions.submit(
+  account.id(),
+  new TransactionRequestBuilder().build()
+);
+```
+
+The allowlist must be non-empty (`createNetworkAuth([])` throws). Transaction
+scripts are forbidden unless their roots (`TransactionScript.root()`) are
+allowlisted via the optional second argument — only allowlist scripts whose
+effect is safe for every possible input, since a root pins the code but not
+the submitter-controlled arguments.
+
+## Detecting a network account
+
+`account.isNetworkAccount()` reports whether an account carries the allowlist
+slot; `account.networkNoteAllowlist()` returns the allowed note-script roots
+(`Word[]`), or `undefined` for non-network accounts.
+
 ## Building without submitting
 
 The standalone `buildNetworkNote(opts)` builds the same `Note` without

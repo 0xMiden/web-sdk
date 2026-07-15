@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.15.6 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `AccountComponent.createNetworkAuth(allowedNoteScriptRoots, allowedTxScriptRoots?)` builds the auth component for a network account — a public account the node auto-consumes network notes against. The note-script allowlist (roots from `NoteScript.root()`) must be non-empty; transaction scripts are forbidden unless allowlisted via the optional second argument. Readback: `Account.isNetworkAccount()` and `Account.networkNoteAllowlist()`. ([#236](https://github.com/0xMiden/web-sdk/pull/236))
+
+```ts
+const auth = AccountComponent.createNetworkAuth([noteScript.root()]);
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(counterComponent)
+  .withAuthComponent(auth)
+  .build();
+```
+
 ## 0.15.5 (2026-07-08)
 
 ### Enhancements
