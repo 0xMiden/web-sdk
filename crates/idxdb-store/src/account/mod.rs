@@ -259,8 +259,13 @@ impl IdxdbStore {
         let root_serialized = root.to_string();
 
         let promise = idxdb_get_account_code(self.db_id(), root_serialized);
-        let account_code_idxdb: AccountCodeIdxdbObject =
+        // A missing row deserializes to `None` rather than surfacing as a serde
+        // "invalid type: unit value" error, so a dangling header code root turns
+        // into a clear, diagnosable store error instead of a cryptic crash.
+        let account_code_idxdb: Option<AccountCodeIdxdbObject> =
             await_js(promise, "failed to fetch account code").await?;
+        let account_code_idxdb =
+            account_code_idxdb.ok_or(StoreError::AccountCodeDataNotFound(root))?;
 
         let code = AccountCode::read_from_bytes(&account_code_idxdb.code)?;
 

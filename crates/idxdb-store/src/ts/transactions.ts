@@ -195,6 +195,7 @@ interface JsFullAccountState {
   storageMapEntries: JsStorageMapEntry[];
   assets: JsVaultAsset[];
   codeRoot: string;
+  code: Uint8Array;
   storageRoot: string;
   vaultRoot: string;
   committed: boolean;
@@ -289,6 +290,9 @@ export async function applyTransactionBatch(
       db.historicalStorageMapEntries,
       db.latestAccountAssets,
       db.historicalAccountAssets,
+      // Full account updates persist code in a nested transaction, so the
+      // parent batch must include accountCodes in its scope as well.
+      db.accountCodes,
       db.latestAccountHeaders,
       db.historicalAccountHeaders,
       db.inputNotes,

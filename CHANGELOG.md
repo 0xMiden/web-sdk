@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.9 (TBA)
+
+### Fixes
+
+* [FIX][web] `miden-idxdb-store` now persists an account's code whenever it writes a full account state, not only at account creation. Previously a sync/update could write a header whose code root had no matching code row, making `getAccount()` fail with `invalid type: unit value, expected struct AccountCodeIdxdbObject`. Full-state writes now persist both atomically, including transaction batches, and a missing row surfaces as a specific store error.
+
 ## 0.15.8 (2026-07-22)
 
 ### Enhancements
