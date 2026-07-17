@@ -169,6 +169,7 @@ export const Address = /* @__PURE__ */ _reexport("Address");
 export const AddressInterface = /* @__PURE__ */ _reexport("AddressInterface");
 export const AdviceInputs = /* @__PURE__ */ _reexport("AdviceInputs");
 export const AdviceMap = /* @__PURE__ */ _reexport("AdviceMap");
+export const AssetCallbackFlag = /* @__PURE__ */ _reexport("AssetCallbackFlag");
 export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
 export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
   "AuthFalcon512RpoMultisigConfig"
