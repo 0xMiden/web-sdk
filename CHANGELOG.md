@@ -2,8 +2,14 @@
 
 ## 0.15.6 (TBD)
 
+### Fixes
+
+* [FIX][web] Bundled `miden-client` bumped to 0.15.4. Upstream fixes reaching the web SDK: public-account sync no longer discards the client's own just-committed transaction as `Superseded` (which could permanently wedge a sole-writer account); transaction-submission failures now report the node's actual cause instead of a misclassified error; `ConsumedExternal` notes retain their metadata, so they stay findable by note ID after consumption; sync responses slightly above the node's 4 MiB payload budget no longer fail to decode. ([miden-client 0.15.4](https://github.com/0xMiden/miden-client/releases/tag/v0.15.4))
+* [FIX][web] Creating a transaction no longer registers a note tag per output note. Previously each created note leaked one `tags` row in IndexedDB (cleanup only ever covered input notes); a store migration prunes the leaked tags, keeping those still needed by inclusion-pending input notes. Mirrors the client-side SQLite migration. (client [0xMiden/rust-sdk#2323](https://github.com/0xMiden/rust-sdk/pull/2323))
+
 ### Enhancements
 
+* [FEATURE][web] `InputNoteRecord.isInclusionPending()` and `OutputNoteRecord.isInclusionPending()` — `true` while the note's on-chain inclusion is still unsettled (input notes: `Expected` / `Unverified`; output notes: `ExpectedFull` / `ExpectedPartial`), i.e. while sync is the mechanism that can advance the record. (client [0xMiden/rust-sdk#2323](https://github.com/0xMiden/rust-sdk/pull/2323))
 * [FEATURE][web] `AccountComponent.createNetworkAuth(allowedNoteScriptRoots, allowedTxScriptRoots?)` builds the auth component for a network account — a public account the node auto-consumes network notes against. The note-script allowlist (roots from `NoteScript.root()`) must be non-empty; transaction scripts are forbidden unless allowlisted via the optional second argument. Readback: `Account.isNetworkAccount()` and `Account.networkNoteAllowlist()`. ([#236](https://github.com/0xMiden/web-sdk/pull/236))
 
 ```ts
