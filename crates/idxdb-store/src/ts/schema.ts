@@ -490,16 +490,16 @@ export class MidenDatabase {
       .stores({})
       .upgrade(async (tx) => {
         const outputNoteCommitments = new Set<string>(
-          (await tx.outputNotes.toCollection().primaryKeys()) as string[]
+          await tx.outputNotes.toCollection().primaryKeys()
         );
         if (outputNoteCommitments.size === 0) {
           return;
         }
         const pendingInputNoteCommitments = new Set<string>(
-          (await tx.inputNotes
+          await tx.inputNotes
             .where("stateDiscriminant")
             .anyOf([0, 1])
-            .primaryKeys()) as string[]
+            .primaryKeys()
         );
         await tx.tags
           .filter(

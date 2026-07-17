@@ -182,14 +182,14 @@ export class MidenDatabase {
             .version(2)
             .stores({})
             .upgrade(async (tx) => {
-            const outputNoteCommitments = new Set((await tx.outputNotes.toCollection().primaryKeys()));
+            const outputNoteCommitments = new Set(await tx.outputNotes.toCollection().primaryKeys());
             if (outputNoteCommitments.size === 0) {
                 return;
             }
-            const pendingInputNoteCommitments = new Set((await tx.inputNotes
+            const pendingInputNoteCommitments = new Set(await tx.inputNotes
                 .where("stateDiscriminant")
                 .anyOf([0, 1])
-                .primaryKeys()));
+                .primaryKeys());
             await tx.tags
                 .filter((tag) => !!tag.sourceNoteId &&
                 outputNoteCommitments.has(tag.sourceNoteId) &&
