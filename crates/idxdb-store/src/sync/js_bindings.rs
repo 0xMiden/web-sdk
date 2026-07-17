@@ -165,6 +165,12 @@ pub struct JsAccountUpdate {
     #[wasm_bindgen(js_name = "codeRoot")]
     pub code_root: String,
 
+    /// The account's serialized executable code. Persisted alongside the header
+    /// so the header's `codeRoot` always resolves to a stored `accountCodes`
+    /// row — even when this is the first time the store sees this code root.
+    #[wasm_bindgen(js_name = "code")]
+    pub code: Vec<u8>,
+
     /// Whether this account update has been committed.
     #[wasm_bindgen(js_name = "committed")]
     pub committed: bool,
@@ -205,6 +211,7 @@ impl JsAccountUpdate {
             assets: asset_vault.assets().map(|asset| JsVaultAsset::from_asset(&asset)).collect(),
             account_id: account.id().to_string(),
             code_root: account.code().commitment().to_string(),
+            code: account.code().to_bytes(),
             committed: account.is_public(),
             nonce: account.nonce().to_string(),
             account_commitment: account.to_commitment().to_string(),

@@ -570,8 +570,9 @@ async function restoreAssetsFromHistorical(db, accountId, nonce) {
 export async function applyFullAccountState(dbId, accountState) {
     try {
         const db = getDatabase(dbId);
-        const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, } = accountState;
+        const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, code, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, } = accountState;
         await db.dexie.transaction("rw", [
+            db.accountCodes,
             db.latestAccountStorages,
             db.historicalAccountStorages,
             db.latestStorageMapEntries,
@@ -581,6 +582,12 @@ export async function applyFullAccountState(dbId, accountState) {
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
         ], async () => {
+            // Persist the account code so the header's `codeRoot` always resolves.
+            // `put` is idempotent: it safely replaces an existing row and fills the
+            // gap for an unseen root (e.g. an account observed only through sync,
+            // never locally inserted) that would otherwise leave getAccountCode
+            // unable to resolve the header.
+            await db.accountCodes.put({ root: codeRoot, code });
             // Archive: save current latest values to historical (so they can be
             // restored on undo), then replace latest with the new state.
             await archiveAndReplaceStorageSlots(db, accountId, nonce, storageSlots);

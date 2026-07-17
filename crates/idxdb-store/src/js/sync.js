@@ -113,6 +113,9 @@ export async function applyStateSync(dbId, stateUpdate) {
         db.blockHeaders,
         db.partialBlockchainNodes,
         db.tags,
+        // applyFullAccountState (called per account update below) opens a nested
+        // transaction that writes accountCodes; Dexie requires it in the parent scope.
+        db.accountCodes,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
         db.latestAccountStorages,
@@ -146,6 +149,7 @@ export async function applyStateSync(dbId, stateUpdate) {
                 storageMapEntries: accountUpdate.storageMapEntries,
                 assets: accountUpdate.assets,
                 codeRoot: accountUpdate.codeRoot,
+                code: accountUpdate.code,
                 storageRoot: accountUpdate.storageRoot,
                 vaultRoot: accountUpdate.vaultRoot,
                 committed: accountUpdate.committed,

@@ -727,6 +727,7 @@ export async function applyFullAccountState(
     storageMapEntries: JsStorageMapEntry[];
     assets: JsVaultAsset[];
     codeRoot: string;
+    code: Uint8Array;
     storageRoot: string;
     vaultRoot: string;
     committed: boolean;
@@ -743,6 +744,7 @@ export async function applyFullAccountState(
       storageMapEntries,
       assets,
       codeRoot,
+      code,
       storageRoot,
       vaultRoot,
       committed,
@@ -753,6 +755,7 @@ export async function applyFullAccountState(
     await db.dexie.transaction(
       "rw",
       [
+        db.accountCodes,
         db.latestAccountStorages,
         db.historicalAccountStorages,
         db.latestStorageMapEntries,
@@ -763,6 +766,13 @@ export async function applyFullAccountState(
         db.historicalAccountHeaders,
       ],
       async () => {
+        // Persist the account code so the header's `codeRoot` always resolves.
+        // `put` is idempotent: it safely replaces an existing row and fills the
+        // gap for an unseen root (e.g. an account observed only through sync,
+        // never locally inserted) that would otherwise leave getAccountCode
+        // unable to resolve the header.
+        await db.accountCodes.put({ root: codeRoot, code });
+
         // Archive: save current latest values to historical (so they can be
         // restored on undo), then replace latest with the new state.
         await archiveAndReplaceStorageSlots(db, accountId, nonce, storageSlots);
