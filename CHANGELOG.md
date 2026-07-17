@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.7 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `FungibleAsset.callbacks()` and `FungibleAsset.withCallbacks(flag)` expose the asset's `AssetCallbackFlag` (`Disabled` / `Enabled`) — the vault-key bit that decides whether the issuing faucet's callbacks run when the asset is added to an account or note. The constructor always yields `Disabled`; `withCallbacks` returns a copy carrying the given flag. The flag is part of the asset's vault key, so it must match the flag the issuing faucet applies. (closes [#239](https://github.com/0xMiden/web-sdk/issues/239))
+
+```ts
+const asset = new FungibleAsset(faucetId, 10n);
+asset.callbacks(); // AssetCallbackFlag.Disabled
+const enabled = asset.withCallbacks(AssetCallbackFlag.Enabled);
+```
+
 ## 0.15.6 (2026-07-17)
 
 ### Fixes

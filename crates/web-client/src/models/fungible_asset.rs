@@ -4,6 +4,7 @@ use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{Asset as NativeAsset, FungibleAsset as FungibleAssetNative};
 
 use super::account_id::AccountId;
+use super::asset_callback_flag::AssetCallbackFlag;
 use super::word::Word;
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64, u64_to_js_u64};
 
@@ -33,6 +34,22 @@ impl FungibleAsset {
     #[js_export(js_name = "faucetId")]
     pub fn faucet_id(&self) -> AccountId {
         self.0.faucet_id().into()
+    }
+
+    /// Returns whether this asset invokes its faucet's callbacks.
+    pub fn callbacks(&self) -> AssetCallbackFlag {
+        self.0.callbacks().into()
+    }
+
+    /// Returns a copy of this asset carrying the given callback flag.
+    ///
+    /// The flag is part of the asset's vault key, so it must match the flag the issuing faucet
+    /// applies — an asset built with the wrong flag addresses a different vault slot than the one
+    /// holding the balance. The constructor always produces `Disabled`; pass `Enabled` only for
+    /// assets from a faucet that registers transfer policies.
+    #[js_export(js_name = "withCallbacks")]
+    pub fn with_callbacks(&self, callbacks: AssetCallbackFlag) -> FungibleAsset {
+        FungibleAsset(self.0.with_callbacks(callbacks.into()))
     }
 
     /// Encodes this asset into the word layout used in the vault.
