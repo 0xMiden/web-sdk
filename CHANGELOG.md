@@ -5,10 +5,12 @@
 ### Changes
 
 * [BREAKING][api][web] Migrated `miden-client-web`, `miden-mobile-prover`, and `miden-idxdb-store` to `miden-client` / `miden-client-sqlite-store` `0.16.0-alpha.1`. `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` are replaced by `accountPatch()`, which exposes the new absolute-valued `AccountPatch`, `AccountStoragePatch`, and `AccountVaultPatch` models; `TransactionSummary.accountDelta()` remains relative. Account-component procedures now require `@account_procedure`, transaction scripts use `@transaction_script pub proc main`, and scripts invoking installed account procedures should link the exact component with `libraries: [{ component }]` (or `link{Static,Dynamic}AccountComponentCode`) so procedure identities match. P2ID/P2IDE note assets are non-empty, `ClientOptions.debugMode` is a deprecated no-op, and IndexedDB applies absolute account patches. ([#225](https://github.com/0xMiden/web-sdk/pull/225))
+* [web] Private notes sent via `sendPrivateNote` now carry the client's current sync height as a block hint, so recipients get deterministic delivery (scanning from that block) instead of a fixed lookback window. ([#231](https://github.com/0xMiden/web-sdk/pull/231))
 
 ### Fixes
 
 * [FIX][web] `miden-idxdb-store` no longer silently overwrites already-stored partial blockchain (`PartialMmr`) authentication nodes. Writing a known node index with the same value is accepted, but writing a different value for that index now rejects with an error and leaves the stored value intact, so a buggy or malicious sync path can't replace known-good MMR nodes. ([#193](https://github.com/0xMiden/web-sdk/issues/193))
+* [FIX][web] `miden-idxdb-store` now persists a tracked block header and its MMR authentication nodes in a single IndexedDB transaction. An interrupted sync (closed tab, crash, or failed write) could previously store the header without its nodes, leaving the client unable to rebuild its partial MMR, so sync then failed with `InconsistentPartialMmr` until the local database was cleared. ([#221](https://github.com/0xMiden/web-sdk/pull/221), client [#2294](https://github.com/0xMiden/rust-sdk/pull/2294))
 
 ## 0.15.0 (2026-06-12)
 
