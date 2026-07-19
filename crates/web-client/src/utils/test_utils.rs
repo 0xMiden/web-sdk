@@ -23,6 +23,8 @@ impl TestUtils {
     #[wasm_bindgen(js_name = "createMockSerializedLibraryPackage")]
     pub fn create_mock_serialized_library_package() -> Uint8Array {
         pub const CODE: &str = "
+            namespace miden::testing::package_tests
+
             pub proc foo
                 push.1.2 mul
             end
@@ -43,6 +45,8 @@ impl TestUtils {
     #[wasm_bindgen(js_name = "createMockSerializedProgramPackage")]
     pub fn create_mock_serialized_program_package() -> Uint8Array {
         pub const CODE: &str = "
+            namespace miden::testing::note_script
+
             @note_script
             pub proc main
                 # This code computes 1001st Fibonacci number
