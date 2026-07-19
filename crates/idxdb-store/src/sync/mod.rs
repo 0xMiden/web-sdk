@@ -2,10 +2,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
-use miden_client::account::{AccountId, StorageMap, StorageSlotType};
+use miden_client::account::{Account, AccountId};
 use miden_client::crypto::{Forest, MmrPeaks};
-use miden_client::note::{BlockNumber, NoteTag};
-use miden_client::store::{AccountStorageFilter, StoreError};
+use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
+use miden_client::store::StoreError;
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -14,10 +14,14 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
-use miden_protocol::note::NoteDetailsCommitment;
 
 use super::IdxdbStore;
-use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
+use super::account::utils::{
+    apply_account_patch,
+    compute_storage_patch,
+    compute_vault_patch,
+    update_tracked_storage_roots,
+};
 use super::chain_data::utils::{
     SerializedPartialBlockchainNodeData,
     serialize_partial_blockchain_node,
@@ -227,22 +231,23 @@ impl IdxdbStore {
             .map(serialize_transaction_record)
             .collect();
 
-        // Separate full updates from delta updates.
-        //
-        // `PublicAccountUpdate::Delta` now wraps a single `PublicAccountDelta`
-        // carrying the per-block incremental updates from the RPC sync path.
-        // To apply it we load the local header / value-slot storage / vault,
-        // then call `PublicAccountDelta::compute_account_delta` to derive the
-        // same `AccountDelta` shape the existing apply logic consumes. (See
-        // sqlite-store's `apply_public_account_delta` for the canonical
-        // implementation of this redirect.)
-        let mut full_accounts = Vec::new();
-        let mut delta_updates = Vec::new();
+        // Separate full account updates from incremental absolute patches. A full-state patch can
+        // also occur when a newly-created account is too large for the node's full-state response;
+        // convert it back into an account so it follows the same replacement path.
+        let mut full_accounts: Vec<Account> = Vec::new();
+        let mut patch_updates = Vec::new();
         for update in account_updates.updated_public_accounts() {
             match update {
-                PublicAccountUpdate::Full(account) => full_accounts.push(account),
-                PublicAccountUpdate::Delta(public_delta) => {
-                    delta_updates.push(public_delta);
+                PublicAccountUpdate::Full(account) => full_accounts.push(account.clone()),
+                PublicAccountUpdate::Patch { new_header, patch } if patch.is_full_state() => {
+                    let account = Account::try_from(patch)?;
+                    if account.to_commitment() != new_header.to_commitment() {
+                        return Err(StoreError::AccountCommitmentMismatch(account.id()));
+                    }
+                    full_accounts.push(account);
+                },
+                PublicAccountUpdate::Patch { new_header, patch } => {
+                    patch_updates.push((new_header, patch));
                 },
             }
         }
@@ -259,49 +264,16 @@ impl IdxdbStore {
             }
         }
 
-        // Apply delta updates incrementally
-        for public_delta in &delta_updates {
-            let new_header = public_delta.new_header();
+        // Apply partial patches incrementally. Their storage and vault values are already absolute,
+        // so no full account or relative-delta reconstruction is required.
+        for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
 
-            // `compute_account_delta` diffs the RPC-provided new state against
-            // the locally-stored account, anchoring the delta on the local
-            // nonce. The locally-stored header (not `new_header`) must be
-            // passed: it carries the old nonce the diff is computed from, and
-            // the call rejects a non-increasing nonce.
-            let local_header = self
-                .get_account_header(account_id)
-                .await?
-                .map(|(header, _)| header)
-                .ok_or(StoreError::AccountDataNotFound(account_id))?;
-
-            // The RPC-side incremental updates address specific slot names so
-            // a narrowed `SlotNames` filter avoids round-tripping the whole
-            // storage tree.
-            let local_storage = self
-                .get_account_storage(
-                    account_id,
-                    AccountStorageFilter::SlotNames(public_delta.value_slot_names()),
-                )
-                .await?;
-            let local_vault = self.get_account_vault(account_id).await?;
-            let delta =
-                public_delta.compute_account_delta(&local_header, &local_storage, &local_vault)?;
-
-            // Load targeted data for delta computation
-            let vault_keys: Vec<String> = delta
-                .vault()
-                .fungible()
-                .iter()
-                .map(|(vault_key, _)| vault_key.to_string())
-                .collect();
-            let old_vault_assets = self.get_vault_assets(account_id, vault_keys).await?;
-
             let map_slot_names: Vec<String> =
-                delta.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
+                patch.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
             let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
 
-            let (updated_storage_slots, updated_assets, removed_vault_keys) = {
+            let (updated_storage_slots, updated_assets, removed_asset_ids) = {
                 let mut smt_forest = self.smt_forest.write();
 
                 let mut final_roots = smt_forest
@@ -309,53 +281,50 @@ impl IdxdbStore {
                     .cloned()
                     .ok_or(StoreError::AccountDataNotFound(account_id))?;
 
-                // Storage: compute new map roots via SMT forest
+                // Storage: compute new map roots via SMT forest and update the tracked root list.
                 let updated_storage_slots =
-                    compute_storage_delta(&mut smt_forest, &old_map_roots, &delta)?;
+                    compute_storage_patch(&mut smt_forest, &old_map_roots, patch)?;
+                update_tracked_storage_roots(
+                    &mut final_roots,
+                    &old_map_roots,
+                    &updated_storage_slots,
+                )?;
 
-                // Update map roots in final_roots with new values from the delta
-                let default_map_root = StorageMap::default().root();
-                for (slot_name, (new_root, slot_type)) in &updated_storage_slots {
-                    if *slot_type == StorageSlotType::Map {
-                        let old_root =
-                            old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
-                        if let Some(root) = final_roots.iter_mut().find(|r| **r == old_root) {
-                            *root = *new_root;
-                        } else {
-                            final_roots.push(*new_root);
-                        }
-                    }
-                }
-
-                // Vault: compute new asset values and update SMT forest
+                // Vault patches already contain absolute final asset values.
                 let old_vault_root = final_roots[0];
-                let (updated_assets, removed_vault_keys) =
-                    compute_vault_delta(&old_vault_assets, &delta)?;
+                let (updated_assets, removed_asset_ids) = compute_vault_patch(patch);
                 let new_vault_root = smt_forest.update_asset_nodes(
                     old_vault_root,
                     updated_assets.iter().copied(),
-                    removed_vault_keys.iter().copied(),
+                    removed_asset_ids.iter().copied(),
                 )?;
+                if new_vault_root != new_header.vault_root() {
+                    return Err(StoreError::DatabaseError(format!(
+                        "computed vault root {} does not match synced account header {}",
+                        new_vault_root.to_hex(),
+                        new_header.vault_root().to_hex(),
+                    )));
+                }
                 final_roots[0] = new_vault_root;
 
                 // For sync updates, replace roots directly (not staged)
                 smt_forest.replace_roots(account_id, final_roots);
 
-                (updated_storage_slots, updated_assets, removed_vault_keys)
+                (updated_storage_slots, updated_assets, removed_asset_ids)
             };
 
-            apply_transaction_delta(
+            apply_account_patch(
                 self.db_id(),
                 account_id,
                 new_header,
                 &updated_storage_slots,
                 &updated_assets,
-                &removed_vault_keys,
-                &delta,
+                &removed_asset_ids,
+                patch,
             )
             .await
             .map_err(|err| {
-                StoreError::DatabaseError(format!("failed to apply sync account delta: {err:?}"))
+                StoreError::DatabaseError(format!("failed to apply sync account patch: {err:?}"))
             })?;
         }
 

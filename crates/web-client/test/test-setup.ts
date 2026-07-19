@@ -312,6 +312,7 @@ function patchNapiPrototypes(rawSdk: any) {
 
   // Patch null → undefined for Option<T> returns
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
   ] as [any, string[]][]) {

@@ -26,6 +26,7 @@ import type {
   NoteExportFormat,
   StorageSlot,
   AccountComponent,
+  Library,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -186,7 +187,10 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
-  /** Enable debug mode for transaction execution (default: false). */
+  /**
+   * @deprecated Transaction debug mode was removed in miden-client 0.16.
+   * This option is retained for source compatibility and has no effect.
+   */
   debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
@@ -573,7 +577,7 @@ export type NoteQuery =
 export interface NoteOptions {
   from: AccountRef;
   to: AccountRef;
-  assets: Asset | Asset[];
+  assets: Asset | [Asset, ...Asset[]];
   type?: NoteVisibility;
   attachment?: Felt[];
 }
@@ -878,6 +882,11 @@ export interface NotesResource {
 export interface CompileComponentOptions {
   /** MASM source code for the component. */
   code: string;
+  /**
+   * Module path used to derive procedure identities. Use the same namespace when
+   * linking this component into transaction scripts.
+   */
+  namespace?: string;
   /** Initial storage slots for the component. */
   slots?: StorageSlot[];
   /**
@@ -904,18 +913,35 @@ export interface CompileTxScriptLibrary {
   linking?: Linking;
 }
 
+/** Links the exact compiled code installed by an account component. */
+export interface CompileAccountComponentLibrary {
+  /** Account component whose installed code should be linked. */
+  component: AccountComponent;
+  /**
+   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
+   * `Linking.Static` — procedures are inlined at compile time.
+   */
+  linking?: Linking;
+}
+
+/** A script library supplied inline, pre-built, or from an installed account component. */
+export type CompileScriptLibrary =
+  | CompileTxScriptLibrary
+  | CompileAccountComponentLibrary
+  | Library;
+
 export interface CompileTxScriptOptions {
   /** MASM source code for the transaction script. */
   code: string;
   /** Component libraries to link. */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: CompileScriptLibrary[];
 }
 
 export interface CompileNoteScriptOptions {
   /** MASM source code for the note script. */
   code: string;
   /** Component libraries to link. */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: CompileScriptLibrary[];
 }
 
 export declare class CompilerResource {

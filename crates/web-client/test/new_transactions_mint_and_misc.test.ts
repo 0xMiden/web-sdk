@@ -85,6 +85,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY, VALUE]
         # Outputs: []
+        @account_procedure
         pub proc write_to_map
             # Setting the key value pair in the map
             push.MAP_SLOT[0..2]
@@ -97,6 +98,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY]
         # Outputs: [VALUE]
+        @account_procedure
         pub proc get_value_in_map
             push.MAP_SLOT[0..2]
             exec.active_account::get_map_item
@@ -105,6 +107,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: []
         # Outputs: [CURRENT_ROOT]
+        @account_procedure
         pub proc get_current_map_root
             push.MAP_SLOT[0..2] exec.active_account::get_item
             # => [CURRENT_ROOT]
@@ -117,7 +120,8 @@ test.describe("custom account component tests", () => {
         use miden_by_example::mapping_example_contract
         use miden::core::sys
 
-        begin
+        @transaction_script
+        pub proc main
             push.1.2.3.4
             push.0.0.0.0
             # => [KEY, VALUE]
@@ -145,8 +149,10 @@ test.describe("custom account component tests", () => {
       const storageMap = new sdk.StorageMap();
       const storageSlotMap = sdk.StorageSlot.map(MAP_SLOT_NAME, storageMap);
 
-      const accountComponentCode =
-        builder.compileAccountComponentCode(accountCode);
+      const accountComponentCode = builder.compileAccountComponentCodeWithPath(
+        "miden_by_example::mapping_example_contract",
+        accountCode
+      );
       const mappingAccountComponent = sdk.AccountComponent.compile(
         accountComponentCode,
         [storageSlotMap]
@@ -171,12 +177,9 @@ test.describe("custom account component tests", () => {
       );
       await client.newAccount(accountBuilderResult.account, false);
 
-      const accountCodeLib = builder.buildLibrary(
-        "miden_by_example::mapping_example_contract",
-        accountCode
+      builder.linkStaticAccountComponentCode(
+        mappingAccountComponent.componentCode()
       );
-
-      builder.linkStaticLibrary(accountCodeLib);
 
       const txScript = builder.compileTxScript(scriptCode);
 
@@ -230,6 +233,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY, VALUE]
         # Outputs: []
+        @account_procedure
         pub proc write_to_map
             # Setting the key value pair in the map
             push.MAP_SLOT[0..2]
@@ -242,6 +246,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: [KEY]
         # Outputs: [VALUE]
+        @account_procedure
         pub proc get_value_in_map
             push.MAP_SLOT[0..2]
             exec.active_account::get_map_item
@@ -250,6 +255,7 @@ test.describe("custom account component tests", () => {
 
         # Inputs: []
         # Outputs: [CURRENT_ROOT]
+        @account_procedure
         pub proc get_current_map_root
             push.MAP_SLOT[0..2] exec.active_account::get_item
             # => [CURRENT_ROOT]
@@ -262,7 +268,8 @@ test.describe("custom account component tests", () => {
         use miden_by_example::mapping_example_contract
         use miden::core::sys
 
-        begin
+        @transaction_script
+        pub proc main
             push.1.2.3.4
             push.0.0.0.0
             # => [KEY, VALUE]
@@ -290,8 +297,10 @@ test.describe("custom account component tests", () => {
       const storageMap = new sdk.StorageMap();
       const storageSlotMap = sdk.StorageSlot.map(MAP_SLOT_NAME, storageMap);
 
-      const accountComponentCode =
-        builder.compileAccountComponentCode(accountCode);
+      const accountComponentCode = builder.compileAccountComponentCodeWithPath(
+        "miden_by_example::mapping_example_contract",
+        accountCode
+      );
       const mappingAccountComponent = sdk.AccountComponent.compile(
         accountComponentCode,
         [storageSlotMap]
@@ -316,12 +325,9 @@ test.describe("custom account component tests", () => {
       );
       await client.newAccount(accountBuilderResult.account, false);
 
-      const accountCodeLib = builder.buildLibrary(
-        "miden_by_example::mapping_example_contract",
-        accountCode
+      builder.linkStaticAccountComponentCode(
+        mappingAccountComponent.componentCode()
       );
-
-      builder.linkStaticLibrary(accountCodeLib);
 
       const txScript = builder.compileTxScript(scriptCode);
 
@@ -397,6 +403,7 @@ test.describe("storage map test", () => {
 
         const MAP_SLOT = word("${MAP_SLOT_NAME}")
 
+        @account_procedure
         pub proc bump_map_item
         # map key
         push.1.1.1.1 # Map key
@@ -412,8 +419,10 @@ test.describe("storage map test", () => {
       `;
 
       const builder = await client.createCodeBuilder();
-      const accountComponentCode =
-        builder.compileAccountComponentCode(accountCode);
+      const accountComponentCode = builder.compileAccountComponentCodeWithPath(
+        "external_contract::bump_item_contract",
+        accountCode
+      );
       const bumpItemComponent = sdk.AccountComponent.compile(
         accountComponentCode,
         [sdk.StorageSlot.map(MAP_SLOT_NAME, storageMap)]
@@ -456,16 +465,14 @@ test.describe("storage map test", () => {
           .getMapItem(MAP_SLOT_NAME, MAP_KEY)
       );
 
-      const accountComponentLib = builder.buildLibrary(
-        "external_contract::bump_item_contract",
-        accountCode
+      builder.linkDynamicAccountComponentCode(
+        bumpItemComponent.componentCode()
       );
-
-      builder.linkDynamicLibrary(accountComponentLib);
 
       const txScript = builder.compileTxScript(
         `use external_contract::bump_item_contract
-        begin
+        @transaction_script
+        pub proc main
             call.bump_item_contract::bump_map_item
         end`
       );
@@ -726,6 +733,9 @@ test.describe("submitNewTransactionWithProver tests", () => {
         );
 
         return {
+          accountNonceDelta: Number(
+            summary.accountDelta().nonceDelta().asInt()
+          ),
           inputNotesCount: summary.inputNotes().numNotes(),
           outputNotesCount: summary.outputNotes().numNotes(),
           saltHex: summary.salt().toHex(),
@@ -733,9 +743,50 @@ test.describe("submitNewTransactionWithProver tests", () => {
         };
       });
 
+      expect(result.accountNonceDelta).toBe(1);
       expect(result.inputNotesCount).toBe(0);
       expect(result.outputNotesCount).toBe(0);
       expect(result.saltHex).toBe(result.expectedSaltHex);
+    });
+
+    test("executeForSummary reconstructs the vault delta for an authorized transaction", async ({
+      run,
+    }) => {
+      const result = await run(async ({ client, sdk, helpers }) => {
+        const { wallet: sender, faucet } = await helpers.setupWalletAndFaucet();
+        const receiver = await client.newWallet(
+          sdk.AccountStorageMode.private(),
+          sdk.AuthScheme.AuthRpoFalcon512
+        );
+        await helpers.mockMintAndConsume(sender.id(), faucet.id());
+
+        const transactionRequest = await client.newSendTransactionRequest(
+          sender.id(),
+          receiver.id(),
+          faucet.id(),
+          sdk.NoteType.Public,
+          sdk.u64(100),
+          null,
+          null
+        );
+        const summary = await client.executeForSummary(
+          sender.id(),
+          transactionRequest
+        );
+        const amount = summary
+          .accountDelta()
+          .vault()
+          .fungible()
+          .amount(faucet.id());
+
+        return {
+          fungibleDelta: amount?.toString(),
+          outputNotesCount: summary.outputNotes().numNotes(),
+        };
+      });
+
+      expect(result.fungibleDelta).toBe("-100");
+      expect(result.outputNotesCount).toBe(1);
     });
   });
 });

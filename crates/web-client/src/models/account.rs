@@ -1,6 +1,6 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
 use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
+use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
@@ -113,15 +113,7 @@ impl Account {
     /// Returns the public key commitments derived from the account's authentication scheme.
     #[js_export(js_name = "getPublicKeyCommitments")]
     pub fn get_public_key_commitments(&self) -> Vec<Word> {
-        let inner_account = &self.0;
-        let mut pks = vec![];
-        let interface: AccountInterface = AccountInterface::from_account(inner_account);
-
-        for auth in interface.auth() {
-            pks.extend(auth.get_public_key_commitments());
-        }
-
-        pks.into_iter().map(NativeWord::from).map(Into::into).collect()
+        get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect()
     }
 }
 

@@ -100,6 +100,7 @@ function initSdk(): any {
   // eslint-disable-next-line camelcase
   patchPrototype(rawSdk.AccountHeader, { to_commitment: "toCommitment" });
 
+  patchNullToUndefined(rawSdk.AccountPatch, ["finalNonce"]);
   patchNullToUndefined(rawSdk.AccountStorage, [
     "getItem",
     "getMapEntries",

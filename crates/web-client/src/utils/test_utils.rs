@@ -2,7 +2,7 @@ use miden_client::Serializable;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::assembly::Assembler as NativeAssembler;
 use miden_client::testing::account_id::ACCOUNT_ID_REGULAR_PRIVATE_ACCOUNT_UPDATABLE_CODE;
-use miden_client::vm::{Package as NativePackage, TargetType as NativeTargetType};
+use miden_client::vm::TargetType as NativeTargetType;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys::Uint8Array;
 
@@ -32,15 +32,9 @@ impl TestUtils {
             end
         ";
 
-        let library = NativeAssembler::default().assemble_library([CODE]).unwrap();
-
-        let package = NativePackage::from_library(
-            "test_package_no_metadata".into(),
-            "0.0.0".parse().unwrap(),
-            NativeTargetType::Library,
-            library,
-            core::iter::empty(),
-        );
+        let package = NativeAssembler::default()
+            .assemble_library("test_package_no_metadata", CODE, None::<&str>)
+            .unwrap();
 
         let bytes: Vec<u8> = package.to_bytes();
         Uint8Array::from(bytes.as_slice())
@@ -58,15 +52,10 @@ impl TestUtils {
             end
         ";
 
-        let library = NativeAssembler::default().assemble_library([CODE]).unwrap();
-
-        let package = NativePackage::from_library(
-            "test_note_script_package".into(),
-            "0.0.0".parse().unwrap(),
-            NativeTargetType::Note,
-            library,
-            core::iter::empty(),
-        );
+        let mut package = NativeAssembler::default()
+            .assemble_library("test_note_script_package", CODE, None::<&str>)
+            .unwrap();
+        package.kind = NativeTargetType::Note;
 
         let bytes: Vec<u8> = package.to_bytes();
         Uint8Array::from(bytes.as_slice())

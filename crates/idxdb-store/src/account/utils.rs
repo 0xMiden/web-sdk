@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use miden_client::account::{
     Account,
     AccountCode,
-    AccountDelta,
     AccountHeader,
     AccountId,
+    AccountPatch,
     AccountStorage,
     Address,
     StorageMap,
@@ -15,17 +15,10 @@ use miden_client::account::{
     StorageSlotName,
     StorageSlotType,
 };
-use miden_client::asset::{
-    Asset,
-    AssetAmount,
-    AssetVault,
-    AssetVaultKey,
-    FungibleAsset,
-    NonFungibleDeltaAction,
-};
+use miden_client::asset::{Asset, AssetId, AssetVault};
 use miden_client::store::{AccountSmtForest, AccountStatus, ClientAccountType, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
-use miden_client::{EMPTY_WORD, Felt, Word};
+use miden_client::{Felt, Word};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
@@ -194,131 +187,147 @@ pub fn parse_account_address_idxdb_object(
     Ok((address, native_account_id))
 }
 
-/// Computes updated storage slot roots from the delta using the SMT forest.
+/// Storage slot changes derived from an account patch.
 ///
-/// Value slots are taken directly from the delta. Map slots are computed incrementally
-/// by applying the map delta entries to the old root via the SMT forest.
-pub fn compute_storage_delta(
+/// The optional word is the slot's final value/root. It is `None` when the slot is removed.
+pub type PatchedStorageSlots = BTreeMap<StorageSlotName, (Option<Word>, StorageSlotType, u8)>;
+
+/// Computes the final values and map roots for the storage changes in `patch`.
+pub fn compute_storage_patch(
     smt_forest: &mut AccountSmtForest,
     old_map_roots: &BTreeMap<StorageSlotName, Word>,
-    delta: &AccountDelta,
-) -> Result<BTreeMap<StorageSlotName, (Word, StorageSlotType)>, StoreError> {
-    let mut updated_slots: BTreeMap<StorageSlotName, (Word, StorageSlotType)> = delta
+    patch: &AccountPatch,
+) -> Result<PatchedStorageSlots, StoreError> {
+    let mut updated_slots: PatchedStorageSlots = patch
         .storage()
         .values()
-        .map(|(slot_name, value)| (slot_name.clone(), (*value, StorageSlotType::Value)))
+        .map(|(slot_name, value_patch)| {
+            (
+                slot_name.clone(),
+                (value_patch.value(), StorageSlotType::Value, value_patch.patch_op().as_u8()),
+            )
+        })
         .collect();
 
     let default_map_root = StorageMap::default().root();
 
-    for (slot_name, map_delta) in delta.storage().maps() {
-        let old_root = old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
-        let new_root = smt_forest.update_storage_map_nodes(
-            old_root,
-            map_delta.entries().iter().map(|(key, value)| (*key, *value)),
-        )?;
-        updated_slots.insert(slot_name.clone(), (new_root, StorageSlotType::Map));
+    for (slot_name, map_patch) in patch.storage().maps() {
+        let patch_op = map_patch.patch_op();
+        let new_root = if patch_op.is_remove() {
+            None
+        } else {
+            let old_root = if patch_op.is_create() {
+                default_map_root
+            } else {
+                old_map_roots.get(slot_name).copied().ok_or_else(|| {
+                    StoreError::DatabaseError(format!(
+                        "storage map slot {slot_name} is missing while applying an update",
+                    ))
+                })?
+            };
+            let entries = map_patch
+                .entries()
+                .expect("create and update map patches always contain entries");
+            Some(smt_forest.update_storage_map_nodes(
+                old_root,
+                entries.as_map().iter().map(|(key, value)| (*key, *value)),
+            )?)
+        };
+        updated_slots.insert(slot_name.clone(), (new_root, StorageSlotType::Map, patch_op.as_u8()));
     }
 
     Ok(updated_slots)
 }
 
-/// Computes the new vault state from old assets and the vault delta.
-///
-/// Returns (`updated_assets`, `removed_vault_keys`) where:
-/// - `updated_assets` contains assets with their new values (for DB insertion and SMT update)
-/// - `removed_vault_keys` contains vault keys for assets removed from the vault
-pub fn compute_vault_delta(
-    old_vault_assets: &[Asset],
-    delta: &AccountDelta,
-) -> Result<(Vec<Asset>, Vec<AssetVaultKey>), StoreError> {
-    let mut updated_assets = Vec::new();
-    let mut removed_vault_keys = Vec::new();
-
-    // Build lookup map from vault key to FungibleAsset
-    let mut fungible_map: BTreeMap<AssetVaultKey, FungibleAsset> = old_vault_assets
-        .iter()
-        .filter_map(|asset| match asset {
-            Asset::Fungible(fa) => Some((fa.vault_key(), *fa)),
-            Asset::NonFungible(_) => None,
-        })
-        .collect();
-
-    // Process fungible deltas
-    for (vault_key, delta_amount) in delta.vault().fungible().iter() {
-        // Preserve the vault key's `AssetCallbackFlag`: it is part of the
-        // asset's vault-key and value encoding, so dropping it makes the
-        // recomputed vault root diverge from the kernel's (a
-        // `ConflictingRoots` error) for callback-bearing assets. Mirrors
-        // miden-protocol's `AssetVault::apply_delta` and the sqlite-store fix
-        // in miden-client #2225.
-        let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?
-            .with_callbacks(vault_key.callback_flag());
-
-        let asset = match fungible_map.remove(vault_key) {
-            Some(existing) => {
-                if *delta_amount >= 0 {
-                    existing.add(delta_asset)?
-                } else {
-                    existing.sub(delta_asset)?
-                }
-            },
-            None => delta_asset,
-        };
-
-        if asset.amount() > AssetAmount::ZERO {
-            updated_assets.push(Asset::Fungible(asset));
-        } else {
-            removed_vault_keys.push(asset.vault_key());
+/// Applies changed storage-map roots to the root list tracked by [`AccountSmtForest`].
+pub fn update_tracked_storage_roots(
+    tracked_roots: &mut Vec<Word>,
+    old_map_roots: &BTreeMap<StorageSlotName, Word>,
+    patched_slots: &PatchedStorageSlots,
+) -> Result<(), StoreError> {
+    for (slot_name, (new_root, slot_type, _patch_op)) in patched_slots {
+        if *slot_type != StorageSlotType::Map {
+            continue;
         }
-    }
 
-    // Process non-fungible deltas
-    for (nft, action) in delta.vault().non_fungible().iter() {
-        match action {
-            NonFungibleDeltaAction::Add => {
-                updated_assets.push(Asset::NonFungible(*nft));
+        let old_root = old_map_roots.get(slot_name).copied();
+        let old_root_position = old_root.and_then(|old_root| {
+            // The vault root is always first and can equal a storage-map root (notably for empty
+            // trees), so only search the storage-map portion of the list.
+            tracked_roots
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find_map(|(position, root)| (*root == old_root).then_some(position))
+        });
+
+        match (old_root, old_root_position, new_root) {
+            (Some(_), Some(position), Some(new_root)) => tracked_roots[position] = *new_root,
+            (Some(old_root), None, _) => {
+                return Err(StoreError::DatabaseError(format!(
+                    "storage map root {} for slot {slot_name} is not tracked",
+                    old_root.to_hex(),
+                )));
             },
-            NonFungibleDeltaAction::Remove => {
-                removed_vault_keys.push(nft.vault_key());
+            (None, _, Some(new_root)) => tracked_roots.push(*new_root),
+            (Some(_), Some(position), None) => {
+                tracked_roots.remove(position);
+            },
+            (None, _, None) => {
+                return Err(StoreError::DatabaseError(format!(
+                    "storage map slot {slot_name} is missing while applying a removal",
+                )));
             },
         }
     }
 
-    Ok((updated_assets, removed_vault_keys))
+    Ok(())
 }
 
-/// Applies a transaction's account delta atomically in a single Dexie transaction.
+/// Extracts the absolute vault changes carried by an account patch.
+pub fn compute_vault_patch(patch: &AccountPatch) -> (Vec<Asset>, Vec<AssetId>) {
+    (
+        patch.vault().updated_assets().collect(),
+        patch.vault().removed_asset_ids().copied().collect(),
+    )
+}
+
+/// Applies an account patch atomically in a single Dexie transaction.
 ///
 /// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
 /// the full Account object. This avoids loading account code and full storage map entries.
-pub async fn apply_transaction_delta(
+pub async fn apply_account_patch(
     db_id: &str,
     account_id: AccountId,
     final_header: &AccountHeader,
-    updated_storage_slots: &BTreeMap<StorageSlotName, (Word, StorageSlotType)>,
+    updated_storage_slots: &PatchedStorageSlots,
     updated_assets: &[Asset],
-    removed_vault_keys: &[AssetVaultKey],
-    delta: &AccountDelta,
+    removed_asset_ids: &[AssetId],
+    patch: &AccountPatch,
 ) -> Result<(), JsValue> {
     let account_id_str = account_id.to_string();
     let nonce_str = final_header.nonce().to_string();
 
     // Build updated slot JS objects from pre-computed storage roots
     let mut js_slots = Vec::new();
-    for (slot_name, (value, slot_type)) in updated_storage_slots {
+    for (slot_name, (value, slot_type, patch_op)) in updated_storage_slots {
         js_slots.push(JsStorageSlot {
             slot_name: slot_name.to_string(),
-            slot_value: value.to_hex(),
+            slot_value: value.map_or_else(String::new, |value| value.to_hex()),
             slot_type: *slot_type as u8,
+            patch_operation: *patch_op,
         });
     }
 
-    // Build changed map entries from delta
+    // Build changed map entries from the absolute patch. Map creation/removal is represented by
+    // the slot's patch operation above; individual entries carry their final values.
     let mut changed_map_entries = Vec::new();
-    for (slot_name, map_delta) in delta.storage().maps() {
-        for (key, value) in map_delta.entries() {
-            let value_str = if *value == EMPTY_WORD {
+    for (slot_name, map_patch) in patch.storage().maps() {
+        let Some(entries) = map_patch.entries() else {
+            continue;
+        };
+        for (key, value) in entries.as_map() {
+            let value_str = if value.is_empty() {
                 String::new()
             } else {
                 value.to_hex()
@@ -336,9 +345,9 @@ pub async fn apply_transaction_delta(
     let mut changed_assets: Vec<JsVaultAsset> =
         updated_assets.iter().map(JsVaultAsset::from_asset).collect();
 
-    for vault_key in removed_vault_keys {
+    for asset_id in removed_asset_ids {
         changed_assets.push(JsVaultAsset {
-            vault_key: vault_key.to_string(),
+            vault_key: asset_id.to_string(),
             asset: String::new(),
         });
     }

@@ -20,10 +20,10 @@ env:
   # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
   # fields encoded as bytes vs fixed64), or 'accept header validation failed'
   # if the protocol version differs.
-  # Pinned to the commit of the miden-client v0.15.0 release tag, matching the
-  # miden-client 0.15.0 crates.io dep in Cargo.toml. A commit sha (not the tag
+  # Pinned to the commit of the rust-sdk v0.16.0-alpha.1 release tag, matching
+  # the miden-client 0.16.0-alpha.1 crates.io dep in Cargo.toml. A commit sha (not the tag
   # name) keeps cache keys stable.
-  MIDEN_CLIENT_REF: 02a3212b001abad6192e6c8c0c7167076a75280e
+  MIDEN_CLIENT_REF: 0f89705c926d0f8aa442d267341b0ce6661e53ba
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -590,7 +590,7 @@ jobs:
       - name: Build React SDK
         run: pnpm --filter @miden-sdk/react run build
 
-  # Build test infrastructure from miden-client repo. miden-client's
+  # Build test infrastructure from rust-sdk. Its
   # scripts/start-test-node.sh cargo-installs the standalone node executables
   # (miden-validator, miden-node, miden-ntx-builder, miden-remote-prover) at
   # the node rev pinned in its Cargo.lock, and builds the gen-genesis fixture
@@ -605,7 +605,7 @@ jobs:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
         with:
-          repository: 0xMiden/miden-client
+          repository: 0xMiden/rust-sdk
           ref: ${{ env.MIDEN_CLIENT_REF }}
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
@@ -722,7 +722,7 @@ jobs:
       - name: Checkout miden-client for test node
         uses: actions/checkout@v6
         with:
-          repository: 0xMiden/miden-client
+          repository: 0xMiden/rust-sdk
           ref: ${{ env.MIDEN_CLIENT_REF }}
           path: miden-client
       - name: Download test node binaries
@@ -758,6 +758,10 @@ jobs:
           BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
           [ -n "$BINARY" ] || { echo "::error::napi binary not found"; exit 1; }
           cp "$BINARY" crates/web-client/miden_client_web.node
+      - name: Check node re-exports are in sync with the napi surface
+        env:
+          MIDEN_MODULE_PATH: ${{ github.workspace }}/crates/web-client/miden_client_web.node
+        run: pnpm --filter @miden-sdk/miden-sdk run check:node-reexports
       - name: Install Playwright (chromium not required, but install pulls deps)
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run nodejs Playwright project
@@ -815,7 +819,7 @@ jobs:
       - name: Checkout miden-client for test node
         uses: actions/checkout@v6
         with:
-          repository: 0xMiden/miden-client
+          repository: 0xMiden/rust-sdk
           ref: ${{ env.MIDEN_CLIENT_REF }}
           path: miden-client
       - name: Download test node binaries
@@ -899,7 +903,7 @@ jobs:
       - name: Checkout miden-client for test node
         uses: actions/checkout@v6
         with:
-          repository: 0xMiden/miden-client
+          repository: 0xMiden/rust-sdk
           ref: ${{ env.MIDEN_CLIENT_REF }}
           path: miden-client
       - name: Download test node binaries

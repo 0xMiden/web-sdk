@@ -1,7 +1,7 @@
 [toolchain]
 # Nightly required for cfg(target_feature = "atomics") on wasm32 and -Z build-std
 # (recompile std with atomics enabled). wasm-bindgen-rayon needs both to bootstrap
-# the multi-threaded prover. Stable 1.93 silently emits a wasm with the +atomics
+# the multi-threaded prover. Stable 1.96.1 silently emits a wasm with the +atomics
 # bit set but the cfg() check still says false, so the wasm-bindgen-rayon compile
 # guard fires.
 #

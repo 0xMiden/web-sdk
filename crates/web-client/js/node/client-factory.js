@@ -42,6 +42,8 @@ function normBytes(val) {
  * Matches the browser interface:
  *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, debugMode)
  *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, debugMode)
+ *
+ * `debugMode` is retained for call-shape compatibility and has no effect with miden-client 0.16.
  *   WasmWebClient.buildSwapTag(...)
  *
  * @param {object} rawSdk - The raw napi SDK module.

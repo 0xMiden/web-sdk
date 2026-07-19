@@ -8,8 +8,8 @@ authors      = ["miden contributors"]
 edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
-rust-version = "1.93"
-version      = "0.15.0"
+rust-version = "1.96.1"
+version      = "0.16.0-alpha.1"
 
 [profile.dev]
 codegen-units = 16
@@ -33,23 +33,17 @@ lto           = false
 codegen-units = 16
 
 [workspace.dependencies]
-# Workspace crates
-idxdb-store = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.0" }
+# Workspace crates. The versions are required when publishing path dependencies and must track
+# `workspace.package.version`.
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.16.0-alpha.1" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.16.0-alpha.1" }
 
-# Miden client + the SQLite store backend its Node.js variant uses.
-miden-client              = { default-features = false, version = "0.15.0" }
-miden-client-sqlite-store = { default-features = false, version = "0.15.0" }
-
-# Must resolve in Cargo.lock to the same miden-protocol that miden-client
-# pins transitively, and that the CI node-builder is compiled against
-# (see MIDEN_CLIENT_REF in .github/workflows/test.yml). Do NOT let it float
-# ahead of that pin: a client/node miden-protocol mismatch makes the node's
-# gRPC responses fail to deserialize ("invalid field element") and breaks every
-# integration test that syncs.
-# TODO: drop the direct dep once AccountProcedureRoot, NoteDetailsCommitment,
-# PartialNoteMetadata are re-exported from miden-client.
-miden-protocol  = { default-features = false, version = "0.15" }
-miden-standards = { default-features = false, version = "0.15" }
+# Client crates
+# Cargo.lock intentionally follows the rust-sdk v0.16.0-alpha.1 release graph, including the
+# Miden VM 0.25.3 family and wincode 0.5.5. Broad `cargo update` runs currently select newer
+# transitive versions; validate those against this alpha before accepting lockfile changes.
+miden-client              = { default-features = false, version = "0.16.0-alpha.1" }
+miden-client-sqlite-store = { default-features = false, version = "0.16.0-alpha.1" }
 
 # External dependencies
 async-trait = { version = "0.1" }
@@ -57,11 +51,11 @@ chrono      = { version = "0.4" }
 hex         = { version = "0.4" }
 miette      = { features = ["fancy"], version = "7.6" }
 # napi-rs powers the Node.js binding of the web-client crate. Matches the
-# version pin in miden-client `next`.
+# version pin in miden-client 0.16.0-alpha.1.
 napi        = { default-features = false, features = ["async", "napi8"], version = "3" }
 napi-build  = { version = "2" }
 napi-derive = { default-features = false, version = "3" }
-rand        = { version = "0.9" }
+rand        = { version = "0.10" }
 serde       = { features = ["derive"], version = "1.0" }
 thiserror   = { default-features = false, version = "2.0" }
 tokio       = { features = ["macros", "rt-multi-thread"], version = "1.48" }
@@ -78,9 +72,3 @@ module_name_repetitions     = "allow"                           # Many triggers,
 must_use_candidate          = "allow"                           # This marks many fn's which isn't helpful.
 should_panic_without_expect = "allow"                           # We don't care about the specific panic message.
 # End of pedantic lints.
-
-# TEMPORARY: points miden-client at the unreleased rust-sdk `jmunoz-expose-debugger` branch
-# (rust-sdk PR #2302), which carries the atomic block-header store (#2294) that this branch adopts.
-# Revert to a crates.io version pin once those changes are released.
-[patch.crates-io]
-miden-client = { git = "https://github.com/0xMiden/rust-sdk", branch = "jmunoz-expose-debugger" }

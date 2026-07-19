@@ -16,11 +16,13 @@ test.describe("StorageView", () => {
 
         const COUNTER_SLOT = word("${SLOT_NAME}")
 
+        @account_procedure
         pub proc get_count
           push.COUNTER_SLOT[0..2] exec.active_account::get_item
           exec.sys::truncate_stack
         end
 
+        @account_procedure
         pub proc increment_count
           push.COUNTER_SLOT[0..2] exec.active_account::get_item
           add.1
@@ -90,6 +92,7 @@ test.describe("StorageView", () => {
 
         const MAP_SLOT = word("${SLOT_NAME}")
 
+        @account_procedure
         pub proc get_balance
           push.MAP_SLOT[0..2] exec.active_account::get_map_item
           exec.sys::truncate_stack
@@ -140,6 +143,7 @@ test.describe("StorageView", () => {
 
         const SLOT = word("${SLOT_NAME}")
 
+        @account_procedure
         pub proc read
           push.SLOT[0..2] exec.active_account::get_item
           exec.sys::truncate_stack

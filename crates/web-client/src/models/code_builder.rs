@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 
 use js_export_macro::js_export;
@@ -79,6 +80,22 @@ impl CodeBuilder {
         Ok(())
     }
 
+    /// Statically links the exact library installed by an account component.
+    ///
+    /// This should be preferred over rebuilding the component source with `buildLibrary`, because
+    /// the installed component code is the source of truth for its procedure identities.
+    #[js_export(js_name = "linkStaticAccountComponentCode")]
+    pub fn link_static_account_component_code(
+        &mut self,
+        account_component_code: &AccountComponentCode,
+    ) -> Result<(), JsErr> {
+        let native_code: NativeAccountComponentCode = account_component_code.into();
+        self.builder.link_static_library(native_code.as_library()).map_err(|e| {
+            js_error_with_context(e, "script builder: failed to link static account component code")
+        })?;
+        Ok(())
+    }
+
     /// This is useful to dynamically link the {@link Library} of a foreign account
     /// that is invoked using foreign procedure invocation (FPI). Its code is available
     /// on-chain and so it does not have to be copied into the script code.
@@ -90,6 +107,25 @@ impl CodeBuilder {
         let library: NativeLibrary = library.into();
         self.builder.link_dynamic_library(&library).map_err(|e| {
             js_error_with_context(e, "script builder: failed to link dynamic library")
+        })?;
+        Ok(())
+    }
+
+    /// Dynamically links the exact library installed by an account component.
+    ///
+    /// Use this for component procedures that are available on-chain and invoked with dynamic
+    /// calls, including foreign procedure invocation.
+    #[js_export(js_name = "linkDynamicAccountComponentCode")]
+    pub fn link_dynamic_account_component_code(
+        &mut self,
+        account_component_code: &AccountComponentCode,
+    ) -> Result<(), JsErr> {
+        let native_code: NativeAccountComponentCode = account_component_code.into();
+        self.builder.link_dynamic_library(native_code.as_library()).map_err(|e| {
+            js_error_with_context(
+                e,
+                "script builder: failed to link dynamic account component code",
+            )
         })?;
         Ok(())
     }
@@ -124,7 +160,7 @@ impl CodeBuilder {
     /// Given a Library Path, and a source code, turn it into a Library.
     /// E.g. A path library can be `miden::my_contract`. When turned into a library,
     /// this can be used from another script with an import statement, following the
-    /// previous example: `use miden::my_contract'.
+    /// previous example: `use miden::my_contract`.
     #[js_export(js_name = "buildLibrary")]
     pub fn build_library(
         &self,
@@ -137,17 +173,19 @@ impl CodeBuilder {
                 &format!("script builder: failed to build library -- invalid path {library_path}"),
             )
         })?;
-        let module = Module::parser(ModuleKind::Library)
-            .parse_str(library_path, &source_code, self.builder.source_manager())
+        let package_name = library_path.as_str().replace("::", "-");
+        let module = Module::parser(Some(ModuleKind::Library))
+            .parse_str(Some(library_path), &source_code, self.builder.source_manager())
             .map_err(|e| {
                 let err_msg = format_assembler_error(&e, "error while parsing module");
                 from_str_err(&err_msg)
             })?;
 
         let assembler: Assembler = self.builder.clone().into();
-        let native_library_build = assembler.assemble_library([module]);
+        let native_library_build =
+            assembler.assemble_library(package_name, module, None::<Box<Module>>);
         match native_library_build {
-            Ok(native_library) => Ok(Arc::unwrap_or_clone(native_library).into()),
+            Ok(native_library) => Ok((*native_library).into()),
             Err(error_report) => {
                 let err_msg =
                     format_assembler_error(&error_report, "error while assembling library");
@@ -163,15 +201,31 @@ impl CodeBuilder {
         &self,
         account_code: String,
     ) -> Result<AccountComponentCode, JsErr> {
-        let assembler: Assembler = self.builder.clone().into();
-        let native_library = assembler.assemble_library([account_code.as_str()]).map_err(|e| {
-            from_str_err(&format!(
-                "Failed to compile account component:
-        {e}"
-            ))
-        })?;
+        self.compile_account_component_code_with_path(
+            "web_sdk::account_component".to_string(),
+            account_code,
+        )
+    }
 
-        let native_code: NativeAccountComponentCode = Arc::unwrap_or_clone(native_library).into();
+    /// Compiles account component code under an explicit module path.
+    ///
+    /// The module path is part of procedure identity in Miden Assembly 0.25. Callers that also
+    /// link this component into a transaction script must use the same path for both operations.
+    #[js_export(js_name = "compileAccountComponentCodeWithPath")]
+    pub fn compile_account_component_code_with_path(
+        &self,
+        component_path: String,
+        account_code: String,
+    ) -> Result<AccountComponentCode, JsErr> {
+        let component_path = Path::validate(&component_path)
+            .map_err(|err| js_error_with_context(err, "invalid account component module path"))?;
+        let native_code: NativeAccountComponentCode = self
+            .builder
+            .clone()
+            .compile_component_code(component_path.as_str(), account_code)
+            .map_err(|err| {
+                js_error_with_context(err, "failed to compile account component code")
+            })?;
         Ok(native_code.into())
     }
 }

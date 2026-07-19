@@ -20,6 +20,15 @@ test("transport basic", async ({ run }) => {
       sdk.AuthScheme.AuthRpoFalcon512,
       recipientSeed
     );
+    const faucetAccount = await mockClient.newFaucet(
+      sdk.AccountStorageMode.private(),
+      false,
+      "DAG",
+      "DAG",
+      8,
+      sdk.u64(10000000),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
 
     // Create recipient address
     const recipientAddress = sdk.Address.fromAccountId(
@@ -28,7 +37,9 @@ test("transport basic", async ({ run }) => {
     );
 
     // Create note
-    const noteAssets = new sdk.NoteAssets([]);
+    const noteAssets = new sdk.NoteAssets([
+      new sdk.FungibleAsset(faucetAccount.id(), sdk.u64(1)),
+    ]);
     const note = sdk.Note.createP2IDNote(
       senderAccount.id(),
       recipientAccount.id(),

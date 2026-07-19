@@ -1,13 +1,15 @@
 use alloc::collections::BTreeMap;
+use core::cmp::Ordering;
+use core::error::Error;
 
 use js_export_macro::js_export;
-use miden_client::ClientError;
-use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote};
+use miden_client::account::{AccountDelta as NativeAccountDelta, AccountId as NativeAccountId};
+use miden_client::asset::{AccountVaultDelta, Asset, AssetAmount, FungibleAsset};
+use miden_client::note::{BlockNumber, Note as NativeNote, PswapNote};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
+    ExecutedTransaction as NativeExecutedTransaction,
     ForeignAccount as NativeForeignAccount,
     PaymentNoteDescription,
     ProvenTransaction as NativeProvenTransaction,
@@ -19,6 +21,7 @@ use miden_client::transaction::{
     TransactionStoreUpdate as NativeTransactionStoreUpdate,
     TransactionSummary as NativeTransactionSummary,
 };
+use miden_client::{ClientError, Felt as NativeFelt};
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -36,6 +39,151 @@ use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
 use crate::{WebClient, js_error_with_context};
+
+fn vault_delta_error<T>(err: T) -> JsErr
+where
+    T: Error + 'static,
+{
+    js_error_with_context(err, "failed to construct the vault delta for transaction summary")
+}
+
+fn add_fungible_change(
+    vault_delta: &mut AccountVaultDelta,
+    initial: FungibleAsset,
+    final_asset: FungibleAsset,
+) -> Result<(), JsErr> {
+    let initial_amount = initial.amount().as_u64();
+    let final_amount = final_asset.amount().as_u64();
+
+    match final_amount.cmp(&initial_amount) {
+        Ordering::Greater => {
+            let asset = FungibleAsset::new(final_asset.faucet_id(), final_amount - initial_amount)
+                .map_err(vault_delta_error)?;
+            vault_delta.add_asset(asset.into()).map_err(vault_delta_error)
+        },
+        Ordering::Less => {
+            let asset = FungibleAsset::new(initial.faucet_id(), initial_amount - final_amount)
+                .map_err(vault_delta_error)?;
+            vault_delta.remove_asset(asset.into()).map_err(vault_delta_error)
+        },
+        Ordering::Equal => Ok(()),
+    }
+}
+
+fn add_asset_change(
+    vault_delta: &mut AccountVaultDelta,
+    initial_asset: Option<Asset>,
+    final_asset: Option<Asset>,
+) -> Result<(), JsErr> {
+    match (initial_asset, final_asset) {
+        (None, Some(asset)) => vault_delta.add_asset(asset).map_err(vault_delta_error),
+        (Some(asset), None) => vault_delta.remove_asset(asset).map_err(vault_delta_error),
+        (Some(Asset::Fungible(initial)), Some(Asset::Fungible(final_asset))) => {
+            add_fungible_change(vault_delta, initial, final_asset)
+        },
+        (Some(Asset::NonFungible(initial)), Some(Asset::NonFungible(final_asset))) => {
+            if initial == final_asset {
+                Ok(())
+            } else {
+                Err(from_str_err(
+                    "cannot construct a transaction summary for a non-fungible asset replacement",
+                ))
+            }
+        },
+        (None, None) => Ok(()),
+        (Some(_), Some(_)) => {
+            Err(from_str_err("cannot construct a transaction summary for an asset type change"))
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use miden_client::testing::account_id::ACCOUNT_ID_PRIVATE_FUNGIBLE_FAUCET;
+
+    use super::*;
+
+    #[test]
+    fn absolute_fungible_asset_values_are_converted_to_relative_deltas() {
+        let faucet_id = NativeAccountId::try_from(ACCOUNT_ID_PRIVATE_FUNGIBLE_FAUCET)
+            .expect("test faucet ID should be valid");
+        let initial = FungibleAsset::new(faucet_id, 100).expect("test asset should be valid");
+        let final_asset = FungibleAsset::new(faucet_id, 40).expect("test asset should be valid");
+        let asset_id = initial.id();
+        let mut vault_delta = AccountVaultDelta::default();
+
+        add_asset_change(&mut vault_delta, Some(initial.into()), Some(final_asset.into()))
+            .expect("valid absolute values should produce a relative delta");
+
+        assert_eq!(vault_delta.fungible().amount(&asset_id), Some(-60));
+    }
+}
+
+/// Reconstructs the relative account delta committed to by a transaction summary from the
+/// absolute account patch retained by an executed transaction.
+///
+/// Storage patches already have identical semantics in `AccountDelta` and `AccountPatch`. Vault
+/// patches, however, contain final absolute values, so the authenticated pre-state witnesses in
+/// the transaction inputs are used to recover each relative asset change.
+fn account_delta_from_executed_transaction(
+    executed_tx: &NativeExecutedTransaction,
+) -> Result<NativeAccountDelta, JsErr> {
+    let account_patch = executed_tx.account_patch();
+    let tx_inputs = executed_tx.tx_inputs();
+    let initial_account = executed_tx.initial_account();
+    let initial_vault_root = initial_account.vault().root();
+    let mut vault_delta = AccountVaultDelta::default();
+
+    for (&asset_id, &final_value) in account_patch.vault().iter() {
+        let initial_asset =
+            tx_inputs.read_vault_asset(initial_vault_root, asset_id).map_err(|err| {
+                js_error_with_context(
+                    err,
+                    "failed to read an initial vault asset while constructing transaction summary",
+                )
+            })?;
+        let final_asset = if final_value.is_empty() {
+            None
+        } else {
+            Some(Asset::from_id_and_value(asset_id, final_value).map_err(|err| {
+                js_error_with_context(
+                    err,
+                    "failed to read a final vault asset while constructing transaction summary",
+                )
+            })?)
+        };
+
+        add_asset_change(&mut vault_delta, initial_asset, final_asset)?;
+    }
+
+    let nonce_delta = match account_patch.final_nonce() {
+        Some(final_nonce) => {
+            let initial_nonce = initial_account.nonce().as_canonical_u64();
+            let final_nonce = final_nonce.as_canonical_u64();
+            let nonce_delta = final_nonce.checked_sub(initial_nonce).ok_or_else(|| {
+                from_str_err("final account nonce is lower than its initial nonce")
+            })?;
+            NativeFelt::try_from(nonce_delta).map_err(|err| {
+                js_error_with_context(
+                    err,
+                    "failed to construct the nonce delta for transaction summary",
+                )
+            })?
+        },
+        None => NativeFelt::ZERO,
+    };
+
+    NativeAccountDelta::new(
+        account_patch.id(),
+        account_patch.storage().clone(),
+        vault_delta,
+        account_patch.code().cloned(),
+        nonce_delta,
+    )
+    .map_err(|err| {
+        js_error_with_context(err, "failed to construct account delta for transaction summary")
+    })
+}
 
 #[js_export]
 impl WebClient {
@@ -243,8 +391,29 @@ impl WebClient {
         note_fill_amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
-        let account_fill_amount = js_u64_to_u64(account_fill_amount);
-        let note_fill_amount = js_u64_to_u64(note_fill_amount);
+        let pswap = PswapNote::try_from(&native_pswap_note)
+            .map_err(|err| js_error_with_context(err, "invalid PSWAP note"))?;
+
+        let account_fill_amount = AssetAmount::new(js_u64_to_u64(account_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid account fill amount"))?;
+        let note_fill_amount = AssetAmount::new(js_u64_to_u64(note_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid note fill amount"))?;
+
+        // miden-client 0.16 treats an overfill as a full fill. Keep the web client's existing
+        // contract, which rejects fills outside the open order amount, and validate the combined
+        // account/note fill before handing it to the native request builder.
+        let total_fill_amount = (account_fill_amount + note_fill_amount)
+            .map_err(|err| js_error_with_context(err, "invalid total fill amount"))?;
+        if total_fill_amount == AssetAmount::ZERO {
+            return Err(from_str_err("Fill amount must be greater than 0"));
+        }
+
+        let requested_amount = pswap.storage().min_requested_asset().amount();
+        if total_fill_amount > requested_amount {
+            return Err(from_str_err(&format!(
+                "Fill amount {total_fill_amount} exceeds requested amount {requested_amount}"
+            )));
+        }
 
         let pswap_transaction_request = NativeTransactionRequestBuilder::new()
             .build_pswap_consume(
@@ -356,10 +525,10 @@ impl WebClient {
 
     /// Executes a transaction and returns the `TransactionSummary`.
     ///
-    /// If the transaction is unauthorized (auth script emits the unauthorized event),
-    /// returns the summary from the error. If the transaction succeeds, constructs
-    /// a summary from the executed transaction using the `auth_arg` from the transaction
-    /// request as the salt (or a zero salt if not provided).
+    /// If the transaction is unauthorized (auth script emits the unauthorized event), returns the
+    /// summary from the error. If the transaction succeeds, constructs a summary from the executed
+    /// transaction using the `auth_arg` from the transaction request as the salt (or a zero salt if
+    /// not provided).
     ///
     /// # Errors
     /// - If there is an internal failure during execution.
@@ -372,18 +541,17 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let native_request: NativeTransactionRequest = transaction_request.into();
-        // auth_arg is passed to the auth procedure as the salt for the transaction summary
-        // defaults to 0 if not provided.
+        // The auth argument is passed to the auth procedure as the transaction-summary salt.
         let salt = native_request.auth_arg().unwrap_or_default();
 
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
         let execute_result = maybe_wrap_send(fut).await;
         match execute_result {
-            Ok(res) => {
-                // construct summary from executed transaction
-                let executed_tx = res.executed_transaction();
+            Ok(result) => {
+                let executed_tx = result.executed_transaction();
+                let account_delta = account_delta_from_executed_transaction(executed_tx)?;
                 let summary = NativeTransactionSummary::new(
-                    executed_tx.account_delta().clone(),
+                    account_delta,
                     executed_tx.input_notes().clone(),
                     executed_tx.output_notes().clone(),
                     salt,

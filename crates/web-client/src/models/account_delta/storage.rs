@@ -1,5 +1,5 @@
 use js_export_macro::js_export;
-use miden_client::asset::AccountStorageDelta as NativeAccountStorageDelta;
+use miden_client::account::AccountStoragePatch as NativeAccountStorageDelta;
 
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
@@ -38,8 +38,7 @@ impl AccountStorageDelta {
     pub fn values(&self) -> Vec<Word> {
         self.0
             .values()
-            .map(|(_slot_name, value)| value)
-            .copied()
+            .filter_map(|(_slot_name, value)| value.value())
             .map(Into::into)
             .collect()
     }

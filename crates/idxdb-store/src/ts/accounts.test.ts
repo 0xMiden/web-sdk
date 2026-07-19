@@ -575,6 +575,124 @@ describe("applyTransactionDelta", () => {
       .toArray();
     expect(histHeaders.length).toBeGreaterThan(0);
   });
+
+  it("replaces and removes map slots while preserving rollback history", async () => {
+    const dbId = await openTestDb(CLIENT_VERSION);
+    const db = getDatabase(dbId);
+
+    await applyTransactionDelta(
+      dbId,
+      ACC,
+      "1",
+      [
+        {
+          slotName: "map1",
+          slotValue: "0xroot1",
+          slotType: 1,
+          patchOperation: 0,
+        },
+      ],
+      [
+        { slotName: "map1", key: "k1", value: "old1" },
+        { slotName: "map1", key: "k2", value: "old2" },
+      ],
+      [],
+      CODE_ROOT,
+      "0xroot1",
+      VAULT_ROOT,
+      false,
+      "0xcommit1"
+    );
+
+    // Create replaces the whole map, including entries omitted by the patch.
+    await applyTransactionDelta(
+      dbId,
+      ACC,
+      "2",
+      [
+        {
+          slotName: "map1",
+          slotValue: "0xroot2",
+          slotType: 1,
+          patchOperation: 0,
+        },
+      ],
+      [
+        { slotName: "map1", key: "k1", value: "new1" },
+        { slotName: "map1", key: "k3", value: "new3" },
+      ],
+      [],
+      CODE_ROOT,
+      "0xroot2",
+      VAULT_ROOT,
+      false,
+      "0xcommit2"
+    );
+
+    let entries = await db.latestStorageMapEntries
+      .where("[accountId+slotName]")
+      .equals([ACC, "map1"])
+      .sortBy("key");
+    expect(entries.map(({ key, value }) => [key, value])).toEqual([
+      ["k1", "new1"],
+      ["k3", "new3"],
+    ]);
+
+    // Remove drops both the slot metadata and all of its entries.
+    await applyTransactionDelta(
+      dbId,
+      ACC,
+      "3",
+      [
+        {
+          slotName: "map1",
+          slotValue: "",
+          slotType: 1,
+          patchOperation: 2,
+        },
+      ],
+      [],
+      [],
+      CODE_ROOT,
+      "0xemptyroot",
+      VAULT_ROOT,
+      false,
+      "0xcommit3"
+    );
+
+    expect(
+      await db.latestAccountStorages
+        .where("[accountId+slotName]")
+        .equals([ACC, "map1"])
+        .count()
+    ).toBe(0);
+    expect(
+      await db.latestStorageMapEntries
+        .where("[accountId+slotName]")
+        .equals([ACC, "map1"])
+        .count()
+    ).toBe(0);
+
+    await undoAccountStates(dbId, ["0xcommit3"]);
+    entries = await db.latestStorageMapEntries
+      .where("[accountId+slotName]")
+      .equals([ACC, "map1"])
+      .sortBy("key");
+    expect(entries.map(({ key, value }) => [key, value])).toEqual([
+      ["k1", "new1"],
+      ["k3", "new3"],
+    ]);
+
+    await undoAccountStates(dbId, ["0xcommit2"]);
+    entries = await db.latestStorageMapEntries
+      .where("[accountId+slotName]")
+      .equals([ACC, "map1"])
+      .sortBy("key");
+    expect(entries.map(({ key, value }) => [key, value])).toEqual([
+      ["k1", "old1"],
+      ["k2", "old2"],
+    ]);
+  });
 });
 
 // ============================================================

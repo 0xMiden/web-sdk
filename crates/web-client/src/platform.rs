@@ -123,12 +123,11 @@ pub fn js_u64_to_u64(val: JsU64) -> u64 {
     #[cfg(feature = "nodejs")]
     {
         let (signed, value, lossless) = val.get_u64();
-        if signed || !lossless {
-            panic!(
-                "BigInt value is outside the u64 range (0..2^64); \
-                 got signed={signed}, lossless={lossless}"
-            );
-        }
+        assert!(
+            !signed && lossless,
+            "BigInt value is outside the u64 range (0..2^64); \
+             got signed={signed}, lossless={lossless}"
+        );
         value
     }
 }

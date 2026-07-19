@@ -24,7 +24,7 @@ use miden_client::account::{
     StorageMapKey,
     StorageSlotName,
 };
-use miden_client::asset::{Asset, AssetVault, AssetVaultKey, AssetWitness, StorageMapWitness};
+use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
 use miden_client::block::BlockHeader;
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
@@ -400,9 +400,9 @@ impl Store for IdxdbStore {
     async fn get_account_asset(
         &self,
         account_id: AccountId,
-        vault_key: AssetVaultKey,
+        vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
-        self.get_account_asset(account_id, vault_key).await
+        self.get_account_asset(account_id, vault_id).await
     }
 
     async fn get_account_map_item(

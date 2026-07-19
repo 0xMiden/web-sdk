@@ -22,8 +22,8 @@ use miden_client::account::{
 use miden_client::asset::{
     AccountStorageHeader,
     Asset,
+    AssetId,
     AssetVault,
-    AssetVaultKey,
     AssetWitness,
     PartialVault,
     StorageMapWitness,
@@ -411,7 +411,7 @@ impl IdxdbStore {
             .map(|entry| {
                 let key_word = Word::try_from(&entry.vault_key)?;
                 let value_word = Word::try_from(&entry.asset)?;
-                Ok(Asset::from_key_value_words(key_word, value_word)?)
+                Ok(Asset::from_id_and_value_words(key_word, value_word)?)
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
 
@@ -543,7 +543,7 @@ impl IdxdbStore {
     pub(crate) async fn get_account_asset(
         &self,
         account_id: AccountId,
-        vault_key: AssetVaultKey,
+        vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
         let account_header = self
             .get_account_header(account_id)
@@ -553,9 +553,12 @@ impl IdxdbStore {
 
         let smt_forest = self.smt_forest.read();
 
-        match smt_forest.get_asset_and_witness(account_header.vault_root(), vault_key) {
+        match smt_forest.get_asset_and_witness(account_header.vault_root(), vault_id) {
             Ok(result) => Ok(Some(result)),
-            Err(StoreError::MerkleStoreError(MerkleError::UntrackedKey(_))) => Ok(None),
+            Err(
+                StoreError::VaultKeyNotTracked(..)
+                | StoreError::MerkleStoreError(MerkleError::UntrackedKey(_)),
+            ) => Ok(None),
             Err(e) => Err(e),
         }
     }

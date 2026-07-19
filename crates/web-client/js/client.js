@@ -158,7 +158,7 @@ export class MidenClient {
         options.keystore.getKey,
         options.keystore.insertKey,
         options.keystore.sign,
-        options?.debugMode,
+        undefined,
         useWorker
       );
     } else {
@@ -167,7 +167,7 @@ export class MidenClient {
         noteTransportUrl,
         seed,
         options?.storeName,
-        options?.debugMode,
+        undefined,
         useWorker
       );
     }

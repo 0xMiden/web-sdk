@@ -189,7 +189,7 @@ pub struct JsVaultAsset {
 impl JsVaultAsset {
     pub fn from_asset(asset: &Asset) -> Self {
         Self {
-            vault_key: asset.vault_key().to_string(),
+            vault_key: asset.id().to_string(),
             asset: asset.to_value_word().to_hex(),
         }
     }
@@ -214,6 +214,12 @@ pub struct JsStorageSlot {
     /// The type of the storage slot.
     #[wasm_bindgen(js_name = "slotType")]
     pub slot_type: u8,
+    /// The storage patch operation (create, update, or remove).
+    ///
+    /// Full-state writes do not inspect this field, but incremental writes use it to distinguish
+    /// map replacement/removal from an entry-wise update.
+    #[wasm_bindgen(js_name = "patchOperation")]
+    pub patch_operation: u8,
 }
 
 impl JsStorageSlot {
@@ -222,6 +228,7 @@ impl JsStorageSlot {
             slot_name: slot.name().to_string(),
             slot_value: slot.value().to_hex(),
             slot_type: slot.slot_type().to_bytes()[0],
+            patch_operation: 0,
         }
     }
 }

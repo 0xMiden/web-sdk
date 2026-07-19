@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.16.0 (TBD)
+## 0.16.0-alpha.1 (2026-07-19)
+
+### Changes
+
+* [BREAKING][api][web] Migrated `miden-client-web`, `miden-mobile-prover`, and `miden-idxdb-store` to `miden-client` / `miden-client-sqlite-store` `0.16.0-alpha.1`. `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` are replaced by `accountPatch()`, which exposes the new absolute-valued `AccountPatch`, `AccountStoragePatch`, and `AccountVaultPatch` models; `TransactionSummary.accountDelta()` remains relative. Account-component procedures now require `@account_procedure`, transaction scripts use `@transaction_script pub proc main`, and scripts invoking installed account procedures should link the exact component with `libraries: [{ component }]` (or `link{Static,Dynamic}AccountComponentCode`) so procedure identities match. P2ID/P2IDE note assets are non-empty, `ClientOptions.debugMode` is a deprecated no-op, and IndexedDB applies absolute account patches. ([#225](https://github.com/0xMiden/web-sdk/pull/225))
 
 ### Fixes
 
