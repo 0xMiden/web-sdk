@@ -38,7 +38,7 @@ impl BasicFungibleFaucetComponent {
     /// Unlike [`Self::from_account`], this reads the metadata straight from the storage slots
     /// without checking that the account exposes the basic fungible faucet interface. This makes
     /// it work for faucets built from custom components that reuse the standards storage layout
-    /// (e.g. AggLayer bridged-asset faucets), but it also means a non-faucet account whose
+    /// (e.g. `AggLayer` bridged-asset faucets), but it also means a non-faucet account whose
     /// storage happens to use the same slot names would yield bogus metadata without an error.
     #[js_export(js_name = "fromAccountStorage")]
     #[allow(clippy::needless_pass_by_value)]

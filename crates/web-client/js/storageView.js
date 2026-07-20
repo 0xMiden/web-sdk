@@ -341,16 +341,27 @@ export function installStorageView(wasmModule) {
     return new StorageView(raw, WordClass);
   };
 
-  // WASM statics that take a raw AccountStorage argument must accept the
+  // Statics that take a raw AccountStorage argument must accept the
   // StorageView that account.storage() now returns — unwrap it before the
-  // wasm-bindgen instanceof guard rejects it.
+  // binding's type guard rejects it. The napi class defines its statics as
+  // read-only properties, so plain assignment would throw; defineProperty
+  // works on both the wasm and napi classes.
   const FaucetComponent = wasmModule.BasicFungibleFaucetComponent;
-  if (FaucetComponent?.fromAccountStorage) {
+  if (
+    FaucetComponent?.fromAccountStorage &&
+    !FaucetComponent.fromAccountStorage.__unwrapsStorageView
+  ) {
     const originalFromStorage =
       FaucetComponent.fromAccountStorage.bind(FaucetComponent);
-    FaucetComponent.fromAccountStorage = (storage) =>
+    const unwrapping = (storage) =>
       originalFromStorage(
         storage instanceof StorageView ? storage.raw : storage
       );
+    unwrapping.__unwrapsStorageView = true;
+    Object.defineProperty(FaucetComponent, "fromAccountStorage", {
+      value: unwrapping,
+      writable: true,
+      configurable: true,
+    });
   }
 }
