@@ -1074,6 +1074,130 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("manual lifecycle — executeRequest → prove → submit → apply", () => {
+    it("executeRequest returns a handle exposing result + id; nothing else runs", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "request" };
+      const executed = await resource.executeRequest("0xaccHex", request);
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request
+      );
+      expect(executed.result).toBe(inner._txResult);
+      expect(executed.id).toBe(inner._txResult.id());
+      // execute-only: nothing downstream runs
+      expect(inner.proveTransaction).not.toHaveBeenCalled();
+      expect(inner.submitProvenTransaction).not.toHaveBeenCalled();
+      expect(inner.applyTransaction).not.toHaveBeenCalled();
+    });
+
+    it("prove without a prover calls proveTransaction with the result only", async () => {
+      const { resource, inner } = makeResource();
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const proven = await executed.prove();
+      expect(inner.proveTransaction).toHaveBeenCalledWith(inner._txResult);
+      expect(proven.proof).toBe("provenTx");
+      expect(proven.result).toBe(inner._txResult);
+    });
+
+    it("prove uses the per-call prover over client.defaultProver", async () => {
+      const defaultProver = { prove: vi.fn() };
+      const callProver = { prove: vi.fn() };
+      const { resource, inner } = makeResource({}, { defaultProver });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      await executed.prove({ prover: callProver });
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
+        inner._txResult,
+        callProver
+      );
+    });
+
+    it("prove falls back to client.defaultProver when set", async () => {
+      const defaultProver = { prove: vi.fn() };
+      const { resource, inner } = makeResource({}, { defaultProver });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      await executed.prove();
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
+        inner._txResult,
+        defaultProver
+      );
+    });
+
+    it("submit forwards proof + result and exposes the block height", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+      });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const proven = await executed.prove();
+      const submitted = await proven.submit();
+      expect(inner.submitProvenTransaction).toHaveBeenCalledWith(
+        "provenTx",
+        inner._txResult
+      );
+      expect(submitted.blockNumber).toBe(123);
+      expect(submitted.result).toBe(inner._txResult);
+    });
+
+    it("apply forwards result + blockNumber and returns the store update", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const submitted = await (await executed.prove()).submit();
+      const update = await submitted.apply();
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
+      expect(update).toBe("storeUpdate");
+    });
+
+    it("waitForConfirmation delegates to resource.waitFor with the tx hex", async () => {
+      const { resource } = makeResource();
+      const waitSpy = vi
+        .spyOn(resource, "waitFor")
+        .mockResolvedValue(undefined);
+      const submitted = await (
+        await (await resource.executeRequest("0xaccHex", {})).prove()
+      ).submit();
+      await submitted.waitForConfirmation({ timeout: 1000 });
+      expect(waitSpy).toHaveBeenCalledWith("txHex", { timeout: 1000 });
+    });
+
+    it("submitProven escape hatch submits an externally-produced proof", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(55),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const submitted = await resource.submitProven(
+        "externalProof",
+        inner._txResult
+      );
+      expect(inner.submitProvenTransaction).toHaveBeenCalledWith(
+        "externalProof",
+        inner._txResult
+      );
+      expect(submitted.blockNumber).toBe(55);
+      const update = await submitted.apply();
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 55);
+      expect(update).toBe("storeUpdate");
+    });
+
+    it("the staged chain drives the same pipeline submit() runs, one liveness check per stage", async () => {
+      const { resource, inner, client } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(77),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const request = { type: "request" };
+      const executed = await resource.executeRequest("0xaccHex", request);
+      const proven = await executed.prove();
+      const submitted = await proven.submit();
+      const update = await submitted.apply();
+      expect(submitted.blockNumber).toBe(77);
+      expect(update).toBe("storeUpdate");
+      // Each of the four stages asserts client liveness independently.
+      expect(client.assertNotTerminated).toHaveBeenCalledTimes(4);
+    });
+  });
+
   describe("list", () => {
     it("uses filter.all() when no query", async () => {
       const { resource, inner, wasm } = makeResource();

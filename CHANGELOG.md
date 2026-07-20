@@ -4,6 +4,15 @@
 
 ### Enhancements
 
+* [FEATURE][web] Manual transaction lifecycle on `client.transactions` — `executeRequest(account, request)` returns a staged handle you advance with `.prove({ prover? })` → `.submit()` → `.apply()`, exposing the stages that `submit()` runs in one call so each can be benchmarked and error-handled independently. Each stage carries its own context, so nothing is re-threaded between calls. A proof produced on a detached client can be submitted with `client.transactions.submitProven(proof, result)` (closes [#233](https://github.com/0xMiden/web-sdk/issues/233)).
+
+```ts
+const executed = await client.transactions.executeRequest(wallet, request);
+const proven = await executed.prove();
+const submitted = await proven.submit();
+await submitted.apply();
+```
+
 * [FEATURE][web] `FungibleAsset.callbacks()` and `FungibleAsset.withCallbacks(flag)` expose the asset's `AssetCallbackFlag` (`Disabled` / `Enabled`) — the vault-key bit that decides whether the issuing faucet's callbacks run when the asset is added to an account or note. The constructor always yields `Disabled`; `withCallbacks` returns a copy carrying the given flag. The flag is part of the asset's vault key, so it must match the flag the issuing faucet applies. (closes [#239](https://github.com/0xMiden/web-sdk/issues/239))
 
 ```ts

@@ -137,3 +137,30 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 ### `waitForConfirmation` semantics
 
 The V1 batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
+
+## Manual Transaction Lifecycle
+
+`client.transactions.submit(account, request)` runs the full pipeline — execute, prove, submit, apply — in one call. When you need to drive the stages yourself (benchmarking each step or handling errors per stage), `executeRequest` returns a staged handle you advance one step at a time. Each stage returns the handle for the next, carrying its own context so you never re-thread the result or block number:
+
+```typescript
+// 1. Execute — runs the request locally, nothing leaves the client.
+const executed = await client.transactions.executeRequest(wallet, request);
+
+// 2. Prove — pure computation over the execution; optional per-call prover.
+const proven = await executed.prove({ prover: remoteProver });
+
+// 3. Submit — sends the proof to the network. `submitted.blockNumber` is the height.
+const submitted = await proven.submit();
+
+// 4. Apply — persists the state changes into the local store.
+await submitted.apply();
+```
+
+Notes on the staged form:
+
+- **`executeRequest` does not persist anything.** Until `apply` runs, the local store doesn't know the transaction exists. If you stop after `submit()`, the network has the transaction but your local state won't reflect it until the next sync.
+- **`prove` accepts an optional `{ prover }`** and otherwise falls back to the client's default prover (or the built-in local prover). A `TransactionProver` is consumed by the call — build (or clone) a fresh prover per `prove()`; reusing one silently falls back to local proving.
+- **The stages are not atomic as a group.** Awaiting other mutating calls on the same account between them can interleave state — drive the chain as an uninterrupted sequence per account.
+- **`apply` fires transaction observers** (e.g. PSWAP lineage tracking), the same as the one-shot `submit` path. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
+- **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
+- **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.

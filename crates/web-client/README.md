@@ -504,6 +504,21 @@ const { blockNumber } = await client.transactions.submitBatch(wallet, [
 
 The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
 
+### Manual Transaction Lifecycle
+
+`client.transactions.submit(account, request)` runs execute → prove → submit → apply in one call. To drive the stages yourself — benchmarking each step or handling errors per stage — `executeRequest` returns a staged handle you advance one step at a time. Each stage carries its own context, so you never re-thread the result or block number:
+
+```typescript
+const executed = await client.transactions.executeRequest(wallet, request); // local only
+const proven = await executed.prove(); // optional { prover } override
+const submitted = await proven.submit(); // network; submitted.blockNumber
+await submitted.apply(); // persist + fire observers
+```
+
+Nothing is persisted until `apply` runs — stopping after `submit()` leaves the local store unaware of the transaction until the next sync. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
+
+To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple
