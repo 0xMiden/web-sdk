@@ -108,4 +108,29 @@ impl From<AccountStorage> for NativeAccountStorage {
     }
 }
 
-impl_napi_from_value!(AccountStorage);
+// Unlike `impl_napi_from_value!`, this accepts both a native `AccountStorage` and a facade
+// wrapper (the JS `StorageView` returned by `account.storage()`) that exposes the native
+// storage behind a `raw` property. The napi class statics are frozen, so the JS facade
+// cannot unwrap `StorageView` before the call the way the browser facade does.
+#[cfg(feature = "nodejs")]
+impl napi::bindgen_prelude::FromNapiValue for AccountStorage {
+    unsafe fn from_napi_value(
+        env: napi::bindgen_prelude::sys::napi_env,
+        napi_val: napi::bindgen_prelude::sys::napi_value,
+    ) -> napi::Result<Self> {
+        use napi::bindgen_prelude::{FromNapiRef, Object};
+
+        if let Ok(storage) =
+            unsafe { <AccountStorage as FromNapiRef>::from_napi_ref(env, napi_val) }
+        {
+            return Ok(storage.clone());
+        }
+
+        let object = unsafe { Object::from_napi_value(env, napi_val)? };
+        object.get("raw")?.ok_or_else(|| {
+            napi::Error::from_reason(
+                "expected an AccountStorage or an object exposing one via `raw`",
+            )
+        })
+    }
+}
