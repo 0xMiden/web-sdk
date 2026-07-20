@@ -14,7 +14,7 @@ import {
   upsertAccountStorage,
   upsertStorageMapEntries,
   upsertVaultAssets,
-  applyTransactionDelta,
+  applyAccountPatch,
   applyFullAccountState,
   upsertAccountRecord,
   insertAccountAddress,
@@ -454,16 +454,16 @@ describe("upsertAccountRecord", () => {
 });
 
 // ============================================================
-// applyTransactionDelta
+// applyAccountPatch
 // ============================================================
-describe("applyTransactionDelta", () => {
+describe("applyAccountPatch", () => {
   const CLIENT_VERSION = "0.0.1";
 
   it("creates initial account state when no prior state exists", async () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -511,7 +511,7 @@ describe("applyTransactionDelta", () => {
     const db = getDatabase(dbId);
 
     // First delta: initial state
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -526,7 +526,7 @@ describe("applyTransactionDelta", () => {
     );
 
     // Second delta: update
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -580,7 +580,7 @@ describe("applyTransactionDelta", () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -605,7 +605,7 @@ describe("applyTransactionDelta", () => {
     );
 
     // Create replaces the whole map, including entries omitted by the patch.
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -639,7 +639,7 @@ describe("applyTransactionDelta", () => {
     ]);
 
     // Remove drops both the slot metadata and all of its entries.
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "3",
@@ -930,8 +930,8 @@ describe("pruneAccountHistory", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    // Build up history via applyTransactionDelta (nonce 1 → 2 → 3)
-    await applyTransactionDelta(
+    // Build up history via applyAccountPatch (nonce 1 → 2 → 3)
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -944,7 +944,7 @@ describe("pruneAccountHistory", () => {
       false,
       "0xc1"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -957,7 +957,7 @@ describe("pruneAccountHistory", () => {
       false,
       "0xc2"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "3",
@@ -1045,7 +1045,7 @@ describe("undoAccountStates", () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1059,7 +1059,7 @@ describe("undoAccountStates", () => {
       COMMITMENT
     );
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -1136,7 +1136,7 @@ describe("undoAccountStates", () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1149,7 +1149,7 @@ describe("undoAccountStates", () => {
       false,
       "0xc1"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -1199,7 +1199,7 @@ describe("undoAccountStates", () => {
     const db = getDatabase(dbId);
 
     // Apply nonce "1" adding a brand-new slot/map/asset (no prior state)
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1351,9 +1351,9 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(lockAccount(BAD_DB, "0xacc")).rejects.toThrow();
   });
 
-  it("applyTransactionDelta rejects on bad dbId", async () => {
+  it("applyAccountPatch rejects on bad dbId", async () => {
     await expect(
-      applyTransactionDelta(
+      applyAccountPatch(
         BAD_DB,
         "0xacc",
         "1",
@@ -1405,7 +1405,7 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
     const db = getDatabase(dbId);
 
     // Build 3 deltas for the same account to exercise the sort comparator at 1119
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1418,7 +1418,7 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       false,
       "0xc1"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -1431,7 +1431,7 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       false,
       "0xc2"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "3",

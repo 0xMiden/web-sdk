@@ -336,7 +336,7 @@ export async function upsertVaultAssets(
   }
 }
 
-export async function applyTransactionDelta(
+export async function applyAccountPatch(
   dbId: string,
   accountId: string,
   nonce: string,

@@ -16,12 +16,8 @@ use miden_client::sync::{
 use miden_client::utils::{Deserializable, Serializable};
 
 use super::IdxdbStore;
-use super::account::utils::{
-    apply_account_patch,
-    compute_storage_patch,
-    compute_vault_patch,
-    update_tracked_storage_roots,
-};
+use super::account::RootsUpdateMode;
+use super::account::utils::account_from_full_state_patch;
 use super::chain_data::utils::{
     SerializedPartialBlockchainNodeData,
     serialize_partial_blockchain_node,
@@ -210,8 +206,9 @@ impl IdxdbStore {
             .map(|tx_record| tx_record.details.final_account_state)
             .collect::<Vec<_>>();
 
-        // Remove the account states and discard their SMT roots from the forest
-        self.rollback_account_states(&account_states_to_rollback).await?;
+        // Remove the account states from the DB; their SMT roots are discarded from the forest
+        // below.
+        self.undo_account_states(&account_states_to_rollback).await?;
 
         // Discard roots for rolled-back accounts
         {
@@ -240,11 +237,7 @@ impl IdxdbStore {
             match update {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account.clone()),
                 PublicAccountUpdate::Patch { new_header, patch } if patch.is_full_state() => {
-                    let account = Account::try_from(patch)?;
-                    if account.to_commitment() != new_header.to_commitment() {
-                        return Err(StoreError::AccountCommitmentMismatch(account.id()));
-                    }
-                    full_accounts.push(account);
+                    full_accounts.push(account_from_full_state_patch(patch, new_header)?);
                 },
                 PublicAccountUpdate::Patch { new_header, patch } => {
                     patch_updates.push((new_header, patch));
@@ -269,63 +262,22 @@ impl IdxdbStore {
         for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
 
-            let map_slot_names: Vec<String> =
-                patch.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
-            let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
+            // Sync patches must move the account state forward; a stale or replayed patch would
+            // otherwise silently rewind tracked state.
+            let (local_header, _) = self
+                .get_account_header(account_id)
+                .await?
+                .ok_or(StoreError::AccountDataNotFound(account_id))?;
+            if new_header.nonce().as_canonical_u64() <= local_header.nonce().as_canonical_u64() {
+                return Err(StoreError::DatabaseError(format!(
+                    "sync account patch nonce {} is not greater than the local nonce {} for account {account_id}",
+                    new_header.nonce().as_canonical_u64(),
+                    local_header.nonce().as_canonical_u64(),
+                )));
+            }
 
-            let (updated_storage_slots, updated_assets, removed_asset_ids) = {
-                let mut smt_forest = self.smt_forest.write();
-
-                let mut final_roots = smt_forest
-                    .get_roots(&account_id)
-                    .cloned()
-                    .ok_or(StoreError::AccountDataNotFound(account_id))?;
-
-                // Storage: compute new map roots via SMT forest and update the tracked root list.
-                let updated_storage_slots =
-                    compute_storage_patch(&mut smt_forest, &old_map_roots, patch)?;
-                update_tracked_storage_roots(
-                    &mut final_roots,
-                    &old_map_roots,
-                    &updated_storage_slots,
-                )?;
-
-                // Vault patches already contain absolute final asset values.
-                let old_vault_root = final_roots[0];
-                let (updated_assets, removed_asset_ids) = compute_vault_patch(patch);
-                let new_vault_root = smt_forest.update_asset_nodes(
-                    old_vault_root,
-                    updated_assets.iter().copied(),
-                    removed_asset_ids.iter().copied(),
-                )?;
-                if new_vault_root != new_header.vault_root() {
-                    return Err(StoreError::DatabaseError(format!(
-                        "computed vault root {} does not match synced account header {}",
-                        new_vault_root.to_hex(),
-                        new_header.vault_root().to_hex(),
-                    )));
-                }
-                final_roots[0] = new_vault_root;
-
-                // For sync updates, replace roots directly (not staged)
-                smt_forest.replace_roots(account_id, final_roots);
-
-                (updated_storage_slots, updated_assets, removed_asset_ids)
-            };
-
-            apply_account_patch(
-                self.db_id(),
-                account_id,
-                new_header,
-                &updated_storage_slots,
-                &updated_assets,
-                &removed_asset_ids,
-                patch,
-            )
-            .await
-            .map_err(|err| {
-                StoreError::DatabaseError(format!("failed to apply sync account patch: {err:?}"))
-            })?;
+            self.apply_incremental_account_patch(new_header, patch, RootsUpdateMode::Replace)
+                .await?;
         }
 
         let state_update = JsStateSyncUpdate {
@@ -348,16 +300,6 @@ impl IdxdbStore {
         let promise = idxdb_apply_state_sync(self.db_id(), state_update);
         await_js_value(promise, "failed to apply state sync").await?;
 
-        Ok(())
-    }
-
-    /// Rolls back account states by removing them from the DB.
-    /// SMT root cleanup is handled separately via `discard_roots`.
-    async fn rollback_account_states(
-        &self,
-        account_commitments: &[Word],
-    ) -> Result<(), StoreError> {
-        self.undo_account_states(account_commitments).await?;
         Ok(())
     }
 }

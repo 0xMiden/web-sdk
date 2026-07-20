@@ -259,7 +259,7 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
         logWebStoreError(error, `Error inserting assets`);
     }
 }
-export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [

@@ -126,8 +126,8 @@ extern "C" {
     // TRANSACTIONAL WRITES
     // --------------------------------------------------------------------------------------------
 
-    #[wasm_bindgen(js_name = applyTransactionDelta)]
-    pub fn idxdb_apply_transaction_delta(
+    #[wasm_bindgen(js_name = applyAccountPatch)]
+    pub fn idxdb_apply_account_patch(
         db_id: &str,
         account_id: String,
         nonce: String,

@@ -26,8 +26,8 @@ use super::js_bindings::{
     JsStorageMapEntry,
     JsStorageSlot,
     JsVaultAsset,
+    idxdb_apply_account_patch,
     idxdb_apply_full_account_state,
-    idxdb_apply_transaction_delta,
     idxdb_upsert_account_code,
     idxdb_upsert_account_record,
     idxdb_upsert_account_storage,
@@ -284,14 +284,6 @@ pub fn update_tracked_storage_roots(
     Ok(())
 }
 
-/// Extracts the absolute vault changes carried by an account patch.
-pub fn compute_vault_patch(patch: &AccountPatch) -> (Vec<Asset>, Vec<AssetId>) {
-    (
-        patch.vault().updated_assets().collect(),
-        patch.vault().removed_asset_ids().copied().collect(),
-    )
-}
-
 /// Applies an account patch atomically in a single Dexie transaction.
 ///
 /// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
@@ -358,7 +350,7 @@ pub async fn apply_account_patch(
     let vault_root = final_header.vault_root().to_string();
     let committed = account_id.is_public();
     let commitment = final_header.to_commitment().to_string();
-    JsFuture::from(idxdb_apply_transaction_delta(
+    JsFuture::from(idxdb_apply_account_patch(
         db_id,
         account_id_str,
         nonce_str,
@@ -374,6 +366,19 @@ pub async fn apply_account_patch(
     .await?;
 
     Ok(())
+}
+
+/// Converts a full-state account patch into an [`Account`] and verifies that its commitment
+/// matches the expected final header.
+pub fn account_from_full_state_patch(
+    patch: &AccountPatch,
+    expected_header: &AccountHeader,
+) -> Result<Account, StoreError> {
+    let account = Account::try_from(patch)?;
+    if account.to_commitment() != expected_header.to_commitment() {
+        return Err(StoreError::AccountCommitmentMismatch(account.id()));
+    }
+    Ok(account)
 }
 
 /// Writes the full account state atomically in a single Dexie transaction.
