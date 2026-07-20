@@ -1,12 +1,13 @@
 use js_export_macro::js_export;
 use miden_client::Felt as NativeFelt;
-use miden_client::account::Account as NativeAccount;
 use miden_client::account::component::FungibleFaucet as NativeFungibleFaucet;
+use miden_client::account::{Account as NativeAccount, AccountStorage as NativeAccountStorage};
 
 use super::account::Account;
 use super::felt::Felt;
 use super::token_symbol::TokenSymbol;
 use crate::js_error_with_context;
+use crate::models::account_storage::AccountStorage;
 use crate::platform::JsErr;
 
 /// Provides metadata for a fungible faucet account component.
@@ -27,6 +28,17 @@ impl BasicFungibleFaucetComponent {
     pub fn from_account(account: Account) -> Result<Self, JsErr> {
         let native_account: NativeAccount = account.into();
         let faucet = NativeFungibleFaucet::try_from(&native_account).map_err(|e| {
+            js_error_with_context(e, "failed to get basic fungible faucet details from account")
+        })?;
+        Ok(Self(faucet))
+    }
+
+    /// Extracts faucet metadata from an account's storage.
+    #[js_export(js_name = "fromAccountStorage")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn from_account_storage(account_storage: AccountStorage) -> Result<Self, JsErr> {
+        let native_account_storage: NativeAccountStorage = account_storage.into();
+        let faucet = NativeFungibleFaucet::try_from(&native_account_storage).map_err(|e| {
             js_error_with_context(e, "failed to get basic fungible faucet details from account")
         })?;
         Ok(Self(faucet))

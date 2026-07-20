@@ -101,3 +101,17 @@ impl From<&NativeAccountStorage> for AccountStorage {
         AccountStorage(native_account_storage.clone())
     }
 }
+
+impl From<AccountStorage> for NativeAccountStorage {
+    fn from(account_storage: AccountStorage) -> Self {
+        account_storage.0
+    }
+}
+
+impl From<&AccountStorage> for NativeAccountStorage {
+    fn from(account_storage: &AccountStorage) -> Self {
+        account_storage.0.clone()
+    }
+}
+
+impl_napi_from_value!(AccountStorage);
