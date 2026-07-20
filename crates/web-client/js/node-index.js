@@ -163,9 +163,6 @@ export const AccountProof = /* @__PURE__ */ _reexport("AccountProof");
 export const AccountReader = /* @__PURE__ */ _reexport("AccountReader");
 export const AccountStatus = /* @__PURE__ */ _reexport("AccountStatus");
 export const AccountStorage = /* @__PURE__ */ _reexport("AccountStorage");
-export const AccountStorageDelta = /* @__PURE__ */ _reexport(
-  "AccountStorageDelta"
-);
 export const AccountStorageMode =
   /* @__PURE__ */ _reexport("AccountStorageMode");
 export const AccountStoragePatch = /* @__PURE__ */ _reexport(
