@@ -101,6 +101,9 @@ export function buildSwapTag(opts) {
 
 function buildNoteAssets(assets, wasm) {
   const assetArray = Array.isArray(assets) ? assets : [assets];
+  if (assetArray.length === 0) {
+    throw new TypeError("P2ID and P2IDE notes require at least one asset");
+  }
   const fungibleAssets = assetArray.map((asset) => {
     const faucetId = resolveAccountRef(asset.token, wasm);
     return new wasm.FungibleAsset(faucetId, BigInt(asset.amount));

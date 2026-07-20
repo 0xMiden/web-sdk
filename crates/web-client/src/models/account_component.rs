@@ -10,6 +10,7 @@ use miden_client::account::{
 };
 use miden_client::assembly::{Library as NativeLibrary, MastNodeExt};
 use miden_client::auth::{
+    Approver,
     AuthSchemeId as NativeAuthSchemeId,
     AuthSecretKey as NativeSecretKey,
     AuthSingleSig as NativeSingleSig,
@@ -51,9 +52,9 @@ impl GetProceduresResultItem {
     }
 }
 
-impl From<(miden_protocol::account::AccountProcedureRoot, bool)> for GetProceduresResultItem {
+impl From<(miden_client::account::AccountProcedureRoot, bool)> for GetProceduresResultItem {
     fn from(
-        native_get_procedures_result_item: (miden_protocol::account::AccountProcedureRoot, bool),
+        native_get_procedures_result_item: (miden_client::account::AccountProcedureRoot, bool),
     ) -> Self {
         let digest_word: NativeWord = native_get_procedures_result_item.0.into();
         Self {
@@ -88,6 +89,16 @@ impl AccountComponent {
         .map_err(|e| js_error_with_context(e, "Failed to compile account component"))
     }
 
+    /// Returns the exact compiled code used by this component.
+    ///
+    /// Link this code when compiling scripts that invoke the component. Rebuilding a library from
+    /// the original source can produce different procedure identities than the code installed on
+    /// the account.
+    #[js_export(js_name = "componentCode")]
+    pub fn component_code(&self) -> AccountComponentCode {
+        self.0.component_code().clone().into()
+    }
+
     /// Marks the component as supporting all account types.
     ///
     /// The 0.15 protocol collapsed the per-account-type flag set on
@@ -116,6 +127,7 @@ impl AccountComponent {
         let library = self.0.component_code().as_library();
 
         let get_proc_export = library
+            .manifest
             .exports()
             .find(|export| {
                 if export.as_procedure().is_none() {
@@ -197,13 +209,12 @@ impl AccountComponent {
         storage_slots: StorageSlotArray,
     ) -> Result<AccountComponent, JsErr> {
         let native_package: NativePackage = package.into();
-        let native_library = (*native_package.mast).clone();
         let items: Vec<StorageSlot> = storage_slots.into();
         let native_slots: Vec<NativeStorageSlot> =
             items.into_iter().map(std::convert::Into::into).collect();
 
         NativeAccountComponent::new(
-            native_library,
+            native_package,
             native_slots,
             AccountComponentMetadata::new("custom"),
         )
@@ -238,11 +249,13 @@ impl AccountComponent {
     ) -> AccountComponent {
         match auth_scheme {
             AuthScheme::AuthRpoFalcon512 => {
-                let auth = NativeSingleSig::new(commitment, NativeAuthSchemeId::Falcon512Poseidon2);
+                let approver = Approver::new(commitment, NativeAuthSchemeId::Falcon512Poseidon2);
+                let auth = NativeSingleSig::new(approver);
                 AccountComponent(auth.into())
             },
             AuthScheme::AuthEcdsaK256Keccak => {
-                let auth = NativeSingleSig::new(commitment, NativeAuthSchemeId::EcdsaK256Keccak);
+                let approver = Approver::new(commitment, NativeAuthSchemeId::EcdsaK256Keccak);
+                let auth = NativeSingleSig::new(approver);
                 AccountComponent(auth.into())
             },
         }

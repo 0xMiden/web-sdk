@@ -126,6 +126,7 @@ impl AccountReader {
         self.0
             .get_balance(faucet_id.into())
             .await
+            .map(|amount| amount.as_u64())
             .map_err(|err| js_error_with_context(err, "failed to get balance"))
     }
 

@@ -98,7 +98,6 @@ declare global {
     AccountHeader: typeof AccountHeader;
     AccountId: typeof AccountId;
     AccountInterface: typeof AccountInterface;
-    AccountStorageDelta: typeof AccountStorageDelta;
     AccountStorageMode: typeof AccountStorageMode;
     AccountStorageRequirements: typeof AccountStorageRequirements;
     AccountType: typeof AccountType;

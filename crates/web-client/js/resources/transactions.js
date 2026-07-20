@@ -243,6 +243,14 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  /**
+   * Dry-run a transaction to obtain the TransactionSummary pending
+   * authorization (e.g. a multisig below its signing threshold). Rejects
+   * with an error carrying `code: "TRANSACTION_ALREADY_AUTHORIZED"` (on
+   * Node.js the code prefixes the message instead) when the transaction
+   * executes successfully, since a fully authorized transaction produces
+   * no summary. See {@link PreviewOptions}.
+   */
   async preview(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();

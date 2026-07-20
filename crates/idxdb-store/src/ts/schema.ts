@@ -256,6 +256,7 @@ export interface JsStorageSlot {
   slotName: string;
   slotValue: string;
   slotType: number;
+  patchOperation?: number;
 }
 
 export interface JsStorageMapEntry {

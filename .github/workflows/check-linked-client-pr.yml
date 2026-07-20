@@ -7,17 +7,17 @@ name: Linked client PR ready
 # clean. But the *published* artifact, after merge, builds from canonical
 # refs:
 #   - PRs targeting `main` build against `miden-client = "X.Y.Z"` from
-#     crates.io. After merge, main's CI is red until miden-client publishes
+#     crates.io. After merge, main's CI is red until rust-sdk publishes
 #     a release that includes the linked PR's commit.
 #   - PRs targeting `next` build against `miden-client@next` (git source).
 #     After merge, next's CI is red until the linked PR is merged into
-#     miden-client's `next`.
+#     rust-sdk's `next`.
 #
 # This workflow keeps a check status on the PR that goes green only when
 # the linked PR has reached the right state for the target branch:
 #   - `main` target → linked PR must be merged AND released to crates.io
 #                      at a version satisfying web-sdk's version requirement.
-#   - `next` target → linked PR must be merged into miden-client/next.
+#   - `next` target → linked PR must be merged into rust-sdk/next.
 #
 # Until that's true, the check stays pending — branch protection can be
 # configured to require this check, blocking merge.
@@ -176,7 +176,7 @@ jobs:
             exit 0
           fi
 
-          repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/miden-client")
+          repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/rust-sdk")
           num=$(printf '%s' "$marker" | grep -oE '[0-9]+$')
 
           # Pull the upstream PR's state. Tab-separated, IFS=$'\t' for
@@ -194,7 +194,7 @@ jobs:
           case "$base_ref" in
             next)
               # next-target → require the merge_commit_sha to be reachable
-              # from miden-client's `next` branch.
+              # from rust-sdk's `next` branch.
               next_sha=$(gh api repos/$repo/git/ref/heads/next --jq .object.sha)
               if [ -z "$merge_commit_sha" ]; then
                 set_status pending "Linked ${repo}#${num} merged but merge_commit_sha unknown."
@@ -208,7 +208,7 @@ jobs:
               esac
               ;;
             main)
-              # main-target → require miden-client to have a published release
+              # main-target → require rust-sdk to have a published release
               # whose tag commit reaches merge_commit_sha. We approximate this
               # by checking whether merge_commit_sha is reachable from the
               # latest release tag.

@@ -26,6 +26,7 @@ import type {
   NoteExportFormat,
   StorageSlot,
   AccountComponent,
+  Library,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -186,8 +187,6 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
-  /** Enable debug mode for transaction execution (default: false). */
-  debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
     getKey: GetKeyCallback;
@@ -573,7 +572,7 @@ export type NoteQuery =
 export interface NoteOptions {
   from: AccountRef;
   to: AccountRef;
-  assets: Asset | Asset[];
+  assets: Asset | [Asset, ...Asset[]];
   type?: NoteVisibility;
   attachment?: Felt[];
 }
@@ -769,8 +768,18 @@ export interface TransactionsResource {
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
 
   /**
-   * Dry-run a transaction to preview its effects without submitting it to
-   * the network.
+   * Dry-run a transaction to obtain the {@link TransactionSummary} the
+   * account is being asked to authorize, without submitting anything to the
+   * network.
+   *
+   * The summary only exists while authorization is pending: it is returned
+   * when the account's auth procedure aborts with the unauthorized event
+   * (e.g. a multisig below its signing threshold), so it can be signed
+   * out-of-band. If the transaction is already fully authorized, execution
+   * succeeds without producing a summary and this method rejects with an
+   * error whose `code` is `"TRANSACTION_ALREADY_AUTHORIZED"` (on Node.js the
+   * code prefixes the error message instead) — submit the transaction with
+   * `execute` instead.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
@@ -878,6 +887,11 @@ export interface NotesResource {
 export interface CompileComponentOptions {
   /** MASM source code for the component. */
   code: string;
+  /**
+   * Module path used to derive procedure identities. Use the same namespace when
+   * linking this component into transaction scripts.
+   */
+  namespace?: string;
   /** Initial storage slots for the component. */
   slots?: StorageSlot[];
   /**
@@ -904,18 +918,35 @@ export interface CompileTxScriptLibrary {
   linking?: Linking;
 }
 
+/** Links the exact compiled code installed by an account component. */
+export interface CompileAccountComponentLibrary {
+  /** Account component whose installed code should be linked. */
+  component: AccountComponent;
+  /**
+   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
+   * `Linking.Static` — procedures are inlined at compile time.
+   */
+  linking?: Linking;
+}
+
+/** A script library supplied inline, pre-built, or from an installed account component. */
+export type CompileScriptLibrary =
+  | CompileTxScriptLibrary
+  | CompileAccountComponentLibrary
+  | Library;
+
 export interface CompileTxScriptOptions {
   /** MASM source code for the transaction script. */
   code: string;
   /** Component libraries to link. */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: CompileScriptLibrary[];
 }
 
 export interface CompileNoteScriptOptions {
   /** MASM source code for the note script. */
   code: string;
   /** Component libraries to link. */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: CompileScriptLibrary[];
 }
 
 export declare class CompilerResource {
