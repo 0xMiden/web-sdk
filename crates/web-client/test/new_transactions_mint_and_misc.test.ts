@@ -739,7 +739,12 @@ test.describe("submitNewTransactionWithProver tests", () => {
       });
 
       expect(result.threw).toBe(true);
-      expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
+      // Browser errors carry the code as a property; the Node binding's `code`
+      // is napi's fixed Status enum, so the code prefixes the message there.
+      expect(
+        result.code === "TRANSACTION_ALREADY_AUTHORIZED" ||
+          result.message.startsWith("TRANSACTION_ALREADY_AUTHORIZED")
+      ).toBe(true);
       expect(result.message).toContain("already fully authorized");
     });
   });

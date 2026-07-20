@@ -40,10 +40,8 @@ function normBytes(val) {
  * Creates the WasmWebClient factory for Node.js.
  *
  * Matches the browser interface:
- *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, debugMode)
- *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, debugMode)
- *
- * `debugMode` is retained for call-shape compatibility and has no effect with miden-client 0.16.
+ *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName)
+ *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign)
  *   WasmWebClient.buildSwapTag(...)
  *
  * @param {object} rawSdk - The raw napi SDK module.
@@ -55,13 +53,7 @@ export function createWasmWebClient(rawSdk, options) {
     buildSwapTag: (...args) =>
       rawSdk.WebClient.buildSwapTag(...args.map(normalizeArg)),
 
-    createClient: async (
-      rpcUrl,
-      noteTransportUrl,
-      seed,
-      storeName,
-      debugMode
-    ) => {
+    createClient: async (rpcUrl, noteTransportUrl, seed, storeName) => {
       const dir = options?.dataDir
         ? path.join(options.dataDir, storeName || "default")
         : storeName
@@ -74,8 +66,7 @@ export function createWasmWebClient(rawSdk, options) {
         noteTransportUrl ?? null,
         normBytes(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
-        path.join(dir, "keystore"),
-        debugMode ?? false
+        path.join(dir, "keystore")
       );
       return wrapClient(client, storeName);
     },

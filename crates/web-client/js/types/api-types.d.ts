@@ -187,11 +187,6 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
-  /**
-   * @deprecated Transaction debug mode was removed in miden-client 0.16.
-   * This option is retained for source compatibility and has no effect.
-   */
-  debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
     getKey: GetKeyCallback;
@@ -782,8 +777,9 @@ export interface TransactionsResource {
    * (e.g. a multisig below its signing threshold), so it can be signed
    * out-of-band. If the transaction is already fully authorized, execution
    * succeeds without producing a summary and this method rejects with an
-   * error whose `code` is `"TRANSACTION_ALREADY_AUTHORIZED"` — submit the
-   * transaction with `execute` instead.
+   * error whose `code` is `"TRANSACTION_ALREADY_AUTHORIZED"` (on Node.js the
+   * code prefixes the error message instead) — submit the transaction with
+   * `execute` instead.
    *
    * @param options - Preview options discriminated by `operation` field.
    */

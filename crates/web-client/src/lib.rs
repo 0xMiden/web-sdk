@@ -365,7 +365,6 @@ impl WebClient {
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
-    /// * `debug_mode`: Retained for API compatibility; ignored by miden-client 0.16.
     #[wasm_bindgen(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -373,7 +372,6 @@ impl WebClient {
         node_note_transport_url: Option<String>,
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
@@ -397,7 +395,7 @@ impl WebClient {
         );
         let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
@@ -415,7 +413,6 @@ impl WebClient {
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
-    /// * `debug_mode`: Retained for API compatibility; ignored by miden-client 0.16.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -427,7 +424,6 @@ impl WebClient {
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
@@ -452,7 +448,7 @@ impl WebClient {
         let keystore =
             WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
@@ -465,7 +461,6 @@ impl WebClient {
         keystore: WebKeyStore<RandomCoin>,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        _debug_mode: Option<bool>,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
@@ -505,7 +500,6 @@ impl WebClient {
     /// * `seed`: Optional seed for account initialization.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
-    /// * `debug_mode`: Retained for API compatibility; ignored by miden-client 0.16.
     #[napi(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -514,7 +508,6 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         db_path: String,
         keystore_path: String,
-        debug_mode: Option<bool>,
     ) -> Result<String, JsErr> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
@@ -540,7 +533,7 @@ impl WebClient {
         let keystore = FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok("Client created successfully".to_string())
@@ -553,7 +546,6 @@ impl WebClient {
         keystore: FilesystemKeyStore,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        _debug_mode: Option<bool>,
     ) -> Result<(), JsErr> {
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()

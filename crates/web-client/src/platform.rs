@@ -41,11 +41,12 @@ pub(crate) fn from_str_err_with_code(msg: &str, code: &str) -> JsErr {
 }
 
 /// Create an error carrying a stable machine-readable `code`. The Node.js
-/// binding has no error-property channel, so the code is dropped and only the
-/// message is surfaced (mirroring `js_error_with_context`).
+/// binding's error `code` property is napi's fixed `Status` enum (always
+/// `GenericFailure` here), so the stable code is prefixed onto the message
+/// instead: `"<CODE>: <message>"`.
 #[cfg(feature = "nodejs")]
-pub(crate) fn from_str_err_with_code(msg: &str, _code: &str) -> JsErr {
-    napi::Error::from_reason(msg)
+pub(crate) fn from_str_err_with_code(msg: &str, code: &str) -> JsErr {
+    napi::Error::from_reason(format!("{code}: {msg}"))
 }
 
 // BYTE TYPES
