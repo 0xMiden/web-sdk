@@ -22,7 +22,7 @@ pub fn deserialize_from_bytes<T: Deserializable>(bytes: &JsBytes) -> Result<T, J
     T::read_from(&mut reader).map_err(|e| js_error_with_context(e, &context))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "browser"))]
 mod tests {
     use miden_client::utils::{ByteReader, DeserializationError};
 
@@ -37,7 +37,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "browser")]
     #[test]
     fn deserialize_from_bytes_failure_with_type_context() {
         use wasm_bindgen_futures::js_sys::Uint8Array;

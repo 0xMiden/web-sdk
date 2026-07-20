@@ -3,8 +3,8 @@ use alloc::collections::BTreeMap;
 use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote};
+use miden_client::asset::{AssetAmount, FungibleAsset};
+use miden_client::note::{BlockNumber, Note as NativeNote, PswapNote};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
@@ -14,10 +14,8 @@ use miden_client::transaction::{
     PswapTransactionData,
     SwapTransactionData,
     TransactionExecutorError,
-    TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionStoreUpdate as NativeTransactionStoreUpdate,
-    TransactionSummary as NativeTransactionSummary,
 };
 
 use crate::models::NoteType;
@@ -34,7 +32,13 @@ use crate::models::transaction_result::TransactionResult;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
-use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
+use crate::platform::{
+    JsErr,
+    from_str_err,
+    from_str_err_with_code,
+    js_u64_to_u64,
+    maybe_wrap_send,
+};
 use crate::{WebClient, js_error_with_context};
 
 #[js_export]
@@ -243,8 +247,29 @@ impl WebClient {
         note_fill_amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
-        let account_fill_amount = js_u64_to_u64(account_fill_amount);
-        let note_fill_amount = js_u64_to_u64(note_fill_amount);
+        let pswap = PswapNote::try_from(&native_pswap_note)
+            .map_err(|err| js_error_with_context(err, "invalid PSWAP note"))?;
+
+        let account_fill_amount = AssetAmount::new(js_u64_to_u64(account_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid account fill amount"))?;
+        let note_fill_amount = AssetAmount::new(js_u64_to_u64(note_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid note fill amount"))?;
+
+        // miden-client 0.16 treats an overfill as a full fill. Keep the web client's existing
+        // contract, which rejects fills outside the open order amount, and validate the combined
+        // account/note fill before handing it to the native request builder.
+        let total_fill_amount = (account_fill_amount + note_fill_amount)
+            .map_err(|err| js_error_with_context(err, "invalid total fill amount"))?;
+        if total_fill_amount == AssetAmount::ZERO {
+            return Err(from_str_err("Fill amount must be greater than 0"));
+        }
+
+        let requested_amount = pswap.storage().min_requested_asset().amount();
+        if total_fill_amount > requested_amount {
+            return Err(from_str_err(&format!(
+                "Fill amount {total_fill_amount} exceeds requested amount {requested_amount}"
+            )));
+        }
 
         let pswap_transaction_request = NativeTransactionRequestBuilder::new()
             .build_pswap_consume(
@@ -354,14 +379,18 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
     }
 
-    /// Executes a transaction and returns the `TransactionSummary`.
+    /// Executes a transaction and returns the `TransactionSummary` the account is being asked
+    /// to authorize.
     ///
-    /// If the transaction is unauthorized (auth script emits the unauthorized event),
-    /// returns the summary from the error. If the transaction succeeds, constructs
-    /// a summary from the executed transaction using the `auth_arg` from the transaction
-    /// request as the salt (or a zero salt if not provided).
+    /// The summary only exists while authorization is pending: when the auth procedure aborts
+    /// with the unauthorized event (e.g. a multisig below its signing threshold), the summary
+    /// built during execution is returned so it can be signed out-of-band. If the transaction
+    /// executes successfully it was already fully authorized, no summary is produced, and this
+    /// method returns an error with code `TRANSACTION_ALREADY_AUTHORIZED` — submit the
+    /// transaction with `execute` instead.
     ///
     /// # Errors
+    /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
     /// - If there is an internal failure during execution.
     #[js_export(js_name = "executeForSummary")]
     pub async fn execute_for_summary(
@@ -371,25 +400,15 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let native_request: NativeTransactionRequest = transaction_request.into();
-        // auth_arg is passed to the auth procedure as the salt for the transaction summary
-        // defaults to 0 if not provided.
-        let salt = native_request.auth_arg().unwrap_or_default();
 
-        let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
-        let execute_result = maybe_wrap_send(fut).await;
-        match execute_result {
-            Ok(res) => {
-                // construct summary from executed transaction
-                let executed_tx = res.executed_transaction();
-                let summary = NativeTransactionSummary::new(
-                    executed_tx.account_delta().clone(),
-                    executed_tx.input_notes().clone(),
-                    executed_tx.output_notes().clone(),
-                    salt,
-                );
-                Ok(TransactionSummary::from(summary))
-            },
+        let fut =
+            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
+        match maybe_wrap_send(fut).await {
+            Ok(_) => Err(from_str_err_with_code(
+                "transaction is already fully authorized, so no transaction summary was \
+                 produced during execution; submit it with execute instead",
+                "TRANSACTION_ALREADY_AUTHORIZED",
+            )),
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),

@@ -163,6 +163,7 @@ function patchSdkPrototypes(rawSdk) {
 
   // null -> undefined for Option<T> return methods
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
   ]) {

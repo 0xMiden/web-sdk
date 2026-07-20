@@ -2,11 +2,8 @@ use js_export_macro::js_export;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
 use miden_client::crypto::RandomCoin;
-use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote};
+use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote, P2ideNote};
 use miden_client::{Felt as NativeFelt, Word as NativeWord};
-use miden_standards::note::{P2ideNote, P2ideNoteStorage};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 
 use super::NoteType;
 use super::account_id::AccountId;
@@ -44,7 +41,7 @@ impl Note {
         note_recipient: &NoteRecipient,
     ) -> Note {
         let native_metadata: miden_client::note::NoteMetadata = note_metadata.into();
-        let partial = miden_protocol::note::PartialNoteMetadata::new(
+        let partial = miden_client::note::PartialNoteMetadata::new(
             native_metadata.sender(),
             native_metadata.note_type(),
         )
@@ -115,8 +112,7 @@ impl Note {
         note_type: NoteType,
         attachment: &NoteAttachment,
     ) -> Result<Self, JsErr> {
-        let mut rng = StdRng::from_os_rng();
-        let coin_seed: [u64; 4] = rng.random();
+        let coin_seed: [u64; 4] = rand::random();
         // `coin_seed` is freshly random `u64`s; values at or beyond the modulus would only
         // happen with vanishing probability and `new_unchecked` is what the upstream Rust
         // client uses in the same spot.
@@ -127,15 +123,16 @@ impl Note {
 
         let native_attachment: miden_client::note::NoteAttachment = attachment.into();
 
-        let native_note = P2idNote::create(
-            sender.into(),
-            target.into(),
-            native_assets,
-            note_type.into(),
-            native_attachment.into(),
-            &mut rng,
-        )
-        .map_err(|err| js_error_with_context(err, "create p2id note"))?;
+        let native_note: NativeNote = P2idNote::builder()
+            .sender(sender.into())
+            .target(target.into())
+            .assets(native_assets)
+            .note_type(note_type.into())
+            .attachment(native_attachment)
+            .generate_serial_number(&mut rng)
+            .build()
+            .map_err(|err| js_error_with_context(err, "create p2id note"))?
+            .into();
 
         Ok(native_note.into())
     }
@@ -151,31 +148,27 @@ impl Note {
         note_type: NoteType,
         attachment: &NoteAttachment,
     ) -> Result<Self, JsErr> {
-        let mut rng = StdRng::from_os_rng();
-        let coin_seed: [u64; 4] = rng.random();
+        let coin_seed: [u64; 4] = rand::random();
         // See `create_p2id_note` for why `new_unchecked` is fine here.
         let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
 
-        let storage = P2ideNoteStorage::new(
-            target.into(),
-            reclaim_height.map(NativeBlockNumber::from),
-            timelock_height.map(NativeBlockNumber::from),
-        );
-
         let native_attachment: miden_client::note::NoteAttachment = attachment.into();
 
-        let native_note = P2ideNote::create(
-            sender.into(),
-            storage,
-            native_assets,
-            note_type.into(),
-            native_attachment.into(),
-            &mut rng,
-        )
-        .map_err(|err| js_error_with_context(err, "create p2ide note"))?;
+        let native_note: NativeNote = P2ideNote::builder()
+            .sender(sender.into())
+            .target(target.into())
+            .assets(native_assets)
+            .note_type(note_type.into())
+            .attachment(native_attachment)
+            .maybe_reclaim_height(reclaim_height.map(NativeBlockNumber::from))
+            .maybe_timelock_height(timelock_height.map(NativeBlockNumber::from))
+            .generate_serial_number(&mut rng)
+            .build()
+            .map_err(|err| js_error_with_context(err, "create p2ide note"))?
+            .into();
 
         Ok(native_note.into())
     }

@@ -259,7 +259,7 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
         logWebStoreError(error, `Error inserting assets`);
     }
 }
-export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -272,7 +272,8 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
         ], async () => {
-            // Apply storage delta: read old → archive → write new
+            const resetMapSlots = new Set();
+            // Apply storage patch: read old → archive → write/delete final state.
             for (const slot of updatedSlots) {
                 const oldSlot = await db.latestAccountStorages
                     .where("[accountId+slotName]")
@@ -285,12 +286,44 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                     oldSlotValue: oldSlot?.slotValue ?? null,
                     slotType: slot.slotType,
                 });
-                await db.latestAccountStorages.put({
-                    accountId,
-                    slotName: slot.slotName,
-                    slotValue: slot.slotValue,
-                    slotType: slot.slotType,
-                });
+                // A created map is a replacement (a remove followed by create can merge to Create),
+                // while a removed map must drop every persisted entry. Archive those entries so account
+                // rollback can restore them.
+                if (slot.slotType === 1 &&
+                    (slot.patchOperation === 0 || slot.patchOperation === 2)) {
+                    resetMapSlots.add(slot.slotName);
+                    const oldMapEntries = await db.latestStorageMapEntries
+                        .where("[accountId+slotName]")
+                        .equals([accountId, slot.slotName])
+                        .toArray();
+                    for (const entry of oldMapEntries) {
+                        await db.historicalStorageMapEntries.put({
+                            accountId,
+                            replacedAtNonce: nonce,
+                            slotName: entry.slotName,
+                            key: entry.key,
+                            oldValue: entry.value,
+                        });
+                    }
+                    await db.latestStorageMapEntries
+                        .where("[accountId+slotName]")
+                        .equals([accountId, slot.slotName])
+                        .delete();
+                }
+                if (slot.patchOperation === 2) {
+                    await db.latestAccountStorages
+                        .where("[accountId+slotName]")
+                        .equals([accountId, slot.slotName])
+                        .delete();
+                }
+                else {
+                    await db.latestAccountStorages.put({
+                        accountId,
+                        slotName: slot.slotName,
+                        slotValue: slot.slotValue,
+                        slotType: slot.slotType,
+                    });
+                }
             }
             // Process map entries: read old → archive → update latest
             for (const entry of changedMapEntries) {
@@ -298,13 +331,30 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                     .where("[accountId+slotName+key]")
                     .equals([accountId, entry.slotName, entry.key])
                     .first();
-                await db.historicalStorageMapEntries.put({
-                    accountId,
-                    replacedAtNonce: nonce,
-                    slotName: entry.slotName,
-                    key: entry.key,
-                    oldValue: oldEntry?.value ?? null,
-                });
+                if (resetMapSlots.has(entry.slotName)) {
+                    const archivedEntry = await db.historicalStorageMapEntries
+                        .where("[accountId+replacedAtNonce+slotName+key]")
+                        .equals([accountId, nonce, entry.slotName, entry.key])
+                        .first();
+                    if (archivedEntry === undefined) {
+                        await db.historicalStorageMapEntries.put({
+                            accountId,
+                            replacedAtNonce: nonce,
+                            slotName: entry.slotName,
+                            key: entry.key,
+                            oldValue: null,
+                        });
+                    }
+                }
+                else {
+                    await db.historicalStorageMapEntries.put({
+                        accountId,
+                        replacedAtNonce: nonce,
+                        slotName: entry.slotName,
+                        key: entry.key,
+                        oldValue: oldEntry?.value ?? null,
+                    });
+                }
                 // "" means removal
                 if (entry.value === "") {
                     await db.latestStorageMapEntries

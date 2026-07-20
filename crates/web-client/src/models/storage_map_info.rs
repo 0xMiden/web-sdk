@@ -10,7 +10,7 @@ use super::word::Word;
 /// Information about storage map updates for an account, as returned by the
 /// `syncStorageMaps` RPC endpoint.
 ///
-/// Contains the list of storage map updates within the requested block range,
+/// Contains the storage map entries merged over the requested block range,
 /// along with the chain tip and last processed block number.
 #[js_export(js_name = "StorageMapInfo")]
 pub struct StorageMapInfo {
@@ -42,8 +42,8 @@ impl StorageMapInfo {
 // STORAGE MAP UPDATE
 // ================================================================================================
 
-/// A single storage map update entry, containing the block number, slot name,
-/// key, and new value.
+/// A merged storage map entry containing the last processed block number, slot name, key, and
+/// final value. The node no longer exposes the individual block number for each update.
 #[derive(Clone)]
 #[js_export(js_name = "StorageMapUpdate")]
 pub struct StorageMapUpdate {
@@ -55,7 +55,7 @@ pub struct StorageMapUpdate {
 
 #[js_export]
 impl StorageMapUpdate {
-    /// Returns the block number in which this update occurred.
+    /// Returns the last processed block number for the merged response.
     #[js_export(js_name = "blockNum")]
     pub fn block_num(&self) -> u32 {
         self.block_num
@@ -83,14 +83,17 @@ impl StorageMapUpdate {
 
 impl From<NativeStorageMapInfo> for StorageMapInfo {
     fn from(native: NativeStorageMapInfo) -> Self {
+        let block_num = native.block_number.as_u32();
         let updates = native
-            .updates
+            .map_entries
             .iter()
-            .map(|u| StorageMapUpdate {
-                block_num: u.block_num.as_u32(),
-                slot_name: u.slot_name.to_string(),
-                key: Word::from(NativeWord::from(u.key)),
-                value: Word::from(u.value),
+            .flat_map(|(slot_name, entries)| {
+                entries.as_map().iter().map(move |(key, value)| StorageMapUpdate {
+                    block_num,
+                    slot_name: slot_name.to_string(),
+                    key: Word::from(NativeWord::from(*key)),
+                    value: Word::from(*value),
+                })
             })
             .collect();
 

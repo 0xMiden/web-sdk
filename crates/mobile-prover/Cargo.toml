@@ -20,9 +20,6 @@ crate-type = ["cdylib", "staticlib"]
 # prove without wasm-bindgen-rayon (which is broken on iOS WKWebView).
 miden-client = { default-features = false, features = ["concurrent", "std"], workspace = true }
 
-# Tiny block_on for the sync C ABI — the prove future is CPU-bound so no
-# real async runtime is needed.
-futures-executor = { default-features = false, features = ["std"], version = "0.3" }
 # Profile settings are inherited from the workspace root. We don't redefine
 # them here because cargo emits a warning ("profiles for the non root package
 # will be ignored") that rollup-plugin-rust treats as a build error.

@@ -253,11 +253,22 @@ test.describe("export and import note", () => {
             window.AccountStorageMode.private(),
             window.AuthScheme.AuthRpoFalcon512
           );
+          const faucet = await client.newFaucet(
+            window.AccountStorageMode.private(),
+            false,
+            "DAG",
+            "DAG",
+            8,
+            BigInt(10000000),
+            window.AuthScheme.AuthRpoFalcon512
+          );
 
           const p2IdNote = window.Note.createP2IDNote(
             account1.id(),
             account2.id(),
-            new window.NoteAssets([]),
+            new window.NoteAssets([
+              new window.FungibleAsset(faucet.id(), BigInt(1)),
+            ]),
             window.NoteType.Public,
             new window.NoteAttachment()
           );

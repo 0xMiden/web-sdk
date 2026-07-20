@@ -4,17 +4,21 @@ import { CompilerResource } from "../../resources/compiler.js";
 function makeBuilder() {
   return {
     compileAccountComponentCode: vi.fn(),
+    compileAccountComponentCodeWithPath: vi.fn(),
     compileTxScript: vi.fn(),
     compileNoteScript: vi.fn(),
     buildLibrary: vi.fn(),
     linkStaticLibrary: vi.fn(),
     linkDynamicLibrary: vi.fn(),
+    linkStaticAccountComponentCode: vi.fn(),
+    linkDynamicAccountComponentCode: vi.fn(),
   };
 }
 
 function makeAccountComponent() {
   return {
     withSupportsAllTypes: vi.fn().mockReturnThis(),
+    componentCode: vi.fn(),
   };
 }
 
@@ -79,6 +83,20 @@ describe("CompilerResource", () => {
       });
       expect(rawComponent.withSupportsAllTypes).not.toHaveBeenCalled();
       expect(result).toBe(rawComponent);
+    });
+
+    it("compiles under an explicit component namespace", async () => {
+      builder.compileAccountComponentCodeWithPath.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({
+        code: "code",
+        namespace: "external_contract::counter_contract",
+      });
+      expect(builder.compileAccountComponentCodeWithPath).toHaveBeenCalledWith(
+        "external_contract::counter_contract",
+        "code"
+      );
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
     });
 
     it("defaults slots to empty array when not provided", async () => {
@@ -154,6 +172,37 @@ describe("CompilerResource", () => {
       await resource.txScript({ code: "code", libraries: [prebuiltLib] });
       expect(builder.buildLibrary).not.toHaveBeenCalled();
       expect(builder.linkDynamicLibrary).toHaveBeenCalledWith(prebuiltLib);
+    });
+
+    it("links the exact account component code dynamically", async () => {
+      builder.compileTxScript.mockReturnValue("txResult");
+      const componentCode = { kind: "account-component-code" };
+      component.componentCode.mockReturnValue(componentCode);
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.txScript({
+        code: "code",
+        libraries: [{ component }],
+      });
+      expect(component.componentCode).toHaveBeenCalledOnce();
+      expect(builder.linkDynamicAccountComponentCode).toHaveBeenCalledWith(
+        componentCode
+      );
+      expect(builder.buildLibrary).not.toHaveBeenCalled();
+    });
+
+    it("links the exact account component code statically", async () => {
+      builder.compileTxScript.mockReturnValue("txResult");
+      const componentCode = { kind: "account-component-code" };
+      component.componentCode.mockReturnValue(componentCode);
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.txScript({
+        code: "code",
+        libraries: [{ component, linking: "static" }],
+      });
+      expect(builder.linkStaticAccountComponentCode).toHaveBeenCalledWith(
+        componentCode
+      );
+      expect(builder.linkDynamicAccountComponentCode).not.toHaveBeenCalled();
     });
 
     it("handles empty libraries array", async () => {

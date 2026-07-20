@@ -34,4 +34,10 @@ impl From<AccountComponentCode> for NativeAccountComponentCode {
     }
 }
 
+impl From<&AccountComponentCode> for NativeAccountComponentCode {
+    fn from(native_account_component: &AccountComponentCode) -> Self {
+        native_account_component.0.clone()
+    }
+}
+
 impl_napi_from_value!(AccountComponentCode);

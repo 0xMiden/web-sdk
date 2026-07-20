@@ -10,7 +10,7 @@ WASM-powered client, React hooks, and Vite tooling — sign, send, and prove tra
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xMiden/web-sdk/badges/coverage.json)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml?query=branch%3Amain)
 [![npm: @miden-sdk/miden-sdk](https://img.shields.io/npm/v/@miden-sdk/miden-sdk?label=%40miden-sdk%2Fmiden-sdk&color=cb3837)](https://www.npmjs.com/package/@miden-sdk/miden-sdk)
 [![npm: @miden-sdk/react](https://img.shields.io/npm/v/@miden-sdk/react?label=%40miden-sdk%2Freact&color=61dafb)](https://www.npmjs.com/package/@miden-sdk/react)
-[![Rust 1.93](https://img.shields.io/badge/rust-1.93-orange?logo=rust)](rust-toolchain.toml)
+[![Rust 1.96.1](https://img.shields.io/badge/rust-1.96.1-orange?logo=rust)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -28,7 +28,7 @@ This repo packages everything you need to interact with Miden from a browser, a 
 | **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | — |
 | **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
 
-Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client).
+Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) from `0xMiden/rust-sdk`.
 
 ---
 
@@ -227,7 +227,7 @@ flowchart TB
 ```
 
 - **`miden-idxdb-store`** persists everything the client needs to survive a tab reload — accounts, notes, the partial MMR, sync state, key material.
-- **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
+- **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
 - **`@miden-sdk/react`** is a thin layer on top: React hooks that call into the WASM client and a pluggable `SignerContext` so the same code works with MidenFi, Para, Turnkey, or your own signer.
 - **`@miden-sdk/vite-plugin`** smooths over the bundler-side WASM ergonomics (worker-context polyfills, COOP/COEP headers, dedup of the WASM module across imports).
 
@@ -332,7 +332,7 @@ The publish workflow gates the WASM artifact with a 25 MB upper-bound check — 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/miden-client` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
+See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/rust-sdk` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
 
 ---
 
@@ -341,5 +341,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo wo
 [MIT](LICENSE) © Miden contributors
 
 <div align="center">
-  <sub>Built with Rust 1.93, wasm-bindgen, and a healthy distrust of top-level await.</sub>
+  <sub>Built with Rust 1.96.1, wasm-bindgen, and a healthy distrust of top-level await.</sub>
 </div>

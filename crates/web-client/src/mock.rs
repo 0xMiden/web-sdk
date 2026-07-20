@@ -60,7 +60,6 @@ impl WebClient {
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            None,
         )
         .await?;
 
@@ -120,7 +119,6 @@ impl WebClient {
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            None,
         )
         .await?;
 

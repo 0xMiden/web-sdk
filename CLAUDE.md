@@ -14,13 +14,13 @@ A pnpm monorepo holding the JS / WASM / React bits previously part of [`0xMiden/
 | `@miden-sdk/node-{darwin-arm64,darwin-x64,linux-x64-gnu}` | `packages/node-sdk-*` | npm (platform-specific native binaries; consumed via `optionalDependencies` on `@miden-sdk/miden-sdk`) |
 | `miden-idxdb-store` | `crates/idxdb-store/` | crates.io |
 
-The `Cargo.toml` workspace dep `miden-client = "x.y.z"` pins compatibility with the upstream Rust crate. Changes to shared types (Account, Note, gRPC schema, …) usually need a coordinated PR in `0xMiden/miden-client` first.
+The `Cargo.toml` workspace dep `miden-client = "x.y.z"` pins compatibility with the upstream Rust crate. Changes to shared types (Account, Note, gRPC schema, …) usually need a coordinated PR in `0xMiden/rust-sdk` first.
 
 ## Toolchain
 
 - **Package manager**: pnpm 9 (workspace at `pnpm-workspace.yaml`). **Never** use `yarn` or `npm install` — they will desync the lockfile.
 - **Node**: ≥ 20 (`engines.node` in `package.json`, `.nvmrc`).
-- **Rust**: stable 1.93 + nightly (for `cargo +nightly fmt`, `clippy`, and `fix`). Pinned in `rust-toolchain.toml`.
+- **Rust**: stable 1.96.1 + nightly (for `cargo +nightly fmt`, `clippy`, and `fix`). Pinned in `rust-toolchain.toml`.
 - **Lefthook** runs pre-commit; `pnpm install` wires it via the `prepare` script.
 
 ## Build / lint / test
@@ -132,26 +132,26 @@ When in doubt, drop the entry and apply `no changelog`. A missing entry the revi
 
 | Concern | Repo |
 |---|---|
-| Shared Rust types, gRPC schema, `MidenClient` semantics | [`0xMiden/miden-client`](https://github.com/0xMiden/miden-client) |
+| Shared Rust types, gRPC schema, `MidenClient` semantics | [`0xMiden/rust-sdk`](https://github.com/0xMiden/rust-sdk) |
 | Account compiler, MASM standard library, base protocol types | [`0xMiden/miden-base`](https://github.com/0xMiden/miden-base) |
 | MidenFi browser-extension wallet adapter | [`0xMiden/miden-wallet-adapter`](https://github.com/0xMiden/miden-wallet-adapter) |
 | Para signer integration | [`0xMiden/miden-para`](https://github.com/0xMiden/miden-para) |
 | Turnkey signer integration | [`0xMiden/miden-turnkey`](https://github.com/0xMiden/miden-turnkey) |
 
-PRs that touch the WASM/JS boundary often need a synchronized PR in miden-client — bump the workspace dep and verify the integration tests still pass.
+PRs that touch the WASM/JS boundary often need a synchronized PR in rust-sdk — bump the workspace dep and verify the integration tests still pass.
 
-### Linking a web-sdk PR to an in-flight miden-client PR
+### Linking a web-sdk PR to an in-flight rust-sdk PR
 
-**ALWAYS use the `Client PR: #N` marker when opening a web-sdk PR that depends on an unmerged / unreleased miden-client change.** It is the load-bearing machine-readable handle — prose mentions ("Companion PR: miden-client#N", "depends on …") do NOT trigger the linked-PR pipeline. Put the marker on its own line in the PR description (top or bottom both fine). Both `Client PR: #N` and `Client PR: 0xMiden/miden-client#N` are accepted; cross-repo is required when the linked PR comes from a fork.
+**ALWAYS use the `Client PR: #N` marker when opening a web-sdk PR that depends on an unmerged / unreleased rust-sdk change.** It is the load-bearing machine-readable handle — prose mentions ("Companion PR: rust-sdk#N", "depends on …") do NOT trigger the linked-PR pipeline. Put the marker on its own line in the PR description (top or bottom both fine). Both `Client PR: #N` and `Client PR: 0xMiden/rust-sdk#N` are accepted; cross-repo is required when the linked PR comes from a fork.
 
-When a web-sdk PR depends on Rust changes that haven't been released yet (i.e. the upstream PR on miden-client is still open), add a marker line to the web-sdk PR description:
+When a web-sdk PR depends on Rust changes that haven't been released yet (i.e. the upstream PR on rust-sdk is still open), add a marker line to the web-sdk PR description:
 
 ```
 Client PR: #2080
 ```
 or, for forks / cross-repo,
 ```
-Client PR: 0xMiden/miden-client#2080
+Client PR: 0xMiden/rust-sdk#2080
 ```
 
 CI picks up the marker via `.github/actions/inject-linked-client-pr`, appends a `[patch]` block to `Cargo.toml` (runner-local — never committed) pointing the workspace `miden-client` dep at the linked PR's head, refreshes `Cargo.lock`, and posts a sticky comment on the web-sdk PR summarizing what was patched. There is at most one such comment per PR (the action deletes it if the marker is later removed).
@@ -164,7 +164,7 @@ scripts/dev-with-client-pr.sh
 
 # Or pass an explicit number / cross-repo target:
 scripts/dev-with-client-pr.sh 2080
-scripts/dev-with-client-pr.sh koookxbt/miden-client#1965
+scripts/dev-with-client-pr.sh some-fork/rust-sdk#1965
 
 # Strip the patch before committing:
 scripts/dev-with-client-pr.sh --clear
@@ -172,7 +172,7 @@ scripts/dev-with-client-pr.sh --clear
 
 The script writes a marker-wrapped `[patch]` block at the bottom of `Cargo.toml`. A pre-commit hook (`lefthook.yml`) blocks any commit while the markers are present, so you can't ship the local override by accident.
 
-**Mergeability gate.** A separate workflow (`.github/workflows/check-linked-client-pr.yml`) keeps a `linked-client-pr-ready` check on the PR. It stays *pending* while the linked client PR isn't merged-and-reachable from web-sdk's target branch's canonical refs (miden-client `next` for `next`-targeted PRs, or the latest miden-client release tag for `main`-targeted PRs). It re-evaluates every 15 minutes, so the check goes green automatically once upstream catches up — no need to push to the PR. Configure branch protection to require this check before merge.
+**Mergeability gate.** A separate workflow (`.github/workflows/check-linked-client-pr.yml`) keeps a `linked-client-pr-ready` check on the PR. It stays *pending* while the linked client PR isn't merged-and-reachable from web-sdk's target branch's canonical refs (rust-sdk `next` for `next`-targeted PRs, or the latest rust-sdk release tag for `main`-targeted PRs). It re-evaluates every 15 minutes, so the check goes green automatically once upstream catches up — no need to push to the PR. Configure branch protection to require this check before merge.
 
 ## Documenting public-API changes
 

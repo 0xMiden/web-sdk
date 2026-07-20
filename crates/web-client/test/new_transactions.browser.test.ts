@@ -68,11 +68,12 @@ const buildCustomScriptRequestWithExpiration = async (
     const client = window.client;
     const builder = client.createScriptBuilder();
     const txScript = builder.compileTxScript(`
-            use.miden::contracts::auth::basic->auth_tx
-            use.miden::kernels::tx::prologue
-            use.miden::kernels::tx::memory
+            use miden::contracts::auth::basic as auth_tx
+            use miden::kernels::tx::prologue
+            use miden::kernels::tx::memory
 
-            begin
+            @transaction_script
+            pub proc main
                 push.0 push.0
                 assert_eq
             end
@@ -298,12 +299,14 @@ export const counterAccountComponent = async (
         const COUNTER_SLOT = word("${COUNTER_SLOT_NAME}")
 
         # => []
+        @account_procedure
         pub proc get_count
             push.COUNTER_SLOT[0..2] exec.active_account::get_item
             exec.sys::truncate_stack
         end
 
         # => []
+        @account_procedure
         pub proc increment_count
             push.COUNTER_SLOT[0..2] exec.active_account::get_item
             # => [count]
@@ -317,7 +320,8 @@ export const counterAccountComponent = async (
       `;
     const txScriptCode = `
         use external_contract::counter_contract
-        begin
+        @transaction_script
+        pub proc main
             call.counter_contract::increment_count
         end
       `;
@@ -328,7 +332,10 @@ export const counterAccountComponent = async (
 
     let builder = await client.createCodeBuilder();
 
-    let accountComponentCode = builder.compileAccountComponentCode(accountCode);
+    let accountComponentCode = builder.compileAccountComponentCodeWithPath(
+      "external_contract::counter_contract",
+      accountCode
+    );
     let counterAccountComponent = window.AccountComponent.compile(
       accountComponentCode,
       [emptyStorageSlot]
@@ -347,12 +354,10 @@ export const counterAccountComponent = async (
 
     await client.syncState();
 
-    // Deploy counter account
-    let accountComponentLib = builder.buildLibrary(
-      "external_contract::counter_contract",
-      accountCode
+    // Link the exact code installed on the counter account.
+    builder.linkDynamicAccountComponentCode(
+      counterAccountComponent.componentCode()
     );
-    builder.linkDynamicLibrary(accountComponentLib);
     let txScript = builder.compileTxScript(txScriptCode);
 
     let txIncrementRequest = new window.TransactionRequestBuilder()
