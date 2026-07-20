@@ -332,7 +332,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   );
 
   mockTest(
-    "manual lifecycle: executeRequest → prove → submitProven → apply",
+    "manual lifecycle: executeRequest → prove → submit → apply",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -352,18 +352,16 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           BigInt(500)
         );
 
-        // Drive the four lifecycle stages by hand instead of submit().
-        const txResult = await client.transactions.executeRequest(
+        // Drive the lifecycle stages by hand instead of submit().
+        const executed = await client.transactions.executeRequest(
           faucet,
           mintRequest
         );
-        const txIdHex = txResult.id().toHex();
-        const proven = await client.transactions.prove(txResult);
-        const { blockNumber } = await client.transactions.submitProven(
-          proven,
-          txResult
-        );
-        await client.transactions.apply(txResult, blockNumber);
+        const txIdHex = executed.id.toHex();
+        const proven = await executed.prove();
+        const submitted = await proven.submit();
+        const blockNumber = submitted.blockNumber;
+        await submitted.apply();
 
         // apply() must have persisted the transaction into the local store.
         const records = await client.transactions.list({ ids: [txIdHex] });

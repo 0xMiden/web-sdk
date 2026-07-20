@@ -513,19 +513,79 @@ export interface BatchSubmitResult {
   blockNumber: number;
 }
 
-/** Options for {@link TransactionsResource.prove}. */
+/** Options for {@link TransactionExecution.prove}. */
 export interface ProveOptions {
   /**
    * Per-call prover override. Falls back to the client's default prover, or
    * the built-in local prover if none is configured.
+   *
+   * A prover is consumed by the call — build (or clone) a fresh one per
+   * `prove()`. Reusing an already-passed prover silently falls back to the
+   * built-in local prover.
    */
   prover?: TransactionProver;
 }
 
-/** Result of {@link TransactionsResource.submitProven}. */
-export interface SubmitProvenResult {
-  /** The block height the transaction was submitted at. Pass to {@link TransactionsResource.apply}. */
-  blockNumber: number;
+/**
+ * A locally-executed transaction — nothing proven, submitted, or persisted yet.
+ * First stage of the manual transaction lifecycle, returned by
+ * {@link TransactionsResource.executeRequest}. Advance it with {@link prove}.
+ */
+export interface TransactionExecution {
+  /** The raw execution artifact (account delta, output notes, …). */
+  readonly result: TransactionResult;
+  /** The executed transaction's id. */
+  readonly id: TransactionId;
+  /**
+   * Prove this execution, then continue with {@link TransactionProof.submit}.
+   * Pure computation — touches neither the network nor the local store.
+   *
+   * @param options - Optional per-call prover override.
+   */
+  prove(options?: ProveOptions): Promise<TransactionProof>;
+}
+
+/**
+ * A proven transaction, ready for the network. Second stage of the manual
+ * transaction lifecycle, returned by {@link TransactionExecution.prove}.
+ * Advance it with {@link submit}.
+ */
+export interface TransactionProof {
+  /** The raw proof — e.g. to serialize and submit from a different client. */
+  readonly proof: ProvenTransaction;
+  /** The execution result this proof was produced from. */
+  readonly result: TransactionResult;
+  /**
+   * Submit the proof to the network, then persist with
+   * {@link TransactionSubmission.apply}. Does NOT persist locally on its own.
+   */
+  submit(): Promise<TransactionSubmission>;
+}
+
+/**
+ * A submitted transaction. Final stage of the manual transaction lifecycle,
+ * returned by {@link TransactionProof.submit}. Persist it with {@link apply},
+ * or block until it commits with {@link waitForConfirmation}.
+ */
+export interface TransactionSubmission {
+  /** The block height the transaction was submitted at. */
+  readonly blockNumber: number;
+  /** The execution result that was submitted. */
+  readonly result: TransactionResult;
+  /**
+   * Persist the transaction into the local store, firing registered
+   * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
+   * local store is unaware of the transaction.
+   *
+   * @returns The pre-apply store update.
+   */
+  apply(): Promise<TransactionStoreUpdate>;
+  /**
+   * Poll local sync height until the transaction commits on-chain.
+   *
+   * @param options - Polling options (timeout, interval, onProgress).
+   */
+  waitForConfirmation(options?: WaitOptions): Promise<void>;
 }
 
 export interface SwapOptions extends TransactionOptions {
@@ -975,69 +1035,47 @@ export interface TransactionsResource {
   ): Promise<TransactionSubmitResult>;
 
   /**
-   * Execute a transaction request against an account WITHOUT proving,
-   * submitting, or persisting anything. First step of the manual
-   * transaction lifecycle:
+   * Execute a transaction request locally — nothing is proven, submitted, or
+   * persisted. Returns a {@link TransactionExecution} handle; advance the
+   * lifecycle by chaining `.prove()` → `.submit()` → `.apply()`, benchmarking
+   * or error-handling each stage independently:
    *
    * ```ts
-   * const result = await client.transactions.executeRequest(account, request);
-   * const proven = await client.transactions.prove(result);
-   * const { blockNumber } = await client.transactions.submitProven(proven, result);
-   * await client.transactions.apply(result, blockNumber);
+   * const executed  = await client.transactions.executeRequest(account, request);
+   * const proven    = await executed.prove({ prover });
+   * const submitted = await proven.submit();
+   * await submitted.apply();
    * ```
    *
-   * {@link submit} runs all four steps in one call; use the split form to
-   * benchmark or error-handle each stage independently.
+   * {@link submit} runs every stage in one call. The stages are not atomic as a
+   * group: awaiting other mutating calls on the same account between them can
+   * interleave state — drive the chain as an uninterrupted sequence per account.
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
-   * @returns Execution artifacts consumed by the later lifecycle stages.
+   * @returns A handle to the executed transaction, ready to prove.
    */
   executeRequest(
     account: AccountRef,
     request: TransactionRequest
-  ): Promise<TransactionResult>;
+  ): Promise<TransactionExecution>;
 
   /**
-   * Prove an executed transaction. Uses the per-call prover when provided,
-   * falling back to the client's default prover (or the built-in local
-   * prover if none is configured). Pure computation over the
-   * `TransactionResult` — touches neither the network nor the local store.
+   * Submit a proof produced somewhere that shares nothing with this client —
+   * e.g. a detached prover that never saw the local store. Returns a
+   * {@link TransactionSubmission} handle; call `.apply()` on it to persist
+   * locally. For the in-process flow prefer
+   * `executeRequest(...)` → `.prove()` → `.submit()`, which threads the proof
+   * and result for you.
    *
-   * @param result - Result returned by {@link executeRequest}.
-   * @param options - Optional per-call prover override.
-   */
-  prove(
-    result: TransactionResult,
-    options?: ProveOptions
-  ): Promise<ProvenTransaction>;
-
-  /**
-   * Submit a proven transaction to the network. Does NOT update the local
-   * store — call {@link apply} with the returned block number to persist
-   * the state changes.
-   *
-   * @param proven - Proof returned by {@link prove}.
+   * @param proof - A proof for `result`, proven elsewhere.
    * @param result - The matching execution result.
+   * @returns A handle to the submitted transaction, ready to apply.
    */
   submitProven(
-    proven: ProvenTransaction,
+    proof: ProvenTransaction,
     result: TransactionResult
-  ): Promise<SubmitProvenResult>;
-
-  /**
-   * Persist a submitted transaction into the local store, firing registered
-   * transaction observers (e.g. PSWAP lineage tracking). Final step of the
-   * manual transaction lifecycle.
-   *
-   * @param result - The execution result that was submitted.
-   * @param blockNumber - Submission height returned by {@link submitProven}.
-   * @returns The pre-apply store update.
-   */
-  apply(
-    result: TransactionResult,
-    blockNumber: number
-  ): Promise<TransactionStoreUpdate>;
+  ): Promise<TransactionSubmission>;
 
   /**
    * Execute a heterogeneous batch of operations against a single account.
