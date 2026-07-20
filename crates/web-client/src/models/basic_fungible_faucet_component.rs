@@ -34,12 +34,21 @@ impl BasicFungibleFaucetComponent {
     }
 
     /// Extracts faucet metadata from an account's storage.
+    ///
+    /// Unlike [`Self::from_account`], this reads the metadata straight from the storage slots
+    /// without checking that the account exposes the basic fungible faucet interface. This makes
+    /// it work for faucets built from custom components that reuse the standards storage layout
+    /// (e.g. AggLayer bridged-asset faucets), but it also means a non-faucet account whose
+    /// storage happens to use the same slot names would yield bogus metadata without an error.
     #[js_export(js_name = "fromAccountStorage")]
     #[allow(clippy::needless_pass_by_value)]
     pub fn from_account_storage(account_storage: AccountStorage) -> Result<Self, JsErr> {
         let native_account_storage: NativeAccountStorage = account_storage.into();
         let faucet = NativeFungibleFaucet::try_from(&native_account_storage).map_err(|e| {
-            js_error_with_context(e, "failed to get basic fungible faucet details from account")
+            js_error_with_context(
+                e,
+                "failed to get basic fungible faucet details from account storage",
+            )
         })?;
         Ok(Self(faucet))
     }

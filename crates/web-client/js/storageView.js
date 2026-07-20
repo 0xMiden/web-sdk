@@ -340,4 +340,17 @@ export function installStorageView(wasmModule) {
     const raw = originalStorage.call(this);
     return new StorageView(raw, WordClass);
   };
+
+  // WASM statics that take a raw AccountStorage argument must accept the
+  // StorageView that account.storage() now returns — unwrap it before the
+  // wasm-bindgen instanceof guard rejects it.
+  const FaucetComponent = wasmModule.BasicFungibleFaucetComponent;
+  if (FaucetComponent?.fromAccountStorage) {
+    const originalFromStorage =
+      FaucetComponent.fromAccountStorage.bind(FaucetComponent);
+    FaucetComponent.fromAccountStorage = (storage) =>
+      originalFromStorage(
+        storage instanceof StorageView ? storage.raw : storage
+      );
+  }
 }
