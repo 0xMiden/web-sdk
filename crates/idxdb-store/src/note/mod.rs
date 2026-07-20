@@ -159,7 +159,12 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
         NoteFilter::Consumed => Some(vec![
             InputNoteState::STATE_CONSUMED_AUTHENTICATED_LOCAL,
             InputNoteState::STATE_CONSUMED_UNAUTHENTICATED_LOCAL,
+            // `ConsumedExternal` has two serialized layouts: the legacy
+            // metadata-less one (8) and the metadata-bearing one (9) written
+            // by miden-client >= 0.15.4. Records in either layout are the
+            // same logical state, so the filter must match both.
             InputNoteState::STATE_CONSUMED_EXTERNAL,
+            InputNoteState::STATE_CONSUMED_EXTERNAL_V2,
         ]),
         NoteFilter::Committed => Some(vec![InputNoteState::STATE_COMMITTED]),
         NoteFilter::Expected => Some(vec![InputNoteState::STATE_EXPECTED]),

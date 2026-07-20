@@ -1,5 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
+use miden_client::account::component::NetworkAccount;
 use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
 use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
@@ -98,6 +99,29 @@ impl Account {
     #[js_export(js_name = "isNew")]
     pub fn is_new(&self) -> bool {
         self.0.is_new()
+    }
+
+    /// Returns true if this is a network account.
+    ///
+    /// A network account is a public account whose storage
+    /// carries the standardized network-account note-script allowlist slot.
+    #[js_export(js_name = "isNetworkAccount")]
+    pub fn is_network_account(&self) -> bool {
+        NetworkAccount::new(self.0.clone()).is_ok()
+    }
+
+    /// Returns the note-script roots this network account is allowed to
+    /// consume, or `undefined` if this is not a network account.
+    #[js_export(js_name = "networkNoteAllowlist")]
+    pub fn network_note_allowlist(&self) -> Option<Vec<Word>> {
+        NetworkAccount::new(self.0.clone()).ok().map(|network_account| {
+            network_account
+                .allowed_notes()
+                .allowed_script_roots()
+                .iter()
+                .map(|root| Word::from(NativeWord::from(*root)))
+                .collect()
+        })
     }
 
     /// Serializes the account into bytes.

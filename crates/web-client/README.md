@@ -589,6 +589,19 @@ console.log(note.isNetworkNote()); // true
 
 Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
 
+To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
+
+```typescript
+const auth = AccountComponent.createNetworkAuth([myNoteScript.root()]);
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(myComponent)
+  .withAuthComponent(auth)
+  .build();
+```
+
+The allowlist must be non-empty. Transaction scripts are forbidden unless allowlisted via the optional second argument (`TransactionScript.root()`); the component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+
 ### Cleanup
 
 When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
