@@ -710,7 +710,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
       expect(result.summaryInputNoteIds).toEqual(result.sentNoteIds);
     });
 
-    test("executeForSummary returns TransactionSummary for authorized transaction with matching salt", async ({
+    test("executeForSummary rejects when the transaction is already authorized", async ({
       run,
     }) => {
       const result = await run(async ({ client, sdk }) => {
@@ -719,74 +719,28 @@ test.describe("submitNewTransactionWithProver tests", () => {
           sdk.AuthScheme.AuthRpoFalcon512
         );
 
-        // Create a known salt value
-        const expectedSalt = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+        // The account's key is in the keystore, so execution succeeds and no
+        // pending-authorization summary exists.
+        const transactionRequest = new sdk.TransactionRequestBuilder().build();
 
-        // Build transaction request with the salt as auth_arg
-        const transactionRequest = new sdk.TransactionRequestBuilder()
-          .withAuthArg(expectedSalt)
-          .build();
-
-        const summary = await client.executeForSummary(
-          senderAccount.id(),
-          transactionRequest
-        );
-
-        return {
-          accountNonceDelta: Number(
-            summary.accountDelta().nonceDelta().asInt()
-          ),
-          inputNotesCount: summary.inputNotes().numNotes(),
-          outputNotesCount: summary.outputNotes().numNotes(),
-          saltHex: summary.salt().toHex(),
-          expectedSaltHex: expectedSalt.toHex(),
-        };
+        try {
+          await client.executeForSummary(
+            senderAccount.id(),
+            transactionRequest
+          );
+          return { threw: false, code: null, message: "" };
+        } catch (error) {
+          return {
+            threw: true,
+            code: (error as { code?: string }).code ?? null,
+            message: `${(error as Error).message ?? error}`,
+          };
+        }
       });
 
-      expect(result.accountNonceDelta).toBe(1);
-      expect(result.inputNotesCount).toBe(0);
-      expect(result.outputNotesCount).toBe(0);
-      expect(result.saltHex).toBe(result.expectedSaltHex);
-    });
-
-    test("executeForSummary reconstructs the vault delta for an authorized transaction", async ({
-      run,
-    }) => {
-      const result = await run(async ({ client, sdk, helpers }) => {
-        const { wallet: sender, faucet } = await helpers.setupWalletAndFaucet();
-        const receiver = await client.newWallet(
-          sdk.AccountStorageMode.private(),
-          sdk.AuthScheme.AuthRpoFalcon512
-        );
-        await helpers.mockMintAndConsume(sender.id(), faucet.id());
-
-        const transactionRequest = await client.newSendTransactionRequest(
-          sender.id(),
-          receiver.id(),
-          faucet.id(),
-          sdk.NoteType.Public,
-          sdk.u64(100),
-          null,
-          null
-        );
-        const summary = await client.executeForSummary(
-          sender.id(),
-          transactionRequest
-        );
-        const amount = summary
-          .accountDelta()
-          .vault()
-          .fungible()
-          .amount(faucet.id());
-
-        return {
-          fungibleDelta: amount?.toString(),
-          outputNotesCount: summary.outputNotes().numNotes(),
-        };
-      });
-
-      expect(result.fungibleDelta).toBe("-100");
-      expect(result.outputNotesCount).toBe(1);
+      expect(result.threw).toBe(true);
+      expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
+      expect(result.message).toContain("already fully authorized");
     });
   });
 });

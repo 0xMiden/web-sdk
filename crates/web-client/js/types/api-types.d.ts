@@ -773,8 +773,17 @@ export interface TransactionsResource {
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
 
   /**
-   * Dry-run a transaction to preview its effects without submitting it to
-   * the network.
+   * Dry-run a transaction to obtain the {@link TransactionSummary} the
+   * account is being asked to authorize, without submitting anything to the
+   * network.
+   *
+   * The summary only exists while authorization is pending: it is returned
+   * when the account's auth procedure aborts with the unauthorized event
+   * (e.g. a multisig below its signing threshold), so it can be signed
+   * out-of-band. If the transaction is already fully authorized, execution
+   * succeeds without producing a summary and this method rejects with an
+   * error whose `code` is `"TRANSACTION_ALREADY_AUTHORIZED"` — submit the
+   * transaction with `execute` instead.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
