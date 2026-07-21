@@ -53,7 +53,10 @@ test.describe("fungible asset vault keys", () => {
           enabledRoundTripped.vaultKey().toHex() === enabled.vaultKey().toHex(),
         valuePreserved:
           enabledRoundTripped.intoWord().toHex() === enabled.intoWord().toHex(),
-        encodedValue: enabledRoundTripped.intoWord().toU64s().map(String),
+        encodedValue: Array.from(
+          enabledRoundTripped.intoWord().toU64s(),
+          String
+        ),
         roundTrippedCallbacks:
           enabledRoundTripped.callbacks() === sdk.AssetCallbackFlag.Enabled,
         oversizedAmountRejected,
