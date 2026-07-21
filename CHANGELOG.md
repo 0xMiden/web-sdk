@@ -21,6 +21,8 @@ asset.callbacks(); // AssetCallbackFlag.Disabled
 const enabled = asset.withCallbacks(AssetCallbackFlag.Enabled);
 ```
 
+* [FEATURE][web] `FungibleAsset.fromVaultKey(vaultKey, amount)` reconstructs a fungible asset from its word-encoded vault key and a `bigint` amount, preserving the callback flag stored in the key instead of defaulting it to `Disabled`. `FungibleAsset.vaultKey()` exposes the corresponding key for round-tripping assets read from vault data. The amount is validated and encoded into the native vault value word internally. (closes [#246](https://github.com/0xMiden/web-sdk/issues/246))
+
 ## 0.15.6 (2026-07-17)
 
 ### Fixes
