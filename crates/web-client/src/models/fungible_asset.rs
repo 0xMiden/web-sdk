@@ -1,7 +1,11 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::{Asset as NativeAsset, FungibleAsset as FungibleAssetNative};
+use miden_client::asset::{
+    Asset as NativeAsset,
+    AssetAmount,
+    FungibleAsset as FungibleAssetNative,
+};
+use miden_client::{Felt as NativeFelt, Word as NativeWord};
 
 use super::account_id::AccountId;
 use super::asset_callback_flag::AssetCallbackFlag;
@@ -22,6 +26,23 @@ impl FungibleAsset {
     #[js_export(constructor)]
     pub fn new(faucet_id: &AccountId, amount: JsU64) -> Result<FungibleAsset, JsErr> {
         FungibleAsset::new_inner(faucet_id, js_u64_to_u64(amount))
+    }
+
+    /// Creates a fungible asset from its word-encoded vault key and amount.
+    #[js_export(js_name = "fromVaultKey")]
+    pub fn from_vault_key(key: &Word, amount: JsU64) -> Result<FungibleAsset, JsErr> {
+        let amount = AssetAmount::new(js_u64_to_u64(amount))
+            .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))?;
+        let value = NativeWord::new([
+            NativeFelt::from(amount),
+            NativeFelt::ZERO,
+            NativeFelt::ZERO,
+            NativeFelt::ZERO,
+        ]);
+
+        FungibleAssetNative::from_key_value_words(key.into(), value)
+            .map(FungibleAsset)
+            .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))
     }
 
     /// Returns the amount of fungible units.
@@ -50,6 +71,12 @@ impl FungibleAsset {
     #[js_export(js_name = "withCallbacks")]
     pub fn with_callbacks(&self, callbacks: AssetCallbackFlag) -> FungibleAsset {
         FungibleAsset(self.0.with_callbacks(callbacks.into()))
+    }
+
+    /// Returns the word-encoded key used to store this asset in an account vault.
+    #[js_export(js_name = "vaultKey")]
+    pub fn vault_key(&self) -> Word {
+        self.0.to_key_word().into()
     }
 
     /// Encodes this asset into the word layout used in the vault.
