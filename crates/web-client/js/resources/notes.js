@@ -101,6 +101,17 @@ function buildNoteFilter(query, wasm) {
     return new wasm.NoteFilter(wasm.NoteFilterTypes.List, noteIds);
   }
 
+  if (query.scriptRoots) {
+    const scriptRoots = query.scriptRoots.map((root) =>
+      typeof root === "string" ? wasm.Word.fromHex(root) : root
+    );
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.ScriptRoots,
+      undefined,
+      scriptRoots
+    );
+  }
+
   if (query.status) {
     const statusMap = {
       consumed: wasm.NoteFilterTypes.Consumed,

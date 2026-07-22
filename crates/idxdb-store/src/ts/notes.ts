@@ -98,6 +98,22 @@ export async function getInputNotesFromDetailsCommitments(
   }
 }
 
+export async function getInputNotesFromScriptRoots(
+  dbId: string,
+  scriptRoots: string[]
+) {
+  try {
+    const db = getDatabase(dbId);
+    const roots = new Set(scriptRoots);
+    let notes = await db.inputNotes
+      .filter((note) => roots.has(note.scriptRoot))
+      .toArray();
+    return await processInputNotes(dbId, notes);
+  } catch (err) {
+    logWebStoreError(err, "Failed to get input notes from script roots");
+  }
+}
+
 export async function getOutputNotesFromDetailsCommitments(
   dbId: string,
   detailsCommitments: string[]

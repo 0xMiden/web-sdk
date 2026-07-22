@@ -10,12 +10,16 @@ function makeWasm(overrides = {}) {
     Processing: "Processing",
     Unverified: "Unverified",
     List: "List",
+    ScriptRoots: "ScriptRoots",
   };
   const filterInstance = { type: "filter" };
   return {
     NoteFilter: vi.fn().mockReturnValue(filterInstance),
     NoteFilterTypes,
     NoteId: {
+      fromHex: vi.fn((hex) => ({ hex })),
+    },
+    Word: {
       fromHex: vi.fn((hex) => ({ hex })),
     },
     NoteExportFormat: { Full: "Full" },
@@ -123,6 +127,19 @@ describe("NotesResource", () => {
       await resource.list({ ids: ["0xabc", "0xdef"] });
       expect(wasm.NoteId.fromHex).toHaveBeenCalledTimes(2);
       expect(wasm.NoteFilter).toHaveBeenCalledWith("List", expect.any(Array));
+    });
+
+    it("builds NoteFilter with script roots when query.scriptRoots provided", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      const wordRoot = { word: true };
+      await resource.list({ scriptRoots: ["0xabc", wordRoot] });
+      expect(wasm.Word.fromHex).toHaveBeenCalledTimes(1);
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xabc");
+      expect(wasm.NoteFilter).toHaveBeenCalledWith("ScriptRoots", undefined, [
+        { hex: "0xabc" },
+        wordRoot,
+      ]);
     });
 
     it("falls back to All when empty query object", async () => {

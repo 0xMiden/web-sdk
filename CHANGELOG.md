@@ -8,6 +8,10 @@
 * [BREAKING][web] Removed `notes.fetchPrivate({ mode: "all" })` (`WasmWebClient.fetchAllPrivateNotes`). `fetchPrivate()` now takes no arguments and always fetches incrementally from the stored pagination cursor. The full re-scan is no longer needed: historical notes for a newly tracked tag sit below the shared cursor and are now backfilled automatically during `sync()`, one tag at a time, so callers that previously reached for `mode: "all"` after adding a tag should just sync. Callers passing the option get a type error; the argument is otherwise ignored at runtime.
 * [CHANGE][web] `miden-client` and `miden-client-sqlite-store` are pinned to the rust-sdk `encrypted-tx-inputs` branch ([#2341](https://github.com/0xMiden/rust-sdk/pull/2341), `32dfba8d`), ahead of the `0.16.0-alpha.1` release, pending the next alpha. Inherited upstream changes include encrypted transaction submission (see above), note-transport attachment support, a note-screener batch cache, faster historical-note retrieval, and single-account note screening: `notes.listAvailable({ account })` now screens the given account only, instead of screening every tracked account and discarding the rest, so its cost no longer grows with the number of tracked accounts. Protocol-layer versions are unchanged (`miden-protocol` / `miden-standards` / `miden-tx` at `0.16.0-alpha.4`).
 
+### Enhancements
+
+* [FEATURE][web] `notes.list({ scriptRoots: [...] })` filters received notes by note script root, given as hex strings or `Word` instances (e.g. from `NoteScript.root()`). This narrows candidate notes at the store level, without loading and screening unrelated notes. `notes.listSent` returns an empty list for this query, since script roots are only tracked for received notes. (web-sdk#TBD, client #TBD)
+
 ## 0.16.0-alpha.1 (2026-07-19)
 
 ### Changes
