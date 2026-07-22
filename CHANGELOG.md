@@ -21,7 +21,7 @@ asset.callbacks(); // AssetCallbackFlag.Disabled
 const enabled = asset.withCallbacks(AssetCallbackFlag.Enabled);
 ```
 
-* [FEATURE][web] `FungibleAsset.fromVaultEntry(key, value)` reconstructs a fungible asset from the word pair stored under it in an account vault — the outputs of `FungibleAsset.vaultKey()` (faucet id + callback flag) and `FungibleAsset.intoWord()` (the value word holding the amount) — so `FungibleAsset.fromVaultEntry(a.vaultKey(), a.intoWord())` round-trips an asset read from vault data, callback flag included. `FungibleAsset.vaultKey()` exposes the key word for this round trip. (closes [#246](https://github.com/0xMiden/web-sdk/issues/246))
+* [FEATURE][web] `FungibleAsset.fromVaultEntry(key, value)` reconstructs a fungible asset from the word pair stored under it in an account vault — the outputs of `FungibleAsset.vaultKey()` (faucet id + callback flag) and `FungibleAsset.intoWord()` (the value word holding the amount) — so `FungibleAsset.fromVaultEntry(a.vaultKey(), a.intoWord())` round-trips an asset read from vault data, callback flag included. `FungibleAsset.fromVaultKey(key, amount)` is a convenience for when you hold the key word plus a scalar `bigint` amount rather than the value word, and `FungibleAsset.vaultKey()` exposes the key word for the round trip. (closes [#246](https://github.com/0xMiden/web-sdk/issues/246))
 
 ## 0.15.6 (2026-07-17)
 

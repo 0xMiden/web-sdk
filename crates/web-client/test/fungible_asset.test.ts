@@ -28,6 +28,11 @@ test.describe("fungible asset vault entries", () => {
         enabled.vaultKey(),
         enabled.intoWord()
       );
+      // The key + scalar amount convenience yields the same asset.
+      const enabledFromKey = sdk.FungibleAsset.fromVaultKey(
+        enabled.vaultKey(),
+        enabled.amount()
+      );
 
       // An amount above the 2^63 - 1 maximum, encoded into the value word, is rejected.
       let oversizedAmountRejected = false;
@@ -62,6 +67,11 @@ test.describe("fungible asset vault entries", () => {
         ),
         roundTrippedCallbacks:
           enabledRoundTripped.callbacks() === sdk.AssetCallbackFlag.Enabled,
+        // fromVaultKey(key, amount) matches fromVaultEntry(key, value).
+        fromVaultKeyMatches:
+          enabledFromKey.vaultKey().toHex() === enabled.vaultKey().toHex() &&
+          enabledFromKey.intoWord().toHex() === enabled.intoWord().toHex() &&
+          enabledFromKey.callbacks() === sdk.AssetCallbackFlag.Enabled,
         oversizedAmountRejected,
       };
     });
@@ -77,6 +87,7 @@ test.describe("fungible asset vault entries", () => {
     expect(result.valuePreserved).toBe(true);
     expect(result.encodedValue).toEqual(["10", "0", "0", "0"]);
     expect(result.roundTrippedCallbacks).toBe(true);
+    expect(result.fromVaultKeyMatches).toBe(true);
     expect(result.oversizedAmountRejected).toBe(true);
   });
 
