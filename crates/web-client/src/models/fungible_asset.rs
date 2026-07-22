@@ -1,11 +1,7 @@
 use js_export_macro::js_export;
+use miden_client::Word as NativeWord;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::{
-    Asset as NativeAsset,
-    AssetAmount,
-    FungibleAsset as FungibleAssetNative,
-};
-use miden_client::{Felt as NativeFelt, Word as NativeWord};
+use miden_client::asset::{Asset as NativeAsset, FungibleAsset as FungibleAssetNative};
 
 use super::account_id::AccountId;
 use super::asset_callback_flag::AssetCallbackFlag;
@@ -28,19 +24,18 @@ impl FungibleAsset {
         FungibleAsset::new_inner(faucet_id, js_u64_to_u64(amount))
     }
 
-    /// Creates a fungible asset from its word-encoded vault key and amount.
-    #[js_export(js_name = "fromVaultKey")]
-    pub fn from_vault_key(key: &Word, amount: JsU64) -> Result<FungibleAsset, JsErr> {
-        let amount = AssetAmount::new(js_u64_to_u64(amount))
-            .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))?;
-        let value = NativeWord::new([
-            NativeFelt::from(amount),
-            NativeFelt::ZERO,
-            NativeFelt::ZERO,
-            NativeFelt::ZERO,
-        ]);
-
-        FungibleAssetNative::from_key_value_words(key.into(), value)
+    /// Reconstructs a fungible asset from its vault entry — the `(key, value)`
+    /// word pair as stored in an account vault, i.e. the outputs of
+    /// [`vaultKey`](Self::vault_key) and [`intoWord`](Self::into_word). The key
+    /// word carries the faucet id and the callback flag; the value word carries
+    /// the amount. This is the inverse of those getters, so
+    /// `FungibleAsset.fromVaultEntry(a.vaultKey(), a.intoWord())` round-trips an
+    /// asset read from vault data (callback flag included). Errors if the words
+    /// don't describe a valid fungible asset (e.g. a malformed key or an amount
+    /// above the `2^63 - 1` maximum).
+    #[js_export(js_name = "fromVaultEntry")]
+    pub fn from_vault_entry(key: &Word, value: &Word) -> Result<FungibleAsset, JsErr> {
+        FungibleAssetNative::from_key_value_words(key.into(), value.into())
             .map(FungibleAsset)
             .map_err(|e| from_str_err(&format!("Failed to create FungibleAsset: {e}")))
     }
@@ -73,13 +68,22 @@ impl FungibleAsset {
         FungibleAsset(self.0.with_callbacks(callbacks.into()))
     }
 
-    /// Returns the word-encoded key used to store this asset in an account vault.
+    /// Returns the key word under which this asset is stored in an account vault.
+    ///
+    /// The key encodes the faucet id and the callback flag; the amount lives in
+    /// the paired value word from [`intoWord`](Self::into_word). Pass both back
+    /// into [`fromVaultEntry`](Self::from_vault_entry) to reconstruct the asset.
     #[js_export(js_name = "vaultKey")]
     pub fn vault_key(&self) -> Word {
         self.0.to_key_word().into()
     }
 
-    /// Encodes this asset into the word layout used in the vault.
+    /// Returns the value word stored under [`vaultKey`](Self::vault_key) in an
+    /// account vault. For a fungible asset the value word encodes the amount.
+    ///
+    /// This is the value half of the vault entry; pair it with `vaultKey()` and
+    /// pass both to [`fromVaultEntry`](Self::from_vault_entry) to reconstruct the
+    /// asset.
     #[js_export(js_name = "intoWord")]
     pub fn into_word(&self) -> Word {
         let native_word: NativeWord = self.0.to_value_word();

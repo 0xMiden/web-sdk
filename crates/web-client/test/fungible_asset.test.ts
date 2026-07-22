@@ -1,8 +1,8 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
 
-test.describe("fungible asset vault keys", () => {
-  test("round-trips callback metadata and encodes the amount", async ({
+test.describe("fungible asset vault entries", () => {
+  test("round-trips a vault entry (key + value words) preserving callbacks", async ({
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
@@ -19,18 +19,21 @@ test.describe("fungible asset vault keys", () => {
 
       const asset = new sdk.FungibleAsset(faucetId, sdk.u64(10));
       const enabled = asset.withCallbacks(sdk.AssetCallbackFlag.Enabled);
-      const disabledRoundTripped = sdk.FungibleAsset.fromVaultKey(
+      // The two getters feed straight back into fromVaultEntry — no decoding.
+      const disabledRoundTripped = sdk.FungibleAsset.fromVaultEntry(
         asset.vaultKey(),
-        asset.amount()
+        asset.intoWord()
       );
-      const enabledRoundTripped = sdk.FungibleAsset.fromVaultKey(
+      const enabledRoundTripped = sdk.FungibleAsset.fromVaultEntry(
         enabled.vaultKey(),
-        enabled.amount()
+        enabled.intoWord()
       );
 
+      // An amount above the 2^63 - 1 maximum, encoded into the value word, is rejected.
       let oversizedAmountRejected = false;
       try {
-        sdk.FungibleAsset.fromVaultKey(enabled.vaultKey(), sdk.u64(1n << 63n));
+        const oversizedValue = new sdk.Word(sdk.u64Array([1n << 63n, 0n, 0n, 0n]));
+        sdk.FungibleAsset.fromVaultEntry(enabled.vaultKey(), oversizedValue);
       } catch (_error) {
         oversizedAmountRejected = true;
       }
@@ -77,12 +80,13 @@ test.describe("fungible asset vault keys", () => {
     expect(result.oversizedAmountRejected).toBe(true);
   });
 
-  test("rejects an invalid vault key", async ({ run }) => {
+  test("rejects an invalid vault entry", async ({ run }) => {
     const result = await run(async ({ sdk }) => {
       const invalidKey = new sdk.Word(sdk.u64Array([0, 0, 0, 0]));
+      const value = new sdk.Word(sdk.u64Array([10, 0, 0, 0]));
 
       try {
-        sdk.FungibleAsset.fromVaultKey(invalidKey, sdk.u64(10));
+        sdk.FungibleAsset.fromVaultEntry(invalidKey, value);
         return { threw: false, message: "" };
       } catch (error) {
         return { threw: true, message: String(error) };
