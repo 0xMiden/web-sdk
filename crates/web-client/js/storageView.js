@@ -340,4 +340,31 @@ export function installStorageView(wasmModule) {
     const raw = originalStorage.call(this);
     return new StorageView(raw, WordClass);
   };
+
+  // WASM statics that take a raw AccountStorage argument must accept the
+  // StorageView that account.storage() now returns — unwrap it before the
+  // wasm-bindgen instanceof guard rejects it. The napi class freezes its
+  // statics (non-writable, non-configurable) so it cannot be patched here;
+  // its Rust-side FromNapiValue impl accepts StorageView natively instead.
+  const FaucetComponent = wasmModule.BasicFungibleFaucetComponent;
+  const descriptor =
+    FaucetComponent &&
+    Object.getOwnPropertyDescriptor(FaucetComponent, "fromAccountStorage");
+  if (
+    descriptor?.value &&
+    (descriptor.writable || descriptor.configurable) &&
+    !descriptor.value.__unwrapsStorageView
+  ) {
+    const originalFromStorage = descriptor.value.bind(FaucetComponent);
+    const unwrapping = (storage) =>
+      originalFromStorage(
+        storage instanceof StorageView ? storage.raw : storage
+      );
+    unwrapping.__unwrapsStorageView = true;
+    Object.defineProperty(FaucetComponent, "fromAccountStorage", {
+      value: unwrapping,
+      writable: true,
+      configurable: true,
+    });
+  }
 }

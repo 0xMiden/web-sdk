@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.8 (TBA)
+
+### Enhancements
+
+* [FEATURE][web] `BasicFungibleFaucetComponent.fromAccountStorage(accountStorage)` reads faucet metadata directly from an account's storage, covering faucets whose account shape makes `fromAccount` fail (e.g. AggLayer faucets). Available on both the browser and Node.js bindings (closes [#243](https://github.com/0xMiden/web-sdk/issues/243), [web-sdk#244](https://github.com/0xMiden/web-sdk/pull/244)).
+
+```ts
+const faucetMeta = BasicFungibleFaucetComponent.fromAccountStorage(account.storage());
+faucetMeta.symbol().toString(); // "DAG"
+```
+
 ## 0.15.7 (2026-07-20)
 
 ### Enhancements
