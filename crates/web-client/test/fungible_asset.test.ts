@@ -37,7 +37,9 @@ test.describe("fungible asset vault entries", () => {
       // An amount above the maximum (2^63 - 2^31), encoded into the value word, is rejected.
       let oversizedAmountRejected = false;
       try {
-        const oversizedValue = new sdk.Word(sdk.u64Array([1n << 63n, 0n, 0n, 0n]));
+        const oversizedValue = new sdk.Word(
+          sdk.u64Array([1n << 63n, 0n, 0n, 0n])
+        );
         sdk.FungibleAsset.fromVaultEntry(enabled.vaultKey(), oversizedValue);
       } catch (_error) {
         oversizedAmountRejected = true;
