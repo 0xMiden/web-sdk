@@ -35,8 +35,9 @@ impl FungibleAsset {
     /// the amount. This is the inverse of those getters, so
     /// `FungibleAsset.fromVaultEntry(a.vaultKey(), a.intoWord())` round-trips an
     /// asset read from vault data (callback flag included). Errors if the words
-    /// don't describe a valid fungible asset (e.g. a malformed key or an amount
-    /// above the `2^63 - 1` maximum).
+    /// don't describe a valid fungible asset (e.g. a malformed key, non-zero
+    /// upper limbs in the value word, or an amount above the maximum fungible
+    /// asset amount, `2^63 - 2^31`).
     #[js_export(js_name = "fromVaultEntry")]
     pub fn from_vault_entry(key: &Word, value: &Word) -> Result<FungibleAsset, JsErr> {
         FungibleAssetNative::from_key_value_words(key.into(), value.into())
@@ -51,7 +52,8 @@ impl FungibleAsset {
     /// number rather than the value word: the key supplies the faucet id and
     /// callback flag, and the amount is encoded into the value word for you. Use
     /// `fromVaultEntry` when you already have both vault words. Errors on a
-    /// malformed key or an amount above the `2^63 - 1` maximum.
+    /// malformed key or an amount above the maximum fungible asset amount,
+    /// `2^63 - 2^31`.
     #[js_export(js_name = "fromVaultKey")]
     pub fn from_vault_key(key: &Word, amount: JsU64) -> Result<FungibleAsset, JsErr> {
         let amount = AssetAmount::new(js_u64_to_u64(amount))

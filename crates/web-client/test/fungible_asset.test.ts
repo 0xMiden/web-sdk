@@ -34,13 +34,30 @@ test.describe("fungible asset vault entries", () => {
         enabled.amount()
       );
 
-      // An amount above the 2^63 - 1 maximum, encoded into the value word, is rejected.
+      // An amount above the maximum (2^63 - 2^31), encoded into the value word, is rejected.
       let oversizedAmountRejected = false;
       try {
         const oversizedValue = new sdk.Word(sdk.u64Array([1n << 63n, 0n, 0n, 0n]));
         sdk.FungibleAsset.fromVaultEntry(enabled.vaultKey(), oversizedValue);
       } catch (_error) {
         oversizedAmountRejected = true;
+      }
+
+      // fromVaultKey's own amount guard rejects an over-maximum scalar amount.
+      let oversizedScalarRejected = false;
+      try {
+        sdk.FungibleAsset.fromVaultKey(enabled.vaultKey(), sdk.u64(1n << 63n));
+      } catch (_error) {
+        oversizedScalarRejected = true;
+      }
+
+      // A value word with non-zero upper limbs is not a valid fungible asset value.
+      let dirtyValueRejected = false;
+      try {
+        const dirtyValue = new sdk.Word(sdk.u64Array([10, 1, 0, 0]));
+        sdk.FungibleAsset.fromVaultEntry(enabled.vaultKey(), dirtyValue);
+      } catch (_error) {
+        dirtyValueRejected = true;
       }
 
       return {
@@ -73,6 +90,8 @@ test.describe("fungible asset vault entries", () => {
           enabledFromKey.intoWord().toHex() === enabled.intoWord().toHex() &&
           enabledFromKey.callbacks() === sdk.AssetCallbackFlag.Enabled,
         oversizedAmountRejected,
+        oversizedScalarRejected,
+        dirtyValueRejected,
       };
     });
 
@@ -89,6 +108,8 @@ test.describe("fungible asset vault entries", () => {
     expect(result.roundTrippedCallbacks).toBe(true);
     expect(result.fromVaultKeyMatches).toBe(true);
     expect(result.oversizedAmountRejected).toBe(true);
+    expect(result.oversizedScalarRejected).toBe(true);
+    expect(result.dirtyValueRejected).toBe(true);
   });
 
   test("rejects an invalid vault entry", async ({ run }) => {
