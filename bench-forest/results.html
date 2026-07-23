@@ -503,11 +503,26 @@
       <p>
         In practice this cost is only visible when importing or creating an
         account whose storage map has tens of thousands of entries; ordinary
-        transactions touch a few rows. A follow-up that would recover most of it
-        (and shrink sqlite's disk footprint too): skip persisting single-leaf
-        subtrees and reconstruct them from the entry at read time. That requires
-        support in the shared <code>forest_backend</code> module in rust-client,
-        so it is out of scope for this branch.
+        transactions touch a few rows. It is also specific to IndexedDB rather
+        than to the design. The sqlite store persists the same ~6-7 rows per
+        entry, but inside one transaction SQLite sustains hundreds of thousands
+        of row inserts per second (they are B-tree appends into a single local
+        file), so populating a 50,000-entry map costs about 4 s there. In the
+        browser every put crosses from wasm through the browser process into
+        LevelDB individually, which is where the fixed ~1,500-2,300 records/s
+        ceiling comes from.
+      </p>
+      <p>
+        Since row count is the only lever, the way to make this better for
+        IndexedDB is to write fewer rows. With hash-distributed keys almost all
+        of those ~6-7 subtree rows hold a single leaf, and a single-leaf subtree
+        is fully determined by its one entry, so the store could skip persisting
+        those rows and reconstruct them from the entry at read time. That would
+        eliminate most of the puts behind the numbers above and shrink both
+        stores' disk footprint, at the price of a little reconstruction work per
+        read. It requires support in the shared
+        <code>forest_backend</code> module in rust-client, so it is left as the
+        main follow-up for whoever continues this work.
       </p>
 
       <h2>Trade-off: disk</h2>
