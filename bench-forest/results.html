@@ -175,6 +175,9 @@
       .note.warn {
         border-left-color: var(--warn);
       }
+      .note.good {
+        border-left-color: var(--accent);
+      }
       ul {
         margin: 8px 0;
         padding-left: 22px;
@@ -512,7 +515,8 @@
         LevelDB individually, which is where the fixed ~1,500-2,300 records/s
         ceiling comes from.
       </p>
-      <p>
+      <div class="note good">
+        <b>How to fix it: skip single-leaf subtrees.</b>
         Since row count is the only lever, the way to make this better for
         IndexedDB is to write fewer rows. With hash-distributed keys almost all
         of those ~6-7 subtree rows hold a single leaf, and a single-leaf subtree
@@ -523,7 +527,7 @@
         read. It requires support in the shared
         <code>forest_backend</code> module in rust-client, so it is left as the
         main follow-up for whoever continues this work.
-      </p>
+      </div>
 
       <h2>Trade-off: disk</h2>
       <table>
