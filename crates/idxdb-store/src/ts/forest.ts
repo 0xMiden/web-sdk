@@ -64,9 +64,9 @@ export interface ForestRowsResponse {
 
 interface ForestExpectedTree {
   lineage: string;
-  version?: string | null;
-  root?: string | null;
-  entryCount?: number | null;
+  version?: string;
+  root?: string;
+  entryCount?: number;
 }
 
 interface ForestEntryWrite {
@@ -85,7 +85,7 @@ interface ForestSubtreeWrite {
   lineage: string;
   depth: number;
   position: string;
-  blob: string;
+  blob: Uint8Array;
 }
 
 interface ForestSubtreeDelete {
@@ -103,7 +103,7 @@ interface ForestTreeWrite {
 
 export interface ForestUpdate {
   expectedTrees: ForestExpectedTree[];
-  allocatedRevision?: string | null;
+  allocatedRevision?: string;
   entryUpserts: ForestEntryWrite[];
   entryDeletes: ForestEntryDelete[];
   subtreeUpserts: ForestSubtreeWrite[];
@@ -122,15 +122,6 @@ function missingForestRevisionError(): Error {
   return new Error(
     "The forest revision record is missing. Reset the IndexedDB database before continuing."
   );
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
 }
 
 export async function getForestSnapshot(dbId: string): Promise<ForestSnapshot> {
@@ -328,25 +319,31 @@ export async function applyForestUpdate(
   if (update == null) {
     return;
   }
+
+  const {
+    expectedTrees,
+    allocatedRevision,
+    entryUpserts,
+    entryDeletes,
+    subtreeUpserts,
+    subtreeDeletes,
+    treeUpserts,
+  } = update;
+
   if (
-    update.allocatedRevision == null &&
-    update.expectedTrees.length === 0 &&
-    update.entryUpserts.length === 0 &&
-    update.entryDeletes.length === 0 &&
-    update.subtreeUpserts.length === 0 &&
-    update.subtreeDeletes.length === 0 &&
-    update.treeUpserts.length === 0
+    allocatedRevision === undefined &&
+    expectedTrees.length === 0 &&
+    entryUpserts.length === 0 &&
+    entryDeletes.length === 0 &&
+    subtreeUpserts.length === 0 &&
+    subtreeDeletes.length === 0 &&
+    treeUpserts.length === 0
   ) {
     return;
   }
 
-  const [expectedTrees, revision] = await Promise.all([
-    Promise.all(
-      update.expectedTrees.map(async (expected) => ({
-        expected,
-        actual: await tx.forestTrees.get(expected.lineage),
-      }))
-    ),
+  const [actualTrees, revision] = await Promise.all([
+    tx.forestTrees.bulkGet(expectedTrees.map((expected) => expected.lineage)),
     tx.forestRevision.get(FOREST_REVISION_ID),
   ]);
 
@@ -354,64 +351,43 @@ export async function applyForestUpdate(
     throw missingForestRevisionError();
   }
 
-  for (const { expected, actual } of expectedTrees) {
-    validateExpectedTree(expected, actual);
+  for (let i = 0; i < expectedTrees.length; i++) {
+    validateExpectedTree(expectedTrees[i], actualTrees[i]);
   }
 
   if (
-    update.allocatedRevision != null &&
-    revision.nextVersion !== update.allocatedRevision
+    allocatedRevision !== undefined &&
+    revision.nextVersion !== allocatedRevision
   ) {
     throw new ForestConflictError("Forest revision does not match");
   }
 
-  if (update.entryDeletes.length > 0) {
+  if (entryDeletes.length > 0) {
     await tx.forestEntries.bulkDelete(
-      update.entryDeletes.map(({ lineage, key }) => [lineage, key])
+      entryDeletes.map(({ lineage, key }) => [lineage, key])
     );
   }
-  if (update.subtreeDeletes.length > 0) {
+  if (subtreeDeletes.length > 0) {
     await tx.forestSubtrees.bulkDelete(
-      update.subtreeDeletes.map(({ lineage, depth, position }) => [
+      subtreeDeletes.map(({ lineage, depth, position }) => [
         lineage,
         depth,
         position,
       ])
     );
   }
-  if (update.entryUpserts.length > 0) {
-    await tx.forestEntries.bulkPut(
-      update.entryUpserts.map(({ lineage, key, value, leafPosition }) => ({
-        lineage,
-        key,
-        value,
-        leafPosition,
-      }))
-    );
+  if (entryUpserts.length > 0) {
+    await tx.forestEntries.bulkPut(entryUpserts);
   }
-  if (update.subtreeUpserts.length > 0) {
-    await tx.forestSubtrees.bulkPut(
-      update.subtreeUpserts.map(({ lineage, depth, position, blob }) => ({
-        lineage,
-        depth,
-        position,
-        blob: base64ToUint8Array(blob),
-      }))
-    );
+  if (subtreeUpserts.length > 0) {
+    await tx.forestSubtrees.bulkPut(subtreeUpserts);
   }
-  if (update.treeUpserts.length > 0) {
-    await tx.forestTrees.bulkPut(
-      update.treeUpserts.map(({ lineage, version, root, entryCount }) => ({
-        lineage,
-        version,
-        root,
-        entryCount,
-      }))
-    );
+  if (treeUpserts.length > 0) {
+    await tx.forestTrees.bulkPut(treeUpserts);
   }
 
-  if (update.allocatedRevision != null) {
-    const nextRevision = BigInt(`0x${update.allocatedRevision}`) + 1n;
+  if (allocatedRevision !== undefined) {
+    const nextRevision = BigInt(`0x${allocatedRevision}`) + 1n;
     if (nextRevision > 0xffffffffffffffffn) {
       throw new Error("Forest revision exceeds the maximum u64 value");
     }

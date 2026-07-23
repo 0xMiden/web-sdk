@@ -42,7 +42,6 @@ use crate::account::models::{
 };
 use crate::forest::CachedAccountForest;
 use crate::forest::cache::ForestRowCache;
-use crate::forest::js_bindings::JsForestUpdate;
 use crate::sync::{JsAccountPatchUpdate, JsAccountUpdate};
 
 pub async fn insert_account_address(
@@ -216,7 +215,7 @@ pub async fn apply_account_patch(
     updated_assets: &[Asset],
     removed_asset_ids: &[AssetId],
     patch: &AccountPatch,
-    forest_update: JsForestUpdate,
+    forest_update: JsValue,
 ) -> Result<(), JsValue> {
     let update = build_js_account_patch_update(
         account_id,
@@ -334,7 +333,7 @@ pub async fn insert_account_atomic(
     account: &Account,
     client_account_type: ClientAccountType,
     initial_address: Address,
-    forest_update: JsForestUpdate,
+    forest_update: JsValue,
 ) -> Result<(), JsValue> {
     let account_state = JsAccountUpdate::from_account(account, account.seed());
     let code_root = account.code().commitment().to_string();
@@ -365,7 +364,7 @@ pub async fn insert_account_atomic(
 pub async fn apply_full_account_state(
     db_id: &str,
     account: &Account,
-    forest_update: JsForestUpdate,
+    forest_update: JsValue,
     expected_initial_commitment: Option<String>,
 ) -> Result<(), JsValue> {
     let account_state = JsAccountUpdate::from_account(account, account.seed());

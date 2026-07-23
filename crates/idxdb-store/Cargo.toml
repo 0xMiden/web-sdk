@@ -24,6 +24,7 @@ serde       = { features = ["derive"], workspace = true }
 base64               = { version = "0.22" }
 hex                  = { workspace = true }
 serde-wasm-bindgen   = { version = "0.6" }
+serde_bytes          = { default-features = false, features = ["alloc"], version = "0.11" }
 wasm-bindgen         = { features = ["serde-serialize"], version = "0.2" }
 wasm-bindgen-futures = { version = "0.4" }
 

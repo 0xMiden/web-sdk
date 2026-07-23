@@ -39,7 +39,6 @@ use super::chain_data::utils::{
 use super::note::utils::{serialize_input_note, serialize_output_note};
 use super::transaction::utils::serialize_transaction_record;
 use crate::forest::cache::{ForestDirtyDelta, ForestRowCache};
-use crate::forest::js_bindings::JsForestUpdate;
 use crate::forest::{self, CachedAccountForest};
 use crate::promise::{await_js, await_js_value};
 
@@ -346,8 +345,10 @@ impl IdxdbStore {
         undo_commitments: &[String],
         full_accounts: &[Account],
         patch_updates: &[(&AccountHeader, &AccountPatch)],
-    ) -> Result<(JsForestUpdate, Vec<JsAccountPatchUpdate>, Vec<JsPostUndoExpectation>), StoreError>
-    {
+    ) -> Result<
+        (wasm_bindgen::JsValue, Vec<JsAccountPatchUpdate>, Vec<JsPostUndoExpectation>),
+        StoreError,
+    > {
         // Syncs with no account work carry no forest update at all, so they neither consume a
         // revision nor contend with concurrent account writes.
         if undo_commitments.is_empty() && full_accounts.is_empty() && patch_updates.is_empty() {

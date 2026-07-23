@@ -7,7 +7,6 @@ use miden_client::utils::Serializable;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
-use crate::forest::js_bindings::JsForestUpdate;
 use crate::sync::JsAccountUpdate;
 
 // INDEXED DB BINDINGS
@@ -141,14 +140,14 @@ extern "C" {
         committed: bool,
         commitment: String,
         expected_initial_commitment: String,
-        forest_update: JsForestUpdate,
+        forest_update: JsValue,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyFullAccountState)]
     pub fn idxdb_apply_full_account_state(
         db_id: &str,
         account_state: JsAccountUpdate,
-        forest_update: JsForestUpdate,
+        forest_update: JsValue,
         expected_initial_commitment: Option<String>,
     ) -> js_sys::Promise;
 
@@ -160,7 +159,7 @@ extern "C" {
         code_root: String,
         address: Vec<u8>,
         watched: bool,
-        forest_update: JsForestUpdate,
+        forest_update: JsValue,
     ) -> js_sys::Promise;
 
     // UPDATES
@@ -176,7 +175,7 @@ extern "C" {
     pub fn idxdb_undo_account_states(
         db_id: &str,
         account_hashes: Vec<String>,
-        forest_update: JsForestUpdate,
+        forest_update: JsValue,
     ) -> js_sys::Promise;
 
     /// Computes, without writing, the latest account state that `undoAccountStates` would

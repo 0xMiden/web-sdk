@@ -274,7 +274,9 @@ fn entry_count_to_u32(count: usize) -> Result<u32, StoreError> {
 ///
 /// Writes are coalesced to their final per-row state (the last write to a row key wins), so the
 /// JS side applies each row at most once and ordering inside the payload carries no meaning.
-pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> Result<JsForestUpdate, StoreError> {
+pub(crate) fn forest_update_payload(
+    delta: ForestDirtyDelta,
+) -> Result<wasm_bindgen::JsValue, StoreError> {
     let mut entry_writes: BTreeMap<(LineageId, Word), Option<(Word, u64)>> = BTreeMap::new();
     let mut subtree_writes: BTreeMap<(LineageId, u8, u64), Option<Vec<u8>>> = BTreeMap::new();
     let mut tree_writes: BTreeMap<LineageId, ForestTreeMeta> = BTreeMap::new();
@@ -339,7 +341,7 @@ pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> Result<JsForestU
                 lineage: lineage_to_hex(lineage),
                 depth,
                 position: u64_to_hex(position),
-                blob: general_purpose::STANDARD.encode(blob),
+                blob: serde_bytes::ByteBuf::from(blob),
             }),
             None => update.subtree_deletes.push(JsForestSubtreeDelete {
                 lineage: lineage_to_hex(lineage),
@@ -357,7 +359,9 @@ pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> Result<JsForestU
         });
     }
 
-    Ok(update)
+    update.into_js().map_err(|e| {
+        StoreError::DatabaseError(format!("failed to serialize the forest update: {e}"))
+    })
 }
 
 // FOREST CONSTRUCTION

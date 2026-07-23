@@ -59,53 +59,54 @@ pub struct JsForestRowsRequest {
 // ================================================================================================
 //
 // The write-back payload rides along the account-write JS calls (`applyAccountPatch` and
-// friends), so its types are exported wasm-bindgen structs like the other inputs of those
-// calls.
+// friends) as ONE plain JS object, serialized in a single `serde_wasm_bindgen` pass
+// ([`JsForestUpdate::into_js`]). Bulk operations carry tens of thousands of rows, so the
+// payload must cross the wasm boundary once as own-property objects; per-row wasm-bindgen
+// classes would re-enter wasm for every field read and re-materialize whole vectors on every
+// property access.
 
 /// Expected state of one lineage at write-back time. `version`, `root` and `entry_count` are
 /// `None` when the lineage is expected to be absent (an addition).
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestExpectedTree {
     pub lineage: String,
     pub version: Option<String>,
     pub root: Option<String>,
-    #[wasm_bindgen(js_name = "entryCount")]
     pub entry_count: Option<u32>,
 }
 
 /// One entry row to insert or replace.
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestEntryWrite {
     pub lineage: String,
     pub key: String,
     pub value: String,
-    #[wasm_bindgen(js_name = "leafPosition")]
     pub leaf_position: String,
 }
 
 /// One entry row to delete.
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestEntryDelete {
     pub lineage: String,
     pub key: String,
 }
 
-/// One subtree blob to insert or replace. `blob` is base64.
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+/// One subtree blob to insert or replace. `blob` crosses the boundary as a `Uint8Array`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestSubtreeWrite {
     pub lineage: String,
     pub depth: u8,
     pub position: String,
-    pub blob: String,
+    pub blob: serde_bytes::ByteBuf,
 }
 
 /// One subtree blob to delete.
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestSubtreeDelete {
     pub lineage: String,
     pub depth: u8,
@@ -113,35 +114,34 @@ pub struct JsForestSubtreeDelete {
 }
 
 /// One lineage metadata row to insert or replace.
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestTreeWrite {
     pub lineage: String,
     pub version: String,
     pub root: String,
-    #[wasm_bindgen(js_name = "entryCount")]
     pub entry_count: u32,
 }
 
 /// A complete forest write-back: expectations to validate plus the final row state to write,
 /// all inside the same Dexie transaction as the account writes of the operation.
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsForestUpdate {
-    #[wasm_bindgen(js_name = "expectedTrees")]
     pub expected_trees: Vec<JsForestExpectedTree>,
     /// The revision the delta was computed at; the stored `nextVersion` must still equal it,
     /// and is advanced past it by the write-back.
-    #[wasm_bindgen(js_name = "allocatedRevision")]
     pub allocated_revision: Option<String>,
-    #[wasm_bindgen(js_name = "entryUpserts")]
     pub entry_upserts: Vec<JsForestEntryWrite>,
-    #[wasm_bindgen(js_name = "entryDeletes")]
     pub entry_deletes: Vec<JsForestEntryDelete>,
-    #[wasm_bindgen(js_name = "subtreeUpserts")]
     pub subtree_upserts: Vec<JsForestSubtreeWrite>,
-    #[wasm_bindgen(js_name = "subtreeDeletes")]
     pub subtree_deletes: Vec<JsForestSubtreeDelete>,
-    #[wasm_bindgen(js_name = "treeUpserts")]
     pub tree_upserts: Vec<JsForestTreeWrite>,
+}
+
+impl JsForestUpdate {
+    /// Serializes the whole update into one plain JS object.
+    pub fn into_js(self) -> Result<JsValue, serde_wasm_bindgen::Error> {
+        serde_wasm_bindgen::to_value(&self)
+    }
 }

@@ -128,8 +128,10 @@ struct CacheInner {
     /// Lineages whose full entry set is loaded; their buckets and exact entries can be answered
     /// from `full_entries` without individual records.
     full_coverage: BTreeSet<LineageId>,
-    /// All entries of fully covered lineages.
-    full_entries: BTreeMap<LineageId, Vec<ForestEntryRow>>,
+    /// All entries of fully covered lineages, keyed by entry key so per-key reads and the write
+    /// maintenance below stay logarithmic even for bulk operations. The value is the entry's
+    /// (value, stored leaf position) pair.
+    full_entries: BTreeMap<LineageId, BTreeMap<Word, (Word, u64)>>,
     /// Expected metadata captured for CAS, including known-absent lineages.
     expected_trees: BTreeMap<LineageId, Option<ForestTreeMeta>>,
     /// Row writes in arrival order.
@@ -208,7 +210,10 @@ impl ForestRowCache {
     /// Records the complete entry set of a lineage, marking it fully covered.
     pub(crate) fn load_all_entries(&self, lineage: LineageId, rows: Vec<ForestEntryRow>) {
         let mut inner = self.0.borrow_mut();
-        inner.full_entries.insert(lineage, rows);
+        inner.full_entries.insert(
+            lineage,
+            rows.into_iter().map(|row| (row.key, (row.value, row.leaf_position))).collect(),
+        );
         inner.full_coverage.insert(lineage);
     }
 
@@ -277,7 +282,7 @@ impl ForestRowStore for ForestRowCache {
         }
         if inner.full_coverage.contains(&lineage) {
             let rows = inner.full_entries.get(&lineage).expect("covered lineage has entries");
-            return Ok(rows.iter().find(|row| row.key == key).map(|row| row.value));
+            return Ok(rows.get(&key).map(|(value, _)| *value));
         }
         if !inner.initial_lineages.contains(&lineage) {
             return Ok(None);
@@ -294,8 +299,8 @@ impl ForestRowStore for ForestRowCache {
             let rows = inner.full_entries.get(&lineage).expect("covered lineage has entries");
             return Ok(rows
                 .iter()
-                .filter(|row| row.leaf_position == position)
-                .map(|row| (row.key, row.value))
+                .filter(|(_, (_, leaf_position))| *leaf_position == position)
+                .map(|(key, (value, _))| (*key, *value))
                 .collect());
         }
         if !inner.initial_lineages.contains(&lineage) {
@@ -314,13 +319,13 @@ impl ForestRowStore for ForestRowCache {
             if inner.full_coverage.contains(&lineage) {
                 inner.full_entries.get(&lineage).expect("covered lineage has entries").clone()
             } else if !inner.initial_lineages.contains(&lineage) {
-                Vec::new()
+                BTreeMap::new()
             } else {
                 return Err(not_prefetched(format!("full entry set of lineage {lineage}")));
             }
         };
-        for row in rows {
-            f(row)?;
+        for (key, (value, leaf_position)) in rows {
+            f(ForestEntryRow { key, value, leaf_position })?;
         }
         Ok(())
     }
@@ -360,10 +365,7 @@ impl ForestRowStore for ForestRowCache {
         }
         if inner.full_coverage.contains(&lineage) {
             let rows = inner.full_entries.get_mut(&lineage).expect("covered lineage has entries");
-            match rows.iter_mut().find(|row| row.key == key) {
-                Some(row) => row.value = value,
-                None => rows.push(ForestEntryRow { key, value, leaf_position }),
-            }
+            rows.insert(key, (value, leaf_position));
         }
         inner
             .writes
@@ -393,7 +395,7 @@ impl ForestRowStore for ForestRowCache {
         }
         if inner.full_coverage.contains(&lineage) {
             let rows = inner.full_entries.get_mut(&lineage).expect("covered lineage has entries");
-            rows.retain(|row| row.key != key);
+            rows.remove(&key);
         }
         inner.writes.push(ForestRowWrite::DeleteEntry { lineage, key });
         Ok(())

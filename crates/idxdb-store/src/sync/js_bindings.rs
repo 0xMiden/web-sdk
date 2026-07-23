@@ -9,7 +9,6 @@ use wasm_bindgen_futures::js_sys;
 
 use super::flattened_vec::FlattenedU8Vec;
 use crate::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
-use crate::forest::js_bindings::JsForestUpdate;
 use crate::note::utils::{SerializedInputNoteData, SerializedOutputNoteData};
 use crate::transaction::utils::SerializedTransactionData;
 
@@ -44,7 +43,7 @@ extern "C" {
     pub fn idxdb_apply_state_sync(
         db_id: &str,
         state_update: JsStateSyncUpdate,
-        forest_update: JsForestUpdate,
+        forest_update: JsValue,
     ) -> js_sys::Promise;
 
     // DELETES

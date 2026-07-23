@@ -623,7 +623,7 @@ impl IdxdbStore {
         account_id: AccountId,
         vault: &AssetVault,
         storage: &AccountStorage,
-    ) -> Result<crate::forest::js_bindings::JsForestUpdate, StoreError> {
+    ) -> Result<wasm_bindgen::JsValue, StoreError> {
         let snapshot = forest::load_forest_snapshot(self.db_id()).await?;
         let revision = snapshot.next_revision;
         let cache = ForestRowCache::new(snapshot.trees.clone(), Some(revision));

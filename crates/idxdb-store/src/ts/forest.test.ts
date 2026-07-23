@@ -311,7 +311,7 @@ describe("applyForestUpdate", () => {
             lineage: "existing",
             depth: 16,
             position: "0000000000000002",
-            blob: uint8ArrayToBase64(new Uint8Array([4, 5, 6])),
+            blob: new Uint8Array([4, 5, 6]),
           },
         ],
         treeUpserts: [
@@ -463,86 +463,33 @@ describe("applyForestUpdate", () => {
     await expect(db.forestRevision.count()).resolves.toBe(0);
   });
 
-  it("stores prototype-getter upserts as plain records", async () => {
+  it("stores Uint8Array subtree blobs without base64 conversion", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
-
-    class EntryUpsert {
-      get lineage() {
-        return "getter-lineage";
-      }
-      get key() {
-        return "getter-key";
-      }
-      get value() {
-        return "getter-value";
-      }
-      get leafPosition() {
-        return "0000000000000001";
-      }
-    }
-
-    class TreeUpsert {
-      get lineage() {
-        return "getter-lineage";
-      }
-      get version() {
-        return FOREST_REVISION_FIRST;
-      }
-      get root() {
-        return "getter-root";
-      }
-      get entryCount() {
-        return 1;
-      }
-    }
-
-    class SubtreeUpsert {
-      get lineage() {
-        return "getter-lineage";
-      }
-      get depth() {
-        return 8;
-      }
-      get position() {
-        return "0000000000000001";
-      }
-      get blob() {
-        return uint8ArrayToBase64(new Uint8Array([1, 2, 3]));
-      }
-    }
+    const blob = new Uint8Array([1, 2, 3]);
 
     await applyUpdate(
       dbId,
       makeUpdate({
         allocatedRevision: FOREST_REVISION_FIRST,
-        entryUpserts: [new EntryUpsert()],
-        subtreeUpserts: [new SubtreeUpsert()],
-        treeUpserts: [new TreeUpsert()],
+        subtreeUpserts: [
+          {
+            lineage: "lineage",
+            depth: 8,
+            position: "0000000000000001",
+            blob,
+          },
+        ],
       })
     );
 
     await expect(
-      db.forestEntries.get(["getter-lineage", "getter-key"])
+      db.forestSubtrees.get(["lineage", 8, "0000000000000001"])
     ).resolves.toEqual({
-      lineage: "getter-lineage",
-      key: "getter-key",
-      value: "getter-value",
-      leafPosition: "0000000000000001",
-    });
-    await expect(db.forestTrees.get("getter-lineage")).resolves.toEqual({
-      lineage: "getter-lineage",
-      version: FOREST_REVISION_FIRST,
-      root: "getter-root",
-      entryCount: 1,
-    });
-    await expect(
-      db.forestSubtrees.get(["getter-lineage", 8, "0000000000000001"])
-    ).resolves.toEqual({
-      lineage: "getter-lineage",
+      lineage: "lineage",
       depth: 8,
       position: "0000000000000001",
-      blob: new Uint8Array([1, 2, 3]),
+      blob,
     });
   });
 
