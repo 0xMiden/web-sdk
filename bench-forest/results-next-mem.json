@@ -1,0 +1,36 @@
+{
+  "label": "next-mem",
+  "dist": "/Users/jeremias/miden_repos/web-sdk-next-bench/crates/web-client/dist/st",
+  "sizes": [
+    {
+      "n": 1000,
+      "insertMs": 203.69999998807907,
+      "updateTxMs": 3147.699999988079,
+      "warmReadMedianMs": 0.30000001192092896,
+      "usageBytes": 853699,
+      "smallTxMs": 24.69999998807907,
+      "openMs": 315.5,
+      "coldReadMs": 0.5,
+      "reloadWarmMedianMs": 0.30000001192092896,
+      "heapBytes": 39600000,
+      "wasmBytes": 46858240
+    },
+    {
+      "n": 10000,
+      "insertMs": 3949.099999964237,
+      "updateTxMs": null,
+      "warmReadMedianMs": 0.30000001192092896,
+      "usageBytes": 3605028,
+      "smallTxMs": 85.59999996423721,
+      "openMs": 2919,
+      "coldReadMs": 0.5,
+      "reloadWarmMedianMs": 0.30000001192092896,
+      "heapBytes": 14300000,
+      "wasmBytes": 610795520
+    },
+    {
+      "n": 50000,
+      "error": "pageerror: unreachable"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "label": "forest-mem",
+  "dist": "/Users/jeremias/miden_repos/web-sdk/crates/web-client/dist/st",
+  "sizes": [
+    {
+      "n": 1000,
+      "insertMs": 1483.8999999761581,
+      "updateTxMs": 3062,
+      "warmReadMedianMs": 1.0999999642372131,
+      "usageBytes": 4324596,
+      "smallTxMs": 23.400000035762787,
+      "openMs": 36,
+      "coldReadMs": 2.099999964237213,
+      "reloadWarmMedianMs": 1,
+      "heapBytes": 44700000,
+      "wasmBytes": 8585216
+    },
+    {
+      "n": 10000,
+      "insertMs": 45907.90000003576,
+      "updateTxMs": null,
+      "warmReadMedianMs": 1.199999988079071,
+      "usageBytes": 49224606,
+      "smallTxMs": 85.60000002384186,
+      "openMs": 36.30000001192093,
+      "coldReadMs": 2.199999988079071,
+      "reloadWarmMedianMs": 1,
+      "heapBytes": 47400000,
+      "wasmBytes": 8585216
+    },
+    {
+      "n": 50000,
+      "insertMs": 352159.5,
+      "updateTxMs": null,
+      "warmReadMedianMs": 1.2000000178813934,
+      "usageBytes": 281974253,
+      "smallTxMs": null,
+      "openMs": 35.09999996423721,
+      "coldReadMs": 2.399999976158142,
+      "reloadWarmMedianMs": 1.199999988079071,
+      "heapBytes": 19300000,
+      "wasmBytes": 8585216
+    }
+  ]
+}

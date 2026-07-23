@@ -1,238 +1,593 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SMT forest persistence in IndexedDB: benchmark results</title>
-<style>
-  :root {
-    --bg: #0e0e10;
-    --panel: #141416;
-    --panel2: #1a1a1d;
-    --fg: #e5e5e5;
-    --muted: #9a9aa2;
-    --line: #26262b;
-    --accent: #6fc2a0;
-    --accent2: #7aa2e8;
-    --warn: #d9a05b;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--fg);
-    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  main { max-width: 880px; margin: 0 auto; padding: 40px 24px 80px; }
-  h1 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -0.01em; }
-  h2 { font-size: 19px; margin: 44px 0 10px; letter-spacing: -0.01em; }
-  p { margin: 10px 0; }
-  .sub { color: var(--muted); font-size: 13.5px; }
-  .sub code { color: var(--muted); }
-  code {
-    font-family: var(--mono); font-size: 0.9em;
-    background: var(--panel2); padding: 1px 5px; border-radius: 4px;
-  }
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 26px 0 8px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px 16px 14px;
-  }
-  .card .big { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .card .big.good { color: var(--accent); }
-  .card .big.warn { color: var(--warn); }
-  .card .lbl { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
-  table {
-    border-collapse: collapse; width: 100%; margin: 14px 0 6px;
-    font-variant-numeric: tabular-nums; font-size: 14px;
-  }
-  th, td { text-align: right; padding: 7px 12px; border-bottom: 1px solid var(--line); }
-  th:first-child, td:first-child { text-align: left; }
-  th { color: var(--muted); font-weight: 550; font-size: 12.5px; }
-  td.good { color: var(--accent); font-weight: 600; }
-  td.bad { color: var(--warn); font-weight: 600; }
-  .bars { margin: 18px 0 4px; display: grid; gap: 14px; }
-  .bargroup .glabel { font-size: 12.5px; color: var(--muted); margin-bottom: 5px; }
-  .bar { display: grid; grid-template-columns: 58px 1fr 90px; align-items: center; gap: 10px; margin: 3px 0; }
-  .bar .who { font-size: 12px; color: var(--muted); text-align: right; }
-  .bar .track { background: var(--panel2); border-radius: 4px; height: 14px; overflow: hidden; }
-  .bar .fill { height: 100%; border-radius: 4px; }
-  .bar .fill.next { background: #5b5b66; }
-  .bar .fill.forest { background: var(--accent); }
-  .bar .val { font-family: var(--mono); font-size: 12.5px; }
-  .note {
-    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent2);
-    border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 14px;
-  }
-  .note.warn { border-left-color: var(--warn); }
-  ul { margin: 8px 0; padding-left: 22px; }
-  li { margin: 4px 0; }
-  .foot { margin-top: 56px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
-  @media (max-width: 640px) { .cards { grid-template-columns: 1fr; } }
-</style>
-</head>
-<body>
-<main>
-  <h1>Account SMT forest persistence in IndexedDB</h1>
-  <p class="sub">
-    web-sdk, branch <code>jere-idxdb-forest-persistence</code> (<code>0fc3a1f</code>) vs
-    <code>next</code> (<code>bed3609</code>) &middot; measured 2026-07-23 in headless Chromium 147
-    (Playwright) on an Apple Silicon Mac &middot; mock client over the real IndexedDB store,
-    one public contract account holding a storage map with N entries.
-  </p>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SMT forest persistence in IndexedDB: benchmark results</title>
+    <style>
+      :root {
+        --bg: #0e0e10;
+        --panel: #141416;
+        --panel2: #1a1a1d;
+        --fg: #e5e5e5;
+        --muted: #9a9aa2;
+        --line: #26262b;
+        --accent: #6fc2a0;
+        --accent2: #7aa2e8;
+        --warn: #d9a05b;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.55 -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+      main {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 40px 24px 80px;
+      }
+      h1 {
+        font-size: 26px;
+        line-height: 1.25;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 19px;
+        margin: 44px 0 10px;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 10px 0;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+      .sub code {
+        color: var(--muted);
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.9em;
+        background: var(--panel2);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 26px 0 8px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px 16px 14px;
+      }
+      .card .big {
+        font-size: 26px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+      .card .big.good {
+        color: var(--accent);
+      }
+      .card .big.warn {
+        color: var(--warn);
+      }
+      .card .lbl {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-top: 4px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 14px 0 6px;
+        font-variant-numeric: tabular-nums;
+        font-size: 14px;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 550;
+        font-size: 12.5px;
+      }
+      td.good {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      td.bad {
+        color: var(--warn);
+        font-weight: 600;
+      }
+      .bars {
+        margin: 18px 0 4px;
+        display: grid;
+        gap: 14px;
+      }
+      .bargroup .glabel {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
+      .bar {
+        display: grid;
+        grid-template-columns: 58px 1fr 90px;
+        align-items: center;
+        gap: 10px;
+        margin: 3px 0;
+      }
+      .bar .who {
+        font-size: 12px;
+        color: var(--muted);
+        text-align: right;
+      }
+      .bar .track {
+        background: var(--panel2);
+        border-radius: 4px;
+        height: 14px;
+        overflow: hidden;
+      }
+      .bar .fill {
+        height: 100%;
+        border-radius: 4px;
+      }
+      .bar .fill.next {
+        background: #5b5b66;
+      }
+      .bar .fill.forest {
+        background: var(--accent);
+      }
+      .bar .val {
+        font-family: var(--mono);
+        font-size: 12.5px;
+      }
+      .note {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent2);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin: 16px 0;
+        font-size: 14px;
+      }
+      .note.warn {
+        border-left-color: var(--warn);
+      }
+      ul {
+        margin: 8px 0;
+        padding-left: 22px;
+      }
+      li {
+        margin: 4px 0;
+      }
+      .foot {
+        margin-top: 56px;
+        color: var(--muted);
+        font-size: 12.5px;
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+      }
+      @media (max-width: 640px) {
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Account SMT forest persistence in IndexedDB</h1>
+      <p class="sub">
+        web-sdk, branch
+        <code>jere-idxdb-forest-persistence</code> (<code>0fc3a1f</code>) vs
+        <code>next</code> (<code>bed3609</code>) &middot; measured 2026-07-23 in
+        headless Chromium 147 (Playwright) on an Apple Silicon Mac &middot; mock
+        client over the real IndexedDB store, one public contract account
+        holding a storage map with N entries.
+      </p>
 
-  <div class="cards">
-    <div class="card">
-      <div class="big good">15.0 s &rarr; 37 ms</div>
-      <div class="lbl">Client open with a 50k-entry map: ~400x faster, and flat at any size</div>
-    </div>
-    <div class="card">
-      <div class="big good">~1.2 ms</div>
-      <div class="lbl">Storage map witness read, constant from 1k to 50k entries</div>
-    </div>
-    <div class="card">
-      <div class="big warn">Cost moved</div>
-      <div class="lbl">Tree persistence is paid once at bulk-write time instead of on every open</div>
-    </div>
-  </div>
+      <div class="cards">
+        <div class="card">
+          <div class="big good">15.0 s &rarr; 37 ms</div>
+          <div class="lbl">
+            Client open with a 50k-entry map: ~400x faster, and flat at any size
+          </div>
+        </div>
+        <div class="card">
+          <div class="big good">611 MB &rarr; 8.6 MB</div>
+          <div class="lbl">
+            Wasm memory after opening over a 10k-entry map; flat at any size on
+            this branch
+          </div>
+        </div>
+        <div class="card">
+          <div class="big warn">Cost moved</div>
+          <div class="lbl">
+            Tree persistence is paid once at bulk-write time instead of on every
+            open
+          </div>
+        </div>
+      </div>
 
-  <p>
-    On <code>next</code> the account SMT forest (one Merkle tree per vault and per storage map)
-    lives only in memory: every client open reads all map entries back from IndexedDB and
-    rebuilds every tree in wasm, so open time and memory grow linearly with total tracked state.
-    This branch persists the trees in IndexedDB (per-tree metadata, entries, 8-level subtree
-    blobs, a revision counter) and each operation loads only the handful of rows it needs, the
-    same design the sqlite store adopted in rust-sdk PR #2333.
-  </p>
+      <p>
+        On <code>next</code> the account SMT forest (one Merkle tree per vault
+        and per storage map) lives only in memory: every client open reads all
+        map entries back from IndexedDB and rebuilds every tree in wasm, so open
+        time and memory grow linearly with total tracked state. This branch
+        persists the trees in IndexedDB (per-tree metadata, entries, 8-level
+        subtree blobs, a revision counter) and each operation loads only the
+        handful of rows it needs, the same design the sqlite store adopted in
+        rust-sdk PR #2333.
+      </p>
 
-  <h2>Client open over an existing store</h2>
-  <p class="sub">Page reload, then construct the client over the already-populated database.</p>
-  <div class="bars">
-    <div class="bargroup">
-      <div class="glabel">N = 1,000</div>
-      <div class="bar"><span class="who">next</span><span class="track"><span class="fill next" style="width:100%"></span></span><span class="val">315 ms</span></div>
-      <div class="bar"><span class="who">forest</span><span class="track"><span class="fill forest" style="width:12.2%"></span></span><span class="val">38 ms</span></div>
-    </div>
-    <div class="bargroup">
-      <div class="glabel">N = 10,000</div>
-      <div class="bar"><span class="who">next</span><span class="track"><span class="fill next" style="width:100%"></span></span><span class="val">2.93 s</span></div>
-      <div class="bar"><span class="who">forest</span><span class="track"><span class="fill forest" style="width:1.2%"></span></span><span class="val">36 ms</span></div>
-    </div>
-    <div class="bargroup">
-      <div class="glabel">N = 50,000</div>
-      <div class="bar"><span class="who">next</span><span class="track"><span class="fill next" style="width:100%"></span></span><span class="val">14.75 s</span></div>
-      <div class="bar"><span class="who">forest</span><span class="track"><span class="fill forest" style="width:0.25%"></span></span><span class="val">37 ms</span></div>
-    </div>
-  </div>
-  <table>
-    <tr><th>Map entries</th><th>next</th><th>forest</th><th>speedup</th></tr>
-    <tr><td>1,000</td><td>315 ms</td><td>38 ms</td><td class="good">8.2x</td></tr>
-    <tr><td>10,000</td><td>2,928 ms</td><td>36 ms</td><td class="good">82x</td></tr>
-    <tr><td>50,000</td><td>14,751 ms</td><td>37 ms</td><td class="good">400x</td></tr>
-  </table>
-  <p class="sub">
-    The open cost on <code>next</code> is the in-memory forest rebuild; it also keeps every tree
-    resident in wasm memory for the lifetime of the client. The forest build opens the database
-    and reads nothing until an operation needs specific rows.
-  </p>
+      <h2>Client open over an existing store</h2>
+      <p class="sub">
+        Page reload, then construct the client over the already-populated
+        database.
+      </p>
+      <div class="bars">
+        <div class="bargroup">
+          <div class="glabel">N = 1,000</div>
+          <div class="bar">
+            <span class="who">next</span
+            ><span class="track"
+              ><span class="fill next" style="width: 100%"></span></span
+            ><span class="val">315 ms</span>
+          </div>
+          <div class="bar">
+            <span class="who">forest</span
+            ><span class="track"
+              ><span class="fill forest" style="width: 12.2%"></span></span
+            ><span class="val">38 ms</span>
+          </div>
+        </div>
+        <div class="bargroup">
+          <div class="glabel">N = 10,000</div>
+          <div class="bar">
+            <span class="who">next</span
+            ><span class="track"
+              ><span class="fill next" style="width: 100%"></span></span
+            ><span class="val">2.93 s</span>
+          </div>
+          <div class="bar">
+            <span class="who">forest</span
+            ><span class="track"
+              ><span class="fill forest" style="width: 1.2%"></span></span
+            ><span class="val">36 ms</span>
+          </div>
+        </div>
+        <div class="bargroup">
+          <div class="glabel">N = 50,000</div>
+          <div class="bar">
+            <span class="who">next</span
+            ><span class="track"
+              ><span class="fill next" style="width: 100%"></span></span
+            ><span class="val">14.75 s</span>
+          </div>
+          <div class="bar">
+            <span class="who">forest</span
+            ><span class="track"
+              ><span class="fill forest" style="width: 0.25%"></span></span
+            ><span class="val">37 ms</span>
+          </div>
+        </div>
+      </div>
+      <table>
+        <tr>
+          <th>Map entries</th>
+          <th>next</th>
+          <th>forest</th>
+          <th>speedup</th>
+        </tr>
+        <tr>
+          <td>1,000</td>
+          <td>315 ms</td>
+          <td>38 ms</td>
+          <td class="good">8.2x</td>
+        </tr>
+        <tr>
+          <td>10,000</td>
+          <td>2,928 ms</td>
+          <td>36 ms</td>
+          <td class="good">82x</td>
+        </tr>
+        <tr>
+          <td>50,000</td>
+          <td>14,751 ms</td>
+          <td>37 ms</td>
+          <td class="good">400x</td>
+        </tr>
+      </table>
+      <p class="sub">
+        The open cost on <code>next</code> is the in-memory forest rebuild; it
+        also keeps every tree resident in wasm memory for the lifetime of the
+        client (measured in the next section). The forest build opens the
+        database and reads nothing until an operation needs specific rows.
+      </p>
 
-  <h2>Storage map witness reads</h2>
-  <p class="sub">
-    <code>AccountReader.getStorageMapItem</code> (value plus authenticated Merkle witness).
-    Median of 30 reads; the cold read is the first read after a reload.
-  </p>
-  <table>
-    <tr><th>Map entries</th><th>next warm</th><th>forest warm</th><th>next cold</th><th>forest cold</th></tr>
-    <tr><td>1,000</td><td>0.30 ms</td><td>1.25 ms</td><td>0.50 ms</td><td>2.10 ms</td></tr>
-    <tr><td>10,000</td><td>0.25 ms</td><td>1.20 ms</td><td>0.60 ms</td><td>2.30 ms</td></tr>
-    <tr><td>50,000</td><td>0.30 ms</td><td>1.20 ms</td><td>0.70 ms</td><td>2.40 ms</td></tr>
-  </table>
-  <p>
-    <code>next</code> answers from the in-RAM forest, but only after paying seconds of open time
-    to build it. The forest build reads one leaf bucket plus eight subtree blobs from IndexedDB
-    per witness: ~1 ms warm, ~2.4 ms on the very first read, independent of map size. A read
-    right after opening (open + first witness) is 316 ms / 2.93 s / 14.75 s on <code>next</code>
-    vs ~40 ms at every size on this branch.
-  </p>
+      <h2>Client memory</h2>
+      <p class="sub">
+        Wasm linear memory (<code>wasm.memory.buffer.byteLength</code>) after
+        opening the client over the populated database and serving 31 witness
+        reads. Wasm memory never shrinks, so this is what the tab holds for the
+        lifetime of the client.
+      </p>
+      <table>
+        <tr>
+          <th>Map entries</th>
+          <th>next</th>
+          <th>forest</th>
+          <th>reduction</th>
+        </tr>
+        <tr>
+          <td>1,000</td>
+          <td>46.9 MB</td>
+          <td>8.6 MB</td>
+          <td class="good">5.5x</td>
+        </tr>
+        <tr>
+          <td>10,000</td>
+          <td>610.8 MB</td>
+          <td>8.6 MB</td>
+          <td class="good">71x</td>
+        </tr>
+        <tr>
+          <td>50,000</td>
+          <td>wasm panic</td>
+          <td>8.6 MB</td>
+          <td class="good">&mdash;</td>
+        </tr>
+      </table>
+      <p>
+        The forest build sits at exactly the same 8,585,216 bytes at every size:
+        the trees stay in IndexedDB and only the rows a read touches ever enter
+        wasm. On <code>next</code> the rebuild allocates memory proportional to
+        total tracked state, reaching ~611 MB for a single 10k-entry map. At 50k
+        entries the <code>next</code> client did not survive setup in this
+        harness: all three attempts died with a wasm panic
+        (<code>unreachable</code>), consistent with the in-memory forest
+        exhausting its address space budget. The 50k open and insert timings for
+        <code>next</code> elsewhere on this page come from the earlier timing
+        run, which completed once.
+      </p>
 
-  <h2>Transaction execution</h2>
-  <table>
-    <tr><th>Map entries</th><th>next</th><th>forest</th></tr>
-    <tr><td>1,000</td><td>3.12 s</td><td>3.01 s</td></tr>
-  </table>
-  <p class="sub">
-    Counter-increment transaction (execute + prove) against the account holding the map. Parity:
-    execution and proving dominate; the store's incremental patch writes a handful of rows on
-    both builds. Larger sizes could not be exercised because the mock chain treats SDK-created
-    accounts as new, so their first transaction carries the full account state and exceeds the
-    protocol's update-size limit past ~1k entries.
-  </p>
+      <h2>Storage map witness reads</h2>
+      <p class="sub">
+        <code>AccountReader.getStorageMapItem</code> (value plus authenticated
+        Merkle witness). Median of 30 reads; the cold read is the first read
+        after a reload.
+      </p>
+      <table>
+        <tr>
+          <th>Map entries</th>
+          <th>next warm</th>
+          <th>forest warm</th>
+          <th>next cold</th>
+          <th>forest cold</th>
+        </tr>
+        <tr>
+          <td>1,000</td>
+          <td>0.30 ms</td>
+          <td>1.25 ms</td>
+          <td>0.50 ms</td>
+          <td>2.10 ms</td>
+        </tr>
+        <tr>
+          <td>10,000</td>
+          <td>0.25 ms</td>
+          <td>1.20 ms</td>
+          <td>0.60 ms</td>
+          <td>2.30 ms</td>
+        </tr>
+        <tr>
+          <td>50,000</td>
+          <td>0.30 ms</td>
+          <td>1.20 ms</td>
+          <td>0.70 ms</td>
+          <td>2.40 ms</td>
+        </tr>
+      </table>
+      <p>
+        <code>next</code> answers from the in-RAM forest, but only after paying
+        seconds of open time to build it. The forest build reads one leaf bucket
+        plus eight subtree blobs from IndexedDB per witness: ~1 ms warm, ~2.4 ms
+        on the very first read, independent of map size. A read right after
+        opening (open + first witness) is 316 ms / 2.93 s / 14.75 s on
+        <code>next</code>
+        vs ~40 ms at every size on this branch.
+      </p>
 
-  <h2>Trade-off: bulk writes of huge maps</h2>
-  <p class="sub">Creating the account, i.e. persisting all N map entries at once.</p>
-  <table>
-    <tr><th>Map entries</th><th>next</th><th>forest</th><th>ratio</th></tr>
-    <tr><td>1,000</td><td>203 ms</td><td>1.47 s</td><td class="bad">7.2x</td></tr>
-    <tr><td>10,000</td><td>3.95 s</td><td>46.6 s</td><td class="bad">11.8x</td></tr>
-    <tr><td>50,000</td><td>43.2 s</td><td>372.7 s</td><td class="bad">8.6x</td></tr>
-  </table>
-  <div class="note warn">
-    <b>This is the cost that used to be paid on every open, moved to a one-time write.</b>
-    Persisting a tree means writing its inner nodes: ~6-7 subtree rows per entry for
-    hash-distributed keys (measured 6,244 subtree rows for 1,000 entries), on top of the entry
-    rows both builds write. IndexedDB throughput is per record: a raw probe (70,000 puts of
-    ~600-byte records in one transaction, no SDK code involved) sustains only ~1,500-2,300
-    records/s in Chromium, which fully accounts for the times above. Serialization strategy,
-    base64 removal, transaction durability and index count were each measured and none moves
-    the needle; row count is the only lever. Adjacent-position packing was prototyped and
-    reverted: hashed keys make deep subtree positions sparse, so 16-way packing collapsed only
-    5.6% of rows.
-  </div>
-  <p>
-    In practice this cost is only visible when importing or creating an account whose storage
-    map has tens of thousands of entries; ordinary transactions touch a few rows. A follow-up
-    that would recover most of it (and shrink sqlite's disk footprint too): skip persisting
-    single-leaf subtrees and reconstruct them from the entry at read time. That requires
-    support in the shared <code>forest_backend</code> module in rust-client, so it is out of
-    scope for this branch.
-  </p>
+      <h2>Transaction execution</h2>
+      <table>
+        <tr>
+          <th>Scenario</th>
+          <th>next</th>
+          <th>forest</th>
+        </tr>
+        <tr>
+          <td>Tx against the map account (N=1,000)</td>
+          <td>3.12 s</td>
+          <td>3.01 s</td>
+        </tr>
+        <tr>
+          <td>Tx against a small account, 1k-entry map tracked</td>
+          <td>24.7 ms</td>
+          <td>23.4 ms</td>
+        </tr>
+        <tr>
+          <td>Tx against a small account, 10k-entry map tracked</td>
+          <td>85.6 ms</td>
+          <td>85.6 ms</td>
+        </tr>
+      </table>
+      <p class="sub">
+        Counter-increment transactions (execute + prove). Parity in every
+        scenario: execution and proving dominate, and the store's incremental
+        patch writes a handful of rows on both builds, so day-to-day
+        transactions do not pay for the trees living in IndexedDB. Larger sizes
+        could not be exercised against the map account itself because the mock
+        chain treats SDK-created accounts as new, so their first transaction
+        carries the full account state and exceeds the protocol's update-size
+        limit past ~1k entries.
+      </p>
 
-  <h2>Trade-off: disk</h2>
-  <table>
-    <tr><th>Map entries</th><th>next</th><th>forest</th><th>ratio</th></tr>
-    <tr><td>1,000</td><td>1.45 MB</td><td>4.29 MB</td><td class="bad">3.0x</td></tr>
-    <tr><td>10,000</td><td>3.96 MB</td><td>63.8 MB</td><td class="bad">16.1x</td></tr>
-    <tr><td>50,000</td><td>29.2 MB</td><td>298.8 MB</td><td class="bad">10.2x</td></tr>
-  </table>
-  <p>
-    Same trade-off the sqlite store documented (23-25x vs leaves alone there): the inner nodes
-    that previously existed only in RAM now live on disk, dominated by the subtree blobs of
-    sparse levels. <code>navigator.storage.estimate()</code>, origin-wide, fresh browser profile
-    per measurement. The single-leaf-subtree follow-up above would cut most of this as well.
-  </p>
+      <h2>Trade-off: bulk writes of huge maps</h2>
+      <p class="sub">
+        Creating the account, i.e. persisting all N map entries at once.
+      </p>
+      <table>
+        <tr>
+          <th>Map entries</th>
+          <th>next</th>
+          <th>forest</th>
+          <th>ratio</th>
+        </tr>
+        <tr>
+          <td>1,000</td>
+          <td>203 ms</td>
+          <td>1.47 s</td>
+          <td class="bad">7.2x</td>
+        </tr>
+        <tr>
+          <td>10,000</td>
+          <td>3.95 s</td>
+          <td>46.6 s</td>
+          <td class="bad">11.8x</td>
+        </tr>
+        <tr>
+          <td>50,000</td>
+          <td>43.2 s</td>
+          <td>372.7 s</td>
+          <td class="bad">8.6x</td>
+        </tr>
+      </table>
+      <div class="note warn">
+        <b
+          >This is the cost that used to be paid on every open, moved to a
+          one-time write.</b
+        >
+        Persisting a tree means writing its inner nodes: ~6-7 subtree rows per
+        entry for hash-distributed keys (measured 6,244 subtree rows for 1,000
+        entries), on top of the entry rows both builds write. IndexedDB
+        throughput is per record: a raw probe (70,000 puts of ~600-byte records
+        in one transaction, no SDK code involved) sustains only ~1,500-2,300
+        records/s in Chromium, which fully accounts for the times above.
+        Serialization strategy, base64 removal, transaction durability and index
+        count were each measured and none moves the needle; row count is the
+        only lever. Adjacent-position packing was prototyped and reverted:
+        hashed keys make deep subtree positions sparse, so 16-way packing
+        collapsed only 5.6% of rows.
+      </div>
+      <p>
+        In practice this cost is only visible when importing or creating an
+        account whose storage map has tens of thousands of entries; ordinary
+        transactions touch a few rows. A follow-up that would recover most of it
+        (and shrink sqlite's disk footprint too): skip persisting single-leaf
+        subtrees and reconstruct them from the entry at read time. That requires
+        support in the shared <code>forest_backend</code> module in rust-client,
+        so it is out of scope for this branch.
+      </p>
 
-  <h2>Methodology and caveats</h2>
-  <ul>
-    <li>Harness: <code>bench-forest/run-bench.mjs</code>. Static server over each build's
-      <code>dist/st</code> bundle, fresh Chromium context (empty IndexedDB) per size, same
-      high-level API calls on both builds. Both bundles are release builds.</li>
-    <li>Mock client (<code>MidenClient.createMock</code>) over the real IndexedDB store; no
-      network. Account creation time excludes building the <code>StorageMap</code> object and
-      compiling the contract component.</li>
-    <li>One sample per (variant, size) for insert/open; reads are medians of 30. Run-to-run
-      noise on the big inserts is around 10%.</li>
-    <li>Raw IndexedDB throughput probe: <code>bench-forest/idb-throughput.mjs</code>.
-      Per-table disk attribution helper: <code>bench-forest/disk-breakdown.js</code>.</li>
-  </ul>
+      <h2>Trade-off: disk</h2>
+      <table>
+        <tr>
+          <th>Map entries</th>
+          <th>next</th>
+          <th>forest</th>
+          <th>ratio</th>
+        </tr>
+        <tr>
+          <td>1,000</td>
+          <td>1.45 MB</td>
+          <td>4.29 MB</td>
+          <td class="bad">3.0x</td>
+        </tr>
+        <tr>
+          <td>10,000</td>
+          <td>3.96 MB</td>
+          <td>63.8 MB</td>
+          <td class="bad">16.1x</td>
+        </tr>
+        <tr>
+          <td>50,000</td>
+          <td>29.2 MB</td>
+          <td>298.8 MB</td>
+          <td class="bad">10.2x</td>
+        </tr>
+      </table>
+      <p>
+        Same trade-off the sqlite store documented (23-25x vs leaves alone
+        there): the inner nodes that previously existed only in RAM now live on
+        disk, dominated by the subtree blobs of sparse levels.
+        <code>navigator.storage.estimate()</code>, origin-wide, fresh browser
+        profile per measurement. The single-leaf-subtree follow-up above would
+        cut most of this as well.
+      </p>
 
-  <div class="foot">
-    Branch state at measurement: feature commit <code>57e4eb2</code> plus review fixes
-    <code>9bcb0f4</code>, <code>d55d4c3</code>, <code>c5aea8e</code> and the write-path
-    performance pass <code>0fc3a1f</code> (serde plain-object transport, raw
-    <code>Uint8Array</code> blobs, single <code>bulkGet</code> expectation check, native base64
-    decoder on reads, logarithmic cache maintenance).
-  </div>
-</main>
-</body>
+      <h2>Methodology and caveats</h2>
+      <ul>
+        <li>
+          Harness: <code>bench-forest/run-bench.mjs</code>. Static server over
+          each build's <code>dist/st</code> bundle, fresh Chromium context
+          (empty IndexedDB) per size, same high-level API calls on both builds.
+          Both bundles are release builds.
+        </li>
+        <li>
+          Mock client (<code>MidenClient.createMock</code>) over the real
+          IndexedDB store; no network. Account creation time excludes building
+          the <code>StorageMap</code> object and compiling the contract
+          component.
+        </li>
+        <li>
+          One sample per (variant, size) for insert/open; reads are medians of
+          30. Run-to-run noise on the big inserts is around 10%.
+        </li>
+        <li>
+          Memory is wasm linear memory after a reload, client open and 31
+          witness reads. <code>performance.memory.usedJSHeapSize</code> was
+          measured too but only covers the V8 heap, missing wasm entirely. The
+          small-account transaction runs while the map account is tracked in the
+          same store; it is skipped at N=50k, where the mock chain panics on any
+          transaction (memory and small-tx numbers come from a second run,
+          <code>results-*-mem.json</code>).
+        </li>
+        <li>
+          Raw IndexedDB throughput probe:
+          <code>bench-forest/idb-throughput.mjs</code>. Per-table disk
+          attribution helper: <code>bench-forest/disk-breakdown.js</code>.
+        </li>
+      </ul>
+
+      <div class="foot">
+        Branch state at measurement: feature commit <code>57e4eb2</code> plus
+        review fixes <code>9bcb0f4</code>, <code>d55d4c3</code>,
+        <code>c5aea8e</code> and the write-path performance pass
+        <code>0fc3a1f</code> (serde plain-object transport, raw
+        <code>Uint8Array</code> blobs, single <code>bulkGet</code> expectation
+        check, native base64 decoder on reads, logarithmic cache maintenance).
+      </div>
+    </main>
+  </body>
 </html>

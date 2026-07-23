@@ -33,7 +33,9 @@ const args = Object.fromEntries(
     .filter(Boolean)
 );
 if (!args.dist || !args.label) {
-  console.error("usage: node run-bench.mjs --dist <dist dir> --label <name> [--sizes n,n]");
+  console.error(
+    "usage: node run-bench.mjs --dist <dist dir> --label <name> [--sizes n,n]"
+  );
   process.exit(1);
 }
 const DIST_ST = resolve(args.dist, "st");
@@ -114,13 +116,50 @@ async function setupSdk(page) {
 
 function median(xs) {
   const s = [...xs].sort((a, b) => a - b);
-  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  return s.length % 2
+    ? s[(s.length - 1) / 2]
+    : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+}
+
+// A wasm panic can take the whole page down without settling pending
+// promises, so every evaluate gets a Node-side deadline; on timeout the
+// caller closes the context and the run moves on to the next size.
+function withDeadline(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} exceeded ${ms}ms`)),
+        ms
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 async function benchSize(browser, n) {
   const context = await browser.newContext(); // fresh profile => empty IndexedDB
+  try {
+    return await benchSizeInner(context, n);
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+async function benchSizeInner(context, n) {
   const page = await context.newPage();
-  page.on("pageerror", (e) => console.error("  pageerror:", e.message));
+  // A wasm panic in a worker surfaces as a pageerror but leaves the awaited
+  // promise pending forever, so evaluates race against this rejection to
+  // fail fast instead of running out the deadline.
+  let markPageDead;
+  const pageDoomed = new Promise((_, reject) => {
+    markPageDead = reject;
+  });
+  pageDoomed.catch(() => {});
+  page.on("pageerror", (e) => {
+    console.error("  pageerror:", e.message);
+    markPageDead(new Error(`pageerror: ${e.message}`));
+  });
   page.on("console", (m) => {
     if (m.type() === "error") console.error("  console:", m.text());
     if (m.text().includes("[forest-bench]")) console.log(" ", m.text());
@@ -130,173 +169,301 @@ async function benchSize(browser, n) {
 
   // Phase A: create the account with an N-entry map, execute one update tx,
   // measure warm witness reads through a raw client's AccountReader.
-  const phaseA = await page.evaluate(
-    async ({ n, counterCode, mapSlot, counterSlot, warmReads }) => {
-      // High-level client: compile, create, prove, sync, execute.
-      const client = await window.MidenClient.createMock();
+  const phaseA = await withDeadline(
+    Promise.race([
+      pageDoomed,
+      page.evaluate(
+        async ({ n, counterCode, mapSlot, counterSlot, warmReads }) => {
+          // High-level client: compile, create, prove, sync, execute.
+          const client = await window.MidenClient.createMock();
 
-      const map = new window.StorageMap();
-      const readIndices = [];
-      for (let i = 0; i < n; i++) {
-        const key = window.Word.newFromFelts(
-          [0n, 0n, 0n, BigInt(i + 1)].map((v) => new window.Felt(v))
-        );
-        const value = window.Word.newFromFelts(
-          [0n, 0n, 0n, BigInt(2 * i + 1)].map((v) => new window.Felt(v))
-        );
-        map.insert(key, value);
-        if (readIndices.length < 64 && i % Math.max(1, Math.floor(n / 64)) === 0) {
-          readIndices.push(i + 1);
-        }
-      }
+          const map = new window.StorageMap();
+          const readIndices = [];
+          for (let i = 0; i < n; i++) {
+            const key = window.Word.newFromFelts(
+              [0n, 0n, 0n, BigInt(i + 1)].map((v) => new window.Felt(v))
+            );
+            const value = window.Word.newFromFelts(
+              [0n, 0n, 0n, BigInt(2 * i + 1)].map((v) => new window.Felt(v))
+            );
+            map.insert(key, value);
+            if (
+              readIndices.length < 64 &&
+              i % Math.max(1, Math.floor(n / 64)) === 0
+            ) {
+              readIndices.push(i + 1);
+            }
+          }
 
-      const component = await client.compile.component({
-        code: counterCode,
-        namespace: "external_contract::counter_contract",
-        slots: [
-          window.StorageSlot.emptyValue(counterSlot),
-          window.StorageSlot.map(mapSlot, map),
-        ],
-      });
+          const component = await client.compile.component({
+            code: counterCode,
+            namespace: "external_contract::counter_contract",
+            slots: [
+              window.StorageSlot.emptyValue(counterSlot),
+              window.StorageSlot.map(mapSlot, map),
+            ],
+          });
 
-      const seed = new Uint8Array(32);
-      seed.fill(0x42);
-      const auth = window.AuthSecretKey.rpoFalconWithRNG(seed);
+          const seed = new Uint8Array(32);
+          seed.fill(0x42);
+          const auth = window.AuthSecretKey.rpoFalconWithRNG(seed);
 
-      const t0 = performance.now();
-      const account = await client.accounts.create({
-        type: "ImmutableContract",
-        storage: "public",
-        seed,
-        auth,
-        components: [component],
-      });
-      const insertMs = performance.now() - t0;
-      const accountId = account.id().toString();
+          const t0 = performance.now();
+          const account = await client.accounts.create({
+            type: "ImmutableContract",
+            storage: "public",
+            seed,
+            auth,
+            components: [component],
+          });
+          const insertMs = performance.now() - t0;
+          const accountId = account.id().toString();
 
-      client.proveBlock();
-      await client.sync();
+          client.proveBlock();
+          await client.sync();
 
-      // Update tx: counter increment (incremental account patch in the store).
-      // Only feasible for small maps: the mock chain does not register
-      // SDK-created accounts as committed, so the tx carries the full account
-      // state and larger maps exceed the protocol's update-size and advice
-      // budgets.
-      let updateTxMs = null;
-      if (n <= 1000) {
-        const script = await client.compile.txScript({
-          code: `
+          // Update tx: counter increment (incremental account patch in the store).
+          // Only feasible for small maps: the mock chain does not register
+          // SDK-created accounts as committed, so the tx carries the full account
+          // state and larger maps exceed the protocol's update-size and advice
+          // budgets.
+          let updateTxMs = null;
+          if (n <= 1000) {
+            const script = await client.compile.txScript({
+              code: `
             use external_contract::counter_contract
             @transaction_script
             pub proc main
               call.counter_contract::increment_count
             end
           `,
-          libraries: [{ component }],
-        });
-        const t1 = performance.now();
-        await client.transactions.execute({ account: account.id(), script });
-        updateTxMs = performance.now() - t1;
-        client.proveBlock();
-        await client.sync();
-      }
+              libraries: [{ component }],
+            });
+            const t1 = performance.now();
+            await client.transactions.execute({
+              account: account.id(),
+              script,
+            });
+            updateTxMs = performance.now() - t1;
+            client.proveBlock();
+            await client.sync();
+          }
 
-      // Witness reads via a raw client over the same DB (AccountReader is not
-      // exposed by the high-level resource API).
-      const raw = await window.MockWasmWebClient.createClient();
-      if (raw.worker) {
-        raw.worker.terminate();
-        raw.worker = null;
-      }
-      const reader = await raw.accountReader(account.id());
-      const readKey = (i) =>
-        window.Word.newFromFelts(
-          [0n, 0n, 0n, BigInt(i)].map((v) => new window.Felt(v))
-        );
-      const times = [];
-      for (let r = 0; r < warmReads; r++) {
-        const i = readIndices[r % readIndices.length];
-        const s = performance.now();
-        await reader.getStorageMapItem(mapSlot, readKey(i));
-        times.push(performance.now() - s);
-      }
+          // Witness reads via a raw client over the same DB (AccountReader is not
+          // exposed by the high-level resource API).
+          const raw = await window.MockWasmWebClient.createClient();
+          if (raw.worker) {
+            raw.worker.terminate();
+            raw.worker = null;
+          }
+          const reader = await raw.accountReader(account.id());
+          const readKey = (i) =>
+            window.Word.newFromFelts(
+              [0n, 0n, 0n, BigInt(i)].map((v) => new window.Felt(v))
+            );
+          const times = [];
+          for (let r = 0; r < warmReads; r++) {
+            const i = readIndices[r % readIndices.length];
+            const s = performance.now();
+            await reader.getStorageMapItem(mapSlot, readKey(i));
+            times.push(performance.now() - s);
+          }
 
-      const estimate = await navigator.storage.estimate();
-      return {
-        accountId,
-        insertMs,
-        updateTxMs,
-        warmReadTimes: times,
-        usageBytes: estimate.usage ?? null,
-        readIndices,
-      };
-    },
-    { n, counterCode: COUNTER_CODE, mapSlot: MAP_SLOT, counterSlot: COUNTER_SLOT, warmReads: WARM_READS }
+          // A transaction against a second, small account while the store also
+          // tracks the heavy one (post-open steady state on both variants).
+          // Skipped past 10k entries: the mock chain's MerkleStore node budget
+          // panics on any transaction while a ~50k-entry account is tracked, and
+          // the panic takes the whole page down, which would also lose phase B.
+          let smallTxMs = null;
+          const smallTxWork =
+            n > 10000
+              ? null
+              : (async () => {
+                  const smallSeed = new Uint8Array(32);
+                  smallSeed.fill(0x77);
+                  const smallAuth =
+                    window.AuthSecretKey.rpoFalconWithRNG(smallSeed);
+                  const smallComponent = await client.compile.component({
+                    code: counterCode,
+                    namespace: "external_contract::counter_contract",
+                    slots: [window.StorageSlot.emptyValue(counterSlot)],
+                  });
+                  const smallAccount = await client.accounts.create({
+                    type: "ImmutableContract",
+                    storage: "public",
+                    seed: smallSeed,
+                    auth: smallAuth,
+                    components: [smallComponent],
+                  });
+                  client.proveBlock();
+                  await client.sync();
+                  const smallScript = await client.compile.txScript({
+                    code: `
+            use external_contract::counter_contract
+            @transaction_script
+            pub proc main
+              call.counter_contract::increment_count
+            end
+          `,
+                    libraries: [{ component: smallComponent }],
+                  });
+                  const tS = performance.now();
+                  await client.transactions.execute({
+                    account: smallAccount.id(),
+                    script: smallScript,
+                  });
+                  const elapsed = performance.now() - tS;
+                  client.proveBlock();
+                  await client.sync();
+                  return elapsed;
+                })();
+          try {
+            if (smallTxWork) {
+              smallTxMs = await Promise.race([
+                smallTxWork,
+                new Promise((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error("small-tx timed out")),
+                    90_000
+                  )
+                ),
+              ]);
+            }
+          } catch (e) {
+            console.error("[forest-bench] small-tx skipped:", e.message);
+          }
+
+          const estimate = await navigator.storage.estimate();
+          return {
+            accountId,
+            insertMs,
+            updateTxMs,
+            smallTxMs,
+            warmReadTimes: times,
+            usageBytes: estimate.usage ?? null,
+            readIndices,
+          };
+        },
+        {
+          n,
+          counterCode: COUNTER_CODE,
+          mapSlot: MAP_SLOT,
+          counterSlot: COUNTER_SLOT,
+          warmReads: WARM_READS,
+        }
+      ),
+    ]),
+    120_000 + n * 15,
+    "phase A"
   );
+  console.log(`[${LABEL}] N=${n} phase A done`);
 
   // Phase B: reload the page (same context, same IndexedDB) and measure raw
   // client construction plus the first (cold) witness read.
   await page.reload();
   await setupSdk(page);
-  const phaseB = await page.evaluate(
-    async ({ accountId, mapSlot, warmReads, readIndices }) => {
-      const t0 = performance.now();
-      const raw = await window.MockWasmWebClient.createClient();
-      if (raw.worker) {
-        raw.worker.terminate();
-        raw.worker = null;
-      }
-      const openMs = performance.now() - t0;
+  const phaseB = await withDeadline(
+    Promise.race([
+      pageDoomed,
+      page.evaluate(
+        async ({ accountId, mapSlot, warmReads, readIndices }) => {
+          const t0 = performance.now();
+          const raw = await window.MockWasmWebClient.createClient();
+          if (raw.worker) {
+            raw.worker.terminate();
+            raw.worker = null;
+          }
+          const openMs = performance.now() - t0;
 
-      const id = window.AccountId.fromHex(accountId);
-      const readKey = (i) =>
-        window.Word.newFromFelts(
-          [0n, 0n, 0n, BigInt(i)].map((v) => new window.Felt(v))
-        );
+          const id = window.AccountId.fromHex(accountId);
+          const readKey = (i) =>
+            window.Word.newFromFelts(
+              [0n, 0n, 0n, BigInt(i)].map((v) => new window.Felt(v))
+            );
 
-      const reader = await raw.accountReader(id);
-      const t1 = performance.now();
-      await reader.getStorageMapItem(mapSlot, readKey(readIndices[0]));
-      const coldReadMs = performance.now() - t1;
+          const reader = await raw.accountReader(id);
+          const t1 = performance.now();
+          await reader.getStorageMapItem(mapSlot, readKey(readIndices[0]));
+          const coldReadMs = performance.now() - t1;
 
-      const times = [];
-      for (let r = 0; r < warmReads; r++) {
-        const i = readIndices[r % readIndices.length];
-        const s = performance.now();
-        await reader.getStorageMapItem(mapSlot, readKey(i));
-        times.push(performance.now() - s);
-      }
-      return { openMs, coldReadMs, reloadWarmTimes: times };
-    },
-    { accountId: phaseA.accountId, mapSlot: MAP_SLOT, warmReads: WARM_READS, readIndices: phaseA.readIndices }
+          const times = [];
+          for (let r = 0; r < warmReads; r++) {
+            const i = readIndices[r % readIndices.length];
+            const s = performance.now();
+            await reader.getStorageMapItem(mapSlot, readKey(i));
+            times.push(performance.now() - s);
+          }
+          // usedJSHeapSize covers only the V8 heap (Chrome-only API); the forest
+          // lives in wasm linear memory, which never shrinks, so its byteLength
+          // after open plus reads reflects what the client allocated.
+          const heapBytes = performance.memory?.usedJSHeapSize ?? null;
+          let wasmBytes = null;
+          try {
+            const glue = await window.getWasmOrThrow();
+            const exports = await glue.__wbg_init();
+            wasmBytes = exports?.memory?.buffer?.byteLength ?? null;
+          } catch {
+            // leave wasmBytes null if the glue does not expose memory
+          }
+          return {
+            openMs,
+            coldReadMs,
+            reloadWarmTimes: times,
+            heapBytes,
+            wasmBytes,
+          };
+        },
+        {
+          accountId: phaseA.accountId,
+          mapSlot: MAP_SLOT,
+          warmReads: WARM_READS,
+          readIndices: phaseA.readIndices,
+        }
+      ),
+    ]),
+    180_000,
+    "phase B"
   );
 
-  await context.close();
   return {
     n,
     insertMs: phaseA.insertMs,
     updateTxMs: phaseA.updateTxMs,
     warmReadMedianMs: median(phaseA.warmReadTimes),
     usageBytes: phaseA.usageBytes,
+    smallTxMs: phaseA.smallTxMs,
     openMs: phaseB.openMs,
     coldReadMs: phaseB.coldReadMs,
     reloadWarmMedianMs: median(phaseB.reloadWarmTimes),
+    heapBytes: phaseB.heapBytes,
+    wasmBytes: phaseB.wasmBytes,
   };
 }
 
 // ── main ────────────────────────────────────────────────────────────
 const browser = await chromium.launch();
 const results = { label: LABEL, dist: DIST_ST, sizes: [] };
+// The mock chain panics nondeterministically at very large N (the panic
+// takes the page down), so each size gets a few attempts in fresh contexts.
+const ATTEMPTS = 3;
 for (const n of SIZES) {
-  console.log(`[${LABEL}] N=${n} ...`);
-  try {
-    const r = await benchSize(browser, n);
-    results.sizes.push(r);
-    console.log(`[${LABEL}] N=${n}`, JSON.stringify(r));
-  } catch (e) {
-    console.error(`[${LABEL}] N=${n} FAILED:`, e.message);
-    results.sizes.push({ n, error: e.message });
+  let lastError;
+  let done = false;
+  for (let attempt = 1; attempt <= ATTEMPTS && !done; attempt++) {
+    console.log(
+      `[${LABEL}] N=${n}${attempt > 1 ? ` (attempt ${attempt})` : ""} ...`
+    );
+    try {
+      const r = await benchSize(browser, n);
+      results.sizes.push(r);
+      console.log(`[${LABEL}] N=${n}`, JSON.stringify(r));
+      done = true;
+    } catch (e) {
+      lastError = e;
+      console.error(`[${LABEL}] N=${n} attempt ${attempt} FAILED:`, e.message);
+    }
   }
+  if (!done) results.sizes.push({ n, error: lastError.message });
 }
 await browser.close();
 server.close();
