@@ -640,7 +640,7 @@ async function restoreAssetsFromHistorical(tx, accountId, nonce) {
  * with a new snapshot. Before overwriting, all current latest values are archived
  * to historical.
  */
-export async function applyFullAccountState(dbId, accountState, forestUpdate) {
+export async function applyFullAccountState(dbId, accountState, forestUpdate, expectedInitialCommitment) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -657,7 +657,7 @@ export async function applyFullAccountState(dbId, accountState, forestUpdate) {
             db.forestEntries,
             db.forestSubtrees,
         ], async (tx) => {
-            await applyFullAccountStateInTransaction(tx, accountState);
+            await applyFullAccountStateInTransaction(tx, accountState, expectedInitialCommitment);
             await applyForestUpdate(tx, forestUpdate);
         });
     }
@@ -665,13 +665,18 @@ export async function applyFullAccountState(dbId, accountState, forestUpdate) {
         logWebStoreError(error, `Error applying full account state`);
     }
 }
-export async function applyFullAccountStateInTransaction(tx, accountState) {
+export async function applyFullAccountStateInTransaction(tx, accountState, expectedInitialCommitment) {
     const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, } = accountState;
     const oldHeader = await tx.latestAccountHeaders.get(accountId);
     if (oldHeader === undefined) {
         throw new StaleAccountBaseError(`Account ${accountId} does not exist`);
     }
-    if (BigInt(nonce) < BigInt(oldHeader.nonce)) {
+    if (expectedInitialCommitment !== undefined &&
+        oldHeader.accountCommitment !== expectedInitialCommitment) {
+        throw new StaleAccountBaseError(`Account ${accountId} commitment does not match the expected base`);
+    }
+    if (expectedInitialCommitment === undefined &&
+        BigInt(nonce) < BigInt(oldHeader.nonce)) {
         throw new StaleAccountBaseError(`Account ${accountId} nonce ${nonce} is lower than stored nonce ${oldHeader.nonce}`);
     }
     await archiveAndReplaceStorageSlots(tx, accountId, nonce, storageSlots);

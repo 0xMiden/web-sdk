@@ -149,6 +149,7 @@ extern "C" {
         db_id: &str,
         account_state: JsAccountUpdate,
         forest_update: JsForestUpdate,
+        expected_initial_commitment: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = insertAccount)]

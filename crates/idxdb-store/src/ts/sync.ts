@@ -199,7 +199,7 @@ interface JsStateSyncUpdate {
   accountPatchUpdates?: JsAccountPatchUpdate[];
   expectedPostUndoStates: {
     accountId: string;
-    commitment: string | null;
+    commitment: string | null | undefined;
   }[];
   transactionUpdates: SerializedTransactionData[];
 }
@@ -259,10 +259,11 @@ export async function applyStateSync(
 
     for (const expected of expectedPostUndoStates) {
       const account = await tx.latestAccountHeaders.get(expected.accountId);
+      const expectedCommitment = expected.commitment ?? null;
       if (
-        (expected.commitment === null && account !== undefined) ||
-        (expected.commitment !== null &&
-          account?.accountCommitment !== expected.commitment)
+        (expectedCommitment === null && account !== undefined) ||
+        (expectedCommitment !== null &&
+          account?.accountCommitment !== expectedCommitment)
       ) {
         throw new ForestConflictError(
           `Post-undo state for account ${expected.accountId} does not match`

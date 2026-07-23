@@ -2,7 +2,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
-use miden_client::account::{AccountHeader, StorageSlotName};
+use miden_client::account::AccountHeader;
 use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::transaction::{
     TransactionDetails,
@@ -101,33 +101,29 @@ impl IdxdbStore {
         let final_header = executed_tx.final_account();
 
         if patch.is_full_state() {
-            // Full-state patches contain everything needed to reconstruct the new account.
-            // Map slots stored today but absent from the new state reset to the empty tree,
-            // so no orphaned forest lineage survives the replacement.
+            // Full-state patches contain everything needed to reconstruct the new account. The
+            // write transaction pins the transaction's initial commitment, so a competing
+            // transaction from the same base state cannot silently overwrite this one.
             let account = account_from_full_state_patch(patch, final_header)?;
+            let expected_initial_commitment = init_header.to_commitment().to_string();
             let mut attempt = 0;
             loop {
                 attempt += 1;
-                let stale_map_slots: Vec<StorageSlotName> = self
-                    .get_storage_map_roots(account.id(), Vec::new())
-                    .await?
-                    .into_keys()
-                    .collect();
                 let forest_update = self
-                    .compute_account_reset_update(
-                        account.id(),
-                        account.vault(),
-                        account.storage(),
-                        &stale_map_slots,
-                    )
+                    .compute_account_reset_update(account.id(), account.vault(), account.storage())
                     .await?;
-                let result = apply_full_account_state(self.db_id(), &account, forest_update)
-                    .await
-                    .map_err(|err| {
-                        StoreError::DatabaseError(format!(
-                            "failed to apply full account state: {err:?}"
-                        ))
-                    });
+                let result = apply_full_account_state(
+                    self.db_id(),
+                    &account,
+                    forest_update,
+                    Some(expected_initial_commitment.clone()),
+                )
+                .await
+                .map_err(|err| {
+                    StoreError::DatabaseError(format!(
+                        "failed to apply full account state: {err:?}"
+                    ))
+                });
                 match result {
                     Err(err)
                         if attempt < crate::forest::MAX_FOREST_ATTEMPTS

@@ -1050,6 +1050,76 @@ describe("applyFullAccountState", () => {
       codeRoot: "0xequal-code",
     });
   });
+
+  it("validates an expected commitment and skips the nonce rule", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId, { nonce: "2", commitment: "0xexpected-base" });
+
+    await applyFullAccountState(
+      dbId,
+      {
+        accountId: ACC,
+        nonce: "1",
+        storageSlots: [],
+        storageMapEntries: [],
+        assets: [],
+        codeRoot: "0xreplacement-code",
+        storageRoot: STORAGE_ROOT,
+        vaultRoot: VAULT_ROOT,
+        committed: false,
+        accountCommitment: "0xreplacement-commitment",
+        accountSeed: undefined,
+      },
+      undefined,
+      "0xexpected-base"
+    );
+
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "1",
+      codeRoot: "0xreplacement-code",
+      accountCommitment: "0xreplacement-commitment",
+    });
+  });
+
+  it("rejects a mismatched expected commitment without writing", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId, { nonce: "2", commitment: "0xstored-base" });
+
+    await expect(
+      applyFullAccountState(
+        dbId,
+        {
+          accountId: ACC,
+          nonce: "3",
+          storageSlots: [
+            { slotName: "replacement", slotValue: "0xvalue", slotType: 0 },
+          ],
+          storageMapEntries: [],
+          assets: [],
+          codeRoot: "0xreplacement-code",
+          storageRoot: STORAGE_ROOT,
+          vaultRoot: VAULT_ROOT,
+          committed: false,
+          accountCommitment: "0xreplacement-commitment",
+          accountSeed: undefined,
+        },
+        undefined,
+        "0xwrong-base"
+      )
+    ).rejects.toMatchObject({
+      name: "StaleAccountBaseError",
+      message: expect.stringMatching(/^StaleAccountBaseError:/),
+    });
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "2",
+      codeRoot: CODE_ROOT,
+      accountCommitment: "0xstored-base",
+    });
+    await expect(db.latestAccountStorages.count()).resolves.toBe(0);
+    await expect(db.historicalAccountHeaders.count()).resolves.toBe(0);
+  });
 });
 
 describe("insertAccount", () => {

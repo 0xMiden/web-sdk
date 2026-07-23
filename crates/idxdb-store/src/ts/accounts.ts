@@ -857,7 +857,8 @@ async function restoreAssetsFromHistorical(
 export async function applyFullAccountState(
   dbId: string,
   accountState: JsAccountUpdate,
-  forestUpdate?: ForestUpdate | null
+  forestUpdate?: ForestUpdate | null,
+  expectedInitialCommitment?: string
 ): Promise<void> {
   try {
     const db = getDatabase(dbId);
@@ -879,7 +880,11 @@ export async function applyFullAccountState(
         db.forestSubtrees,
       ],
       async (tx) => {
-        await applyFullAccountStateInTransaction(tx, accountState);
+        await applyFullAccountStateInTransaction(
+          tx,
+          accountState,
+          expectedInitialCommitment
+        );
         await applyForestUpdate(tx, forestUpdate);
       }
     );
@@ -890,7 +895,8 @@ export async function applyFullAccountState(
 
 export async function applyFullAccountStateInTransaction(
   tx: Transaction,
-  accountState: JsAccountUpdate
+  accountState: JsAccountUpdate,
+  expectedInitialCommitment?: string
 ): Promise<void> {
   const {
     accountId,
@@ -910,7 +916,18 @@ export async function applyFullAccountStateInTransaction(
   if (oldHeader === undefined) {
     throw new StaleAccountBaseError(`Account ${accountId} does not exist`);
   }
-  if (BigInt(nonce) < BigInt(oldHeader.nonce)) {
+  if (
+    expectedInitialCommitment !== undefined &&
+    oldHeader.accountCommitment !== expectedInitialCommitment
+  ) {
+    throw new StaleAccountBaseError(
+      `Account ${accountId} commitment does not match the expected base`
+    );
+  }
+  if (
+    expectedInitialCommitment === undefined &&
+    BigInt(nonce) < BigInt(oldHeader.nonce)
+  ) {
     throw new StaleAccountBaseError(
       `Account ${accountId} nonce ${nonce} is lower than stored nonce ${oldHeader.nonce}`
     );

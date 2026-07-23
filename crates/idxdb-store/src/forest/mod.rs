@@ -114,12 +114,14 @@ pub(crate) fn is_forest_conflict(err: &StoreError) -> bool {
     matches!(err, StoreError::DatabaseError(msg) if msg.contains(FOREST_CONFLICT_MARKER))
 }
 
-/// Whether a read-only witness lookup straddled a concurrent commit and should be retried.
+/// Whether an operation that compares account-table roots against the forest straddled a
+/// concurrent commit and should be retried.
 ///
-/// Besides explicit prefetch conflicts, the account header and the forest snapshot are read in
-/// separate transactions, so a commit between them surfaces as conflicting roots; a fresh
-/// attempt reads both again.
-pub(crate) fn is_retryable_read(err: &StoreError) -> bool {
+/// Besides explicit prefetch/write-back conflicts, account rows and the forest snapshot are
+/// read in separate transactions, so a commit between them surfaces as conflicting roots; a
+/// fresh attempt reads both again. A genuinely diverged store keeps failing and surfaces the
+/// same error once the attempts are exhausted.
+pub(crate) fn is_retryable_conflict(err: &StoreError) -> bool {
     use miden_client::crypto::MerkleError;
     is_forest_conflict(err)
         || matches!(err, StoreError::MerkleStoreError(MerkleError::ConflictingRoots { .. }))

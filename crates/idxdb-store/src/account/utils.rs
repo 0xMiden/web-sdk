@@ -358,14 +358,25 @@ pub async fn insert_account_atomic(
 /// Writes the full account state atomically in a single Dexie transaction.
 /// Combines storage upsert + map entries upsert + vault assets upsert + account record upsert,
 /// plus the account's forest row changes.
+///
+/// With `expected_initial_commitment`, the write transaction requires the stored account to
+/// still match that commitment (local transaction results pin their exact base state); without
+/// it, the transaction only rejects a nonce regression (network updates supersede by nonce).
 pub async fn apply_full_account_state(
     db_id: &str,
     account: &Account,
     forest_update: JsForestUpdate,
+    expected_initial_commitment: Option<String>,
 ) -> Result<(), JsValue> {
     let account_state = JsAccountUpdate::from_account(account, account.seed());
 
-    JsFuture::from(idxdb_apply_full_account_state(db_id, account_state, forest_update)).await?;
+    JsFuture::from(idxdb_apply_full_account_state(
+        db_id,
+        account_state,
+        forest_update,
+        expected_initial_commitment,
+    ))
+    .await?;
 
     Ok(())
 }

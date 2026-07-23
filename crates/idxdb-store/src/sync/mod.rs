@@ -326,7 +326,7 @@ impl IdxdbStore {
             match result {
                 Err(err)
                     if attempt < forest::MAX_FOREST_ATTEMPTS
-                        && forest::is_forest_conflict(&err) => {},
+                        && forest::is_retryable_conflict(&err) => {},
                 result => return result,
             }
         }

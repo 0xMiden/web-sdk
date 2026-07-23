@@ -527,7 +527,7 @@ impl IdxdbStore {
             {
                 Err(err)
                     if attempt < forest::MAX_FOREST_ATTEMPTS
-                        && forest::is_forest_conflict(&err) => {},
+                        && forest::is_retryable_conflict(&err) => {},
                 result => return result,
             }
         }
@@ -613,17 +613,23 @@ impl IdxdbStore {
 
     /// Computes a forest update that resets the account's lineages to the provided full state:
     /// stored keys missing from the target state are removed, all target pairs are upserted, and
-    /// slots listed in `stale_map_slots` without a target are reset to the empty tree.
+    /// map slots stored today without a target are reset to the empty tree.
+    ///
+    /// The stored map slots are enumerated after the forest snapshot is taken, so a slot added
+    /// by a concurrent commit cannot slip between the two reads unnoticed; such a commit
+    /// advances the revision and fails the prefetch (or the write-back CAS) instead.
     pub(crate) async fn compute_account_reset_update(
         &self,
         account_id: AccountId,
         vault: &AssetVault,
         storage: &AccountStorage,
-        stale_map_slots: &[StorageSlotName],
     ) -> Result<crate::forest::js_bindings::JsForestUpdate, StoreError> {
         let snapshot = forest::load_forest_snapshot(self.db_id()).await?;
         let revision = snapshot.next_revision;
         let cache = ForestRowCache::new(snapshot.trees.clone(), Some(revision));
+
+        let stale_map_slots: Vec<StorageSlotName> =
+            self.get_storage_map_roots(account_id, Vec::new()).await?.into_keys().collect();
 
         let (vault_target, map_targets) = forest::account_forest_targets(vault, storage);
         let empty_target = BTreeMap::new();
@@ -632,7 +638,7 @@ impl IdxdbStore {
         for (slot_name, target) in &map_targets {
             lineages.push((storage_map_lineage_id(account_id, slot_name), target));
         }
-        for slot_name in stale_map_slots {
+        for slot_name in &stale_map_slots {
             if !map_targets.contains_key(slot_name) {
                 lineages.push((storage_map_lineage_id(account_id, slot_name), &empty_target));
             }
@@ -672,7 +678,7 @@ impl IdxdbStore {
         loop {
             attempt += 1;
             let forest_update = self
-                .compute_account_reset_update(account.id(), account.vault(), account.storage(), &[])
+                .compute_account_reset_update(account.id(), account.vault(), account.storage())
                 .await?;
 
             let result = insert_account_atomic(
@@ -707,23 +713,21 @@ impl IdxdbStore {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            // Map slots stored today but absent from the new state reset to the empty tree.
-            let stale_map_slots: Vec<StorageSlotName> =
-                self.get_storage_map_roots(account_id, Vec::new()).await?.into_keys().collect();
             let forest_update = self
                 .compute_account_reset_update(
                     account_id,
                     new_account_state.vault(),
                     new_account_state.storage(),
-                    &stale_map_slots,
                 )
                 .await?;
 
-            let result = apply_full_account_state(self.db_id(), new_account_state, forest_update)
-                .await
-                .map_err(|err| {
-                    StoreError::DatabaseError(format!("failed to update account: {err:?}"))
-                });
+            // Network updates supersede by nonce, so no initial commitment is pinned here.
+            let result =
+                apply_full_account_state(self.db_id(), new_account_state, forest_update, None)
+                    .await
+                    .map_err(|err| {
+                        StoreError::DatabaseError(format!("failed to update account: {err:?}"))
+                    });
             match result {
                 Err(err)
                     if attempt < forest::MAX_FOREST_ATTEMPTS
@@ -769,8 +773,8 @@ impl IdxdbStore {
             attempt += 1;
             match self.get_account_asset_once(account_id, vault_id).await {
                 Err(err)
-                    if attempt < forest::MAX_FOREST_ATTEMPTS && forest::is_retryable_read(&err) => {
-                },
+                    if attempt < forest::MAX_FOREST_ATTEMPTS
+                        && forest::is_retryable_conflict(&err) => {},
                 result => return result,
             }
         }
@@ -813,8 +817,8 @@ impl IdxdbStore {
             attempt += 1;
             match self.get_account_map_item_once(account_id, slot_name.clone(), key).await {
                 Err(err)
-                    if attempt < forest::MAX_FOREST_ATTEMPTS && forest::is_retryable_read(&err) => {
-                },
+                    if attempt < forest::MAX_FOREST_ATTEMPTS
+                        && forest::is_retryable_conflict(&err) => {},
                 result => return result,
             }
         }

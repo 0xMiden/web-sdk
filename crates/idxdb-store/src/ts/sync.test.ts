@@ -1408,6 +1408,26 @@ describe("sync", () => {
       ).resolves.toBeUndefined();
     });
 
+    it("accepts undefined as an absent post-undo commitment", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await seedSyncAccount(dbId, "acct-deleted", "1", "commitment-1");
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          accountCommitmentsToUndo: ["commitment-1"],
+          expectedPostUndoStates: [
+            { accountId: "acct-deleted", commitment: undefined },
+          ],
+        })
+      );
+
+      await expect(
+        db.latestAccountHeaders.get("acct-deleted")
+      ).resolves.toBeUndefined();
+    });
+
     it("rejects non-increasing patches inside the sync transaction", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
