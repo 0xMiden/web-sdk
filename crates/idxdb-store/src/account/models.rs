@@ -66,3 +66,38 @@ pub struct ForeignAccountCodeIdxdbObject {
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub code: Vec<u8>,
 }
+
+/// Post-undo state of one account, from `getPostUndoAccountStates`.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostUndoAccountStateIdxdbObject {
+    pub account_id: String,
+    pub vault_assets: Vec<PostUndoVaultAssetIdxdbObject>,
+    pub storage_map_entries: Vec<PostUndoMapEntryIdxdbObject>,
+    pub storage_slots: Vec<PostUndoStorageSlotIdxdbObject>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostUndoVaultAssetIdxdbObject {
+    pub vault_key: String,
+    pub asset: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostUndoMapEntryIdxdbObject {
+    pub slot_name: String,
+    pub key: String,
+    pub value: String,
+}
+
+// Field names mirror the JS row shape.
+#[allow(clippy::struct_field_names)]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostUndoStorageSlotIdxdbObject {
+    pub slot_name: String,
+    pub slot_value: String,
+    pub slot_type: u8,
+}

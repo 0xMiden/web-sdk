@@ -4,6 +4,9 @@
 /* eslint-disable  @typescript-eslint/no-unsafe-assignment */
 import { getDatabase } from "./schema.js";
 import { uint8ArrayToBase64 } from "./utils.js";
+
+export const STORE_DUMP_FORMAT_VERSION = 1;
+
 type TransformableInput =
   | { type: "Uint8Array"; value: Uint8Array }
   | { type: "Blob"; value: Blob }
@@ -62,12 +65,30 @@ export async function transformForExport(obj: any): Promise<any> {
 
 export async function exportStore(dbId: string) {
   const db = getDatabase(dbId);
-  const dbJson: Record<string, any> = {};
+  const tables = db.dexie.tables;
+  const rawTables: Record<string, any[]> = await db.dexie.transaction(
+    "r",
+    tables,
+    async () => {
+      return Object.fromEntries(
+        await Promise.all(
+          tables.map(async (table) => [table.name, await table.toArray()])
+        )
+      );
+    }
+  );
 
-  for (const table of db.dexie.tables) {
-    const records = await table.toArray();
-    dbJson[table.name] = await Promise.all(records.map(transformForExport));
-  }
+  const transformedTables = Object.fromEntries(
+    await Promise.all(
+      Object.entries(rawTables).map(async ([tableName, records]) => [
+        tableName,
+        await Promise.all(records.map(transformForExport)),
+      ])
+    )
+  );
 
-  return JSON.stringify(dbJson);
+  return JSON.stringify({
+    formatVersion: STORE_DUMP_FORMAT_VERSION,
+    tables: transformedTables,
+  });
 }

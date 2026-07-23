@@ -1,6 +1,10 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
-import { exportStore, transformForExport } from "./export.js";
+import {
+  exportStore,
+  STORE_DUMP_FORMAT_VERSION,
+  transformForExport,
+} from "./export.js";
 import { uint8ArrayToBase64 } from "./utils.js";
 
 let dbCounter = 0;
@@ -119,13 +123,14 @@ describe("exportStore", () => {
     const dbId = await openTestDb();
     const jsonStr = await exportStore(dbId);
     const parsed = JSON.parse(jsonStr);
+    expect(parsed.formatVersion).toBe(STORE_DUMP_FORMAT_VERSION);
 
     // All tables in the schema should be present as keys
     const db = getDatabase(dbId);
     const tableNames = db.dexie.tables.map((t) => t.name);
     for (const name of tableNames) {
-      expect(parsed).toHaveProperty(name);
-      expect(Array.isArray(parsed[name])).toBe(true);
+      expect(parsed.tables).toHaveProperty(name);
+      expect(Array.isArray(parsed.tables[name])).toBe(true);
     }
   });
 
@@ -134,17 +139,24 @@ describe("exportStore", () => {
     const jsonStr = await exportStore(dbId);
     const parsed = JSON.parse(jsonStr);
 
-    // blockchainCheckpoint gets one row on populate and settings gets the clientVersion row.
-    // Everything else should be empty.
+    // The checkpoint, settings, and revision stores are seeded on populate.
     const db = getDatabase(dbId);
     const tableNames = db.dexie.tables.map((t) => t.name);
-    const nonEmptyTables = tableNames.filter((name) => parsed[name].length > 0);
-    expect(nonEmptyTables).toEqual(
-      expect.arrayContaining(["blockchainCheckpoint", "settings"])
+    const nonEmptyTables = tableNames.filter(
+      (name) => parsed.tables[name].length > 0
     );
-    // tables other than these two must be empty
+    expect(nonEmptyTables).toEqual(
+      expect.arrayContaining([
+        "blockchainCheckpoint",
+        "settings",
+        "forestRevision",
+      ])
+    );
     const otherNonEmpty = nonEmptyTables.filter(
-      (n) => n !== "blockchainCheckpoint" && n !== "settings"
+      (name) =>
+        name !== "blockchainCheckpoint" &&
+        name !== "settings" &&
+        name !== "forestRevision"
     );
     expect(otherNonEmpty).toHaveLength(0);
   });
@@ -174,8 +186,8 @@ describe("exportStore", () => {
     const jsonStr = await exportStore(dbId);
     const parsed = JSON.parse(jsonStr);
 
-    expect(parsed.inputNotes).toHaveLength(1);
-    const note = parsed.inputNotes[0];
+    expect(parsed.tables.inputNotes).toHaveLength(1);
+    const note = parsed.tables.inputNotes[0];
 
     // Uint8Array fields should be serialized as tagged base64
     expect(note.assets).toEqual({
@@ -214,16 +226,55 @@ describe("exportStore", () => {
     const jsonStr = await exportStore(dbId);
     const parsed = JSON.parse(jsonStr);
 
-    expect(parsed.accountCode).toHaveLength(1);
-    expect(parsed.accountCode[0].root).toBe("root-1");
-    expect(parsed.accountCode[0].code).toEqual({
+    expect(parsed.tables.accountCode).toHaveLength(1);
+    expect(parsed.tables.accountCode[0].root).toBe("root-1");
+    expect(parsed.tables.accountCode[0].code).toEqual({
       __type: "Uint8Array",
       data: uint8ArrayToBase64(new Uint8Array([1, 2])),
     });
 
     // settings has the initial clientVersion row + our test-key
-    const settingsKeys = parsed.settings.map((s: any) => s.key);
+    const settingsKeys = parsed.tables.settings.map((s: any) => s.key);
     expect(settingsKeys).toContain("test-key");
+  });
+
+  it("exports forest rows and reads every table in one transaction", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const transactionSpy = vi.spyOn(db.dexie, "transaction");
+    const blob = new Uint8Array([7, 8, 9]);
+    await db.forestTrees.put({
+      lineage: "lineage",
+      version: "0000000000000001",
+      root: "0xroot",
+      entryCount: 1,
+    });
+    await db.forestEntries.put({
+      lineage: "lineage",
+      key: "0xkey",
+      value: "0xvalue",
+      leafPosition: "ffffffffffffffff",
+    });
+    await db.forestSubtrees.put({
+      lineage: "lineage",
+      depth: 8,
+      position: "ffffffffffffffff",
+      blob,
+    });
+
+    const parsed = JSON.parse(await exportStore(dbId));
+
+    expect(transactionSpy).toHaveBeenCalledTimes(1);
+    expect(transactionSpy.mock.calls[0][0]).toBe("r");
+    expect(transactionSpy.mock.calls[0][1]).toHaveLength(
+      db.dexie.tables.length
+    );
+    expect(parsed.tables.forestTrees).toHaveLength(1);
+    expect(parsed.tables.forestEntries).toHaveLength(1);
+    expect(parsed.tables.forestSubtrees[0].blob).toEqual({
+      __type: "Uint8Array",
+      data: uint8ArrayToBase64(blob),
+    });
   });
 
   it("throws for a db that was never opened", async () => {

@@ -7,6 +7,7 @@ use miden_client::utils::Serializable;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
+use crate::forest::js_bindings::JsForestUpdate;
 use crate::sync::JsAccountUpdate;
 
 // INDEXED DB BINDINGS
@@ -139,12 +140,25 @@ extern "C" {
         vault_root: String,
         committed: bool,
         commitment: String,
+        forest_update: JsForestUpdate,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyFullAccountState)]
     pub fn idxdb_apply_full_account_state(
         db_id: &str,
         account_state: JsAccountUpdate,
+        forest_update: JsForestUpdate,
+    ) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = insertAccount)]
+    pub fn idxdb_insert_account(
+        db_id: &str,
+        account_state: JsAccountUpdate,
+        code: Vec<u8>,
+        code_root: String,
+        address: Vec<u8>,
+        watched: bool,
+        forest_update: JsForestUpdate,
     ) -> js_sys::Promise;
 
     // UPDATES
@@ -157,7 +171,19 @@ extern "C" {
     // --------------------------------------------------------------------------------------------
 
     #[wasm_bindgen(js_name = undoAccountStates)]
-    pub fn idxdb_undo_account_states(db_id: &str, account_hashes: Vec<String>) -> js_sys::Promise;
+    pub fn idxdb_undo_account_states(
+        db_id: &str,
+        account_hashes: Vec<String>,
+        forest_update: JsForestUpdate,
+    ) -> js_sys::Promise;
+
+    /// Computes, without writing, the latest account state that `undoAccountStates` would
+    /// restore for each account affected by the provided commitments.
+    #[wasm_bindgen(js_name = getPostUndoAccountStates)]
+    pub fn idxdb_get_post_undo_account_states(
+        db_id: &str,
+        account_hashes: Vec<String>,
+    ) -> js_sys::Promise;
 
     /// Prunes historical account states for the specified account up to the given nonce.
     #[wasm_bindgen(js_name = pruneAccountHistory)]

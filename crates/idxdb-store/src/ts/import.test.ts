@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
-import { exportStore } from "./export.js";
+import { exportStore, STORE_DUMP_FORMAT_VERSION } from "./export.js";
 import { forceImportStore, transformForImport } from "./import.js";
 import { uint8ArrayToBase64 } from "./utils.js";
 
@@ -25,6 +25,19 @@ async function openTestDb(): Promise<string> {
   await openDatabase(name, "0.1.0");
   openDbIds.push(name);
   return name;
+}
+
+function minimalDump(extraTables: Record<string, unknown[]> = {}): string {
+  return JSON.stringify({
+    formatVersion: STORE_DUMP_FORMAT_VERSION,
+    tables: {
+      forestRevision: [{ id: 0, nextVersion: "0000000000000001" }],
+      forestTrees: [],
+      forestEntries: [],
+      forestSubtrees: [],
+      ...extraTables,
+    },
+  });
 }
 
 // ================================================================================================
@@ -175,6 +188,25 @@ describe("forceImportStore", () => {
     });
 
     await dbA.tags.put({ tag: "tag-rt" });
+    const subtreeBlob = new Uint8Array([8, 9, 10]);
+    await dbA.forestTrees.put({
+      lineage: "lineage-rt",
+      version: "0000000000000001",
+      root: "0xroot-rt",
+      entryCount: 1,
+    });
+    await dbA.forestEntries.put({
+      lineage: "lineage-rt",
+      key: "0xkey-rt",
+      value: "0xvalue-rt",
+      leafPosition: "ffffffffffffffff",
+    });
+    await dbA.forestSubtrees.put({
+      lineage: "lineage-rt",
+      depth: 8,
+      position: "ffffffffffffffff",
+      blob: subtreeBlob,
+    });
 
     const jsonStr = await exportStore(dbIdA);
 
@@ -190,6 +222,18 @@ describe("forceImportStore", () => {
     const tagsB = await dbB.tags.toArray();
     const tagFound = tagsB.find((t) => t.tag === "tag-rt");
     expect(tagFound).toBeDefined();
+    await expect(dbB.forestTrees.get("lineage-rt")).resolves.toBeDefined();
+    await expect(
+      dbB.forestEntries.get(["lineage-rt", "0xkey-rt"])
+    ).resolves.toBeDefined();
+    expect(
+      await dbB.forestSubtrees.get(["lineage-rt", 8, "ffffffffffffffff"])
+    ).toEqual({
+      lineage: "lineage-rt",
+      depth: 8,
+      position: "ffffffffffffffff",
+      blob: subtreeBlob,
+    });
   });
 
   it("import clears existing rows in target DB before importing", async () => {
@@ -209,6 +253,13 @@ describe("forceImportStore", () => {
       code: new Uint8Array([9]),
     });
     expect(await dbB.accountCodes.count()).toBe(1);
+    await dbB.forestTrees.put({
+      lineage: "target-only",
+      version: "0000000000000001",
+      root: "0xtarget",
+      entryCount: 0,
+    });
+    const transactionSpy = vi.spyOn(dbB.dexie, "transaction");
 
     await forceImportStore(dbIdB, jsonStr);
 
@@ -216,6 +267,12 @@ describe("forceImportStore", () => {
     // Only the row from DB-A should remain
     expect(codesAfter.map((c) => c.root)).toContain("root-a1");
     expect(codesAfter.map((c) => c.root)).not.toContain("root-b-old");
+    await expect(dbB.forestTrees.get("target-only")).resolves.toBeUndefined();
+    expect(transactionSpy).toHaveBeenCalledTimes(1);
+    expect(transactionSpy.mock.calls[0][0]).toBe("rw");
+    expect(transactionSpy.mock.calls[0][1]).toHaveLength(
+      dbB.dexie.tables.length
+    );
   });
 
   it("handles double-serialized JSON (string payload)", async () => {
@@ -229,62 +286,69 @@ describe("forceImportStore", () => {
     await forceImportStore(dbIdB, doubleEncoded);
   });
 
-  it("throws when payload has no tables (empty JSON object {})", async () => {
-    const dbId = await openTestDb();
-    // {} parses to an object with zero keys — triggers "No tables found" error
-    await expect(forceImportStore(dbId, "{}")).rejects.toThrow(
-      "No tables found"
-    );
-  });
-
-  it("throws when the payload contains only unknown table names", async () => {
-    // Dexie.table() throws InvalidTableError before the warn+skip guard in import.ts
-    // can fire, because the table name is not in the transaction scope. This verifies
-    // the real (observed) behavior of the source rather than its intent comment.
-    const dbId = await openTestDb();
-    const payload = JSON.stringify({ unknownTable: [{ id: 1, value: "x" }] });
-    await expect(forceImportStore(dbId, payload)).rejects.toThrow();
-  });
-
-  it("warn+skip guard: covers lines 86-90 by mocking dexie.table not to throw for unknown names", async () => {
-    // The warn+skip guard in import.ts (lines 85-90) is normally dead code because
-    // db.dexie.table() throws InvalidTableError for unknown tables before the guard is reached.
-    // We mock the table accessor to make it return a fake table object for unknown names,
-    // allowing execution to reach the guard and exercise the console.warn + continue path.
+  it("rejects a legacy dump without a format marker before clearing", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
-
-    const origTable = db.dexie.table.bind(db.dexie);
-    const fakeBulkPut = vi.fn().mockResolvedValue(undefined);
-    const fakeTableStub = { bulkPut: fakeBulkPut };
-
-    vi.spyOn(db.dexie, "table").mockImplementation((name: string) => {
-      // For unknown table names, return a stub instead of throwing.
-      // For known tables, delegate to the real implementation.
-      try {
-        return origTable(name);
-      } catch {
-        return fakeTableStub as any;
-      }
+    await db.accountCodes.put({
+      root: "sentinel",
+      code: new Uint8Array([1]),
     });
 
-    const payload = JSON.stringify({ unknownTable: [{ id: 1 }] });
+    await expect(forceImportStore(dbId, "{}")).rejects.toThrow(
+      "missing its format marker"
+    );
+    await expect(db.accountCodes.get("sentinel")).resolves.toBeDefined();
+  });
 
-    // Should resolve without error (unknown table is warned and skipped)
-    await forceImportStore(dbId, payload);
+  it("rejects unsupported versions and missing forest tables", async () => {
+    const dbId = await openTestDb();
+    await expect(
+      forceImportStore(dbId, JSON.stringify({ formatVersion: 2, tables: {} }))
+    ).rejects.toThrow("Unsupported store dump format version");
+    await expect(
+      forceImportStore(
+        dbId,
+        JSON.stringify({
+          formatVersion: STORE_DUMP_FORMAT_VERSION,
+          tables: {
+            forestRevision: [],
+            forestTrees: [],
+            forestEntries: [],
+          },
+        })
+      )
+    ).rejects.toThrow('missing required forest table "forestSubtrees"');
+  });
 
+  it("rejects an invalid tables object and non-array table rows", async () => {
+    const dbId = await openTestDb();
+    await expect(
+      forceImportStore(
+        dbId,
+        JSON.stringify({
+          formatVersion: STORE_DUMP_FORMAT_VERSION,
+          tables: null,
+        })
+      )
+    ).rejects.toThrow("valid tables object");
+    const invalidTableDump = JSON.parse(minimalDump());
+    invalidTableDump.tables.settings = {};
+    await expect(
+      forceImportStore(dbId, JSON.stringify(invalidTableDump))
+    ).rejects.toThrow('Table "settings" is not an array');
+  });
+
+  it("warns and skips unknown tables", async () => {
+    const dbId = await openTestDb();
+    await forceImportStore(dbId, minimalDump({ unknownTable: [{ id: 1 }] }));
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("unknownTable")
     );
-    // The stub's bulkPut should NOT have been called (we skipped it)
-    expect(fakeBulkPut).not.toHaveBeenCalled();
-
-    vi.restoreAllMocks();
   });
 
   it("throws for a db that was never opened", async () => {
     await expect(
-      forceImportStore("never-opened", JSON.stringify({ someTable: [] }))
+      forceImportStore("never-opened", minimalDump())
     ).rejects.toThrow();
   });
 

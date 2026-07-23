@@ -9,6 +9,7 @@ use wasm_bindgen_futures::js_sys;
 
 use super::flattened_vec::FlattenedU8Vec;
 use crate::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
+use crate::forest::js_bindings::JsForestUpdate;
 use crate::note::utils::{SerializedInputNoteData, SerializedOutputNoteData};
 use crate::transaction::utils::SerializedTransactionData;
 
@@ -40,7 +41,11 @@ extern "C" {
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyStateSync)]
-    pub fn idxdb_apply_state_sync(db_id: &str, state_update: JsStateSyncUpdate) -> js_sys::Promise;
+    pub fn idxdb_apply_state_sync(
+        db_id: &str,
+        state_update: JsStateSyncUpdate,
+        forest_update: JsForestUpdate,
+    ) -> js_sys::Promise;
 
     // DELETES
     // --------------------------------------------------------------------------------------------
@@ -113,9 +118,42 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "accountUpdates")]
     pub account_updates: Vec<JsAccountUpdate>,
 
+    /// Commitments of the account states to undo (discarded local transactions), rolled back
+    /// inside the same transaction before the account updates are applied.
+    #[wasm_bindgen(js_name = "accountCommitmentsToUndo")]
+    pub account_commitments_to_undo: Vec<String>,
+
+    /// Incremental account patches included in this sync, applied after the undo.
+    #[wasm_bindgen(js_name = "accountPatchUpdates")]
+    pub account_patch_updates: Vec<JsAccountPatchUpdate>,
+
     /// Transaction data for transactions included in this update.
     #[wasm_bindgen(js_name = "transactionUpdates")]
     pub transaction_updates: Vec<SerializedTransactionData>,
+}
+
+/// One incremental account patch applied within a state sync, mirroring the per-account
+/// arguments of the standalone `applyAccountPatch` JS function.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct JsAccountPatchUpdate {
+    #[wasm_bindgen(js_name = "accountId")]
+    pub account_id: String,
+    pub nonce: String,
+    #[wasm_bindgen(js_name = "updatedSlots")]
+    pub updated_slots: Vec<JsStorageSlot>,
+    #[wasm_bindgen(js_name = "changedMapEntries")]
+    pub changed_map_entries: Vec<JsStorageMapEntry>,
+    #[wasm_bindgen(js_name = "changedAssets")]
+    pub changed_assets: Vec<JsVaultAsset>,
+    #[wasm_bindgen(js_name = "codeRoot")]
+    pub code_root: String,
+    #[wasm_bindgen(js_name = "storageRoot")]
+    pub storage_root: String,
+    #[wasm_bindgen(js_name = "vaultRoot")]
+    pub vault_root: String,
+    pub committed: bool,
+    pub commitment: String,
 }
 
 /// Represents an update to a single account's state.

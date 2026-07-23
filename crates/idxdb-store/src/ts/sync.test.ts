@@ -9,6 +9,7 @@ import {
   applyStateSync,
   discardTransactions,
 } from "./sync.js";
+import { applyAccountPatch } from "./accounts.js";
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -1139,6 +1140,157 @@ describe("sync", () => {
       const ids = all.map((a) => a.id);
       expect(ids).toContain("acct-sync-A");
       expect(ids).toContain("acct-sync-B");
+    });
+
+    it("applies undo, patches, full updates, and one forest delta in order", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await applyAccountPatch(
+        dbId,
+        "acct-sync",
+        "1",
+        [{ slotName: "slot", slotValue: "old", slotType: 0 }],
+        [],
+        [],
+        "code-1",
+        "storage-1",
+        "vault-1",
+        false,
+        "commitment-1"
+      );
+      await applyAccountPatch(
+        dbId,
+        "acct-sync",
+        "2",
+        [{ slotName: "slot", slotValue: "discarded", slotType: 0 }],
+        [],
+        [],
+        "code-2",
+        "storage-2",
+        "vault-2",
+        false,
+        "commitment-2"
+      );
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 8,
+          accountCommitmentsToUndo: ["commitment-2"],
+          accountPatchUpdates: [
+            {
+              accountId: "acct-sync",
+              nonce: "3",
+              updatedSlots: [
+                { slotName: "slot", slotValue: "final", slotType: 0 },
+              ],
+              changedMapEntries: [],
+              changedAssets: [],
+              codeRoot: "code-3",
+              storageRoot: "storage-3",
+              vaultRoot: "vault-3",
+              committed: true,
+              commitment: "commitment-3",
+            },
+          ],
+          accountUpdates: [
+            {
+              accountId: "full-account",
+              nonce: "1",
+              storageRoot: "full-storage",
+              storageSlots: [],
+              storageMapEntries: [],
+              vaultRoot: "full-vault",
+              assets: [],
+              codeRoot: "full-code",
+              committed: false,
+              accountCommitment: "full-commitment",
+              accountSeed: undefined,
+            },
+          ],
+        }),
+        {
+          expectedTrees: [{ lineage: "sync-lineage" }],
+          allocatedRevision: "0000000000000001",
+          entryUpserts: [],
+          entryDeletes: [],
+          subtreeUpserts: [],
+          subtreeDeletes: [],
+          treeUpserts: [
+            {
+              lineage: "sync-lineage",
+              version: "0000000000000001",
+              root: "0xsync-root",
+              entryCount: 0,
+            },
+          ],
+        }
+      );
+
+      await expect(
+        db.latestAccountHeaders.get("acct-sync")
+      ).resolves.toMatchObject({
+        nonce: "3",
+        accountCommitment: "commitment-3",
+      });
+      await expect(
+        db.latestAccountStorages.get(["acct-sync", "slot"])
+      ).resolves.toMatchObject({ slotValue: "final" });
+      await expect(
+        db.latestAccountHeaders.get("full-account")
+      ).resolves.toBeDefined();
+      await expect(db.forestTrees.get("sync-lineage")).resolves.toBeDefined();
+      await expect(db.forestRevision.get(0)).resolves.toMatchObject({
+        nextVersion: "0000000000000002",
+      });
+    });
+
+    it("rolls back the whole sync when forest validation fails", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 9,
+            accountUpdates: [
+              {
+                accountId: "rolled-back-account",
+                nonce: "1",
+                storageRoot: "storage",
+                storageSlots: [],
+                storageMapEntries: [],
+                vaultRoot: "vault",
+                assets: [],
+                codeRoot: "code",
+                committed: false,
+                accountCommitment: "commitment",
+                accountSeed: undefined,
+              },
+            ],
+          }),
+          {
+            expectedTrees: [],
+            allocatedRevision: "0000000000000009",
+            entryUpserts: [],
+            entryDeletes: [],
+            subtreeUpserts: [],
+            subtreeDeletes: [],
+            treeUpserts: [],
+          }
+        )
+      ).rejects.toMatchObject({ name: "ForestConflictError" });
+
+      await expect(
+        db.latestAccountHeaders.get("rolled-back-account")
+      ).resolves.toBeUndefined();
+      await expect(db.blockchainCheckpoint.get(1)).resolves.toMatchObject({
+        blockNum: 0,
+      });
+      await expect(db.forestRevision.get(0)).resolves.toMatchObject({
+        nextVersion: "0000000000000001",
+      });
     });
   });
 });

@@ -10,12 +10,14 @@ import {
   getAccountStorageMaps,
   getAccountVaultAssets,
   getAccountAddresses,
+  getPostUndoAccountStates,
   upsertAccountCode,
   upsertAccountStorage,
   upsertStorageMapEntries,
   upsertVaultAssets,
   applyAccountPatch,
   applyFullAccountState,
+  insertAccount,
   upsertAccountRecord,
   insertAccountAddress,
   removeAccountAddress,
@@ -25,6 +27,7 @@ import {
   pruneAccountHistory,
   undoAccountStates,
 } from "./accounts.js";
+import { ForestUpdate } from "./forest.js";
 import { uniqueDbName } from "./test-utils.js";
 
 // Track opened DB IDs for per-test cleanup.
@@ -55,6 +58,18 @@ const STORAGE_ROOT = "0xsroot1";
 const VAULT_ROOT = "0xvroot1";
 const COMMITMENT = "0xcommit1";
 const NONCE = "1";
+
+function makeForestUpdate(overrides: Partial<ForestUpdate> = {}): ForestUpdate {
+  return {
+    expectedTrees: [],
+    entryUpserts: [],
+    entryDeletes: [],
+    subtreeUpserts: [],
+    subtreeDeletes: [],
+    treeUpserts: [],
+    ...overrides,
+  };
+}
 
 async function seedAccount(
   dbId: string,
@@ -683,7 +698,22 @@ describe("applyAccountPatch", () => {
       ["k3", "new3"],
     ]);
 
-    await undoAccountStates(dbId, ["0xcommit2"]);
+    await undoAccountStates(
+      dbId,
+      ["0xcommit2"],
+      makeForestUpdate({
+        expectedTrees: [{ lineage: "undo-lineage" }],
+        allocatedRevision: "0000000000000001",
+        treeUpserts: [
+          {
+            lineage: "undo-lineage",
+            version: "0000000000000001",
+            root: "0xundo-root",
+            entryCount: 0,
+          },
+        ],
+      })
+    );
     entries = await db.latestStorageMapEntries
       .where("[accountId+slotName]")
       .equals([ACC, "map1"])
@@ -692,6 +722,73 @@ describe("applyAccountPatch", () => {
       ["k1", "old1"],
       ["k2", "old2"],
     ]);
+    await expect(db.forestTrees.get("undo-lineage")).resolves.toBeDefined();
+  });
+
+  it("commits the account patch and forest update atomically", async () => {
+    const dbId = await openTestDb(CLIENT_VERSION);
+    const db = getDatabase(dbId);
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "1",
+      [],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      COMMITMENT,
+      makeForestUpdate({
+        expectedTrees: [{ lineage: "lineage" }],
+        allocatedRevision: "0000000000000001",
+        treeUpserts: [
+          {
+            lineage: "lineage",
+            version: "0000000000000001",
+            root: "0xroot",
+            entryCount: 0,
+          },
+        ],
+      })
+    );
+
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toBeDefined();
+    await expect(db.forestTrees.get("lineage")).resolves.toBeDefined();
+    await expect(db.forestRevision.get(0)).resolves.toMatchObject({
+      nextVersion: "0000000000000002",
+    });
+  });
+
+  it("rolls back account rows when the forest CAS fails", async () => {
+    const dbId = await openTestDb(CLIENT_VERSION);
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+
+    await expect(
+      applyAccountPatch(
+        dbId,
+        ACC,
+        "2",
+        [{ slotName: "slot", slotValue: "0xnew", slotType: 0 }],
+        [],
+        [],
+        CODE_ROOT,
+        "0xnew-storage",
+        VAULT_ROOT,
+        false,
+        "0xnew-commitment",
+        makeForestUpdate({ allocatedRevision: "0000000000000009" })
+      )
+    ).rejects.toMatchObject({ name: "ForestConflictError" });
+
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: NONCE,
+      storageRoot: STORAGE_ROOT,
+    });
+    await expect(db.latestAccountStorages.count()).resolves.toBe(0);
+    await expect(db.historicalAccountHeaders.count()).resolves.toBe(0);
   });
 });
 
@@ -826,6 +923,187 @@ describe("applyFullAccountState", () => {
       .toArray();
     expect(histAssets.length).toBeGreaterThan(0);
     expect(histAssets[0].oldAsset).toBeNull();
+  });
+
+  it("rolls back a full replacement when the forest CAS fails", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+
+    await expect(
+      applyFullAccountState(
+        dbId,
+        {
+          accountId: ACC,
+          nonce: "2",
+          storageSlots: [{ slotName: "slot", slotValue: "0xnew", slotType: 0 }],
+          storageMapEntries: [],
+          assets: [],
+          codeRoot: "0xnew-code",
+          storageRoot: "0xnew-storage",
+          vaultRoot: "0xnew-vault",
+          committed: true,
+          accountCommitment: "0xnew-commitment",
+          accountSeed: undefined,
+        },
+        makeForestUpdate({ allocatedRevision: "0000000000000009" })
+      )
+    ).rejects.toMatchObject({ name: "ForestConflictError" });
+
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: NONCE,
+      codeRoot: CODE_ROOT,
+    });
+    await expect(db.latestAccountStorages.count()).resolves.toBe(0);
+    await expect(db.historicalAccountHeaders.count()).resolves.toBe(0);
+  });
+});
+
+describe("insertAccount", () => {
+  it("writes the complete account and forest state in one transaction", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    const address = new Uint8Array([1, 2, 3]);
+    await insertAccount(
+      dbId,
+      {
+        accountId: ACC,
+        nonce: "1",
+        storageSlots: [{ slotName: "slot", slotValue: "0xvalue", slotType: 0 }],
+        storageMapEntries: [
+          { slotName: "map", key: "0xkey", value: "0xvalue" },
+        ],
+        assets: [{ vaultKey: "vault-key", asset: "0xasset" }],
+        codeRoot: CODE_ROOT,
+        storageRoot: STORAGE_ROOT,
+        vaultRoot: VAULT_ROOT,
+        committed: false,
+        accountCommitment: COMMITMENT,
+        accountSeed: new Uint8Array([9, 8]),
+      },
+      new Uint8Array([4, 5, 6]),
+      CODE_ROOT,
+      address,
+      true,
+      makeForestUpdate({
+        expectedTrees: [{ lineage: "lineage" }],
+        allocatedRevision: "0000000000000001",
+        entryUpserts: [
+          {
+            lineage: "lineage",
+            key: "0xkey",
+            value: "0xvalue",
+            leafPosition: "0000000000000001",
+          },
+        ],
+        treeUpserts: [
+          {
+            lineage: "lineage",
+            version: "0000000000000001",
+            root: "0xroot",
+            entryCount: 1,
+          },
+        ],
+      })
+    );
+
+    await expect(db.accountCodes.get(CODE_ROOT)).resolves.toEqual({
+      root: CODE_ROOT,
+      code: new Uint8Array([4, 5, 6]),
+    });
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      id: ACC,
+      watched: true,
+      locked: false,
+      accountCommitment: COMMITMENT,
+    });
+    await expect(
+      db.latestAccountStorages.where("accountId").equals(ACC).count()
+    ).resolves.toBe(1);
+    await expect(
+      db.latestStorageMapEntries.where("accountId").equals(ACC).count()
+    ).resolves.toBe(1);
+    await expect(
+      db.latestAccountAssets.where("accountId").equals(ACC).count()
+    ).resolves.toBe(1);
+    await expect(db.addresses.where("id").equals(ACC).first()).resolves.toEqual(
+      {
+        id: ACC,
+        address,
+      }
+    );
+    await expect(
+      db.forestEntries.get(["lineage", "0xkey"])
+    ).resolves.toBeDefined();
+    await expect(db.forestRevision.get(0)).resolves.toMatchObject({
+      nextVersion: "0000000000000002",
+    });
+
+    await expect(
+      insertAccount(
+        dbId,
+        {
+          accountId: ACC,
+          nonce: "2",
+          storageSlots: [],
+          storageMapEntries: [],
+          assets: [],
+          codeRoot: "other-code",
+          storageRoot: "other-storage",
+          vaultRoot: "other-vault",
+          committed: true,
+          accountCommitment: "other-commitment",
+          accountSeed: undefined,
+        },
+        new Uint8Array([7]),
+        "other-code",
+        new Uint8Array([7]),
+        false,
+        makeForestUpdate()
+      )
+    ).rejects.toMatchObject({ name: "ForestConflictError" });
+
+    await expect(db.accountCodes.get("other-code")).resolves.toBeUndefined();
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "1",
+      watched: true,
+    });
+    await expect(db.addresses.where("id").equals(ACC).count()).resolves.toBe(1);
+  });
+
+  it("supports accounts with empty child collections", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await insertAccount(
+      dbId,
+      {
+        accountId: "empty-account",
+        nonce: "0",
+        storageSlots: [],
+        storageMapEntries: [],
+        assets: [],
+        codeRoot: "empty-code",
+        storageRoot: "empty-storage",
+        vaultRoot: "empty-vault",
+        committed: false,
+        accountCommitment: "empty-commitment",
+        accountSeed: undefined,
+      },
+      new Uint8Array(),
+      "empty-code",
+      new Uint8Array([0]),
+      false,
+      undefined
+    );
+
+    await expect(
+      db.latestAccountHeaders.get("empty-account")
+    ).resolves.toMatchObject({
+      watched: false,
+    });
+    await expect(db.latestAccountStorages.count()).resolves.toBe(0);
+    await expect(db.latestStorageMapEntries.count()).resolves.toBe(0);
+    await expect(db.latestAccountAssets.count()).resolves.toBe(0);
   });
 });
 
@@ -1241,6 +1519,167 @@ describe("undoAccountStates", () => {
       .toArray();
     expect(assets).toHaveLength(0);
   });
+
+  it("rolls back undo when the forest CAS fails", async () => {
+    const dbId = await openTestDb(CV);
+    const db = getDatabase(dbId);
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "1",
+      [{ slotName: "slot", slotValue: "0xold", slotType: 0 }],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit1"
+    );
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [{ slotName: "slot", slotValue: "0xnew", slotType: 0 }],
+      [],
+      [],
+      CODE_ROOT,
+      "0xstorage2",
+      VAULT_ROOT,
+      false,
+      "0xcommit2"
+    );
+
+    await expect(
+      undoAccountStates(
+        dbId,
+        ["0xcommit2"],
+        makeForestUpdate({ allocatedRevision: "0000000000000009" })
+      )
+    ).rejects.toMatchObject({ name: "ForestConflictError" });
+
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "2",
+    });
+    await expect(
+      db.latestAccountStorages.get([ACC, "slot"])
+    ).resolves.toMatchObject({ slotValue: "0xnew" });
+    await expect(
+      db.historicalAccountHeaders.where("id").equals(ACC).count()
+    ).resolves.toBe(1);
+  });
+});
+
+describe("getPostUndoAccountStates", () => {
+  it("matches the state produced by undo without modifying the database", async () => {
+    const dbId = await openTestDb("0.0.1");
+    const db = getDatabase(dbId);
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "1",
+      [{ slotName: "slot1", slotValue: "0xold", slotType: 0 }],
+      [{ slotName: "map1", key: "key1", value: "old" }],
+      [{ vaultKey: "asset1", asset: "0xold" }],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit1"
+    );
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [
+        { slotName: "slot1", slotValue: "0xnew", slotType: 0 },
+        { slotName: "slot2", slotValue: "0xadded", slotType: 0 },
+      ],
+      [
+        { slotName: "map1", key: "key1", value: "new" },
+        { slotName: "map1", key: "key2", value: "added" },
+      ],
+      [
+        { vaultKey: "asset1", asset: "0xnew" },
+        { vaultKey: "asset2", asset: "0xadded" },
+      ],
+      CODE_ROOT,
+      "0xstorage2",
+      "0xvault2",
+      false,
+      "0xcommit2"
+    );
+
+    const planned = await getPostUndoAccountStates(dbId, ["0xcommit2"]);
+    expect(planned).toEqual([
+      {
+        accountId: ACC,
+        storageSlots: [{ slotName: "slot1", slotValue: "0xold", slotType: 0 }],
+        storageMapEntries: [{ slotName: "map1", key: "key1", value: "old" }],
+        vaultAssets: [{ vaultKey: "asset1", asset: "0xold" }],
+      },
+    ]);
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "2",
+    });
+    await expect(
+      db.latestAccountStorages.where("accountId").equals(ACC).count()
+    ).resolves.toBe(2);
+
+    await undoAccountStates(dbId, ["0xcommit2"]);
+
+    const actual = {
+      accountId: ACC,
+      storageSlots: (
+        await db.latestAccountStorages
+          .where("accountId")
+          .equals(ACC)
+          .sortBy("slotName")
+      ).map(({ slotName, slotValue, slotType }) => ({
+        slotName,
+        slotValue,
+        slotType,
+      })),
+      storageMapEntries: (
+        await db.latestStorageMapEntries
+          .where("accountId")
+          .equals(ACC)
+          .sortBy("key")
+      ).map(({ slotName, key, value }) => ({ slotName, key, value })),
+      vaultAssets: (
+        await db.latestAccountAssets
+          .where("accountId")
+          .equals(ACC)
+          .sortBy("vaultKey")
+      ).map(({ vaultKey, asset }) => ({ vaultKey, asset })),
+    };
+    expect(actual).toEqual(planned[0]);
+  });
+
+  it("returns empty rows when undo would delete the account", async () => {
+    const dbId = await openTestDb();
+    await seedAccount(dbId, {
+      accountId: "new-account",
+      commitment: "new-commitment",
+    });
+    await upsertAccountStorage(dbId, "new-account", [
+      { slotName: "slot", slotValue: "0xvalue", slotType: 0 },
+    ]);
+
+    await expect(
+      getPostUndoAccountStates(dbId, ["new-commitment"])
+    ).resolves.toEqual([
+      {
+        accountId: "new-account",
+        storageSlots: [],
+        storageMapEntries: [],
+        vaultAssets: [],
+      },
+    ]);
+    await expect(
+      getPostUndoAccountStates(dbId, ["missing-commitment"])
+    ).resolves.toEqual([]);
+  });
 });
 
 // ============================================================
@@ -1289,6 +1728,12 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(getAccountAddresses(BAD_DB, "0xacc")).rejects.toThrow();
   });
 
+  it("getPostUndoAccountStates rejects on bad dbId", async () => {
+    await expect(
+      getPostUndoAccountStates(BAD_DB, ["0xcommit"])
+    ).rejects.toThrow();
+  });
+
   it("upsertAccountCode rejects on bad dbId", async () => {
     await expect(
       upsertAccountCode(BAD_DB, "0xroot", new Uint8Array([1]))
@@ -1328,6 +1773,31 @@ describe("error paths: unregistered dbId re-throws", () => {
   it("insertAccountAddress rejects on bad dbId", async () => {
     await expect(
       insertAccountAddress(BAD_DB, "0xacc", new Uint8Array([1]))
+    ).rejects.toThrow();
+  });
+
+  it("insertAccount rejects on bad dbId", async () => {
+    await expect(
+      insertAccount(
+        BAD_DB,
+        {
+          accountId: "0xacc",
+          nonce: "1",
+          storageSlots: [],
+          storageMapEntries: [],
+          assets: [],
+          codeRoot: "0xcode",
+          storageRoot: "0xstorage",
+          vaultRoot: "0xvault",
+          committed: false,
+          accountCommitment: "0xcommit",
+          accountSeed: undefined,
+        },
+        new Uint8Array([1]),
+        "0xcode",
+        new Uint8Array([2]),
+        false
+      )
     ).rejects.toThrow();
   });
 

@@ -1,7 +1,8 @@
-import { getDatabase, } from "./schema.js";
+import { getDatabase } from "./schema.js";
 import { upsertTransactionRecord, insertTransactionScript, } from "./transactions.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
-import { applyFullAccountState } from "./accounts.js";
+import { applyAccountPatchInTransaction, applyFullAccountStateInTransaction, undoAccountStatesInTransaction, } from "./accounts.js";
+import { applyForestUpdate } from "./forest.js";
 import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function getNoteTags(dbId) {
     try {
@@ -99,9 +100,9 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, so
         logWebStoreError(error, "Failed to remove note tag");
     }
 }
-export async function applyStateSync(dbId, stateUpdate) {
+export async function applyStateSync(dbId, stateUpdate, forestUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, accountCommitmentsToUndo = [], accountPatchUpdates = [], transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.blockchainCheckpoint,
@@ -121,37 +122,35 @@ export async function applyStateSync(dbId, stateUpdate) {
         db.historicalStorageMapEntries,
         db.latestAccountAssets,
         db.historicalAccountAssets,
+        db.forestRevision,
+        db.forestTrees,
+        db.forestEntries,
+        db.forestSubtrees,
     ];
     return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
+        await undoAccountStatesInTransaction(tx, accountCommitmentsToUndo);
+        for (const accountPatch of accountPatchUpdates) {
+            await applyAccountPatchInTransaction(tx, accountPatch);
+        }
+        for (const accountUpdate of accountUpdates) {
+            await applyFullAccountStateInTransaction(tx, accountUpdate);
+        }
         await Promise.all([
             Promise.all(serializedInputNotes.map((note) => {
-                return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
+                return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId, tx);
             })),
             Promise.all(serializedOutputNotes.map((note) => {
-                return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state, tx);
             })),
             Promise.all(transactionUpdates.map((transactionRecord) => {
                 let promises = [
-                    upsertTransactionRecord(dbId, transactionRecord.id, transactionRecord.details, transactionRecord.blockNum, transactionRecord.statusVariant, transactionRecord.status, transactionRecord.scriptRoot),
+                    upsertTransactionRecord(dbId, transactionRecord.id, transactionRecord.details, transactionRecord.blockNum, transactionRecord.statusVariant, transactionRecord.status, transactionRecord.scriptRoot, tx),
                 ];
                 if (transactionRecord.scriptRoot && transactionRecord.txScript) {
-                    promises.push(insertTransactionScript(dbId, transactionRecord.scriptRoot, transactionRecord.txScript));
+                    promises.push(insertTransactionScript(dbId, transactionRecord.scriptRoot, transactionRecord.txScript, tx));
                 }
                 return Promise.all(promises);
             })),
-            Promise.all(accountUpdates.map((accountUpdate) => applyFullAccountState(dbId, {
-                accountId: accountUpdate.accountId,
-                nonce: accountUpdate.nonce,
-                storageSlots: accountUpdate.storageSlots,
-                storageMapEntries: accountUpdate.storageMapEntries,
-                assets: accountUpdate.assets,
-                codeRoot: accountUpdate.codeRoot,
-                storageRoot: accountUpdate.storageRoot,
-                vaultRoot: accountUpdate.vaultRoot,
-                committed: accountUpdate.committed,
-                accountCommitment: accountUpdate.accountCommitment,
-                accountSeed: accountUpdate.accountSeed,
-            }))),
             updateSyncHeight(tx, blockNum, newPeaks),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
             updateCommittedNoteTags(tx, committedNoteTagSources),
@@ -159,6 +158,7 @@ export async function applyStateSync(dbId, stateUpdate) {
                 return updateBlockHeader(tx, newBlockNums[i], newBlockHeader, blockHasRelevantNotes[i] == 1);
             })),
         ]);
+        await applyForestUpdate(tx, forestUpdate);
     });
 }
 async function updateSyncHeight(tx, blockNum, newPeaks) {

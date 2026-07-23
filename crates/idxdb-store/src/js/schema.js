@@ -4,6 +4,8 @@ import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
+/** Initial `nextVersion` of the forest revision singleton (16-char lowercase hex u64). */
+export const FOREST_REVISION_FIRST = "0000000000000001";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 // Since we can't have a pointer to a JS Object from rust, we'll
@@ -60,12 +62,21 @@ var Table;
     Table["Tags"] = "tags";
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
+    Table["ForestRevision"] = "forestRevision";
+    Table["ForestTrees"] = "forestTrees";
+    Table["ForestEntries"] = "forestEntries";
+    Table["ForestSubtrees"] = "forestSubtrees";
 })(Table || (Table = {}));
 function indexes(...items) {
     return items.join(",");
 }
 /** V1 baseline schema. Extracted as a constant because once migrations are enabled, this must
- *  never be modified — all schema changes should go through new version blocks instead. */
+ *  never be modified — all schema changes should go through new version blocks instead.
+ *
+ *  While migrations stay dormant, new stores may be added here directly: releases cut from
+ *  `next` bump the minor version, and a minor-version change takes the reset path in
+ *  `ensureClientVersion`, recreating the database with the new stores. Development databases on
+ *  the same exact version skip that reset and must be deleted manually after a schema change. */
 const V1_STORES = {
     [Table.AccountCode]: indexes("root"),
     [Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId"),
@@ -90,6 +101,10 @@ const V1_STORES = {
     [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
     [Table.ForeignAccountCode]: indexes("accountId"),
     [Table.Settings]: indexes("key"),
+    [Table.ForestRevision]: indexes("id"),
+    [Table.ForestTrees]: indexes("lineage"),
+    [Table.ForestEntries]: indexes("[lineage+key]", "lineage", "[lineage+leafPosition]"),
+    [Table.ForestSubtrees]: indexes("[lineage+depth+position]", "lineage"),
 };
 export class MidenDatabase {
     dexie;
@@ -116,6 +131,10 @@ export class MidenDatabase {
     tags;
     foreignAccountCode;
     settings;
+    forestRevision;
+    forestTrees;
+    forestEntries;
+    forestSubtrees;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -185,6 +204,10 @@ export class MidenDatabase {
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
+        this.forestRevision = this.dexie.table(Table.ForestRevision);
+        this.forestTrees = this.dexie.table(Table.ForestTrees);
+        this.forestEntries = this.dexie.table(Table.ForestEntries);
+        this.forestSubtrees = this.dexie.table(Table.ForestSubtrees);
         this.dexie.on("populate", () => {
             this.blockchainCheckpoint
                 .put({
@@ -194,6 +217,11 @@ export class MidenDatabase {
             })
                 /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
+            // Mirrors the SQLite forest_revision seed: the first allocated revision is 1.
+            this.forestRevision
+                .put({ id: 0, nextVersion: FOREST_REVISION_FIRST })
+                /* v8 ignore next 2 — same unreachable failure path as the checkpoint populate above */
+                .catch((err) => logWebStoreError(err, "Failed to populate forest revision"));
         });
     }
     async open(clientVersion) {

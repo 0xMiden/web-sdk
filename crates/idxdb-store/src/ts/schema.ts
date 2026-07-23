@@ -7,6 +7,9 @@ export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 
+/** Initial `nextVersion` of the forest revision singleton (16-char lowercase hex u64). */
+export const FOREST_REVISION_FIRST = "0000000000000001";
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -71,6 +74,10 @@ enum Table {
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
+  ForestRevision = "forestRevision",
+  ForestTrees = "forestTrees",
+  ForestEntries = "forestEntries",
+  ForestSubtrees = "forestSubtrees",
 }
 
 export interface IAccountCode {
@@ -247,6 +254,45 @@ export interface ISetting {
   value: Uint8Array;
 }
 
+/**
+ * Singleton row (id = 0) holding the next database-wide forest version to allocate.
+ * `nextVersion` is a 16-char lowercase hex string, since a u64 does not fit a JS number.
+ */
+export interface IForestRevision {
+  id: number;
+  nextVersion: string;
+}
+
+/** Latest-tree metadata of one forest lineage. `version` is 16-char lowercase hex. */
+export interface IForestTree {
+  lineage: string;
+  version: string;
+  root: string;
+  entryCount: number;
+}
+
+/**
+ * One key-value entry of a lineage's SMT. `leafPosition` is a 16-char lowercase hex string so
+ * compound-key ranges order numerically.
+ */
+export interface IForestEntry {
+  lineage: string;
+  key: string;
+  value: string;
+  leafPosition: string;
+}
+
+/**
+ * An 8-level subtree blob of a lineage's SMT, rooted at (`depth`, `position`). `position` is a
+ * 16-char lowercase hex string.
+ */
+export interface IForestSubtree {
+  lineage: string;
+  depth: number;
+  position: string;
+  blob: Uint8Array;
+}
+
 export interface JsVaultAsset {
   vaultKey: string;
   asset: string;
@@ -270,7 +316,12 @@ function indexes(...items: string[]): string {
 }
 
 /** V1 baseline schema. Extracted as a constant because once migrations are enabled, this must
- *  never be modified — all schema changes should go through new version blocks instead. */
+ *  never be modified — all schema changes should go through new version blocks instead.
+ *
+ *  While migrations stay dormant, new stores may be added here directly: releases cut from
+ *  `next` bump the minor version, and a minor-version change takes the reset path in
+ *  `ensureClientVersion`, recreating the database with the new stores. Development databases on
+ *  the same exact version skip that reset and must be deleted manually after a schema change. */
 const V1_STORES: Record<string, string> = {
   [Table.AccountCode]: indexes("root"),
   [Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId"),
@@ -331,6 +382,14 @@ const V1_STORES: Record<string, string> = {
   [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
   [Table.ForeignAccountCode]: indexes("accountId"),
   [Table.Settings]: indexes("key"),
+  [Table.ForestRevision]: indexes("id"),
+  [Table.ForestTrees]: indexes("lineage"),
+  [Table.ForestEntries]: indexes(
+    "[lineage+key]",
+    "lineage",
+    "[lineage+leafPosition]"
+  ),
+  [Table.ForestSubtrees]: indexes("[lineage+depth+position]", "lineage"),
 };
 
 // Dexie dynamically adds table accessors to Transaction objects at runtime,
@@ -345,14 +404,14 @@ declare module "dexie" {
     transactionScripts: Table<ITransactionScript, string>;
     tags: Table<ITag, number>;
     latestAccountHeaders: Table<IAccount, string>;
-    historicalAccountHeaders: Table<IAccount, string>;
-    latestAccountStorages: Table<ILatestAccountStorage, string>;
-    historicalAccountStorages: Table<IHistoricalAccountStorage, string>;
+    historicalAccountHeaders: Table<IHistoricalAccount, string>;
+    latestAccountStorage: Table<ILatestAccountStorage, string>;
+    historicalAccountStorage: Table<IHistoricalAccountStorage, string>;
     latestStorageMapEntries: Table<ILatestStorageMapEntry, string>;
     historicalStorageMapEntries: Table<IHistoricalStorageMapEntry, string>;
     latestAccountAssets: Table<ILatestAccountAsset, string>;
     historicalAccountAssets: Table<IHistoricalAccountAsset, string>;
-    accountCodes: Table<IAccountCode, string>;
+    accountCode: Table<IAccountCode, string>;
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
@@ -361,6 +420,10 @@ declare module "dexie" {
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
     settings: Table<ISetting, string>;
+    forestRevision: Table<IForestRevision, number>;
+    forestTrees: Table<IForestTree, string>;
+    forestEntries: Table<IForestEntry, [string, string]>;
+    forestSubtrees: Table<IForestSubtree, [string, number, string]>;
   }
 }
 
@@ -388,6 +451,10 @@ export type MidenDexie = Dexie & {
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
   settings: Dexie.Table<ISetting, string>;
+  forestRevision: Dexie.Table<IForestRevision, number>;
+  forestTrees: Dexie.Table<IForestTree, string>;
+  forestEntries: Dexie.Table<IForestEntry, [string, string]>;
+  forestSubtrees: Dexie.Table<IForestSubtree, [string, number, string]>;
 };
 
 export class MidenDatabase {
@@ -415,6 +482,10 @@ export class MidenDatabase {
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
   settings: Dexie.Table<ISetting, string>;
+  forestRevision: Dexie.Table<IForestRevision, number>;
+  forestTrees: Dexie.Table<IForestTree, string>;
+  forestEntries: Dexie.Table<IForestEntry, [string, string]>;
+  forestSubtrees: Dexie.Table<IForestSubtree, [string, number, string]>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -530,6 +601,17 @@ export class MidenDatabase {
       Table.ForeignAccountCode
     );
     this.settings = this.dexie.table<ISetting, string>(Table.Settings);
+    this.forestRevision = this.dexie.table<IForestRevision, number>(
+      Table.ForestRevision
+    );
+    this.forestTrees = this.dexie.table<IForestTree, string>(Table.ForestTrees);
+    this.forestEntries = this.dexie.table<IForestEntry, [string, string]>(
+      Table.ForestEntries
+    );
+    this.forestSubtrees = this.dexie.table<
+      IForestSubtree,
+      [string, number, string]
+    >(Table.ForestSubtrees);
 
     this.dexie.on("populate", () => {
       this.blockchainCheckpoint
@@ -541,6 +623,13 @@ export class MidenDatabase {
         /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
+        );
+      // Mirrors the SQLite forest_revision seed: the first allocated revision is 1.
+      this.forestRevision
+        .put({ id: 0, nextVersion: FOREST_REVISION_FIRST } as IForestRevision)
+        /* v8 ignore next 2 — same unreachable failure path as the checkpoint populate above */
+        .catch((err: unknown) =>
+          logWebStoreError(err, "Failed to populate forest revision")
         );
     });
   }

@@ -4,19 +4,23 @@ use alloc::vec::Vec;
 
 use miden_client::account::{
     Account,
-    AccountCode,
     AccountHeader,
     AccountId,
     AccountPatch,
-    AccountStorage,
     Address,
-    StorageMap,
-    StorageSlotContent,
+    StorageMapKey,
     StorageSlotName,
     StorageSlotType,
 };
-use miden_client::asset::{Asset, AssetId, AssetVault};
-use miden_client::store::{AccountSmtForest, AccountStatus, ClientAccountType, StoreError};
+use miden_client::asset::{Asset, AssetId};
+use miden_client::store::forest_backend::{ForestRowStore, SmtForestUpdateBatch};
+use miden_client::store::{
+    AccountStatus,
+    ClientAccountType,
+    StoreError,
+    add_storage_map_ops,
+    storage_map_lineage_id,
+};
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{Felt, Word};
 use wasm_bindgen::JsValue;
@@ -28,92 +32,18 @@ use super::js_bindings::{
     JsVaultAsset,
     idxdb_apply_account_patch,
     idxdb_apply_full_account_state,
-    idxdb_upsert_account_code,
-    idxdb_upsert_account_record,
-    idxdb_upsert_account_storage,
-    idxdb_upsert_storage_map_entries,
-    idxdb_upsert_vault_assets,
+    idxdb_insert_account,
 };
 use crate::account::js_bindings::idxdb_insert_account_address;
-use crate::account::models::{AccountRecordIdxdbObject, AddressIdxdbObject};
-use crate::sync::JsAccountUpdate;
-
-pub async fn upsert_account_code(db_id: &str, account_code: &AccountCode) -> Result<(), JsValue> {
-    let root = account_code.commitment().to_string();
-    let code = account_code.to_bytes();
-
-    let promise = idxdb_upsert_account_code(db_id, root, code);
-    JsFuture::from(promise).await?;
-
-    Ok(())
-}
-
-pub async fn upsert_account_storage(
-    db_id: &str,
-    account_id: &AccountId,
-    account_storage: &AccountStorage,
-) -> Result<(), JsValue> {
-    let mut slots = vec![];
-    let mut maps = vec![];
-    for slot in account_storage.slots() {
-        slots.push(JsStorageSlot::from_slot(slot));
-        if let StorageSlotContent::Map(map) = slot.content() {
-            maps.extend(JsStorageMapEntry::from_map(map, slot.name().as_str()));
-        }
-    }
-
-    let account_id_str = account_id.to_string();
-    JsFuture::from(idxdb_upsert_account_storage(db_id, account_id_str.clone(), slots)).await?;
-    JsFuture::from(idxdb_upsert_storage_map_entries(db_id, account_id_str, maps)).await?;
-
-    Ok(())
-}
-
-pub async fn upsert_account_asset_vault(
-    db_id: &str,
-    account_id: &AccountId,
-    asset_vault: &AssetVault,
-) -> Result<(), JsValue> {
-    let js_assets: Vec<JsVaultAsset> =
-        asset_vault.assets().map(|asset| JsVaultAsset::from_asset(&asset)).collect();
-
-    let promise = idxdb_upsert_vault_assets(db_id, account_id.to_string(), js_assets);
-    JsFuture::from(promise).await?;
-
-    Ok(())
-}
-
-pub async fn upsert_account_record(
-    db_id: &str,
-    account: &Account,
-    client_account_type: ClientAccountType,
-) -> Result<(), JsValue> {
-    let account_id_str = account.id().to_string();
-    let code_root = account.code().commitment().to_string();
-    let storage_root = account.storage().to_commitment().to_string();
-    let vault_root = account.vault().root().to_string();
-    let committed = account.is_public();
-    let nonce = account.nonce().to_string();
-    let account_seed = account.seed().map(|seed| seed.to_bytes());
-    let commitment = account.to_commitment().to_string();
-    let watched = matches!(client_account_type, ClientAccountType::Watched);
-
-    let promise = idxdb_upsert_account_record(
-        db_id,
-        account_id_str,
-        code_root,
-        storage_root,
-        vault_root,
-        nonce,
-        committed,
-        commitment,
-        account_seed,
-        watched,
-    );
-    JsFuture::from(promise).await?;
-
-    Ok(())
-}
+use crate::account::models::{
+    AccountRecordIdxdbObject,
+    AddressIdxdbObject,
+    PostUndoAccountStateIdxdbObject,
+};
+use crate::forest::CachedAccountForest;
+use crate::forest::cache::ForestRowCache;
+use crate::forest::js_bindings::JsForestUpdate;
+use crate::sync::{JsAccountPatchUpdate, JsAccountUpdate};
 
 pub async fn insert_account_address(
     db_id: &str,
@@ -192,10 +122,53 @@ pub fn parse_account_address_idxdb_object(
 /// The optional word is the slot's final value/root. It is `None` when the slot is removed.
 pub type PatchedStorageSlots = BTreeMap<StorageSlotName, (Option<Word>, StorageSlotType, u8)>;
 
-/// Computes the final values and map roots for the storage changes in `patch`.
-pub fn compute_storage_patch(
-    smt_forest: &mut AccountSmtForest,
-    old_map_roots: &BTreeMap<StorageSlotName, Word>,
+/// Adds the storage-map operations of `patch` to a forest update batch, returning the touched
+/// map slot names.
+///
+/// Create and remove patches first remove every key currently stored for the slot's lineage
+/// (read through the prefetched `rows`); keys re-inserted by the patch below win over these
+/// removals because the batch keeps the last operation per key.
+pub fn add_storage_map_patch_ops(
+    rows: &ForestRowCache,
+    account_id: AccountId,
+    batch: &mut SmtForestUpdateBatch,
+    patch: &AccountPatch,
+) -> Result<Vec<StorageSlotName>, StoreError> {
+    let mut touched = Vec::new();
+    for (slot_name, map_patch) in patch.storage().maps() {
+        touched.push(slot_name.clone());
+        let lineage = storage_map_lineage_id(account_id, slot_name);
+
+        let patch_op = map_patch.patch_op();
+        if patch_op.is_create() || patch_op.is_remove() {
+            let mut stored_keys = Vec::new();
+            rows.for_each_entry(lineage, &mut |row| {
+                stored_keys.push(row.key);
+                Ok(())
+            })
+            .map_err(crate::forest::backend_error)?;
+            for key in stored_keys {
+                batch.operations(lineage).add_remove(key);
+            }
+        }
+
+        let entries = map_patch
+            .entries()
+            .into_iter()
+            .flat_map(|e| e.as_map().iter())
+            .map(|(key, value)| (*key, *value));
+        add_storage_map_ops(batch, account_id, slot_name, entries);
+    }
+    Ok(touched)
+}
+
+/// Collects the final values and map roots for the storage changes in `patch`.
+///
+/// Value slots come straight from the patch; map roots are read from `forest` after the update
+/// batch was applied, so they reflect the persisted post-apply state.
+pub fn patched_storage_slots(
+    forest: &CachedAccountForest,
+    account_id: AccountId,
     patch: &AccountPatch,
 ) -> Result<PatchedStorageSlots, StoreError> {
     let mut updated_slots: PatchedStorageSlots = patch
@@ -209,29 +182,17 @@ pub fn compute_storage_patch(
         })
         .collect();
 
-    let default_map_root = StorageMap::default().root();
-
     for (slot_name, map_patch) in patch.storage().maps() {
         let patch_op = map_patch.patch_op();
         let new_root = if patch_op.is_remove() {
             None
         } else {
-            let old_root = if patch_op.is_create() {
-                default_map_root
-            } else {
-                old_map_roots.get(slot_name).copied().ok_or_else(|| {
-                    StoreError::DatabaseError(format!(
-                        "storage map slot {slot_name} is missing while applying an update",
-                    ))
-                })?
-            };
-            let entries = map_patch
-                .entries()
-                .expect("create and update map patches always contain entries");
-            Some(smt_forest.update_storage_map_nodes(
-                old_root,
-                entries.as_map().iter().map(|(key, value)| (*key, *value)),
-            )?)
+            let lineage = storage_map_lineage_id(account_id, slot_name);
+            Some(forest.latest_root(lineage).ok_or_else(|| {
+                StoreError::DatabaseError(format!(
+                    "storage map slot {slot_name} has no forest root after applying an update",
+                ))
+            })?)
         };
         updated_slots.insert(slot_name.clone(), (new_root, StorageSlotType::Map, patch_op.as_u8()));
     }
@@ -239,55 +200,11 @@ pub fn compute_storage_patch(
     Ok(updated_slots)
 }
 
-/// Applies changed storage-map roots to the root list tracked by [`AccountSmtForest`].
-pub fn update_tracked_storage_roots(
-    tracked_roots: &mut Vec<Word>,
-    old_map_roots: &BTreeMap<StorageSlotName, Word>,
-    patched_slots: &PatchedStorageSlots,
-) -> Result<(), StoreError> {
-    for (slot_name, (new_root, slot_type, _patch_op)) in patched_slots {
-        if *slot_type != StorageSlotType::Map {
-            continue;
-        }
-
-        let old_root = old_map_roots.get(slot_name).copied();
-        let old_root_position = old_root.and_then(|old_root| {
-            // The vault root is always first and can equal a storage-map root (notably for empty
-            // trees), so only search the storage-map portion of the list.
-            tracked_roots
-                .iter()
-                .enumerate()
-                .skip(1)
-                .find_map(|(position, root)| (*root == old_root).then_some(position))
-        });
-
-        match (old_root, old_root_position, new_root) {
-            (Some(_), Some(position), Some(new_root)) => tracked_roots[position] = *new_root,
-            (Some(old_root), None, _) => {
-                return Err(StoreError::DatabaseError(format!(
-                    "storage map root {} for slot {slot_name} is not tracked",
-                    old_root.to_hex(),
-                )));
-            },
-            (None, _, Some(new_root)) => tracked_roots.push(*new_root),
-            (Some(_), Some(position), None) => {
-                tracked_roots.remove(position);
-            },
-            (None, _, None) => {
-                return Err(StoreError::DatabaseError(format!(
-                    "storage map slot {slot_name} is missing while applying a removal",
-                )));
-            },
-        }
-    }
-
-    Ok(())
-}
-
 /// Applies an account patch atomically in a single Dexie transaction.
 ///
 /// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
 /// the full Account object. This avoids loading account code and full storage map entries.
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_account_patch(
     db_id: &str,
     account_id: AccountId,
@@ -296,10 +213,45 @@ pub async fn apply_account_patch(
     updated_assets: &[Asset],
     removed_asset_ids: &[AssetId],
     patch: &AccountPatch,
+    forest_update: JsForestUpdate,
 ) -> Result<(), JsValue> {
-    let account_id_str = account_id.to_string();
-    let nonce_str = final_header.nonce().to_string();
+    let update = build_js_account_patch_update(
+        account_id,
+        final_header,
+        updated_storage_slots,
+        updated_assets,
+        removed_asset_ids,
+        patch,
+    );
 
+    JsFuture::from(idxdb_apply_account_patch(
+        db_id,
+        update.account_id,
+        update.nonce,
+        update.updated_slots,
+        update.changed_map_entries,
+        update.changed_assets,
+        update.code_root,
+        update.storage_root,
+        update.vault_root,
+        update.committed,
+        update.commitment,
+        forest_update,
+    ))
+    .await?;
+
+    Ok(())
+}
+
+/// Serializes the per-account pieces of an incremental patch for the JS write functions.
+pub fn build_js_account_patch_update(
+    account_id: AccountId,
+    final_header: &AccountHeader,
+    updated_storage_slots: &PatchedStorageSlots,
+    updated_assets: &[Asset],
+    removed_asset_ids: &[AssetId],
+    patch: &AccountPatch,
+) -> JsAccountPatchUpdate {
     // Build updated slot JS objects from pre-computed storage roots
     let mut js_slots = Vec::new();
     for (slot_name, (value, slot_type, patch_op)) in updated_storage_slots {
@@ -344,28 +296,18 @@ pub async fn apply_account_patch(
         });
     }
 
-    // Account record fields from final header
-    let code_root = final_header.code_commitment().to_string();
-    let storage_root = final_header.storage_commitment().to_string();
-    let vault_root = final_header.vault_root().to_string();
-    let committed = account_id.is_public();
-    let commitment = final_header.to_commitment().to_string();
-    JsFuture::from(idxdb_apply_account_patch(
-        db_id,
-        account_id_str,
-        nonce_str,
-        js_slots,
+    JsAccountPatchUpdate {
+        account_id: account_id.to_string(),
+        nonce: final_header.nonce().to_string(),
+        updated_slots: js_slots,
         changed_map_entries,
         changed_assets,
-        code_root,
-        storage_root,
-        vault_root,
-        committed,
-        commitment,
-    ))
-    .await?;
-
-    Ok(())
+        code_root: final_header.code_commitment().to_string(),
+        storage_root: final_header.storage_commitment().to_string(),
+        vault_root: final_header.vault_root().to_string(),
+        committed: account_id.is_public(),
+        commitment: final_header.to_commitment().to_string(),
+    }
 }
 
 /// Converts a full-state account patch into an [`Account`] and verifies that its commitment
@@ -381,12 +323,123 @@ pub fn account_from_full_state_patch(
     Ok(account)
 }
 
+/// Inserts a new account's code, storage, vault, header and address rows plus its forest rows
+/// in one Dexie transaction. Fails if the account already exists.
+pub async fn insert_account_atomic(
+    db_id: &str,
+    account: &Account,
+    client_account_type: ClientAccountType,
+    initial_address: Address,
+    forest_update: JsForestUpdate,
+) -> Result<(), JsValue> {
+    let account_state = JsAccountUpdate::from_account(account, account.seed());
+    let code_root = account.code().commitment().to_string();
+    let code = account.code().to_bytes();
+    let address = initial_address.to_bytes();
+    let watched = matches!(client_account_type, ClientAccountType::Watched);
+
+    JsFuture::from(idxdb_insert_account(
+        db_id,
+        account_state,
+        code,
+        code_root,
+        address,
+        watched,
+        forest_update,
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Writes the full account state atomically in a single Dexie transaction.
-/// Combines storage upsert + map entries upsert + vault assets upsert + account record upsert.
-pub async fn apply_full_account_state(db_id: &str, account: &Account) -> Result<(), JsValue> {
+/// Combines storage upsert + map entries upsert + vault assets upsert + account record upsert,
+/// plus the account's forest row changes.
+pub async fn apply_full_account_state(
+    db_id: &str,
+    account: &Account,
+    forest_update: JsForestUpdate,
+) -> Result<(), JsValue> {
     let account_state = JsAccountUpdate::from_account(account, account.seed());
 
-    JsFuture::from(idxdb_apply_full_account_state(db_id, account_state)).await?;
+    JsFuture::from(idxdb_apply_full_account_state(db_id, account_state, forest_update)).await?;
 
     Ok(())
+}
+
+// FOREST TARGETS
+// ================================================================================================
+
+/// Explicit forest target state of one account, keyed by hashed SMT key.
+pub struct AccountForestTargets {
+    pub account_id: AccountId,
+    pub vault: BTreeMap<Word, Word>,
+    pub maps: BTreeMap<StorageSlotName, BTreeMap<Word, Word>>,
+}
+
+/// Parses the post-undo resolver's rows into forest targets.
+pub fn parse_post_undo_targets(
+    state: &PostUndoAccountStateIdxdbObject,
+) -> Result<AccountForestTargets, StoreError> {
+    let account_id = AccountId::from_hex(&state.account_id)?;
+
+    let mut vault = BTreeMap::new();
+    for row in &state.vault_assets {
+        let key_word = Word::try_from(&row.vault_key)?;
+        let value_word = Word::try_from(&row.asset)?;
+        let asset = Asset::from_id_and_value_words(key_word, value_word)?;
+        vault.insert(asset.id().hash().into(), asset.to_value_word());
+    }
+
+    let mut maps: BTreeMap<StorageSlotName, BTreeMap<Word, Word>> = BTreeMap::new();
+    // Seed map slots first so a map that is empty after the undo still reconciles to the empty
+    // tree.
+    for slot in &state.storage_slots {
+        if StorageSlotType::try_from(slot.slot_type).ok() == Some(StorageSlotType::Map) {
+            let slot_name = StorageSlotName::new(slot.slot_name.clone())
+                .map_err(|e| StoreError::ParsingError(e.to_string()))?;
+            maps.entry(slot_name).or_default();
+        }
+    }
+    for row in &state.storage_map_entries {
+        let slot_name = StorageSlotName::new(row.slot_name.clone())
+            .map_err(|e| StoreError::ParsingError(e.to_string()))?;
+        let key = StorageMapKey::new(Word::try_from(&row.key)?);
+        maps.entry(slot_name)
+            .or_default()
+            .insert(Word::from(key.hash()), Word::try_from(&row.value)?);
+    }
+
+    Ok(AccountForestTargets { account_id, vault, maps })
+}
+
+/// Overlays an incremental patch's absolute values onto reconcile targets.
+pub fn overlay_patch_on_targets(targets: &mut AccountForestTargets, patch: &AccountPatch) {
+    for asset in patch.vault().updated_assets() {
+        targets.vault.insert(asset.id().hash().into(), asset.to_value_word());
+    }
+    for asset_id in patch.vault().removed_asset_ids() {
+        targets.vault.remove(&Word::from(asset_id.hash()));
+    }
+
+    for (slot_name, map_patch) in patch.storage().maps() {
+        let patch_op = map_patch.patch_op();
+        if patch_op.is_remove() {
+            targets.maps.remove(slot_name);
+            continue;
+        }
+        if patch_op.is_create() {
+            targets.maps.insert(slot_name.clone(), BTreeMap::new());
+        }
+        let slot_target = targets.maps.entry(slot_name.clone()).or_default();
+        if let Some(entries) = map_patch.entries() {
+            for (key, value) in entries.as_map() {
+                let key_word = Word::from(key.hash());
+                if value.is_empty() {
+                    slot_target.remove(&key_word);
+                } else {
+                    slot_target.insert(key_word, *value);
+                }
+            }
+        }
+    }
 }

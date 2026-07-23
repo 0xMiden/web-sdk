@@ -1,11 +1,4 @@
-import {
-  getDatabase,
-  JsVaultAsset,
-  JsStorageSlot,
-  JsStorageMapEntry,
-  IBlockHeader,
-  IBlockchainCheckpoint,
-} from "./schema.js";
+import { getDatabase, IBlockHeader, IBlockchainCheckpoint } from "./schema.js";
 
 import {
   upsertTransactionRecord,
@@ -14,7 +7,14 @@ import {
 
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 
-import { applyFullAccountState } from "./accounts.js";
+import {
+  applyAccountPatchInTransaction,
+  applyFullAccountStateInTransaction,
+  JsAccountPatchUpdate,
+  JsAccountUpdate,
+  undoAccountStatesInTransaction,
+} from "./accounts.js";
+import { applyForestUpdate, ForestUpdate } from "./forest.js";
 import {
   logWebStoreError,
   putPartialBlockchainNodesNoOverwrite,
@@ -179,20 +179,6 @@ interface SerializedTransactionData {
   txScript?: Uint8Array;
 }
 
-interface JsAccountUpdate {
-  storageRoot: string;
-  storageSlots: JsStorageSlot[];
-  storageMapEntries: JsStorageMapEntry[];
-  vaultRoot: string;
-  assets: JsVaultAsset[];
-  accountId: string;
-  codeRoot: string;
-  committed: boolean;
-  nonce: string;
-  accountCommitment: string;
-  accountSeed?: Uint8Array;
-}
-
 interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
@@ -205,13 +191,16 @@ interface JsStateSyncUpdate {
   serializedInputNotes: SerializedInputNoteData[];
   serializedOutputNotes: SerializedOutputNoteData[];
   accountUpdates: JsAccountUpdate[];
+  accountCommitmentsToUndo?: string[];
+  accountPatchUpdates?: JsAccountPatchUpdate[];
   transactionUpdates: SerializedTransactionData[];
 }
 
 export async function applyStateSync(
   dbId: string,
-  stateUpdate: JsStateSyncUpdate
-) {
+  stateUpdate: JsStateSyncUpdate,
+  forestUpdate?: ForestUpdate | null
+): Promise<void> {
   const db = getDatabase(dbId);
   const {
     blockNum,
@@ -225,6 +214,8 @@ export async function applyStateSync(
     serializedInputNotes,
     serializedOutputNotes,
     accountUpdates,
+    accountCommitmentsToUndo = [],
+    accountPatchUpdates = [],
     transactionUpdates,
   } = stateUpdate;
 
@@ -248,9 +239,22 @@ export async function applyStateSync(
     db.historicalStorageMapEntries,
     db.latestAccountAssets,
     db.historicalAccountAssets,
+    db.forestRevision,
+    db.forestTrees,
+    db.forestEntries,
+    db.forestSubtrees,
   ];
 
   return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
+    await undoAccountStatesInTransaction(tx, accountCommitmentsToUndo);
+
+    for (const accountPatch of accountPatchUpdates) {
+      await applyAccountPatchInTransaction(tx, accountPatch);
+    }
+    for (const accountUpdate of accountUpdates) {
+      await applyFullAccountStateInTransaction(tx, accountUpdate);
+    }
+
     await Promise.all([
       Promise.all(
         serializedInputNotes.map((note) => {
@@ -270,7 +274,8 @@ export async function applyStateSync(
             note.state,
             note.consumedBlockHeight,
             note.consumedTxOrder,
-            note.consumerAccountId
+            note.consumerAccountId,
+            tx
           );
         })
       ),
@@ -287,7 +292,8 @@ export async function applyStateSync(
             note.nullifier,
             note.expectedHeight,
             note.stateDiscriminant,
-            note.state
+            note.state,
+            tx
           );
         })
       ),
@@ -301,7 +307,8 @@ export async function applyStateSync(
               transactionRecord.blockNum,
               transactionRecord.statusVariant,
               transactionRecord.status,
-              transactionRecord.scriptRoot
+              transactionRecord.scriptRoot,
+              tx
             ),
           ];
 
@@ -310,30 +317,14 @@ export async function applyStateSync(
               insertTransactionScript(
                 dbId,
                 transactionRecord.scriptRoot,
-                transactionRecord.txScript
+                transactionRecord.txScript,
+                tx
               )
             );
           }
 
           return Promise.all(promises);
         })
-      ),
-      Promise.all(
-        accountUpdates.map((accountUpdate) =>
-          applyFullAccountState(dbId, {
-            accountId: accountUpdate.accountId,
-            nonce: accountUpdate.nonce,
-            storageSlots: accountUpdate.storageSlots,
-            storageMapEntries: accountUpdate.storageMapEntries,
-            assets: accountUpdate.assets,
-            codeRoot: accountUpdate.codeRoot,
-            storageRoot: accountUpdate.storageRoot,
-            vaultRoot: accountUpdate.vaultRoot,
-            committed: accountUpdate.committed,
-            accountCommitment: accountUpdate.accountCommitment,
-            accountSeed: accountUpdate.accountSeed,
-          })
-        )
       ),
       updateSyncHeight(tx, blockNum, newPeaks),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
@@ -349,6 +340,7 @@ export async function applyStateSync(
         })
       ),
     ]);
+    await applyForestUpdate(tx, forestUpdate);
   });
 }
 

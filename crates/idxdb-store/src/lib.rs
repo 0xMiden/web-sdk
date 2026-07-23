@@ -30,7 +30,6 @@ use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
     AccountRecord,
-    AccountSmtForest,
     AccountStatus,
     AccountStorageFilter,
     BlockRelevance,
@@ -46,7 +45,6 @@ use miden_client::store::{
 };
 use miden_client::sync::{NoteTagRecord, StateSyncUpdate};
 use miden_client::transaction::{TransactionRecord, TransactionStoreUpdate};
-use miden_client::utils::RwLock;
 use miden_client::{Felt, Word};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -57,6 +55,7 @@ pub mod account;
 pub mod auth;
 pub mod chain_data;
 pub mod export;
+pub(crate) mod forest;
 pub mod import;
 pub mod note;
 mod promise;
@@ -88,7 +87,6 @@ extern "C" {
 /// which would prevent the struct from being Send + Sync.
 pub struct IdxdbStore {
     database_id: String,
-    smt_forest: RwLock<AccountSmtForest>,
 }
 
 impl IdxdbStore {
@@ -96,52 +94,9 @@ impl IdxdbStore {
         let promise = open_database(database_name.as_str(), CLIENT_VERSION);
         let _db_id = JsFuture::from(promise).await?;
 
-        let store = IdxdbStore {
-            database_id: database_name,
-            smt_forest: RwLock::new(AccountSmtForest::new()),
-        };
-
-        // Initialize SMT forest
-        store.build_smt_forest().await?;
-
-        Ok(store)
-    }
-
-    /// Builds the SMT forest by loading all existing account vault and storage data.
-    ///
-    /// This ensures that the forest contains all necessary Merkle nodes for generating
-    /// witnesses when creating partial accounts or executing transactions.
-    async fn build_smt_forest(&self) -> Result<(), JsValue> {
-        let account_ids = self
-            .get_account_ids()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to get account IDs: {e:?}")))?;
-
-        for account_id in account_ids {
-            let vault = self.get_account_vault(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!("Failed to get vault for account {account_id}: {e:?}"))
-            })?;
-
-            let storage = self
-                .get_account_storage(account_id, AccountStorageFilter::All)
-                .await
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to get storage for account {account_id}: {e:?}"
-                    ))
-                })?;
-
-            self.smt_forest
-                .write()
-                .insert_and_register_account_state(account_id, &vault, &storage)
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to insert account state for {account_id}: {e:?}"
-                    ))
-                })?;
-        }
-
-        Ok(())
+        // The account SMT forest persists in IndexedDB (see the `forest` module); operations
+        // build short-lived forests over prefetched rows, so opening the store reads nothing.
+        Ok(IdxdbStore { database_id: database_name })
     }
 
     /// Returns the database ID as a string slice for passing to JS functions.

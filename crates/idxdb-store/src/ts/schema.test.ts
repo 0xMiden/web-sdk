@@ -130,6 +130,31 @@ describe("openDatabase", () => {
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
   });
+
+  it("creates the forest stores, indexes, and revision singleton", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const db = getDatabase(name);
+    openMidenDbs.push(db);
+
+    expect(db.forestRevision.schema.primKey.name).toBe("id");
+    expect(db.forestTrees.schema.primKey.name).toBe("lineage");
+    expect(db.forestEntries.schema.primKey.name).toBe("[lineage+key]");
+    expect(db.forestEntries.schema.indexes.map((index) => index.name)).toEqual([
+      "lineage",
+      "[lineage+leafPosition]",
+    ]);
+    expect(db.forestSubtrees.schema.primKey.name).toBe(
+      "[lineage+depth+position]"
+    );
+    expect(db.forestSubtrees.schema.indexes.map((index) => index.name)).toEqual(
+      ["lineage"]
+    );
+    await expect(db.forestRevision.get(0)).resolves.toEqual({
+      id: 0,
+      nextVersion: "0000000000000001",
+    });
+  });
 });
 
 // ============================================================

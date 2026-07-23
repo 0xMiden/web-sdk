@@ -14,7 +14,6 @@ use miden_client::transaction::{
 use miden_client::utils::Deserializable;
 
 use super::IdxdbStore;
-use super::account::RootsUpdateMode;
 use super::account::utils::{account_from_full_state_patch, apply_full_account_state};
 use super::note::utils::apply_note_updates_tx;
 use crate::promise::await_js;
@@ -102,21 +101,18 @@ impl IdxdbStore {
         if patch.is_full_state() {
             // Full-state patches contain everything needed to reconstruct the new account.
             let account = account_from_full_state_patch(patch, final_header)?;
-            apply_full_account_state(self.db_id(), &account).await.map_err(|err| {
-                StoreError::DatabaseError(format!("failed to apply full account state: {err:?}"))
-            })?;
-
-            let mut smt_forest = self.smt_forest.write();
-            smt_forest.insert_and_stage_account_state(
-                account.id(),
-                account.vault(),
-                account.storage(),
+            let forest_update = self
+                .compute_account_reset_update(account.id(), account.vault(), account.storage(), &[])
+                .await?;
+            apply_full_account_state(self.db_id(), &account, forest_update).await.map_err(
+                |err| {
+                    StoreError::DatabaseError(format!(
+                        "failed to apply full account state: {err:?}"
+                    ))
+                },
             )?;
         } else {
-            // Stage the new roots so they are committed or discarded when the transaction is
-            // confirmed or dropped during sync.
-            self.apply_incremental_account_patch(final_header, patch, RootsUpdateMode::Stage)
-                .await?;
+            self.apply_incremental_account_patch(final_header, patch).await?;
         }
 
         // Updates for notes

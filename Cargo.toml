@@ -72,3 +72,19 @@ module_name_repetitions     = "allow"                           # Many triggers,
 must_use_candidate          = "allow"                           # This marks many fn's which isn't helpful.
 should_panic_without_expect = "allow"                           # We don't care about the specific panic message.
 # End of pedantic lints.
+
+# TEMPORARY: pins for the SMT forest persistence work. miden-client points at the rust-sdk
+# branch that adds the shared forest row backend (stacked on 0xMiden/rust-sdk#2333) and the
+# miden-crypto family at the branch that backports `MutationSet::from_parts` (miden-vm#3413)
+# onto the released 0.28 protocol crates. Remove once both are merged and released.
+# NOTE: local path pins during development; switch to the git branch before pushing.
+[patch.crates-io]
+miden-client              = { path = "/Users/jeremias/miden_repos/miden-client-14/crates/rust-client" }
+miden-client-sqlite-store = { path = "/Users/jeremias/miden_repos/miden-client-14/crates/sqlite-store" }
+miden-crypto              = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/crypto" }
+miden-crypto-derive       = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/crypto-derive" }
+miden-field               = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/field" }
+miden-lifted-air          = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/lifted-air" }
+miden-lifted-stark        = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/lifted-stark" }
+miden-serde-utils         = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/serde-utils" }
+miden-stark-transcript    = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/stark-transcript" }
