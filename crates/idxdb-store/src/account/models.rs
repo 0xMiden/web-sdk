@@ -72,6 +72,9 @@ pub struct ForeignAccountCodeIdxdbObject {
 #[serde(rename_all = "camelCase")]
 pub struct PostUndoAccountStateIdxdbObject {
     pub account_id: String,
+    /// The account-record commitment the undo would leave, or `None` when the undo deletes the
+    /// account record entirely.
+    pub commitment: Option<String>,
     pub vault_assets: Vec<PostUndoVaultAssetIdxdbObject>,
     pub storage_map_entries: Vec<PostUndoMapEntryIdxdbObject>,
     pub storage_slots: Vec<PostUndoStorageSlotIdxdbObject>,

@@ -123,13 +123,31 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "accountCommitmentsToUndo")]
     pub account_commitments_to_undo: Vec<String>,
 
-    /// Incremental account patches included in this sync, applied after the undo.
+    /// The account states the undo is expected to restore, validated inside the transaction
+    /// after the undo runs. A mismatch means the plan the forest delta was computed from went
+    /// stale (e.g. a concurrent history prune) and the whole sync must be retried.
+    #[wasm_bindgen(js_name = "expectedPostUndoStates")]
+    pub expected_post_undo_states: Vec<JsPostUndoExpectation>,
+
+    /// Incremental account patches included in this sync, applied after the undo and the full
+    /// account updates.
     #[wasm_bindgen(js_name = "accountPatchUpdates")]
     pub account_patch_updates: Vec<JsAccountPatchUpdate>,
 
     /// Transaction data for transactions included in this update.
     #[wasm_bindgen(js_name = "transactionUpdates")]
     pub transaction_updates: Vec<SerializedTransactionData>,
+}
+
+/// The account state the sync's undo is expected to restore for one account.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct JsPostUndoExpectation {
+    #[wasm_bindgen(js_name = "accountId")]
+    pub account_id: String,
+    /// Expected latest commitment after the undo; `None` when the undo deletes the account
+    /// record entirely.
+    pub commitment: Option<String>,
 }
 
 /// One incremental account patch applied within a state sync, mirroring the per-account

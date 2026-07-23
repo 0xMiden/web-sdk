@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -38,7 +38,7 @@ use super::chain_data::utils::{
 };
 use super::note::utils::{serialize_input_note, serialize_output_note};
 use super::transaction::utils::serialize_transaction_record;
-use crate::forest::cache::ForestRowCache;
+use crate::forest::cache::{ForestDirtyDelta, ForestRowCache};
 use crate::forest::js_bindings::JsForestUpdate;
 use crate::forest::{self, CachedAccountForest};
 use crate::promise::{await_js, await_js_value};
@@ -46,6 +46,7 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::{JsAccountPatchUpdate, JsAccountUpdate};
 use js_bindings::{
+    JsPostUndoExpectation,
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
@@ -250,10 +251,20 @@ impl IdxdbStore {
             }
         }
 
-        // Sync patches must move the account state forward; a stale or replayed patch would
-        // otherwise silently rewind tracked state.
+        // Sync patches on otherwise-untouched accounts must move the account state forward; a
+        // stale or replayed patch would otherwise silently rewind tracked state. Patches on
+        // rolled-back or fully-replaced accounts cannot be checked against the pre-sync local
+        // header; the write transaction validates them against the restored state instead.
+        let reconciled_ids: BTreeSet<AccountId> = rolled_back_accounts
+            .iter()
+            .copied()
+            .chain(full_accounts.iter().map(Account::id))
+            .collect();
         for (new_header, _) in &patch_updates {
             let account_id = new_header.id();
+            if reconciled_ids.contains(&account_id) {
+                continue;
+            }
             let (local_header, _) = self
                 .get_account_header(account_id)
                 .await?
@@ -267,18 +278,7 @@ impl IdxdbStore {
             }
         }
 
-        // Compute one reconciled forest delta covering the undo, the full account updates, and
-        // the incremental patches, so the whole sync commits it in a single transaction.
-        let (forest_update, account_patch_updates) = self
-            .compute_sync_forest_update(
-                &account_commitments_to_undo,
-                &rolled_back_accounts,
-                &full_accounts,
-                &patch_updates,
-            )
-            .await?;
-
-        let state_update = JsStateSyncUpdate {
+        let base_state_update = JsStateSyncUpdate {
             block_num: block_num.as_u32(),
             flattened_new_block_headers: flatten_nested_u8_vec(block_headers_as_bytes),
             new_block_nums: block_nums,
@@ -294,37 +294,81 @@ impl IdxdbStore {
                 .map(|account| JsAccountUpdate::from_account(account, None))
                 .collect(),
             account_commitments_to_undo,
-            account_patch_updates,
+            expected_post_undo_states: Vec::new(),
+            account_patch_updates: Vec::new(),
             transaction_updates,
         };
-        let promise = idxdb_apply_state_sync(self.db_id(), state_update, forest_update);
-        await_js_value(promise, "failed to apply state sync").await?;
 
-        Ok(())
+        // Compute one reconciled forest delta covering the undo, the full account updates, and
+        // the incremental patches, so the whole sync commits it in a single transaction. A
+        // conflict (concurrent commit between the snapshot and the write-back, or a stale undo
+        // plan) restarts the computation from a fresh snapshot.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let result = match self
+                .compute_sync_forest_update(
+                    &base_state_update.account_commitments_to_undo,
+                    &full_accounts,
+                    &patch_updates,
+                )
+                .await
+            {
+                Ok((forest_update, account_patch_updates, expected_post_undo_states)) => {
+                    let mut state_update = base_state_update.clone();
+                    state_update.account_patch_updates = account_patch_updates;
+                    state_update.expected_post_undo_states = expected_post_undo_states;
+                    let promise = idxdb_apply_state_sync(self.db_id(), state_update, forest_update);
+                    await_js_value(promise, "failed to apply state sync").await.map(|_| ())
+                },
+                Err(err) => Err(err),
+            };
+            match result {
+                Err(err)
+                    if attempt < forest::MAX_FOREST_ATTEMPTS
+                        && forest::is_forest_conflict(&err) => {},
+                result => return result,
+            }
+        }
     }
 
     /// Computes the sync's single reconciled forest delta, together with the serialized
     /// per-account patch payloads (whose updated map roots come from the forest's post-apply
-    /// state).
+    /// state) and the post-undo account states the write transaction must re-validate.
     ///
     /// Rolled-back accounts reconcile to the state the undo restores; full updates reconcile to
     /// the replacement state (winning over a rollback of the same account); patches on
     /// reconciled accounts overlay their absolute values on the reconcile target, while patches
     /// on untouched accounts contribute incremental operations directly.
+    #[allow(clippy::too_many_lines)]
     async fn compute_sync_forest_update(
         &self,
         undo_commitments: &[String],
-        _rolled_back_accounts: &[AccountId],
         full_accounts: &[Account],
         patch_updates: &[(&AccountHeader, &AccountPatch)],
-    ) -> Result<(JsForestUpdate, Vec<JsAccountPatchUpdate>), StoreError> {
+    ) -> Result<(JsForestUpdate, Vec<JsAccountPatchUpdate>, Vec<JsPostUndoExpectation>), StoreError>
+    {
+        // Syncs with no account work carry no forest update at all, so they neither consume a
+        // revision nor contend with concurrent account writes.
+        if undo_commitments.is_empty() && full_accounts.is_empty() && patch_updates.is_empty() {
+            let empty = forest::forest_update_payload(ForestDirtyDelta::default())?;
+            return Ok((empty, Vec::new(), Vec::new()));
+        }
+
         let snapshot = forest::load_forest_snapshot(self.db_id()).await?;
         let revision = snapshot.next_revision;
         let cache = ForestRowCache::new(snapshot.trees.clone(), Some(revision));
 
-        // Post-undo baselines for rolled-back accounts.
+        // Post-undo baselines for rolled-back accounts. The states resolved here are also the
+        // expectations the write transaction re-validates after running the undo, so a
+        // concurrent history prune cannot silently change what the undo restores.
         let mut reconcile: BTreeMap<AccountId, AccountForestTargets> = BTreeMap::new();
+        let mut expected_post_undo_states = Vec::new();
         for state in self.get_post_undo_account_states(undo_commitments).await? {
+            expected_post_undo_states.push(JsPostUndoExpectation {
+                account_id: state.account_id.clone(),
+                commitment: state.commitment.clone(),
+            });
             let targets = parse_post_undo_targets(&state)?;
             reconcile.insert(targets.account_id, targets);
         }
@@ -348,6 +392,12 @@ impl IdxdbStore {
             }
         }
 
+        // Incremental map patches layer onto the forest's latest trees, which must match the
+        // roots recorded in the account tables (same divergence check as the local patch path).
+        for (new_header, patch) in &incremental {
+            self.check_map_patch_roots(new_header.id(), patch, &snapshot.trees).await?;
+        }
+
         // Build one batch: reconcile ops (with their own full-coverage prefetch), then
         // incremental ops (map resets need their lineage's stored keys).
         let mut batch = SmtForestUpdateBatch::empty();
@@ -368,7 +418,7 @@ impl IdxdbStore {
                 }
             }
         }
-        forest::prefetch_rows(self.db_id(), &reset_plan, &cache).await?;
+        forest::prefetch_rows(self.db_id(), &reset_plan, &cache, revision).await?;
 
         for (new_header, patch) in &incremental {
             let account_id = new_header.id();
@@ -382,14 +432,17 @@ impl IdxdbStore {
         }
 
         let plan = plan_update(batch.clone(), &snapshot.trees);
-        forest::prefetch_rows(self.db_id(), &plan, &cache).await?;
+        forest::prefetch_rows(self.db_id(), &plan, &cache, revision).await?;
 
         let mut smt_forest = CachedAccountForest::new(RowForestBackend::new(cache.clone()))?;
         smt_forest.apply_updates(revision, batch)?;
 
         // Verify vault roots and build the per-account patch payloads from post-apply roots.
+        // Patches on reconciled accounts are included too: inside the write transaction the
+        // undo (or full update) runs first, then the patch moves the account rows to the same
+        // state the forest target already reflects.
         let mut account_patch_updates = Vec::new();
-        for (new_header, patch) in incremental {
+        for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
             let vault_root = smt_forest
                 .latest_root(vault_lineage_id(account_id))
@@ -425,7 +478,8 @@ impl IdxdbStore {
         }
 
         drop(smt_forest);
-        Ok((forest::forest_update_payload(cache.into_dirty_delta()), account_patch_updates))
+        let forest_update = forest::forest_update_payload(cache.into_dirty_delta())?;
+        Ok((forest_update, account_patch_updates, expected_post_undo_states))
     }
 }
 

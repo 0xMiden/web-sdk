@@ -169,6 +169,7 @@ describe("getForestRows", () => {
         },
       ],
       fullLineages: ["lineage-a", "lineage-missing"],
+      expectedRevision: FOREST_REVISION_FIRST,
     });
 
     expect(rows).toEqual({
@@ -232,6 +233,23 @@ describe("getForestRows", () => {
         },
         { lineage: "lineage-missing", rows: [] },
       ],
+    });
+  });
+
+  it("rejects rows read from a different forest revision", async () => {
+    const dbId = await openTestDb();
+
+    await expect(
+      getForestRows(dbId, {
+        entries: [],
+        buckets: [],
+        subtrees: [],
+        fullLineages: [],
+        expectedRevision: "0000000000000002",
+      })
+    ).rejects.toMatchObject({
+      name: "ForestConflictError",
+      message: expect.stringMatching(/^ForestConflictError:/),
     });
   });
 });
@@ -436,6 +454,98 @@ describe("applyForestUpdate", () => {
     });
   });
 
+  it("does not read the revision for an empty update", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await db.forestRevision.clear();
+
+    await expect(applyUpdate(dbId, makeUpdate())).resolves.toBeUndefined();
+    await expect(db.forestRevision.count()).resolves.toBe(0);
+  });
+
+  it("stores prototype-getter upserts as plain records", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    class EntryUpsert {
+      get lineage() {
+        return "getter-lineage";
+      }
+      get key() {
+        return "getter-key";
+      }
+      get value() {
+        return "getter-value";
+      }
+      get leafPosition() {
+        return "0000000000000001";
+      }
+    }
+
+    class TreeUpsert {
+      get lineage() {
+        return "getter-lineage";
+      }
+      get version() {
+        return FOREST_REVISION_FIRST;
+      }
+      get root() {
+        return "getter-root";
+      }
+      get entryCount() {
+        return 1;
+      }
+    }
+
+    class SubtreeUpsert {
+      get lineage() {
+        return "getter-lineage";
+      }
+      get depth() {
+        return 8;
+      }
+      get position() {
+        return "0000000000000001";
+      }
+      get blob() {
+        return uint8ArrayToBase64(new Uint8Array([1, 2, 3]));
+      }
+    }
+
+    await applyUpdate(
+      dbId,
+      makeUpdate({
+        allocatedRevision: FOREST_REVISION_FIRST,
+        entryUpserts: [new EntryUpsert()],
+        subtreeUpserts: [new SubtreeUpsert()],
+        treeUpserts: [new TreeUpsert()],
+      })
+    );
+
+    await expect(
+      db.forestEntries.get(["getter-lineage", "getter-key"])
+    ).resolves.toEqual({
+      lineage: "getter-lineage",
+      key: "getter-key",
+      value: "getter-value",
+      leafPosition: "0000000000000001",
+    });
+    await expect(db.forestTrees.get("getter-lineage")).resolves.toEqual({
+      lineage: "getter-lineage",
+      version: FOREST_REVISION_FIRST,
+      root: "getter-root",
+      entryCount: 1,
+    });
+    await expect(
+      db.forestSubtrees.get(["getter-lineage", 8, "0000000000000001"])
+    ).resolves.toEqual({
+      lineage: "getter-lineage",
+      depth: 8,
+      position: "0000000000000001",
+      blob: new Uint8Array([1, 2, 3]),
+    });
+  });
+
   it("formats the maximum u64 revision without losing precision", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
@@ -449,6 +559,23 @@ describe("applyForestUpdate", () => {
       makeUpdate({ allocatedRevision: "fffffffffffffffe" })
     );
 
+    await expect(db.forestRevision.get(0)).resolves.toEqual({
+      id: 0,
+      nextVersion: "ffffffffffffffff",
+    });
+  });
+
+  it("rejects revision overflow without modifying the singleton", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await db.forestRevision.put({
+      id: 0,
+      nextVersion: "ffffffffffffffff",
+    });
+
+    await expect(
+      applyUpdate(dbId, makeUpdate({ allocatedRevision: "ffffffffffffffff" }))
+    ).rejects.toThrow("Forest revision exceeds the maximum u64 value");
     await expect(db.forestRevision.get(0)).resolves.toEqual({
       id: 0,
       nextVersion: "ffffffffffffffff",

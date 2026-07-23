@@ -95,6 +95,36 @@ pub(crate) fn backend_error(e: miden_client::store::forest_backend::BackendError
     StoreError::DatabaseError(format!("forest backend error: {e}"))
 }
 
+// OPTIMISTIC CONCURRENCY
+// ================================================================================================
+
+/// Message marker of the typed JS `ForestConflictError`, thrown when optimistic-concurrency
+/// validation fails (row prefetch against a moved revision, write-back CAS, or a stale undo
+/// plan). The JS error's message starts with this marker so it survives the wasm boundary,
+/// where only the stringified error is available.
+const FOREST_CONFLICT_MARKER: &str = "ForestConflictError";
+
+/// Maximum attempts for a store operation whose forest phase hits optimistic-concurrency
+/// conflicts before the conflict is surfaced to the caller.
+pub(crate) const MAX_FOREST_ATTEMPTS: usize = 3;
+
+/// Whether the error is a forest optimistic-concurrency conflict, which a fresh attempt (new
+/// snapshot, new prefetch, new write-back) can resolve.
+pub(crate) fn is_forest_conflict(err: &StoreError) -> bool {
+    matches!(err, StoreError::DatabaseError(msg) if msg.contains(FOREST_CONFLICT_MARKER))
+}
+
+/// Whether a read-only witness lookup straddled a concurrent commit and should be retried.
+///
+/// Besides explicit prefetch conflicts, the account header and the forest snapshot are read in
+/// separate transactions, so a commit between them surfaces as conflicting roots; a fresh
+/// attempt reads both again.
+pub(crate) fn is_retryable_read(err: &StoreError) -> bool {
+    use miden_client::crypto::MerkleError;
+    is_forest_conflict(err)
+        || matches!(err, StoreError::MerkleStoreError(MerkleError::ConflictingRoots { .. }))
+}
+
 fn word_from_hex(hex_str: &str) -> Result<Word, StoreError> {
     Word::try_from(hex_str)
         .map_err(|e| StoreError::DatabaseError(format!("malformed word hex: {e}")))
@@ -136,10 +166,15 @@ pub(crate) async fn load_forest_snapshot(db_id: &str) -> Result<ForestSnapshot, 
 }
 
 /// Loads the rows named by `plan` into `cache`.
+///
+/// `expected_revision` is the revision the operation's snapshot was taken at; the row read
+/// fails with a conflict if a commit advanced the counter since, so the cache never mixes rows
+/// from different forest states.
 pub(crate) async fn prefetch_rows(
     db_id: &str,
     plan: &ForestPrefetchPlan,
     cache: &ForestRowCache,
+    expected_revision: VersionId,
 ) -> Result<(), StoreError> {
     if plan.is_empty() {
         return Ok(());
@@ -147,6 +182,7 @@ pub(crate) async fn prefetch_rows(
 
     let request = JsForestRowsRequest {
         entries: Vec::new(),
+        expected_revision: Some(u64_to_hex(expected_revision)),
         buckets: plan
             .buckets
             .iter()
@@ -224,11 +260,19 @@ pub(crate) async fn prefetch_rows(
 // WRITE-BACK PAYLOAD
 // ================================================================================================
 
+/// Converts an entry count to the u32 the tree rows store, rejecting values that do not fit
+/// (persisting a clamped count would corrupt the lineage's metadata).
+fn entry_count_to_u32(count: usize) -> Result<u32, StoreError> {
+    u32::try_from(count).map_err(|_| {
+        StoreError::DatabaseError(format!("forest lineage entry count {count} exceeds u32"))
+    })
+}
+
 /// Converts a recorded delta into the JS write-back payload.
 ///
 /// Writes are coalesced to their final per-row state (the last write to a row key wins), so the
 /// JS side applies each row at most once and ordering inside the payload carries no meaning.
-pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> JsForestUpdate {
+pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> Result<JsForestUpdate, StoreError> {
     let mut entry_writes: BTreeMap<(LineageId, Word), Option<(Word, u64)>> = BTreeMap::new();
     let mut subtree_writes: BTreeMap<(LineageId, u8, u64), Option<Vec<u8>>> = BTreeMap::new();
     let mut tree_writes: BTreeMap<LineageId, ForestTreeMeta> = BTreeMap::new();
@@ -253,17 +297,18 @@ pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> JsForestUpdate {
         }
     }
 
+    let mut expected_trees = Vec::with_capacity(delta.expected_trees.len());
+    for (lineage, meta) in delta.expected_trees {
+        expected_trees.push(JsForestExpectedTree {
+            lineage: lineage_to_hex(lineage),
+            version: meta.map(|m| u64_to_hex(m.version)),
+            root: meta.map(|m| m.root.to_hex()),
+            entry_count: meta.map(|m| entry_count_to_u32(m.entry_count)).transpose()?,
+        });
+    }
+
     let mut update = JsForestUpdate {
-        expected_trees: delta
-            .expected_trees
-            .into_iter()
-            .map(|(lineage, meta)| JsForestExpectedTree {
-                lineage: lineage_to_hex(lineage),
-                version: meta.map(|m| u64_to_hex(m.version)),
-                root: meta.map(|m| m.root.to_hex()),
-                entry_count: meta.map(|m| u32::try_from(m.entry_count).unwrap_or(u32::MAX)),
-            })
-            .collect(),
+        expected_trees,
         allocated_revision: delta.allocated_revision.map(u64_to_hex),
         entry_upserts: Vec::new(),
         entry_deletes: Vec::new(),
@@ -306,11 +351,11 @@ pub(crate) fn forest_update_payload(delta: ForestDirtyDelta) -> JsForestUpdate {
             lineage: lineage_to_hex(lineage),
             version: u64_to_hex(meta.version),
             root: meta.root.to_hex(),
-            entry_count: u32::try_from(meta.entry_count).unwrap_or(u32::MAX),
+            entry_count: entry_count_to_u32(meta.entry_count)?,
         });
     }
 
-    update
+    Ok(update)
 }
 
 // FOREST CONSTRUCTION
@@ -326,9 +371,10 @@ pub(crate) async fn forest_for_plan(
     plan: &ForestPrefetchPlan,
     mutating: bool,
 ) -> Result<(CachedAccountForest, ForestRowCache), StoreError> {
+    let expected_revision = snapshot.next_revision;
     let allocated_revision = mutating.then_some(snapshot.next_revision);
     let cache = ForestRowCache::new(snapshot.trees, allocated_revision);
-    prefetch_rows(db_id, plan, &cache).await?;
+    prefetch_rows(db_id, plan, &cache, expected_revision).await?;
     let forest = CachedAccountForest::new(RowForestBackend::new(cache.clone()))?;
     Ok((forest, cache))
 }

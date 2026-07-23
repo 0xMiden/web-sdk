@@ -84,6 +84,7 @@ use models::{
 pub(crate) mod utils;
 use miden_client::store::forest_backend::{
     ForestPrefetchPlan,
+    ForestTreeMeta,
     LineageId,
     RowForestBackend,
     SmtForestUpdateBatch,
@@ -458,15 +459,83 @@ impl IdxdbStore {
             .collect()
     }
 
+    /// Verifies that every Update map patch layers onto a forest lineage whose root matches the
+    /// old root recorded in the account tables; a mismatch means the forest and the account
+    /// state diverged. Create and Remove patches reset the lineage, so their old root is
+    /// irrelevant.
+    pub(crate) async fn check_map_patch_roots(
+        &self,
+        account_id: AccountId,
+        patch: &AccountPatch,
+        trees: &BTreeMap<LineageId, ForestTreeMeta>,
+    ) -> Result<(), StoreError> {
+        let update_slots: Vec<StorageSlotName> = patch
+            .storage()
+            .maps()
+            .filter(|(_, map_patch)| {
+                let op = map_patch.patch_op();
+                !op.is_create() && !op.is_remove()
+            })
+            .map(|(slot_name, _)| slot_name.clone())
+            .collect();
+        if update_slots.is_empty() {
+            return Ok(());
+        }
+
+        let stored_roots = self
+            .get_storage_map_roots(
+                account_id,
+                update_slots.iter().map(|name| name.as_str().to_string()).collect(),
+            )
+            .await?;
+        // A lineage the forest does not know yet starts from the empty tree, which is
+        // consistent with an absent old root.
+        let default_root = StorageMap::default().root();
+        for slot_name in &update_slots {
+            let lineage = storage_map_lineage_id(account_id, slot_name);
+            let forest_root = trees.get(&lineage).map_or(default_root, |meta| meta.root);
+            let expected_root = stored_roots.get(slot_name).copied().unwrap_or(default_root);
+            if forest_root != expected_root {
+                return Err(StoreError::MerkleStoreError(MerkleError::ConflictingRoots {
+                    expected_root,
+                    actual_root: forest_root,
+                }));
+            }
+        }
+        Ok(())
+    }
+
     /// Applies an incremental (non-full-state) account patch: computes the new storage-map and
     /// vault roots via the SMT forest, verifies the resulting vault root against `final_header`,
     /// and persists the changes atomically.
     ///
-    /// The patch's storage and vault values are already absolute, so no full account or
-    /// relative-delta reconstruction is required; only the previous roots of changed maps are
-    /// read back from the store.
+    /// The stored account state must still match `init_header` at write time (validated inside
+    /// the write transaction), so a stale or replayed patch cannot overwrite newer state.
+    /// Optimistic-concurrency conflicts restart the operation from a fresh snapshot.
     pub(crate) async fn apply_incremental_account_patch(
         &self,
+        init_header: &AccountHeader,
+        final_header: &AccountHeader,
+        patch: &AccountPatch,
+    ) -> Result<(), StoreError> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match self
+                .apply_incremental_account_patch_once(init_header, final_header, patch)
+                .await
+            {
+                Err(err)
+                    if attempt < forest::MAX_FOREST_ATTEMPTS
+                        && forest::is_forest_conflict(&err) => {},
+                result => return result,
+            }
+        }
+    }
+
+    async fn apply_incremental_account_patch_once(
+        &self,
+        init_header: &AccountHeader,
         final_header: &AccountHeader,
         patch: &AccountPatch,
     ) -> Result<(), StoreError> {
@@ -476,6 +545,9 @@ impl IdxdbStore {
         // slots that reset (create or remove) also need their lineage's stored keys.
         let snapshot = forest::load_forest_snapshot(self.db_id()).await?;
         let revision = snapshot.next_revision;
+
+        self.check_map_patch_roots(account_id, patch, &snapshot.trees).await?;
+
         let cache = ForestRowCache::new(snapshot.trees.clone(), Some(revision));
 
         let mut reset_plan = ForestPrefetchPlan::default();
@@ -488,7 +560,7 @@ impl IdxdbStore {
                 reset_plan.full_lineages.insert(lineage);
             }
         }
-        forest::prefetch_rows(self.db_id(), &reset_plan, &cache).await?;
+        forest::prefetch_rows(self.db_id(), &reset_plan, &cache, revision).await?;
 
         // Build one update batch covering the vault and every changed map slot.
         let mut batch = SmtForestUpdateBatch::empty();
@@ -501,7 +573,7 @@ impl IdxdbStore {
         add_storage_map_patch_ops(&cache, account_id, &mut batch, patch)?;
 
         let plan = plan_update(batch.clone(), &snapshot.trees);
-        forest::prefetch_rows(self.db_id(), &plan, &cache).await?;
+        forest::prefetch_rows(self.db_id(), &plan, &cache, revision).await?;
 
         // Phase 2: compute and stage the forest changes against the cache.
         let mut smt_forest = CachedAccountForest::new(RowForestBackend::new(cache.clone()))?;
@@ -523,10 +595,11 @@ impl IdxdbStore {
 
         // Phase 3: write account rows and forest rows in one Dexie transaction.
         drop(smt_forest);
-        let forest_update = forest::forest_update_payload(cache.into_dirty_delta());
+        let forest_update = forest::forest_update_payload(cache.into_dirty_delta())?;
         apply_account_patch(
             self.db_id(),
             account_id,
+            init_header,
             final_header,
             &updated_storage_slots,
             &updated_assets,
@@ -573,7 +646,7 @@ impl IdxdbStore {
                 pre_plan.full_lineages.insert(*lineage);
             }
         }
-        forest::prefetch_rows(self.db_id(), &pre_plan, &cache).await?;
+        forest::prefetch_rows(self.db_id(), &pre_plan, &cache, revision).await?;
 
         let mut batch = SmtForestUpdateBatch::empty();
         for (lineage, target) in lineages {
@@ -581,12 +654,12 @@ impl IdxdbStore {
         }
 
         let plan = plan_update(batch.clone(), &snapshot.trees);
-        forest::prefetch_rows(self.db_id(), &plan, &cache).await?;
+        forest::prefetch_rows(self.db_id(), &plan, &cache, revision).await?;
 
         let mut smt_forest = CachedAccountForest::new(RowForestBackend::new(cache.clone()))?;
         smt_forest.apply_updates(revision, batch)?;
         drop(smt_forest);
-        Ok(forest::forest_update_payload(cache.into_dirty_delta()))
+        forest::forest_update_payload(cache.into_dirty_delta())
     }
 
     pub(crate) async fn insert_account(
@@ -595,21 +668,31 @@ impl IdxdbStore {
         initial_address: Address,
         client_account_type: ClientAccountType,
     ) -> Result<(), StoreError> {
-        let forest_update = self
-            .compute_account_reset_update(account.id(), account.vault(), account.storage(), &[])
-            .await?;
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let forest_update = self
+                .compute_account_reset_update(account.id(), account.vault(), account.storage(), &[])
+                .await?;
 
-        insert_account_atomic(
-            self.db_id(),
-            account,
-            client_account_type,
-            initial_address,
-            forest_update,
-        )
-        .await
-        .map_err(|js_error| {
-            StoreError::DatabaseError(format!("failed to insert account: {js_error:?}"))
-        })
+            let result = insert_account_atomic(
+                self.db_id(),
+                account,
+                client_account_type,
+                initial_address.clone(),
+                forest_update,
+            )
+            .await
+            .map_err(|js_error| {
+                StoreError::DatabaseError(format!("failed to insert account: {js_error:?}"))
+            });
+            match result {
+                Err(err)
+                    if attempt < forest::MAX_FOREST_ATTEMPTS
+                        && forest::is_forest_conflict(&err) => {},
+                result => return result,
+            }
+        }
     }
 
     pub(crate) async fn update_account(
@@ -621,23 +704,33 @@ impl IdxdbStore {
             .await?
             .ok_or(StoreError::AccountDataNotFound(account_id))?;
 
-        // Map slots stored today but absent from the new state reset to the empty tree.
-        let stale_map_slots: Vec<StorageSlotName> =
-            self.get_storage_map_roots(account_id, Vec::new()).await?.into_keys().collect();
-        let forest_update = self
-            .compute_account_reset_update(
-                account_id,
-                new_account_state.vault(),
-                new_account_state.storage(),
-                &stale_map_slots,
-            )
-            .await?;
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            // Map slots stored today but absent from the new state reset to the empty tree.
+            let stale_map_slots: Vec<StorageSlotName> =
+                self.get_storage_map_roots(account_id, Vec::new()).await?.into_keys().collect();
+            let forest_update = self
+                .compute_account_reset_update(
+                    account_id,
+                    new_account_state.vault(),
+                    new_account_state.storage(),
+                    &stale_map_slots,
+                )
+                .await?;
 
-        apply_full_account_state(self.db_id(), new_account_state, forest_update)
-            .await
-            .map_err(|_| StoreError::DatabaseError("failed to update account".to_string()))?;
-
-        Ok(())
+            let result = apply_full_account_state(self.db_id(), new_account_state, forest_update)
+                .await
+                .map_err(|err| {
+                    StoreError::DatabaseError(format!("failed to update account: {err:?}"))
+                });
+            match result {
+                Err(err)
+                    if attempt < forest::MAX_FOREST_ATTEMPTS
+                        && forest::is_forest_conflict(&err) => {},
+                result => return result.map(|_| ()),
+            }
+        }
     }
 
     pub(crate) async fn get_account_vault(
@@ -671,6 +764,23 @@ impl IdxdbStore {
         account_id: AccountId,
         vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match self.get_account_asset_once(account_id, vault_id).await {
+                Err(err)
+                    if attempt < forest::MAX_FOREST_ATTEMPTS && forest::is_retryable_read(&err) => {
+                },
+                result => return result,
+            }
+        }
+    }
+
+    async fn get_account_asset_once(
+        &self,
+        account_id: AccountId,
+        vault_id: AssetId,
+    ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
         let account_header = self
             .get_account_header(account_id)
             .await?
@@ -693,6 +803,24 @@ impl IdxdbStore {
     }
 
     pub(crate) async fn get_account_map_item(
+        &self,
+        account_id: AccountId,
+        slot_name: StorageSlotName,
+        key: StorageMapKey,
+    ) -> Result<(Word, StorageMapWitness), StoreError> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match self.get_account_map_item_once(account_id, slot_name.clone(), key).await {
+                Err(err)
+                    if attempt < forest::MAX_FOREST_ATTEMPTS && forest::is_retryable_read(&err) => {
+                },
+                result => return result,
+            }
+        }
+    }
+
+    async fn get_account_map_item_once(
         &self,
         account_id: AccountId,
         slot_name: StorageSlotName,
@@ -820,7 +948,7 @@ impl IdxdbStore {
                 pre_plan.full_lineages.insert(*lineage);
             }
         }
-        forest::prefetch_rows(self.db_id(), &pre_plan, cache).await?;
+        forest::prefetch_rows(self.db_id(), &pre_plan, cache, snapshot.next_revision).await?;
 
         for (lineage, target) in jobs {
             forest::add_reconcile_ops(cache, batch, lineage, target)?;

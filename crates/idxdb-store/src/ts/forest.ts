@@ -25,6 +25,7 @@ export interface ForestRowsRequest {
   buckets: ForestBucketRequest[];
   subtrees: ForestSubtreeRequest[];
   fullLineages: string[];
+  expectedRevision?: string;
 }
 
 export interface ForestSnapshot {
@@ -112,7 +113,7 @@ export interface ForestUpdate {
 
 export class ForestConflictError extends Error {
   constructor(message: string) {
-    super(message);
+    super(`ForestConflictError: ${message}`);
     this.name = "ForestConflictError";
   }
 }
@@ -173,71 +174,84 @@ export async function getForestRows(
     const db = getDatabase(dbId);
     return await db.dexie.transaction(
       "r",
-      [db.forestEntries, db.forestSubtrees],
+      [db.forestEntries, db.forestSubtrees, db.forestRevision],
       async (tx) => {
-        const [entries, buckets, subtrees, fullLineages] = await Promise.all([
-          Promise.all(
-            request.entries.map(async ({ lineage, key }) => {
-              const row = await tx.forestEntries.get([lineage, key]);
-              if (row === undefined) {
-                return { lineage, key };
-              }
-              return {
-                lineage,
-                key,
-                value: row.value,
-                leafPosition: row.leafPosition,
-              };
-            })
-          ),
-          Promise.all(
-            request.buckets.map(async ({ lineage, leafPosition }) => {
-              const rows = await tx.forestEntries
-                .where("[lineage+leafPosition]")
-                .equals([lineage, leafPosition])
-                .toArray();
-              return {
-                lineage,
-                leafPosition,
-                entries: rows.map(({ key, value }) => ({ key, value })),
-              };
-            })
-          ),
-          Promise.all(
-            request.subtrees.map(async ({ lineage, depth, position }) => {
-              const row = await tx.forestSubtrees.get([
-                lineage,
-                depth,
-                position,
-              ]);
-              if (row === undefined) {
-                return { lineage, depth, position };
-              }
-              return {
-                lineage,
-                depth,
-                position,
-                blob: uint8ArrayToBase64(row.blob),
-              };
-            })
-          ),
-          Promise.all(
-            request.fullLineages.map(async (lineage) => {
-              const rows = await tx.forestEntries
-                .where("lineage")
-                .equals(lineage)
-                .toArray();
-              return {
-                lineage,
-                rows: rows.map(({ key, value, leafPosition }) => ({
+        const [revision, entries, buckets, subtrees, fullLineages] =
+          await Promise.all([
+            request.expectedRevision === undefined
+              ? Promise.resolve(undefined)
+              : tx.forestRevision.get(FOREST_REVISION_ID),
+            Promise.all(
+              request.entries.map(async ({ lineage, key }) => {
+                const row = await tx.forestEntries.get([lineage, key]);
+                if (row === undefined) {
+                  return { lineage, key };
+                }
+                return {
+                  lineage,
                   key,
-                  value,
+                  value: row.value,
+                  leafPosition: row.leafPosition,
+                };
+              })
+            ),
+            Promise.all(
+              request.buckets.map(async ({ lineage, leafPosition }) => {
+                const rows = await tx.forestEntries
+                  .where("[lineage+leafPosition]")
+                  .equals([lineage, leafPosition])
+                  .toArray();
+                return {
+                  lineage,
                   leafPosition,
-                })),
-              };
-            })
-          ),
-        ]);
+                  entries: rows.map(({ key, value }) => ({ key, value })),
+                };
+              })
+            ),
+            Promise.all(
+              request.subtrees.map(async ({ lineage, depth, position }) => {
+                const row = await tx.forestSubtrees.get([
+                  lineage,
+                  depth,
+                  position,
+                ]);
+                if (row === undefined) {
+                  return { lineage, depth, position };
+                }
+                return {
+                  lineage,
+                  depth,
+                  position,
+                  blob: uint8ArrayToBase64(row.blob),
+                };
+              })
+            ),
+            Promise.all(
+              request.fullLineages.map(async (lineage) => {
+                const rows = await tx.forestEntries
+                  .where("lineage")
+                  .equals(lineage)
+                  .toArray();
+                return {
+                  lineage,
+                  rows: rows.map(({ key, value, leafPosition }) => ({
+                    key,
+                    value,
+                    leafPosition,
+                  })),
+                };
+              })
+            ),
+          ]);
+
+        if (request.expectedRevision !== undefined) {
+          if (revision === undefined) {
+            throw missingForestRevisionError();
+          }
+          if (revision.nextVersion !== request.expectedRevision) {
+            throw new ForestConflictError("Forest revision does not match");
+          }
+        }
 
         return { entries, buckets, subtrees, fullLineages };
       }
@@ -314,6 +328,17 @@ export async function applyForestUpdate(
   if (update == null) {
     return;
   }
+  if (
+    update.allocatedRevision == null &&
+    update.expectedTrees.length === 0 &&
+    update.entryUpserts.length === 0 &&
+    update.entryDeletes.length === 0 &&
+    update.subtreeUpserts.length === 0 &&
+    update.subtreeDeletes.length === 0 &&
+    update.treeUpserts.length === 0
+  ) {
+    return;
+  }
 
   const [expectedTrees, revision] = await Promise.all([
     Promise.all(
@@ -355,24 +380,42 @@ export async function applyForestUpdate(
     );
   }
   if (update.entryUpserts.length > 0) {
-    await tx.forestEntries.bulkPut(update.entryUpserts);
+    await tx.forestEntries.bulkPut(
+      update.entryUpserts.map(({ lineage, key, value, leafPosition }) => ({
+        lineage,
+        key,
+        value,
+        leafPosition,
+      }))
+    );
   }
   if (update.subtreeUpserts.length > 0) {
     await tx.forestSubtrees.bulkPut(
-      update.subtreeUpserts.map(({ blob, ...row }) => ({
-        ...row,
+      update.subtreeUpserts.map(({ lineage, depth, position, blob }) => ({
+        lineage,
+        depth,
+        position,
         blob: base64ToUint8Array(blob),
       }))
     );
   }
   if (update.treeUpserts.length > 0) {
-    await tx.forestTrees.bulkPut(update.treeUpserts);
+    await tx.forestTrees.bulkPut(
+      update.treeUpserts.map(({ lineage, version, root, entryCount }) => ({
+        lineage,
+        version,
+        root,
+        entryCount,
+      }))
+    );
   }
 
   if (update.allocatedRevision != null) {
-    const nextVersion = (BigInt(`0x${update.allocatedRevision}`) + 1n)
-      .toString(16)
-      .padStart(16, "0");
+    const nextRevision = BigInt(`0x${update.allocatedRevision}`) + 1n;
+    if (nextRevision > 0xffffffffffffffffn) {
+      throw new Error("Forest revision exceeds the maximum u64 value");
+    }
+    const nextVersion = nextRevision.toString(16).padStart(16, "0");
     await tx.forestRevision.put({
       id: FOREST_REVISION_ID,
       nextVersion,

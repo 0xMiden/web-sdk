@@ -204,10 +204,13 @@ pub fn patched_storage_slots(
 ///
 /// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
 /// the full Account object. This avoids loading account code and full storage map entries.
+/// The write transaction validates that the stored account still matches `init_header`'s
+/// commitment before writing.
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_account_patch(
     db_id: &str,
     account_id: AccountId,
+    init_header: &AccountHeader,
     final_header: &AccountHeader,
     updated_storage_slots: &PatchedStorageSlots,
     updated_assets: &[Asset],
@@ -236,6 +239,7 @@ pub async fn apply_account_patch(
         update.vault_root,
         update.committed,
         update.commitment,
+        init_header.to_commitment().to_string(),
         forest_update,
     ))
     .await?;

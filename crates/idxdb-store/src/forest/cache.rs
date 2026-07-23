@@ -235,6 +235,16 @@ impl ForestRowCache {
     fn note_expected_absent(inner: &mut CacheInner, lineage: LineageId) {
         inner.expected_trees.entry(lineage).or_insert(None);
     }
+
+    /// Promotes a lineage absent from the initial snapshot to full coverage before its first
+    /// entry write. Such a lineage starts authoritatively empty, so its complete entry set is
+    /// exactly the writes it receives; tracking them in `full_entries` keeps `leaf_entries` and
+    /// `for_each_entry` consistent with reads-after-writes within the same operation.
+    fn cover_written_lineage(inner: &mut CacheInner, lineage: LineageId) {
+        if !inner.initial_lineages.contains(&lineage) && inner.full_coverage.insert(lineage) {
+            inner.full_entries.entry(lineage).or_default();
+        }
+    }
 }
 
 impl ForestRowStore for ForestRowCache {
@@ -340,6 +350,7 @@ impl ForestRowStore for ForestRowCache {
         leaf_position: u64,
     ) -> Result<()> {
         let mut inner = self.0.borrow_mut();
+        Self::cover_written_lineage(&mut inner, lineage);
         inner.entries.insert((lineage, key), Loaded::Present((value, leaf_position)));
         if let Some(bucket) = inner.buckets.get_mut(&(lineage, leaf_position)) {
             match bucket.iter_mut().find(|(k, _)| *k == key) {
@@ -362,6 +373,7 @@ impl ForestRowStore for ForestRowCache {
 
     fn delete_entry(&mut self, lineage: LineageId, key: Word) -> Result<()> {
         let mut inner = self.0.borrow_mut();
+        Self::cover_written_lineage(&mut inner, lineage);
         let previous = inner.entries.insert((lineage, key), Loaded::Absent);
         let leaf_position = match previous {
             Some(Loaded::Present((_, position))) => Some(position),

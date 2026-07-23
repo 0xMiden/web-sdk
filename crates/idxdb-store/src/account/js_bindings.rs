@@ -140,6 +140,7 @@ extern "C" {
         vault_root: String,
         committed: bool,
         commitment: String,
+        expected_initial_commitment: String,
         forest_update: JsForestUpdate,
     ) -> js_sys::Promise;
 

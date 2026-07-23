@@ -9,7 +9,7 @@ import {
   applyStateSync,
   discardTransactions,
 } from "./sync.js";
-import { applyAccountPatch } from "./accounts.js";
+import { applyAccountPatch, upsertAccountRecord } from "./accounts.js";
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -36,6 +36,26 @@ async function openTestDb(): Promise<string> {
   await openDatabase(name, "0.1.0");
   openDbIds.push(name);
   return name;
+}
+
+async function seedSyncAccount(
+  dbId: string,
+  accountId: string,
+  nonce = "0",
+  commitment = `${accountId}-initial`
+): Promise<void> {
+  await upsertAccountRecord(
+    dbId,
+    accountId,
+    `${accountId}-code`,
+    `${accountId}-storage`,
+    `${accountId}-vault`,
+    nonce,
+    false,
+    commitment,
+    undefined,
+    false
+  );
 }
 
 // Helper: uint8Array -> base64 (mirrors the source util)
@@ -80,6 +100,7 @@ function minimalStateUpdate(
     serializedInputNotes: [],
     serializedOutputNotes: [],
     accountUpdates: [],
+    expectedPostUndoStates: [],
     transactionUpdates: [],
     ...overrides,
   };
@@ -1063,6 +1084,7 @@ describe("sync", () => {
   describe("applyStateSync — account updates", () => {
     it("applies a full account state during sync", async () => {
       const dbId = await openTestDb();
+      await seedSyncAccount(dbId, "acct-sync-1");
 
       await applyStateSync(
         dbId,
@@ -1099,6 +1121,8 @@ describe("sync", () => {
 
     it("applies multiple account updates in one sync call", async () => {
       const dbId = await openTestDb();
+      await seedSyncAccount(dbId, "acct-sync-A");
+      await seedSyncAccount(dbId, "acct-sync-B");
 
       await applyStateSync(
         dbId,
@@ -1145,6 +1169,7 @@ describe("sync", () => {
     it("applies undo, patches, full updates, and one forest delta in order", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
+      await seedSyncAccount(dbId, "acct-sync", "0", "commitment-0");
       await applyAccountPatch(
         dbId,
         "acct-sync",
@@ -1156,7 +1181,8 @@ describe("sync", () => {
         "storage-1",
         "vault-1",
         false,
-        "commitment-1"
+        "commitment-1",
+        "commitment-0"
       );
       await applyAccountPatch(
         dbId,
@@ -1169,7 +1195,8 @@ describe("sync", () => {
         "storage-2",
         "vault-2",
         false,
-        "commitment-2"
+        "commitment-2",
+        "commitment-1"
       );
 
       await applyStateSync(
@@ -1177,6 +1204,9 @@ describe("sync", () => {
         minimalStateUpdate({
           blockNum: 8,
           accountCommitmentsToUndo: ["commitment-2"],
+          expectedPostUndoStates: [
+            { accountId: "acct-sync", commitment: "commitment-1" },
+          ],
           accountPatchUpdates: [
             {
               accountId: "acct-sync",
@@ -1195,8 +1225,8 @@ describe("sync", () => {
           ],
           accountUpdates: [
             {
-              accountId: "full-account",
-              nonce: "1",
+              accountId: "acct-sync",
+              nonce: "2",
               storageRoot: "full-storage",
               storageSlots: [],
               storageMapEntries: [],
@@ -1237,8 +1267,11 @@ describe("sync", () => {
         db.latestAccountStorages.get(["acct-sync", "slot"])
       ).resolves.toMatchObject({ slotValue: "final" });
       await expect(
-        db.latestAccountHeaders.get("full-account")
-      ).resolves.toBeDefined();
+        db.historicalAccountHeaders
+          .where("[id+replacedAtNonce]")
+          .equals(["acct-sync", "3"])
+          .first()
+      ).resolves.toMatchObject({ accountCommitment: "full-commitment" });
       await expect(db.forestTrees.get("sync-lineage")).resolves.toBeDefined();
       await expect(db.forestRevision.get(0)).resolves.toMatchObject({
         nextVersion: "0000000000000002",
@@ -1248,6 +1281,7 @@ describe("sync", () => {
     it("rolls back the whole sync when forest validation fails", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
+      await seedSyncAccount(dbId, "rolled-back-account");
 
       await expect(
         applyStateSync(
@@ -1284,13 +1318,153 @@ describe("sync", () => {
 
       await expect(
         db.latestAccountHeaders.get("rolled-back-account")
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({
+        nonce: "0",
+        accountCommitment: "rolled-back-account-initial",
+      });
       await expect(db.blockchainCheckpoint.get(1)).resolves.toMatchObject({
         blockNum: 0,
       });
       await expect(db.forestRevision.get(0)).resolves.toMatchObject({
         nextVersion: "0000000000000001",
       });
+    });
+
+    it("rejects a stale post-undo expectation and rolls back the undo", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await seedSyncAccount(dbId, "acct-stale", "0", "commitment-0");
+      await applyAccountPatch(
+        dbId,
+        "acct-stale",
+        "1",
+        [],
+        [],
+        [],
+        "code-1",
+        "storage-1",
+        "vault-1",
+        false,
+        "commitment-1",
+        "commitment-0"
+      );
+      await applyAccountPatch(
+        dbId,
+        "acct-stale",
+        "2",
+        [],
+        [],
+        [],
+        "code-2",
+        "storage-2",
+        "vault-2",
+        false,
+        "commitment-2",
+        "commitment-1"
+      );
+
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            accountCommitmentsToUndo: ["commitment-2"],
+            expectedPostUndoStates: [
+              { accountId: "acct-stale", commitment: "wrong-commitment" },
+            ],
+          })
+        )
+      ).rejects.toMatchObject({
+        name: "ForestConflictError",
+        message: expect.stringMatching(/^ForestConflictError:/),
+      });
+      await expect(
+        db.latestAccountHeaders.get("acct-stale")
+      ).resolves.toMatchObject({
+        nonce: "2",
+        accountCommitment: "commitment-2",
+      });
+      await expect(
+        db.historicalAccountHeaders.where("id").equals("acct-stale").count()
+      ).resolves.toBe(2);
+    });
+
+    it("accepts an absent account as the expected post-undo state", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await seedSyncAccount(dbId, "acct-deleted", "1", "commitment-1");
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          accountCommitmentsToUndo: ["commitment-1"],
+          expectedPostUndoStates: [
+            { accountId: "acct-deleted", commitment: null },
+          ],
+        })
+      );
+
+      await expect(
+        db.latestAccountHeaders.get("acct-deleted")
+      ).resolves.toBeUndefined();
+    });
+
+    it("rejects non-increasing patches inside the sync transaction", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await seedSyncAccount(dbId, "acct-patch", "2", "commitment-2");
+
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            accountPatchUpdates: [
+              {
+                accountId: "acct-patch",
+                nonce: "2",
+                updatedSlots: [],
+                changedMapEntries: [],
+                changedAssets: [],
+                codeRoot: "code-2",
+                storageRoot: "storage-2",
+                vaultRoot: "vault-2",
+                committed: false,
+                commitment: "replayed-commitment",
+              },
+            ],
+          })
+        )
+      ).rejects.toMatchObject({
+        name: "StaleAccountBaseError",
+        message: expect.stringMatching(/^StaleAccountBaseError:/),
+      });
+      await expect(
+        db.latestAccountHeaders.get("acct-patch")
+      ).resolves.toMatchObject({
+        nonce: "2",
+        accountCommitment: "commitment-2",
+      });
+
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            accountPatchUpdates: [
+              {
+                accountId: "missing-account",
+                nonce: "1",
+                updatedSlots: [],
+                changedMapEntries: [],
+                changedAssets: [],
+                codeRoot: "code",
+                storageRoot: "storage",
+                vaultRoot: "vault",
+                committed: false,
+                commitment: "commitment",
+              },
+            ],
+          })
+        )
+      ).rejects.toMatchObject({ name: "StaleAccountBaseError" });
     });
   });
 });

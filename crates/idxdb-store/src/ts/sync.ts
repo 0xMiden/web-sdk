@@ -14,7 +14,11 @@ import {
   JsAccountUpdate,
   undoAccountStatesInTransaction,
 } from "./accounts.js";
-import { applyForestUpdate, ForestUpdate } from "./forest.js";
+import {
+  applyForestUpdate,
+  ForestConflictError,
+  ForestUpdate,
+} from "./forest.js";
 import {
   logWebStoreError,
   putPartialBlockchainNodesNoOverwrite,
@@ -193,6 +197,10 @@ interface JsStateSyncUpdate {
   accountUpdates: JsAccountUpdate[];
   accountCommitmentsToUndo?: string[];
   accountPatchUpdates?: JsAccountPatchUpdate[];
+  expectedPostUndoStates: {
+    accountId: string;
+    commitment: string | null;
+  }[];
   transactionUpdates: SerializedTransactionData[];
 }
 
@@ -216,6 +224,7 @@ export async function applyStateSync(
     accountUpdates,
     accountCommitmentsToUndo = [],
     accountPatchUpdates = [],
+    expectedPostUndoStates,
     transactionUpdates,
   } = stateUpdate;
 
@@ -248,11 +257,24 @@ export async function applyStateSync(
   return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
     await undoAccountStatesInTransaction(tx, accountCommitmentsToUndo);
 
-    for (const accountPatch of accountPatchUpdates) {
-      await applyAccountPatchInTransaction(tx, accountPatch);
+    for (const expected of expectedPostUndoStates) {
+      const account = await tx.latestAccountHeaders.get(expected.accountId);
+      if (
+        (expected.commitment === null && account !== undefined) ||
+        (expected.commitment !== null &&
+          account?.accountCommitment !== expected.commitment)
+      ) {
+        throw new ForestConflictError(
+          `Post-undo state for account ${expected.accountId} does not match`
+        );
+      }
     }
+
     for (const accountUpdate of accountUpdates) {
       await applyFullAccountStateInTransaction(tx, accountUpdate);
+    }
+    for (const accountPatch of accountPatchUpdates) {
+      await applyAccountPatchInTransaction(tx, accountPatch);
     }
 
     await Promise.all([

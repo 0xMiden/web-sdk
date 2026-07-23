@@ -40,6 +40,13 @@ export interface JsAccountPatchUpdate {
   commitment: string;
 }
 
+export class StaleAccountBaseError extends Error {
+  constructor(message: string) {
+    super(`StaleAccountBaseError: ${message}`);
+    this.name = "StaleAccountBaseError";
+  }
+}
+
 function seedToBase64(seed: Uint8Array | undefined): string | undefined {
   return seed ? uint8ArrayToBase64(seed) : undefined;
 }
@@ -380,6 +387,7 @@ export async function applyAccountPatch(
   vaultRoot: string,
   committed: boolean,
   commitment: string,
+  expectedInitialCommitment: string,
   forestUpdate?: ForestUpdate | null
 ): Promise<void> {
   try {
@@ -402,18 +410,22 @@ export async function applyAccountPatch(
         db.forestSubtrees,
       ],
       async (tx) => {
-        await applyAccountPatchInTransaction(tx, {
-          accountId,
-          nonce,
-          updatedSlots,
-          changedMapEntries,
-          changedAssets,
-          codeRoot,
-          storageRoot,
-          vaultRoot,
-          committed,
-          commitment,
-        });
+        await applyAccountPatchInTransaction(
+          tx,
+          {
+            accountId,
+            nonce,
+            updatedSlots,
+            changedMapEntries,
+            changedAssets,
+            codeRoot,
+            storageRoot,
+            vaultRoot,
+            committed,
+            commitment,
+          },
+          expectedInitialCommitment
+        );
         await applyForestUpdate(tx, forestUpdate);
       }
     );
@@ -424,7 +436,8 @@ export async function applyAccountPatch(
 
 export async function applyAccountPatchInTransaction(
   tx: Transaction,
-  patch: JsAccountPatchUpdate
+  patch: JsAccountPatchUpdate,
+  expectedInitialCommitment?: string
 ): Promise<void> {
   const {
     accountId,
@@ -438,6 +451,23 @@ export async function applyAccountPatchInTransaction(
     committed,
     commitment,
   } = patch;
+  const oldHeader = await tx.latestAccountHeaders.get(accountId);
+  if (oldHeader === undefined) {
+    throw new StaleAccountBaseError(`Account ${accountId} does not exist`);
+  }
+  if (
+    expectedInitialCommitment !== undefined &&
+    oldHeader.accountCommitment !== expectedInitialCommitment
+  ) {
+    throw new StaleAccountBaseError(
+      `Account ${accountId} commitment does not match the expected base`
+    );
+  }
+  if (BigInt(nonce) <= BigInt(oldHeader.nonce)) {
+    throw new StaleAccountBaseError(
+      `Account ${accountId} nonce ${nonce} must be greater than stored nonce ${oldHeader.nonce}`
+    );
+  }
   const resetMapSlots = new Set<string>();
 
   for (const slot of updatedSlots) {
@@ -567,26 +597,19 @@ export async function applyAccountPatchInTransaction(
     }
   }
 
-  const oldHeader = await tx.latestAccountHeaders
-    .where("id")
-    .equals(accountId)
-    .first();
-
-  if (oldHeader) {
-    await tx.historicalAccountHeaders.put({
-      id: accountId,
-      replacedAtNonce: nonce,
-      codeRoot: oldHeader.codeRoot,
-      storageRoot: oldHeader.storageRoot,
-      vaultRoot: oldHeader.vaultRoot,
-      nonce: oldHeader.nonce,
-      committed: oldHeader.committed,
-      accountSeed: oldHeader.accountSeed,
-      accountCommitment: oldHeader.accountCommitment,
-      locked: oldHeader.locked,
-      watched: oldHeader.watched ?? false,
-    });
-  }
+  await tx.historicalAccountHeaders.put({
+    id: accountId,
+    replacedAtNonce: nonce,
+    codeRoot: oldHeader.codeRoot,
+    storageRoot: oldHeader.storageRoot,
+    vaultRoot: oldHeader.vaultRoot,
+    nonce: oldHeader.nonce,
+    committed: oldHeader.committed,
+    accountSeed: oldHeader.accountSeed,
+    accountCommitment: oldHeader.accountCommitment,
+    locked: oldHeader.locked,
+    watched: oldHeader.watched ?? false,
+  });
 
   await tx.latestAccountHeaders.put({
     id: accountId,
@@ -883,30 +906,33 @@ export async function applyFullAccountStateInTransaction(
     accountSeed,
   } = accountState;
 
+  const oldHeader = await tx.latestAccountHeaders.get(accountId);
+  if (oldHeader === undefined) {
+    throw new StaleAccountBaseError(`Account ${accountId} does not exist`);
+  }
+  if (BigInt(nonce) < BigInt(oldHeader.nonce)) {
+    throw new StaleAccountBaseError(
+      `Account ${accountId} nonce ${nonce} is lower than stored nonce ${oldHeader.nonce}`
+    );
+  }
+
   await archiveAndReplaceStorageSlots(tx, accountId, nonce, storageSlots);
   await archiveAndReplaceMapEntries(tx, accountId, nonce, storageMapEntries);
   await archiveAndReplaceVaultAssets(tx, accountId, nonce, assets);
 
-  const oldHeader = await tx.latestAccountHeaders
-    .where("id")
-    .equals(accountId)
-    .first();
-
-  if (oldHeader) {
-    await tx.historicalAccountHeaders.put({
-      id: accountId,
-      replacedAtNonce: nonce,
-      codeRoot: oldHeader.codeRoot,
-      storageRoot: oldHeader.storageRoot,
-      vaultRoot: oldHeader.vaultRoot,
-      nonce: oldHeader.nonce,
-      committed: oldHeader.committed,
-      accountSeed: oldHeader.accountSeed,
-      accountCommitment: oldHeader.accountCommitment,
-      locked: oldHeader.locked,
-      watched: oldHeader.watched ?? false,
-    });
-  }
+  await tx.historicalAccountHeaders.put({
+    id: accountId,
+    replacedAtNonce: nonce,
+    codeRoot: oldHeader.codeRoot,
+    storageRoot: oldHeader.storageRoot,
+    vaultRoot: oldHeader.vaultRoot,
+    nonce: oldHeader.nonce,
+    committed: oldHeader.committed,
+    accountSeed: oldHeader.accountSeed,
+    accountCommitment: oldHeader.accountCommitment,
+    locked: oldHeader.locked,
+    watched: oldHeader.watched ?? false,
+  });
 
   await tx.latestAccountHeaders.put({
     id: accountId,
@@ -1265,6 +1291,7 @@ export async function pruneAccountHistory(
 
 export interface PostUndoAccountState {
   accountId: string;
+  commitment: string | null;
   vaultAssets: JsVaultAsset[];
   storageMapEntries: JsStorageMapEntry[];
   storageSlots: JsStorageSlot[];
@@ -1432,6 +1459,7 @@ export async function getPostUndoAccountStates(
 
           states.push({
             accountId,
+            commitment: oldHeader?.accountCommitment ?? null,
             storageSlots: [...slots.values()]
               .map(({ slotName, slotValue, slotType }) => ({
                 slotName,

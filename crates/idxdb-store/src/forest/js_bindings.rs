@@ -49,6 +49,10 @@ pub struct JsForestRowsRequest {
     pub buckets: Vec<JsForestBucketRequest>,
     pub subtrees: Vec<JsForestSubtreeRequest>,
     pub full_lineages: Vec<String>,
+    /// The revision the operation's snapshot was taken at. The read transaction fails with a
+    /// conflict when the stored counter no longer matches, so rows from a later commit cannot
+    /// be mixed with the older snapshot.
+    pub expected_revision: Option<String>,
 }
 
 // WRITE-BACK TYPES

@@ -2,6 +2,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
+use miden_client::account::{AccountHeader, StorageSlotName};
 use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::transaction::{
     TransactionDetails,
@@ -96,13 +97,26 @@ impl IdxdbStore {
             .await?;
 
         let patch = executed_tx.account_patch();
+        let init_header: AccountHeader = executed_tx.initial_account().into();
         let final_header = executed_tx.final_account();
 
         if patch.is_full_state() {
             // Full-state patches contain everything needed to reconstruct the new account.
+            // Map slots stored today but absent from the new state reset to the empty tree,
+            // so no orphaned forest lineage survives the replacement.
             let account = account_from_full_state_patch(patch, final_header)?;
+            let stale_map_slots: Vec<StorageSlotName> = self
+                .get_storage_map_roots(account.id(), Vec::new())
+                .await?
+                .into_keys()
+                .collect();
             let forest_update = self
-                .compute_account_reset_update(account.id(), account.vault(), account.storage(), &[])
+                .compute_account_reset_update(
+                    account.id(),
+                    account.vault(),
+                    account.storage(),
+                    &stale_map_slots,
+                )
                 .await?;
             apply_full_account_state(self.db_id(), &account, forest_update).await.map_err(
                 |err| {
@@ -112,7 +126,7 @@ impl IdxdbStore {
                 },
             )?;
         } else {
-            self.apply_incremental_account_patch(final_header, patch).await?;
+            self.apply_incremental_account_patch(&init_header, final_header, patch).await?;
         }
 
         // Updates for notes

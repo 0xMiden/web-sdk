@@ -2,7 +2,7 @@ import { getDatabase } from "./schema.js";
 import { upsertTransactionRecord, insertTransactionScript, } from "./transactions.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 import { applyAccountPatchInTransaction, applyFullAccountStateInTransaction, undoAccountStatesInTransaction, } from "./accounts.js";
-import { applyForestUpdate } from "./forest.js";
+import { applyForestUpdate, ForestConflictError, } from "./forest.js";
 import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function getNoteTags(dbId) {
     try {
@@ -102,7 +102,7 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, so
 }
 export async function applyStateSync(dbId, stateUpdate, forestUpdate) {
     const db = getDatabase(dbId);
-    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, accountCommitmentsToUndo = [], accountPatchUpdates = [], transactionUpdates, } = stateUpdate;
+    const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, accountCommitmentsToUndo = [], accountPatchUpdates = [], expectedPostUndoStates, transactionUpdates, } = stateUpdate;
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.blockchainCheckpoint,
@@ -129,11 +129,19 @@ export async function applyStateSync(dbId, stateUpdate, forestUpdate) {
     ];
     return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
         await undoAccountStatesInTransaction(tx, accountCommitmentsToUndo);
-        for (const accountPatch of accountPatchUpdates) {
-            await applyAccountPatchInTransaction(tx, accountPatch);
+        for (const expected of expectedPostUndoStates) {
+            const account = await tx.latestAccountHeaders.get(expected.accountId);
+            if ((expected.commitment === null && account !== undefined) ||
+                (expected.commitment !== null &&
+                    account?.accountCommitment !== expected.commitment)) {
+                throw new ForestConflictError(`Post-undo state for account ${expected.accountId} does not match`);
+            }
         }
         for (const accountUpdate of accountUpdates) {
             await applyFullAccountStateInTransaction(tx, accountUpdate);
+        }
+        for (const accountPatch of accountPatchUpdates) {
+            await applyAccountPatchInTransaction(tx, accountPatch);
         }
         await Promise.all([
             Promise.all(serializedInputNotes.map((note) => {

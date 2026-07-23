@@ -1,6 +1,12 @@
 import { applyForestUpdate, ForestConflictError, } from "./forest.js";
 import { getDatabase, } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+export class StaleAccountBaseError extends Error {
+    constructor(message) {
+        super(`StaleAccountBaseError: ${message}`);
+        this.name = "StaleAccountBaseError";
+    }
+}
 function seedToBase64(seed) {
     return seed ? uint8ArrayToBase64(seed) : undefined;
 }
@@ -260,7 +266,7 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
         logWebStoreError(error, `Error inserting assets`);
     }
 }
-export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, forestUpdate) {
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, expectedInitialCommitment, forestUpdate) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -288,7 +294,7 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
                 vaultRoot,
                 committed,
                 commitment,
-            });
+            }, expectedInitialCommitment);
             await applyForestUpdate(tx, forestUpdate);
         });
     }
@@ -296,8 +302,19 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
         logWebStoreError(error, `Error applying transaction delta`);
     }
 }
-export async function applyAccountPatchInTransaction(tx, patch) {
+export async function applyAccountPatchInTransaction(tx, patch, expectedInitialCommitment) {
     const { accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, } = patch;
+    const oldHeader = await tx.latestAccountHeaders.get(accountId);
+    if (oldHeader === undefined) {
+        throw new StaleAccountBaseError(`Account ${accountId} does not exist`);
+    }
+    if (expectedInitialCommitment !== undefined &&
+        oldHeader.accountCommitment !== expectedInitialCommitment) {
+        throw new StaleAccountBaseError(`Account ${accountId} commitment does not match the expected base`);
+    }
+    if (BigInt(nonce) <= BigInt(oldHeader.nonce)) {
+        throw new StaleAccountBaseError(`Account ${accountId} nonce ${nonce} must be greater than stored nonce ${oldHeader.nonce}`);
+    }
     const resetMapSlots = new Set();
     for (const slot of updatedSlots) {
         const oldSlot = await tx.latestAccountStorage
@@ -416,25 +433,19 @@ export async function applyAccountPatchInTransaction(tx, patch) {
             });
         }
     }
-    const oldHeader = await tx.latestAccountHeaders
-        .where("id")
-        .equals(accountId)
-        .first();
-    if (oldHeader) {
-        await tx.historicalAccountHeaders.put({
-            id: accountId,
-            replacedAtNonce: nonce,
-            codeRoot: oldHeader.codeRoot,
-            storageRoot: oldHeader.storageRoot,
-            vaultRoot: oldHeader.vaultRoot,
-            nonce: oldHeader.nonce,
-            committed: oldHeader.committed,
-            accountSeed: oldHeader.accountSeed,
-            accountCommitment: oldHeader.accountCommitment,
-            locked: oldHeader.locked,
-            watched: oldHeader.watched ?? false,
-        });
-    }
+    await tx.historicalAccountHeaders.put({
+        id: accountId,
+        replacedAtNonce: nonce,
+        codeRoot: oldHeader.codeRoot,
+        storageRoot: oldHeader.storageRoot,
+        vaultRoot: oldHeader.vaultRoot,
+        nonce: oldHeader.nonce,
+        committed: oldHeader.committed,
+        accountSeed: oldHeader.accountSeed,
+        accountCommitment: oldHeader.accountCommitment,
+        locked: oldHeader.locked,
+        watched: oldHeader.watched ?? false,
+    });
     await tx.latestAccountHeaders.put({
         id: accountId,
         codeRoot,
@@ -656,28 +667,29 @@ export async function applyFullAccountState(dbId, accountState, forestUpdate) {
 }
 export async function applyFullAccountStateInTransaction(tx, accountState) {
     const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, } = accountState;
+    const oldHeader = await tx.latestAccountHeaders.get(accountId);
+    if (oldHeader === undefined) {
+        throw new StaleAccountBaseError(`Account ${accountId} does not exist`);
+    }
+    if (BigInt(nonce) < BigInt(oldHeader.nonce)) {
+        throw new StaleAccountBaseError(`Account ${accountId} nonce ${nonce} is lower than stored nonce ${oldHeader.nonce}`);
+    }
     await archiveAndReplaceStorageSlots(tx, accountId, nonce, storageSlots);
     await archiveAndReplaceMapEntries(tx, accountId, nonce, storageMapEntries);
     await archiveAndReplaceVaultAssets(tx, accountId, nonce, assets);
-    const oldHeader = await tx.latestAccountHeaders
-        .where("id")
-        .equals(accountId)
-        .first();
-    if (oldHeader) {
-        await tx.historicalAccountHeaders.put({
-            id: accountId,
-            replacedAtNonce: nonce,
-            codeRoot: oldHeader.codeRoot,
-            storageRoot: oldHeader.storageRoot,
-            vaultRoot: oldHeader.vaultRoot,
-            nonce: oldHeader.nonce,
-            committed: oldHeader.committed,
-            accountSeed: oldHeader.accountSeed,
-            accountCommitment: oldHeader.accountCommitment,
-            locked: oldHeader.locked,
-            watched: oldHeader.watched ?? false,
-        });
-    }
+    await tx.historicalAccountHeaders.put({
+        id: accountId,
+        replacedAtNonce: nonce,
+        codeRoot: oldHeader.codeRoot,
+        storageRoot: oldHeader.storageRoot,
+        vaultRoot: oldHeader.vaultRoot,
+        nonce: oldHeader.nonce,
+        committed: oldHeader.committed,
+        accountSeed: oldHeader.accountSeed,
+        accountCommitment: oldHeader.accountCommitment,
+        locked: oldHeader.locked,
+        watched: oldHeader.watched ?? false,
+    });
     await tx.latestAccountHeaders.put({
         id: accountId,
         codeRoot,
@@ -1077,6 +1089,7 @@ export async function getPostUndoAccountStates(dbId, accountCommitments) {
                 }
                 states.push({
                     accountId,
+                    commitment: oldHeader?.accountCommitment ?? null,
                     storageSlots: [...slots.values()]
                         .map(({ slotName, slotValue, slotType }) => ({
                         slotName,

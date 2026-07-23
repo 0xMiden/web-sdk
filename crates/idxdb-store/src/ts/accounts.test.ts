@@ -57,6 +57,7 @@ const CODE_ROOT = "0xcode1";
 const STORAGE_ROOT = "0xsroot1";
 const VAULT_ROOT = "0xvroot1";
 const COMMITMENT = "0xcommit1";
+const INITIAL_COMMITMENT = "0xcommit0";
 const NONCE = "1";
 
 function makeForestUpdate(overrides: Partial<ForestUpdate> = {}): ForestUpdate {
@@ -474,56 +475,40 @@ describe("upsertAccountRecord", () => {
 describe("applyAccountPatch", () => {
   const CLIENT_VERSION = "0.0.1";
 
-  it("creates initial account state when no prior state exists", async () => {
+  it("rejects a patch when the account does not exist", async () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
 
-    await applyAccountPatch(
-      dbId,
-      ACC,
-      "1",
-      [{ slotName: "slot1", slotValue: "0xval1", slotType: 0 }],
-      [{ slotName: "map1", key: "k1", value: "v1" }],
-      [{ vaultKey: "vk1", asset: "0xasset1" }],
-      CODE_ROOT,
-      STORAGE_ROOT,
-      VAULT_ROOT,
-      false,
-      COMMITMENT
-    );
-
-    const header = await db.latestAccountHeaders
-      .where("id")
-      .equals(ACC)
-      .first();
-    expect(header?.nonce).toBe("1");
-    expect(header?.storageRoot).toBe(STORAGE_ROOT);
-
-    const slots = await db.latestAccountStorages
-      .where("accountId")
-      .equals(ACC)
-      .toArray();
-    expect(slots).toHaveLength(1);
-    expect(slots[0].slotValue).toBe("0xval1");
-
-    const maps = await db.latestStorageMapEntries
-      .where("accountId")
-      .equals(ACC)
-      .toArray();
-    expect(maps).toHaveLength(1);
-    expect(maps[0].value).toBe("v1");
-
-    const assets = await db.latestAccountAssets
-      .where("accountId")
-      .equals(ACC)
-      .toArray();
-    expect(assets).toHaveLength(1);
-    expect(assets[0].asset).toBe("0xasset1");
+    await expect(
+      applyAccountPatch(
+        dbId,
+        ACC,
+        "1",
+        [{ slotName: "slot1", slotValue: "0xval1", slotType: 0 }],
+        [{ slotName: "map1", key: "k1", value: "v1" }],
+        [{ vaultKey: "vk1", asset: "0xasset1" }],
+        CODE_ROOT,
+        STORAGE_ROOT,
+        VAULT_ROOT,
+        false,
+        COMMITMENT,
+        INITIAL_COMMITMENT
+      )
+    ).rejects.toMatchObject({
+      name: "StaleAccountBaseError",
+      message: expect.stringMatching(/^StaleAccountBaseError:/),
+    });
+    await expect(db.latestAccountHeaders.count()).resolves.toBe(0);
+    await expect(db.latestAccountStorages.count()).resolves.toBe(0);
   });
 
   it("archives old state and updates to new state", async () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     // First delta: initial state
     await applyAccountPatch(
@@ -537,7 +522,8 @@ describe("applyAccountPatch", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      COMMITMENT
+      COMMITMENT,
+      INITIAL_COMMITMENT
     );
 
     // Second delta: update
@@ -552,7 +538,8 @@ describe("applyAccountPatch", () => {
       "0xsroot2",
       "0xvroot2",
       false,
-      "0xcommit2"
+      "0xcommit2",
+      COMMITMENT
     );
 
     // Latest should reflect nonce 2
@@ -594,6 +581,10 @@ describe("applyAccountPatch", () => {
   it("replaces and removes map slots while preserving rollback history", async () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     await applyAccountPatch(
       dbId,
@@ -616,7 +607,8 @@ describe("applyAccountPatch", () => {
       "0xroot1",
       VAULT_ROOT,
       false,
-      "0xcommit1"
+      "0xcommit1",
+      INITIAL_COMMITMENT
     );
 
     // Create replaces the whole map, including entries omitted by the patch.
@@ -641,7 +633,8 @@ describe("applyAccountPatch", () => {
       "0xroot2",
       VAULT_ROOT,
       false,
-      "0xcommit2"
+      "0xcommit2",
+      "0xcommit1"
     );
 
     let entries = await db.latestStorageMapEntries
@@ -672,7 +665,8 @@ describe("applyAccountPatch", () => {
       "0xemptyroot",
       VAULT_ROOT,
       false,
-      "0xcommit3"
+      "0xcommit3",
+      "0xcommit2"
     );
 
     expect(
@@ -728,6 +722,10 @@ describe("applyAccountPatch", () => {
   it("commits the account patch and forest update atomically", async () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
     await applyAccountPatch(
       dbId,
       ACC,
@@ -740,6 +738,7 @@ describe("applyAccountPatch", () => {
       VAULT_ROOT,
       false,
       COMMITMENT,
+      INITIAL_COMMITMENT,
       makeForestUpdate({
         expectedTrees: [{ lineage: "lineage" }],
         allocatedRevision: "0000000000000001",
@@ -779,6 +778,7 @@ describe("applyAccountPatch", () => {
         VAULT_ROOT,
         false,
         "0xnew-commitment",
+        COMMITMENT,
         makeForestUpdate({ allocatedRevision: "0000000000000009" })
       )
     ).rejects.toMatchObject({ name: "ForestConflictError" });
@@ -788,6 +788,54 @@ describe("applyAccountPatch", () => {
       storageRoot: STORAGE_ROOT,
     });
     await expect(db.latestAccountStorages.count()).resolves.toBe(0);
+    await expect(db.historicalAccountHeaders.count()).resolves.toBe(0);
+  });
+
+  it("rejects a mismatched commitment and a non-increasing nonce", async () => {
+    const dbId = await openTestDb(CLIENT_VERSION);
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+
+    const patchArguments = [
+      dbId,
+      ACC,
+      "2",
+      [],
+      [],
+      [],
+      CODE_ROOT,
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit2",
+    ] as const;
+
+    await expect(
+      applyAccountPatch(...patchArguments, "0xwrong")
+    ).rejects.toMatchObject({
+      name: "StaleAccountBaseError",
+      message: expect.stringMatching(/^StaleAccountBaseError:/),
+    });
+    await expect(
+      applyAccountPatch(
+        dbId,
+        ACC,
+        NONCE,
+        [],
+        [],
+        [],
+        CODE_ROOT,
+        STORAGE_ROOT,
+        VAULT_ROOT,
+        false,
+        "0xreplayed",
+        COMMITMENT
+      )
+    ).rejects.toMatchObject({ name: "StaleAccountBaseError" });
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: NONCE,
+      accountCommitment: COMMITMENT,
+    });
     await expect(db.historicalAccountHeaders.count()).resolves.toBe(0);
   });
 });
@@ -853,30 +901,31 @@ describe("applyFullAccountState", () => {
     expect(assets[0].asset).toBe("0xnewasset");
   });
 
-  it("applies full state when no existing header (no-history branch)", async () => {
+  it("rejects full state when no existing header", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    // No prior state for account
-    await applyFullAccountState(dbId, {
-      accountId: "0xbrand-new",
-      nonce: "1",
-      storageSlots: [],
-      storageMapEntries: [],
-      assets: [],
-      codeRoot: "0xcodeNew",
-      storageRoot: "0xsrootNew",
-      vaultRoot: "0xvrootNew",
-      committed: false,
-      accountCommitment: "0xcommitNew",
-      accountSeed: new Uint8Array([5, 6, 7]),
+    await expect(
+      applyFullAccountState(dbId, {
+        accountId: "0xbrand-new",
+        nonce: "1",
+        storageSlots: [],
+        storageMapEntries: [],
+        assets: [],
+        codeRoot: "0xcodeNew",
+        storageRoot: "0xsrootNew",
+        vaultRoot: "0xvrootNew",
+        committed: false,
+        accountCommitment: "0xcommitNew",
+        accountSeed: new Uint8Array([5, 6, 7]),
+      })
+    ).rejects.toMatchObject({
+      name: "StaleAccountBaseError",
+      message: expect.stringMatching(/^StaleAccountBaseError:/),
     });
-
-    const header = await db.latestAccountHeaders
-      .where("id")
-      .equals("0xbrand-new")
-      .first();
-    expect(header?.nonce).toBe("1");
+    await expect(
+      db.latestAccountHeaders.get("0xbrand-new")
+    ).resolves.toBeUndefined();
   });
 
   it("archives new slots as null-old-value when new slot has no old counterpart", async () => {
@@ -956,6 +1005,50 @@ describe("applyFullAccountState", () => {
     });
     await expect(db.latestAccountStorages.count()).resolves.toBe(0);
     await expect(db.historicalAccountHeaders.count()).resolves.toBe(0);
+  });
+
+  it("allows an equal nonce and rejects a lower nonce", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId, { nonce: "2" });
+
+    await applyFullAccountState(dbId, {
+      accountId: ACC,
+      nonce: "2",
+      storageSlots: [],
+      storageMapEntries: [],
+      assets: [],
+      codeRoot: "0xequal-code",
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      committed: false,
+      accountCommitment: "0xequal-commitment",
+      accountSeed: undefined,
+    });
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "2",
+      codeRoot: "0xequal-code",
+    });
+
+    await expect(
+      applyFullAccountState(dbId, {
+        accountId: ACC,
+        nonce: "1",
+        storageSlots: [],
+        storageMapEntries: [],
+        assets: [],
+        codeRoot: "0xstale-code",
+        storageRoot: STORAGE_ROOT,
+        vaultRoot: VAULT_ROOT,
+        committed: false,
+        accountCommitment: "0xstale-commitment",
+        accountSeed: undefined,
+      })
+    ).rejects.toMatchObject({ name: "StaleAccountBaseError" });
+    await expect(db.latestAccountHeaders.get(ACC)).resolves.toMatchObject({
+      nonce: "2",
+      codeRoot: "0xequal-code",
+    });
   });
 });
 
@@ -1207,6 +1300,10 @@ describe("pruneAccountHistory", () => {
   it("prunes historical records at or below the given nonce", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     // Build up history via applyAccountPatch (nonce 1 → 2 → 3)
     await applyAccountPatch(
@@ -1220,7 +1317,8 @@ describe("pruneAccountHistory", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      "0xc1"
+      "0xc1",
+      INITIAL_COMMITMENT
     );
     await applyAccountPatch(
       dbId,
@@ -1233,7 +1331,8 @@ describe("pruneAccountHistory", () => {
       "0xsr2",
       VAULT_ROOT,
       false,
-      "0xc2"
+      "0xc2",
+      "0xc1"
     );
     await applyAccountPatch(
       dbId,
@@ -1246,7 +1345,8 @@ describe("pruneAccountHistory", () => {
       "0xsr3",
       VAULT_ROOT,
       false,
-      "0xc3"
+      "0xc3",
+      "0xc2"
     );
 
     // Prune up to and including nonce 2
@@ -1322,6 +1422,10 @@ describe("undoAccountStates", () => {
   it("undo restores previous account state", async () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     await applyAccountPatch(
       dbId,
@@ -1334,7 +1438,8 @@ describe("undoAccountStates", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      COMMITMENT
+      COMMITMENT,
+      INITIAL_COMMITMENT
     );
 
     await applyAccountPatch(
@@ -1348,7 +1453,8 @@ describe("undoAccountStates", () => {
       "0xsroot2",
       "0xvroot2",
       false,
-      "0xcommit2"
+      "0xcommit2",
+      COMMITMENT
     );
 
     await undoAccountStates(dbId, ["0xcommit2"]);
@@ -1413,6 +1519,10 @@ describe("undoAccountStates", () => {
   it("resolves commitment from historical headers when not in latest", async () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     await applyAccountPatch(
       dbId,
@@ -1425,7 +1535,8 @@ describe("undoAccountStates", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      "0xc1"
+      "0xc1",
+      INITIAL_COMMITMENT
     );
     await applyAccountPatch(
       dbId,
@@ -1438,20 +1549,23 @@ describe("undoAccountStates", () => {
       "0xsr2",
       VAULT_ROOT,
       false,
-      "0xc2"
+      "0xc2",
+      "0xc1"
     );
 
     // "0xc1" is now in historical (archived when nonce 2 applied)
     // undoAccountStates("0xc1") should find it in historical and restore
     await undoAccountStates(dbId, ["0xc1"]);
 
-    // Latest header should now be at nonce "0" (before nonce "1" was applied)
-    // — no prior historical means account deleted
+    // Latest header should now be at nonce "0" from before nonce "1" was applied.
     const header = await db.latestAccountHeaders
       .where("id")
       .equals(ACC)
       .first();
-    expect(header).toBeUndefined();
+    expect(header).toMatchObject({
+      nonce: "0",
+      accountCommitment: INITIAL_COMMITMENT,
+    });
   });
 
   it("no-ops when commitment does not exist anywhere", async () => {
@@ -1475,6 +1589,10 @@ describe("undoAccountStates", () => {
   it("restores null old values by deleting from latest (slot null branch)", async () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     // Apply nonce "1" adding a brand-new slot/map/asset (no prior state)
     await applyAccountPatch(
@@ -1488,7 +1606,8 @@ describe("undoAccountStates", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      COMMITMENT
+      COMMITMENT,
+      INITIAL_COMMITMENT
     );
 
     // Historical entries for nonce "1" have null old values (brand-new)
@@ -1523,6 +1642,10 @@ describe("undoAccountStates", () => {
   it("rolls back undo when the forest CAS fails", async () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
     await applyAccountPatch(
       dbId,
       ACC,
@@ -1534,7 +1657,8 @@ describe("undoAccountStates", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      "0xcommit1"
+      "0xcommit1",
+      INITIAL_COMMITMENT
     );
     await applyAccountPatch(
       dbId,
@@ -1547,7 +1671,8 @@ describe("undoAccountStates", () => {
       "0xstorage2",
       VAULT_ROOT,
       false,
-      "0xcommit2"
+      "0xcommit2",
+      "0xcommit1"
     );
 
     await expect(
@@ -1566,7 +1691,7 @@ describe("undoAccountStates", () => {
     ).resolves.toMatchObject({ slotValue: "0xnew" });
     await expect(
       db.historicalAccountHeaders.where("id").equals(ACC).count()
-    ).resolves.toBe(1);
+    ).resolves.toBe(2);
   });
 });
 
@@ -1574,6 +1699,10 @@ describe("getPostUndoAccountStates", () => {
   it("matches the state produced by undo without modifying the database", async () => {
     const dbId = await openTestDb("0.0.1");
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
     await applyAccountPatch(
       dbId,
       ACC,
@@ -1585,7 +1714,8 @@ describe("getPostUndoAccountStates", () => {
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      "0xcommit1"
+      "0xcommit1",
+      INITIAL_COMMITMENT
     );
     await applyAccountPatch(
       dbId,
@@ -1607,13 +1737,15 @@ describe("getPostUndoAccountStates", () => {
       "0xstorage2",
       "0xvault2",
       false,
-      "0xcommit2"
+      "0xcommit2",
+      "0xcommit1"
     );
 
     const planned = await getPostUndoAccountStates(dbId, ["0xcommit2"]);
     expect(planned).toEqual([
       {
         accountId: ACC,
+        commitment: "0xcommit1",
         storageSlots: [{ slotName: "slot1", slotValue: "0xold", slotType: 0 }],
         storageMapEntries: [{ slotName: "map1", key: "key1", value: "old" }],
         vaultAssets: [{ vaultKey: "asset1", asset: "0xold" }],
@@ -1630,6 +1762,8 @@ describe("getPostUndoAccountStates", () => {
 
     const actual = {
       accountId: ACC,
+      commitment:
+        (await db.latestAccountHeaders.get(ACC))?.accountCommitment ?? null,
       storageSlots: (
         await db.latestAccountStorages
           .where("accountId")
@@ -1671,6 +1805,7 @@ describe("getPostUndoAccountStates", () => {
     ).resolves.toEqual([
       {
         accountId: "new-account",
+        commitment: null,
         storageSlots: [],
         storageMapEntries: [],
         vaultAssets: [],
@@ -1834,7 +1969,8 @@ describe("error paths: unregistered dbId re-throws", () => {
         "0xsr",
         "0xvr",
         false,
-        "0xcommit"
+        "0xcommit",
+        "0xinitial"
       )
     ).rejects.toThrow();
   });
@@ -1873,6 +2009,10 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
   it("undoes multiple nonces for the same account in descending order", async () => {
     const dbId = await openTestDb("0.0.1");
     const db = getDatabase(dbId);
+    await seedAccount(dbId, {
+      nonce: "0",
+      commitment: INITIAL_COMMITMENT,
+    });
 
     // Build 3 deltas for the same account to exercise the sort comparator at 1119
     await applyAccountPatch(
@@ -1886,7 +2026,8 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       STORAGE_ROOT,
       VAULT_ROOT,
       false,
-      "0xc1"
+      "0xc1",
+      INITIAL_COMMITMENT
     );
     await applyAccountPatch(
       dbId,
@@ -1899,7 +2040,8 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       "0xsr2",
       VAULT_ROOT,
       false,
-      "0xc2"
+      "0xc2",
+      "0xc1"
     );
     await applyAccountPatch(
       dbId,
@@ -1912,7 +2054,8 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       "0xsr3",
       VAULT_ROOT,
       false,
-      "0xc3"
+      "0xc3",
+      "0xc2"
     );
 
     // Undo both nonce 2 and 3 at once — they have the same accountId,
