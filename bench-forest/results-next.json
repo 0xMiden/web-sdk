@@ -1,0 +1,36 @@
+{
+  "label": "next",
+  "dist": "/Users/jeremias/miden_repos/web-sdk-next-bench/crates/web-client/dist/st",
+  "sizes": [
+    {
+      "n": 1000,
+      "insertMs": 203.19999998807907,
+      "updateTxMs": 3122.599999964237,
+      "warmReadMedianMs": 0.2999999523162842,
+      "usageBytes": 1453735,
+      "openMs": 315,
+      "coldReadMs": 0.5,
+      "reloadWarmMedianMs": 0.20000004768371582
+    },
+    {
+      "n": 10000,
+      "insertMs": 3950.300000011921,
+      "updateTxMs": null,
+      "warmReadMedianMs": 0.25,
+      "usageBytes": 3958261,
+      "openMs": 2927.800000011921,
+      "coldReadMs": 0.6000000238418579,
+      "reloadWarmMedianMs": 0.30000001192092896
+    },
+    {
+      "n": 50000,
+      "insertMs": 43179.80000001192,
+      "updateTxMs": null,
+      "warmReadMedianMs": 0.30000001192092896,
+      "usageBytes": 29248040,
+      "openMs": 14750.699999988079,
+      "coldReadMs": 0.699999988079071,
+      "reloadWarmMedianMs": 0.29999998211860657
+    }
+  ]
+}

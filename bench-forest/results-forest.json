@@ -1,0 +1,36 @@
+{
+  "label": "forest",
+  "dist": "/Users/jeremias/miden_repos/web-sdk/crates/web-client/dist/st",
+  "sizes": [
+    {
+      "n": 1000,
+      "insertMs": 1467,
+      "updateTxMs": 3013,
+      "warmReadMedianMs": 1.2499999701976776,
+      "usageBytes": 4288847,
+      "openMs": 38.30000001192093,
+      "coldReadMs": 2.100000023841858,
+      "reloadWarmMedianMs": 1.0999999642372131
+    },
+    {
+      "n": 10000,
+      "insertMs": 46630.90000003576,
+      "updateTxMs": null,
+      "warmReadMedianMs": 1.199999988079071,
+      "usageBytes": 63835028,
+      "openMs": 35.89999997615814,
+      "coldReadMs": 2.300000011920929,
+      "reloadWarmMedianMs": 1.300000011920929
+    },
+    {
+      "n": 50000,
+      "insertMs": 372668.3000000119,
+      "updateTxMs": null,
+      "warmReadMedianMs": 1.199999988079071,
+      "usageBytes": 298835431,
+      "openMs": 36.90000003576279,
+      "coldReadMs": 2.400000035762787,
+      "reloadWarmMedianMs": 1.100000023841858
+    }
+  ]
+}
