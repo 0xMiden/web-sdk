@@ -79,12 +79,12 @@ should_panic_without_expect = "allow"                           # We don't care 
 # onto the released 0.28 protocol crates. Remove once both are merged and released.
 # NOTE: local path pins during development; switch to the git branch before pushing.
 [patch.crates-io]
-miden-client              = { path = "/Users/jeremias/miden_repos/miden-client-14/crates/rust-client" }
-miden-client-sqlite-store = { path = "/Users/jeremias/miden_repos/miden-client-14/crates/sqlite-store" }
-miden-crypto              = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/crypto" }
-miden-crypto-derive       = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/crypto-derive" }
-miden-field               = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/field" }
-miden-lifted-air          = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/lifted-air" }
-miden-lifted-stark        = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/lifted-stark" }
-miden-serde-utils         = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/serde-utils" }
-miden-stark-transcript    = { path = "/Users/jeremias/miden_repos/miden-vm-client-pin/crates/stark-transcript" }
+miden-client              = { branch = "jere-forest-row-backend", git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-sqlite-store = { branch = "jere-forest-row-backend", git = "https://github.com/0xMiden/rust-sdk" }
+miden-crypto              = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
+miden-crypto-derive       = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
+miden-field               = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
+miden-lifted-air          = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
+miden-lifted-stark        = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
+miden-serde-utils         = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
+miden-stark-transcript    = { branch = "client-pin-from-parts-0.28", git = "https://github.com/JereSalo/miden-vm" }
