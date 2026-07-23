@@ -104,9 +104,9 @@ export async function getInputNotesFromScriptRoots(
 ) {
   try {
     const db = getDatabase(dbId);
-    const roots = new Set(scriptRoots);
     let notes = await db.inputNotes
-      .filter((note) => roots.has(note.scriptRoot))
+      .where("scriptRoot")
+      .anyOf(scriptRoots)
       .toArray();
     return await processInputNotes(dbId, notes);
   } catch (err) {

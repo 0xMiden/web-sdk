@@ -314,6 +314,7 @@ const V1_STORES: Record<string, string> = {
     "detailsCommitment",
     "noteId",
     "nullifier",
+    "scriptRoot",
     "stateDiscriminant",
     "[consumedBlockHeight+consumedTxOrder+noteId]"
   ),

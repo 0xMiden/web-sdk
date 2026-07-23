@@ -86,9 +86,9 @@ export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitmen
 export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
     try {
         const db = getDatabase(dbId);
-        const roots = new Set(scriptRoots);
         let notes = await db.inputNotes
-            .filter((note) => roots.has(note.scriptRoot))
+            .where("scriptRoot")
+            .anyOf(scriptRoots)
             .toArray();
         return await processInputNotes(dbId, notes);
     }
