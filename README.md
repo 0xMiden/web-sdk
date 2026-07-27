@@ -183,6 +183,49 @@ The other SDK hooks (`useCreateWallet`, `useSend`, `useNotes`, etc.) all gate on
 
 ---
 
+## Single-threaded vs multi-threaded proving
+
+Orthogonal to eager/lazy, the WASM client ships in two **threading variants**, so there are four entry points in all. The default is **single-threaded (ST)** and loads in any browser context. The **multi-threaded (MT)** build parallelizes proving across hardware threads with `wasm-bindgen-rayon` — **~3–5× faster local proving** on a commodity multi-core laptop — in exchange for a hard hosting requirement.
+
+| Specifier | Threading | Loads WASM | Hosting requirement |
+|---|---|---|---|
+| `@miden-sdk/miden-sdk` | ST | eager (top-level `await`) | None — works anywhere |
+| `@miden-sdk/miden-sdk/lazy` | ST | lazy (`ready()`) | None — works anywhere |
+| `@miden-sdk/miden-sdk/mt` | **MT** | eager (top-level `await`) | Cross-origin isolation |
+| `@miden-sdk/miden-sdk/mt/lazy` | **MT** | lazy (`ready()`) | Cross-origin isolation |
+
+The threading axis composes with eager/lazy — see [Eager vs lazy entry points](#eager-vs-lazy-entry-points) for that dimension.
+
+**Where the speedup comes from.** MT only accelerates the **local prove** step (Miden's zero-knowledge proof generation) — the single most expensive thing the client does in a tab. On multi-core hardware the proof work fans out across Web Workers instead of running on one thread; the rest of the pipeline (sync, RPC, storage) is unchanged. The ST default runs the same prove on a single thread.
+
+**Pick MT when:**
+
+- You do **local (non-delegated) proving** and **control your response headers** — including Chrome/Firefox extensions and other hosts whose manifest already sets COOP/COEP.
+- Interactive "prove-in-the-tab" UX matters and shaving seconds off each transaction is worth the deployment constraint.
+
+**Pick ST (the default) when:**
+
+- You **don't control the response headers** (a third-party host, or a CDN that won't set them).
+- You prove **exclusively through a delegated / remote prover** — the network round-trip dwarfs any local speedup, so MT buys you nothing.
+- You target **Capacitor / native WebViews** (e.g. the Miden Wallet iOS/Android hosts) — they don't expose cross-origin isolation.
+
+**Using MT takes two things:**
+
+1. **Cross-origin isolation.** The page must respond with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` so the browser grants `SharedArrayBuffer`; without them the `/mt` WASM throws at load. `@miden-sdk/vite-plugin` sets these in dev. Note that `require-corp` also gates cross-origin images/fonts/iframes — a real deployment decision, not a free flag.
+2. **Bring up the thread pool once.** Call `await initThreadPool(navigator.hardwareConcurrency)` before your first prove — skip it and rayon spawns zero workers, so the MT build silently runs single-threaded.
+
+```ts
+import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
+
+await MidenClient.ready();
+await initThreadPool(navigator.hardwareConcurrency); // once, at startup
+const client = await MidenClient.createTestnet();     // prove calls now fan out across threads
+```
+
+The [web-client README](crates/web-client/README.md#setting-cross-origin-isolation-headers) has the full header recipes (Vite, Next.js, Express, extension manifests), the COEP caveats, and a service-worker fallback for hosts where you can't add headers.
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -262,12 +305,12 @@ pnpm dev
 | **Vite** | First-class | `@miden-sdk/vite-plugin` covers WASM dedup, polyfills, COOP/COEP. Tested against Vite 5+. |
 | **Webpack 5** | Supported | Use the module-worker variant; webpack auto-handles the `import.meta.url` worker pattern. |
 | **Next.js (App Router)** | Supported | Mark client components with `"use client"`. SSR will skip WASM init; the lazy entry point is recommended. |
-| **Browser (Chromium ≥ 88)** | Supported | Required: WASM threads (`SharedArrayBuffer`), so cross-origin isolation headers are mandatory in production. |
+| **Browser (Chromium ≥ 88)** | Supported | The default (ST) build runs anywhere. The `/mt` build needs cross-origin isolation (COOP/COEP) for `SharedArrayBuffer` — see [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving). |
 | **Browser (Safari ≥ 16.4)** | Supported | The plugin auto-applies the classic-Worker + TLA-free WASM glue needed by WKWebView. |
 | **Browser (Firefox ≥ 108)** | Supported | Same constraints as Chromium. |
 | **Node.js** | Not yet | Tracked separately; the Rust client has a Node.js binding in flight via napi-rs. |
 
-The published WASM artifact targets `wasm32-unknown-unknown` with `+atomics +bulk-memory +mutable-globals` enabled.
+Two WASM artifacts are published: a **single-threaded** default built on stable Rust that loads anywhere, and a **multi-threaded** `/mt` build (pinned nightly, `+atomics +bulk-memory +mutable-globals +simd128` with shared memory) for `SharedArrayBuffer`-backed threads. Both target `wasm32-unknown-unknown`. See [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving).
 
 ---
 
