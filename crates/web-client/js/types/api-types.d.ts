@@ -587,10 +587,6 @@ export interface ExportNoteOptions {
   format?: NoteExportFormat;
 }
 
-export interface FetchPrivateNotesOptions {
-  mode?: "incremental" | "all";
-}
-
 export interface SendPrivateOptions {
   note: NoteInput;
   to: AccountRef;
@@ -869,9 +865,12 @@ export interface NotesResource {
   /**
    * Fetch private notes from the note transport service.
    *
-   * @param options - Optional fetch mode: `"incremental"` (default) or `"all"`.
+   * Fetches incrementally: only notes past the stored pagination cursor are
+   * downloaded. Historical notes for a newly tracked tag sit below that cursor
+   * and are recovered automatically by {@link MidenClient.sync}, which
+   * backfills each newly tracked tag.
    */
-  fetchPrivate(options?: FetchPrivateNotesOptions): Promise<void>;
+  fetchPrivate(): Promise<void>;
   /**
    * Send a private note to a recipient via the note transport service.
    *
