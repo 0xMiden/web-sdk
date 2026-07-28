@@ -5,7 +5,7 @@
 ### Changes
 
 * [BREAKING][web] Removed `notes.fetchPrivate({ mode: "all" })` (`WasmWebClient.fetchAllPrivateNotes`). `fetchPrivate()` now takes no arguments and always fetches incrementally from the stored pagination cursor. The full re-scan is no longer needed: historical notes for a newly tracked tag sit below the shared cursor and are now backfilled automatically during `sync()`, one tag at a time, so callers that previously reached for `mode: "all"` after adding a tag should just sync. Callers passing the option get a type error; the argument is otherwise ignored at runtime.
-* [CHANGE][web] `miden-client` and `miden-client-sqlite-store` are pinned to rust-sdk `c39d2f0`, 17 commits past the `0.16.0-alpha.1` release, which adds the `debug-output` feature (routing MASM `debug` print events to a custom sink). Inherited upstream changes include note-transport attachment support, a note-screener batch cache, and faster historical-note retrieval. Protocol-layer versions are unchanged (`miden-protocol` / `miden-standards` / `miden-tx` at `0.16.0-alpha.4`).
+* [CHANGE][web] `miden-client` and `miden-client-sqlite-store` are pinned to rust-sdk `1bda89d`, 15 commits past the `0.16.0-alpha.1` release. Inherited upstream changes include note-transport attachment support, a note-screener batch cache, faster historical-note retrieval, and single-account note screening: `notes.listAvailable({ account })` now screens the given account only, instead of screening every tracked account and discarding the rest, so its cost no longer grows with the number of tracked accounts. Protocol-layer versions are unchanged (`miden-protocol` / `miden-standards` / `miden-tx` at `0.16.0-alpha.4`).
 
 ## 0.16.0-alpha.1 (2026-07-19)
 
