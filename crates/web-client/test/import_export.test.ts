@@ -200,12 +200,22 @@ test.describe("export and import note", () => {
   });
 
   test(`exporting and then importing note`, async ({ page }) => {
+    // Capture a store snapshot that already carries the genesis block header
+    // but predates the minted note.
+    await page.evaluate(async () => {
+      await window.client.syncState();
+    });
+    const genesisOnlyDb = await exportDb(page);
+
     const { createdNoteId: noteId } = await setupMintedNote(page);
 
     const serializedNoteFile = await exportNoteSerialized(page, noteId, "Full");
 
-    // Clear store and assert that the output note cannot be found
+    // Clear the store and restore the pre-mint snapshot, so the note import
+    // below runs against a store that knows the chain's genesis but not the
+    // note.
     await clearStore(page);
+    await importDb(genesisOnlyDb, page);
     await expect(async () => {
       return await page.evaluate(
         async ({ noteId }) => {
