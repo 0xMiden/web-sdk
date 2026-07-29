@@ -162,11 +162,16 @@ impl WebClient {
             .0
             .commitment();
 
-        client.seed_transaction_encryption_key(TransactionEncryptionKey::new_unattested(
-            b"mock-key-id".to_vec(),
-            KeyExchangeKey::with_rng(&mut StdRng::from_rng(&mut rand::rng())).public_key(),
-            genesis_commitment,
-        ));
+        client
+            .seed_transaction_encryption_key(TransactionEncryptionKey::new_unattested(
+                b"mock-key-id".to_vec(),
+                KeyExchangeKey::with_rng(&mut StdRng::from_rng(&mut rand::rng())).public_key(),
+                genesis_commitment,
+            ))
+            .await
+            .map_err(|err| {
+                js_error_with_context(err, "failed to seed the mock transaction encryption key")
+            })?;
 
         Ok(())
     }
