@@ -73,8 +73,9 @@ must_use_candidate          = "allow"                           # This marks man
 should_panic_without_expect = "allow"                           # We don't care about the specific panic message.
 # End of pedantic lints.
 
-# TEMPORARY: points the client crates at the encrypted-transaction-inputs branch
-# (0xMiden/rust-sdk#2341), pending the next alpha release.
+# TEMPORARY: points the client crates at the note-filter-by-script-root branch
+# (0xMiden/rust-sdk#2335), which is stacked on the encrypted-transaction-inputs
+# branch (0xMiden/rust-sdk#2341), pending the next alpha release.
 [patch.crates-io]
-miden-client              = { branch = "encrypted-tx-inputs", git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "encrypted-tx-inputs", git = "https://github.com/0xMiden/rust-sdk" }
+miden-client              = { git = "https://github.com/0xMiden/rust-sdk", rev = "64a35ec319bd8d4e4e0358d38dbe777d4d6dd2b3" }
+miden-client-sqlite-store = { git = "https://github.com/0xMiden/rust-sdk", rev = "64a35ec319bd8d4e4e0358d38dbe777d4d6dd2b3" }

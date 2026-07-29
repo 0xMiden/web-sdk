@@ -1752,7 +1752,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.16.0-alpha.1"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=encrypted-tx-inputs#32dfba8df1eb5910a189b023365aa644f8efbdcb"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=64a35ec319bd8d4e4e0358d38dbe777d4d6dd2b3#64a35ec319bd8d4e4e0358d38dbe777d4d6dd2b3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1790,7 +1790,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.16.0-alpha.1"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=encrypted-tx-inputs#32dfba8df1eb5910a189b023365aa644f8efbdcb"
+source = "git+https://github.com/0xMiden/rust-sdk?rev=64a35ec319bd8d4e4e0358d38dbe777d4d6dd2b3#64a35ec319bd8d4e4e0358d38dbe777d4d6dd2b3"
 dependencies = [
  "anyhow",
  "async-trait",
