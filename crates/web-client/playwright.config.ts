@@ -83,6 +83,7 @@ const ciShardProjects = process.env.CI
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
           "test/account.test.ts",
+          "test/account_code_dangling.test.ts",
           "test/account_component.test.ts",
           "test/account_file.test.ts",
           "test/account_reader.test.ts",
@@ -190,6 +191,7 @@ export default defineConfig({
       // Skip browser-only and WASM-specific tests
       testIgnore: [
         "test/store_isolation*",
+        "test/account_code_dangling.test.ts", // IndexedDB corruption regression
         "test/sync_lock*",
         "test/import_export*",
         "test/remote_keystore*",

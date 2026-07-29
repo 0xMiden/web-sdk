@@ -51,6 +51,7 @@ async function openTestDb(version = "0.1.0"): Promise<string> {
 // ============================================================
 const ACC = "0xacc1";
 const CODE_ROOT = "0xcode1";
+const CODE_BYTES = new Uint8Array([1, 2, 3, 4]);
 const STORAGE_ROOT = "0xsroot1";
 const VAULT_ROOT = "0xvroot1";
 const COMMITMENT = "0xcommit1";
@@ -605,6 +606,7 @@ describe("applyFullAccountState", () => {
       storageMapEntries: [{ slotName: "map1", key: "k1", value: "vnew" }],
       assets: [{ vaultKey: "vk1", asset: "0xnewasset" }],
       codeRoot: CODE_ROOT,
+      code: CODE_BYTES,
       storageRoot: "0xsroot2",
       vaultRoot: "0xvroot2",
       committed: true,
@@ -650,6 +652,7 @@ describe("applyFullAccountState", () => {
       storageMapEntries: [],
       assets: [],
       codeRoot: "0xcodeNew",
+      code: CODE_BYTES,
       storageRoot: "0xsrootNew",
       vaultRoot: "0xvrootNew",
       committed: false,
@@ -680,6 +683,7 @@ describe("applyFullAccountState", () => {
       storageMapEntries: [{ slotName: "brand-new-map", key: "k", value: "v" }],
       assets: [{ vaultKey: "brand-new-key", asset: "0xa" }],
       codeRoot: CODE_ROOT,
+      code: CODE_BYTES,
       storageRoot: STORAGE_ROOT,
       vaultRoot: VAULT_ROOT,
       committed: false,
@@ -708,6 +712,115 @@ describe("applyFullAccountState", () => {
       .toArray();
     expect(histAssets.length).toBeGreaterThan(0);
     expect(histAssets[0].oldAsset).toBeNull();
+  });
+});
+
+// ============================================================
+// applyFullAccountState — account-code persistence (regression)
+//
+// Regression for the "invalid type: unit value, expected struct
+// AccountCodeIdxdbObject" crash: applyFullAccountState (the update_account /
+// sync path) used to write the header's codeRoot without ensuring the
+// accountCodes row existed, leaving getAccountCode unable to resolve it. It
+// now persists the code in the same transaction.
+// ============================================================
+describe("applyFullAccountState — account-code persistence", () => {
+  it("writes the account code so getAccountCode resolves the header's codeRoot", async () => {
+    const dbId = await openTestDb();
+
+    await seedAccount(dbId, { codeRoot: CODE_ROOT });
+    await applyFullAccountState(dbId, {
+      accountId: ACC,
+      nonce: "2",
+      storageSlots: [],
+      storageMapEntries: [],
+      assets: [],
+      codeRoot: CODE_ROOT,
+      code: CODE_BYTES,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      committed: true,
+      accountCommitment: "0xcommit2",
+      accountSeed: undefined,
+    });
+
+    const code = await getAccountCode(dbId, CODE_ROOT);
+    expect(code).not.toBeNull();
+    expect(code?.root).toBe(CODE_ROOT);
+    expect(code?.code).toBe("AQIDBA==");
+  });
+
+  it("fills a code root the store has never seen (sync-only account)", async () => {
+    // The production gap: an account observed only through sync, whose code was
+    // never locally inserted via insert_account/upsertAccountCode. Before the
+    // fix, getAccountCode(newRoot) returned null -> the Rust crash.
+    const dbId = await openTestDb();
+    const NEW_ROOT = "0xcode-never-seen";
+
+    expect(await getAccountCode(dbId, NEW_ROOT)).toBeNull();
+
+    await applyFullAccountState(dbId, {
+      accountId: "0xsync-only",
+      nonce: "1",
+      storageSlots: [],
+      storageMapEntries: [],
+      assets: [],
+      codeRoot: NEW_ROOT,
+      code: CODE_BYTES,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      committed: true,
+      accountCommitment: "0xcommit-sync",
+      accountSeed: undefined,
+    });
+
+    const code = await getAccountCode(dbId, NEW_ROOT);
+    expect(code).not.toBeNull();
+    expect(code?.root).toBe(NEW_ROOT);
+    expect(code?.code).toBe("AQIDBA==");
+  });
+
+  it("preserves and repairs account code across a 0.15.x patch reopen", async () => {
+    // End-to-end shape of the reported incident: an account created under one
+    // patch survives the patch bump, but its code row is missing when a later
+    // full-state sync refreshes the account.
+    const name = uniqueDbName();
+    await openDatabase(name, "0.15.5");
+    openDbIds.push(name);
+    await seedAccount(name, { codeRoot: CODE_ROOT });
+    await upsertAccountCode(name, CODE_ROOT, CODE_BYTES);
+
+    // Patch bump preserves the DB (same major.minor -> no nuke).
+    getDatabase(name).dexie.close();
+    await openDatabase(name, "0.15.6");
+
+    expect((await getAccountHeader(name, ACC))?.codeRoot).toBe(CODE_ROOT);
+    expect((await getAccountCode(name, CODE_ROOT))?.code).toBe("AQIDBA==");
+
+    // Reproduce the dangling relationship from the failure report, then apply
+    // the same full-state refresh that previously left it unresolved.
+    await getDatabase(name).accountCodes.delete(CODE_ROOT);
+    expect(await getAccountCode(name, CODE_ROOT)).toBeNull();
+
+    await applyFullAccountState(name, {
+      accountId: ACC,
+      nonce: "2",
+      storageSlots: [],
+      storageMapEntries: [],
+      assets: [],
+      codeRoot: CODE_ROOT,
+      code: CODE_BYTES,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      committed: true,
+      accountCommitment: "0xcommit-upgraded",
+      accountSeed: undefined,
+    });
+
+    // The refresh restores the invariant: the header's code root resolves.
+    const header = await getAccountHeader(name, ACC);
+    expect(header?.codeRoot).toBe(CODE_ROOT);
+    expect((await getAccountCode(name, CODE_ROOT))?.code).toBe("AQIDBA==");
   });
 });
 
@@ -1260,6 +1373,7 @@ describe("error paths: unregistered dbId re-throws", () => {
         storageMapEntries: [],
         assets: [],
         codeRoot: "0xcode",
+        code: CODE_BYTES,
         storageRoot: "0xsr",
         vaultRoot: "0xvr",
         committed: false,

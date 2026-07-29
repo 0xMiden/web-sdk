@@ -138,6 +138,9 @@ export async function applyTransactionBatch(dbId, payloads) {
         db.historicalStorageMapEntries,
         db.latestAccountAssets,
         db.historicalAccountAssets,
+        // Full account updates persist code in a nested transaction, so the
+        // parent batch must include accountCodes in its scope as well.
+        db.accountCodes,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
         db.inputNotes,

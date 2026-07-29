@@ -942,6 +942,7 @@ describe("sync", () => {
   describe("applyStateSync — account updates", () => {
     it("applies a full account state during sync", async () => {
       const dbId = await openTestDb();
+      const code = new Uint8Array([0x01, 0x02, 0x03]);
 
       await applyStateSync(
         dbId,
@@ -957,6 +958,7 @@ describe("sync", () => {
               vaultRoot: "vault-root-1",
               assets: [],
               codeRoot: "code-root-1",
+              code,
               committed: true,
               accountCommitment: "commitment-1",
               accountSeed: undefined,
@@ -974,10 +976,15 @@ describe("sync", () => {
       expect(account!.nonce).toBe("1");
       expect(account!.committed).toBe(true);
       expect(account!.codeRoot).toBe("code-root-1");
+
+      const storedCode = await db.accountCodes.get(account!.codeRoot);
+      expect(storedCode?.code).toEqual(code);
     });
 
     it("applies multiple account updates in one sync call", async () => {
       const dbId = await openTestDb();
+      const codeA = new Uint8Array([0x0a]);
+      const codeB = new Uint8Array([0x0b]);
 
       await applyStateSync(
         dbId,
@@ -993,6 +1000,7 @@ describe("sync", () => {
               vaultRoot: "vr-A",
               assets: [],
               codeRoot: "cr-A",
+              code: codeA,
               committed: true,
               accountCommitment: "com-A",
               accountSeed: undefined,
@@ -1006,6 +1014,7 @@ describe("sync", () => {
               vaultRoot: "vr-B",
               assets: [],
               codeRoot: "cr-B",
+              code: codeB,
               committed: false,
               accountCommitment: "com-B",
               accountSeed: new Uint8Array([0xca, 0xfe]),
@@ -1019,6 +1028,9 @@ describe("sync", () => {
       const ids = all.map((a) => a.id);
       expect(ids).toContain("acct-sync-A");
       expect(ids).toContain("acct-sync-B");
+
+      expect((await db.accountCodes.get("cr-A"))?.code).toEqual(codeA);
+      expect((await db.accountCodes.get("cr-B"))?.code).toEqual(codeB);
     });
   });
 });

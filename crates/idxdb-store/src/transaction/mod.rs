@@ -71,6 +71,8 @@ struct BatchFullAccountState {
     storage_map_entries: Vec<JsStorageMapEntry>,
     assets: Vec<JsVaultAsset>,
     code_root: String,
+    #[serde(with = "serde_bytes")]
+    code: Vec<u8>,
     storage_root: String,
     vault_root: String,
     committed: bool,
@@ -460,6 +462,7 @@ impl IdxdbStore {
                     storage_map_entries,
                     assets,
                     code_root: account.code().commitment().to_string(),
+                    code: account.code().to_bytes(),
                     storage_root: account.storage().to_commitment().to_string(),
                     vault_root: account.vault().root().to_string(),
                     committed: account.is_public(),
