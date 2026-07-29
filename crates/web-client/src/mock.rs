@@ -162,10 +162,15 @@ impl WebClient {
             .0
             .commitment();
 
+        // Generated ahead of the call so the non-`Send` `ThreadRng` temporary is dropped
+        // before the await; the Node.js binding requires the future to be `Send`.
+        let public_key =
+            KeyExchangeKey::with_rng(&mut StdRng::from_rng(&mut rand::rng())).public_key();
+
         client
             .seed_transaction_encryption_key(TransactionEncryptionKey::new_unattested(
                 b"mock-key-id".to_vec(),
-                KeyExchangeKey::with_rng(&mut StdRng::from_rng(&mut rand::rng())).public_key(),
+                public_key,
                 genesis_commitment,
             ))
             .await
