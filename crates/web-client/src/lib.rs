@@ -26,7 +26,7 @@ use miden_client::crypto::RandomCoin;
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient};
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
@@ -377,7 +377,8 @@ impl WebClient {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -429,7 +430,8 @@ impl WebClient {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -513,7 +515,8 @@ impl WebClient {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
         })?;
 
-        let rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = if let Some(url) = node_note_transport_url {
             let client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);

@@ -12,7 +12,7 @@ use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
 use miden_client::rpc::domain::account::{GetAccountRequest, StorageMapFetch, VaultFetch};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
-use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient};
+use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient, VerifyingRpcClient};
 use note::FetchedNote;
 
 use crate::js_error_with_context;
@@ -46,7 +46,10 @@ impl RpcClient {
     /// @param endpoint - Endpoint to connect to.
     #[js_export(constructor)]
     pub fn new(endpoint: Endpoint) -> Result<RpcClient, JsErr> {
-        let rpc_client = Arc::new(GrpcClient::new(&endpoint.into(), DEFAULT_GRPC_TIMEOUT_MS));
+        let rpc_client = Arc::new(VerifyingRpcClient::new(GrpcClient::new(
+            &endpoint.into(),
+            DEFAULT_GRPC_TIMEOUT_MS,
+        )));
 
         Ok(RpcClient { inner: rpc_client })
     }
