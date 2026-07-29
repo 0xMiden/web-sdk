@@ -3,11 +3,16 @@ use alloc::sync::Arc;
 #[cfg(feature = "browser")]
 use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
+use miden_client::block::BlockNumber;
+use miden_client::crypto::eddsa_25519_sha512::KeyExchangeKey;
+use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::Store;
 use miden_client::testing::MockChain;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::{MockNoteTransportApi, MockNoteTransportNode};
 use miden_client::utils::{Deserializable, RwLock, Serializable};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 #[cfg(feature = "browser")]
 use crate::WebKeyStore;
@@ -62,6 +67,8 @@ impl WebClient {
             Some(mock_note_transport_api.clone()),
         )
         .await?;
+
+        self.seed_mock_transaction_encryption_key().await?;
 
         *self.mock_rpc_api.lock().await = Some(mock_rpc_api);
         *self.mock_note_transport_api.lock().await = Some(mock_note_transport_api);
@@ -122,10 +129,56 @@ impl WebClient {
         )
         .await?;
 
+        self.seed_mock_transaction_encryption_key().await?;
+
         *self.mock_rpc_api.lock().await = Some(mock_rpc_api);
         *self.mock_note_transport_api.lock().await = Some(mock_note_transport_api);
 
         Ok("Mock client created successfully".to_string())
+    }
+}
+
+impl WebClient {
+    /// Gives a mock-backed client the transaction encryption key that submission seals against.
+    ///
+    /// `MockRpcApi` refuses to serve a key, because attesting one needs a validator signature the
+    /// mock chain cannot produce. The mock also discards the sealed inputs it receives, so an
+    /// unattested key is enough: sealing still runs its real transcript and wire path, only the
+    /// attestation check is skipped.
+    ///
+    /// Must run after the client is in place and its genesis header stored, since the key is
+    /// scoped to the genesis commitment.
+    async fn seed_mock_transaction_encryption_key(&self) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let genesis_commitment = client
+            .get_block_header_by_num(BlockNumber::GENESIS)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the genesis block header"))?
+            .ok_or_else(|| {
+                from_str_err("genesis block header must be in place before the mock client can seal transaction inputs")
+            })?
+            .0
+            .commitment();
+
+        // Generated ahead of the call so the non-`Send` `ThreadRng` temporary is dropped
+        // before the await; the Node.js binding requires the future to be `Send`.
+        let public_key =
+            KeyExchangeKey::with_rng(&mut StdRng::from_rng(&mut rand::rng())).public_key();
+
+        client
+            .seed_transaction_encryption_key(TransactionEncryptionKey::new_unattested(
+                b"mock-key-id".to_vec(),
+                public_key,
+                genesis_commitment,
+            ))
+            .await
+            .map_err(|err| {
+                js_error_with_context(err, "failed to seed the mock transaction encryption key")
+            })?;
+
+        Ok(())
     }
 }
 

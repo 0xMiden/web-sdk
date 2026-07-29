@@ -89,7 +89,6 @@ const WRITE_METHODS = new Set([
   "addTag",
   "executeForSummary",
   "executeProgram",
-  "fetchAllPrivateNotes",
   "fetchPrivateNotes",
   "forceImportStore",
   "importAccountById",

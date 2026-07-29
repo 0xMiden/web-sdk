@@ -33,7 +33,9 @@ impl WebClient {
 
     /// Fetch private notes from the note transport layer
     ///
-    /// Uses an internal pagination mechanism to avoid fetching duplicate notes.
+    /// Uses an internal pagination mechanism to avoid fetching duplicate notes: only notes past
+    /// the stored cursor are fetched. Historical notes for a newly tracked tag sit below that
+    /// cursor and are recovered automatically during `syncState`, which backfills each new tag.
     #[js_export(js_name = "fetchPrivateNotes")]
     pub async fn fetch_private_notes(&self) -> Result<(), JsErr> {
         let mut guard = self.get_mut_inner().await;
@@ -45,26 +47,6 @@ impl WebClient {
             .fetch_private_notes()
             .await
             .map_err(|e| js_error_with_context(e, "failed fetching private notes"))?;
-
-        Ok(())
-    }
-
-    /// Fetch all private notes from the note transport layer
-    ///
-    /// Fetches all notes stored in the transport layer, with no pagination.
-    /// Prefer using [`WebClient::fetch_private_notes`] for a more efficient, on-going,
-    /// fetching mechanism.
-    #[js_export(js_name = "fetchAllPrivateNotes")]
-    pub async fn fetch_all_private_notes(&self) -> Result<(), JsErr> {
-        let mut guard = self.get_mut_inner().await;
-        let client = guard
-            .as_mut()
-            .ok_or_else(|| from_str_err("Client not initialized. Call createClient() first."))?;
-
-        client
-            .fetch_all_private_notes()
-            .await
-            .map_err(|e| js_error_with_context(e, "failed fetching all private notes"))?;
 
         Ok(())
     }
