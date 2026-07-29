@@ -620,17 +620,16 @@ jobs:
         with:
           path: target/test-node/install
           key: ${{ runner.os }}-test-node-${{ steps.node-rev.outputs.rev }}
-      # Persistent cargo-install build dir so a node rev bump recompiles only
-      # the crates that changed; the restore-keys prefix seeds the incremental
-      # build from the previous rev.
+      # Build dir cached per node rev, with no cross-rev fallback: cargo reuses
+      # stale build-script outputs when one target dir serves the same crate
+      # versions from two git revs, which breaks the compile with phantom type
+      # errors. A rev bump therefore compiles from scratch.
       - name: Restore test node build dir
         if: steps.cache-test-node.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: target/test-node/build
           key: ${{ runner.os }}-test-node-build-${{ steps.node-rev.outputs.rev }}
-          restore-keys: |
-            ${{ runner.os }}-test-node-build-
       # Warm the cache consumed by every job that starts the node:
       # start-test-node.sh unconditionally runs
       # `cargo build --release -p test-node-genesis`, so the consumer jobs
