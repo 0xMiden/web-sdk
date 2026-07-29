@@ -25,7 +25,7 @@ env:
   # that serves `GetTransactionEncryptionKey`, which the patched client calls
   # on every first submission. A commit sha (not the branch name) keeps cache
   # keys stable. Re-pin to the release tag once the next alpha ships.
-  MIDEN_CLIENT_REF: 32dfba8df1eb5910a189b023365aa644f8efbdcb
+  MIDEN_CLIENT_REF: cf510e39fafa647aea8fb863ba779e92a8f7d9c2
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's

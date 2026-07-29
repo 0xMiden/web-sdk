@@ -76,5 +76,5 @@ should_panic_without_expect = "allow"                           # We don't care 
 # TEMPORARY: points the client crates at the encrypted-transaction-inputs branch
 # (0xMiden/rust-sdk#2341), pending the next alpha release.
 [patch.crates-io]
-miden-client              = { branch = "encrypted-tx-inputs", git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "encrypted-tx-inputs", git = "https://github.com/0xMiden/rust-sdk" }
+miden-client              = { branch = "next", git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-sqlite-store = { branch = "next", git = "https://github.com/0xMiden/rust-sdk" }
