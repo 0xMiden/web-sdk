@@ -42,8 +42,8 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.16.0-alpha.1" 
 # Cargo.lock intentionally follows the rust-sdk v0.16.0-alpha.1 release graph, including the
 # Miden VM 0.25.3 family and wincode 0.5.5. Broad `cargo update` runs currently select newer
 # transitive versions; validate those against this alpha before accepting lockfile changes.
-miden-client              = { default-features = false, version = "0.16.0-alpha.1" }
-miden-client-sqlite-store = { default-features = false, version = "0.16.0-alpha.1" }
+miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
 
 # External dependencies
 async-trait = { version = "0.1" }

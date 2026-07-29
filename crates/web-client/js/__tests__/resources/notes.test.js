@@ -39,7 +39,6 @@ function makeInner() {
     getConsumableNotes: vi.fn(),
     importNoteFile: vi.fn(),
     exportNoteFile: vi.fn(),
-    fetchAllPrivateNotes: vi.fn(),
     fetchPrivateNotes: vi.fn(),
     sendPrivateNote: vi.fn(),
   };
@@ -250,28 +249,38 @@ describe("NotesResource", () => {
   });
 
   describe("fetchPrivate", () => {
-    it("calls fetchAllPrivateNotes when mode is 'all'", async () => {
-      inner.fetchAllPrivateNotes.mockResolvedValue(undefined);
-      const resource = makeResource();
-      await resource.fetchPrivate({ mode: "all" });
-      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
-      expect(inner.fetchAllPrivateNotes).toHaveBeenCalledOnce();
-      expect(inner.fetchPrivateNotes).not.toHaveBeenCalled();
-    });
-
-    it("calls fetchPrivateNotes by default (no opts)", async () => {
+    it("calls fetchPrivateNotes and guards against a terminated client", async () => {
       inner.fetchPrivateNotes.mockResolvedValue(undefined);
       const resource = makeResource();
       await resource.fetchPrivate();
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(inner.fetchPrivateNotes).toHaveBeenCalledOnce();
-      expect(inner.fetchAllPrivateNotes).not.toHaveBeenCalled();
+      expect(inner.fetchPrivateNotes).toHaveBeenCalledWith();
     });
 
-    it("calls fetchPrivateNotes when mode is not 'all'", async () => {
+    it("ignores any argument passed by legacy callers", async () => {
       inner.fetchPrivateNotes.mockResolvedValue(undefined);
       const resource = makeResource();
-      await resource.fetchPrivate({ mode: "partial" });
+      await resource.fetchPrivate({ mode: "all" });
       expect(inner.fetchPrivateNotes).toHaveBeenCalledOnce();
+      expect(inner.fetchPrivateNotes).toHaveBeenCalledWith();
+    });
+
+    it("does not call the client when the client is terminated", async () => {
+      client.assertNotTerminated.mockImplementation(() => {
+        throw new Error("client terminated");
+      });
+      const resource = makeResource();
+      await expect(resource.fetchPrivate()).rejects.toThrow(
+        "client terminated"
+      );
+      expect(inner.fetchPrivateNotes).not.toHaveBeenCalled();
+    });
+
+    it("propagates a rejection from the underlying client", async () => {
+      inner.fetchPrivateNotes.mockRejectedValue(new Error("transport down"));
+      const resource = makeResource();
+      await expect(resource.fetchPrivate()).rejects.toThrow("transport down");
     });
   });
 

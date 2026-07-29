@@ -20,10 +20,12 @@ env:
   # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
   # fields encoded as bytes vs fixed64), or 'accept header validation failed'
   # if the protocol version differs.
-  # Pinned to the commit of the rust-sdk v0.16.0-alpha.1 release tag, matching
-  # the miden-client 0.16.0-alpha.1 crates.io dep in Cargo.toml. A commit sha (not the tag
-  # name) keeps cache keys stable.
-  MIDEN_CLIENT_REF: 0f89705c926d0f8aa442d267341b0ce6661e53ba
+  # Pinned to the head of the rust-sdk `encrypted-tx-inputs` branch, matching
+  # the miden-client git patch in Cargo.toml: its Cargo.lock pins the node rev
+  # that serves `GetTransactionEncryptionKey`, which the patched client calls
+  # on every first submission. A commit sha (not the branch name) keeps cache
+  # keys stable. Re-pin to the release tag once the next alpha ships.
+  MIDEN_CLIENT_REF: cf510e39fafa647aea8fb863ba779e92a8f7d9c2
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -618,17 +620,16 @@ jobs:
         with:
           path: target/test-node/install
           key: ${{ runner.os }}-test-node-${{ steps.node-rev.outputs.rev }}
-      # Persistent cargo-install build dir so a node rev bump recompiles only
-      # the crates that changed; the restore-keys prefix seeds the incremental
-      # build from the previous rev.
+      # Build dir cached per node rev, with no cross-rev fallback: cargo reuses
+      # stale build-script outputs when one target dir serves the same crate
+      # versions from two git revs, which breaks the compile with phantom type
+      # errors. A rev bump therefore compiles from scratch.
       - name: Restore test node build dir
         if: steps.cache-test-node.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: target/test-node/build
           key: ${{ runner.os }}-test-node-build-${{ steps.node-rev.outputs.rev }}
-          restore-keys: |
-            ${{ runner.os }}-test-node-build-
       # Warm the cache consumed by every job that starts the node:
       # start-test-node.sh unconditionally runs
       # `cargo build --release -p test-node-genesis`, so the consumer jobs

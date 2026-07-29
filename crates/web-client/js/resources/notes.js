@@ -55,13 +55,9 @@ export class NotesResource {
     return await this.#inner.exportNoteFile(resolveNoteIdHex(noteId), format);
   }
 
-  async fetchPrivate(opts) {
+  async fetchPrivate() {
     this.#client.assertNotTerminated();
-    if (opts?.mode === "all") {
-      await this.#inner.fetchAllPrivateNotes();
-    } else {
-      await this.#inner.fetchPrivateNotes();
-    }
+    await this.#inner.fetchPrivateNotes();
   }
 
   async sendPrivate(opts) {
