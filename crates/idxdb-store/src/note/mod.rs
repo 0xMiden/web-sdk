@@ -58,7 +58,7 @@ impl IdxdbStore {
         filter: NoteFilter,
     ) -> Result<Vec<InputNoteRecord>, StoreError> {
         let input_notes_idxdb: Vec<InputNoteIdxdbObject> =
-            await_js(filter.to_input_notes_promise(self.db_id())?, "failed to get input notes")
+            await_js(filter.to_input_notes_promise(self.db_id()), "failed to get input notes")
                 .await?;
 
         input_notes_idxdb
@@ -72,7 +72,7 @@ impl IdxdbStore {
         filter: NoteFilter,
     ) -> Result<Vec<OutputNoteRecord>, StoreError> {
         let output_notes_idxdb: Vec<OutputNoteIdxdbObject> =
-            await_js(filter.to_output_note_promise(self.db_id())?, "failed to get output notes")
+            await_js(filter.to_output_note_promise(self.db_id()), "failed to get output notes")
                 .await?;
 
         output_notes_idxdb
@@ -182,19 +182,23 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
             InputNoteState::STATE_PROCESSING_AUTHENTICATED,
             InputNoteState::STATE_PROCESSING_UNAUTHENTICATED,
         ]),
-        _ => None,
+        NoteFilter::List(_)
+        | NoteFilter::Unique(_)
+        | NoteFilter::Nullifiers(_)
+        | NoteFilter::DetailsCommitments(_)
+        | NoteFilter::ScriptRoots(_) => None,
     }
 }
 
 // Provide extension methods for NoteFilter via a local trait
 pub(crate) trait NoteFilterExt {
-    fn to_input_notes_promise(&self, db_id: &str) -> Result<Promise, StoreError>;
-    fn to_output_note_promise(&self, db_id: &str) -> Result<Promise, StoreError>;
+    fn to_input_notes_promise(&self, db_id: &str) -> Promise;
+    fn to_output_note_promise(&self, db_id: &str) -> Promise;
 }
 
 impl NoteFilterExt for NoteFilter {
-    fn to_input_notes_promise(&self, db_id: &str) -> Result<Promise, StoreError> {
-        let promise = match self {
+    fn to_input_notes_promise(&self, db_id: &str) -> Promise {
+        match self {
             NoteFilter::All
             | NoteFilter::Consumed
             | NoteFilter::Committed
@@ -232,16 +236,11 @@ impl NoteFilterExt for NoteFilter {
                     script_roots.iter().map(NoteScriptRoot::to_hex).collect();
                 idxdb_get_input_notes_from_script_roots(db_id, script_roots_as_str)
             },
-            filter => {
-                return Err(StoreError::QueryError(format!("unsupported note filter: {filter:?}")));
-            },
-        };
-
-        Ok(promise)
+        }
     }
 
-    fn to_output_note_promise(&self, db_id: &str) -> Result<Promise, StoreError> {
-        let promise = match self {
+    fn to_output_note_promise(&self, db_id: &str) -> Promise {
+        match self {
             NoteFilter::All
             | NoteFilter::Consumed
             | NoteFilter::Committed
@@ -293,11 +292,6 @@ impl NoteFilterExt for NoteFilter {
                     commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
                 idxdb_get_output_notes_from_details_commitments(db_id, commitments_as_str)
             },
-            filter => {
-                return Err(StoreError::QueryError(format!("unsupported note filter: {filter:?}")));
-            },
-        };
-
-        Ok(promise)
+        }
     }
 }
