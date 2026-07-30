@@ -3,6 +3,14 @@ name: Publish Rust Crates on Release
 on:
   release:
     types: [published]
+  # Manual trigger to (re-)publish the crates from a chosen ref — used to recover when a release's
+  # crates-publish failed partway, or to catch crates.io up to a fix that landed after the tag.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch/tag/sha) to publish from. Defaults to the branch this run is dispatched on."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -19,28 +27,34 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.release.tag_name }}
+          # On a release event, the tag; on workflow_dispatch, the input ref (empty default falls
+          # back to the dispatched branch via the action's own default).
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
 
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
 
       - name: Log release info
         run: |
-          echo "Publishing release ${{ github.event.release.tag_name }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Release tag (if any): ${{ github.event.release.tag_name }}"
           echo "Commit: $(git rev-parse HEAD)"
 
       - name: Update Rust toolchain
         run: |
           rustup update --no-self-update
 
+      # Dry-run only the crates that resolve standalone. web-client is omitted: it depends on
+      # js-export-macro + idxdb-store, which aren't on crates.io until the publish steps below run,
+      # so it can't be dry-run before them.
       - name: Preflight - publish dry run
         continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cd crates/idxdb-store
+          cd crates/js-export-macro
           cargo publish --dry-run
-          cd ../web-client
+          cd ../idxdb-store
           cargo publish --dry-run
           cd ../mobile-prover
           cargo publish --dry-run
@@ -50,6 +64,15 @@ jobs:
         run: |
           rm -rf "$CARGO_TARGET_DIR/package" || true
 
+      # Publish in dependency order: js-export-macro and idxdb-store first, then web-client (which
+      # depends on both), then mobile-prover.
+      - name: Publish js-export-macro
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/js-export-macro
+          cargo publish
+
       - name: Publish idxdb-store
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -57,12 +80,15 @@ jobs:
           cd crates/idxdb-store
           cargo publish
 
+      # --no-verify: web-client is a wasm `cdylib` that does not build for the host target (its
+      # miden-client dependency is configured for wasm), so cargo's default host verify build
+      # fails. The crate is verified for wasm32 by the build and clippy-wasm CI jobs instead.
       - name: Publish web-client
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd crates/web-client
-          cargo publish
+          cargo publish --no-verify
 
       - name: Publish mobile-prover
         env:

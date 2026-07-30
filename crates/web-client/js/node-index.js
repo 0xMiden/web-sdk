@@ -177,6 +177,7 @@ export const Address = /* @__PURE__ */ _reexport("Address");
 export const AddressInterface = /* @__PURE__ */ _reexport("AddressInterface");
 export const AdviceInputs = /* @__PURE__ */ _reexport("AdviceInputs");
 export const AdviceMap = /* @__PURE__ */ _reexport("AdviceMap");
+export const AssetCallbackFlag = /* @__PURE__ */ _reexport("AssetCallbackFlag");
 export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
 export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
   "AuthFalcon512RpoMultisigConfig"
@@ -192,6 +193,7 @@ export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
   "ConsumableNoteRecord"
 );
 export const Endpoint = /* @__PURE__ */ _reexport("Endpoint");
+export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
 export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
@@ -214,6 +216,9 @@ export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");
 export const Library = /* @__PURE__ */ _reexport("Library");
 export const MerklePath = /* @__PURE__ */ _reexport("MerklePath");
+export const NetworkAccountTarget = /* @__PURE__ */ _reexport(
+  "NetworkAccountTarget"
+);
 export const NetworkId = /* @__PURE__ */ _reexport("NetworkId");
 export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
   "NetworkNoteStatusInfo"
@@ -262,6 +267,9 @@ export const ProcedureThreshold =
   /* @__PURE__ */ _reexport("ProcedureThreshold");
 export const Program = /* @__PURE__ */ _reexport("Program");
 export const ProvenTransaction = /* @__PURE__ */ _reexport("ProvenTransaction");
+export const PswapLineageRecord =
+  /* @__PURE__ */ _reexport("PswapLineageRecord");
+export const PswapLineageState = /* @__PURE__ */ _reexport("PswapLineageState");
 export const PublicKey = /* @__PURE__ */ _reexport("PublicKey");
 export const RpcClient = /* @__PURE__ */ _reexport("RpcClient");
 export const Rpo256 = /* @__PURE__ */ _reexport("Rpo256");

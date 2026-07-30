@@ -110,3 +110,64 @@ function buildNoteAssets(assets, wasm) {
   });
   return new wasm.NoteAssets(fungibleAssets);
 }
+
+/**
+ * Builds a Public custom-script note carrying a NetworkAccountTarget attachment
+ * (does not submit). Provide exactly one of `recipient` or `script`.
+ *
+ * @param {NetworkNoteOptions} opts
+ * @returns {Note}
+ */
+export function buildNetworkNote(opts) {
+  const wasm = getWasm();
+  if (opts.recipient && opts.script) {
+    throw new Error(
+      "buildNetworkNote requires exactly one of `recipient` or `script`, not both."
+    );
+  }
+  const sender = resolveAccountRef(opts.account, wasm);
+
+  const target =
+    opts.target instanceof wasm.NetworkAccountTarget
+      ? opts.target
+      : new wasm.NetworkAccountTarget(
+          resolveAccountRef(opts.target, wasm),
+          opts.executionHint
+        );
+
+  const noteAssets = opts.assets
+    ? buildNoteAssets(opts.assets, wasm)
+    : new wasm.NoteAssets();
+
+  const metadata = new wasm.NoteMetadata(
+    sender,
+    wasm.NoteType.Public,
+    wasm.NoteTag.withAccountTarget(target.targetId())
+  );
+
+  const recipient = opts.recipient ?? buildRecipient(opts, wasm);
+
+  const attachments = [target.toAttachment()];
+  if (opts.attachment) {
+    attachments.push(new wasm.NoteAttachment(opts.attachment));
+  }
+
+  return wasm.Note.withAttachments(
+    noteAssets,
+    metadata,
+    recipient,
+    attachments
+  );
+}
+
+function buildRecipient(opts, wasm) {
+  if (!opts.script) {
+    throw new Error(
+      "buildNetworkNote requires either `recipient` or `script`."
+    );
+  }
+  const storage = new wasm.NoteStorage(
+    new wasm.FeltArray((opts.inputs ?? []).map((value) => new wasm.Felt(value)))
+  );
+  return wasm.NoteRecipient.fromScript(opts.script, storage);
+}

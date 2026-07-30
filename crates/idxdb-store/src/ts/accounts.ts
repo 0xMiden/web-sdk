@@ -540,6 +540,7 @@ export async function applyAccountPatch(
     );
   } catch (error) {
     logWebStoreError(error, `Error applying transaction delta`);
+    throw error;
   }
 }
 
@@ -866,6 +867,7 @@ export async function applyFullAccountState(
     );
   } catch (error) {
     logWebStoreError(error, `Error applying full account state`);
+    throw error;
   }
 }
 
