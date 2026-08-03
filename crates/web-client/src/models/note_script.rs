@@ -68,8 +68,11 @@ impl NoteScript {
 
     /// Returns the MAST root of this script.
     ///
-    /// For a well-known script this root is its stable on-chain identifier — e.g. the
-    /// standard burn note script root is `NoteScript.burn().root().toHex()`.
+    /// The root is the script's MAST commitment — the identifier used on-chain to reference
+    /// the script (e.g. `NoteScript.burn().root().toHex()` gives the standard burn note
+    /// script root). It is fixed for a given protocol / standards-library version, but a
+    /// protocol upgrade that changes the compiled script changes the root, so treat it as
+    /// version-specific rather than a permanent constant.
     pub fn root(&self) -> Word {
         miden_client::Word::from(self.0.root()).into()
     }

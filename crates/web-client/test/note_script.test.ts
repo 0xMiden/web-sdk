@@ -8,10 +8,12 @@ import { test, expect } from "./test-setup";
 // constructor is wired to a *distinct* script — a copy-paste slip in the
 // bodies would surface here as colliding roots.
 test.describe("well-known note scripts", () => {
-  test("swap/pswap/mint/burn expose stable, distinct MAST roots", async ({
+  test("the six well-known scripts expose well-formed, distinct MAST roots", async ({
     run,
   }) => {
     const result = await run(async ({ sdk }) => ({
+      p2id: sdk.NoteScript.p2id().root().toHex(),
+      p2ide: sdk.NoteScript.p2ide().root().toHex(),
       swap: sdk.NoteScript.swap().root().toHex(),
       pswap: sdk.NoteScript.pswap().root().toHex(),
       mint: sdk.NoteScript.mint().root().toHex(),
@@ -20,13 +22,20 @@ test.describe("well-known note scripts", () => {
     }));
 
     // Each root is a well-formed 32-byte word hex string.
-    for (const key of ["swap", "pswap", "mint", "burn"]) {
+    for (const key of ["p2id", "p2ide", "swap", "pswap", "mint", "burn"]) {
       expect(result[key]).toMatch(/^0x[0-9a-fA-F]{64}$/);
     }
     // Deterministic across calls (LazyLock-backed standard script).
     expect(result.burnAgain).toBe(result.burn);
-    // Each constructor is wired to a distinct script — not accidentally aliased.
-    const roots = [result.swap, result.pswap, result.mint, result.burn];
+    // Every constructor is wired to a distinct script — not accidentally aliased.
+    const roots = [
+      result.p2id,
+      result.p2ide,
+      result.swap,
+      result.pswap,
+      result.mint,
+      result.burn,
+    ];
     expect(new Set(roots).size).toBe(roots.length);
   });
 });
