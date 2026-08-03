@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.9 (TBD)
+## 0.15.9 (TBA)
 
 ### Enhancements
 
