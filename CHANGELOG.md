@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.9 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] Added `NoteScript.burn()` and `NoteScript.mint()`, exposing the well-known BURN and MINT note scripts (the faucet burn/mint pair) alongside the existing `p2id()` / `p2ide()` / `swap()`. The standard BURN note script root is now reachable from TypeScript as `NoteScript.burn().root().toHex()`. ([#256](https://github.com/0xMiden/web-sdk/pull/256))
+
+```ts
+const burnScriptRoot = NoteScript.burn().root().toHex();
+```
+
 ## 0.15.8 (2026-07-22)
 
 ### Enhancements
