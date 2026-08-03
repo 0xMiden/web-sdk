@@ -50,20 +50,26 @@ impl NoteScript {
         StandardNote::SWAP.script().into()
     }
 
-    /// Returns the well-known MINT script (instructs a faucet to mint a fungible asset).
+    /// Returns the well-known PSWAP script (partial-fill swap).
+    pub fn pswap() -> Self {
+        StandardNote::PSWAP.script().into()
+    }
+
+    /// Returns the well-known MINT script (instructs a network fungible faucet to mint a
+    /// fungible asset — MINT notes are consumable only by network faucets).
     pub fn mint() -> Self {
         StandardNote::MINT.script().into()
     }
 
     /// Returns the well-known BURN script (instructs a faucet to burn a fungible asset).
-    ///
-    /// Its MAST root — e.g. `NoteScript.burn().root().toHex()` — is the on-chain
-    /// identifier of the standard burn note script.
     pub fn burn() -> Self {
         StandardNote::BURN.script().into()
     }
 
     /// Returns the MAST root of this script.
+    ///
+    /// For a well-known script this root is its stable on-chain identifier — e.g. the
+    /// standard burn note script root is `NoteScript.burn().root().toHex()`.
     pub fn root(&self) -> Word {
         miden_client::Word::from(self.0.root()).into()
     }
