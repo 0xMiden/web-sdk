@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.9 (TBA)
+## 0.15.9 (2026-08-04)
 
 ### Enhancements
 
