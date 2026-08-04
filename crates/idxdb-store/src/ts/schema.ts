@@ -270,8 +270,10 @@ function indexes(...items: string[]): string {
 }
 
 /** V1 baseline schema. Extracted as a constant because once migrations are enabled, this must
- *  never be modified — all schema changes should go through new version blocks instead. */
-const V1_STORES: Record<string, string> = {
+ *  never be modified — all schema changes should go through new version blocks instead.
+ *  Exported for migration tests, which seed a physical v1 database before opening it with the
+ *  current version chain. */
+export const V1_STORES: Record<string, string> = {
   [Table.AccountCode]: indexes("root"),
   [Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId"),
   [Table.HistoricalAccountStorage]: indexes(
@@ -421,11 +423,12 @@ export class MidenDatabase {
 
     // --- Schema versioning ---
     //
-    // NOTE: The migration system is not currently in use. The Miden network
-    // resets on every upgrade, so the database is nuked whenever the client
-    // version changes (see ensureClientVersion). Once the network stabilizes
-    // and data can be preserved across upgrades, the version-change nuke will
-    // be removed and migrations will take over.
+    // NOTE: Migrations coexist with the client-version nuke: the database is
+    // still nuked on major/minor client-version changes (network resets — see
+    // ensureClientVersion), while Dexie version blocks below handle schema and
+    // data fixes for stores that survive patch upgrades. Once the network
+    // stabilizes and data can be preserved across all upgrades, the
+    // version-change nuke will be removed and migrations alone will take over.
     //
     // v1 is the baseline schema. To add a migration:
     //   1. Add a .version(N+1).stores({...}).upgrade(tx => {...}) block below.
@@ -457,12 +460,51 @@ export class MidenDatabase {
     // Note: The `populate` hook (below the version blocks) only fires on
     // first database creation, NOT during upgrades.
     //
-    // To enable migrations (stop nuking the DB on version change):
-    //   1. Remove the nuke logic in ensureClientVersion (close/delete/open).
-    //      Just persist the new version instead.
-    //   2. Freeze V1_STORES — never modify it again.
-    //   3. Add version(2+) blocks below for all schema changes going forward.
+    // Version blocks exist below, so V1_STORES is frozen — never modify it;
+    // add a new version block instead. To retire the nuke entirely (once data
+    // must survive major/minor upgrades), remove the close/delete/open logic
+    // in ensureClientVersion and just persist the new version there.
     this.dexie.version(1).stores(V1_STORES);
+
+    // v2 (miden-client 0.15.4): prune note tags leaked by output-note
+    // registration. Mirrors sqlite-store migration
+    // `0002_prune_output_note_tags.sql`. Clients built against miden-client
+    // < 0.15.4 registered a `Note`-sourced tag for every output note a
+    // transaction created, but sync cleanup only removes tags of committed
+    // *input* notes — leaking one `tags` row per created note. The client no
+    // longer registers those tags; this upgrade deletes the rows already
+    // leaked. A tag is kept while an inclusion-pending input note
+    // (Expected = 0, Unverified = 1 — the mirror of
+    // `InputNoteRecord::is_inclusion_pending`) still needs it.
+    //
+    // This data-only fix coexists with the version-change nuke above: the
+    // nuke covers major/minor client upgrades (network resets), while this
+    // upgrade runs for stores preserved across patch upgrades.
+    this.dexie
+      .version(2)
+      .stores({})
+      .upgrade(async (tx) => {
+        const outputNoteCommitments = new Set<string>(
+          await tx.outputNotes.toCollection().primaryKeys()
+        );
+        if (outputNoteCommitments.size === 0) {
+          return;
+        }
+        const pendingInputNoteCommitments = new Set<string>(
+          await tx.inputNotes
+            .where("stateDiscriminant")
+            .anyOf([0, 1])
+            .primaryKeys()
+        );
+        await tx.tags
+          .filter(
+            (tag) =>
+              !!tag.sourceNoteId &&
+              outputNoteCommitments.has(tag.sourceNoteId) &&
+              !pendingInputNoteCommitments.has(tag.sourceNoteId)
+          )
+          .delete();
+      });
 
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode

@@ -149,6 +149,38 @@ await mint({
 });
 ```
 
+### Bridge Out (AggLayer)
+```tsx
+const { bridge } = useBridge();
+
+// Emits a public B2AGG note that the bridge account consumes, burning the
+// asset so it can be claimed at the destination Ethereum address.
+await bridge({
+  from: senderAccountId,
+  bridgeAccount: bridgeAccountId,
+  assetId: tokenFaucetId,
+  amount: 100n,
+  destinationNetwork: 1, // AggLayer-assigned network id
+  destinationAddress: "0x000000000000000000000000000000000000dEaD",
+});
+```
+
+### Create a Network Note
+```tsx
+const { createNetworkNote } = useCreateNetworkNote();
+
+// Builds a Public custom-script note carrying a NetworkAccountTarget
+// attachment; the targeted network account auto-consumes it on-chain.
+// Provide exactly one of `script` or `recipient`.
+const { txId, note } = await createNetworkNote({
+  accountId: senderAccountId,
+  target: networkAccountId,
+  script: myNoteScript, // or: recipient: myRecipient
+});
+
+note.isNetworkNote(); // true
+```
+
 ### Create Faucet
 ```tsx
 const { createFaucet } = useCreateFaucet();
@@ -394,6 +426,9 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useTransactionHistory(...)` | `transactions` | Local transaction log |
 | `useSessionAccount()` | `account` | The signer's connected account |
 | `useWaitForNotes(...)` | resolves when matching notes appear | Pull-style note waiting |
+| `usePswapLineages()` | `lineages` | All tracked PSWAP order lineages |
+| `usePswapLineagesFor(creator)` | `lineages` | Tracked PSWAP lineages for one creator |
+| `usePswapLineage(orderId)` | `lineage` | One tracked PSWAP lineage by stable order id |
 
 ### Mutation (write)
 | Hook | Action | Returns on success |
@@ -407,11 +442,14 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
+| `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
+| `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |
 | `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` — `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` — creator only, reclaims unfilled offered asset | `TransactionResult` |
+| `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` — creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
 | `useTransaction()` | `transact({ ... })` | `TransactionResult` (custom tx) |
 | `useExecuteProgram()` | `execute(...)` | program output |
 | `useCompile()` | `compile({ source })` | `{ component, txScript, noteScript }` |

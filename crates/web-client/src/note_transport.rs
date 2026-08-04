@@ -23,6 +23,7 @@ impl WebClient {
             .get_sync_height()
             .await
             .map_err(|e| js_error_with_context(e, "failed to read sync height"))?;
+
         client
             .send_private_note_with_block_hint(note.into(), &address.into(), block_hint)
             .await

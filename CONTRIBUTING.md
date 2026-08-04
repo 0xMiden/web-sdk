@@ -65,3 +65,14 @@ Three situations where you still want to edit `Cargo.toml` by hand instead:
 1. **The upstream PR's branch was rebased past changes that web-sdk hasn't caught up to yet.** If the PR head includes additional incompatible `Store` or protocol changes, use a compatible rust-sdk branch or commit and retarget `Cargo.toml` manually.
 2. **You want to test against a specific commit, not the PR's HEAD.** The auto-patch always resolves to the head ref of the linked PR. If you need a fixed sha, use a hand-written `git = ..., rev = "..."` retarget.
 3. **You're testing a draft branch that has no PR yet.** No PR → no marker → fall back to manual retarget.
+
+## Releasing
+
+A release bumps **two independent version lines** that must move together:
+
+1. **npm packages** — `version` in `crates/web-client/package.json`, `packages/react-sdk/package.json`, and the `packages/node-sdk-*/package.json` natives (plus the `@miden-sdk/*` dependency ranges that reference them).
+2. **Rust crates** — `version` under `[workspace.package]` in the root `Cargo.toml`, **and** the matching `version` fields of the internal crates in `[workspace.dependencies]` (`idxdb-store`, `js-export-macro`). All workspace crates share this version.
+
+The Rust version is easy to forget because it's decoupled from npm, but `Publish Rust Crates on Release` runs `cargo publish` for the crates at the workspace version — if it isn't bumped, the publish fails with `crate <name>@<version> already exists on crates.io index`. Keep the Rust workspace version aligned with the npm release version.
+
+Then open the release PR, merge it, and publish a GitHub Release tagged `vX.Y.Z` — `publish-web-sdk.yml` ships the npm packages and `publish-crates-release.yml` publishes the Rust crates.

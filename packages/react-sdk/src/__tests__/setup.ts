@@ -33,6 +33,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     ]),
     newMintTransactionRequest: vi.fn().mockReturnValue({}),
     newSendTransactionRequest: vi.fn().mockReturnValue({}),
+    newB2AggTransactionRequest: vi.fn().mockReturnValue({}),
     newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
     newSwapTransactionRequest: vi.fn().mockReturnValue({}),
     submitNewTransaction: vi
@@ -120,6 +121,13 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         })
       ),
     },
+    EthAddress: {
+      fromHex: vi.fn((hex: string) => ({
+        toHex: vi.fn(() => hex),
+        toString: vi.fn(() => hex),
+        free: vi.fn(),
+      })),
+    },
     Endpoint,
     RpcClient,
     BasicFungibleFaucetComponent: {
@@ -175,6 +183,88 @@ vi.mock("@miden-sdk/miden-sdk", () => {
           attachment,
         })
       ),
+      withAttachments: vi.fn(
+        (
+          assets: unknown,
+          metadata: unknown,
+          recipient: unknown,
+          attachments: unknown
+        ) => ({
+          _live: true,
+          id() {
+            if (!this._live) throw new Error("invalid Note handle");
+            return { toString: () => "0xnote" };
+          },
+          assets,
+          metadata,
+          recipient,
+          attachments,
+        })
+      ),
+    },
+    // Mock Felt — real WASM `Felt` wraps a field element built from a bigint;
+    // `asInt()` returns it back so tests can assert on the value round-trip.
+    Felt: class Felt {
+      value: bigint;
+      constructor(value: bigint) {
+        this.value = value;
+      }
+      asInt() {
+        return this.value;
+      }
+      free() {}
+    },
+    // Mock FeltArray — thin wrapper mirroring the real wasm-bindgen
+    // `Vec<Felt>` ABI (constructed from an array of `Felt` instances).
+    FeltArray: vi.fn().mockImplementation((elements: unknown[] = []) => ({
+      elements,
+      length: () => elements.length,
+      get: (i: number) => elements[i],
+      free: vi.fn(),
+    })),
+    NetworkAccountTarget: vi
+      .fn()
+      .mockImplementation(
+        (
+          targetId: ReturnType<typeof createMockAccountId>,
+          executionHint?: unknown
+        ) => ({
+          targetId: vi.fn(() => targetId),
+          executionHint: vi.fn(() => executionHint),
+          toAttachment: vi.fn(() => ({ type: "network-account-target" })),
+          free: vi.fn(),
+        })
+      ),
+    NoteMetadata: vi
+      .fn()
+      .mockImplementation(
+        (
+          sender: ReturnType<typeof createMockAccountId>,
+          noteType: number,
+          noteTag: unknown
+        ) => ({
+          sender,
+          noteType,
+          noteTag,
+          free: vi.fn(),
+        })
+      ),
+    NoteStorage: vi.fn().mockImplementation((feltArray: unknown) => ({
+      items: () => feltArray,
+      free: vi.fn(),
+    })),
+    NoteRecipient: {
+      fromScript: vi.fn((script: unknown, storage: unknown) => ({
+        script,
+        storage,
+        free: vi.fn(),
+      })),
+    },
+    NoteTag: {
+      withAccountTarget: vi.fn((accountId: unknown) => ({
+        accountId,
+        asU32: vi.fn(() => 0),
+      })),
     },
     NoteAssets: class NoteAssets {
       assets: unknown[];

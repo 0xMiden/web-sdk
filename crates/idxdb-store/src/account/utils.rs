@@ -284,22 +284,14 @@ pub fn update_tracked_storage_roots(
     Ok(())
 }
 
-/// Applies an account patch atomically in a single Dexie transaction.
-///
-/// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
-/// the full Account object. This avoids loading account code and full storage map entries.
-pub async fn apply_account_patch(
-    db_id: &str,
-    account_id: AccountId,
-    final_header: &AccountHeader,
+/// Builds the JS-side objects an account-patch write needs: the updated storage slots, the map
+/// entries carried by the patch, and the changed vault assets (updates plus removal markers).
+pub fn build_account_patch_payload(
     updated_storage_slots: &PatchedStorageSlots,
     updated_assets: &[Asset],
     removed_asset_ids: &[AssetId],
     patch: &AccountPatch,
-) -> Result<(), JsValue> {
-    let account_id_str = account_id.to_string();
-    let nonce_str = final_header.nonce().to_string();
-
+) -> (Vec<JsStorageSlot>, Vec<JsStorageMapEntry>, Vec<JsVaultAsset>) {
     // Build updated slot JS objects from pre-computed storage roots
     let mut js_slots = Vec::new();
     for (slot_name, (value, slot_type, patch_op)) in updated_storage_slots {
@@ -343,6 +335,32 @@ pub async fn apply_account_patch(
             asset: String::new(),
         });
     }
+
+    (js_slots, changed_map_entries, changed_assets)
+}
+
+/// Applies an account patch atomically in a single Dexie transaction.
+///
+/// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
+/// the full Account object. This avoids loading account code and full storage map entries.
+pub async fn apply_account_patch(
+    db_id: &str,
+    account_id: AccountId,
+    final_header: &AccountHeader,
+    updated_storage_slots: &PatchedStorageSlots,
+    updated_assets: &[Asset],
+    removed_asset_ids: &[AssetId],
+    patch: &AccountPatch,
+) -> Result<(), JsValue> {
+    let account_id_str = account_id.to_string();
+    let nonce_str = final_header.nonce().to_string();
+
+    let (js_slots, changed_map_entries, changed_assets) = build_account_patch_payload(
+        updated_storage_slots,
+        updated_assets,
+        removed_asset_ids,
+        patch,
+    );
 
     // Account record fields from final header
     let code_root = final_header.code_commitment().to_string();

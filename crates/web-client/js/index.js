@@ -67,9 +67,11 @@ export {
 // (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
 // `async fn` in Rust because they take the client's RNG via an async lock.
 const SYNC_METHODS = new Set([
+  "buildPswapCancelByOrder",
   "buildSwapTag",
   "createCodeBuilder",
   "lastAuthError",
+  "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
   "newPswapCancelTransactionRequest",
@@ -103,6 +105,7 @@ const WRITE_METHODS = new Set([
   "removeSetting",
   "sendPrivateNote",
   "setSetting",
+  "submitNewTransactionBatch",
   "submitProvenTransaction",
 ]);
 
@@ -123,6 +126,9 @@ const READ_METHODS = new Set([
   "getInputNotes",
   "getOutputNote",
   "getOutputNotes",
+  "getPswapLineage",
+  "getPswapLineages",
+  "getPswapLineagesFor",
   "getPublicKeyCommitmentsOfAccount",
   "getSetting",
   "getSyncHeight",

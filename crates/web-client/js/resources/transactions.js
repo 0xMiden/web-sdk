@@ -4,6 +4,26 @@ import {
   resolveTransactionIdHex,
 } from "../utils.js";
 
+/**
+ * Prove an executed transaction, resolving the prover exactly the way the
+ * one-shot `submit()` pipeline does: the per-call prover if given, else the
+ * client's default prover, else the built-in local prover. Shared by
+ * {@link TransactionExecution.prove} and the internal pipeline so the two can
+ * never drift.
+ *
+ * @param {*} inner - The WASM WebClient.
+ * @param {*} defaultProver - The client's configured default prover, or null.
+ * @param {*} result - The execution result to prove.
+ * @param {{ prover?: * }} [opts] - Optional per-call prover override.
+ * @returns {Promise<*>} The proven transaction.
+ */
+async function proveResult(inner, defaultProver, result, opts) {
+  const prover = opts?.prover ?? defaultProver;
+  return prover
+    ? await inner.proveTransaction(result, prover)
+    : await inner.proveTransaction(result);
+}
+
 export class TransactionsResource {
   #inner;
   #getWasm;
@@ -79,10 +99,119 @@ export class TransactionsResource {
     return { txId, note: null, result };
   }
 
+  /**
+   * Builds a Public custom-script note carrying a NetworkAccountTarget
+   * attachment, submits it as an own output note, and optionally waits for
+   * confirmation. Provide exactly one of `recipient` or `script`.
+   */
+  async createNetworkNote(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (opts.recipient && opts.script) {
+      throw new Error(
+        "createNetworkNote requires exactly one of `recipient` or `script`, not both."
+      );
+    }
+
+    const senderId = resolveAccountRef(opts.account, wasm);
+
+    const target =
+      opts.target instanceof wasm.NetworkAccountTarget
+        ? opts.target
+        : new wasm.NetworkAccountTarget(
+            resolveAccountRef(opts.target, wasm),
+            opts.executionHint
+          );
+
+    const noteAssets = opts.assets
+      ? new wasm.NoteAssets(
+          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map(
+            (a) =>
+              new wasm.FungibleAsset(
+                resolveAccountRef(a.token, wasm),
+                BigInt(a.amount)
+              )
+          )
+        )
+      : new wasm.NoteAssets();
+
+    const metadata = new wasm.NoteMetadata(
+      senderId,
+      wasm.NoteType.Public,
+      wasm.NoteTag.withAccountTarget(target.targetId())
+    );
+
+    let recipient = opts.recipient;
+    if (!recipient) {
+      if (!opts.script) {
+        throw new Error(
+          "createNetworkNote requires either `recipient` or `script`."
+        );
+      }
+      const storage = new wasm.NoteStorage(
+        new wasm.FeltArray(
+          (opts.inputs ?? []).map((value) => new wasm.Felt(value))
+        )
+      );
+      recipient = wasm.NoteRecipient.fromScript(opts.script, storage);
+    }
+
+    const attachments = [target.toAttachment()];
+    if (opts.attachment) {
+      attachments.push(new wasm.NoteAttachment(opts.attachment));
+    }
+
+    const note = wasm.Note.withAttachments(
+      noteAssets,
+      metadata,
+      recipient,
+      attachments
+    );
+
+    // NoteArray constructor consumes its elements; use push(&note) to keep
+    // `note` valid so we can return it to the caller.
+    const ownOutputs = new wasm.NoteArray();
+    ownOutputs.push(note);
+    const request = new wasm.TransactionRequestBuilder()
+      .withOwnOutputNotes(ownOutputs)
+      .build();
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      senderId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, note, result };
+  }
+
   async mint(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildMintRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  async bridge(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
@@ -267,6 +396,10 @@ export class TransactionsResource {
         ({ accountId, request } = await this.#buildMintRequest(opts, wasm));
         break;
       }
+      case "bridge": {
+        ({ accountId, request } = await this.#buildB2AggRequest(opts, wasm));
+        break;
+      }
       case "consume": {
         ({ accountId, request } = await this.#buildConsumeRequest(opts, wasm));
         break;
@@ -311,6 +444,163 @@ export class TransactionsResource {
   async execute(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+    const { accountId, request } = this.#buildExecuteRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /**
+   * Submit a heterogeneous batch of operations against a single account. All
+   * operations are executed, proven individually and as a batch, and submitted
+   * atomically — either every tx in the batch lands or none does.
+   *
+   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
+   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   */
+  async batch(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (!opts || !opts.account) {
+      throw new Error("batch: `account` is required");
+    }
+    if (!Array.isArray(opts.operations) || opts.operations.length === 0) {
+      throw new Error("batch: `operations` must be a non-empty array");
+    }
+
+    // Build each TransactionRequest. Per-op builders all use the batch-level
+    // `account` — V1 only supports same-account batches, mirroring the Rust
+    // constraint. We forward `opts.account` into each per-op options object so
+    // the existing builders' `resolveAccountRef` produces fresh AccountIds
+    // when needed.
+    const requests = [];
+    for (let i = 0; i < opts.operations.length; i++) {
+      const op = opts.operations[i];
+      let built;
+      switch (op?.kind) {
+        case "send":
+          built = await this.#buildSendRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "mint":
+          built = await this.#buildMintRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "consume":
+          built = await this.#buildConsumeRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "swap":
+          built = await this.#buildSwapRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "execute":
+          built = this.#buildExecuteRequest(
+            { ...op, account: opts.account },
+            wasm
+          );
+          break;
+        case "custom":
+          if (!op.request) {
+            throw new Error(
+              `batch: operation[${i}] of kind "custom" is missing \`request\``
+            );
+          }
+          built = { request: op.request };
+          break;
+        default:
+          throw new Error(
+            `batch: operation[${i}] has unknown kind "${op?.kind}"`
+          );
+      }
+      requests.push(built.request);
+    }
+
+    return this.submitBatch(opts.account, requests, opts);
+  }
+
+  /**
+   * Submit pre-built TransactionRequests as an atomic batch. Lower-level
+   * counterpart of `batch()` — for callers that already have built requests in
+   * hand. Equivalent to `submit()` but plural.
+   *
+   * @param {AccountRef} account - The account executing the batch.
+   * @param {TransactionRequest[]} requests - Pre-built transaction requests.
+   * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
+   *   The batch is proved with the client's configured prover; the V1 batch API
+   *   has no per-call prover override.
+   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   */
+  async submitBatch(account, requests, options) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (!Array.isArray(requests) || requests.length === 0) {
+      throw new Error("submitBatch: `requests` must be a non-empty array");
+    }
+
+    const accountId = resolveAccountRef(account, wasm);
+    const blockNumber = await this.#inner.submitNewTransactionBatch(
+      accountId,
+      requests.map((r) => r.serialize())
+    );
+
+    if (options?.waitForConfirmation) {
+      await this.#waitForBlock(blockNumber, options);
+    }
+
+    return { blockNumber };
+  }
+
+  /**
+   * Polls until the local sync height reaches `blockNumber` or the timeout
+   * expires. The Rust V1 batch API returns only a block number — there are no
+   * per-tx ids to poll on, so we wait on the chain height instead.
+   *
+   * @param {number} blockNumber - The block height to wait for.
+   * @param {object} [opts] - Polling options (timeout, interval).
+   */
+  async #waitForBlock(blockNumber, opts) {
+    const timeout = opts?.timeout ?? 60_000;
+    const interval = opts?.interval ?? 5_000;
+    const start = Date.now();
+
+    while (true) {
+      if (timeout > 0 && Date.now() - start >= timeout) {
+        throw new Error(
+          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+        );
+      }
+      try {
+        await this.#inner.syncStateWithTimeout(0);
+      } catch {
+        // sync may fail transiently; continue polling
+      }
+      const height = await this.#inner.getSyncHeight();
+      if (height >= blockNumber) return;
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+  }
+
+  #buildExecuteRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
 
     let builder = new wasm.TransactionRequestBuilder().withCustomScript(
@@ -338,18 +628,7 @@ export class TransactionsResource {
       );
     }
 
-    const request = builder.build();
-    const { txId, result } = await this.#submitOrSubmitWithProver(
-      accountId,
-      request,
-      opts.prover
-    );
-
-    if (opts.waitForConfirmation) {
-      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
-    }
-
-    return { txId, result };
+    return { accountId, request: builder.build() };
   }
 
   async executeProgram(opts) {
@@ -391,6 +670,65 @@ export class TransactionsResource {
       accountId,
       request,
       opts?.prover
+    );
+  }
+
+  /**
+   * Execute a transaction request locally — nothing is proven, submitted, or
+   * persisted. Returns a {@link TransactionExecution} handle; advance the
+   * lifecycle by chaining `.prove()` → `.submit()` → `.apply()`, benchmarking
+   * or error-handling each stage independently. Use {@link submit} to run every
+   * stage in one call.
+   *
+   * ```ts
+   * const executed  = await client.transactions.executeRequest(account, request);
+   * const proven    = await executed.prove({ prover });
+   * const submitted = await proven.submit();
+   * await submitted.apply();
+   * ```
+   *
+   * The stages are NOT atomic as a group: awaiting other mutating calls on the
+   * same account between them can interleave state. Drive the chain as an
+   * uninterrupted sequence per account.
+   *
+   * @param {AccountRef} account - The account executing the transaction.
+   * @param {TransactionRequest} request - The pre-built transaction request.
+   * @returns {Promise<TransactionExecution>} A handle to the executed
+   *   transaction, ready to prove.
+   */
+  async executeRequest(account, request) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(account, wasm);
+    const result = await this.#inner.executeTransaction(accountId, request);
+    return new TransactionExecution(this.#inner, this.#client, this, result);
+  }
+
+  /**
+   * Submit a proof produced somewhere that shares nothing with this client —
+   * e.g. a detached prover that never saw the local store. Returns a
+   * {@link TransactionSubmission} handle; call `.apply()` on it to persist
+   * locally. For the in-process flow prefer
+   * `executeRequest(...)` → `.prove()` → `.submit()`, which threads the proof
+   * and result for you.
+   *
+   * @param {ProvenTransaction} proof - A proof for `result`, proven elsewhere.
+   * @param {TransactionResult} result - The matching execution result.
+   * @returns {Promise<TransactionSubmission>} A handle to the submitted
+   *   transaction, ready to apply.
+   */
+  async submitProven(proof, result) {
+    this.#client.assertNotTerminated();
+    const blockNumber = await this.#inner.submitProvenTransaction(
+      proof,
+      result
+    );
+    return new TransactionSubmission(
+      this.#inner,
+      this.#client,
+      this,
+      result,
+      blockNumber
     );
   }
 
@@ -518,6 +856,24 @@ export class TransactionsResource {
       accountId,
       noteType,
       amount
+    );
+    return { accountId, request };
+  }
+
+  async #buildB2AggRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
+    const faucetId = resolveAccountRef(opts.token, wasm);
+    const amount = BigInt(opts.amount);
+    const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
+
+    const request = await this.#inner.newB2AggTransactionRequest(
+      accountId,
+      bridgeAccountId,
+      faucetId,
+      amount,
+      opts.destinationNetwork,
+      destinationAddress
     );
     return { accountId, request };
   }
@@ -666,13 +1022,181 @@ export class TransactionsResource {
 
   async #submitOrSubmitWithProver(accountId, request, perCallProver) {
     const result = await this.#inner.executeTransaction(accountId, request);
-    const prover = perCallProver ?? this.#client.defaultProver;
-    const proven = prover
-      ? await this.#inner.proveTransaction(result, prover)
-      : await this.#inner.proveTransaction(result);
+    const proven = await proveResult(
+      this.#inner,
+      this.#client.defaultProver,
+      result,
+      { prover: perCallProver }
+    );
     const txId = result.id();
     const height = await this.#inner.submitProvenTransaction(proven, result);
     await this.#inner.applyTransaction(result, height);
     return { txId, result };
+  }
+}
+
+/**
+ * A locally-executed transaction — nothing proven, submitted, or persisted yet.
+ * First stage of the manual transaction lifecycle, returned by
+ * {@link TransactionsResource.executeRequest}. Advance it with {@link prove}.
+ */
+class TransactionExecution {
+  #inner;
+  #client;
+  #resource;
+  #result;
+
+  constructor(inner, client, resource, result) {
+    this.#inner = inner;
+    this.#client = client;
+    this.#resource = resource;
+    this.#result = result;
+  }
+
+  /** The raw execution artifact (account delta, output notes, …). */
+  get result() {
+    return this.#result;
+  }
+
+  /** The executed transaction's id. */
+  get id() {
+    return this.#result.id();
+  }
+
+  /**
+   * Prove this execution. Uses the per-call prover when provided, falling back
+   * to the client's default prover (or the built-in local prover). Pure
+   * computation — touches neither the network nor the local store.
+   *
+   * A `TransactionProver` is consumed by the call: build (or clone) a fresh
+   * prover per `prove()`. Reusing an already-passed prover silently falls back
+   * to the built-in local prover.
+   *
+   * @param {ProveOptions} [opts] - Optional per-call prover override.
+   * @returns {Promise<TransactionProof>} A handle to the proven transaction,
+   *   ready to submit.
+   */
+  async prove(opts) {
+    this.#client.assertNotTerminated();
+    const proven = await proveResult(
+      this.#inner,
+      this.#client.defaultProver,
+      this.#result,
+      opts
+    );
+    return new TransactionProof(
+      this.#inner,
+      this.#client,
+      this.#resource,
+      proven,
+      this.#result
+    );
+  }
+}
+
+/**
+ * A proven transaction, ready for the network. Second stage of the manual
+ * transaction lifecycle, returned by {@link TransactionExecution.prove}.
+ * Advance it with {@link submit}.
+ */
+class TransactionProof {
+  #inner;
+  #client;
+  #resource;
+  #proof;
+  #result;
+
+  constructor(inner, client, resource, proof, result) {
+    this.#inner = inner;
+    this.#client = client;
+    this.#resource = resource;
+    this.#proof = proof;
+    this.#result = result;
+  }
+
+  /** The raw proof — e.g. to serialize and submit from a different client. */
+  get proof() {
+    return this.#proof;
+  }
+
+  /** The execution result this proof was produced from. */
+  get result() {
+    return this.#result;
+  }
+
+  /**
+   * Submit the proof to the network. Does NOT persist locally — call
+   * {@link TransactionSubmission.apply} on the returned handle; skipping it
+   * leaves the local store out of sync until the next full sync.
+   *
+   * @returns {Promise<TransactionSubmission>} A handle to the submitted
+   *   transaction, ready to apply.
+   */
+  async submit() {
+    this.#client.assertNotTerminated();
+    const blockNumber = await this.#inner.submitProvenTransaction(
+      this.#proof,
+      this.#result
+    );
+    return new TransactionSubmission(
+      this.#inner,
+      this.#client,
+      this.#resource,
+      this.#result,
+      blockNumber
+    );
+  }
+}
+
+/**
+ * A submitted transaction. Final stage of the manual transaction lifecycle,
+ * returned by {@link TransactionProof.submit}. Persist it locally with
+ * {@link apply}, or block until it commits with {@link waitForConfirmation}.
+ */
+class TransactionSubmission {
+  #inner;
+  #client;
+  #resource;
+  #result;
+  #blockNumber;
+
+  constructor(inner, client, resource, result, blockNumber) {
+    this.#inner = inner;
+    this.#client = client;
+    this.#resource = resource;
+    this.#result = result;
+    this.#blockNumber = blockNumber;
+  }
+
+  /** The block height the transaction was submitted at. */
+  get blockNumber() {
+    return this.#blockNumber;
+  }
+
+  /** The execution result that was submitted. */
+  get result() {
+    return this.#result;
+  }
+
+  /**
+   * Persist the transaction into the local store, firing registered
+   * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
+   * local store is unaware of the transaction.
+   *
+   * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
+   */
+  async apply() {
+    this.#client.assertNotTerminated();
+    return await this.#inner.applyTransaction(this.#result, this.#blockNumber);
+  }
+
+  /**
+   * Poll local sync height until the transaction commits on-chain. Convenience
+   * wrapper over {@link TransactionsResource.waitFor}.
+   *
+   * @param {WaitOptions} [opts] - Polling options (timeout, interval, onProgress).
+   */
+  async waitForConfirmation(opts) {
+    return await this.#resource.waitFor(this.#result.id().toHex(), opts);
   }
 }

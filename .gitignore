@@ -61,3 +61,12 @@ crates/idxdb-store/src/js/**/*.js.map
 
 # AI tooling
 docs/superpowers/
+
+# typedoc output is regenerated fresh by CI on every run via
+# `pnpm --filter @miden-sdk/miden-sdk run typedoc`. Don't commit the
+# tree — the "Check that web client documentation is up-to-date" step
+# in test.yml runs `git diff --exit-code` over this path, which is a
+# no-op when the dir is untracked. Treat the step as a warning-only
+# smoke test; the canonical API reference is the typedoc output
+# rendered on the published docs site.
+docs/typedoc/
