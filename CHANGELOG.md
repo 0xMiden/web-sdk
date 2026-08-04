@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][web] `sendPrivateNote` now relays a block hint (the sender's current sync height) so the recipient locates the note's on-chain commitment deterministically. Previously the note was relayed without a hint and the recipient fell back to a narrow fixed lookback window, silently dropping the note when its sync height had advanced past that window — so delivery to an already-synced recipient was unreliable. The public API (`sendPrivateNote(note, address)`) is unchanged. ([web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258))
+* [FIX][web] `client.notes.sendPrivate(...)` now relays a block hint (the sender's current sync height) through the transport layer, so an already-synced recipient locates the note's on-chain commitment deterministically instead of relying on a narrow fixed lookback window that silently dropped it. Relay promptly after submitting the note's transaction so the hint stays at or before the note's commitment. No API change. ([web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258))
 
 ## 0.15.8 (2026-07-22)
 
