@@ -917,7 +917,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1836,9 +1836,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.15.4"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfe7ffae180889a614a2be3be194f8cb84f0f20658f1a7ae33c3ae140193db19"
+checksum = "1f802b89c9b8488355548e76257448a156951884b5fdb2b7382cc724bee0a774"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1876,9 +1876,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.15.4"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "048d71be5a55a9e08048b77083451cabdd3176afacf4b4c9be5386c264fc812c"
+checksum = "6413bb02e6715f655c0b4cb958a7348b1ab157da68993350c772b95010c6af16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3614,7 +3614,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4101,7 +4101,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4855,7 +4855,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

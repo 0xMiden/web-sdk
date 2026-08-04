@@ -13,6 +13,7 @@ const burnScriptRoot = NoteScript.burn().root().toHex();
 ### Fixes
 
 * [FIX][web] `client.notes.sendPrivate(...)` now relays a block hint (the sender's current sync height) through the transport layer, so an already-synced recipient locates the note's on-chain commitment deterministically instead of relying on a narrow fixed lookback window that silently dropped it. Relay promptly after submitting the note's transaction so the hint stays at or before the note's commitment. No API change. ([web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258))
+* [FIX][web] Bundled `miden-client` bumped to 0.15.5. Upstream note-transport fixes reaching the web SDK: a transport delivery that collides with a note a local transaction is consuming no longer wedges `sync()` (it is skipped and the cursor advances), and transport deliveries are now validated on receipt — entries whose details don't match the header's commitment, or whose tag was never requested, are dropped. `prepare_transaction` also no longer panics on an already-consumed input note that carries no metadata. ([miden-client 0.15.5](https://github.com/0xMiden/rust-sdk/releases/tag/v0.15.5))
 
 ## 0.15.8 (2026-07-22)
 
