@@ -2,6 +2,10 @@
 
 ## 0.16.0-alpha.2 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] Added `NoteScript.faucetPolicyAction()`, `NoteScript.pauseAction()`, `NoteScript.ownerAction()`, and `NoteScript.rbacAction()`, exposing the four well-known account/faucet management (action) note scripts introduced in the 0.16 `StandardNote` set. Their MAST roots are reachable from TypeScript via e.g. `NoteScript.pauseAction().root().toHex()`. ([#260](https://github.com/0xMiden/web-sdk/pull/260))
+
 ### Changes
 
 * [BREAKING][web] Transaction submissions now encrypt their private inputs, so the RPC operator relaying them cannot read them: only holders of the validator set's shared encryption secret can. On first submission the client fetches the validator set's transaction encryption key from the node, verifies a validator attestation for it against the validator set committed in a trusted block header (bound to the chain's genesis commitment, so an attestation cannot be replayed from another network), and caches the verified key in the store; a submission rejected for having been sealed against a retired key evicts the cached key and the next submission re-fetches. Requires a node that unseals submitted inputs — such nodes reject plaintext submissions, and older nodes reject sealed ones, so client and node must be upgraded together. ([#252](https://github.com/0xMiden/web-sdk/pull/252), client [#2341](https://github.com/0xMiden/rust-sdk/pull/2341))
