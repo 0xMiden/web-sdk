@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.15.9 (TBD)
+## 0.15.9 (TBA)
+
+### Enhancements
+
+* [FEATURE][web] Added `NoteScript.burn()`, `NoteScript.mint()`, and `NoteScript.pswap()`, exposing the remaining well-known note scripts (the faucet burn/mint pair plus partial-fill swap) so the static constructors now mirror every `StandardNote` variant alongside the existing `p2id()` / `p2ide()` / `swap()`. The standard BURN note script root is now reachable from TypeScript as `NoteScript.burn().root().toHex()`. ([#256](https://github.com/0xMiden/web-sdk/pull/256))
+
+```ts
+const burnScriptRoot = NoteScript.burn().root().toHex();
+```
 
 ### Fixes
 
