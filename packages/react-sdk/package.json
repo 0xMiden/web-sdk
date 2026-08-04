@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/react",
-  "version": "0.15.8",
+  "version": "0.15.9",
   "description": "React hooks library for Miden Web Client",
   "type": "module",
   "module": "dist/index.mjs",
