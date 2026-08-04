@@ -50,28 +50,28 @@ impl NoteScript {
         StandardNote::SWAP.script().into()
     }
 
-    /// Returns the well-known FAUCET_POLICY_ACTION script — a management note that switches
+    /// Returns the well-known `FAUCET_POLICY_ACTION` script — a management note that switches
     /// one of a faucet's active token policies (its `TokenPolicyManager` component).
     #[js_export(js_name = "faucetPolicyAction")]
     pub fn faucet_policy_action() -> Self {
         StandardNote::FAUCET_POLICY_ACTION.script().into()
     }
 
-    /// Returns the well-known PAUSE_ACTION script — a management note that triggers a
+    /// Returns the well-known `PAUSE_ACTION` script — a management note that triggers a
     /// pause/unpause action on the consuming account's `PausableManager` component.
     #[js_export(js_name = "pauseAction")]
     pub fn pause_action() -> Self {
         StandardNote::PAUSE_ACTION.script().into()
     }
 
-    /// Returns the well-known OWNER_ACTION script — a management note that triggers an
+    /// Returns the well-known `OWNER_ACTION` script — a management note that triggers an
     /// ownership action on the consuming account's `Ownable2Step` component.
     #[js_export(js_name = "ownerAction")]
     pub fn owner_action() -> Self {
         StandardNote::OWNER_ACTION.script().into()
     }
 
-    /// Returns the well-known RBAC_ACTION script — a management note that triggers a
+    /// Returns the well-known `RBAC_ACTION` script — a management note that triggers a
     /// role-based access-control action on the consuming account's `RoleBasedAccessControl`
     /// component.
     #[js_export(js_name = "rbacAction")]
