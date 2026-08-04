@@ -1221,6 +1221,11 @@ export interface NotesResource {
   /**
    * Send a private note to a recipient via the note transport service.
    *
+   * The note is relayed with a block hint (the client's current sync height) so the recipient
+   * locates its on-chain commitment deterministically rather than relying on a narrow lookback
+   * window. Relay promptly after submitting the note's transaction — while its commitment is
+   * still ahead of the synced tip — so the hint stays at or before the commitment.
+   *
    * @param options - Options including the note and the recipient.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
