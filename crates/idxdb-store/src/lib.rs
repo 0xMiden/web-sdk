@@ -24,7 +24,7 @@ use miden_client::account::{
     StorageMapKey,
     StorageSlotName,
 };
-use miden_client::asset::{Asset, AssetVault, AssetVaultKey, AssetWitness, StorageMapWitness};
+use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
 use miden_client::block::BlockHeader;
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
@@ -197,17 +197,11 @@ impl Store for IdxdbStore {
         self.apply_transaction(tx_update).await
     }
 
-    /// `IndexedDB` cannot batch independent transactions atomically across the JS boundary,
-    /// so this implementation applies each update sequentially. A failure mid-batch leaves
-    /// earlier updates persisted.
     async fn apply_transaction_batch(
         &self,
         tx_updates: Vec<TransactionStoreUpdate>,
     ) -> Result<(), StoreError> {
-        for update in tx_updates {
-            self.apply_transaction(update).await?;
-        }
-        Ok(())
+        self.apply_transaction_batch_atomic(tx_updates).await
     }
 
     // NOTES
@@ -400,9 +394,9 @@ impl Store for IdxdbStore {
     async fn get_account_asset(
         &self,
         account_id: AccountId,
-        vault_key: AssetVaultKey,
+        vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
-        self.get_account_asset(account_id, vault_key).await
+        self.get_account_asset(account_id, vault_id).await
     }
 
     async fn get_account_map_item(

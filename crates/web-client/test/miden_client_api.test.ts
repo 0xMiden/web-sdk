@@ -331,6 +331,57 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "manual lifecycle: executeRequest → prove → submit → apply",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.AccountType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const lowLevel = await window.MockWasmWebClient.createClient();
+        const mintRequest = await lowLevel.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(500)
+        );
+
+        // Drive the lifecycle stages by hand instead of submit().
+        const executed = await client.transactions.executeRequest(
+          faucet,
+          mintRequest
+        );
+        const txIdHex = executed.id.toHex();
+        const proven = await executed.prove();
+        const submitted = await proven.submit();
+        const blockNumber = submitted.blockNumber;
+        await submitted.apply();
+
+        // apply() must have persisted the transaction into the local store.
+        const records = await client.transactions.list({ ids: [txIdHex] });
+
+        return {
+          txIdHex,
+          blockNumber,
+          listedCount: records.length,
+          listedId: records[0]?.id().toHex(),
+        };
+      });
+
+      expect(result.txIdHex.length).toBeGreaterThan(0);
+      expect(typeof result.blockNumber).toBe("number");
+      expect(result.blockNumber).toBeGreaterThanOrEqual(0);
+      expect(result.listedCount).toBe(1);
+      expect(result.listedId).toBe(result.txIdHex);
+    }
+  );
+
   // Regression test for #2011: the JS wrapper was building OutputNoteArray
   // while the WASM binding for withOwnOutputNotes switched to NoteArray,
   // causing `expected instance of NoteArray` at runtime.
@@ -865,7 +916,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   });
 
   mockTest(
-    "transactions.preview returns a TransactionSummary",
+    "transactions.preview rejects when the transaction is already authorized",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -877,25 +928,28 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           maxSupply: 10_000_000n,
         });
 
-        const summary = await client.transactions.preview({
-          operation: "mint",
-          account: faucet,
-          to: wallet,
-          amount: 1000n,
-        });
-
-        return {
-          hasSummary: summary != null,
-          hasOutputNotes: typeof summary.outputNotes === "function",
-          outputNotesCount: summary.outputNotes().numNotes(),
-          hasAccountDelta: typeof summary.accountDelta === "function",
-        };
+        // The faucet's key is in the keystore, so the mint executes
+        // successfully and no pending-authorization summary exists.
+        try {
+          await client.transactions.preview({
+            operation: "mint",
+            account: faucet,
+            to: wallet,
+            amount: 1000n,
+          });
+          return { threw: false, code: null, message: "" };
+        } catch (error) {
+          return {
+            threw: true,
+            code: (error as { code?: string }).code ?? null,
+            message: `${(error as Error).message ?? error}`,
+          };
+        }
       });
 
-      expect(result.hasSummary).toBe(true);
-      expect(result.hasOutputNotes).toBe(true);
-      expect(result.outputNotesCount).toBeGreaterThan(0);
-      expect(result.hasAccountDelta).toBe(true);
+      expect(result.threw).toBe(true);
+      expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
+      expect(result.message).toContain("already fully authorized");
     }
   );
 

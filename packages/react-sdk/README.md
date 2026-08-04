@@ -12,6 +12,8 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Note Attachments** - Send and read arbitrary data payloads on notes via `useSend()` and `readNoteAttachment()`
 - **Temporal Note Tracking** - `useNoteStream()` tracks when notes first appear, with built-in filtering, handled-note exclusion, and phase snapshots
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
+- **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
+- **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
@@ -1100,6 +1102,64 @@ function CancelPswapButton({ accountId, note }: Props) {
   return (
     <button onClick={handleCancel} disabled={isLoading}>
       {isLoading ? stage : 'Cancel PSWAP'}
+    </button>
+  );
+}
+```
+
+#### `usePswapLineages()` / `usePswapLineagesFor()` / `usePswapLineage()`
+
+Read the partial-swap orders this client is tracking. As a PSWAP note is filled
+round by round, the client follows the chain — original note → remainder →
+remainder — and records each step as a **lineage** keyed by a stable `orderId`.
+These query hooks expose that tracked state and refresh after every successful
+sync. They return `{ lineages | lineage, isLoading, error, refetch }`.
+
+```tsx
+import {
+  usePswapLineages,
+  usePswapLineagesFor,
+  usePswapLineage,
+} from '@miden-sdk/react';
+
+// Every lineage tracked by this client
+const { lineages } = usePswapLineages();
+
+// Only the lineages created by one account
+const { lineages: mine } = usePswapLineagesFor('0xmywallet...');
+
+// A single order by its stable id
+const { lineage } = usePswapLineage(orderId);
+
+function OrderRow({ orderId }: { orderId: string }) {
+  const { lineage, isLoading } = usePswapLineage(orderId);
+  if (isLoading) return <span>Loading…</span>;
+  if (!lineage) return <span>Not tracked</span>;
+  return (
+    <span>
+      {lineage.orderId()} — {lineage.remainingOffered().toString()} left,
+      state {lineage.state()}
+    </span>
+  );
+}
+```
+
+#### `usePswapCancelByOrder()`
+
+Cancel a tracked PSWAP by its stable `orderId` and reclaim the unfilled offered
+asset on the lineage's current tip. Unlike `usePswapCancel`, you don't need to
+hold the tip note — the creator account and tip are resolved from the locally
+tracked lineage, so only the order id is required.
+
+```tsx
+import { usePswapCancelByOrder } from '@miden-sdk/react';
+
+function CancelOrderButton({ orderId }: { orderId: string }) {
+  const { pswapCancelByOrder, isLoading, stage } = usePswapCancelByOrder();
+
+  return (
+    <button onClick={() => pswapCancelByOrder({ orderId })} disabled={isLoading}>
+      {isLoading ? stage : 'Cancel order'}
     </button>
   );
 }

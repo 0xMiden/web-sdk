@@ -61,6 +61,7 @@ const ciShardProjects = process.env.CI
         testMatch: [
           "test/new_transactions_send_and_custom.test.ts",
           "test/new_transactions_mint_and_misc.test.ts",
+          "test/network_transaction.test.ts",
           "test/swap_transactions.test.ts",
           "test/pswap_transactions.test.ts",
         ],
@@ -109,6 +110,7 @@ const ciShardProjects = process.env.CI
           "test/miden_client_api.test.ts",
           "test/address.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
+          "test/fungible_asset.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
@@ -196,6 +198,10 @@ export default defineConfig({
         "test/shared/**", // Old format duplicates (ported to root test/)
         "test/node/**", // Old format duplicates (ported to root test/)
         "test/remote_prover_transactions*", // Old browser format for chromium CI
+        // Network-transaction NTB round-trip — runs in ci-shard-1-tx-flows
+        // (chromium) against the real node; not yet validated under the
+        // napi client.
+        "test/network_transaction.test.ts",
         // Browser-only variants — napi versions live in *.node.test.ts
         "test/miden_client_api.test.ts",
         "test/compile_and_contract.test.ts",

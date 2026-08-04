@@ -162,7 +162,7 @@ const isMt = variant === "mt";
 
 // Toolchain selection. The MT path needs the project-pinned nightly:
 //   - `cfg(target_feature = "atomics")` only flips true on nightly. Stable
-//     1.93 silently emits the +atomics bit but the cfg() check still says
+//     1.96.1 silently emits the +atomics bit but the cfg() check still says
 //     false, so wasm-bindgen-rayon's compile_error! gate fires.
 //   - `-Z build-std` (in mtOnlyCargoArgs below) is nightly-only.
 // MT inherits the date-pinned nightly from rust-toolchain.toml — we leave

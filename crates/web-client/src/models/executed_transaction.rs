@@ -2,9 +2,9 @@ use js_export_macro::js_export;
 use miden_client::account::AccountHeader as NativeAccountHeader;
 use miden_client::transaction::ExecutedTransaction as NativeExecutedTransaction;
 
-use super::account_delta::AccountDelta;
 use super::account_header::AccountHeader;
 use super::account_id::AccountId;
+use super::account_patch::AccountPatch;
 use super::block_header::BlockHeader;
 use super::input_notes::InputNotes;
 use super::output_notes::OutputNotes;
@@ -15,8 +15,8 @@ use super::transaction_id::TransactionId;
 ///
 /// Executed transaction serves two primary purposes:
 /// - It contains a complete description of the effects of the transaction. Specifically, it
-///   contains all output notes created as the result of the transaction and describes all the
-///   changes made to the involved account (i.e., the account delta).
+///   contains all output notes created as the result of the transaction and the absolute-valued
+///   account patch produced by execution.
 /// - It contains all the information required to re-execute and prove the transaction in a
 ///   stateless manner. This includes all public transaction inputs, but also all nondeterministic
 ///   inputs that the host provided to Miden VM while executing the transaction (i.e., advice
@@ -75,10 +75,10 @@ impl ExecutedTransaction {
         self.0.block_header().into()
     }
 
-    /// Returns the account delta resulting from execution.
-    #[js_export(js_name = "accountDelta")]
-    pub fn account_delta(&self) -> AccountDelta {
-        self.0.account_delta().into()
+    /// Returns the absolute account patch resulting from execution.
+    #[js_export(js_name = "accountPatch")]
+    pub fn account_patch(&self) -> AccountPatch {
+        self.0.account_patch().into()
     }
 
     // TODO: tx_inputs

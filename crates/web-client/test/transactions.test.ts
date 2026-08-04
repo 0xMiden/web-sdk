@@ -200,9 +200,7 @@ test.describe("compile_tx_script tests", () => {
       );
 
       const builder = await client.createCodeBuilder();
-      // miden-standards 0.14.5+ requires the @note_script attribute on
-      // the single public proc. compileNoteScript no longer accepts the
-      // legacy bare begin/end form (that form is reserved for tx scripts).
+      // Note scripts use a single public procedure annotated with `@note_script`.
       const compiledScript = builder.compileNoteScript(`
         @note_script
         pub proc main

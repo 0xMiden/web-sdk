@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
-use miden_client::rpc::domain::note::NoteSyncBlock as NativeNoteSyncBlock;
+use miden_client::rpc::domain::note::SyncNotesBlock as NativeNoteSyncBlock;
 
 use super::block_header::BlockHeader;
 use super::committed_note::CommittedNote;

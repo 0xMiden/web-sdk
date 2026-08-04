@@ -9,7 +9,7 @@ description: >
 
   Marker syntax (anywhere in the body, first match wins):
     Client PR: #1234
-    Client PR: 0xMiden/miden-client#1234        (cross-repo / forks)
+    Client PR: 0xMiden/rust-sdk#1234            (cross-repo / forks)
 
   This action keeps Cargo.toml clean on disk for committers — they
   never need to hand-edit a patch block. Local-dev parity is provided
@@ -88,7 +88,7 @@ runs:
           exit 0
         fi
 
-        repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/miden-client")
+        repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/rust-sdk")
         num=$(printf '%s' "$marker" | grep -oE '[0-9]+$')
 
         # Resolve head + state.
@@ -146,7 +146,7 @@ runs:
         #
         # Why not [patch]? Cargo's [patch."<url>"] section needs the patch
         # source to be DIFFERENT from the original source. Web-sdk's `next`
-        # pins `miden-client` to `https://github.com/0xMiden/miden-client.git`
+        # pins `miden-client` to `https://github.com/0xMiden/rust-sdk.git`
         # at branch=next; pointing the same URL at a different branch via
         # [patch."<url>"] errors with `patches must point to different
         # sources`. [patch.crates-io] also doesn't apply on `next` because

@@ -10,7 +10,7 @@ WASM-powered client, React hooks, and Vite tooling — sign, send, and prove tra
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xMiden/web-sdk/badges/coverage.json)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml?query=branch%3Amain)
 [![npm: @miden-sdk/miden-sdk](https://img.shields.io/npm/v/@miden-sdk/miden-sdk?label=%40miden-sdk%2Fmiden-sdk&color=cb3837)](https://www.npmjs.com/package/@miden-sdk/miden-sdk)
 [![npm: @miden-sdk/react](https://img.shields.io/npm/v/@miden-sdk/react?label=%40miden-sdk%2Freact&color=61dafb)](https://www.npmjs.com/package/@miden-sdk/react)
-[![Rust 1.93](https://img.shields.io/badge/rust-1.93-orange?logo=rust)](rust-toolchain.toml)
+[![Rust 1.96.1](https://img.shields.io/badge/rust-1.96.1-orange?logo=rust)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -28,7 +28,7 @@ This repo packages everything you need to interact with Miden from a browser, a 
 | **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | — |
 | **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
 
-Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client).
+Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) from `0xMiden/rust-sdk`.
 
 ---
 
@@ -183,6 +183,49 @@ The other SDK hooks (`useCreateWallet`, `useSend`, `useNotes`, etc.) all gate on
 
 ---
 
+## Single-threaded vs multi-threaded proving
+
+Orthogonal to eager/lazy, the WASM client ships in two **threading variants**, so there are four entry points in all. The default is **single-threaded (ST)** and loads in any browser context. The **multi-threaded (MT)** build parallelizes proving across hardware threads with `wasm-bindgen-rayon` — **~3–5× faster local proving** on a commodity multi-core laptop — in exchange for a hard hosting requirement.
+
+| Specifier | Threading | Loads WASM | Hosting requirement |
+|---|---|---|---|
+| `@miden-sdk/miden-sdk` | ST | eager (top-level `await`) | None — works anywhere |
+| `@miden-sdk/miden-sdk/lazy` | ST | lazy (`ready()`) | None — works anywhere |
+| `@miden-sdk/miden-sdk/mt` | **MT** | eager (top-level `await`) | Cross-origin isolation |
+| `@miden-sdk/miden-sdk/mt/lazy` | **MT** | lazy (`ready()`) | Cross-origin isolation |
+
+The threading axis composes with eager/lazy — see [Eager vs lazy entry points](#eager-vs-lazy-entry-points) for that dimension.
+
+**Where the speedup comes from.** MT only accelerates the **local prove** step (Miden's zero-knowledge proof generation) — the single most expensive thing the client does in a tab. On multi-core hardware the proof work fans out across Web Workers instead of running on one thread; the rest of the pipeline (sync, RPC, storage) is unchanged. The ST default runs the same prove on a single thread.
+
+**Pick MT when:**
+
+- You do **local (non-delegated) proving** and **control your response headers** — including Chrome/Firefox extensions and other hosts whose manifest already sets COOP/COEP.
+- Interactive "prove-in-the-tab" UX matters and shaving seconds off each transaction is worth the deployment constraint.
+
+**Pick ST (the default) when:**
+
+- You **don't control the response headers** (a third-party host, or a CDN that won't set them).
+- You prove **exclusively through a delegated / remote prover** — the network round-trip dwarfs any local speedup, so MT buys you nothing.
+- You target **Capacitor / native WebViews** (e.g. the Miden Wallet iOS/Android hosts) — they don't expose cross-origin isolation.
+
+**Using MT takes two things:**
+
+1. **Cross-origin isolation.** The page must respond with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` so the browser grants `SharedArrayBuffer`; without them the `/mt` WASM throws at load. `@miden-sdk/vite-plugin` sets these in dev. Note that `require-corp` also gates cross-origin images/fonts/iframes — a real deployment decision, not a free flag.
+2. **Bring up the thread pool once.** Call `await initThreadPool(navigator.hardwareConcurrency)` before your first prove — skip it and rayon spawns zero workers, so the MT build silently runs single-threaded.
+
+```ts
+import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
+
+await MidenClient.ready();
+await initThreadPool(navigator.hardwareConcurrency); // once, at startup
+const client = await MidenClient.createTestnet();     // prove calls now fan out across threads
+```
+
+The [web-client README](crates/web-client/README.md#setting-cross-origin-isolation-headers) has the full header recipes (Vite, Next.js, Express, extension manifests), the COEP caveats, and a service-worker fallback for hosts where you can't add headers.
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -227,7 +270,7 @@ flowchart TB
 ```
 
 - **`miden-idxdb-store`** persists everything the client needs to survive a tab reload — accounts, notes, the partial MMR, sync state, key material.
-- **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
+- **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
 - **`@miden-sdk/react`** is a thin layer on top: React hooks that call into the WASM client and a pluggable `SignerContext` so the same code works with MidenFi, Para, Turnkey, or your own signer.
 - **`@miden-sdk/vite-plugin`** smooths over the bundler-side WASM ergonomics (worker-context polyfills, COOP/COEP headers, dedup of the WASM module across imports).
 
@@ -262,12 +305,12 @@ pnpm dev
 | **Vite** | First-class | `@miden-sdk/vite-plugin` covers WASM dedup, polyfills, COOP/COEP. Tested against Vite 5+. |
 | **Webpack 5** | Supported | Use the module-worker variant; webpack auto-handles the `import.meta.url` worker pattern. |
 | **Next.js (App Router)** | Supported | Mark client components with `"use client"`. SSR will skip WASM init; the lazy entry point is recommended. |
-| **Browser (Chromium ≥ 88)** | Supported | Required: WASM threads (`SharedArrayBuffer`), so cross-origin isolation headers are mandatory in production. |
+| **Browser (Chromium ≥ 88)** | Supported | The default (ST) build runs anywhere. The `/mt` build needs cross-origin isolation (COOP/COEP) for `SharedArrayBuffer` — see [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving). |
 | **Browser (Safari ≥ 16.4)** | Supported | The plugin auto-applies the classic-Worker + TLA-free WASM glue needed by WKWebView. |
 | **Browser (Firefox ≥ 108)** | Supported | Same constraints as Chromium. |
 | **Node.js** | Not yet | Tracked separately; the Rust client has a Node.js binding in flight via napi-rs. |
 
-The published WASM artifact targets `wasm32-unknown-unknown` with `+atomics +bulk-memory +mutable-globals` enabled.
+Two WASM artifacts are published: a **single-threaded** default built on stable Rust that loads anywhere, and a **multi-threaded** `/mt` build (pinned nightly, `+atomics +bulk-memory +mutable-globals +simd128` with shared memory) for `SharedArrayBuffer`-backed threads. Both target `wasm32-unknown-unknown`. See [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving).
 
 ---
 
@@ -332,7 +375,7 @@ The publish workflow gates the WASM artifact with a 25 MB upper-bound check — 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/miden-client` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
+See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/rust-sdk` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
 
 ---
 
@@ -341,5 +384,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo wo
 [MIT](LICENSE) © Miden contributors
 
 <div align="center">
-  <sub>Built with Rust 1.93, wasm-bindgen, and a healthy distrust of top-level await.</sub>
+  <sub>Built with Rust 1.96.1, wasm-bindgen, and a healthy distrust of top-level await.</sub>
 </div>

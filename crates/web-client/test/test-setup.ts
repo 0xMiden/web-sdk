@@ -312,8 +312,13 @@ function patchNapiPrototypes(rawSdk: any) {
 
   // Patch null → undefined for Option<T> returns
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [
+      rawSdk.BasicFungibleFaucetComponent,
+      ["description", "logoUri", "externalLink"],
+    ],
   ] as [any, string[]][]) {
     if (!cls?.prototype) continue;
     for (const method of methods) {

@@ -18,8 +18,8 @@ export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes, 
         // Persist the header and its MMR nodes in one transaction so a header is never stored
         // without the nodes that rebuild its `PartialMmr` (mirrors miden-client's atomic insert).
         await db.dexie.transaction("rw", db.blockHeaders, db.partialBlockchainNodes, async () => {
-            // Header: INSERT OR IGNORE, then one-way upgrade `has_client_notes` to true
-            // (`get_tracked_block_header_numbers` filters on it to seed forest-node tracking).
+            // Header: INSERT OR IGNORE, then one-way upgrade `has_client_notes` to true (load-bearing:
+            // `get_tracked_block_header_numbers` filters on it to seed forest-node tracking).
             await db.blockHeaders.add(headerData).catch(async (err) => {
                 if (!isConstraintError(err))
                     throw err;
@@ -27,6 +27,8 @@ export async function insertBlockHeader(dbId, blockNum, header, hasClientNotes, 
                     await db.blockHeaders.update(blockNum, { hasClientNotes: "true" });
                 }
             });
+            // Nodes: insert-if-missing with overwrite protection; a conflicting value throws and
+            // aborts the transaction, rolling back the header write too.
             await putPartialBlockchainNodesNoOverwrite(db.partialBlockchainNodes, nodeData);
         });
     }

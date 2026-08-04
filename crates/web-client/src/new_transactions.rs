@@ -3,8 +3,14 @@ use alloc::collections::BTreeMap;
 use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote};
+use miden_client::agglayer::B2AggNote;
+use miden_client::asset::{AssetAmount, FungibleAsset};
+use miden_client::note::{
+    BlockNumber,
+    Note as NativeNote,
+    NoteAssets as NativeNoteAssets,
+    PswapNote,
+};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
@@ -16,13 +22,12 @@ use miden_client::transaction::{
     TransactionExecutorError,
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
-    TransactionStoreUpdate as NativeTransactionStoreUpdate,
-    TransactionSummary as NativeTransactionSummary,
 };
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
+use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
 use crate::models::note::Note;
@@ -34,7 +39,15 @@ use crate::models::transaction_result::TransactionResult;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
-use crate::platform::{JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
+use crate::platform::{
+    JsBytes,
+    JsErr,
+    from_str_err,
+    from_str_err_with_code,
+    js_u64_to_u64,
+    maybe_wrap_send,
+};
+use crate::utils::deserialize_from_bytes;
 use crate::{WebClient, js_error_with_context};
 
 #[js_export]
@@ -116,6 +129,55 @@ impl WebClient {
             })?;
 
         Ok(send_transaction_request.into())
+    }
+
+    /// Builds a transaction request that bridges a fungible asset out to another network via the
+    /// `AggLayer`.
+    ///
+    /// The request emits a single public B2AGG (Bridge-to-AggLayer) note holding `amount` units of
+    /// the `faucet_id` asset. The note is consumed by `bridge_account_id`, which burns the asset so
+    /// it can be claimed at `destination_address` (an Ethereum address) on the AggLayer-assigned
+    /// `destination_network`.
+    #[js_export(js_name = "newB2AggTransactionRequest")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_b2agg_transaction_request(
+        &self,
+        sender_account_id: &AccountId,
+        bridge_account_id: &AccountId,
+        faucet_id: &AccountId,
+        amount: JsU64,
+        destination_network: u32,
+        destination_address: &EthAddress,
+    ) -> Result<TransactionRequest, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating transaction request")
+        })?;
+
+        let amount = js_u64_to_u64(amount);
+        let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
+            .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
+        let note_assets = NativeNoteAssets::new(vec![fungible_asset.into()])
+            .map_err(|err| js_error_with_context(err, "failed to create b2agg note assets"))?;
+
+        let b2agg_note = B2AggNote::create(
+            destination_network,
+            destination_address.into(),
+            note_assets,
+            bridge_account_id.into(),
+            sender_account_id.into(),
+            client.rng(),
+        )
+        .map_err(|err| js_error_with_context(err, "failed to create b2agg note"))?;
+
+        let b2agg_transaction_request = NativeTransactionRequestBuilder::new()
+            .own_output_notes(vec![b2agg_note])
+            .build()
+            .map_err(|err| {
+                js_error_with_context(err, "failed to create b2agg transaction request")
+            })?;
+
+        Ok(b2agg_transaction_request.into())
     }
 
     #[js_export(js_name = "newSwapTransactionRequest")]
@@ -243,8 +305,29 @@ impl WebClient {
         note_fill_amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
-        let account_fill_amount = js_u64_to_u64(account_fill_amount);
-        let note_fill_amount = js_u64_to_u64(note_fill_amount);
+        let pswap = PswapNote::try_from(&native_pswap_note)
+            .map_err(|err| js_error_with_context(err, "invalid PSWAP note"))?;
+
+        let account_fill_amount = AssetAmount::new(js_u64_to_u64(account_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid account fill amount"))?;
+        let note_fill_amount = AssetAmount::new(js_u64_to_u64(note_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid note fill amount"))?;
+
+        // miden-client 0.16 treats an overfill as a full fill. Keep the web client's existing
+        // contract, which rejects fills outside the open order amount, and validate the combined
+        // account/note fill before handing it to the native request builder.
+        let total_fill_amount = (account_fill_amount + note_fill_amount)
+            .map_err(|err| js_error_with_context(err, "invalid total fill amount"))?;
+        if total_fill_amount == AssetAmount::ZERO {
+            return Err(from_str_err("Fill amount must be greater than 0"));
+        }
+
+        let requested_amount = pswap.storage().min_requested_asset().amount();
+        if total_fill_amount > requested_amount {
+            return Err(from_str_err(&format!(
+                "Fill amount {total_fill_amount} exceeds requested amount {requested_amount}"
+            )));
+        }
 
         let pswap_transaction_request = NativeTransactionRequestBuilder::new()
             .build_pswap_consume(
@@ -331,6 +414,51 @@ impl WebClient {
         Ok(tx_id)
     }
 
+    /// Executes a batch of transactions against the specified account, proves them individually
+    /// and as a batch, submits the batch to the network, and atomically applies the per-tx
+    /// updates to the local store. Returns the block number the batch was accepted into.
+    ///
+    /// All transactions must target the same local account — the `account_id` argument.
+    /// Each element of `transaction_requests` is the serialized-bytes form of a
+    /// `TransactionRequest` (obtained via `tx_request.serialize()`)
+    // TODO V2: support multi-account batches
+    #[js_export(js_name = "submitNewTransactionBatch")]
+    pub async fn submit_new_transaction_batch(
+        &self,
+        account_id: &AccountId,
+        transaction_requests: Vec<JsBytes>,
+    ) -> Result<u32, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_account_id: miden_client::account::AccountId = account_id.into();
+
+        // Deserialize all requests up front so we fail early on malformed input.
+        let mut native_reqs: Vec<NativeTransactionRequest> =
+            Vec::with_capacity(transaction_requests.len());
+        for bytes in &transaction_requests {
+            let req = deserialize_from_bytes::<NativeTransactionRequest>(bytes).map_err(|err| {
+                from_str_err(&format!("failed to deserialize transaction request: {err:?}"))
+            })?;
+            native_reqs.push(req);
+        }
+
+        // `new_transaction_batch()` is now a synchronous builder constructor that takes no
+        // account id; the target account is supplied per-transaction via `push`. This wrapper
+        // keeps its single-account contract by pushing every request against `native_account_id`.
+        let mut builder = client.new_transaction_batch();
+
+        for native_req in native_reqs {
+            builder = maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
+                .await
+                .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
+        }
+
+        maybe_wrap_send(Box::pin(builder.submit()))
+            .await
+            .map(|block_number| block_number.as_u32())
+            .map_err(|err| js_error_with_context(err, "failed to submit transaction batch"))
+    }
+
     /// Executes a transaction specified by the request against the specified account but does not
     /// submit it to the network nor update the local database. The returned [`TransactionResult`]
     /// retains the execution artifacts needed to continue with the transaction lifecycle.
@@ -354,14 +482,18 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
     }
 
-    /// Executes a transaction and returns the `TransactionSummary`.
+    /// Executes a transaction and returns the `TransactionSummary` the account is being asked
+    /// to authorize.
     ///
-    /// If the transaction is unauthorized (auth script emits the unauthorized event),
-    /// returns the summary from the error. If the transaction succeeds, constructs
-    /// a summary from the executed transaction using the `auth_arg` from the transaction
-    /// request as the salt (or a zero salt if not provided).
+    /// The summary only exists while authorization is pending: when the auth procedure aborts
+    /// with the unauthorized event (e.g. a multisig below its signing threshold), the summary
+    /// built during execution is returned so it can be signed out-of-band. If the transaction
+    /// executes successfully it was already fully authorized, no summary is produced, and this
+    /// method returns an error with code `TRANSACTION_ALREADY_AUTHORIZED` — submit the
+    /// transaction with `execute` instead.
     ///
     /// # Errors
+    /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
     /// - If there is an internal failure during execution.
     #[js_export(js_name = "executeForSummary")]
     pub async fn execute_for_summary(
@@ -371,25 +503,15 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let native_request: NativeTransactionRequest = transaction_request.into();
-        // auth_arg is passed to the auth procedure as the salt for the transaction summary
-        // defaults to 0 if not provided.
-        let salt = native_request.auth_arg().unwrap_or_default();
 
-        let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
-        let execute_result = maybe_wrap_send(fut).await;
-        match execute_result {
-            Ok(res) => {
-                // construct summary from executed transaction
-                let executed_tx = res.executed_transaction();
-                let summary = NativeTransactionSummary::new(
-                    executed_tx.account_delta().clone(),
-                    executed_tx.input_notes().clone(),
-                    executed_tx.output_notes().clone(),
-                    salt,
-                );
-                Ok(TransactionSummary::from(summary))
-            },
+        let fut =
+            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
+        match maybe_wrap_send(fut).await {
+            Ok(_) => Err(from_str_err_with_code(
+                "transaction is already fully authorized, so no transaction summary was \
+                 produced during execution; submit it with execute instead",
+                "TRANSACTION_ALREADY_AUTHORIZED",
+            )),
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
@@ -492,6 +614,10 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to submit proven transaction"))
     }
 
+    /// Persists a submitted transaction and returns its pre-apply
+    /// [`TransactionStoreUpdate`]. Routes through the high-level
+    /// `Client::apply_transaction` so registered observers (e.g. PSWAP
+    /// tracking) fire.
     #[js_export(js_name = "applyTransaction")]
     pub async fn apply_transaction(
         &self,
@@ -500,17 +626,19 @@ impl WebClient {
     ) -> Result<TransactionStoreUpdate, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let fut = Box::pin(client.get_transaction_store_update(
-            transaction_result.native(),
-            BlockNumber::from(submission_height),
-        ));
+        let height = BlockNumber::from(submission_height);
+
+        // Build the pre-apply update for the JS return value.
+        let fut =
+            Box::pin(client.get_transaction_store_update(transaction_result.native(), height));
         let update = maybe_wrap_send(fut)
             .await
             .map(TransactionStoreUpdate::from)
             .map_err(|err| js_error_with_context(err, "failed to build transaction update"))?;
 
-        let native_update: NativeTransactionStoreUpdate = (&update).into();
-        let fut = Box::pin(client.apply_transaction_update(native_update));
+        // High-level apply fires registered observers (e.g. PSWAP tracking);
+        // the low-level `apply_transaction_update` would persist without them.
+        let fut = Box::pin(client.apply_transaction(transaction_result.native(), height));
         maybe_wrap_send(fut)
             .await
             .map_err(|err| js_error_with_context(err, "failed to apply transaction result"))?;

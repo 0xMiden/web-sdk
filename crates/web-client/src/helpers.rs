@@ -1,18 +1,22 @@
 use miden_client::account::component::{
     AccountComponent,
     BasicWallet,
-    BurnPolicyConfig,
+    BurnPolicy,
     FungibleFaucet,
-    MintPolicyConfig,
-    PolicyRegistration,
+    MintPolicy,
     TokenName,
     TokenPolicyManager,
 };
 use miden_client::account::{Account, AccountBuilder, AccountBuilderSchemaCommitmentExt};
 use miden_client::asset::{AssetAmount, TokenSymbol};
-use miden_client::auth::{AuthSchemeId as NativeAuthScheme, AuthSecretKey, AuthSingleSig};
+use miden_client::auth::{
+    Approver,
+    AuthSchemeId as NativeAuthScheme,
+    AuthSecretKey,
+    AuthSingleSig,
+};
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 
 use crate::js_error_with_context;
 use crate::models::account_storage_mode::AccountStorageMode;
@@ -41,7 +45,7 @@ pub(crate) async fn generate_wallet(
                 .map_err(|_| from_str_err("Seed must be exactly 32 bytes"))?;
             StdRng::from_seed(seed_array)
         },
-        None => StdRng::from_os_rng(),
+        None => rand::make_rng(),
     };
 
     let native_scheme: NativeAuthScheme = auth_scheme.try_into()?;
@@ -57,8 +61,8 @@ pub(crate) async fn generate_wallet(
             return Err(from_str_err(&message));
         },
     };
-    let auth_component: AccountComponent =
-        AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
+    let approver = Approver::new(key_pair.public_key().to_commitment(), native_scheme);
+    let auth_component: AccountComponent = AuthSingleSig::new(approver).into();
 
     let mut init_seed = [0u8; 32];
     rng.fill_bytes(&mut init_seed);
@@ -98,7 +102,7 @@ pub(crate) async fn generate_faucet(
     max_supply: u64,
     auth_scheme: AuthScheme,
 ) -> Result<(Account, AuthSecretKey), JsErr> {
-    let mut rng = StdRng::from_os_rng();
+    let mut rng: StdRng = rand::make_rng();
 
     let native_scheme: NativeAuthScheme = auth_scheme.try_into()?;
     let key_pair = match native_scheme {
@@ -113,8 +117,8 @@ pub(crate) async fn generate_faucet(
             return Err(from_str_err(&message));
         },
     };
-    let auth_component: AccountComponent =
-        AuthSingleSig::new(key_pair.public_key().to_commitment(), native_scheme).into();
+    let approver = Approver::new(key_pair.public_key().to_commitment(), native_scheme);
+    let auth_component: AccountComponent = AuthSingleSig::new(approver).into();
 
     let symbol = TokenSymbol::new(&token_symbol).map_err(|err| from_str_err(&err.to_string()))?;
     let name = TokenName::new(&token_name).map_err(|err| from_str_err(&err.to_string()))?;
@@ -129,11 +133,10 @@ pub(crate) async fn generate_faucet(
 
     // Only mint/burn policies are registered — see the function rustdoc for why transfer
     // policies are intentionally omitted.
-    let policy_manager = TokenPolicyManager::new()
-        .with_mint_policy(MintPolicyConfig::AllowAll, PolicyRegistration::Active)
-        .map_err(|err| js_error_with_context(err, "failed to register mint policy"))?
-        .with_burn_policy(BurnPolicyConfig::AllowAll, PolicyRegistration::Active)
-        .map_err(|err| js_error_with_context(err, "failed to register burn policy"))?;
+    let policy_manager = TokenPolicyManager::builder()
+        .active_mint_policy(MintPolicy::allow_all())
+        .active_burn_policy(BurnPolicy::allow_all())
+        .build();
 
     let mut init_seed = [0u8; 32];
     rng.fill_bytes(&mut init_seed);

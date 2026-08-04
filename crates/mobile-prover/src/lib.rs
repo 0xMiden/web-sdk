@@ -80,11 +80,7 @@ pub unsafe extern "C" fn miden_prove_transaction(
     };
 
     let prover = LocalTransactionProver::new(ProvingOptions::default());
-    // The prove future is CPU-bound (no real async I/O); a tiny single-
-    // thread executor suffices to drive it to completion. rayon-backed
-    // parallelism inside the prover spawns its own threads via the
-    // `concurrent` feature, independent of this outer executor.
-    let proven: ProvenTransaction = match futures_executor::block_on(prover.prove(inputs)) {
+    let proven: ProvenTransaction = match prover.prove(inputs) {
         Ok(p) => p,
         Err(_) => {
             unsafe { *output_written = 0 };

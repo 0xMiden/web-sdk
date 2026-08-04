@@ -423,6 +423,26 @@ console.log(faucet.id().toString());
 console.log(faucet.isFaucet()); // true
 ```
 
+### Read Faucet Metadata
+
+`BasicFungibleFaucetComponent` extracts the on-chain token metadata from a faucet account. The same
+component backs both basic and network-style faucets, so it works for either:
+
+```typescript
+import { BasicFungibleFaucetComponent } from "@miden-sdk/miden-sdk";
+
+const faucet = BasicFungibleFaucetComponent.fromAccount(account);
+
+faucet.symbol().toString();       // "DAG"
+faucet.tokenName();               // "DAG Token"
+faucet.decimals();                // 8
+faucet.maxSupply().toString();    // "10000000"
+faucet.tokenSupply().toString();  // amount minted so far, e.g. "0"
+faucet.description();             // string | undefined
+faucet.logoUri();                 // string | undefined
+faucet.externalLink();            // string | undefined
+```
+
 ### Send Tokens
 
 ```typescript
@@ -451,6 +471,138 @@ console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
+
+### Batch Operations
+
+Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+```typescript
+const { blockNumber } = await client.transactions.batch({
+  account: wallet,
+  operations: [
+    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", notes: pendingNotes },
+  ],
+  waitForConfirmation: true,
+});
+console.log(`Batch landed in block ${blockNumber}`);
+```
+
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
+
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+
+```typescript
+const { blockNumber } = await client.transactions.submitBatch(wallet, [
+  request1,
+  request2,
+]);
+```
+
+The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+
+### Manual Transaction Lifecycle
+
+`client.transactions.submit(account, request)` runs execute → prove → submit → apply in one call. To drive the stages yourself — benchmarking each step or handling errors per stage — `executeRequest` returns a staged handle you advance one step at a time. Each stage carries its own context, so you never re-thread the result or block number:
+
+```typescript
+const executed = await client.transactions.executeRequest(wallet, request); // local only
+const proven = await executed.prove(); // optional { prover } override
+const submitted = await proven.submit(); // network; submitted.blockNumber
+await submitted.apply(); // persist + fire observers
+```
+
+Nothing is persisted until `apply` runs — stopping after `submit()` leaves the local store unaware of the transaction until the next sync. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
+
+To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
+### Partial-Swap (PSWAP) Orders
+
+A partial-swap note offers one asset for another and can be filled by multiple
+counterparties over time — each partial fill pays the creator and leaves a
+remainder note carrying the unfilled balance. The client tracks that chain as a
+**lineage** keyed by a stable `orderId`, advancing it round by round as fills
+are discovered on sync.
+
+```typescript
+// Offer 100 of token A for 25 of token B.
+await client.transactions.pswapCreate({
+  account: wallet,
+  offer: { token: aToken, amount: 100n },
+  request: { token: bToken, amount: 25n }
+});
+await client.sync();
+
+// The order is tracked as a lineage keyed by a stable order id.
+const [lineage] = await client.pswap.lineagesFor(wallet);
+const orderId = lineage.orderId();
+console.log(lineage.remainingOffered().toString()); // unfilled offered balance
+
+// A counterparty fills part of the order:
+//   client.transactions.pswapConsume({ account, note, fillAmount });
+// On the next sync the lineage advances, and `remainingOffered()` shrinks.
+
+// Reclaim the unfilled remainder on the current tip, by stable order id.
+// `waitForConfirmation` blocks until the cancel commits AND a sync brings
+// the consumed-note update down; without it, the call resolves at submit
+// time and `pswap.lineage(orderId)` still reads `Active` until the next
+// sync. The lineage only transitions to `Reclaimed` once the chain sees
+// the cancel land.
+await client.pswap.cancelByOrder({ orderId, waitForConfirmation: true });
+```
+
+`client.pswap.lineages()` returns every order this client created;
+`client.pswap.lineage(orderId)` returns one order's lineage, or `null` if it is
+not tracked.
+
+### Bridge out (AggLayer)
+
+`client.transactions.bridge(...)` bridges a fungible asset out to another network via the AggLayer. It emits a single public B2AGG note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned network.
+
+```typescript
+await client.transactions.bridge({
+  account: wallet, // sender (executes the transaction)
+  bridgeAccount: bridge, // consumes the note and burns the asset
+  token: dagToken, // faucet of the asset being bridged
+  amount: 100n,
+  destinationNetwork: 1, // AggLayer-assigned network id
+  destinationAddress: "0x000000000000000000000000000000000000dEaD"
+});
+```
+
+The 20-byte destination is also available as an `EthAddress` (`EthAddress.fromHex("0x…")`) for the lower-level builders `Note.createB2AggNote(...)` and `client.newB2AggTransactionRequest(...)`.
+
+### Network Notes
+
+A network note is a Public note carrying a `NetworkAccountTarget` attachment; a public network account auto-consumes it once the note lands on-chain — no manual `consume` call needed on the target side.
+
+```typescript
+const { txId, note } = await client.transactions.createNetworkNote({
+  account: senderId,
+  target: networkAccountId,
+  script: myNoteScript, // or: recipient: myRecipient
+  waitForConfirmation: true,
+});
+console.log(note.isNetworkNote()); // true
+```
+
+Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
+
+To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
+
+```typescript
+const auth = AccountComponent.createNetworkAuth([myNoteScript.root()]);
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(myComponent)
+  .withAuthComponent(auth)
+  .build();
+```
+
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional second argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

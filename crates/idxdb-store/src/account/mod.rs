@@ -8,6 +8,7 @@ use miden_client::account::{
     AccountHeader,
     AccountId,
     AccountIdError,
+    AccountPatch,
     AccountStorage,
     Address,
     PartialAccount,
@@ -22,8 +23,8 @@ use miden_client::account::{
 use miden_client::asset::{
     AccountStorageHeader,
     Asset,
+    AssetId,
     AssetVault,
-    AssetVaultKey,
     AssetWitness,
     PartialVault,
     StorageMapWitness,
@@ -81,13 +82,24 @@ use models::{
 
 pub(crate) mod utils;
 use utils::{
+    apply_account_patch,
     apply_full_account_state,
+    compute_storage_patch,
     parse_account_record_idxdb_object,
+    update_tracked_storage_roots,
     upsert_account_asset_vault,
     upsert_account_code,
     upsert_account_record,
     upsert_account_storage,
 };
+
+/// How the SMT forest's tracked roots are updated after an incremental account patch is applied.
+pub(crate) enum RootsUpdateMode {
+    /// Replace the tracked roots immediately (state-sync updates).
+    Replace,
+    /// Stage the new roots for later commit/discard during sync (local transactions).
+    Stage,
+}
 
 impl IdxdbStore {
     pub(super) async fn get_account_ids(&self) -> Result<Vec<AccountId>, StoreError> {
@@ -411,7 +423,7 @@ impl IdxdbStore {
             .map(|entry| {
                 let key_word = Word::try_from(&entry.vault_key)?;
                 let value_word = Word::try_from(&entry.asset)?;
-                Ok(Asset::from_key_value_words(key_word, value_word)?)
+                Ok(Asset::from_id_and_value_words(key_word, value_word)?)
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
 
@@ -441,6 +453,79 @@ impl IdxdbStore {
                 Ok((name, root))
             })
             .collect()
+    }
+
+    /// Applies an incremental (non-full-state) account patch: computes the new storage-map and
+    /// vault roots via the SMT forest, verifies the resulting vault root against `final_header`,
+    /// and persists the changes atomically.
+    ///
+    /// The patch's storage and vault values are already absolute, so no full account or
+    /// relative-delta reconstruction is required; only the previous roots of changed maps are
+    /// read back from the store.
+    pub(crate) async fn apply_incremental_account_patch(
+        &self,
+        final_header: &AccountHeader,
+        patch: &AccountPatch,
+        roots_update: RootsUpdateMode,
+    ) -> Result<(), StoreError> {
+        let account_id = final_header.id();
+
+        let map_slot_names: Vec<String> =
+            patch.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
+        let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
+
+        let (updated_storage_slots, updated_assets, removed_asset_ids) = {
+            let mut smt_forest = self.smt_forest.write();
+
+            let mut final_roots = smt_forest
+                .get_roots(&account_id)
+                .cloned()
+                .ok_or(StoreError::AccountDataNotFound(account_id))?;
+
+            // Storage: compute new map roots via SMT forest and update the tracked root list.
+            let updated_storage_slots =
+                compute_storage_patch(&mut smt_forest, &old_map_roots, patch)?;
+            update_tracked_storage_roots(&mut final_roots, &old_map_roots, &updated_storage_slots)?;
+
+            // Vault patches already contain absolute final asset values. The first tracked root
+            // is always the vault root.
+            let old_vault_root = final_roots[0];
+            let updated_assets: Vec<Asset> = patch.vault().updated_assets().collect();
+            let removed_asset_ids: Vec<AssetId> =
+                patch.vault().removed_asset_ids().copied().collect();
+            let new_vault_root = smt_forest.update_asset_nodes(
+                old_vault_root,
+                updated_assets.iter().copied(),
+                removed_asset_ids.iter().copied(),
+            )?;
+            if new_vault_root != final_header.vault_root() {
+                return Err(StoreError::DatabaseError(format!(
+                    "computed vault root {} does not match the final account header {}",
+                    new_vault_root.to_hex(),
+                    final_header.vault_root().to_hex(),
+                )));
+            }
+            final_roots[0] = new_vault_root;
+
+            match roots_update {
+                RootsUpdateMode::Replace => smt_forest.replace_roots(account_id, final_roots),
+                RootsUpdateMode::Stage => smt_forest.stage_roots(account_id, final_roots),
+            }
+
+            (updated_storage_slots, updated_assets, removed_asset_ids)
+        };
+
+        apply_account_patch(
+            self.db_id(),
+            account_id,
+            final_header,
+            &updated_storage_slots,
+            &updated_assets,
+            &removed_asset_ids,
+            patch,
+        )
+        .await
+        .map_err(|err| StoreError::DatabaseError(format!("failed to apply account patch: {err:?}")))
     }
 
     pub(crate) async fn insert_account(
@@ -543,7 +628,7 @@ impl IdxdbStore {
     pub(crate) async fn get_account_asset(
         &self,
         account_id: AccountId,
-        vault_key: AssetVaultKey,
+        vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
         let account_header = self
             .get_account_header(account_id)
@@ -553,9 +638,12 @@ impl IdxdbStore {
 
         let smt_forest = self.smt_forest.read();
 
-        match smt_forest.get_asset_and_witness(account_header.vault_root(), vault_key) {
+        match smt_forest.get_asset_and_witness(account_header.vault_root(), vault_id) {
             Ok(result) => Ok(Some(result)),
-            Err(StoreError::MerkleStoreError(MerkleError::UntrackedKey(_))) => Ok(None),
+            Err(
+                StoreError::VaultKeyNotTracked(..)
+                | StoreError::MerkleStoreError(MerkleError::UntrackedKey(_)),
+            ) => Ok(None),
             Err(e) => Err(e),
         }
     }

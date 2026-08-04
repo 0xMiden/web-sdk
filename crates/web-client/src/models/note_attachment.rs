@@ -176,11 +176,11 @@ impl NoteAttachment {
     }
 
     // NOTE: the previous `newWord` / `newArray` constructors, `asWord` /
-    // `asArray` getters, `attachmentKind` accessor, and the
-    // `newNetworkAccountTarget` helper were removed in the migration to
-    // miden-client PR #2214. The 0.15 protocol surface dropped the
-    // word-vs-array content dispatch (content is always `Vec<Word>`) and
-    // the `NetworkAccountTarget` type does not exist on this surface.
+    // `asArray` getters, and `attachmentKind` accessor were removed in the
+    // migration to miden-client PR #2214: the 0.15 protocol surface dropped
+    // the word-vs-array content dispatch (content is always `Vec<Word>`).
+    // `NetworkAccountTarget` attachments are re-exposed via the
+    // `NetworkAccountTarget` binding + `Note.withAttachments(...)`.
 }
 
 // CONVERSIONS
@@ -209,3 +209,5 @@ impl From<&NoteAttachment> for NativeNoteAttachment {
         note_attachment.0.clone()
     }
 }
+
+impl_napi_from_value!(NoteAttachment);
