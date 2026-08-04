@@ -129,28 +129,36 @@ jobs:
       - name: Install Rust
         run: rustup update --no-self-update
 
-      - name: Set up musl cross toolchain
-        if: ${{ matrix.rust-target }}
-        run: |
-          rustup target add ${{ matrix.rust-target }}
-          sudo apt-get update && sudo apt-get install -y musl-tools
-
       - name: Build napi binary
         if: ${{ !matrix.rust-target }}
         run: cargo build -p miden-client-web --no-default-features --features nodejs --release
 
-      - name: Build napi binary (musl cross)
+      - name: Build napi binary (musl cross via rust-musl-cross)
         if: ${{ matrix.rust-target }}
-        # Build a *dynamically* linked musl cdylib so a musl-linked Node
-        # (Alpine) can dlopen it against its own libc instead of a second,
-        # statically embedded copy. musl targets default to +crt-static, and a
-        # static CRT inside a shared object breaks dlopen — so disable it.
-        # Route C dependencies (e.g. libsqlite3-sys) through the musl C
-        # compiler that musl-tools provides.
-        env:
-          RUSTFLAGS: "-C target-feature=-crt-static"
-          CC_x86_64_unknown_linux_musl: musl-gcc
-        run: cargo build -p miden-client-web --no-default-features --features nodejs --release --target ${{ matrix.rust-target }}
+        # A dynamically linked musl cdylib so a musl-linked Node (Alpine) can
+        # dlopen it against its own libc instead of a second, statically
+        # embedded copy (-crt-static is disabled; a static CRT inside a shared
+        # object breaks dlopen).
+        #
+        # Build inside messense/rust-musl-cross, which ships a real
+        # musl-targeting GNU toolchain (with a musl libgcc). A plain cross-build
+        # with musl-tools' musl-gcc does not work here. musl-gcc only wraps the
+        # host glibc gcc and does not set rustc's linker, so rustc falls back to
+        # the host linker driver and silently produces a glibc-linked .so
+        # (NEEDED libc.so.6 / ld-linux-x86-64.so.2) that cannot load on Alpine.
+        # The rust-musl-cross toolchain links a genuine musl binary; the Alpine
+        # smoke test below is the backstop.
+        #
+        # The image is pinned by digest (not the mutable :x86_64-musl tag): this
+        # step runs in the provenance-signed publish pipeline, so the third-party
+        # toolchain that produces the shipped binary must be immutable. Bump the
+        # digest deliberately after re-verifying a new image.
+        run: |
+          docker run --rm \
+            -v "$PWD:/home/rust/src" -w /home/rust/src \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            messense/rust-musl-cross:x86_64-musl@sha256:ce75e9174325d4fbb3de85c309e2d7ca29f7500169bc4b5d2c611ff7e86d549a \
+            bash -c "rustup target add ${{ matrix.rust-target }} && cargo build -p miden-client-web --no-default-features --features nodejs --release --target ${{ matrix.rust-target }}"
 
       - name: Prepare .node binary
         run: |
