@@ -23,18 +23,26 @@ function makeTxRequestBuilder() {
 }
 
 function makeWasm(overrides = {}) {
+  const networkTarget = {
+    targetId: vi.fn(() => "targetIdObj"),
+    toAttachment: vi.fn(() => "targetAttachment"),
+  };
   return {
     AccountId: {
       fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
       fromBech32: vi.fn((b) => ({ bech32: b, toString: () => b })),
     },
+    EthAddress: {
+      fromHex: vi.fn((hex) => ({ hex, toHex: () => hex })),
+    },
     NoteType: { Public: "Public", Private: "Private" },
     Note: {
       createP2IDNote: vi.fn().mockReturnValue("p2idNote"),
+      withAttachments: vi.fn().mockReturnValue("networkNote"),
     },
     NoteAssets: vi.fn().mockReturnValue("noteAssets"),
     FungibleAsset: vi.fn().mockReturnValue("fungibleAsset"),
-    NoteAttachment: vi.fn().mockReturnValue("noteAttachment"),
+    NoteAttachment: vi.fn().mockImplementation((v) => ({ attachment: v })),
     NoteArray: vi.fn().mockImplementation(makeNoteArray),
     NoteAndArgs: vi.fn().mockImplementation((note, args) => ({ note, args })),
     NoteAndArgsArray: vi.fn().mockReturnValue("noteAndArgsArray"),
@@ -54,6 +62,14 @@ function makeWasm(overrides = {}) {
     ForeignAccountArray: vi.fn().mockReturnValue("foreignAccArray"),
     AccountStorageRequirements: vi.fn().mockReturnValue("storageReqs"),
     AdviceInputs: vi.fn().mockReturnValue("adviceInputs"),
+    NetworkAccountTarget: vi.fn().mockImplementation(() => networkTarget),
+    NoteTag: { withAccountTarget: vi.fn(() => "networkTag") },
+    NoteMetadata: vi.fn().mockImplementation(() => "metadata"),
+    NoteStorage: vi.fn().mockImplementation(() => "storage"),
+    FeltArray: vi.fn().mockImplementation((items) => ({ feltArray: items })),
+    Felt: vi.fn().mockImplementation((value) => ({ felt: value })),
+    NoteRecipient: { fromScript: vi.fn(() => "recipientFromScript") },
+    __networkTarget: networkTarget,
     ...overrides,
   };
 }
@@ -71,6 +87,7 @@ function makeInner(overrides = {}) {
     applyTransaction: vi.fn().mockResolvedValue(undefined),
     newSendTransactionRequest: vi.fn().mockResolvedValue("sendRequest"),
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
+    newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     newPswapCreateTransactionRequest: vi
@@ -244,6 +261,164 @@ describe("TransactionsResource", () => {
     });
   });
 
+  describe("createNetworkNote", () => {
+    it("throws when both recipient and script are provided", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+          recipient: "customRecipient",
+          script: "myScript",
+        })
+      ).rejects.toThrow(/recipient.*script.*not both/i);
+    });
+
+    it("throws when neither recipient nor script is provided", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.createNetworkNote({
+          account: "0xsender",
+          target: "0xtarget",
+        })
+      ).rejects.toThrow(/recipient.*script/i);
+    });
+
+    it("builds a network note from a script (recipient path) and submits", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const result = await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "myScript",
+        inputs: [1n],
+      });
+
+      expect(wasm.NetworkAccountTarget).toHaveBeenCalledWith(
+        expect.anything(),
+        undefined
+      );
+      expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
+        "targetIdObj"
+      );
+      expect(wasm.NoteMetadata).toHaveBeenCalledWith(
+        expect.anything(),
+        "Public",
+        "networkTag"
+      );
+      expect(wasm.Felt).toHaveBeenCalledWith(1n);
+      expect(wasm.FeltArray).toHaveBeenCalledWith([{ felt: 1n }]);
+      expect(wasm.NoteStorage).toHaveBeenCalledWith({
+        feltArray: [{ felt: 1n }],
+      });
+      expect(wasm.NoteRecipient.fromScript).toHaveBeenCalledWith(
+        "myScript",
+        expect.anything() // NoteStorage instance
+      );
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(), // NoteAssets instance
+        expect.anything(), // NoteMetadata instance
+        "recipientFromScript",
+        ["targetAttachment"]
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.note).toBe("networkNote");
+      expect(result.txId).toBeDefined();
+    });
+
+    it("uses a pre-built recipient without building one from a script", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        recipient: "customRecipient",
+      });
+      expect(wasm.NoteRecipient.fromScript).not.toHaveBeenCalled();
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(), // NoteAssets instance
+        expect.anything(), // NoteMetadata instance
+        "customRecipient",
+        ["targetAttachment"]
+      );
+    });
+
+    it("appends an extra attachment after the required NetworkAccountTarget one", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        attachment: [9n],
+      });
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(), // NoteAssets instance
+        expect.anything(), // NoteMetadata instance
+        "recipientFromScript",
+        ["targetAttachment", { attachment: [9n] }]
+      );
+    });
+
+    it("threads assets into NoteAssets instead of defaulting to empty", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        assets: { token: "0xtoken", amount: 5 },
+      });
+      expect(wasm.FungibleAsset).toHaveBeenCalledWith(
+        expect.anything(),
+        BigInt(5)
+      );
+      expect(wasm.NoteAssets).toHaveBeenCalledWith([expect.anything()]);
+    });
+
+    it("uses a pre-built NetworkAccountTarget directly without reconstructing it", async () => {
+      const { resource, wasm } = makeResource();
+      const preBuilt = Object.create(wasm.NetworkAccountTarget.prototype);
+      preBuilt.targetId = vi.fn(() => "preBuiltTargetId");
+      preBuilt.toAttachment = vi.fn(() => "preBuiltAttachment");
+
+      await resource.createNetworkNote({
+        account: "0xsender",
+        target: preBuilt,
+        script: "s",
+      });
+
+      // Only the initial call from makeResource's implicit setup counts —
+      // assert it was not invoked again to build a new target for this call.
+      expect(wasm.NetworkAccountTarget).not.toHaveBeenCalled();
+      expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
+        "preBuiltTargetId"
+      );
+      expect(wasm.Note.withAttachments).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        ["preBuiltAttachment"]
+      );
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
+      const tx = { transactionStatus: () => committedStatus };
+      const { resource, inner } = makeResource({
+        getTransactions: vi.fn().mockResolvedValue([tx]),
+      });
+      const result = await resource.createNetworkNote({
+        account: "0xsender",
+        target: "0xtarget",
+        script: "s",
+        waitForConfirmation: true,
+        timeout: 5000,
+      });
+      expect(inner.syncChain).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+  });
+
   describe("mint", () => {
     it("builds mint request and submits", async () => {
       const { resource, inner } = makeResource();
@@ -255,6 +430,61 @@ describe("TransactionsResource", () => {
       });
       expect(inner.newMintTransactionRequest).toHaveBeenCalled();
       expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+  });
+
+  describe("bridge", () => {
+    it("builds a B2AGG request and submits", async () => {
+      const { resource, inner, wasm } = makeResource();
+      const result = await resource.bridge({
+        account: "0xsender",
+        bridgeAccount: "0xbridge",
+        token: "0xfaucet",
+        amount: 100,
+        destinationNetwork: 1,
+        destinationAddress: "0x000000000000000000000000000000000000dEaD",
+      });
+
+      expect(wasm.EthAddress.fromHex).toHaveBeenCalledWith(
+        "0x000000000000000000000000000000000000dEaD"
+      );
+      // Pin the argument order — a sender/bridge/faucet swap is the highest-risk
+      // bug for this builder, so assert each position by its resolved id.
+      expect(inner.newB2AggTransactionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" }),
+        expect.objectContaining({ hex: "0xbridge" }),
+        expect.objectContaining({ hex: "0xfaucet" }),
+        100n, // amount normalized to bigint
+        1, // destination network
+        expect.objectContaining({
+          hex: "0x000000000000000000000000000000000000dEaD",
+        })
+      );
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(result.txId).toBeDefined();
+    });
+
+    it("waits for confirmation when waitForConfirmation=true", async () => {
+      const committedStatus = {
+        isCommitted: () => true,
+        isDiscarded: () => false,
+      };
+      const tx = { transactionStatus: () => committedStatus };
+      const { resource, inner } = makeResource({
+        getTransactions: vi.fn().mockResolvedValue([tx]),
+      });
+      const result = await resource.bridge({
+        account: "0xsender",
+        bridgeAccount: "0xbridge",
+        token: "0xfaucet",
+        amount: 100,
+        destinationNetwork: 1,
+        destinationAddress: "0x000000000000000000000000000000000000dEaD",
+        waitForConfirmation: true,
+        timeout: 5000,
+      });
+      expect(inner.syncChain).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
     });
   });
@@ -614,6 +844,21 @@ describe("TransactionsResource", () => {
       expect(inner.executeForSummary).toHaveBeenCalled();
     });
 
+    it("builds bridge request for preview", async () => {
+      const { resource, inner } = makeResource();
+      await resource.preview({
+        operation: "bridge",
+        account: "0xsender",
+        bridgeAccount: "0xbridge",
+        token: "0xfaucet",
+        amount: 100,
+        destinationNetwork: 1,
+        destinationAddress: "0x000000000000000000000000000000000000dEaD",
+      });
+      expect(inner.newB2AggTransactionRequest).toHaveBeenCalled();
+      expect(inner.executeForSummary).toHaveBeenCalled();
+    });
+
     it("builds consume request for preview", async () => {
       const { resource, inner } = makeResource();
       await resource.preview({
@@ -826,6 +1071,130 @@ describe("TransactionsResource", () => {
         expect.anything(),
         prover
       );
+    });
+  });
+
+  describe("manual lifecycle — executeRequest → prove → submit → apply", () => {
+    it("executeRequest returns a handle exposing result + id; nothing else runs", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "request" };
+      const executed = await resource.executeRequest("0xaccHex", request);
+      expect(inner.executeTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request
+      );
+      expect(executed.result).toBe(inner._txResult);
+      expect(executed.id).toBe(inner._txResult.id());
+      // execute-only: nothing downstream runs
+      expect(inner.proveTransaction).not.toHaveBeenCalled();
+      expect(inner.submitProvenTransaction).not.toHaveBeenCalled();
+      expect(inner.applyTransaction).not.toHaveBeenCalled();
+    });
+
+    it("prove without a prover calls proveTransaction with the result only", async () => {
+      const { resource, inner } = makeResource();
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const proven = await executed.prove();
+      expect(inner.proveTransaction).toHaveBeenCalledWith(inner._txResult);
+      expect(proven.proof).toBe("provenTx");
+      expect(proven.result).toBe(inner._txResult);
+    });
+
+    it("prove uses the per-call prover over client.defaultProver", async () => {
+      const defaultProver = { prove: vi.fn() };
+      const callProver = { prove: vi.fn() };
+      const { resource, inner } = makeResource({}, { defaultProver });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      await executed.prove({ prover: callProver });
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
+        inner._txResult,
+        callProver
+      );
+    });
+
+    it("prove falls back to client.defaultProver when set", async () => {
+      const defaultProver = { prove: vi.fn() };
+      const { resource, inner } = makeResource({}, { defaultProver });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      await executed.prove();
+      expect(inner.proveTransaction).toHaveBeenCalledWith(
+        inner._txResult,
+        defaultProver
+      );
+    });
+
+    it("submit forwards proof + result and exposes the block height", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+      });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const proven = await executed.prove();
+      const submitted = await proven.submit();
+      expect(inner.submitProvenTransaction).toHaveBeenCalledWith(
+        "provenTx",
+        inner._txResult
+      );
+      expect(submitted.blockNumber).toBe(123);
+      expect(submitted.result).toBe(inner._txResult);
+    });
+
+    it("apply forwards result + blockNumber and returns the store update", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(123),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const executed = await resource.executeRequest("0xaccHex", {});
+      const submitted = await (await executed.prove()).submit();
+      const update = await submitted.apply();
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 123);
+      expect(update).toBe("storeUpdate");
+    });
+
+    it("waitForConfirmation delegates to resource.waitFor with the tx hex", async () => {
+      const { resource } = makeResource();
+      const waitSpy = vi
+        .spyOn(resource, "waitFor")
+        .mockResolvedValue(undefined);
+      const submitted = await (
+        await (await resource.executeRequest("0xaccHex", {})).prove()
+      ).submit();
+      await submitted.waitForConfirmation({ timeout: 1000 });
+      expect(waitSpy).toHaveBeenCalledWith("txHex", { timeout: 1000 });
+    });
+
+    it("submitProven escape hatch submits an externally-produced proof", async () => {
+      const { resource, inner } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(55),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const submitted = await resource.submitProven(
+        "externalProof",
+        inner._txResult
+      );
+      expect(inner.submitProvenTransaction).toHaveBeenCalledWith(
+        "externalProof",
+        inner._txResult
+      );
+      expect(submitted.blockNumber).toBe(55);
+      const update = await submitted.apply();
+      expect(inner.applyTransaction).toHaveBeenCalledWith(inner._txResult, 55);
+      expect(update).toBe("storeUpdate");
+    });
+
+    it("the staged chain drives the same pipeline submit() runs, one liveness check per stage", async () => {
+      const { resource, inner, client } = makeResource({
+        submitProvenTransaction: vi.fn().mockResolvedValue(77),
+        applyTransaction: vi.fn().mockResolvedValue("storeUpdate"),
+      });
+      const request = { type: "request" };
+      const executed = await resource.executeRequest("0xaccHex", request);
+      const proven = await executed.prove();
+      const submitted = await proven.submit();
+      const update = await submitted.apply();
+      expect(submitted.blockNumber).toBe(77);
+      expect(update).toBe("storeUpdate");
+      // Each of the four stages asserts client liveness independently.
+      expect(client.assertNotTerminated).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -1279,6 +1648,214 @@ describe("TransactionsResource", () => {
           notes: [noteId],
         })
       ).rejects.toThrow("Note not found: 0xnoteHexFromId");
+    });
+  });
+
+  describe("batch + submitBatch", () => {
+    // Helper: a fake TransactionRequest with a .serialize() method, since
+    // submitBatch calls `r.serialize()` on every entry. The per-op
+    // builders' `new*Request` methods need to return objects with
+    // `.serialize()` so the batch path is exercised end-to-end.
+    function fakeRequest(label = "req") {
+      return {
+        serialize: vi.fn().mockReturnValue(new Uint8Array([1, 2])),
+        _label: label,
+      };
+    }
+
+    it("dispatches send / mint / consume / swap / execute / custom kinds and submits", async () => {
+      // Override the TransactionRequestBuilder so `build()` returns a
+      // serializable fake request (the `execute` kind path goes through
+      // build() rather than a `new*Request` inner method).
+      const { resource, inner } = makeResource(
+        {
+          newSendTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("send")),
+          newMintTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("mint")),
+          newConsumeTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("consume")),
+          newSwapTransactionRequest: vi
+            .fn()
+            .mockResolvedValue(fakeRequest("swap")),
+          submitNewTransactionBatch: vi.fn().mockResolvedValue(42),
+        },
+        {},
+        {
+          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+            const b = makeTxRequestBuilder();
+            b.build = vi.fn().mockReturnValue(fakeRequest("built"));
+            return b;
+          }),
+        }
+      );
+      const customReq = fakeRequest("custom");
+
+      const result = await resource.batch({
+        account: "0xsender",
+        operations: [
+          {
+            kind: "send",
+            to: "0xto",
+            token: "0xtok",
+            amount: 1,
+            type: "public",
+          },
+          { kind: "mint", to: "0xto", amount: 2, type: "public" },
+          { kind: "consume", notes: ["0xnoteId"] },
+          {
+            kind: "swap",
+            offer: { token: "0xt1", amount: 5 },
+            request: { token: "0xt2", amount: 7 },
+            type: "public",
+          },
+          { kind: "execute", script: "scriptHandle" },
+          { kind: "custom", request: customReq },
+        ],
+      });
+
+      expect(inner.submitNewTransactionBatch).toHaveBeenCalledTimes(1);
+      const [accountIdArg, bytesArg] =
+        inner.submitNewTransactionBatch.mock.calls[0];
+      expect(accountIdArg.toString()).toBe("0xsender");
+      expect(bytesArg).toHaveLength(6);
+      expect(result).toEqual({ blockNumber: 42 });
+      // custom request.serialize() called via submitBatch path
+      expect(customReq.serialize).toHaveBeenCalled();
+    });
+
+    it("execute kind threads foreignAccounts through ForeignAccountArray", async () => {
+      const { resource, wasm } = makeResource(
+        {
+          submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
+        },
+        {},
+        {
+          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+            const b = makeTxRequestBuilder();
+            b.build = vi.fn().mockReturnValue(fakeRequest("execBuilt"));
+            return b;
+          }),
+        }
+      );
+
+      await resource.batch({
+        account: "0xsender",
+        operations: [
+          {
+            kind: "execute",
+            script: "scriptHandle",
+            foreignAccounts: ["0xforeign1", { id: "0xforeign2" }],
+          },
+        ],
+      });
+
+      expect(wasm.ForeignAccount.public).toHaveBeenCalledTimes(2);
+      expect(wasm.ForeignAccountArray).toHaveBeenCalled();
+    });
+
+    it("throws when account is missing", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({ operations: [{ kind: "send" }] })
+      ).rejects.toThrow(/account.*required/);
+    });
+
+    it("throws when operations is empty or not an array", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({ account: "0xsender", operations: [] })
+      ).rejects.toThrow(/non-empty array/);
+      await expect(
+        resource.batch({ account: "0xsender", operations: undefined })
+      ).rejects.toThrow(/non-empty array/);
+    });
+
+    it("throws on unknown operation kind", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({
+          account: "0xsender",
+          operations: [{ kind: "bogus" }],
+        })
+      ).rejects.toThrow(/unknown kind/);
+    });
+
+    it("throws when custom kind is missing the pre-built request", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.batch({
+          account: "0xsender",
+          operations: [{ kind: "custom" }],
+        })
+      ).rejects.toThrow(/missing.*request/);
+    });
+
+    it("submitBatch rejects an empty requests array", async () => {
+      const { resource } = makeResource();
+      await expect(resource.submitBatch("0xsender", [])).rejects.toThrow(
+        /non-empty array/
+      );
+    });
+
+    it("submitBatch with waitForConfirmation polls sync height until block lands", async () => {
+      const heights = [99, 99, 100];
+      const { resource, inner } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
+        getSyncHeight: vi
+          .fn()
+          .mockImplementation(() => Promise.resolve(heights.shift())),
+        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const r1 = fakeRequest("a");
+      const r2 = fakeRequest("b");
+      const result = await resource.submitBatch("0xsender", [r1, r2], {
+        waitForConfirmation: true,
+        timeout: 60_000,
+        interval: 0, // poll immediately, no wall-clock wait in tests
+      });
+
+      expect(result).toEqual({ blockNumber: 100 });
+      expect(inner.getSyncHeight).toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation tolerates transient sync failures", async () => {
+      // First syncState rejects, next call resolves; getSyncHeight returns the
+      // target on the first read so the poll loop exits cleanly.
+      const sync = vi.fn();
+      sync.mockRejectedValueOnce(new Error("transient"));
+      sync.mockResolvedValue(undefined);
+      const { resource, inner } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(50),
+        getSyncHeight: vi.fn().mockResolvedValue(50),
+        syncStateWithTimeout: sync,
+      });
+      const r = fakeRequest();
+      await resource.submitBatch("0xsender", [r], {
+        waitForConfirmation: true,
+        interval: 0,
+      });
+      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+    });
+
+    it("submitBatch waitForConfirmation throws on timeout", async () => {
+      const { resource } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
+        getSyncHeight: vi.fn().mockResolvedValue(0),
+        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+      });
+      const r = fakeRequest();
+      await expect(
+        resource.submitBatch("0xsender", [r], {
+          waitForConfirmation: true,
+          timeout: 1, // 1ms — first poll already past
+          interval: 0,
+        })
+      ).rejects.toThrow(/timed out/);
     });
   });
 });

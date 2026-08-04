@@ -14,6 +14,8 @@ import type {
   TransactionId,
   TransactionRequest,
   TransactionResult,
+  TransactionStoreUpdate,
+  ProvenTransaction,
   TransactionSummary,
   TransactionRecord,
   InputNoteRecord,
@@ -31,8 +33,12 @@ import type {
   AccountStorageRequirements,
   TransactionScript,
   NoteScript,
+  NoteRecipient,
+  NoteExecutionHint,
+  NetworkAccountTarget,
   AdviceInputs,
   FeltArray,
+  PswapLineageRecord,
 } from "./crates/miden_client_web";
 
 // Import the full namespace for the MidenArrayConstructors type
@@ -355,6 +361,48 @@ export interface SendResult {
   result: TransactionResult;
 }
 
+/**
+ * Options for {@link TransactionsResource.createNetworkNote} and the standalone
+ * {@link buildNetworkNote}. Builds a Public, custom-script note carrying a
+ * `NetworkAccountTarget` attachment so a public network account auto-consumes it.
+ *
+ * Provide exactly one of `recipient` or `script`.
+ */
+export interface NetworkNoteOptions extends TransactionOptions {
+  /** Account that creates, funds, and submits the note (the executing sender). */
+  account: AccountRef;
+  /**
+   * The network account the note targets. Any account reference, or a pre-built
+   * `NetworkAccountTarget`. Encoded as the note's `NetworkAccountTarget`
+   * attachment — this is what makes `isNetworkNote()` true.
+   */
+  target: AccountRef | NetworkAccountTarget;
+  /** Execution hint when `target` is an account reference. Defaults to `always`. */
+  executionHint?: NoteExecutionHint;
+  /**
+   * Recipient carrying the note's custom consumption script. Build with
+   * `new NoteRecipient(serialNum, noteScript, noteStorage)`, or omit and pass
+   * `script` to have the recipient built for you.
+   */
+  recipient?: NoteRecipient;
+  /** Custom consumption script; the recipient is built with a fresh serial number. */
+  script?: NoteScript;
+  /** Note storage / inputs the script reads (used with `script`). */
+  inputs?: bigint[];
+  /** Assets locked into the note. Optional — a note may carry no assets. */
+  assets?: Asset | Asset[];
+  /** Extra attachment payload appended AFTER the required `NetworkAccountTarget`. */
+  attachment?: bigint[];
+}
+
+/** Result of {@link TransactionsResource.createNetworkNote}. */
+export interface NetworkNoteResult {
+  txId: TransactionId;
+  /** The built network note (read its id / attachments). */
+  note: Note;
+  result: TransactionResult;
+}
+
 /** Result of methods that previously returned bare TransactionId. */
 export interface TransactionSubmitResult {
   txId: TransactionId;
@@ -372,6 +420,21 @@ export interface MintOptions extends TransactionOptions {
   type?: NoteVisibility;
 }
 
+export interface BridgeOptions extends TransactionOptions {
+  /** Account that creates and funds the bridge note (the sender / executing account). */
+  account: AccountRef;
+  /** Bridge account that consumes the note and burns the bridged asset. */
+  bridgeAccount: AccountRef;
+  /** Faucet / token ID of the fungible asset to bridge. */
+  token: AccountRef;
+  /** Amount of the asset to bridge. */
+  amount: number | bigint;
+  /** AggLayer-assigned network ID of the destination chain. */
+  destinationNetwork: number;
+  /** Destination Ethereum address on the destination network (0x-prefixed hex). */
+  destinationAddress: string;
+}
+
 export interface ConsumeOptions extends TransactionOptions {
   account: AccountRef;
   notes: NoteInput | NoteInput[];
@@ -380,6 +443,148 @@ export interface ConsumeOptions extends TransactionOptions {
 export interface ConsumeAllOptions extends TransactionOptions {
   account: AccountRef;
   maxNotes?: number;
+}
+
+/**
+ * A single operation inside a transaction batch. The shape mirrors the
+ * singular options types (`SendOptions`, `MintOptions`, ...) minus the
+ * `account` field — the executing account is set once at the batch level
+ * and shared by every operation (V1 single-account constraint).
+ */
+export type BatchOperation =
+  | {
+      kind: "send";
+      to: AccountRef;
+      token: AccountRef;
+      amount: number | bigint;
+      type?: NoteVisibility;
+      reclaimAfter?: number;
+      timelockUntil?: number;
+    }
+  | {
+      kind: "mint";
+      to: AccountRef;
+      amount: number | bigint;
+      type?: NoteVisibility;
+    }
+  | {
+      kind: "consume";
+      notes: NoteInput | NoteInput[];
+    }
+  | {
+      kind: "swap";
+      offer: Asset;
+      request: Asset;
+      type?: NoteVisibility;
+      paybackType?: NoteVisibility;
+    }
+  | {
+      kind: "execute";
+      script: TransactionScript;
+      foreignAccounts?: (
+        | AccountRef
+        | { id: AccountRef; storage?: AccountStorageRequirements }
+      )[];
+    }
+  | {
+      /** Escape hatch for pre-built TransactionRequests. */
+      kind: "custom";
+      request: TransactionRequest;
+    };
+
+export interface BatchOptions {
+  /** The account executing every operation in the batch (single-account in V1). */
+  account: AccountRef;
+  /** Operations to execute atomically as a batch. Must be non-empty. */
+  operations: BatchOperation[];
+  /**
+   * Wait until the batch's block has been observed in the local sync height.
+   * Differs from singular `waitForConfirmation`: the V1 batch API returns
+   * only a block number, so we poll chain height rather than per-tx status.
+   */
+  waitForConfirmation?: boolean;
+  /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
+  timeout?: number;
+}
+
+export interface BatchSubmitResult {
+  /** The block number the batch was accepted into. */
+  blockNumber: number;
+}
+
+/** Options for {@link TransactionExecution.prove}. */
+export interface ProveOptions {
+  /**
+   * Per-call prover override. Falls back to the client's default prover, or
+   * the built-in local prover if none is configured.
+   *
+   * A prover is consumed by the call — build (or clone) a fresh one per
+   * `prove()`. Reusing an already-passed prover silently falls back to the
+   * built-in local prover.
+   */
+  prover?: TransactionProver;
+}
+
+/**
+ * A locally-executed transaction — nothing proven, submitted, or persisted yet.
+ * First stage of the manual transaction lifecycle, returned by
+ * {@link TransactionsResource.executeRequest}. Advance it with {@link prove}.
+ */
+export interface TransactionExecution {
+  /** The raw execution artifact (account delta, output notes, …). */
+  readonly result: TransactionResult;
+  /** The executed transaction's id. */
+  readonly id: TransactionId;
+  /**
+   * Prove this execution, then continue with {@link TransactionProof.submit}.
+   * Pure computation — touches neither the network nor the local store.
+   *
+   * @param options - Optional per-call prover override.
+   */
+  prove(options?: ProveOptions): Promise<TransactionProof>;
+}
+
+/**
+ * A proven transaction, ready for the network. Second stage of the manual
+ * transaction lifecycle, returned by {@link TransactionExecution.prove}.
+ * Advance it with {@link submit}.
+ */
+export interface TransactionProof {
+  /** The raw proof — e.g. to serialize and submit from a different client. */
+  readonly proof: ProvenTransaction;
+  /** The execution result this proof was produced from. */
+  readonly result: TransactionResult;
+  /**
+   * Submit the proof to the network, then persist with
+   * {@link TransactionSubmission.apply}. Does NOT persist locally on its own.
+   */
+  submit(): Promise<TransactionSubmission>;
+}
+
+/**
+ * A submitted transaction. Final stage of the manual transaction lifecycle,
+ * returned by {@link TransactionProof.submit}. Persist it with {@link apply},
+ * or block until it commits with {@link waitForConfirmation}.
+ */
+export interface TransactionSubmission {
+  /** The block height the transaction was submitted at. */
+  readonly blockNumber: number;
+  /** The execution result that was submitted. */
+  readonly result: TransactionResult;
+  /**
+   * Persist the transaction into the local store, firing registered
+   * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
+   * local store is unaware of the transaction.
+   *
+   * @returns The pre-apply store update.
+   */
+  apply(): Promise<TransactionStoreUpdate>;
+  /**
+   * Poll local sync height until the transaction commits on-chain.
+   *
+   * @param options - Polling options (timeout, interval, onProgress).
+   */
+  waitForConfirmation(options?: WaitOptions): Promise<void>;
 }
 
 export interface SwapOptions extends TransactionOptions {
@@ -425,6 +630,18 @@ export interface PswapCancelOptions extends TransactionOptions {
   note: NoteInput;
 }
 
+export interface PswapCancelByOrderOptions extends TransactionOptions {
+  /**
+   * Stable order id of the lineage to cancel, as reported by
+   * {@link PswapLineageRecord.orderId}. Accepts the decimal string or a
+   * `bigint`. `number` is rejected: a PSWAP order id is `u64`-shaped and
+   * routinely exceeds `Number.MAX_SAFE_INTEGER`, which a JS `number` cannot
+   * represent without silent precision loss. The creator account and current
+   * tip note are resolved from the tracked lineage.
+   */
+  orderId: string | bigint;
+}
+
 export interface ExecuteOptions extends TransactionOptions {
   /** Account executing the custom script. */
   account: AccountRef;
@@ -468,6 +685,16 @@ export interface PreviewMintOptions {
   to: AccountRef;
   amount: number | bigint;
   type?: NoteVisibility;
+}
+
+export interface PreviewBridgeOptions {
+  operation: "bridge";
+  account: AccountRef;
+  bridgeAccount: AccountRef;
+  token: AccountRef;
+  amount: number | bigint;
+  destinationNetwork: number;
+  destinationAddress: string;
 }
 
 export interface PreviewConsumeOptions {
@@ -517,6 +744,7 @@ export interface PreviewCustomOptions {
 export type PreviewOptions =
   | PreviewSendOptions
   | PreviewMintOptions
+  | PreviewBridgeOptions
   | PreviewConsumeOptions
   | PreviewSwapOptions
   | PreviewPswapCreateOptions
@@ -713,6 +941,22 @@ export interface TransactionsResource {
    */
   mint(options: MintOptions): Promise<TransactionSubmitResult>;
   /**
+   * Builds a Public custom-script note carrying a `NetworkAccountTarget`
+   * attachment, submits it as an own output note, and (optionally) waits for
+   * confirmation. The submitted note satisfies `Note.isNetworkNote()`, so a
+   * public network account will auto-consume it.
+   */
+  createNetworkNote(options: NetworkNoteOptions): Promise<NetworkNoteResult>;
+  /**
+   * Bridge a fungible asset out to another network via the AggLayer. Emits a
+   * single public B2AGG (Bridge-to-AggLayer) note that the bridge account
+   * consumes, burning the asset so it can be claimed at the destination
+   * Ethereum address on the destination network.
+   *
+   * @param options - Sender, bridge account, token, amount, and destination.
+   */
+  bridge(options: BridgeOptions): Promise<TransactionSubmitResult>;
+  /**
    * Consume one or more notes for an account.
    *
    * @param options - Consume options including the account and notes to consume.
@@ -795,6 +1039,77 @@ export interface TransactionsResource {
     options?: TransactionOptions
   ): Promise<TransactionSubmitResult>;
 
+  /**
+   * Execute a transaction request locally — nothing is proven, submitted, or
+   * persisted. Returns a {@link TransactionExecution} handle; advance the
+   * lifecycle by chaining `.prove()` → `.submit()` → `.apply()`, benchmarking
+   * or error-handling each stage independently:
+   *
+   * ```ts
+   * const executed  = await client.transactions.executeRequest(account, request);
+   * const proven    = await executed.prove({ prover });
+   * const submitted = await proven.submit();
+   * await submitted.apply();
+   * ```
+   *
+   * {@link submit} runs every stage in one call. The stages are not atomic as a
+   * group: awaiting other mutating calls on the same account between them can
+   * interleave state — drive the chain as an uninterrupted sequence per account.
+   *
+   * @param account - The account executing the transaction.
+   * @param request - The pre-built transaction request.
+   * @returns A handle to the executed transaction, ready to prove.
+   */
+  executeRequest(
+    account: AccountRef,
+    request: TransactionRequest
+  ): Promise<TransactionExecution>;
+
+  /**
+   * Submit a proof produced somewhere that shares nothing with this client —
+   * e.g. a detached prover that never saw the local store. Returns a
+   * {@link TransactionSubmission} handle; call `.apply()` on it to persist
+   * locally. For the in-process flow prefer
+   * `executeRequest(...)` → `.prove()` → `.submit()`, which threads the proof
+   * and result for you.
+   *
+   * @param proof - A proof for `result`, proven elsewhere.
+   * @param result - The matching execution result.
+   * @returns A handle to the submitted transaction, ready to apply.
+   */
+  submitProven(
+    proof: ProvenTransaction,
+    result: TransactionResult
+  ): Promise<TransactionSubmission>;
+
+  /**
+   * Execute a heterogeneous batch of operations against a single account.
+   * Each operation is built, proven individually and as a batch, and all
+   * operations are submitted atomically — either every tx in the batch
+   * lands or none does.
+   *
+   * V1 supports only same-account batches (mirrors the underlying Rust
+   * `Client::new_transaction_batch()` constraint).
+   *
+   * @param options - Batch options including the account and operations.
+   */
+  batch(options: BatchOptions): Promise<BatchSubmitResult>;
+
+  /**
+   * Submit pre-built TransactionRequests as an atomic batch. Plural
+   * counterpart of {@link submit} — for callers that already have built
+   * requests in hand and want to skip the high-level operation builders.
+   *
+   * @param account - The account executing every transaction in the batch.
+   * @param requests - Pre-built transaction requests (must be non-empty).
+   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   */
+  submitBatch(
+    account: AccountRef,
+    requests: TransactionRequest[],
+    options?: Omit<BatchOptions, "account" | "operations">
+  ): Promise<BatchSubmitResult>;
+
   /** Execute a program (view call) and return the resulting stack output. */
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
 
@@ -813,6 +1128,46 @@ export interface TransactionsResource {
    * @param options - Optional polling timeout, interval, and progress callback.
    */
   waitFor(txId: string | TransactionId, options?: WaitOptions): Promise<void>;
+}
+
+export interface PswapResource {
+  /**
+   * Returns every partial-swap (PSWAP) lineage tracked by this client. A
+   * lineage records how a PSWAP note has been filled round by round, from the
+   * original note through each remainder to the current tip.
+   */
+  lineages(): Promise<PswapLineageRecord[]>;
+  /**
+   * Returns the PSWAP lineages created by a specific local account.
+   *
+   * @param account - Creator account (hex, bech32, `Account`, or `AccountId`).
+   */
+  lineagesFor(account: AccountRef): Promise<PswapLineageRecord[]>;
+  /**
+   * Returns the lineage for a single order, or `null` if this client is not
+   * tracking it — either because the order was not created by this client, or
+   * because tracking did not register when it was created. Registration runs as
+   * a transaction observer at create time and does not block the create
+   * transaction if it fails.
+   *
+   * @param orderId - Stable order id (decimal string or bigint). `number` is
+   *   rejected: a PSWAP order id is `u64`-shaped and routinely exceeds
+   *   `Number.MAX_SAFE_INTEGER`, which a JS `number` cannot represent without
+   *   silent precision loss.
+   */
+  lineage(orderId: string | bigint): Promise<PswapLineageRecord | null>;
+  /**
+   * Reclaim the unfilled offered asset on the current tip of an active
+   * lineage, identified by its stable order id. Builds the cancel transaction,
+   * resolves the creator account from the tracked lineage, and submits it
+   * through the same prove/submit path as the other transaction helpers.
+   * Throws if no lineage is tracked for the order.
+   *
+   * @param options - Order id and optional transaction options.
+   */
+  cancelByOrder(
+    options: PswapCancelByOrderOptions
+  ): Promise<TransactionSubmitResult>;
 }
 
 export interface NotesResource {
@@ -1076,6 +1431,7 @@ export declare class MidenClient {
   readonly settings: SettingsResource;
   readonly compile: CompilerResource;
   readonly keystore: KeystoreResource;
+  readonly pswap: PswapResource;
 
   /** Syncs the client: fetches private notes from the Note Transport Layer, then syncs on-chain state. Fails fast on either. */
   sync(): Promise<SyncSummary>;
@@ -1148,6 +1504,13 @@ export declare function createP2IDNote(
 export declare function createP2IDENote(
   options: P2IDEOptions
 ): ReturnType<WasmModule["Note"]["createP2IDENote"]>;
+
+/**
+ * Builds (without submitting) a Public custom-script note carrying a
+ * `NetworkAccountTarget` attachment. Provide exactly one of `recipient` or
+ * `script`.
+ */
+export declare function buildNetworkNote(opts: NetworkNoteOptions): Note;
 
 /** Builds a swap tag for note matching. Returns a NoteTag (use `.asU32()` for the numeric value). */
 export declare function buildSwapTag(

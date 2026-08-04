@@ -12,6 +12,7 @@ use miden_client::transaction::{
     TransactionStatus,
 };
 use miden_client::utils::Serializable;
+use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::js_bindings::{idxdb_insert_transaction_script, idxdb_upsert_transaction_record};
@@ -20,32 +21,35 @@ use crate::promise::await_ok;
 // TYPES
 // ================================================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 #[wasm_bindgen(getter_with_clone)]
 pub struct SerializedTransactionData {
     pub id: String,
+    #[serde(with = "serde_bytes")]
     pub details: Vec<u8>,
     #[wasm_bindgen(js_name = "scriptRoot")]
+    #[serde(with = "serde_bytes")]
     pub script_root: Option<Vec<u8>>,
     #[wasm_bindgen(js_name = "txScript")]
+    #[serde(with = "serde_bytes")]
     pub tx_script: Option<Vec<u8>>,
     #[wasm_bindgen(js_name = "blockNum")]
     pub block_num: u32,
     #[wasm_bindgen(js_name = "statusVariant")]
     pub status_variant: u8,
+    #[serde(with = "serde_bytes")]
     pub status: Vec<u8>,
 }
 
 // ================================================================================================
 
-/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// Converts an `ExecutedTransaction` into a pending `TransactionRecord`.
 /// `submission_height` is the block number at which the transaction was submitted to the network.
-pub async fn insert_proven_transaction_data(
-    db_id: &str,
+pub(crate) fn build_transaction_record(
     executed_transaction: &ExecutedTransaction,
     submission_height: BlockNumber,
-) -> Result<(), StoreError> {
-    // Build transaction record
+) -> TransactionRecord {
     let nullifiers: Vec<Word> = executed_transaction
         .input_notes()
         .iter()
@@ -66,12 +70,22 @@ pub async fn insert_proven_transaction_data(
         creation_timestamp: crate::current_timestamp_u64(),
     };
 
-    let transaction_record = TransactionRecord::new(
+    TransactionRecord::new(
         executed_transaction.id(),
         details,
         executed_transaction.tx_args().tx_script().cloned(),
         TransactionStatus::Pending,
-    );
+    )
+}
+
+/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// `submission_height` is the block number at which the transaction was submitted to the network.
+pub async fn insert_proven_transaction_data(
+    db_id: &str,
+    executed_transaction: &ExecutedTransaction,
+    submission_height: BlockNumber,
+) -> Result<(), StoreError> {
+    let transaction_record = build_transaction_record(executed_transaction, submission_height);
 
     upsert_transaction_record(db_id, &transaction_record).await?;
 
