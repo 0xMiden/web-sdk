@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][web] `client.notes.sendPrivate(...)` now relays the note's **actual on-chain commitment block** as the transport-layer block hint (read from the sent note's committed record), instead of the sender's current sync height, falling back to the sync height only while the note is still uncommitted. The recipient scans forward from the hint for the commitment, so a sync height that has advanced past the note — e.g. when the caller relays after waiting for the transaction to commit — no longer overshoots the commitment and silently drops delivery. Refines the hint added in [web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258); no API change. (closes [#262](https://github.com/0xMiden/web-sdk/issues/262))
+* [FIX][web] `client.notes.sendPrivate(...)` now relays the note's **actual on-chain commitment block** as the transport-layer block hint (read from the sent note's committed record), instead of the sender's current sync height, falling back to the sync height only while the note is still uncommitted. The recipient scans forward from the hint for the commitment, so a sync height that has advanced past the note — e.g. when the caller relays after waiting for the transaction to commit — no longer overshoots the commitment and silently drops delivery. Refines the hint added in [web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258); no API change. ([web-sdk#263](https://github.com/0xMiden/web-sdk/pull/263), closes [#262](https://github.com/0xMiden/web-sdk/issues/262))
 
 ## 0.15.9 (2026-08-04)
 
