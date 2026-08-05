@@ -108,7 +108,10 @@ test("transport hint is the note's commitment block, so delivery survives a sync
       sdk.NoteType.Private,
       sdk.u64(1000)
     );
-    const mintTxId = await client.submitNewTransaction(faucet.id(), mintRequest);
+    const mintTxId = await client.submitNewTransaction(
+      faucet.id(),
+      mintRequest
+    );
     await client.proveBlock();
     await client.syncState();
     const [mintTx] = await client.getTransactions(
@@ -131,7 +134,10 @@ test("transport hint is the note's commitment block, so delivery survives a sync
       null,
       null
     );
-    const sendTxId = await client.submitNewTransaction(sender.id(), sendRequest);
+    const sendTxId = await client.submitNewTransaction(
+      sender.id(),
+      sendRequest
+    );
     await client.proveBlock();
     await client.syncState();
     const [sendTx] = await client.getTransactions(
@@ -152,9 +158,8 @@ test("transport hint is the note's commitment block, so delivery survives a sync
     );
 
     // Recipient has nothing consumable before the transport delivers the note.
-    const consumableBefore = (
-      await client.getConsumableNotes(recipient.id())
-    ).length;
+    const consumableBefore = (await client.getConsumableNotes(recipient.id()))
+      .length;
 
     // Relay through the transport, then have the recipient pick it up.
     await client.sendPrivateNote(note, recipientAddress);
@@ -163,9 +168,8 @@ test("transport hint is the note's commitment block, so delivery survives a sync
 
     // The relayed note bound to its commitment and is consumable — only true if the hint was
     // the commitment block, not the advanced sync height.
-    const consumableAfter = (
-      await client.getConsumableNotes(recipient.id())
-    ).length;
+    const consumableAfter = (await client.getConsumableNotes(recipient.id()))
+      .length;
 
     return { consumableBefore, consumableAfter };
   });
