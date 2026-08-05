@@ -1,4 +1,5 @@
 use js_export_macro::js_export;
+use miden_client::note::Note as NativeNote;
 
 use crate::platform::{JsErr, from_str_err};
 use crate::{WebClient, js_error_with_context};
@@ -17,25 +18,43 @@ impl WebClient {
             .as_mut()
             .ok_or_else(|| from_str_err("Client not initialized. Call createClient() first."))?;
 
+        let native_note: NativeNote = note.into();
+        let note_id = native_note.id();
+
         // Relay with a block hint so the recipient scans from a deterministic block for the note's
         // on-chain commitment, instead of the narrow fixed lookback window it falls back to for
-        // hint-less notes. That window silently drops the note for any recipient whose sync height
-        // has advanced past it, so hint-less delivery is non-deterministic.
+        // hint-less notes (that window silently drops the note for any recipient whose sync height
+        // has advanced past it).
         //
-        // The hint is the sender's current sync height. This is a safe hint ("any block at or
-        // before the commitment is correct") for the intended flow: relaying right after
-        // submitting the note's transaction, while the commitment is still ahead of the synced
-        // tip. It assumes prompt relay — a caller that defers relay until the sender has synced
-        // past the note's own commitment would produce a hint above the commitment, which the
-        // recipient would not scan back to. The note's true creation block isn't reachable from a
-        // bare `Note`, so the sync height is the best available lower bound for the normal path.
-        let block_hint = client
-            .get_sync_height()
-            .await
-            .map_err(|e| js_error_with_context(e, "failed reading block hint for private note"))?;
+        // Prefer the note's ACTUAL commitment block, taken from its committed record's inclusion
+        // proof, so the hint is exact no matter how far the sender has synced past the note. The
+        // recipient scans FORWARD from `after_block_num`, so a hint ABOVE the commitment — which a
+        // bare sync-height hint produces once the sender has synced past the note (e.g. relaying
+        // after waiting for commit) — is never scanned back to and silently drops delivery. When
+        // the note isn't committed yet (prompt relay before commit) there is no inclusion proof,
+        // and the sync height is then a correct lower bound sitting below the commitment.
+        let committed_block = {
+            let from_output =
+                client.get_output_note(note_id).await.ok().flatten().and_then(|record| {
+                    record.inclusion_proof().map(|proof| proof.location().block_num())
+                });
+            match from_output {
+                Some(block) => Some(block),
+                None => client.get_input_note(note_id).await.ok().flatten().and_then(|record| {
+                    record.inclusion_proof().map(|proof| proof.location().block_num())
+                }),
+            }
+        };
+
+        let block_hint = match committed_block {
+            Some(block) => block,
+            None => client.get_sync_height().await.map_err(|e| {
+                js_error_with_context(e, "failed reading block hint for private note")
+            })?,
+        };
 
         client
-            .send_private_note_with_block_hint(note.into(), &address.into(), block_hint)
+            .send_private_note_with_block_hint(native_note, &address.into(), block_hint)
             .await
             .map_err(|e| js_error_with_context(e, "failed sending private note"))?;
 
