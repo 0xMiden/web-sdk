@@ -3,9 +3,11 @@ import { test, expect } from "./test-setup";
 
 // Regression guard for the block-hint overshoot bug (web-sdk#262): a sender that
 // relays a private note AFTER syncing past the note's on-chain commitment must
-// still deliver it. `sendPrivateNote` derives the hint from the note's own
-// commitment block; a sync-height hint would sit ABOVE the commitment, and the
-// recipient — which scans FORWARD from the hint — would silently never bind it.
+// still deliver it. `sendPrivateOutputNote` derives the recipient's scan-start
+// block from the note's stored expected_height (the submission tip, at or below the
+// commitment); a sync-height hint would sit ABOVE the commitment once the sender
+// advanced past it, and the recipient — which scans FORWARD from the hint — would
+// silently never bind the note.
 //
 // This is a CROSS-client test. A private note's details are not on-chain, so the
 // recipient can only obtain them through the transport layer (never by auto-import
@@ -64,13 +66,9 @@ test("private-note recipient still receives after the sender syncs past the note
     // The note commits at this block; the sender advances past it before relaying.
     const heightAtCommit = await sender.getSyncHeight();
 
-    // The committed note object to relay (the recipient's input note, which the
-    // sender holds because it tracks the recipient and minted the note).
-    const note = (await sender.getInputNote(relayedNoteId)).toNote();
-
     // ── Advance the sender PAST the commitment, THEN relay ──
     // This is the bug's trigger: the sender's sync height is now above the note's
-    // commitment block, so a sync-height hint would overshoot it.
+    // commitment block, so a naive sync-height hint would overshoot it.
     for (let i = 0; i < 3; i++) {
       await sender.proveBlock();
       await sender.syncState();
@@ -80,7 +78,10 @@ test("private-note recipient still receives after the sender syncs past the note
       recipientWallet.id(),
       "BasicWallet"
     );
-    await sender.sendPrivateNote(note, recipientAddress);
+    // Relay via the convenience method: it derives the recipient's scan-start block from the
+    // output note's expected_height (the submission tip, at or below the commitment), NOT the
+    // sender's now-advanced sync height — so delivery survives the sync advance.
+    await sender.sendPrivateOutputNote(relayedNoteId, recipientAddress);
 
     // Snapshot the sender's chain + transport (post-relay) and export the
     // recipient account so a fresh client can track and receive.

@@ -821,7 +821,24 @@ export interface FetchPrivateNotesOptions {
 }
 
 export interface SendPrivateOptions {
+  /** The note to relay — a `Note`, or a note id/record resolved from this client's input notes. */
   note: NoteInput;
+  /** The recipient. */
+  to: AccountRef;
+  /**
+   * Block the recipient scans FORWARD from for the note's on-chain commitment. Must be at or below
+   * the commitment block — a hint above it is never scanned back to, so the recipient silently
+   * never receives the note. A safe, always-valid choice is the chain tip when the note's
+   * transaction was submitted. For one of this client's own output notes, prefer `sendPrivateOutput`,
+   * which derives this block for you.
+   */
+  scanAfterBlockNum: number;
+}
+
+export interface SendPrivateOutputOptions {
+  /** Id of one of this client's own output notes (its transaction must have been submitted). */
+  noteId: NoteInput;
+  /** The recipient. */
   to: AccountRef;
 }
 
@@ -1219,17 +1236,29 @@ export interface NotesResource {
    */
   fetchPrivate(options?: FetchPrivateNotesOptions): Promise<void>;
   /**
-   * Send a private note to a recipient via the note transport service.
+   * Relay a private note to a recipient via the note transport service, with an explicit block
+   * hint (`scanAfterBlockNum`) the recipient scans forward from for the note's on-chain commitment.
    *
-   * The note is relayed with a block hint so the recipient locates its on-chain commitment
-   * deterministically rather than relying on a narrow lookback window. The hint is the note's
-   * actual commitment block (read from its committed record), falling back to the client's
-   * current sync height only while the note is not yet committed — so delivery is correct
-   * whether you relay before or after the transaction commits.
+   * The hint must be at or below the commitment block; a hint above it is never scanned back to and
+   * the recipient silently never receives the note. This is the agnostic form for relaying an
+   * arbitrary note; for one of this client's own output notes prefer {@link NotesResource.sendPrivateOutput},
+   * which derives the block from the note's stored expected height.
    *
-   * @param options - Options including the note and the recipient.
+   * @param options - The note, the recipient, and `scanAfterBlockNum`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
+  /**
+   * Relay one of this client's own private output notes via the note transport service.
+   *
+   * The recipient's scan-start block is derived from the note's stored `expected_height` (the chain
+   * tip when its transaction was submitted), so delivery is correct regardless of how far this
+   * client has since synced past the note — a bare sync-height hint would overshoot the commitment
+   * once the sender advances past it (e.g. relaying after waiting for commit) and silently drop
+   * delivery. The note must exist in this client's store as an output note.
+   *
+   * @param options - The output note id and the recipient.
+   */
+  sendPrivateOutput(options: SendPrivateOutputOptions): Promise<void>;
 }
 
 // ════════════════════════════════════════════════════════════════
