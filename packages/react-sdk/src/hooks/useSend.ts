@@ -283,7 +283,10 @@ export function useSend(): UseSendResult {
           const recipientAccountId = parseAccountId(options.to);
           const recipientAddress = parseAddress(options.to, recipientAccountId);
           await runExclusiveSafe(() =>
-            client.sendPrivateNote(fullNote!, recipientAddress)
+            client.sendPrivateOutputNote(
+              fullNote!.id().toString(),
+              recipientAddress
+            )
           );
         }
 

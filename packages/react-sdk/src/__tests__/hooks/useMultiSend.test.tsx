@@ -122,7 +122,7 @@ describe("useMultiSend", () => {
       expect(result.current.result).toEqual({ transactionId: "0xmultisend" });
       expect(result.current.stage).toBe("complete");
       expect(mockSync).toHaveBeenCalled();
-      expect(mockClient.sendPrivateNote).toHaveBeenCalledTimes(2);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(2);
 
       const createP2IDNoteMock = (
         Note as unknown as { createP2IDNote: ReturnType<typeof vi.fn> }
@@ -175,7 +175,7 @@ describe("useMultiSend", () => {
         NoteType.Public,
         expect.anything()
       );
-      expect(mockClient.sendPrivateNote).not.toHaveBeenCalled();
+      expect(mockClient.sendPrivateOutputNote).not.toHaveBeenCalled();
     });
 
     it("should reject concurrent sends with SEND_BUSY", async () => {
