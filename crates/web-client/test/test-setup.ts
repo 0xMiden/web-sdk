@@ -1164,7 +1164,15 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
     waitForTransaction: (txId: string, maxWait?: number, interval?: number) =>
       waitForTransaction(client, sdk, txId, maxWait, interval),
     parseNetworkId: (networkId: string) => h.parseNetworkId(sdk, networkId),
-    createFreshMockClient: () => h.createFreshMockClient(sdk),
+    createFreshMockClient: (
+      serializedMockChain?: any,
+      serializedNoteTransport?: any
+    ) =>
+      h.createFreshMockClient(
+        sdk,
+        serializedMockChain,
+        serializedNoteTransport
+      ),
     createIntegrationClient: () => h.createIntegrationClient(),
     createMidenMockClient: async () => {
       const MidenClient = await h.createMidenClient(sdk);

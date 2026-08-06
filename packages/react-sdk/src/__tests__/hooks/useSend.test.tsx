@@ -923,7 +923,7 @@ describe("useSend", () => {
         });
       });
 
-      expect(mockClient.sendPrivateNote).toHaveBeenCalledTimes(1);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
       expect(result.current.stage).toBe("complete");
     });
   });

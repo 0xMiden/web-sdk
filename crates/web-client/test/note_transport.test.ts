@@ -55,8 +55,10 @@ test("transport basic", async ({ run }) => {
     );
     const notesBeforeSending = notes.length;
 
-    // Send note
-    await mockClient.sendPrivateNote(note, recipientAddress);
+    // Send note. The note is uncommitted here (never minted on-chain), so this
+    // same-client relay+fetch roundtrip just needs any valid scan-start block; 0
+    // (genesis) always covers it.
+    await mockClient.sendPrivateNote(note, recipientAddress, 0);
 
     // 1 note stored
     await mockClient.fetchPrivateNotes();

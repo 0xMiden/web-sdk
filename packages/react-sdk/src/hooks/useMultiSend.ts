@@ -141,7 +141,7 @@ export function useMultiSend(): UseMultiSendResult {
 
         // NoteArray constructor consumes its elements via Vec<Note>; use
         // push(&note) so each output.note handle stays valid for the
-        // sendPrivateNote loop below.
+        // sendPrivateOutputNote loop below.
         const ownOutputs = new NoteArray();
         for (const o of outputs) {
           ownOutputs.push(o.note);
@@ -186,8 +186,8 @@ export function useMultiSend(): UseMultiSendResult {
 
           for (const output of outputs) {
             if (output.noteType === NoteType.Private) {
-              await client.sendPrivateNote(
-                output.note,
+              await client.sendPrivateOutputNote(
+                output.note.id().toString(),
                 output.recipientAddress
               );
             }
