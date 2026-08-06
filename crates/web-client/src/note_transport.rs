@@ -51,7 +51,7 @@ impl WebClient {
     /// of how far this client has since synced past the note — unlike a bare sync-height hint,
     /// which overshoots the commitment once the sender advances past it (e.g. relaying after
     /// waiting for the transaction to commit) and silently drops delivery. The note must exist
-    /// in this client's store as an output note (i.e. its transaction has been submitted).
+    /// in this client's store as an output note (i.e. its transaction has been applied).
     #[js_export(js_name = "sendPrivateOutputNote")]
     pub async fn send_private_output_note(
         &self,

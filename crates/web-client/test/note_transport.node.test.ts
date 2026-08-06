@@ -144,3 +144,103 @@ test("private-note recipient still receives after the sender syncs past the note
   expect(result.committedCount).toBe(1);
   expect(result.committedNoteId).toBe(result.relayedNoteId);
 });
+
+// Companion guard for the agnostic low-level `sendPrivateNote(note, address,
+// scanAfterBlockNum)`: the explicit hint is honoured, so relaying with a hint ABOVE
+// the note's commitment block makes the recipient scan forward from above the
+// commitment and never bind the note. This is the failure mode the block hint exists
+// to prevent, and it's what a caller would hit if they passed the client's (advanced)
+// sync height — exactly why the API forces the caller to choose the block.
+test("agnostic sendPrivateNote does NOT deliver when the explicit hint overshoots the commitment", async ({
+  run,
+}) => {
+  const result = await run(async ({ sdk, helpers }) => {
+    const sender = await helpers.createFreshMockClient();
+    if (!sender) return { skip: true };
+
+    const recipientWallet = await sender.newWallet(
+      sdk.AccountStorageMode.private(),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+    const faucet = await sender.newFaucet(
+      sdk.AccountStorageMode.private(),
+      false,
+      "DAG",
+      "DAG",
+      8,
+      sdk.u64(10000000),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
+
+    // Mint a PRIVATE note to the recipient and commit it (block C).
+    const mintRequest = await sender.newMintTransactionRequest(
+      recipientWallet.id(),
+      faucet.id(),
+      sdk.NoteType.Private,
+      sdk.u64(1000)
+    );
+    const mintTxId = await sender.submitNewTransaction(
+      faucet.id(),
+      mintRequest
+    );
+    await sender.proveBlock();
+    await sender.syncState();
+
+    const [mintTxRecord] = await sender.getTransactions(
+      sdk.TransactionFilter.ids([mintTxId])
+    );
+    const relayedNoteId = mintTxRecord.outputNotes().notes()[0].id().toString();
+    const heightAtCommit = await sender.getSyncHeight();
+    const note = (await sender.getInputNote(relayedNoteId)).toNote();
+
+    // Advance PAST the commitment, then relay with a deliberately-too-high hint
+    // (the sender's now-advanced sync height) via the agnostic low-level method.
+    for (let i = 0; i < 3; i++) {
+      await sender.proveBlock();
+      await sender.syncState();
+    }
+    const heightAtRelay = await sender.getSyncHeight();
+    const recipientAddress = sdk.Address.fromAccountId(
+      recipientWallet.id(),
+      "BasicWallet"
+    );
+    await sender.sendPrivateNote(note, recipientAddress, heightAtRelay);
+
+    const serializedChain = await sender.serializeMockChain();
+    const serializedTransport = await sender.serializeMockNoteTransportNode();
+    const recipientAccountBytes = (
+      await sender.exportAccountFile(recipientWallet.id())
+    ).serialize();
+
+    const recipient = await helpers.createFreshMockClient(
+      serializedChain,
+      serializedTransport
+    );
+    if (!recipient) return { skip: true };
+
+    await recipient.syncState();
+    await recipient.importAccountFile(
+      sdk.AccountFile.deserialize(recipientAccountBytes)
+    );
+    await recipient.fetchPrivateNotes();
+    await recipient.syncState();
+
+    const committed = await recipient.getInputNotes(
+      new sdk.NoteFilter(sdk.NoteFilterTypes.Committed)
+    );
+
+    return {
+      skip: false,
+      heightAtCommit,
+      heightAtRelay,
+      committedCount: committed.length,
+    };
+  });
+
+  if (result.skip) return;
+
+  // The hint overshoots the commitment...
+  expect(result.heightAtRelay).toBeGreaterThan(result.heightAtCommit);
+  // ...so the recipient never binds the note: the explicit hint is honoured.
+  expect(result.committedCount).toBe(0);
+});

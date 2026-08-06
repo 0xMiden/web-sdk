@@ -836,7 +836,7 @@ export interface SendPrivateOptions {
 }
 
 export interface SendPrivateOutputOptions {
-  /** Id of one of this client's own output notes (its transaction must have been submitted). */
+  /** Id of one of this client's own output notes (its transaction must have been applied). */
   noteId: NoteInput;
   /** The recipient. */
   to: AccountRef;
