@@ -301,6 +301,7 @@ export const createMockWebClient = (
       }
       return undefined;
     }),
+    sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
     importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue(createMockAccount()),
@@ -361,6 +362,7 @@ type MockWebClientType = {
   submitProvenTransaction: ReturnType<typeof vi.fn>;
   applyTransaction: ReturnType<typeof vi.fn>;
   sendPrivateNote: ReturnType<typeof vi.fn>;
+  sendPrivateOutputNote: ReturnType<typeof vi.fn>;
   importAccountFile: ReturnType<typeof vi.fn>;
   importAccountById: ReturnType<typeof vi.fn>;
   importPublicAccountFromSeed: ReturnType<typeof vi.fn>;

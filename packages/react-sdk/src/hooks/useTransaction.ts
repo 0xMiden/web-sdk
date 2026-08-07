@@ -149,8 +149,12 @@ export function useTransaction(): UseTransactionResult {
           const targetAddress = parseAddress(options.privateNoteTarget);
           const fullNotes = extractFullNotes(txResult);
           for (const note of fullNotes) {
+            // Relay via the output-note convenience: it derives the recipient's
+            // scan-start block from the note's expected height, so delivery is
+            // correct even though we relay after waiting for the commit (which has
+            // advanced this client's sync height past the note's commitment block).
             await runExclusiveSafe(() =>
-              client.sendPrivateNote(note, targetAddress)
+              client.sendPrivateOutputNote(note.id().toString(), targetAddress)
             );
           }
         }
