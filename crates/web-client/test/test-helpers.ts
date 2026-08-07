@@ -639,7 +639,11 @@ export function parseNetworkId(sdk: any, networkId: string): any {
  * Creates a fresh mock client (separate from the test fixture's client).
  * Useful for tests that need multiple independent clients.
  */
-export async function createFreshMockClient(sdk: any): Promise<any | null> {
+export async function createFreshMockClient(
+  sdk: any,
+  serializedMockChain?: any,
+  serializedNoteTransport?: any
+): Promise<any | null> {
   let rawSdk;
   try {
     rawSdk = loadNodeSdk();
@@ -653,8 +657,8 @@ export async function createFreshMockClient(sdk: any): Promise<any | null> {
     path.join(dir, "store.db"),
     path.join(dir, "keystore"),
     null,
-    null,
-    null
+    serializedMockChain ?? null,
+    serializedNoteTransport ?? null
   );
 
   return wrapNodeClient(rawClient, rawSdk);

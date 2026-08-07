@@ -41,6 +41,7 @@ function makeInner() {
     exportNoteFile: vi.fn(),
     fetchPrivateNotes: vi.fn(),
     sendPrivateNote: vi.fn(),
+    sendPrivateOutputNote: vi.fn(),
   };
 }
 
@@ -285,18 +286,23 @@ describe("NotesResource", () => {
   });
 
   describe("sendPrivate", () => {
-    it("sends a Note object directly (has id() and assets(), no toNote())", async () => {
+    it("sends a Note object directly with the explicit scan-after block", async () => {
       inner.sendPrivateNote.mockResolvedValue(undefined);
       const noteObj = {
         id: vi.fn().mockReturnValue({ toString: () => "noteid" }),
         assets: vi.fn(),
       };
       const resource = makeResource();
-      await resource.sendPrivate({ note: noteObj, to: "0xrecipient" });
+      await resource.sendPrivate({
+        note: noteObj,
+        to: "0xrecipient",
+        scanAfterBlockNum: 7,
+      });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(inner.sendPrivateNote).toHaveBeenCalledWith(
         noteObj,
-        expect.anything()
+        expect.anything(),
+        7
       );
     });
 
@@ -308,20 +314,40 @@ describe("NotesResource", () => {
       inner.getInputNote.mockResolvedValue(record);
       inner.sendPrivateNote.mockResolvedValue(undefined);
       const resource = makeResource();
-      await resource.sendPrivate({ note: "0xnoteHex", to: "0xrecipient" });
+      await resource.sendPrivate({
+        note: "0xnoteHex",
+        to: "0xrecipient",
+        scanAfterBlockNum: 3,
+      });
       expect(inner.getInputNote).toHaveBeenCalledWith("0xnoteHex");
       expect(record.toNote).toHaveBeenCalledOnce();
       expect(inner.sendPrivateNote).toHaveBeenCalledWith(
         note,
-        expect.anything()
+        expect.anything(),
+        3
       );
+    });
+
+    it("throws when scanAfterBlockNum is missing", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.sendPrivate({
+          note: { id: vi.fn(), assets: vi.fn() },
+          to: "0xrec",
+        })
+      ).rejects.toThrow("scanAfterBlockNum");
+      expect(inner.sendPrivateNote).not.toHaveBeenCalled();
     });
 
     it("throws when note not found by hex", async () => {
       inner.getInputNote.mockResolvedValue(undefined);
       const resource = makeResource();
       await expect(
-        resource.sendPrivate({ note: "0xmissing", to: "0xrec" })
+        resource.sendPrivate({
+          note: "0xmissing",
+          to: "0xrec",
+          scanAfterBlockNum: 1,
+        })
       ).rejects.toThrow("Note not found: 0xmissing");
     });
 
@@ -334,6 +360,33 @@ describe("NotesResource", () => {
       const resource = makeResource();
       await resource.sendPrivate({
         note: noteObj,
+        to: "mBech32Address",
+        scanAfterBlockNum: 0,
+      });
+      expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Address");
+    });
+  });
+
+  describe("sendPrivateOutput", () => {
+    it("relays an output note by id (SDK derives the block from expected height)", async () => {
+      inner.sendPrivateOutputNote.mockResolvedValue(undefined);
+      const resource = makeResource();
+      await resource.sendPrivateOutput({
+        noteId: "0xoutputNote",
+        to: "0xrecipient",
+      });
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+      expect(inner.sendPrivateOutputNote).toHaveBeenCalledWith(
+        "0xoutputNote",
+        expect.anything()
+      );
+    });
+
+    it("resolves bech32 'to' address", async () => {
+      inner.sendPrivateOutputNote.mockResolvedValue(undefined);
+      const resource = makeResource();
+      await resource.sendPrivateOutput({
+        noteId: "0xoutputNote",
         to: "mBech32Address",
       });
       expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Address");

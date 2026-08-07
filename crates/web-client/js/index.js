@@ -104,6 +104,7 @@ const WRITE_METHODS = new Set([
   "removeTag",
   "removeSetting",
   "sendPrivateNote",
+  "sendPrivateOutputNote",
   "setSetting",
   "submitNewTransactionBatch",
   "submitProvenTransaction",
