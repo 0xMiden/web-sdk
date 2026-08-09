@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (TBD)
+
+### Fixes
+
+* [FIX][react] `MidenProvider` no longer rebuilds the `WebClient` on every store update when rendered without a `config` prop. The `config = {}` default parameter allocated a new object per render, invalidating the `resolvedConfig` memo and re-running the client init effect; since the provider subscribes to the store without a selector, each init's own state writes triggered another render and another init. The default is now a module-level constant. ([#269](https://github.com/0xMiden/web-sdk/pull/269))
+  
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements
