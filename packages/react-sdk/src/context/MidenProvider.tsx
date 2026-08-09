@@ -43,9 +43,15 @@ interface MidenProviderProps {
   errorComponent?: ReactNode | ((error: Error) => ReactNode);
 }
 
+// Stable identity for the default config. An inline `{}` default would produce
+// a new object on every render, invalidating the `resolvedConfig` memo below
+// and re-running the init effect (and rebuilding the WebClient) on every
+// store update.
+const EMPTY_CONFIG: MidenConfig = {};
+
 export function MidenProvider({
   children,
-  config = {},
+  config = EMPTY_CONFIG,
   loadingComponent,
   errorComponent,
 }: MidenProviderProps) {
