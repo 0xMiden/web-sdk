@@ -509,6 +509,29 @@ jobs:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
 
+  vite-plugin-lint:
+    name: Vite plugin lint and typecheck
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Run lint
+        run: make vite-plugin-lint
+      - name: Run typecheck
+        run: pnpm --filter @miden-sdk/vite-plugin run typecheck
+
   test-web-client-unit:
     name: web-client unit tests
     runs-on: ubuntu-24.04
