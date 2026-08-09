@@ -287,7 +287,10 @@ impl IdxdbStore {
                 (updated_storage_slots, updated_assets, removed_vault_keys)
             };
 
-            apply_transaction_delta(
+            // Forest roots are staged before the IndexedDB write. If that write fails,
+            // discard so in-memory roots stay consistent with persisted account tables
+            // (see 0xMiden/web-sdk#190; same class as miden-client#2181).
+            if let Err(err) = apply_transaction_delta(
                 self.db_id(),
                 account_id,
                 final_header,
@@ -297,9 +300,12 @@ impl IdxdbStore {
                 delta,
             )
             .await
-            .map_err(|err| {
-                StoreError::DatabaseError(format!("failed to apply transaction delta: {err:?}"))
-            })?;
+            {
+                self.smt_forest.write().discard_roots(account_id);
+                return Err(StoreError::DatabaseError(format!(
+                    "failed to apply transaction delta: {err:?}"
+                )));
+            }
         }
 
         // Updates for notes
@@ -308,6 +314,9 @@ impl IdxdbStore {
         for tag_record in tx_update.new_tags() {
             self.add_note_tag(*tag_record).await?;
         }
+
+        // Account tables are durable; release pending old roots (mirrors batch path).
+        self.smt_forest.write().commit_roots(account_id);
 
         Ok(())
     }
