@@ -6,6 +6,11 @@
 //!
 //! **Note:** This implementation is only available when targeting WebAssembly
 
+// `#[wasm_bindgen(getter_with_clone)]` generates a `self.field.clone()` getter for every field,
+// including Copy ones (u8/u32/bool/Option<u32>), which clippy's `clone_on_copy` flags. The clones
+// are macro-generated and harmless, so the lint is allowed crate-wide.
+#![allow(clippy::clone_on_copy)]
+
 extern crate alloc;
 
 use alloc::boxed::Box;
