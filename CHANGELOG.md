@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (TBD)
+
+### Fixes
+
+* [FIX][react] `waitForTransactionCommit` no longer throws `null pointer passed to rust` on its second poll. `TransactionFilter.ids` takes `Vec<TransactionId>` by value and consumes it, so passing the caller's `TransactionId` object frees its WASM pointer after the first iteration. The hex is now snapshotted once and a fresh `TransactionId` is rebuilt per poll.
+
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements
