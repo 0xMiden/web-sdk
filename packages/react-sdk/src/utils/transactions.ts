@@ -1,5 +1,9 @@
-import { NoteType, TransactionFilter } from "@miden-sdk/miden-sdk";
-import type { Note, TransactionId } from "@miden-sdk/miden-sdk";
+import {
+  NoteType,
+  TransactionFilter,
+  TransactionId,
+} from "@miden-sdk/miden-sdk";
+import type { Note } from "@miden-sdk/miden-sdk";
 
 type ClientWithTransactions = {
   syncState: () => Promise<unknown>;
@@ -24,10 +28,19 @@ export async function waitForTransactionCommit(
 ) {
   let waited = 0;
 
+  // `TransactionFilter.ids` takes `Vec<TransactionId>` by value and consumes it
+  // (`ids.into_iter()`), so each call frees the WASM pointer of every id handed
+  // to it. Snapshot the hex once and rebuild a fresh TransactionId per poll —
+  // reusing the caller's object throws "null pointer passed to rust" on the
+  // second iteration.
+  const txIdHex = txId.toHex();
+  
   while (waited < maxWaitMs) {
     await runExclusiveSafe(() => client.syncState());
     const [record] = await runExclusiveSafe(() =>
-      client.getTransactions(TransactionFilter.ids([txId]))
+client.getTransactions(
+          TransactionFilter.ids([TransactionId.fromHex(txIdHex)])
+        )
     );
     if (record) {
       const status = record.transactionStatus();
