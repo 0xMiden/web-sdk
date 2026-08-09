@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.0-alpha.2 (TBD)
+## 0.16.0-alpha.2 (2026-08-09)
 
 ### Changes
 
