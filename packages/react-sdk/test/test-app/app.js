@@ -113,7 +113,7 @@ const TestHarness = () => {
         const readyClient = waitForClient(isReady, client);
         const wallet = await readyClient.newWallet(
           AccountStorageMode.private(),
-          AuthScheme.AuthRpoFalcon512
+          AuthScheme.Falcon
         );
         const faucet = await readyClient.newFaucet(
           AccountStorageMode.private(),
@@ -122,7 +122,7 @@ const TestHarness = () => {
           "TEST",
           8,
           BigInt(1000000),
-          AuthScheme.AuthRpoFalcon512
+          AuthScheme.Falcon
         );
 
         const request = readyClient.newMintTransactionRequest(
@@ -143,7 +143,7 @@ const TestHarness = () => {
         const readyClient = waitForClient(isReady, client);
         const wallet = await readyClient.newWallet(
           AccountStorageMode.private(),
-          AuthScheme.AuthRpoFalcon512
+          AuthScheme.Falcon
         );
         const accountFile = await readyClient.exportAccountFile(wallet.id());
         const imported = await importAccount({

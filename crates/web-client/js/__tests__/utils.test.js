@@ -228,6 +228,11 @@ describe("resolveAuthScheme", () => {
     expect(resolveAuthScheme(undefined, wasm)).toBe(2);
   });
 
+  it("passes through an already-resolved numeric value unchanged", () => {
+    expect(resolveAuthScheme(1, wasm)).toBe(1);
+    expect(resolveAuthScheme(2, wasm)).toBe(2);
+  });
+
   // NOTE: main exposes a hardcoded-discriminant fallback when `wasm` is
   // omitted (1 for ecdsa, 2 for falcon); next dropped that and now
   // requires the WASM module to read enum values from

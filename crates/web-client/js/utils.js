@@ -105,11 +105,20 @@ export function resolveStorageMode(mode, wasm) {
 /**
  * Resolves an auth scheme string to a WASM AuthScheme enum value.
  *
- * @param {string | undefined} scheme - "falcon" or "ecdsa". Defaults to "falcon".
+ * Already-resolved numeric enum values pass through unchanged, so callers
+ * that receive a pre-resolved value (e.g. `AccountsResource.create`, which
+ * resolves before forwarding to the low-level `newWallet`/`newFaucet`) don't
+ * get double-processed.
+ *
+ * @param {string | number | undefined} scheme - "falcon" or "ecdsa" (or an
+ *   already-resolved numeric enum value). Defaults to "falcon".
  * @param {object} wasm - The WASM module.
  * @returns {number} The AuthScheme enum value.
  */
 export function resolveAuthScheme(scheme, wasm) {
+  if (typeof scheme === "number") {
+    return scheme;
+  }
   if (scheme === "ecdsa") {
     return wasm.AuthScheme.AuthEcdsaK256Keccak;
   }
