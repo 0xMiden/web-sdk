@@ -273,7 +273,7 @@ export interface NoteSummary {
 export interface CreateWalletOptions {
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
+  /** Auth scheme. Default: AuthScheme.Falcon */
   authScheme?: AuthScheme;
   /** Initial seed for deterministic account ID */
   initSeed?: Uint8Array;
@@ -291,7 +291,7 @@ export interface CreateFaucetOptions {
   maxSupply: bigint | number;
   /** Storage mode. Default: private */
   storageMode?: StorageMode;
-  /** Auth scheme. Default: AuthScheme.AuthRpoFalcon512 */
+  /** Auth scheme. Default: AuthScheme.Falcon */
   authScheme?: AuthScheme;
 }
 
@@ -692,7 +692,7 @@ export const DEFAULTS = {
   RPC_URL: undefined, // Will use SDK's testnet default
   AUTO_SYNC_INTERVAL: 15000,
   STORAGE_MODE: "private" as const,
-  AUTH_SCHEME: AuthScheme.AuthRpoFalcon512,
+  AUTH_SCHEME: AuthScheme.Falcon,
   NOTE_TYPE: "private" as const,
   FAUCET_DECIMALS: 8,
 } as const;

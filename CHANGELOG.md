@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.10 (TBA)
+
+### Fixes
+
+* [FIX][web,react] `WebClient.newWallet`/`newFaucet` now resolve a friendly `AuthScheme` string ("falcon" / "ecdsa") the same way the higher-level `client.accounts.create()` already does, instead of requiring a raw numeric WASM enum value. Previously, `AuthScheme.AuthRpoFalcon512` did not exist on the exported `AuthScheme` const (`{ Falcon: "falcon", ECDSA: "ecdsa" }`), so passing it — as `useCreateWallet()`'s documented default did — resolved to `undefined` and hung the call instead of rejecting. `@miden-sdk/react`'s `useCreateWallet()` / `useCreateFaucet()` default now correctly resolves to `AuthScheme.Falcon`. ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223))
+
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements

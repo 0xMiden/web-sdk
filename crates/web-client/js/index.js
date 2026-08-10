@@ -16,6 +16,7 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
+import { resolveAuthScheme } from "./utils.js";
 export * from "../Cargo.toml";
 
 export const AccountType = Object.freeze({
@@ -803,8 +804,13 @@ class WebClient {
 
   async newWallet(storageMode, authSchemeId, seed) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
+      return await wasmWebClient.newWallet(
+        storageMode,
+        resolveAuthScheme(authSchemeId, wasm),
+        seed
+      );
     });
   }
 
@@ -818,6 +824,7 @@ class WebClient {
     authSchemeId
   ) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newFaucet(
         storageMode,
@@ -826,7 +833,7 @@ class WebClient {
         tokenSymbol,
         decimals,
         maxSupply,
-        authSchemeId
+        resolveAuthScheme(authSchemeId, wasm)
       );
     });
   }

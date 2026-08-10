@@ -99,9 +99,12 @@ vi.mock("@miden-sdk/miden-sdk", () => {
   }
 
   return {
+    // Mirrors the real `@miden-sdk/miden-sdk` export shape (see
+    // `crates/web-client/js/index.js`) — the friendly string const, not the
+    // internal numeric WASM enum.
     AuthScheme: {
-      AuthRpoFalcon512: 2,
-      AuthEcdsaK256Keccak: 1,
+      Falcon: "falcon",
+      ECDSA: "ecdsa",
     },
     WebClient,
     WasmWebClient: WebClient,
