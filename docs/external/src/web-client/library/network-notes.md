@@ -83,18 +83,28 @@ import {
   AccountBuilder,
   AccountComponent,
   AccountStorageMode,
+  NoteFee,
   TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 
 // Reuse the same compiled note script when building the network note, so
 // the allowlisted root matches.
-const auth = AccountComponent.createNetworkAuth([noteScript.root()]);
+//
+// Each allowlisted script also needs a price, denominated in the fungible
+// asset of `feeFaucetId`. A zero price is valid; an omitted one is not.
+const components = AccountComponent.createNetworkAuth(
+  [noteScript.root()],
+  feeFaucetId,
+  [new NoteFee(noteScript.root(), 0n)]
+);
 
-const { account } = new AccountBuilder(seed)
+const builder = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
-  .withComponent(myComponent)
-  .withAuthComponent(auth)
-  .build();
+  .withComponent(myComponent);
+// `createNetworkAuth` returns the auth component together with the
+// components backing its fee policy; install all of them.
+for (const component of components) builder.withComponent(component);
+const { account } = builder.build();
 
 await client.accounts.insert({ account });
 
@@ -106,12 +116,15 @@ await client.transactions.submit(
 );
 ```
 
-The allowlist must be non-empty (`createNetworkAuth([])` throws). The canonical
-expiration transaction script is always allowlisted, since the node attaches it
-to every network transaction; any other transaction script is forbidden unless
-its root (`TransactionScript.root()`) is allowlisted via the optional second
-argument — only allowlist scripts whose effect is safe for every possible input,
-since a root pins the code but not the submitter-controlled arguments.
+The allowlist must be non-empty (`createNetworkAuth([], ...)` throws), and every
+root in it must be priced by the fee schedule — a root the schedule omits aborts
+the account's fee estimation rather than defaulting to free, so the call rejects
+it up front. The canonical expiration transaction script is always allowlisted,
+since the node attaches it to every network transaction; any other transaction
+script is forbidden unless its root (`TransactionScript.root()`) is allowlisted
+via the optional fourth argument — only allowlist scripts whose effect is safe
+for every possible input, since a root pins the code but not the
+submitter-controlled arguments.
 
 ## Detecting a network account
 

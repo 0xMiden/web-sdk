@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.16.0-alpha.3 (TBA)
+
+### Changes
+
+* [BREAKING][web] `AccountComponent.createNetworkAuth(...)` now takes a fee faucet and a fee schedule, and returns an `AccountComponent[]` rather than a single component. A network account must declare what it charges to consume each allowlisted note script — upstream moved transaction fees into the authentication procedure — and the auth component now expands into itself plus the components backing its fee policy, all of which belong on the account. Every root in the note allowlist needs a schedule entry, a zero one included: a root the schedule omits aborts the account's fee estimation instead of being treated as free, so `createNetworkAuth` rejects it up front. Prices are given as the new `NoteFee(scriptRoot, amount)`, denominated in the fungible asset of the fee faucet. Any transaction-script allowlist moves from the second argument to the fourth.
+
+    ```typescript
+    const components = AccountComponent.createNetworkAuth(
+      [noteScript.root()],
+      feeFaucetId,
+      [new NoteFee(noteScript.root(), 0n)]
+    );
+    const builder = new AccountBuilder(seed)
+      .storageMode(AccountStorageMode.public())
+      .withComponent(myComponent);
+    for (const component of components) builder.withComponent(component);
+    ```
+
+* [BREAKING][web] Removed `TransactionSummary.salt()`, replaced by `TransactionSummary.userParams()`, which returns the seven user-defined field elements the summary commitment binds. The protocol no longer models one of them as a dedicated salt and assigns these elements no meaning, so a caller using some of them for replay protection reads back what it wrote.
+* [CHANGE][web] `miden-client` and `miden-client-sqlite-store` now track the rust-sdk `next` branch at `0.16.0-rc.1`, superseding the `note_filter_script_root` branch pin from `0.16.0-alpha.2`. Protocol-layer crates move to `0.16.0-rc.3` and Miden VM to `0.29`. Transaction fees moved out of the kernel epilogue into the authentication procedure upstream, which is what reshapes `createNetworkAuth` above.
+
 ## 0.16.0-alpha.2 (2026-08-09)
 
 ### Changes
