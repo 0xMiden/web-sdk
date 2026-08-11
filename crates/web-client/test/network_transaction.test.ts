@@ -116,15 +116,15 @@ const networkCounterTransaction = async (
 
     const seed = new Uint8Array(32);
     crypto.getRandomValues(seed);
-    const builder = new window.AccountBuilder(seed)
+    const accountBuilder = new window.AccountBuilder(seed)
       .storageMode(window.AccountStorageMode.public())
       .withComponent(counterComponent);
     // `createNetworkAuth` returns the auth component plus the components backing
     // its fee policy; all of them belong on the account.
     for (const component of networkAuth) {
-      builder.withComponent(component);
+      accountBuilder.withComponent(component);
     }
-    const built = builder.build();
+    const built = accountBuilder.build();
     await client.newAccount(built.account, false);
 
     // Readback: the built account identifies as a network account and reports
