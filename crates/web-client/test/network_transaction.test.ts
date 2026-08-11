@@ -93,17 +93,38 @@ const networkCounterTransaction = async (
     // component. Its note-script allowlist is the standardized storage slot the
     // node inspects to identify the account as a network account and route
     // matching notes to it.
-    const networkAuth = window.AccountComponent.createNetworkAuth([
-      noteScript.root(),
-    ]);
+    //
+    // The account must also declare what it charges to consume each allowlisted
+    // note script, denominated in the asset of a fee faucet. This test node
+    // charges no verification fee, so the note is priced at zero — but the entry
+    // still has to be present, since a root missing from the schedule aborts fee
+    // estimation instead of being treated as free.
+    const feeFaucet = await client.newFaucet(
+      window.AccountStorageMode.tryFromStr("public"),
+      false,
+      "FEE",
+      "FEE",
+      8,
+      BigInt(10000000),
+      2
+    );
+    const networkAuth = window.AccountComponent.createNetworkAuth(
+      [noteScript.root()],
+      feeFaucet.id(),
+      [new window.NoteFee(noteScript.root(), BigInt(0))]
+    );
 
     const seed = new Uint8Array(32);
     crypto.getRandomValues(seed);
-    const built = new window.AccountBuilder(seed)
+    const builder = new window.AccountBuilder(seed)
       .storageMode(window.AccountStorageMode.public())
-      .withComponent(counterComponent)
-      .withAuthComponent(networkAuth)
-      .build();
+      .withComponent(counterComponent);
+    // `createNetworkAuth` returns the auth component plus the components backing
+    // its fee policy; all of them belong on the account.
+    for (const component of networkAuth) {
+      builder.withComponent(component);
+    }
+    const built = builder.build();
     await client.newAccount(built.account, false);
 
     // Readback: the built account identifies as a network account and reports

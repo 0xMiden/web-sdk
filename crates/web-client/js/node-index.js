@@ -239,6 +239,7 @@ export const NoteDetails = /* @__PURE__ */ _reexport("NoteDetails");
 export const NoteDetailsAndTag = /* @__PURE__ */ _reexport("NoteDetailsAndTag");
 export const NoteExecutionHint = /* @__PURE__ */ _reexport("NoteExecutionHint");
 export const NoteExportFormat = /* @__PURE__ */ _reexport("NoteExportFormat");
+export const NoteFee = /* @__PURE__ */ _reexport("NoteFee");
 export const NoteFile = /* @__PURE__ */ _reexport("NoteFile");
 export const NoteFilter = /* @__PURE__ */ _reexport("NoteFilter");
 export const NoteFilterTypes = /* @__PURE__ */ _reexport("NoteFilterTypes");
