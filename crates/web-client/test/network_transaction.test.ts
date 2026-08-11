@@ -243,9 +243,15 @@ test.describe("network transaction tests", () => {
       senderAllowlist,
     } = await networkCounterTransaction(page);
     // Readback: the built account identifies as a network account and its
-    // allowlist holds exactly the note-script root it was created with.
+    // allowlist holds the note-script root it was created with, plus the two
+    // roots the protocol allowlists itself (the network-account config note and
+    // the fee-sponsorship note). The allowlist is a set ordered by root value
+    // rather than insertion, so assert membership and size instead of contents.
+    // The size is load-bearing: a longer allowlist means the account would
+    // auto-consume note scripts it was never meant to.
     expect(isNetworkAccount).toBe(true);
-    expect(allowlist).toEqual([allowlistedNoteRoot]);
+    expect(allowlist).toContain(allowlistedNoteRoot);
+    expect(allowlist).toHaveLength(3);
     // A plain wallet is not a network account.
     expect(senderIsNetworkAccount).toBe(false);
     expect(senderAllowlist).toBeUndefined();
