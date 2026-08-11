@@ -1,5 +1,8 @@
 use js_export_macro::js_export;
-use miden_client::assembly::Library as NativeLibrary;
+// A library is no longer a distinct protocol type: it is a `Package` that carries a library
+// artifact. The JS-facing `Library` class stays as its own wrapper so callers that hold one
+// keep working.
+use miden_client::vm::Package as NativeLibrary;
 
 #[js_export]
 #[derive(Clone)]
