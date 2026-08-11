@@ -35,18 +35,22 @@ test.describe("network note tests", () => {
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
+      // The note is priced at zero, but the entry has to be present: a root the
+      // schedule omits aborts fee estimation rather than being treated as free.
+      const feeSchedule = [new sdk.NoteFee(p2idScript.root(), sdk.u64(0))];
+      // Yields the auth component plus the components backing its fee policy.
+      const networkAuth = sdk.AccountComponent.createNetworkAuth(
+        [p2idScript.root()],
+        feeFaucet.id(),
+        feeSchedule
+      );
+
       const seed = new Uint8Array(32);
       crypto.getRandomValues(seed);
       const networkAccountBuilder = new sdk.AccountBuilder(seed).storageMode(
         sdk.AccountStorageMode.public()
       );
-      // The note is priced at zero, but the entry has to be present: a root the
-      // schedule omits aborts fee estimation rather than being treated as free.
-      for (const component of sdk.AccountComponent.createNetworkAuth(
-        [p2idScript.root()],
-        feeFaucet.id(),
-        [new sdk.NoteFee(p2idScript.root(), sdk.u64(0))]
-      )) {
+      for (const component of networkAuth) {
         networkAccountBuilder.withComponent(component);
       }
       const networkAccount = networkAccountBuilder.build().account;
