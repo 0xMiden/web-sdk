@@ -20,12 +20,11 @@ env:
   # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
   # fields encoded as bytes vs fixed64), or 'accept header validation failed'
   # if the protocol version differs.
-  # Pinned to the head of the rust-sdk `note_filter_script_root` branch, matching
-  # the miden-client git dependency in Cargo.toml: its Cargo.lock pins the node
-  # rev that serves `GetTransactionEncryptionKey`, which the client calls on
-  # every first submission. A commit sha (not the branch name) keeps cache keys
-  # stable. Re-pin to the release tag once the next alpha ships.
-  MIDEN_CLIENT_REF: e70d3df8651872a5095b55bc78774aa5ab24a1bc
+  # Must match the rust-sdk revision the workspace `miden-client` dep resolves
+  # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
+  # built against. A commit sha (not the branch name) keeps cache keys stable.
+  # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
+  MIDEN_CLIENT_REF: 5ddc4a7f55cd9a809500f52d969c1353bf7b07e8
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
