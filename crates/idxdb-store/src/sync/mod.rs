@@ -152,13 +152,13 @@ impl IdxdbStore {
         &self,
         state_sync_update: StateSyncUpdate,
     ) -> Result<(), StoreError> {
-        let StateSyncUpdate {
+        let (
             block_num,
             partial_blockchain_updates,
             note_updates,
             transaction_updates,
             account_updates,
-        } = state_sync_update;
+        ) = state_sync_update.into_parts();
 
         let (
             block_headers_as_bytes,
