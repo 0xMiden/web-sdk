@@ -1,9 +1,12 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::component::NetworkAccount;
-use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
+use miden_client::account::{
+    Account as NativeAccount,
+    AccountComponentInterface,
+    AccountComponentInterfaceExt,
+};
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
-use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -11,7 +14,7 @@ use crate::models::account_storage::AccountStorage;
 use crate::models::asset_vault::AssetVault;
 use crate::models::felt::Felt;
 use crate::models::word::Word;
-use crate::platform::{JsBytes, JsErr};
+use crate::platform::{JsBytes, JsErr, from_str_err};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// An account which can store assets and define rules for manipulating them.
@@ -74,8 +77,7 @@ impl Account {
     /// Returns true if the account exposes a fungible-faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
-        let interface = AccountInterface::from_account(&self.0);
-        interface.components().contains(&AccountComponentInterface::FungibleFaucet)
+        self.component_interfaces().contains(&AccountComponentInterface::FungibleFaucet)
     }
 
     /// Returns true if the account is a regular (non-faucet) account.
@@ -136,9 +138,45 @@ impl Account {
     }
 
     /// Returns the public key commitments derived from the account's authentication scheme.
+    ///
+    /// Reads the keys out of account state, so it answers "who may authorize this account" —
+    /// for a multisig that is every approver, including keys this client does not hold. For
+    /// "which keys do I hold for this account", use `client.keystore.getCommitments(accountId)`
+    /// instead.
+    ///
+    /// Throws when the account's auth component is not one of the bundled standard components.
+    /// Third-party auth components define their own key storage layout and cannot be decoded
+    /// here; read their keys through the package that defines the component.
     #[js_export(js_name = "getPublicKeyCommitments")]
-    pub fn get_public_key_commitments(&self) -> Vec<Word> {
-        get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect()
+    pub fn get_public_key_commitments(&self) -> Result<Vec<Word>, JsErr> {
+        let auth_components = self
+            .component_interfaces()
+            .into_iter()
+            .filter(AccountComponentInterface::is_auth_component)
+            .count();
+
+        // `get_public_keys_from_account` classifies via `AccountInterface::from_account`, which
+        // asserts on exactly one auth component. Reject those accounts here so an unrecognized
+        // auth component surfaces as an error instead of a panic or an empty list.
+        if auth_components != 1 {
+            return Err(from_str_err(&format!(
+                "expected exactly one standard auth component, found {auth_components}: cannot \
+                 derive public key commitments from this account's state"
+            )));
+        }
+
+        Ok(get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect())
+    }
+}
+
+impl Account {
+    /// Classifies the account's procedures into component interfaces, bucketing anything
+    /// unrecognized as `Custom`.
+    ///
+    /// Deliberately not `AccountInterface::from_account`, which panics unless the account
+    /// installs exactly one auth component matching a bundled standard template.
+    fn component_interfaces(&self) -> Vec<AccountComponentInterface> {
+        AccountComponentInterface::from_procedures(self.0.code().procedures())
     }
 }
 
