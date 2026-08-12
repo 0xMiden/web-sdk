@@ -594,12 +594,11 @@ Provide exactly one of `script` or `recipient`. Notes are always Public — the 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
 ```typescript
-// Every allowlisted note script needs a price, a zero one included. Fees are
-// charged in the fungible asset of `feeFaucetId`.
-const components = AccountComponent.createNetworkAuth(
-  [myNoteScript.root()],
-  feeFaucetId,
-  [new NoteFee(myNoteScript.root(), 0n)]
+// Each allowed note script carries the fee charged to consume it, in the
+// fungible asset of `feeFaucetId`. Zero is a valid price.
+const components = AccountComponent.createNetworkAuthComponents(
+  [new NoteScriptFee(myNoteScript.root(), 0n)],
+  feeFaucetId
 );
 
 const builder = new AccountBuilder(seed)
@@ -611,7 +610,7 @@ for (const component of components) builder.withComponent(component);
 const { account } = builder.build();
 ```
 
-The allowlist must be non-empty, and every root in it must appear in the fee schedule — a root the schedule omits aborts the account's fee estimation rather than being treated as free. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional fourth argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

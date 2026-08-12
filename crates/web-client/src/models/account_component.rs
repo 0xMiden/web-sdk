@@ -39,26 +39,28 @@ use crate::models::storage_slot::StorageSlot;
 use crate::models::word::Word;
 use crate::platform::{JsErr, from_str_err, js_u64_to_u64, u64_to_js_u64};
 
-/// Fee a network account charges for consuming a note with a given script root.
+/// A note script a network account allows, together with the fee it charges to consume notes
+/// running that script.
 ///
-/// Amounts are denominated in the fungible asset of the fee faucet passed to
-/// `AccountComponent.createNetworkAuth`.
+/// Passed to `AccountComponent.createNetworkAuthComponents`, where the roots form the account's
+/// note-script allowlist and the amounts its fee schedule. Amounts are denominated in the
+/// fungible asset of the fee faucet given to that same call.
 #[derive(Clone)]
 #[js_export]
-pub struct NoteFee {
+pub struct NoteScriptFee {
     script_root: Word,
     amount: u64,
 }
 
 #[js_export]
-impl NoteFee {
+impl NoteScriptFee {
     /// Prices consumption of notes whose script root is `scriptRoot` at `amount`.
     ///
     /// Obtain the root via `NoteScript.root()`. An amount of `0` is a valid price and is what an
     /// account that charges nothing for a note uses.
     #[js_export(constructor)]
-    pub fn new(script_root: &Word, amount: JsU64) -> NoteFee {
-        NoteFee {
+    pub fn new(script_root: &Word, amount: JsU64) -> NoteScriptFee {
+        NoteScriptFee {
             script_root: script_root.clone(),
             amount: js_u64_to_u64(amount),
         }
@@ -256,8 +258,8 @@ impl AccountComponent {
     /// note-script allowlist is the standardized storage slot the node's
     /// network-transaction builder inspects to identify the account as a network
     /// account and route matching notes to it for auto-consumption. The account
-    /// may only consume notes whose script root is in `allowedNoteScriptRoots`
-    /// (obtain a root via `NoteScript.root()`).
+    /// may only consume notes whose script root is in `allowedNoteScriptFees` (obtain a
+    /// root via `NoteScript.root()`).
     ///
     /// The canonical expiration transaction script is always allowlisted: the
     /// node's network-transaction builder attaches it to every network
@@ -268,46 +270,32 @@ impl AccountComponent {
     /// root pins the script's code but not its arguments or advice inputs,
     /// which the (arbitrary) transaction submitter controls.
     ///
-    /// Fees are charged in the fungible asset issued by `feeFaucetId`, priced per note script
-    /// root by `feeSchedule`. Every root in `allowedNoteScriptRoots` needs an entry, a zero one
-    /// included: a root missing from the schedule aborts the account's fee estimation instead of
-    /// being treated as free.
+    /// Each entry in `allowedNoteScriptFees` carries both the allowlisted note script root and the
+    /// fee the account charges to consume notes running it, so every allowlisted script is
+    /// priced by construction. A fee of zero is valid; a script root the account does not price
+    /// at all aborts fee estimation rather than being treated as free. Fees are denominated in
+    /// the fungible asset issued by `feeFaucetId`.
     ///
     /// Returns the auth component together with the components backing its fee policy. Every one
-    /// of them must be installed on the account — pass each to `AccountBuilder.withComponent`.
+    /// of them must be installed on the account: pass each to `AccountBuilder.withComponent`.
     ///
     /// # Errors
-    /// Errors if `allowedNoteScriptRoots` is empty (a network account with no
-    /// allowlisted note scripts could never consume a note), or if any
-    /// allowlisted root is missing from `feeSchedule`.
-    #[js_export(js_name = "createNetworkAuth")]
-    pub fn create_network_auth(
-        allowed_note_script_roots: Vec<Word>,
+    /// Errors if `allowedNoteScriptFees` is empty, since a network account with no allowlisted note
+    /// scripts could never consume a note.
+    #[js_export(js_name = "createNetworkAuthComponents")]
+    pub fn create_network_auth_components(
+        allowed_note_script_fees: Vec<NoteScriptFee>,
         fee_faucet_id: &AccountId,
-        fee_schedule: Vec<NoteFee>,
         allowed_tx_script_roots: Option<Vec<Word>>,
     ) -> Result<Vec<AccountComponent>, JsErr> {
-        let note_roots: BTreeSet<NoteScriptRoot> = allowed_note_script_roots
-            .into_iter()
-            .map(|root| NoteScriptRoot::from_raw(NativeWord::from(&root)))
-            .collect();
-
+        let mut note_roots: BTreeSet<NoteScriptRoot> = BTreeSet::new();
         let mut fee_policy = BasicConstantFeePolicy::new();
-        let mut priced_roots: BTreeSet<NoteScriptRoot> = BTreeSet::new();
-        for entry in &fee_schedule {
+        for entry in &allowed_note_script_fees {
             let root = NoteScriptRoot::from_raw(NativeWord::from(&entry.script_root));
             let amount = AssetAmount::new(entry.amount)
                 .map_err(|e| js_error_with_context(e, "invalid note fee amount"))?;
+            note_roots.insert(root);
             fee_policy = fee_policy.with_fee(root, amount);
-            priced_roots.insert(root);
-        }
-
-        if let Some(unpriced) = note_roots.difference(&priced_roots).next() {
-            let message = format!(
-                "note script root {} is allowlisted but missing from the fee schedule",
-                unpriced.as_word().to_hex()
-            );
-            return Err(from_str_err(&message));
         }
 
         // `AuthNetworkAccount::new` allowlists the config and fee-sponsorship note scripts on top
@@ -426,6 +414,6 @@ impl From<&AccountComponent> for NativeAccountComponent {
     }
 }
 
-// `NoteFee` is passed by value in a `Vec` to `createNetworkAuth`, which napi only accepts for
-// types implementing `FromNapiValue`.
-impl_napi_from_value!(NoteFee);
+// `NoteScriptFee` is passed by value in a `Vec` to `createNetworkAuthComponents`, which napi only
+// accepts for types implementing `FromNapiValue`.
+impl_napi_from_value!(NoteScriptFee);
