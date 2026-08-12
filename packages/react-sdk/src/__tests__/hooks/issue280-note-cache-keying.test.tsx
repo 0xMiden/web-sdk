@@ -90,4 +90,32 @@ describe("issue 280: note cache keying per filter", () => {
       "0xconsumed1"
     );
   });
+
+  it("switching status on a mounted useNotes fetches the new filter", async () => {
+    const client = makeClient();
+    mockUseMiden.mockReturnValue({ client, isReady: true });
+    act(() => {
+      useMidenStore.getState().setClient(client as never);
+    });
+
+    // No sync yet — lastSyncTime is still null, so the sync effect returns early.
+    const { result, rerender } = renderHook(
+      ({ status }: { status: "committed" | "consumed" }) =>
+        useNotes({ status }),
+      { initialProps: { status: "committed" as const } }
+    );
+    await waitFor(() => expect(result.current.notes.length).toBe(1));
+
+    rerender({ status: "consumed" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const requested = (
+      client.getInputNotes as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c) => c[0]._type);
+
+    expect(requested).toContain(1);
+    expect(result.current.notes.map((n) => n.id()!.toString())).toEqual([
+      "0xconsumed1",
+    ]);
+  });
 });

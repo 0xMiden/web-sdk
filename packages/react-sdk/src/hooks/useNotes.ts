@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
   useMidenStore,
@@ -64,7 +64,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
   const { lastSyncTime } = useSyncStateStore();
 
   const [error, setError] = useState<Error | null>(null);
-  const [hasFetched, setHasFetched] = useState(false);
+  const fetchedKeysRef = useRef<Set<string>>(new Set());
 
   const refetch = useCallback(async () => {
     if (!client || !isReady) return;
@@ -89,7 +89,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)
       setNotesIfChanged(fetchedNotes, filterKey);
       setConsumableNotesIfChanged(fetchedConsumable, accountKey);
-      setHasFetched(true);
+      fetchedKeysRef.current.add(`${filterKey}|${accountKey}`);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -109,10 +109,15 @@ export function useNotes(options?: NotesFilter): NotesResult {
 
   // Initial fetch
   useEffect(() => {
-    if (isReady && !hasFetched && notes.length === 0) {
+    const fetchKey = `${filterKey}|${accountKey}`;
+    if (
+      isReady &&
+      !fetchedKeysRef.current.has(fetchKey) &&
+      notes.length === 0
+    ) {
       refetch();
     }
-  }, [isReady, hasFetched, notes.length, refetch]);
+  }, [isReady, filterKey, accountKey, notes.length, refetch]);
 
   // Refresh after successful syncs to keep notes current
   useEffect(() => {
