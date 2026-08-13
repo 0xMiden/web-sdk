@@ -3,7 +3,13 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::account::AccountId;
-use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteScript, Nullifier};
+use miden_client::note::{
+    BlockNumber,
+    NoteDetailsCommitment,
+    NoteScript,
+    NoteScriptRoot,
+    Nullifier,
+};
 use miden_client::store::{
     InputNoteRecord,
     InputNoteState,
@@ -26,6 +32,7 @@ use js_bindings::{
     idxdb_get_input_notes_from_details_commitments,
     idxdb_get_input_notes_from_ids,
     idxdb_get_input_notes_from_nullifiers,
+    idxdb_get_input_notes_from_script_roots,
     idxdb_get_note_script,
     idxdb_get_output_notes,
     idxdb_get_output_notes_from_details_commitments,
@@ -178,7 +185,8 @@ fn input_note_state_discriminants(filter: &NoteFilter) -> Option<Vec<u8>> {
         NoteFilter::List(_)
         | NoteFilter::Unique(_)
         | NoteFilter::Nullifiers(_)
-        | NoteFilter::DetailsCommitments(_) => None,
+        | NoteFilter::DetailsCommitments(_)
+        | NoteFilter::ScriptRoots(_) => None,
     }
 }
 
@@ -223,6 +231,11 @@ impl NoteFilterExt for NoteFilter {
                     commitments.iter().map(NoteDetailsCommitment::to_hex).collect();
                 idxdb_get_input_notes_from_details_commitments(db_id, commitments_as_str)
             },
+            NoteFilter::ScriptRoots(script_roots) => {
+                let script_roots_as_str: Vec<String> =
+                    script_roots.iter().map(NoteScriptRoot::to_hex).collect();
+                idxdb_get_input_notes_from_script_roots(db_id, script_roots_as_str)
+            },
         }
     }
 
@@ -255,7 +268,7 @@ impl NoteFilterExt for NoteFilter {
 
                 idxdb_get_output_notes(db_id, states)
             },
-            NoteFilter::Processing | NoteFilter::Unverified => {
+            NoteFilter::Processing | NoteFilter::ScriptRoots(_) | NoteFilter::Unverified => {
                 Promise::resolve(&JsValue::from(Array::new()))
             },
             NoteFilter::List(ids) => {

@@ -794,7 +794,14 @@ export type NoteQuery =
         | "processing"
         | "unverified";
     }
-  | { ids: (string | NoteId)[] };
+  | { ids: (string | NoteId)[] }
+  /**
+   * Filter received notes by note script root, given as hex strings or Word
+   * instances (e.g. from `NoteScript.root()`). Notes match regardless of their
+   * state. Only supported by `notes.list`; `notes.listSent` returns an empty
+   * list for this query.
+   */
+  | { scriptRoots: (string | Word)[] };
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
@@ -1189,9 +1196,10 @@ export interface PswapResource {
 
 export interface NotesResource {
   /**
-   * List received (input) notes, optionally filtered by status or IDs.
+   * List received (input) notes, optionally filtered by status, IDs, or note
+   * script roots.
    *
-   * @param query - Optional filter by note status or note IDs.
+   * @param query - Optional filter by note status, note IDs, or script roots.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
   /**
@@ -1202,7 +1210,9 @@ export interface NotesResource {
   get(noteId: NoteInput): Promise<InputNoteRecord | null>;
 
   /**
-   * List sent (output) notes, optionally filtered by status or IDs.
+   * List sent (output) notes, optionally filtered by status or IDs. A script
+   * root query returns an empty list, since script roots are only tracked for
+   * received notes.
    *
    * @param query - Optional filter by note status or note IDs.
    */

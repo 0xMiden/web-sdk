@@ -8,6 +8,7 @@ import {
   getInputNotes,
   getInputNotesFromIds,
   getInputNotesFromNullifiers,
+  getInputNotesFromScriptRoots,
   getOutputNotes,
   getOutputNotesFromIds,
   getOutputNotesFromNullifiers,
@@ -534,6 +535,41 @@ describe("getInputNotesFromIds", () => {
   it("returns empty array for unmatched IDs", async () => {
     const dbId = await openTestDb();
     const result = await getInputNotesFromIds(dbId, ["nonexistent"]);
+    expect(result).toEqual([]);
+  });
+});
+
+// ================================================================================================
+// getInputNotesFromScriptRoots
+// ================================================================================================
+
+describe("getInputNotesFromScriptRoots", () => {
+  it("returns notes matching the given script roots", async () => {
+    const dbId = await openTestDb();
+    await insertNote(dbId, "root-note-1", { scriptRoot: "0xroot1" });
+    await insertNote(dbId, "root-note-2", { scriptRoot: "0xroot1" });
+    await insertNote(dbId, "root-note-3", { scriptRoot: "0xroot2" });
+
+    const result = await getInputNotesFromScriptRoots(dbId, ["0xroot1"]);
+    expect(result).toHaveLength(2);
+    // createdAt holds the noteId (see insertNote)
+    expect(result?.map((note) => note.createdAt).sort()).toEqual([
+      "root-note-1",
+      "root-note-2",
+    ]);
+
+    const combined = await getInputNotesFromScriptRoots(dbId, [
+      "0xroot1",
+      "0xroot2",
+    ]);
+    expect(combined).toHaveLength(3);
+  });
+
+  it("returns empty array for unmatched script roots", async () => {
+    const dbId = await openTestDb();
+    await insertNote(dbId, "root-note-1", { scriptRoot: "0xroot1" });
+
+    const result = await getInputNotesFromScriptRoots(dbId, ["0xother"]);
     expect(result).toEqual([]);
   });
 });

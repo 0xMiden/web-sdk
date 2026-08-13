@@ -29,6 +29,12 @@ extern "C" {
         details_commitments: Vec<String>,
     ) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getInputNotesFromScriptRoots)]
+    pub fn idxdb_get_input_notes_from_script_roots(
+        db_id: &str,
+        script_roots: Vec<String>,
+    ) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getOutputNotes)]
     pub fn idxdb_get_output_notes(db_id: &str, states: Vec<u8>) -> js_sys::Promise;
 
