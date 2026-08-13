@@ -58,8 +58,10 @@ pub struct SerializedInputNoteData {
     #[wasm_bindgen(js_name = "stateDiscriminant")]
     pub state_discriminant: u8,
     pub state: Vec<u8>,
+    /// Unix timestamp in seconds. `f64` because wasm-bindgen maps `u64` to
+    /// `BigInt`, which `JSON.stringify` (used by store export) rejects.
     #[wasm_bindgen(js_name = "createdAt")]
-    pub created_at: String,
+    pub created_at: f64,
     #[wasm_bindgen(js_name = "consumedBlockHeight")]
     pub consumed_block_height: Option<u32>,
     #[wasm_bindgen(js_name = "consumedTxOrder")]
@@ -110,7 +112,8 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
 
     let state_discriminant = note.state().discriminant();
     let state = note.state().to_bytes();
-    let created_at = Utc::now().timestamp().to_string();
+    #[allow(clippy::cast_precision_loss)]
+    let created_at = Utc::now().timestamp() as f64;
 
     let consumed_block_height = note.state().consumed_block_height().map(|h| h.as_u32());
     let consumed_tx_order = note.state().consumed_tx_order();
@@ -260,9 +263,6 @@ pub fn parse_input_note_idxdb_object(
     let attachments = decode_attachments(&attachments)?;
 
     let state = InputNoteState::read_from_bytes(&state)?;
-    let created_at = created_at
-        .parse::<u64>()
-        .map_err(|_| StoreError::QueryError("Failed to parse created_at timestamp".to_string()))?;
 
     Ok(InputNoteRecord::new(details, attachments, Some(created_at), state))
 }

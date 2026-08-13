@@ -43,6 +43,9 @@ export const logWebStoreError = (error: any, errorContext?: string) => {
   throw error;
 };
 
+export const bytesEqual = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, i) => byte === b[i]);
+
 // Partial blockchain (MMR) authentication nodes are part of the local
 // `PartialMmr` state. Once a node index is known its value is fixed, so a
 // later write with the same index but a different value indicates a buggy or
@@ -59,7 +62,7 @@ export const putPartialBlockchainNodesNoOverwrite = async (
   const unique = new Map<number, IPartialBlockchainNode>();
   for (const entry of data) {
     const seen = unique.get(entry.id);
-    if (seen !== undefined && seen.node !== entry.node) {
+    if (seen !== undefined && !bytesEqual(seen.node, entry.node)) {
       throw new Error(
         `Conflicting partial blockchain node ${entry.id} within the same write`
       );
@@ -74,13 +77,13 @@ export const putPartialBlockchainNodesNoOverwrite = async (
     const current = existing[i];
     if (current === undefined) {
       toAdd.push(records[i]);
-    } else if (current.node !== records[i].node) {
+    } else if (!bytesEqual(current.node, records[i].node)) {
       throw new Error(
         `Refusing to overwrite partial blockchain node ${records[i].id}: ` +
           `stored value differs from the new value`
       );
     }
-    // current.node === records[i].node: already stored, nothing to do.
+    // matching stored node: already stored, nothing to do.
   }
   if (toAdd.length > 0) {
     await table.bulkAdd(toAdd);

@@ -84,17 +84,15 @@ export async function getCurrentBlockchainPeaks(dbId: string) {
 
 export async function addNoteTag(
   dbId: string,
-  tag: Uint8Array,
+  tag: number,
   sourceNoteId: string,
   sourceAccountId: string,
   sourceSubscriptionKey?: string
 ) {
   try {
     const db = getDatabase(dbId);
-    let tagArray = new Uint8Array(tag);
-    let tagBase64 = uint8ArrayToBase64(tagArray);
     await db.tags.add({
-      tag: tagBase64,
+      tag,
       sourceNoteId: sourceNoteId ? sourceNoteId : "",
       sourceAccountId: sourceAccountId ? sourceAccountId : "",
       sourceSubscriptionKey: sourceSubscriptionKey ? sourceSubscriptionKey : "",
@@ -106,20 +104,18 @@ export async function addNoteTag(
 
 export async function removeNoteTag(
   dbId: string,
-  tag: Uint8Array,
+  tag: number,
   sourceNoteId?: string,
   sourceAccountId?: string,
   sourceSubscriptionKey?: string
 ) {
   try {
     const db = getDatabase(dbId);
-    let tagArray = new Uint8Array(tag);
-    let tagBase64 = uint8ArrayToBase64(tagArray);
     const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
 
     return await db.tags
       .where({
-        tag: tagBase64,
+        tag,
         sourceNoteId: sourceNoteId ? sourceNoteId : "",
         sourceAccountId: sourceAccountId ? sourceAccountId : "",
       })
@@ -148,7 +144,7 @@ interface SerializedInputNoteData {
   noteScriptRoot: string;
   noteScript: Uint8Array;
   nullifier?: string;
-  createdAt: string;
+  createdAt: number;
   stateDiscriminant: number;
   state: Uint8Array;
   consumedBlockHeight?: number;
@@ -200,7 +196,7 @@ interface JsStateSyncUpdate {
   newBlockNums: number[];
   blockHasRelevantNotes: Uint8Array;
   serializedNodeIds: string[];
-  serializedNodes: string[];
+  serializedNodes: Uint8Array[];
   committedNoteTagSources: string[];
   serializedInputNotes: SerializedInputNoteData[];
   serializedOutputNotes: SerializedOutputNoteData[];
@@ -394,7 +390,7 @@ async function updateBlockHeader(
     const data = {
       blockNum: blockNum,
       header: blockHeader,
-      hasClientNotes: hasClientNotes.toString(),
+      hasClientNotes: hasClientNotes ? 1 : 0,
     };
 
     const existingBlockHeader = await (
@@ -415,7 +411,7 @@ async function updateBlockHeader(
 async function updatePartialBlockchainNodes(
   tx: Transaction,
   nodeIndexes: string[],
-  nodes: string[]
+  nodes: Uint8Array[]
 ) {
   try {
     if (nodeIndexes.length !== nodes.length) {

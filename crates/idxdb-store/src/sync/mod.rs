@@ -15,6 +15,8 @@ use miden_client::sync::{
 };
 use miden_client::utils::{Deserializable, Serializable};
 
+use wasm_bindgen_futures::js_sys;
+
 use super::IdxdbStore;
 use super::account::RootsUpdateMode;
 use super::account::utils::account_from_full_state_patch;
@@ -78,7 +80,7 @@ impl IdxdbStore {
                     };
 
                 Ok(NoteTagRecord {
-                    tag: NoteTag::read_from_bytes(&t.tag)?,
+                    tag: NoteTag::from(t.tag),
                     source,
                 })
             })
@@ -121,7 +123,7 @@ impl IdxdbStore {
 
         let promise = idxdb_add_note_tag(
             self.db_id(),
-            tag.tag.to_bytes(),
+            tag.tag.as_u32(),
             source_note_id,
             source_account_id,
             source_subscription_key,
@@ -137,7 +139,7 @@ impl IdxdbStore {
 
         let promise = idxdb_remove_note_tag(
             self.db_id(),
-            tag.tag.to_bytes(),
+            tag.tag.as_u32(),
             source_note_id,
             source_account_id,
             source_subscription_key,
@@ -316,7 +318,7 @@ fn encode_tag_source(source: &NoteTagSource) -> (Option<String>, Option<String>,
     }
 }
 
-type SerializedBlockData = (Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
+type SerializedBlockData = (Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<js_sys::Uint8Array>);
 
 fn serialize_partial_blockchain_updates(
     partial_blockchain_updates: &PartialBlockchainUpdates,
@@ -338,7 +340,7 @@ fn serialize_partial_blockchain_updates(
         let SerializedPartialBlockchainNodeData { id, node } =
             serialize_partial_blockchain_node(*id, *node)?;
         serialized_node_ids.push(id);
-        serialized_nodes.push(node);
+        serialized_nodes.push(js_sys::Uint8Array::from(node.as_slice()));
     }
 
     Ok((

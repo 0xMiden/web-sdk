@@ -134,7 +134,7 @@ export async function getNoteScript(dbId, scriptRoot) {
         logWebStoreError(err, "Failed to get note script from root");
     }
 }
-export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, attachments, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, serializedCreatedAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
+export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, attachments, serialNumber, inputs, scriptRoot, serializedNoteScript, nullifier, createdAt, stateDiscriminant, state, consumedBlockHeight, consumedTxOrder, consumerAccountId, tx) {
     const db = getDatabase(dbId);
     const doWork = async (t) => {
         try {
@@ -150,7 +150,7 @@ export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, a
                 nullifier: nullifier ?? undefined,
                 state,
                 stateDiscriminant,
-                serializedCreatedAt,
+                createdAt,
                 // These fields are null for non-consumed notes.
                 // Convert null -> undefined so Dexie omits them from compound indexes.
                 consumedBlockHeight: consumedBlockHeight ?? undefined,
@@ -277,7 +277,7 @@ async function processInputNotes(dbId, notes) {
             assets: assetsBase64,
             serialNumber: serialNumberBase64,
             inputs: inputsBase64,
-            createdAt: note.serializedCreatedAt,
+            createdAt: note.createdAt,
             serializedNoteScript: serializedNoteScriptBase64,
             state: stateBase64,
             attachments: attachmentsBase64,

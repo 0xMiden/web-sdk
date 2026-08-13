@@ -22,8 +22,8 @@ pub struct PartialBlockchainPeaksIdxdbObject {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteTagIdxdbObject {
-    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
-    pub tag: Vec<u8>,
+    /// The tag's `u32` value.
+    pub tag: u32,
     /// Hex of a [`miden_client::note::NoteDetailsCommitment`] — set when the
     /// tag's source is [`miden_client::sync::NoteTagSource::Note`].
     pub source_note_id: Option<String>,

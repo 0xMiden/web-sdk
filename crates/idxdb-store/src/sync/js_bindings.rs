@@ -33,7 +33,7 @@ extern "C" {
     #[wasm_bindgen(js_name = addNoteTag)]
     pub fn idxdb_add_note_tag(
         db_id: &str,
-        tag: Vec<u8>,
+        tag: u32,
         source_note_id: Option<String>,
         source_account_id: Option<String>,
         source_subscription_key: Option<String>,
@@ -47,7 +47,7 @@ extern "C" {
     #[wasm_bindgen(js_name = removeNoteTag)]
     pub fn idxdb_remove_note_tag(
         db_id: &str,
-        tag: Vec<u8>,
+        tag: u32,
         source_note_id: Option<String>,
         source_account_id: Option<String>,
         source_subscription_key: Option<String>,
@@ -94,7 +94,7 @@ pub struct JsStateSyncUpdate {
 
     /// The actual authentication node data corresponding to the IDs above.
     #[wasm_bindgen(js_name = "serializedNodes")]
-    pub serialized_nodes: Vec<String>,
+    pub serialized_nodes: Vec<js_sys::Uint8Array>,
 
     /// Details-commitment hex of committed notes whose tracking tags
     /// (`NoteTagSource::Note`) should be removed from the client's local state.

@@ -9,6 +9,8 @@ use miden_client::note::BlockNumber;
 use miden_client::store::{BlockRelevance, PartialBlockchainFilter, StoreError};
 use miden_client::utils::Deserializable;
 
+use wasm_bindgen_futures::js_sys;
+
 use super::IdxdbStore;
 use crate::promise::{await_js, await_js_value, await_ok};
 
@@ -52,7 +54,7 @@ impl IdxdbStore {
             let SerializedPartialBlockchainNodeData { id, node } =
                 serialize_partial_blockchain_node(*id, *node)?;
             serialized_node_ids.push(id);
-            serialized_nodes.push(node);
+            serialized_nodes.push(js_sys::Uint8Array::from(node.as_slice()));
         }
 
         // Header + MMR nodes are persisted in one IndexedDB transaction (see `chainData.js`).

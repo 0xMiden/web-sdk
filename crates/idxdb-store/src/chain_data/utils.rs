@@ -7,7 +7,7 @@ use miden_client::Word;
 use miden_client::block::BlockHeader;
 use miden_client::crypto::InOrderIndex;
 use miden_client::store::StoreError;
-use miden_client::utils::Serializable;
+use miden_client::utils::{Deserializable, Serializable};
 use serde_wasm_bindgen::from_value;
 use wasm_bindgen::JsValue;
 
@@ -21,7 +21,7 @@ pub struct SerializedBlockHeaderData {
 
 pub struct SerializedPartialBlockchainNodeData {
     pub id: String,
-    pub node: String,
+    pub node: Vec<u8>,
 }
 
 pub fn serialize_block_header(
@@ -50,7 +50,7 @@ pub fn serialize_partial_blockchain_node(
         ))
     })?;
     let id_as_str = id.to_string();
-    let node = node.to_string();
+    let node = node.to_bytes();
     Ok(SerializedPartialBlockchainNodeData { id: id_as_str, node })
 }
 
@@ -79,7 +79,7 @@ pub fn process_partial_blockchain_nodes_from_js_value(
                 StoreError::ParsingError("partial blockchain node id must be non-zero".to_string())
             })?;
             let id = InOrderIndex::new(id);
-            let node = Word::try_from(&record.node)?;
+            let node = Word::read_from_bytes(&record.node)?;
             Ok((id, node))
         })
         .collect();

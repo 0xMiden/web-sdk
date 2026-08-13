@@ -41,7 +41,7 @@ extern "C" {
         header: Vec<u8>,
         has_client_notes: bool,
         node_ids: Vec<String>,
-        nodes: Vec<String>,
+        nodes: Vec<js_sys::Uint8Array>,
     ) -> js_sys::Promise;
 
     // DELETES

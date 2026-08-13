@@ -181,16 +181,16 @@ pub struct JsVaultAsset {
     /// The vault key associated with the asset.
     #[wasm_bindgen(js_name = "vaultKey")]
     pub vault_key: String,
-    /// Word representing the asset.
+    /// Word representing the asset. `None` marks the asset as removed.
     #[wasm_bindgen(js_name = "asset")]
-    pub asset: String,
+    pub asset: Option<String>,
 }
 
 impl JsVaultAsset {
     pub fn from_asset(asset: &Asset) -> Self {
         Self {
             vault_key: asset.id().to_string(),
-            asset: asset.to_value_word().to_hex(),
+            asset: Some(asset.to_value_word().to_hex()),
         }
     }
 }
@@ -208,9 +208,9 @@ pub struct JsStorageSlot {
     /// The name of the storage slot.
     #[wasm_bindgen(js_name = "slotName")]
     pub slot_name: String,
-    /// The value stored in the storage slot.
+    /// The value stored in the storage slot. `None` marks the slot as removed.
     #[wasm_bindgen(js_name = "slotValue")]
-    pub slot_value: String,
+    pub slot_value: Option<String>,
     /// The type of the storage slot.
     #[wasm_bindgen(js_name = "slotType")]
     pub slot_type: u8,
@@ -226,7 +226,7 @@ impl JsStorageSlot {
     pub fn from_slot(slot: &StorageSlot) -> Self {
         Self {
             slot_name: slot.name().to_string(),
-            slot_value: slot.value().to_hex(),
+            slot_value: Some(slot.value().to_hex()),
             slot_type: slot.slot_type().to_bytes()[0],
             patch_operation: 0,
         }
@@ -249,9 +249,9 @@ pub struct JsStorageMapEntry {
     /// The key of the storage map entry.
     #[wasm_bindgen(js_name = "key")]
     pub key: String,
-    /// The value of the storage map entry.
+    /// The value of the storage map entry. `None` marks the entry as removed.
     #[wasm_bindgen(js_name = "value")]
-    pub value: String,
+    pub value: Option<String>,
 }
 
 impl JsStorageMapEntry {
@@ -260,7 +260,7 @@ impl JsStorageMapEntry {
             .map(|(key, value)| Self {
                 slot_name: slot_name.to_string(),
                 key: key.to_hex(),
-                value: value.to_hex(),
+                value: Some(value.to_hex()),
             })
             .collect()
     }

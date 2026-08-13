@@ -11,7 +11,7 @@ export async function insertBlockHeader(
   header: Uint8Array,
   hasClientNotes: boolean,
   nodeIds: string[],
-  nodes: string[]
+  nodes: Uint8Array[]
 ) {
   try {
     const db = getDatabase(dbId);
@@ -22,7 +22,7 @@ export async function insertBlockHeader(
     const headerData = {
       blockNum: blockNum,
       header,
-      hasClientNotes: hasClientNotes.toString(),
+      hasClientNotes: hasClientNotes ? 1 : 0,
     };
     const nodeData = nodes.map((node, index) => ({
       id: Number(nodeIds[index]),
@@ -41,7 +41,7 @@ export async function insertBlockHeader(
         await db.blockHeaders.add(headerData).catch(async (err: unknown) => {
           if (!isConstraintError(err)) throw err;
           if (hasClientNotes) {
-            await db.blockHeaders.update(blockNum, { hasClientNotes: "true" });
+            await db.blockHeaders.update(blockNum, { hasClientNotes: 1 });
           }
         });
 
@@ -70,7 +70,7 @@ function isConstraintError(err: unknown): boolean {
 export async function insertPartialBlockchainNodes(
   dbId: string,
   ids: string[],
-  nodes: string[]
+  nodes: Uint8Array[]
 ) {
   try {
     const db = getDatabase(dbId);
@@ -116,7 +116,7 @@ export async function getBlockHeaders(dbId: string, blockNumbers: number[]) {
           return {
             blockNum: result.blockNum,
             header: headerBase64,
-            hasClientNotes: result.hasClientNotes === "true",
+            hasClientNotes: result.hasClientNotes === 1,
           };
         }
       })
@@ -133,7 +133,7 @@ export async function getTrackedBlockHeaders(dbId: string) {
     const db = getDatabase(dbId);
     const allMatchingRecords = await db.blockHeaders
       .where("hasClientNotes")
-      .equals("true")
+      .equals(1)
       .toArray();
 
     const processedRecords = await Promise.all(
@@ -143,7 +143,7 @@ export async function getTrackedBlockHeaders(dbId: string) {
         return {
           blockNum: record.blockNum,
           header: headerBase64,
-          hasClientNotes: record.hasClientNotes === "true",
+          hasClientNotes: record.hasClientNotes === 1,
         };
       })
     );
@@ -159,7 +159,7 @@ export async function getTrackedBlockHeaderNumbers(dbId: string) {
     const db = getDatabase(dbId);
     const blockNums = await db.blockHeaders
       .where("hasClientNotes")
-      .equals("true")
+      .equals(1)
       .primaryKeys();
     return blockNums;
   } catch (err) {
@@ -167,11 +167,22 @@ export async function getTrackedBlockHeaderNumbers(dbId: string) {
   }
 }
 
+/** Byte fields cross the JS→Rust boundary base64-encoded. */
+function processPartialBlockchainNode(record: {
+  id: number;
+  node: Uint8Array;
+}) {
+  return {
+    id: record.id,
+    node: uint8ArrayToBase64(record.node),
+  };
+}
+
 export async function getPartialBlockchainNodesAll(dbId: string) {
   try {
     const db = getDatabase(dbId);
     const partialBlockchainNodesAll = await db.partialBlockchainNodes.toArray();
-    return partialBlockchainNodesAll;
+    return partialBlockchainNodesAll.map(processPartialBlockchainNode);
   } catch (err) {
     logWebStoreError(err, "Failed to get partial blockchain nodes");
   }
@@ -185,7 +196,9 @@ export async function getPartialBlockchainNodes(dbId: string, ids: string[]) {
 
     // bulkGet returns undefined for missing keys — filter them out so the
     // Rust deserializer does not choke on undefined values.
-    return results.filter((r) => r !== undefined);
+    return results
+      .filter((r) => r !== undefined)
+      .map(processPartialBlockchainNode);
   } catch (err) {
     logWebStoreError(err, "Failed to get partial blockchain nodes");
   }
@@ -202,7 +215,7 @@ export async function getPartialBlockchainNodesUpToInOrderIndex(
       .where("id")
       .belowOrEqual(maxNumericId)
       .toArray();
-    return results;
+    return results.map(processPartialBlockchainNode);
   } catch (err) {
     logWebStoreError(err, "Failed to get partial blockchain nodes up to index");
   }
@@ -239,13 +252,13 @@ export async function pruneIrrelevantBlocks(
           await db.blockHeaders
             .where("blockNum")
             .anyOf(blocksToUntrack)
-            .modify({ hasClientNotes: "false" });
+            .modify({ hasClientNotes: 0 });
         }
 
         // 3. Delete irrelevant block headers.
         const allMatchingRecords = await db.blockHeaders
           .where("hasClientNotes")
-          .equals("false")
+          .equals(0)
           .and(
             (record) =>
               record.blockNum !== 0 && record.blockNum !== syncHeight.blockNum

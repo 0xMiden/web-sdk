@@ -1,5 +1,5 @@
 use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use miden_client::account::{
@@ -305,30 +305,27 @@ pub async fn apply_account_patch(
     for (slot_name, (value, slot_type, patch_op)) in updated_storage_slots {
         js_slots.push(JsStorageSlot {
             slot_name: slot_name.to_string(),
-            slot_value: value.map_or_else(String::new, |value| value.to_hex()),
+            slot_value: value.map(|value| value.to_hex()),
             slot_type: *slot_type as u8,
             patch_operation: *patch_op,
         });
     }
 
     // Build changed map entries from the absolute patch. Map creation/removal is represented by
-    // the slot's patch operation above; individual entries carry their final values.
+    // the slot's patch operation above; individual entries carry their final values (`None` for
+    // removed entries).
     let mut changed_map_entries = Vec::new();
     for (slot_name, map_patch) in patch.storage().maps() {
         let Some(entries) = map_patch.entries() else {
             continue;
         };
         for (key, value) in entries.as_map() {
-            let value_str = if value.is_empty() {
-                String::new()
-            } else {
-                value.to_hex()
-            };
+            let value = (!value.is_empty()).then(|| value.to_hex());
 
             changed_map_entries.push(JsStorageMapEntry {
                 slot_name: slot_name.to_string(),
                 key: Word::from(*key).to_hex(),
-                value: value_str,
+                value,
             });
         }
     }
@@ -340,7 +337,7 @@ pub async fn apply_account_patch(
     for asset_id in removed_asset_ids {
         changed_assets.push(JsVaultAsset {
             vault_key: asset_id.to_string(),
-            asset: String::new(),
+            asset: None,
         });
     }
 

@@ -87,7 +87,7 @@ export interface ILatestAccountStorage {
 
 export interface IHistoricalAccountStorage {
   accountId: string;
-  replacedAtNonce: string;
+  replacedAtNonce: number;
   slotName: string;
   oldSlotValue: string | null;
   slotType: number;
@@ -102,7 +102,7 @@ export interface ILatestStorageMapEntry {
 
 export interface IHistoricalStorageMapEntry {
   accountId: string;
-  replacedAtNonce: string;
+  replacedAtNonce: number;
   slotName: string;
   key: string;
   oldValue: string | null;
@@ -116,7 +116,7 @@ export interface ILatestAccountAsset {
 
 export interface IHistoricalAccountAsset {
   accountId: string;
-  replacedAtNonce: string;
+  replacedAtNonce: number;
   vaultKey: string;
   oldAsset: string | null;
 }
@@ -131,12 +131,14 @@ export interface IAccountKeyMapping {
   pubKeyCommitmentHex: string;
 }
 
+/** Nonces are stored as numbers so nonce-keyed indexes order numerically.
+ *  Account nonces count transactions, far below Number.MAX_SAFE_INTEGER. */
 export interface IAccount {
   id: string;
   codeRoot: string;
   storageRoot: string;
   vaultRoot: string;
-  nonce: string;
+  nonce: number;
   committed: boolean;
   accountSeed?: Uint8Array;
   accountCommitment: string;
@@ -146,11 +148,11 @@ export interface IAccount {
 
 export interface IHistoricalAccount {
   id: string;
-  replacedAtNonce: string;
+  replacedAtNonce: number;
   codeRoot: string;
   storageRoot: string;
   vaultRoot: string;
-  nonce: string;
+  nonce: number;
   committed: boolean;
   accountSeed?: Uint8Array;
   accountCommitment: string;
@@ -187,7 +189,7 @@ export interface IInputNote {
   inputs: Uint8Array;
   scriptRoot: string;
   nullifier?: string;
-  serializedCreatedAt: string;
+  createdAt: number;
   state: Uint8Array;
   consumedBlockHeight?: number;
   consumedTxOrder?: number;
@@ -221,17 +223,19 @@ export interface IBlockchainCheckpoint {
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  hasClientNotes: string;
+  /** 0/1 flag: `hasClientNotes` is indexed and IndexedDB forbids boolean keys. */
+  hasClientNotes: number;
 }
 
 export interface IPartialBlockchainNode {
   id: number;
-  node: string;
+  node: Uint8Array;
 }
 
 export interface ITag {
   id?: number;
-  tag: string;
+  /** `NoteTag` is a u32. */
+  tag: number;
   sourceNoteId?: string;
   sourceAccountId?: string;
   sourceSubscriptionKey?: string;
@@ -247,14 +251,15 @@ export interface ISetting {
   value: Uint8Array;
 }
 
+/** For the three boundary types below, an absent value marks a removal. */
 export interface JsVaultAsset {
   vaultKey: string;
-  asset: string;
+  asset?: string;
 }
 
 export interface JsStorageSlot {
   slotName: string;
-  slotValue: string;
+  slotValue?: string;
   slotType: number;
   patchOperation?: number;
 }
@@ -262,7 +267,7 @@ export interface JsStorageSlot {
 export interface JsStorageMapEntry {
   slotName: string;
   key: string;
-  value: string;
+  value?: string;
 }
 
 function indexes(...items: string[]): string {

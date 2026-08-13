@@ -166,7 +166,7 @@ export async function upsertInputNote(
   scriptRoot: string,
   serializedNoteScript: Uint8Array,
   nullifier: string | undefined,
-  serializedCreatedAt: string,
+  createdAt: number,
   stateDiscriminant: number,
   state: Uint8Array,
   consumedBlockHeight?: number | null,
@@ -189,7 +189,7 @@ export async function upsertInputNote(
         nullifier: nullifier ?? undefined,
         state,
         stateDiscriminant,
-        serializedCreatedAt,
+        createdAt,
         // These fields are null for non-consumed notes.
         // Convert null -> undefined so Dexie omits them from compound indexes.
         consumedBlockHeight: consumedBlockHeight ?? undefined,
@@ -349,7 +349,7 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
         assets: assetsBase64,
         serialNumber: serialNumberBase64,
         inputs: inputsBase64,
-        createdAt: note.serializedCreatedAt,
+        createdAt: note.createdAt,
         serializedNoteScript: serializedNoteScriptBase64,
         state: stateBase64,
         attachments: attachmentsBase64,

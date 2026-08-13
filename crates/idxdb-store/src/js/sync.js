@@ -64,10 +64,8 @@ export async function getCurrentBlockchainPeaks(dbId) {
 export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
-        let tagArray = new Uint8Array(tag);
-        let tagBase64 = uint8ArrayToBase64(tagArray);
         await db.tags.add({
-            tag: tagBase64,
+            tag,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
             sourceAccountId: sourceAccountId ? sourceAccountId : "",
             sourceSubscriptionKey: sourceSubscriptionKey ? sourceSubscriptionKey : "",
@@ -80,12 +78,10 @@ export async function addNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourc
 export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, sourceSubscriptionKey) {
     try {
         const db = getDatabase(dbId);
-        let tagArray = new Uint8Array(tag);
-        let tagBase64 = uint8ArrayToBase64(tagArray);
         const subscriptionKey = sourceSubscriptionKey ? sourceSubscriptionKey : "";
         return await db.tags
             .where({
-            tag: tagBase64,
+            tag,
             sourceNoteId: sourceNoteId ? sourceNoteId : "",
             sourceAccountId: sourceAccountId ? sourceAccountId : "",
         })
@@ -186,7 +182,7 @@ async function updateBlockHeader(tx, blockNum, blockHeader, hasClientNotes) {
         const data = {
             blockNum: blockNum,
             header: blockHeader,
-            hasClientNotes: hasClientNotes.toString(),
+            hasClientNotes: hasClientNotes ? 1 : 0,
         };
         const existingBlockHeader = await tx.blockHeaders.get(blockNum);
         if (!existingBlockHeader) {

@@ -1,4 +1,3 @@
-use alloc::string::String;
 use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
@@ -22,5 +21,6 @@ pub struct BlockHeaderIdxdbObject {
 #[serde(rename_all = "camelCase")]
 pub struct PartialBlockchainNodeIdxdbObject {
     pub id: u32,
-    pub node: String,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub node: Vec<u8>,
 }

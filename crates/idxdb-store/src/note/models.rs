@@ -16,7 +16,7 @@ pub struct InputNoteIdxdbObject {
     pub serial_number: Vec<u8>,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub inputs: Vec<u8>,
-    pub created_at: String,
+    pub created_at: u64,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub serialized_note_script: Vec<u8>,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]

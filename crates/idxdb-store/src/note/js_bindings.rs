@@ -68,7 +68,7 @@ extern "C" {
         note_script_root: String,
         serialized_note_script: Vec<u8>,
         nullifier: Option<String>,
-        serialized_created_at: String,
+        created_at: f64,
         state_discriminant: u8,
         state: Vec<u8>,
         consumed_block_height: Option<u32>,
