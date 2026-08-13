@@ -6,6 +6,11 @@
 //!
 //! **Note:** This implementation is only available when targeting WebAssembly
 
+// `#[wasm_bindgen(getter_with_clone)]` generates a `self.field.clone()` getter for every field,
+// including Copy ones (u8/u32/bool/Option<u32>), which clippy's `clone_on_copy` flags. The clones
+// are macro-generated and harmless, so the lint is allowed crate-wide.
+#![allow(clippy::clone_on_copy)]
+
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -197,17 +202,11 @@ impl Store for IdxdbStore {
         self.apply_transaction(tx_update).await
     }
 
-    /// `IndexedDB` cannot batch independent transactions atomically across the JS boundary,
-    /// so this implementation applies each update sequentially. A failure mid-batch leaves
-    /// earlier updates persisted.
     async fn apply_transaction_batch(
         &self,
         tx_updates: Vec<TransactionStoreUpdate>,
     ) -> Result<(), StoreError> {
-        for update in tx_updates {
-            self.apply_transaction(update).await?;
-        }
-        Ok(())
+        self.apply_transaction_batch_atomic(tx_updates).await
     }
 
     // NOTES

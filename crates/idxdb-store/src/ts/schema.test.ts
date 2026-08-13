@@ -5,11 +5,9 @@ import {
   getDatabase,
   MidenDatabase,
   CLIENT_VERSION_SETTING_KEY,
+  V1_STORES,
 } from "./schema.js";
 import { uniqueDbName } from "./test-utils.js";
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 // Track DBs for cleanup.
 const openDbs: Dexie[] = [];
@@ -44,67 +42,103 @@ function trackMidenDb(mdb: MidenDatabase): MidenDatabase {
 }
 
 describe("MidenDatabase migrations", () => {
-  // Placeholder for the actual v1→v2 migration test. When the first real
-  // migration is introduced, replace the dummy schema and upgrade logic below
-  // with the production V1_STORES → V2 change. The test structure (create v1
-  // DB, insert data, reopen as v2, verify data survived) stays the same.
-  //
-  // This uses a raw Dexie instance with a toy schema because there's no real
-  // migration yet — the purpose is to validate the vitest + fake-indexeddb
-  // test setup and provide a working template for future migration tests.
-  it("v1 → v2 migration preserves data", async () => {
+  // v1 → v2: prunes note tags leaked by output-note registration
+  // (miden-client < 0.15.4). See the version(2) block in schema.ts.
+  it("v1 → v2 migration prunes leaked output-note tags", async () => {
     const name = uniqueDbName();
 
-    const testV1 = {
-      items: "id,category",
-      settings: "key",
-    };
-
-    // Step 1: Create a v1 database and insert test data
+    // Step 1: seed a physical v1 database with the production v1 schema.
     const dbV1 = trackDb(new Dexie(name));
-    dbV1.version(1).stores(testV1);
+    dbV1.version(1).stores(V1_STORES);
     await dbV1.open();
 
-    await dbV1
-      .table("items")
-      .put({ id: "item-1", category: "a", name: "Alice" });
-    await dbV1.table("items").put({ id: "item-2", category: "b", name: "Bob" });
-    await dbV1
-      .table("settings")
-      .put({ key: "color", value: encoder.encode("blue") });
+    const leakedCommitment = "0x" + "aa".repeat(32);
+    const pendingCommitment = "0x" + "bb".repeat(32);
+    const inputOnlyCommitment = "0x" + "cc".repeat(32);
+
+    await dbV1.table("outputNotes").bulkPut([
+      // Consumed output note whose tag was leaked.
+      {
+        detailsCommitment: leakedCommitment,
+        noteId: "0x1",
+        stateDiscriminant: 3,
+      },
+      // Output note that is also a still-pending input note (self-transfer).
+      {
+        detailsCommitment: pendingCommitment,
+        noteId: "0x2",
+        stateDiscriminant: 0,
+      },
+    ]);
+    await dbV1.table("inputNotes").bulkPut([
+      // Expected (0) — inclusion-pending, its tags must survive.
+      {
+        detailsCommitment: pendingCommitment,
+        noteId: "0x2",
+        stateDiscriminant: 0,
+      },
+      // Expected input-only note — no output note matches, tag must survive.
+      {
+        detailsCommitment: inputOnlyCommitment,
+        noteId: "0x3",
+        stateDiscriminant: 0,
+      },
+    ]);
+    await dbV1.table("tags").bulkPut([
+      // Leaked: matches an output note, no pending input note needs it.
+      { tag: "dGFnMQ==", sourceNoteId: leakedCommitment, sourceAccountId: "" },
+      // Kept: matches an output note but a pending input note still needs it.
+      { tag: "dGFnMg==", sourceNoteId: pendingCommitment, sourceAccountId: "" },
+      // Kept: note-sourced but no output note matches.
+      {
+        tag: "dGFnMw==",
+        sourceNoteId: inputOnlyCommitment,
+        sourceAccountId: "",
+      },
+      // Kept: account-sourced tag.
+      { tag: "dGFnNA==", sourceNoteId: "", sourceAccountId: "0xdeadbeef" },
+      // Kept: user-sourced tag.
+      { tag: "dGFnNQ==", sourceNoteId: "", sourceAccountId: "" },
+    ]);
 
     dbV1.close();
 
-    // Step 2: Open with v1 + v2 (v2 adds an index and a data transform)
-    const dbV2 = trackDb(new Dexie(name));
-    dbV2.version(1).stores(testV1);
-    dbV2
-      .version(2)
-      .stores({ items: "id,category,name" })
-      .upgrade((tx) => {
-        return tx
-          .table("items")
-          .toCollection()
-          .modify((record: Record<string, unknown>) => {
-            if (!record.name) {
-              record.name = "unknown";
-            }
-          });
-      });
-    await dbV2.open();
+    // Step 2: reopen through MidenDatabase, whose version chain includes v2.
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb.open("0.15.5");
+    expect(success).toBe(true);
 
-    // Verify data survived migration
-    const item1 = await dbV2.table("items").get("item-1");
-    expect(item1).toBeDefined();
-    expect(item1.name).toBe("Alice");
-    expect(item1.category).toBe("a");
+    const remaining = await mdb.tags.toArray();
+    const remainingTags = remaining.map((t) => t.tag).sort();
+    expect(remainingTags).toEqual([
+      "dGFnMg==",
+      "dGFnMw==",
+      "dGFnNA==",
+      "dGFnNQ==",
+    ]);
 
-    const item2 = await dbV2.table("items").get("item-2");
-    expect(item2).toBeDefined();
-    expect(item2.name).toBe("Bob");
+    // Unrelated tables survive the upgrade untouched.
+    expect(await mdb.outputNotes.count()).toBe(2);
+    expect(await mdb.inputNotes.count()).toBe(2);
+  });
 
-    const setting = await dbV2.table("settings").get("color");
-    expect(decoder.decode(setting.value)).toBe("blue");
+  it("v2 upgrade is a no-op when there are no output notes", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    await dbV1.table("tags").put({
+      tag: "dGFnMQ==",
+      sourceNoteId: "0x" + "aa".repeat(32),
+      sourceAccountId: "",
+    });
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    await mdb.open("0.15.5");
+
+    expect(await mdb.tags.count()).toBe(1);
   });
 });
 

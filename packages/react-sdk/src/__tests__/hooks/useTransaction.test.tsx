@@ -351,7 +351,7 @@ describe("useTransaction", () => {
         submitProvenTransaction: vi.fn().mockResolvedValue(100),
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
-        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
       });
 
       mockUseMiden.mockReturnValue({
@@ -376,7 +376,7 @@ describe("useTransaction", () => {
       expect(mockClient.proveTransaction).toHaveBeenCalled();
       expect(mockClient.submitProvenTransaction).toHaveBeenCalled();
       expect(mockClient.applyTransaction).toHaveBeenCalled();
-      expect(mockClient.sendPrivateNote).toHaveBeenCalledTimes(1);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
       expect(result.current.stage).toBe("complete");
       expect(mockSync).toHaveBeenCalled();
     });
@@ -411,7 +411,7 @@ describe("useTransaction", () => {
         submitProvenTransaction: vi.fn().mockResolvedValue(100),
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
-        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
       });
 
       mockUseMiden.mockReturnValue({
@@ -430,7 +430,7 @@ describe("useTransaction", () => {
         });
       });
 
-      expect(mockClient.sendPrivateNote).not.toHaveBeenCalled();
+      expect(mockClient.sendPrivateOutputNote).not.toHaveBeenCalled();
     });
 
     it("should handle errors in pipeline", async () => {

@@ -224,6 +224,7 @@ export async function upsertInputNote(
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+      throw error;
     }
   };
   if (tx) return doWork(tx);
@@ -331,6 +332,7 @@ export async function upsertOutputNote(
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+      throw error;
     }
   };
   if (tx) return doWork(tx);

@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import type { AdviceMap, TransactionRequest } from "@miden-sdk/miden-sdk";
 
 // Mock AccountId
 export const createMockAccountId = (id: string = "0x1234567890abcdef") => ({
@@ -183,9 +184,29 @@ export const createMockTransactionRequest = () => ({
   expectedFutureNotes: vi.fn(() => []),
   scriptArg: vi.fn(() => undefined),
   authArg: vi.fn(() => undefined),
+  adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
+  extendAdviceMap: vi.fn(
+    () => createMockTransactionRequest() as unknown as TransactionRequest
+  ),
   serialize: vi.fn(() => new Uint8Array()),
   free: vi.fn(),
   [Symbol.dispose]: vi.fn(),
+});
+
+// Mock PswapLineageRecord
+export const createMockPswapLineageRecord = (
+  orderId: string = "42",
+  overrides: Record<string, unknown> = {}
+) => ({
+  orderId: vi.fn(() => orderId),
+  creatorAccountId: vi.fn(() => createMockAccountId()),
+  remainingOffered: vi.fn(() => 100n),
+  remainingRequested: vi.fn(() => 50n),
+  currentDepth: vi.fn(() => 0),
+  currentTipNoteId: vi.fn(() => ({ toString: () => "0xtip" })),
+  state: vi.fn(() => 0),
+  free: vi.fn(),
+  ...overrides,
 });
 
 // Mock FeltArray
@@ -229,6 +250,9 @@ export const createMockWebClient = (
     newSendTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),
+    newB2AggTransactionRequest: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
     newConsumeTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),
@@ -248,6 +272,15 @@ export const createMockWebClient = (
     submitNewTransactionWithProver: vi
       .fn()
       .mockResolvedValue(createMockTransactionId()),
+
+    // PSWAP lineage tracking
+    getPswapLineages: vi.fn().mockResolvedValue([]),
+    getPswapLineagesFor: vi.fn().mockResolvedValue([]),
+    getPswapLineage: vi.fn().mockResolvedValue(null),
+    buildPswapCancelByOrder: vi
+      .fn()
+      .mockResolvedValue(createMockTransactionRequest()),
+
     executeTransaction: vi
       .fn()
       .mockResolvedValue(createMockTransactionResult()),
@@ -268,6 +301,7 @@ export const createMockWebClient = (
       }
       return undefined;
     }),
+    sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
     importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue(createMockAccount()),
@@ -311,6 +345,7 @@ type MockWebClientType = {
   getTransactions: ReturnType<typeof vi.fn>;
   newMintTransactionRequest: ReturnType<typeof vi.fn>;
   newSendTransactionRequest: ReturnType<typeof vi.fn>;
+  newB2AggTransactionRequest: ReturnType<typeof vi.fn>;
   newConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newSwapTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
@@ -318,11 +353,16 @@ type MockWebClientType = {
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
+  getPswapLineages: ReturnType<typeof vi.fn>;
+  getPswapLineagesFor: ReturnType<typeof vi.fn>;
+  getPswapLineage: ReturnType<typeof vi.fn>;
+  buildPswapCancelByOrder: ReturnType<typeof vi.fn>;
   executeTransaction: ReturnType<typeof vi.fn>;
   proveTransaction: ReturnType<typeof vi.fn>;
   submitProvenTransaction: ReturnType<typeof vi.fn>;
   applyTransaction: ReturnType<typeof vi.fn>;
   sendPrivateNote: ReturnType<typeof vi.fn>;
+  sendPrivateOutputNote: ReturnType<typeof vi.fn>;
   importAccountFile: ReturnType<typeof vi.fn>;
   importAccountById: ReturnType<typeof vi.fn>;
   importPublicAccountFromSeed: ReturnType<typeof vi.fn>;

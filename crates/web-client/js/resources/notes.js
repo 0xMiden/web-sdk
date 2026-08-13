@@ -64,6 +64,18 @@ export class NotesResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
+    if (
+      !Number.isInteger(opts?.scanAfterBlockNum) ||
+      opts.scanAfterBlockNum < 0
+    ) {
+      throw new Error(
+        "sendPrivate requires scanAfterBlockNum: the block the recipient scans forward " +
+          "from for the note's commitment. It must be at or below the commitment block. " +
+          "For one of this client's own output notes, use sendPrivateOutput({ noteId, to }) " +
+          "which derives this from the note's expected height."
+      );
+    }
+
     let note;
     const input = opts.note;
     // Check if input is a Note object (has .id() and .assets() but not .toNote())
@@ -85,7 +97,15 @@ export class NotesResource {
     }
 
     const address = resolveAddress(opts.to, wasm);
-    await this.#inner.sendPrivateNote(note, address);
+    await this.#inner.sendPrivateNote(note, address, opts.scanAfterBlockNum);
+  }
+
+  async sendPrivateOutput(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const noteHex = resolveNoteIdHex(opts.noteId);
+    const address = resolveAddress(opts.to, wasm);
+    await this.#inner.sendPrivateOutputNote(noteHex, address);
   }
 }
 

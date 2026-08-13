@@ -180,6 +180,7 @@ export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, a
         }
         catch (error) {
             logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+            throw error;
         }
     };
     if (tx)
@@ -265,6 +266,7 @@ export async function upsertOutputNote(dbId, detailsCommitment, noteId, assets, 
         }
         catch (error) {
             logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+            throw error;
         }
     };
     if (tx)

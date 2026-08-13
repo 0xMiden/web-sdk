@@ -1,8 +1,11 @@
+use alloc::collections::BTreeSet;
+
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::component::{
     AccountComponent as NativeAccountComponent,
     AccountComponentMetadata,
+    AuthNetworkAccount,
 };
 use miden_client::account::{
     AccountComponentCode as NativeAccountComponentCode,
@@ -16,6 +19,8 @@ use miden_client::auth::{
     AuthSingleSig as NativeSingleSig,
     PublicKeyCommitment,
 };
+use miden_client::note::NoteScriptRoot;
+use miden_client::transaction::{ExpirationTransactionScript, TransactionScriptRoot};
 use miden_client::vm::Package as NativePackage;
 
 use crate::js_error_with_context;
@@ -200,6 +205,56 @@ impl AccountComponent {
         let pkc = PublicKeyCommitment::from(native_word);
 
         Ok(AccountComponent::create_auth_component(pkc, auth_scheme))
+    }
+
+    /// Builds the auth component for a network account.
+    ///
+    /// A network account is a public account carrying this component: its
+    /// note-script allowlist is the standardized storage slot the node's
+    /// network-transaction builder inspects to identify the account as a network
+    /// account and route matching notes to it for auto-consumption. The account
+    /// may only consume notes whose script root is in `allowedNoteScriptRoots`
+    /// (obtain a root via `NoteScript.root()`).
+    ///
+    /// The canonical expiration transaction script is always allowlisted: the
+    /// node's network-transaction builder attaches it to every network
+    /// transaction, so an account without it could never be serviced.
+    /// `allowedTxScriptRoots` allowlists further transaction script roots (from
+    /// `TransactionScript.root()`) the account will execute. Allowlist a script
+    /// root only if the script's effect is safe for *every* possible input: a
+    /// root pins the script's code but not its arguments or advice inputs,
+    /// which the (arbitrary) transaction submitter controls.
+    ///
+    /// # Errors
+    /// Errors if `allowedNoteScriptRoots` is empty: a network account with no
+    /// allowlisted note scripts could never consume a note.
+    #[js_export(js_name = "createNetworkAuth")]
+    pub fn create_network_auth(
+        allowed_note_script_roots: Vec<Word>,
+        allowed_tx_script_roots: Option<Vec<Word>>,
+    ) -> Result<AccountComponent, JsErr> {
+        let note_roots: BTreeSet<NoteScriptRoot> = allowed_note_script_roots
+            .into_iter()
+            .map(|root| NoteScriptRoot::from_raw(NativeWord::from(&root)))
+            .collect();
+
+        let auth = AuthNetworkAccount::with_allowed_notes(note_roots).map_err(|e| {
+            js_error_with_context(e, "Failed to create network account auth component")
+        })?;
+
+        // The network transaction builder attaches the canonical expiration script to every
+        // network transaction it executes, so an account that does not allowlist that root could
+        // never be serviced by the node.
+        let mut tx_roots: BTreeSet<TransactionScriptRoot> =
+            BTreeSet::from([ExpirationTransactionScript::script_root()]);
+        tx_roots.extend(
+            allowed_tx_script_roots
+                .unwrap_or_default()
+                .into_iter()
+                .map(|root| TransactionScriptRoot::from_raw(NativeWord::from(&root))),
+        );
+
+        Ok(AccountComponent(auth.with_allowed_tx_scripts(tx_roots).into()))
     }
 
     /// Creates an account component from a compiled package and storage slots.

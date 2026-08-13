@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.16.0-alpha.2 (TBD)
+## 0.16.0-alpha.2 (2026-08-09)
 
 ### Changes
 
+* [BREAKING][web] `client.notes.sendPrivate({ note, to })` now requires an explicit `scanAfterBlockNum` — the block the recipient scans **forward** from for the note's on-chain commitment — rather than the SDK inferring it from the client's current sync height. A hint above the commitment is never scanned back to, so the previous sync-height inference silently dropped delivery once the sender had synced past the note (e.g. relaying after waiting for the transaction to commit). The value must be at or below the commitment block; a safe choice is the chain tip when the note's transaction was submitted. For one of this client's own output notes, prefer the new `client.notes.sendPrivateOutput({ noteId, to })`, which derives that block from the note's stored expected height for you. Refines the hint added in [web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258). ([web-sdk#264](https://github.com/0xMiden/web-sdk/pull/264), closes [#262](https://github.com/0xMiden/web-sdk/issues/262))
 * [BREAKING][web] Transaction submissions now encrypt their private inputs, so the RPC operator relaying them cannot read them: only holders of the validator set's shared encryption secret can. On first submission the client fetches the validator set's transaction encryption key from the node, verifies a validator attestation for it against the validator set committed in a trusted block header (bound to the chain's genesis commitment, so an attestation cannot be replayed from another network), and caches the verified key in the store; a submission rejected for having been sealed against a retired key evicts the cached key and the next submission re-fetches. Requires a node that unseals submitted inputs — such nodes reject plaintext submissions, and older nodes reject sealed ones, so client and node must be upgraded together. ([#252](https://github.com/0xMiden/web-sdk/pull/252), client [#2341](https://github.com/0xMiden/rust-sdk/pull/2341))
 * [BREAKING][web] Removed `notes.fetchPrivate({ mode: "all" })` (`WasmWebClient.fetchAllPrivateNotes`). `fetchPrivate()` now takes no arguments and always fetches incrementally from the stored pagination cursor. The full re-scan is no longer needed: historical notes for a newly tracked tag sit below the shared cursor and are now backfilled automatically during `sync()`, one tag at a time, so callers that previously reached for `mode: "all"` after adding a tag should just sync. Callers passing the option get a type error; the argument is otherwise ignored at runtime.
 * [CHANGE][web] `miden-client` and `miden-client-sqlite-store` are pinned to the rust-sdk `note_filter_script_root` branch ([#2335](https://github.com/0xMiden/rust-sdk/pull/2335), `e70d3df8`), which merges rust-sdk `next` (where encrypted transaction inputs landed, [#2341](https://github.com/0xMiden/rust-sdk/pull/2341)), ahead of the `0.16.0-alpha.1` release, pending the next alpha. Inherited upstream changes include encrypted transaction submission (see above), the store-level note script root filter (see below), note-transport attachment support, a note-screener batch cache, faster historical-note retrieval, and single-account note screening: `notes.listAvailable({ account })` now screens the given account only, instead of screening every tracked account and discarding the rest, so its cost no longer grows with the number of tracked accounts. Protocol-layer versions are unchanged (`miden-protocol` / `miden-standards` / `miden-tx` at `0.16.0-alpha.4`).
@@ -11,6 +12,9 @@
 ### Enhancements
 
 * [FEATURE][web] `notes.list({ scriptRoots: [...] })` filters received notes by note script root, given as hex strings or `Word` instances (e.g. from `NoteScript.root()`). This narrows candidate notes at the store level, without loading and screening unrelated notes. `notes.listSent` returns an empty list for this query, since script roots are only tracked for received notes. ([#249](https://github.com/0xMiden/web-sdk/pull/249), client [#2335](https://github.com/0xMiden/rust-sdk/pull/2335))
+* [BREAKING][web] Removed `FungibleAsset.withCallbacks(flag)`. The callback flag is no longer a per-asset value: it is an immutable property of the issuing faucet's account id, so every asset from a given faucet carries the same flag and no copy can override it. `FungibleAsset.callbacks()` still reports the flag, now read from the faucet id. Callers that built an asset with an explicit flag should drop the call — the flag follows the faucet automatically. Forward-ported from the 0.15 line ([web-sdk#240](https://github.com/0xMiden/web-sdk/pull/240)), where the flag was settable.
+* [CHANGE][web] `AccountComponent.createNetworkAuth(...)` now always allowlists the canonical expiration transaction script, in addition to any roots passed as the optional second argument. The node's network-transaction builder attaches that script to every network transaction it executes, and an account that does not allowlist it is no longer recognized as a network account (`Account.isNetworkAccount()` returns `false`) and could never be serviced. Accounts built with the previous behavior must be rebuilt.
+* [CHANGE][web] `miden-client` and `miden-client-sqlite-store` are pinned to the rust-sdk `encrypted-tx-inputs` branch ([#2341](https://github.com/0xMiden/rust-sdk/pull/2341), `32dfba8d`), ahead of the `0.16.0-alpha.1` release, pending the next alpha. Inherited upstream changes include encrypted transaction submission (see above), note-transport attachment support, a note-screener batch cache, faster historical-note retrieval, and single-account note screening: `notes.listAvailable({ account })` now screens the given account only, instead of screening every tracked account and discarding the rest, so its cost no longer grows with the number of tracked accounts. Protocol-layer versions are unchanged (`miden-protocol` / `miden-standards` / `miden-tx` at `0.16.0-alpha.4`).
 
 ## 0.16.0-alpha.1 (2026-07-19)
 
@@ -24,6 +28,111 @@
 
 * [FIX][web] `miden-idxdb-store` no longer silently overwrites already-stored partial blockchain (`PartialMmr`) authentication nodes. Writing a known node index with the same value is accepted, but writing a different value for that index now rejects with an error and leaves the stored value intact, so a buggy or malicious sync path can't replace known-good MMR nodes. ([#193](https://github.com/0xMiden/web-sdk/issues/193))
 * [FIX][web] `miden-idxdb-store` now persists a tracked block header and its MMR authentication nodes in a single IndexedDB transaction. An interrupted sync (closed tab, crash, or failed write) could previously store the header without its nodes, leaving the client unable to rebuild its partial MMR, so sync then failed with `InconsistentPartialMmr` until the local database was cleared. ([#221](https://github.com/0xMiden/web-sdk/pull/221), client [#2294](https://github.com/0xMiden/rust-sdk/pull/2294))
+
+## 0.15.8 (2026-07-22)
+
+### Enhancements
+
+* [FEATURE][web] `BasicFungibleFaucetComponent.fromAccountStorage(accountStorage)` reads faucet metadata directly from an account's storage, covering faucets whose account shape makes `fromAccount` fail (e.g. AggLayer faucets). Available on both the browser and Node.js bindings (closes [#243](https://github.com/0xMiden/web-sdk/issues/243), [web-sdk#244](https://github.com/0xMiden/web-sdk/pull/244)).
+
+```ts
+const faucetMeta = BasicFungibleFaucetComponent.fromAccountStorage(account.storage());
+faucetMeta.symbol().toString(); // "DAG"
+```
+
+* [FEATURE][web] `FungibleAsset.fromVaultEntry(key, value)` reconstructs a fungible asset from the word pair stored under it in an account vault — the outputs of `FungibleAsset.vaultKey()` (faucet id + callback flag) and `FungibleAsset.intoWord()` (the value word holding the amount) — so `FungibleAsset.fromVaultEntry(a.vaultKey(), a.intoWord())` round-trips an asset read from vault data, callback flag included. `FungibleAsset.fromVaultKey(key, amount)` is a convenience for when you hold the key word plus a scalar `bigint` amount rather than the value word, and `FungibleAsset.vaultKey()` exposes the key word for the round trip. (closes [#246](https://github.com/0xMiden/web-sdk/issues/246))
+
+## 0.15.7 (2026-07-20)
+
+### Enhancements
+
+* [FEATURE][web] Manual transaction lifecycle on `client.transactions` — `executeRequest(account, request)` returns a staged handle you advance with `.prove({ prover? })` → `.submit()` → `.apply()`, exposing the stages that `submit()` runs in one call so each can be benchmarked and error-handled independently. Each stage carries its own context, so nothing is re-threaded between calls. A proof produced on a detached client can be submitted with `client.transactions.submitProven(proof, result)` (closes [#233](https://github.com/0xMiden/web-sdk/issues/233)).
+
+```ts
+const executed = await client.transactions.executeRequest(wallet, request);
+const proven = await executed.prove();
+const submitted = await proven.submit();
+await submitted.apply();
+```
+
+* [FEATURE][web] `FungibleAsset.callbacks()` and `FungibleAsset.withCallbacks(flag)` expose the asset's `AssetCallbackFlag` (`Disabled` / `Enabled`) — the vault-key bit that decides whether the issuing faucet's callbacks run when the asset is added to an account or note. The constructor always yields `Disabled`; `withCallbacks` returns a copy carrying the given flag. The flag is part of the asset's vault key, so it must match the flag the issuing faucet applies. (closes [#239](https://github.com/0xMiden/web-sdk/issues/239))
+
+```ts
+const asset = new FungibleAsset(faucetId, 10n);
+asset.callbacks(); // AssetCallbackFlag.Disabled
+const enabled = asset.withCallbacks(AssetCallbackFlag.Enabled);
+```
+
+## 0.15.6 (2026-07-17)
+
+### Fixes
+
+* [FIX][web] Bundled `miden-client` bumped to 0.15.4. Upstream fixes reaching the web SDK: public-account sync no longer discards the client's own just-committed transaction as `Superseded` (which could permanently wedge a sole-writer account); transaction-submission failures now report the node's actual cause instead of a misclassified error; `ConsumedExternal` notes retain their metadata, so they stay findable by note ID after consumption; sync responses slightly above the node's 4 MiB payload budget no longer fail to decode. ([miden-client 0.15.4](https://github.com/0xMiden/rust-sdk/releases/tag/v0.15.4))
+* [FIX][web] Creating a transaction no longer registers a note tag per output note. Previously each created note leaked one `tags` row in IndexedDB (cleanup only ever covered input notes); a store migration prunes the leaked tags, keeping those still needed by inclusion-pending input notes. Mirrors the client-side SQLite migration. (client [0xMiden/rust-sdk#2323](https://github.com/0xMiden/rust-sdk/pull/2323))
+
+### Enhancements
+
+* [FEATURE][web] `InputNoteRecord.isInclusionPending()` and `OutputNoteRecord.isInclusionPending()` — `true` while the note's on-chain inclusion is still unsettled (input notes: `Expected` / `Unverified`; output notes: `ExpectedFull` / `ExpectedPartial`), i.e. while sync is the mechanism that can advance the record. (client [0xMiden/rust-sdk#2323](https://github.com/0xMiden/rust-sdk/pull/2323))
+* [FEATURE][web] `AccountComponent.createNetworkAuth(allowedNoteScriptRoots, allowedTxScriptRoots?)` builds the auth component for a network account — a public account the node auto-consumes network notes against. The note-script allowlist (roots from `NoteScript.root()`) must be non-empty; transaction scripts are forbidden unless allowlisted via the optional second argument. Readback: `Account.isNetworkAccount()` and `Account.networkNoteAllowlist()`. ([#236](https://github.com/0xMiden/web-sdk/pull/236))
+
+```ts
+const auth = AccountComponent.createNetworkAuth([noteScript.root()]);
+const { account } = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(counterComponent)
+  .withAuthComponent(auth)
+  .build();
+```
+
+## 0.15.5 (2026-07-08)
+
+### Enhancements
+
+* [FEATURE][web] `client.transactions.createNetworkNote(...)`, `Note.withAttachments/attachments/isNetworkNote`, `NetworkAccountTarget`, and standalone `buildNetworkNote` — create custom-script notes that target a public network account. ([#230](https://github.com/0xMiden/web-sdk/pull/230))
+* [FEATURE][react] `useCreateNetworkNote` — build + submit a custom-script network note. ([#230](https://github.com/0xMiden/web-sdk/pull/230))
+
+## 0.15.4 (2026-06-29)
+
+### Fixes
+
+* [FIX][web] `account.storage().getItem(slot)` / `getMapItem(...)` results (`StorageResult`) now forward `toU64s()`. The result is typed as a `Word` and already forwards `toFelts()` / `toHex()` / `toBigInt()`, but `toU64s()` was missing, so reading raw u64 elements off a storage value (e.g. `getItem(slot).toU64s()`) threw `toU64s is not a function` at runtime. This broke the OpenZeppelin multisig client's `AccountInspector` (run on every multisig-account `load`), and thus every guardian transaction. ([#194](https://github.com/0xMiden/web-sdk/pull/194))
+
+### Enhancements
+
+* [FEATURE][web] `BasicFungibleFaucetComponent` now exposes the full token metadata of a fungible-faucet account: `tokenName()`, `tokenSupply()` (the amount minted so far, as a `Felt`), `description()`, `logoUri()`, and `externalLink()` — the optional descriptive fields return `undefined` when unset. These read the same on-chain `FungibleFaucet` component that already backed `symbol()` / `decimals()` / `maxSupply()`, so they work for both basic and network-style faucet accounts. In the 0.15 protocol the basic-vs-network distinction is a function of account configuration, not a separate component type, so a dedicated `NetworkFungibleFaucet` binding is unnecessary. ([#162](https://github.com/0xMiden/web-sdk/issues/162))
+
+```ts
+const faucet = BasicFungibleFaucetComponent.fromAccount(account);
+faucet.tokenName();               // "DAG Token"
+faucet.tokenSupply().toString();  // "0"
+faucet.description();             // string | undefined
+```
+
+* [FEATURE][web,react] AggLayer bridge-out (B2AGG) note support. `client.transactions.bridge({ account, bridgeAccount, token, amount, destinationNetwork, destinationAddress })` bridges a fungible asset out to another network — emitting a single public B2AGG (Bridge-to-AggLayer) note that the bridge account consumes, burning the asset so it can be claimed at the destination Ethereum address on the AggLayer-assigned `destinationNetwork`. The lower-level builders are also exposed: `Note.createB2AggNote(sender, bridgeAccount, assets, destinationNetwork, destinationAddress)` and `client.newB2AggTransactionRequest(...)`. A new `EthAddress` class carries the 20-byte destination address (`EthAddress.fromHex("0x…")` / `EthAddress.fromBytes(bytes)`, with `toHex()` / `toBytes()`). The `@miden-sdk/react` `useBridge()` hook wraps the build-and-submit flow: `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })`. Builds on the `miden-agglayer` re-export already present in the bundled `miden-client` — no new dependency. (closes [#173](https://github.com/0xMiden/web-sdk/issues/173))
+* [FEATURE][web] Added `client.transactions.batch({ account, operations })` to `MidenClient` for atomic multi-tx batches against a single account. Operations are discriminated by `kind` (`"send" | "mint" | "consume" | "swap" | "execute" | "custom"`) and reuse the same options shape as their singular counterparts. Returns `{ blockNumber }`. Companion `submitBatch(account, requests, options?)` is the lower-level escape hatch for pre-built `TransactionRequest`s. Wraps the underlying WASM `submitNewTransactionBatch` so consumers don't have to call `.serialize()` themselves. ([web-sdk#31](https://github.com/0xMiden/web-sdk/pull/31), client [#2109](https://github.com/0xMiden/miden-client/pull/2109))
+
+## 0.15.3 (2026-06-25)
+
+### Fixes
+
+* [FIX][web,react] The `@miden-sdk/miden-sdk` **Node entry** (resolved via the `node` export condition — Next.js / Remix server builds, Vitest, and any bundler that prefers `node`) now re-exports the full public class surface, matching the browser entry. It previously shipped a hand-curated subset, so importing a class the subset omitted — e.g. `BasicFungibleFaucetComponent`, `TransactionRequest`, `InputNoteRecord`, `NoteAttachmentScheme`, `Poseidon2` — or using a `@miden-sdk/react` hook that imports one (`useAssetMetadata`, `useCompile`) — failed under Node resolution with `"'X' is not exported from '@miden-sdk/miden-sdk'"`, even though the type declarations advertised it. The JS-layer helpers `CompilerResource` and `getWasmOrThrow` are now exported on Node too. The Node re-export list is generated from the native module and checked in CI, so it stays in lockstep with the surface. ([#206](https://github.com/0xMiden/web-sdk/pull/206))
+
+## 0.15.2 (2026-06-22)
+
+### Enhancements
+
+* [FEATURE][web] `TransactionRequest.extendAdviceMap(adviceMap)` merges advice entries into an already-built request and returns a new request (last-write-wins on key collisions), and `TransactionRequest.adviceMap()` returns a copy of the request's advice map. This lets a signer/guardian flow inject advice (e.g. a signature) that only becomes available *after* the request object is constructed, without going back through the builder. ([#203](https://github.com/0xMiden/web-sdk/pull/203), closes [#202](https://github.com/0xMiden/web-sdk/issues/202))
+* [FEATURE][web,react] PSWAP order-lineage tracking. The client persists a *lineage* per partially-fillable swap order — the chain of remainder notes a PSWAP leaves behind as it is filled round by round — keyed by a stable `orderId`. A new `pswap` resource on `MidenClient` exposes `pswap.lineages()`, `pswap.lineagesFor(creator)`, and `pswap.lineage(orderId)`, returning `PswapLineageRecord`s — `remainingOffered()` / `remainingRequested()` (the amounts still unfilled on the current tip), `currentDepth()`, `currentTipNoteId()`, and `state()` (`Active` / `FullyFilled` / `Reclaimed`) — plus `pswap.cancelByOrder(orderId)`, which reclaims the unfilled offered asset on the order's current tip (refused on a `FullyFilled` / `Reclaimed` order). Four React hooks expose the reads + cancel: `usePswapLineages`, `usePswapLineagesFor`, `usePswapLineage`, and `usePswapCancelByOrder`. ([#176](https://github.com/0xMiden/web-sdk/pull/176), companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231))
+
+### Changes
+
+* [behavior][web] `applyTransaction(...)` now persists through the high-level client apply path, so registered transaction observers (e.g. PSWAP lineage tracking) fire when a transaction is applied — previously the split prove/submit/apply pipeline persisted the update without firing any. For transactions unrelated to a tracked order the observer pass is a no-op. ([#176](https://github.com/0xMiden/web-sdk/pull/176))
+
+## 0.15.1 (2026-06-19)
+
+### Changes
+
+* [web,react] Bumped the bundled `miden-client` to `0.15.2`. Notes imported from the note transport layer now honor a sender-provided block hint (`after_block_num`) when present, falling back to the 20-block lookback window otherwise. The bump also makes miden-client's PSWAP chain-tracking APIs (`pswap_lineages`, `build_pswap_cancel_by_order`, …) and `send_private_note_with_block_hint` available in the bundled core for later exposure, and re-exports `miden-agglayer`. No web/React API changes. (companion: [0xMiden/miden-client#2231](https://github.com/0xMiden/miden-client/pull/2231), [0xMiden/miden-client#2262](https://github.com/0xMiden/miden-client/issues/2262), [0xMiden/miden-client#2253](https://github.com/0xMiden/miden-client/issues/2253))
 
 ## 0.15.0 (2026-06-12)
 
