@@ -83,6 +83,19 @@ export async function getInputNotesFromDetailsCommitments(dbId, detailsCommitmen
         logWebStoreError(err, "Failed to get input notes from details commitments");
     }
 }
+export async function getInputNotesFromScriptRoots(dbId, scriptRoots) {
+    try {
+        const db = getDatabase(dbId);
+        let notes = await db.inputNotes
+            .where("scriptRoot")
+            .anyOf(scriptRoots)
+            .toArray();
+        return await processInputNotes(dbId, notes);
+    }
+    catch (err) {
+        logWebStoreError(err, "Failed to get input notes from script roots");
+    }
+}
 export async function getOutputNotesFromDetailsCommitments(dbId, detailsCommitments) {
     try {
         const db = getDatabase(dbId);
