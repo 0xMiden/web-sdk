@@ -65,6 +65,8 @@ export const AccountType = Object.freeze({
 export const AuthScheme = Object.freeze({
   Falcon: "falcon",
   ECDSA: "ecdsa",
+  AuthRpoFalcon512: 2,
+  AuthEcdsaK256Keccak: 1,
 });
 
 export const NoteVisibility = Object.freeze({
