@@ -1,3 +1,4 @@
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -16,7 +17,6 @@ use miden_client::sync::{
 use miden_client::utils::{Deserializable, Serializable};
 
 use super::IdxdbStore;
-use super::account::RootsUpdateMode;
 use super::account::utils::account_from_full_state_patch;
 use super::chain_data::utils::{
     SerializedPartialBlockchainNodeData,
@@ -206,20 +206,17 @@ impl IdxdbStore {
             .map(|tx_record| tx_record.details.final_account_state)
             .collect::<Vec<_>>();
 
-        // Remove the account states from the DB; their SMT roots are discarded from the forest
-        // below.
+        let rolled_back_accounts: BTreeSet<AccountId> = transaction_updates
+            .discarded_transactions()
+            .map(|tx_record| tx_record.details.account_id)
+            .collect();
+
+        // Restore the previous account states, then rebuild the forest from them. Committed
+        // transactions need nothing: their forest updates were applied when they were recorded.
         self.undo_account_states(&account_states_to_rollback).await?;
 
-        // Discard roots for rolled-back accounts
-        {
-            let mut smt_forest = self.smt_forest.write();
-            for tx_record in transaction_updates.discarded_transactions() {
-                smt_forest.discard_roots(tx_record.details.account_id);
-            }
-            // Commit roots for successfully committed transactions
-            for tx_record in transaction_updates.committed_transactions() {
-                smt_forest.commit_roots(tx_record.details.account_id);
-            }
+        for account_id in rolled_back_accounts {
+            self.rebuild_account_forest(account_id).await?;
         }
 
         let transaction_updates: Vec<_> = transaction_updates
@@ -245,20 +242,8 @@ impl IdxdbStore {
             }
         }
 
-        // Update SMT forest for full account updates (insert nodes + replace roots atomically)
-        {
-            let mut smt_forest = self.smt_forest.write();
-            for account in &full_accounts {
-                smt_forest.insert_and_register_account_state(
-                    account.id(),
-                    account.vault(),
-                    account.storage(),
-                )?;
-            }
-        }
-
-        // Apply partial patches incrementally. Their storage and vault values are already absolute,
-        // so no full account or relative-delta reconstruction is required.
+        // Apply partial patches incrementally. Their values are already absolute, so no account
+        // reconstruction is required.
         for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
 
@@ -276,8 +261,7 @@ impl IdxdbStore {
                 )));
             }
 
-            self.apply_incremental_account_patch(new_header, patch, RootsUpdateMode::Replace)
-                .await?;
+            self.apply_incremental_account_patch(new_header, patch).await?;
         }
 
         let state_update = JsStateSyncUpdate {
@@ -299,6 +283,12 @@ impl IdxdbStore {
         };
         let promise = idxdb_apply_state_sync(self.db_id(), state_update);
         await_js_value(promise, "failed to apply state sync").await?;
+
+        // Rebuild the forest for the accounts the write just replaced. Deferred until the write
+        // landed so a failed sync leaves the forest untouched instead of ahead of the tables.
+        for account in &full_accounts {
+            self.smt_forest.write().rebuild_account(account)?;
+        }
 
         Ok(())
     }
