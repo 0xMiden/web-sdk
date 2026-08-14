@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0-alpha.3 (TBD)
+
+### Changes
+
+* [BREAKING][web] `Account.getPublicKeyCommitments()` now throws when the account's authentication component is not one of the bundled standard components, instead of returning `[]`. Third-party auth components define their own key storage layout, so their keys cannot be derived from account state — read them through the package that defines the component, or use `client.keystore.getCommitments(accountId)` for the keys this client actually holds. Accounts with such a component previously also made `isFaucet()` / `isRegularAccount()` panic (`miden-standards` asserts on classifying exactly one auth component); those now classify without asserting. ([web-sdk#285](https://github.com/0xMiden/web-sdk/pull/285), [guardian#306](https://github.com/OpenZeppelin/guardian/issues/306))
+
 ## 0.16.0-alpha.2 (2026-08-09)
 
 ### Changes

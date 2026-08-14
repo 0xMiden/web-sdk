@@ -245,6 +245,64 @@ test.describe("account public commitments", () => {
   });
 });
 
+// GET_PUBLIC_KEY_COMMITMENTS TESTS
+// =======================================================================================================
+
+test.describe("Account.getPublicKeyCommitments", () => {
+  test("returns the key for a standard auth component", async ({ run }) => {
+    const result = await run(async ({ client, sdk }) => {
+      const wallet = await client.newWallet(
+        sdk.AccountStorageMode.private(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+      return { count: wallet.getPublicKeyCommitments().length };
+    });
+    expect(result.count).toBe(1);
+  });
+
+  test("throws for a non-standard auth component", async ({ run }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // An auth component compiled from arbitrary MASM: its procedure roots match no
+      // bundled standard template, so classification buckets it as `Custom` and no
+      // standard auth component is detected. Same shape as any third-party auth
+      // component that defines its own key storage layout.
+      const code = `
+        @auth_script
+        pub proc auth_noop
+            push.1 drop
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const library = codeBuilder.buildLibrary("custom::auth::noop", code);
+      const authComponent = sdk.AccountComponent.fromLibrary(
+        library,
+        []
+      ).withSupportsAllTypes();
+
+      const seed = new Uint8Array(32);
+      seed.fill(0x07);
+      const account = new sdk.AccountBuilder(seed)
+        .withAuthComponent(authComponent)
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+
+      let error = null;
+      try {
+        account.getPublicKeyCommitments();
+      } catch (err) {
+        error = err?.message ?? String(err);
+      }
+
+      // Faucet classification shares the same code path and must not blow up either.
+      return { error, isFaucet: account.isFaucet() };
+    });
+
+    expect(result.error).toContain("found 0");
+    expect(result.isFaucet).toBe(false);
+  });
+});
+
 // GET_ACCOUNT_BY_KEY_COMMITMENT TESTS
 // =======================================================================================================
 
