@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSessionAccount } from "../../hooks/useSessionAccount";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
@@ -142,6 +142,66 @@ describe("useSessionAccount", () => {
       expect(result.current.step).toBe("ready");
       expect(result.current.isReady).toBe(true);
       expect(result.current.sessionAccountId).toBe("0xsession_wallet");
+    });
+  });
+
+  describe("lifecycle", () => {
+    it("should cancel initialization when the hook unmounts", async () => {
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xsession_wallet"),
+          toHex: vi.fn(() => "0xsession_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+
+      let resolveSyncState!: () => void;
+      const syncState = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSyncState = resolve;
+          })
+      );
+      const getConsumableNotes = vi.fn().mockResolvedValue([]);
+      const submitNewTransaction = vi.fn();
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        syncState,
+        getConsumableNotes,
+        submitNewTransaction,
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result, unmount } = renderHook(() =>
+        useSessionAccount({
+          ...defaultOptions,
+          pollIntervalMs: 10,
+        })
+      );
+
+      let initializePromise: Promise<void> | undefined;
+      act(() => {
+        initializePromise = result.current.initialize();
+      });
+
+      await waitFor(() => expect(syncState).toHaveBeenCalledTimes(1));
+
+      unmount();
+      resolveSyncState();
+
+      await act(async () => {
+        await initializePromise;
+      });
+
+      expect(getConsumableNotes).not.toHaveBeenCalled();
+      expect(submitNewTransaction).not.toHaveBeenCalled();
     });
   });
 
