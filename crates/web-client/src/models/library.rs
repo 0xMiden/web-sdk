@@ -1,5 +1,5 @@
 use js_export_macro::js_export;
-use miden_client::assembly::Library as NativeLibrary;
+use miden_client::vm::Package as NativeLibrary;
 
 #[js_export]
 #[derive(Clone)]

@@ -6,7 +6,6 @@ use miden_client::account::AccountComponentCode as NativeAccountComponentCode;
 use miden_client::assembly::{
     Assembler,
     CodeBuilder as NativeCodeBuilder,
-    Library as NativeLibrary,
     Module,
     ModuleKind,
     Path,
@@ -14,6 +13,7 @@ use miden_client::assembly::{
     Report,
     SourceManagerSync,
 };
+use miden_client::vm::Package as NativeLibrary;
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
 #[cfg(feature = "browser")]
@@ -74,7 +74,7 @@ impl CodeBuilder {
     #[js_export(js_name = "linkStaticLibrary")]
     pub fn link_static_library(&mut self, library: &Library) -> Result<(), JsErr> {
         let library: NativeLibrary = library.into();
-        self.builder.link_static_library(&library).map_err(|e| {
+        self.builder.link_static_package(&library).map_err(|e| {
             js_error_with_context(e, "script builder: failed to link static library")
         })?;
         Ok(())
@@ -90,7 +90,7 @@ impl CodeBuilder {
         account_component_code: &AccountComponentCode,
     ) -> Result<(), JsErr> {
         let native_code: NativeAccountComponentCode = account_component_code.into();
-        self.builder.link_static_library(native_code.as_library()).map_err(|e| {
+        self.builder.link_static_package(native_code.as_package()).map_err(|e| {
             js_error_with_context(e, "script builder: failed to link static account component code")
         })?;
         Ok(())
@@ -105,7 +105,7 @@ impl CodeBuilder {
     #[js_export(js_name = "linkDynamicLibrary")]
     pub fn link_dynamic_library(&mut self, library: &Library) -> Result<(), JsErr> {
         let library: NativeLibrary = library.into();
-        self.builder.link_dynamic_library(&library).map_err(|e| {
+        self.builder.link_dynamic_package(&library).map_err(|e| {
             js_error_with_context(e, "script builder: failed to link dynamic library")
         })?;
         Ok(())
@@ -121,7 +121,7 @@ impl CodeBuilder {
         account_component_code: &AccountComponentCode,
     ) -> Result<(), JsErr> {
         let native_code: NativeAccountComponentCode = account_component_code.into();
-        self.builder.link_dynamic_library(native_code.as_library()).map_err(|e| {
+        self.builder.link_dynamic_package(native_code.as_package()).map_err(|e| {
             js_error_with_context(
                 e,
                 "script builder: failed to link dynamic account component code",

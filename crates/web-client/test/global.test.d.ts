@@ -32,6 +32,7 @@ import {
   NoteConsumability,
   NoteExecutionHint,
   NoteExportFormat,
+  NoteScriptFee,
   NoteFilter,
   NoteFile,
   NoteFilterTypes,
@@ -125,6 +126,7 @@ declare global {
     NoteConsumability: typeof NoteConsumability;
     NoteExecutionHint: typeof NoteExecutionHint;
     NoteExportFormat: typeof NoteExportFormat;
+    NoteScriptFee: typeof NoteScriptFee;
     NoteFilter: typeof NoteFilter;
     NoteFile: typeof NoteFile;
     NoteFilterTypes: typeof NoteFilterTypes;

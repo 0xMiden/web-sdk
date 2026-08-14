@@ -2,6 +2,7 @@ use js_export_macro::js_export;
 use miden_client::transaction::TransactionSummary as NativeTransactionSummary;
 
 use super::account_delta::AccountDelta;
+use super::felt::Felt;
 use super::input_notes::InputNotes;
 use super::output_notes::OutputNotes;
 use super::word::Word;
@@ -43,9 +44,13 @@ impl TransactionSummary {
         Ok(self.0.output_notes().into())
     }
 
-    /// Returns the random salt mixed into the summary commitment.
-    pub fn salt(&self) -> Result<Word, JsErr> {
-        Ok(self.0.salt().into())
+    /// Returns the seven user-defined elements bound by the summary commitment.
+    ///
+    /// The protocol assigns no meaning to these elements. A caller that uses some of them as a
+    /// salt for replay protection reads back what it wrote.
+    #[js_export(js_name = "userParams")]
+    pub fn user_params(&self) -> Vec<Felt> {
+        self.0.user_params().as_elements().iter().map(Into::into).collect()
     }
 
     /// Computes the commitment to this `TransactionSummary`.

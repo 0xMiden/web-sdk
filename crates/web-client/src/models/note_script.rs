@@ -40,6 +40,18 @@ impl NoteScript {
         StandardNote::P2ID.script().into()
     }
 
+    /// Returns the Network Account Config script.
+    #[js_export(js_name = "networkAccountConfig")]
+    pub fn network_account_config() -> Self {
+        StandardNote::NETWORK_ACCOUNT_CONFIG.script().into()
+    }
+
+    /// Returns the Fee Sponsorship script.
+    #[js_export(js_name = "feeSponsorship")]
+    pub fn fee_sponsorship() -> Self {
+        StandardNote::FEE_SPONSORSHIP.script().into()
+    }
+
     /// Returns the well-known P2IDE script (P2ID with execution hint).
     pub fn p2ide() -> Self {
         StandardNote::P2IDE.script().into()

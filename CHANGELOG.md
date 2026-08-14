@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.16.0-alpha.3 (TBA)
+
+### Changes
+
+* [BREAKING][web] Note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account`. Upstream renamed the procedure to reflect that the assets are removed from the active note rather than merely added to the account. A script still using the old name fails to compile with `undefined item 'add_assets_to_account'` (protocol [#3343](https://github.com/0xMiden/protocol/pull/3343)).
+* [BREAKING][web] Creating a note that carries a `NetworkAccountTarget` attachment now prices the note by calling `estimate_note_fee` on the target account, even on a chain that charges no fees. The target must therefore be a network account built from `AccountComponent.createNetworkAuthComponents`, committed on-chain at the transaction's reference block, allowlisting and pricing the note's script root. Targeting a plain wallet fails with `account procedure ... is not in the account procedure index map`; targeting an account that has not been committed yet fails to resolve the account at all.
+* [BREAKING][web] `AccountComponent.createNetworkAuth` is renamed to `AccountComponent.createNetworkAuthComponents`. The note allowlist is now a `NoteScriptFee[]`, where each entry pairs an allowlisted note script root with the fee the account charges to consume notes running it, and a new parameter takes the account id of the faucet whose asset those fees are paid in. A fee of zero is valid. The call returns an `AccountComponent[]` instead of a single component. When building the network account, add every returned component to it with `AccountBuilder.withComponent`.
+
+    ```typescript
+    const components = AccountComponent.createNetworkAuthComponents(
+      [new NoteScriptFee(noteScript.root(), 0n)],
+      feeFaucetId
+    );
+    const builder = new AccountBuilder(seed)
+      .storageMode(AccountStorageMode.public())
+      .withComponent(myComponent);
+    for (const component of components) builder.withComponent(component);
+    ```
+
+* [BREAKING][web] Removed `TransactionSummary.salt()`, replaced by `TransactionSummary.userParams()`, which returns the seven user-defined field elements the summary commitment binds. The protocol no longer models one of them as a dedicated salt and assigns these elements no meaning, so a caller using some of them for replay protection reads back what it wrote.
+* [CHANGE][web] `miden-client` and `miden-client-sqlite-store` now track the rust-sdk `next` branch at `0.16.0-rc.1`, superseding the `note_filter_script_root` branch pin from `0.16.0-alpha.2`. Protocol-layer crates move to `0.16.0-rc.3` and Miden VM to `0.29`. Transaction fees moved out of the kernel epilogue into the authentication procedure upstream, which is what reshapes `createNetworkAuthComponents` above.
+
+### Enhancements
+
+* [FEATURE][web] Added the `NoteScript.networkAccountConfig()` and `NoteScript.feeSponsorship()` models. `AccountComponent.createNetworkAuthComponents` allowlists both at a zero fee, so `new NoteScriptFee(NoteScript.feeSponsorship().root(), amount)` is how a network account charges for consuming them.
+
 ## 0.16.0-alpha.2 (2026-08-09)
 
 ### Changes

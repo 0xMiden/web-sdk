@@ -34,7 +34,7 @@ impl WebClient {
                 })?
                 .into();
 
-        let native_note_tag = SwapNote::build_tag(
+        let native_note_tag = SwapNote::create_tag(
             note_type.into(),
             &offered_fungible_asset,
             &requested_fungible_asset,
