@@ -594,15 +594,23 @@ Provide exactly one of `script` or `recipient`. Notes are always Public — the 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
 ```typescript
-const auth = AccountComponent.createNetworkAuth([myNoteScript.root()]);
-const { account } = new AccountBuilder(seed)
+// Each allowed note script carries the fee charged to consume it, in the
+// fungible asset of `feeFaucetId`. Zero is a valid price.
+const components = AccountComponent.createNetworkAuthComponents(
+  [new NoteScriptFee(myNoteScript.root(), 0n)],
+  feeFaucetId
+);
+
+const builder = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
-  .withComponent(myComponent)
-  .withAuthComponent(auth)
-  .build();
+  .withComponent(myComponent);
+// The call returns the auth component plus the components backing its fee
+// policy; the account needs all of them.
+for (const component of components) builder.withComponent(component);
+const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional second argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

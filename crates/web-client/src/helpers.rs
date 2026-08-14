@@ -71,7 +71,7 @@ pub(crate) async fn generate_wallet(
     // `Into<NativeAccountType>` impl — the storage mode *is* the account type.
     let new_account = AccountBuilder::new(init_seed)
         .account_type(storage_mode.into())
-        .with_auth_component(auth_component)
+        .with_component(auth_component)
         .with_component(BasicWallet)
         .build_with_schema_commitment()
         .map_err(|err| js_error_with_context(err, "failed to create new wallet"))?;
@@ -143,7 +143,7 @@ pub(crate) async fn generate_faucet(
 
     let new_account = AccountBuilder::new(init_seed)
         .account_type(storage_mode.into())
-        .with_auth_component(auth_component)
+        .with_component(auth_component)
         .with_component(faucet)
         .with_components(policy_manager)
         .build_with_schema_commitment()

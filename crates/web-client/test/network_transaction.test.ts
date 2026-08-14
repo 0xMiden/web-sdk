@@ -93,17 +93,35 @@ const networkCounterTransaction = async (
     // component. Its note-script allowlist is the standardized storage slot the
     // node inspects to identify the account as a network account and route
     // matching notes to it.
-    const networkAuth = window.AccountComponent.createNetworkAuth([
-      noteScript.root(),
-    ]);
+    //
+    // Each allowed note script carries the fee the account charges to consume it,
+    // denominated in the asset of a fee faucet. This test node charges no
+    // verification fee, so the note is priced at zero.
+    const feeFaucet = await client.newFaucet(
+      window.AccountStorageMode.tryFromStr("public"),
+      false,
+      "FEE",
+      "FEE",
+      8,
+      BigInt(10000000),
+      2
+    );
+    const networkAuth = window.AccountComponent.createNetworkAuthComponents(
+      [new window.NoteScriptFee(noteScript.root(), BigInt(0))],
+      feeFaucet.id()
+    );
 
     const seed = new Uint8Array(32);
     crypto.getRandomValues(seed);
-    const built = new window.AccountBuilder(seed)
+    const accountBuilder = new window.AccountBuilder(seed)
       .storageMode(window.AccountStorageMode.public())
-      .withComponent(counterComponent)
-      .withAuthComponent(networkAuth)
-      .build();
+      .withComponent(counterComponent);
+    // `createNetworkAuthComponents` returns the auth component plus the components backing
+    // its fee policy; all of them belong on the account.
+    for (const component of networkAuth) {
+      accountBuilder.withComponent(component);
+    }
+    const built = accountBuilder.build();
     await client.newAccount(built.account, false);
 
     // Readback: the built account identifies as a network account and reports
@@ -222,9 +240,15 @@ test.describe("network transaction tests", () => {
       senderAllowlist,
     } = await networkCounterTransaction(page);
     // Readback: the built account identifies as a network account and its
-    // allowlist holds exactly the note-script root it was created with.
+    // allowlist holds the note-script root it was created with, plus the two
+    // roots the protocol allowlists itself (the network-account config note and
+    // the fee-sponsorship note). The allowlist is a set ordered by root value
+    // rather than insertion, so assert membership and size instead of contents.
+    // The size is load-bearing: a longer allowlist means the account would
+    // auto-consume note scripts it was never meant to.
     expect(isNetworkAccount).toBe(true);
-    expect(allowlist).toEqual([allowlistedNoteRoot]);
+    expect(allowlist).toContain(allowlistedNoteRoot);
+    expect(allowlist).toHaveLength(3);
     // A plain wallet is not a network account.
     expect(senderIsNetworkAccount).toBe(false);
     expect(senderAllowlist).toBeUndefined();

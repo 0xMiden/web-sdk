@@ -251,6 +251,7 @@ export const NoteLocation = /* @__PURE__ */ _reexport("NoteLocation");
 export const NoteMetadata = /* @__PURE__ */ _reexport("NoteMetadata");
 export const NoteRecipient = /* @__PURE__ */ _reexport("NoteRecipient");
 export const NoteScript = /* @__PURE__ */ _reexport("NoteScript");
+export const NoteScriptFee = /* @__PURE__ */ _reexport("NoteScriptFee");
 export const NoteStorage = /* @__PURE__ */ _reexport("NoteStorage");
 export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");
 export const NoteSyncInfo = /* @__PURE__ */ _reexport("NoteSyncInfo");
