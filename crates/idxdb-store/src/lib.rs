@@ -35,7 +35,6 @@ use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
     AccountRecord,
-    AccountSmtForest,
     AccountStatus,
     AccountStorageFilter,
     BlockRelevance,
@@ -62,12 +61,15 @@ pub mod account;
 pub mod auth;
 pub mod chain_data;
 pub mod export;
+mod forest;
 pub mod import;
 pub mod note;
 mod promise;
 pub mod settings;
 pub mod sync;
 pub mod transaction;
+
+use forest::AccountForest;
 
 pub(crate) const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -93,7 +95,7 @@ extern "C" {
 /// which would prevent the struct from being Send + Sync.
 pub struct IdxdbStore {
     database_id: String,
-    smt_forest: RwLock<AccountSmtForest>,
+    smt_forest: RwLock<AccountForest>,
 }
 
 impl IdxdbStore {
@@ -101,9 +103,12 @@ impl IdxdbStore {
         let promise = open_database(database_name.as_str(), CLIENT_VERSION);
         let _db_id = JsFuture::from(promise).await?;
 
+        let smt_forest = AccountForest::new()
+            .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
+
         let store = IdxdbStore {
             database_id: database_name,
-            smt_forest: RwLock::new(AccountSmtForest::new()),
+            smt_forest: RwLock::new(smt_forest),
         };
 
         // Initialize SMT forest
@@ -123,30 +128,44 @@ impl IdxdbStore {
             .map_err(|e| JsValue::from_str(&format!("Failed to get account IDs: {e:?}")))?;
 
         for account_id in account_ids {
-            let vault = self.get_account_vault(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!("Failed to get vault for account {account_id}: {e:?}"))
+            self.rebuild_account_forest(account_id).await.map_err(|e| {
+                JsValue::from_str(&format!(
+                    "Failed to insert account state for {account_id}: {e:?}"
+                ))
             })?;
-
-            let storage = self
-                .get_account_storage(account_id, AccountStorageFilter::All)
-                .await
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to get storage for account {account_id}: {e:?}"
-                    ))
-                })?;
-
-            self.smt_forest
-                .write()
-                .insert_and_register_account_state(account_id, &vault, &storage)
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to insert account state for {account_id}: {e:?}"
-                    ))
-                })?;
         }
 
         Ok(())
+    }
+
+    /// Rebuilds an account's forest lineages from the store tables, which are the source of truth.
+    ///
+    /// Used on store open, and to recover from a write that did not land: forest updates are
+    /// forward-only, so a caller that advanced the forest and then failed (or undid) the write
+    /// rebuilds rather than rolling back.
+    ///
+    /// An account the tables no longer track is reduced to an empty vault.
+    pub(crate) async fn rebuild_account_forest(
+        &self,
+        account_id: AccountId,
+    ) -> Result<(), StoreError> {
+        let state = match self.get_account_header(account_id).await? {
+            Some(_) => {
+                let vault = self.get_account_vault(account_id).await?;
+                let storage =
+                    self.get_account_storage(account_id, AccountStorageFilter::All).await?;
+                Some((vault, storage))
+            },
+            None => None,
+        };
+
+        let mut smt_forest = self.smt_forest.write();
+        match &state {
+            Some((vault, storage)) => {
+                smt_forest.rebuild(account_id, vault.assets(), storage.slots().iter())
+            },
+            None => smt_forest.rebuild(account_id, core::iter::empty(), [].iter()),
+        }
     }
 
     /// Returns the database ID as a string slice for passing to JS functions.
