@@ -10,13 +10,12 @@ use miden_client::account::{
     AccountPatch,
     AccountStorage,
     Address,
-    StorageMap,
     StorageSlotContent,
     StorageSlotName,
     StorageSlotType,
 };
-use miden_client::asset::{Asset, AssetId, AssetVault};
-use miden_client::store::{AccountSmtForest, AccountStatus, ClientAccountType, StoreError};
+use miden_client::asset::AssetVault;
+use miden_client::store::{AccountStatus, ClientAccountType, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{Felt, Word};
 use wasm_bindgen::JsValue;
@@ -187,124 +186,37 @@ pub fn parse_account_address_idxdb_object(
     Ok((address, native_account_id))
 }
 
-/// Storage slot changes derived from an account patch.
-///
-/// The optional word is the slot's final value/root. It is `None` when the slot is removed.
-pub type PatchedStorageSlots = BTreeMap<StorageSlotName, (Option<Word>, StorageSlotType, u8)>;
-
-/// Computes the final values and map roots for the storage changes in `patch`.
-pub fn compute_storage_patch(
-    smt_forest: &mut AccountSmtForest,
-    old_map_roots: &BTreeMap<StorageSlotName, Word>,
-    patch: &AccountPatch,
-) -> Result<PatchedStorageSlots, StoreError> {
-    let mut updated_slots: PatchedStorageSlots = patch
-        .storage()
-        .values()
-        .map(|(slot_name, value_patch)| {
-            (
-                slot_name.clone(),
-                (value_patch.value(), StorageSlotType::Value, value_patch.patch_op().as_u8()),
-            )
-        })
-        .collect();
-
-    let default_map_root = StorageMap::default().root();
-
-    for (slot_name, map_patch) in patch.storage().maps() {
-        let patch_op = map_patch.patch_op();
-        let new_root = if patch_op.is_remove() {
-            None
-        } else {
-            let old_root = if patch_op.is_create() {
-                default_map_root
-            } else {
-                old_map_roots.get(slot_name).copied().ok_or_else(|| {
-                    StoreError::DatabaseError(format!(
-                        "storage map slot {slot_name} is missing while applying an update",
-                    ))
-                })?
-            };
-            let entries = map_patch
-                .entries()
-                .expect("create and update map patches always contain entries");
-            Some(smt_forest.update_storage_map_nodes(
-                old_root,
-                entries.as_map().iter().map(|(key, value)| (*key, *value)),
-            )?)
-        };
-        updated_slots.insert(slot_name.clone(), (new_root, StorageSlotType::Map, patch_op.as_u8()));
-    }
-
-    Ok(updated_slots)
-}
-
-/// Applies changed storage-map roots to the root list tracked by [`AccountSmtForest`].
-pub fn update_tracked_storage_roots(
-    tracked_roots: &mut Vec<Word>,
-    old_map_roots: &BTreeMap<StorageSlotName, Word>,
-    patched_slots: &PatchedStorageSlots,
-) -> Result<(), StoreError> {
-    for (slot_name, (new_root, slot_type, _patch_op)) in patched_slots {
-        if *slot_type != StorageSlotType::Map {
-            continue;
-        }
-
-        let old_root = old_map_roots.get(slot_name).copied();
-        let old_root_position = old_root.and_then(|old_root| {
-            // The vault root is always first and can equal a storage-map root (notably for empty
-            // trees), so only search the storage-map portion of the list.
-            tracked_roots
-                .iter()
-                .enumerate()
-                .skip(1)
-                .find_map(|(position, root)| (*root == old_root).then_some(position))
-        });
-
-        match (old_root, old_root_position, new_root) {
-            (Some(_), Some(position), Some(new_root)) => tracked_roots[position] = *new_root,
-            (Some(old_root), None, _) => {
-                return Err(StoreError::DatabaseError(format!(
-                    "storage map root {} for slot {slot_name} is not tracked",
-                    old_root.to_hex(),
-                )));
-            },
-            (None, _, Some(new_root)) => tracked_roots.push(*new_root),
-            (Some(_), Some(position), None) => {
-                tracked_roots.remove(position);
-            },
-            (None, _, None) => {
-                return Err(StoreError::DatabaseError(format!(
-                    "storage map slot {slot_name} is missing while applying a removal",
-                )));
-            },
-        }
-    }
-
-    Ok(())
-}
-
 /// Builds the JS-side objects an account-patch write needs: the updated storage slots, the map
 /// entries carried by the patch, and the changed vault assets (updates plus removal markers).
+///
+/// `new_map_roots` holds the root the forest computed for each changed map slot. Removed slots are
+/// absent from it: their rows are deleted rather than rewritten, so they have no root. Everything
+/// else is read off `patch`.
 pub fn build_account_patch_payload(
-    updated_storage_slots: &PatchedStorageSlots,
-    updated_assets: &[Asset],
-    removed_asset_ids: &[AssetId],
+    new_map_roots: &BTreeMap<StorageSlotName, Word>,
     patch: &AccountPatch,
 ) -> (Vec<JsStorageSlot>, Vec<JsStorageMapEntry>, Vec<JsVaultAsset>) {
-    // Build updated slot JS objects from pre-computed storage roots
-    let mut js_slots = Vec::new();
-    for (slot_name, (value, slot_type, patch_op)) in updated_storage_slots {
-        js_slots.push(JsStorageSlot {
+    // A removed map has no root; its empty value tells the JS layer to delete the row.
+    let mut js_slots: Vec<JsStorageSlot> = patch
+        .storage()
+        .values()
+        .map(|(slot_name, value_patch)| JsStorageSlot {
             slot_name: slot_name.to_string(),
-            slot_value: value.map_or_else(String::new, |value| value.to_hex()),
-            slot_type: *slot_type as u8,
-            patch_operation: *patch_op,
-        });
-    }
+            slot_value: value_patch.value().map_or_else(String::new, |value| value.to_hex()),
+            slot_type: StorageSlotType::Value as u8,
+            patch_operation: value_patch.patch_op().as_u8(),
+        })
+        .chain(patch.storage().maps().map(|(slot_name, map_patch)| JsStorageSlot {
+            slot_name: slot_name.to_string(),
+            slot_value: new_map_roots.get(slot_name).map_or_else(String::new, Word::to_hex),
+            slot_type: StorageSlotType::Map as u8,
+            patch_operation: map_patch.patch_op().as_u8(),
+        }))
+        .collect();
+    js_slots.sort_by(|a, b| a.slot_name.cmp(&b.slot_name));
 
-    // Build changed map entries from the absolute patch. Map creation/removal is represented by
-    // the slot's patch operation above; individual entries carry their final values.
+    // Map creation/removal is represented by the slot's patch operation above; individual entries
+    // carry their final values.
     let mut changed_map_entries = Vec::new();
     for (slot_name, map_patch) in patch.storage().maps() {
         let Some(entries) = map_patch.entries() else {
@@ -325,42 +237,35 @@ pub fn build_account_patch_payload(
         }
     }
 
-    // Build changed assets: updated assets + removal markers
-    let mut changed_assets: Vec<JsVaultAsset> =
-        updated_assets.iter().map(JsVaultAsset::from_asset).collect();
-
-    for asset_id in removed_asset_ids {
-        changed_assets.push(JsVaultAsset {
+    let changed_assets: Vec<JsVaultAsset> = patch
+        .vault()
+        .updated_assets()
+        .map(|asset| JsVaultAsset::from_asset(&asset))
+        .chain(patch.vault().removed_asset_ids().map(|asset_id| JsVaultAsset {
             vault_key: asset_id.to_string(),
             asset: String::new(),
-        });
-    }
+        }))
+        .collect();
 
     (js_slots, changed_map_entries, changed_assets)
 }
 
 /// Applies an account patch atomically in a single Dexie transaction.
 ///
-/// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
-/// the full Account object. This avoids loading account code and full storage map entries.
+/// Takes the patch plus the map roots the SMT forest computed for it, instead of the full Account
+/// object. This avoids loading account code and full storage map entries.
 pub async fn apply_account_patch(
     db_id: &str,
     account_id: AccountId,
     final_header: &AccountHeader,
-    updated_storage_slots: &PatchedStorageSlots,
-    updated_assets: &[Asset],
-    removed_asset_ids: &[AssetId],
+    new_map_roots: &BTreeMap<StorageSlotName, Word>,
     patch: &AccountPatch,
 ) -> Result<(), JsValue> {
     let account_id_str = account_id.to_string();
     let nonce_str = final_header.nonce().to_string();
 
-    let (js_slots, changed_map_entries, changed_assets) = build_account_patch_payload(
-        updated_storage_slots,
-        updated_assets,
-        removed_asset_ids,
-        patch,
-    );
+    let (js_slots, changed_map_entries, changed_assets) =
+        build_account_patch_payload(new_map_roots, patch);
 
     // Account record fields from final header
     let code_root = final_header.code_commitment().to_string();
