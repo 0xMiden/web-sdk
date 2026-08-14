@@ -22,6 +22,10 @@
 * [BREAKING][web] Removed `TransactionSummary.salt()`, replaced by `TransactionSummary.userParams()`, which returns the seven user-defined field elements the summary commitment binds. The protocol no longer models one of them as a dedicated salt and assigns these elements no meaning, so a caller using some of them for replay protection reads back what it wrote.
 * [CHANGE][web] `miden-client` and `miden-client-sqlite-store` now track the rust-sdk `next` branch at `0.16.0-rc.1`, superseding the `note_filter_script_root` branch pin from `0.16.0-alpha.2`. Protocol-layer crates move to `0.16.0-rc.3` and Miden VM to `0.29`. Transaction fees moved out of the kernel epilogue into the authentication procedure upstream, which is what reshapes `createNetworkAuthComponents` above.
 
+### Enhancements
+
+* [FEATURE][web] Added the `NoteScript.networkAccountConfig()` and `NoteScript.feeSponsorship()` models. `AccountComponent.createNetworkAuthComponents` allowlists both at a zero fee, so `new NoteScriptFee(NoteScript.feeSponsorship().root(), amount)` is how a network account charges for consuming them.
+
 ## 0.16.0-alpha.2 (2026-08-09)
 
 ### Changes
