@@ -290,13 +290,6 @@ impl AccountComponent {
     ) -> Result<Vec<AccountComponent>, JsErr> {
         let mut note_roots: BTreeSet<NoteScriptRoot> = BTreeSet::new();
         let mut fee_policy = BasicConstantFeePolicy::new();
-        for entry in &allowed_note_script_fees {
-            let root = NoteScriptRoot::from_raw(NativeWord::from(&entry.script_root));
-            let amount = AssetAmount::new(entry.amount)
-                .map_err(|e| js_error_with_context(e, "invalid note fee amount"))?;
-            note_roots.insert(root);
-            fee_policy = fee_policy.with_fee(root, amount);
-        }
 
         // `AuthNetworkAccount::new` allowlists the config and fee-sponsorship note scripts on top
         // of the caller's roots. The caller cannot name those two, so price both at zero here to
@@ -304,6 +297,14 @@ impl AccountComponent {
         fee_policy = fee_policy
             .with_fee(NetworkAccountConfigNote::script_root(), AssetAmount::ZERO)
             .with_fee(FeeSponsorshipNote::script_root(), AssetAmount::ZERO);
+
+        for entry in &allowed_note_script_fees {
+            let root = NoteScriptRoot::from_raw(NativeWord::from(&entry.script_root));
+            let amount = AssetAmount::new(entry.amount)
+                .map_err(|e| js_error_with_context(e, "invalid note fee amount"))?;
+            note_roots.insert(root);
+            fee_policy = fee_policy.with_fee(root, amount);
+        }
 
         let fee_policy_manager = FeePolicyManager::builder()
             .fee_faucet_id(fee_faucet_id.into())
