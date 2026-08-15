@@ -3,6 +3,7 @@ import resolve from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
 import copy from "rollup-plugin-copy";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // `wasm-bindgen-rayon`'s `workerHelpers.js` lives at
 //   <out-dir>/snippets/wasm-bindgen-rayon-XXX/src/workerHelpers.js
@@ -257,6 +258,18 @@ const devMode = process.env.MIDEN_WEB_DEV === "true";
 // release.
 const fastBuild = process.env.MIDEN_FAST_BUILD === "true";
 
+// Production builds strip MASP debug_info sections (~8.5MB of rodata; see
+// tools/strip-masp-debug) via a WASM_OPT_BIN shim, letting the same
+// wasm-opt pass drop the zeroed bytes. Dev/fast builds keep the debug info
+// so VM errors carry assert.err messages and source spans. A pre-existing
+// WASM_OPT_BIN (e.g. CI's native binaryen) is saved for the shim to use.
+if (!devMode && !fastBuild) {
+  process.env.MIDEN_REAL_WASM_OPT = process.env.WASM_OPT_BIN || "wasm-opt";
+  process.env.WASM_OPT_BIN = fileURLToPath(
+    new URL("./scripts/wasm-opt-with-masp-strip.sh", import.meta.url)
+  );
+}
+
 // Arguments to tell cargo to add full debug symbols
 // to the generated .wasm file (dev mode only).
 // Note: strip='none' is already set by cargoArgsLineTablesDebug.
@@ -299,6 +312,11 @@ const wasmOptArgs = [
   "--enable-simd",
   // Preserve the name section through optimization passes.
   "--debuginfo",
+  // Let memory-packing drop zero runs even from the MT build's imported
+  // shared memory, which binaryen won't otherwise assume starts zeroed.
+  // Safe: the SDK always instantiates a fresh (spec-zeroed)
+  // WebAssembly.Memory. Without this, MT keeps ~8MB of zeroed MASP bytes.
+  "--zero-filled-memory",
 ];
 
 // MT-only cargo args. For the MT build we additionally need:

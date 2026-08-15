@@ -4833,6 +4833,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strip-masp-debug"
+version = "0.16.0-rc.1"
+dependencies = [
+ "miden-core",
+ "miden-mast-package",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
