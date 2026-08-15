@@ -1,7 +1,13 @@
 [workspace]
 resolver = "2"
 
-members = ["crates/idxdb-store", "crates/js-export-macro", "crates/mobile-prover", "crates/web-client", "tools/strip-masp-debug"]
+members = [
+  "crates/idxdb-store",
+  "crates/js-export-macro",
+  "crates/mobile-prover",
+  "crates/web-client",
+  "tools/strip-masp-debug",
+]
 
 [workspace.package]
 authors      = ["miden contributors"]
