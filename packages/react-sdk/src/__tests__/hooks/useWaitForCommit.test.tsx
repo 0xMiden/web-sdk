@@ -95,8 +95,13 @@ describe("useWaitForCommit", () => {
       intervalMs: 1,
     });
 
-    expect(mockClient.getTransactions).toHaveBeenCalledWith(
-      TransactionFilter.ids([txId as never])
+    // The id is rebuilt from the snapshotted hex on each poll rather than
+    // reusing the caller's object (`TransactionFilter.ids` consumes it by
+    // value), so assert on the hex rather than on object identity.
+    const [idsArg] = vi.mocked(TransactionFilter.ids).mock.calls.at(-1)!;
+    expect(idsArg).toHaveLength(1);
+    expect((idsArg[0] as unknown as { toHex: () => string }).toHex()).toBe(
+      "0xtx123"
     );
   });
 
