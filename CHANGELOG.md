@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (TBD)
+
+### Fixes
+
+* [FIX][react] Hooks no longer reuse by-value WASM objects across poll/refetch iterations, which zeroed the JS wrapper's pointer on first use and made every later use throw `null pointer passed to rust` (closes [#278](https://github.com/0xMiden/web-sdk/issues/278)). Four sites, each now rebuilding the handle from a snapshotted hex or account reference:
+  * `useWaitForNotes` — `getConsumableNotes` takes `Option<AccountId>` by value, so the single `AccountId` built before the loop was dead after the first poll. The helper therefore only worked when the notes were already present and failed whenever it actually had to wait.
+  * `useWaitForCommit` — `TransactionFilter.ids([txId])` consumed the caller's `TransactionId` on the first poll.
+  * `useTransactionHistory` — the memoised `TransactionId`s were handed to `TransactionFilter.ids` again on every refetch, so the second refetch (e.g. the one driven by a sync tick) threw.
+  * `useTransaction` — `txId.toHex()` was read after `waitForTransactionCommit` had already consumed the handle; the hex is now snapshotted before the call.
+
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements

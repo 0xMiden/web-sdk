@@ -141,8 +141,14 @@ export function useTransaction(): UseTransactionResult {
           client.applyTransaction(txResult, submissionHeight)
         );
 
-        // Deliver private notes if requested
+        // Deliver private notes if requested.
+        // Snapshot the hex before anything can consume the handle:
+        // `waitForTransactionCommit` passes `txId` into `TransactionFilter.ids`,
+        // which takes `Vec<TransactionId>` by value, so wasm-bindgen moves the
+        // handle into WASM and zeroes the JS wrapper's pointer. Reading
+        // `txId.toHex()` afterwards traps with "null pointer passed to rust".
         const txId = txResult.id();
+        const txIdHex = txId.toHex();
         if (options.privateNoteTarget != null) {
           await waitForTransactionCommit(client, runExclusiveSafe, txId);
 
@@ -155,7 +161,7 @@ export function useTransaction(): UseTransactionResult {
           }
         }
 
-        const txSummary = { transactionId: txId.toHex() };
+        const txSummary = { transactionId: txIdHex };
         setStage("complete");
         setResult(txSummary);
         await sync();

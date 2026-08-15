@@ -69,7 +69,14 @@ describe("useTransactionHistory", () => {
 
     await waitFor(() => expect(result.current.record).not.toBeNull());
 
-    expect(TransactionFilter.ids).toHaveBeenCalledWith([txId]);
+    // The ids are rebuilt from the hex snapshot on each refetch rather than
+    // reusing the caller's objects (`TransactionFilter.ids` consumes them by
+    // value), so assert on the hex rather than on object identity.
+    const [idsArg] = vi.mocked(TransactionFilter.ids).mock.calls.at(-1)!;
+    expect(idsArg).toHaveLength(1);
+    expect((idsArg[0] as unknown as { toHex: () => string }).toHex()).toBe(
+      "0xdeadbeef"
+    );
     expect(result.current.status).toBe("committed");
   });
 

@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { useMiden } from "../context/MidenProvider";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
-import type { TransactionId } from "@miden-sdk/miden-sdk";
+import { TransactionFilter, TransactionId } from "@miden-sdk/miden-sdk";
 import type { WaitForCommitOptions } from "../types";
 
 export interface UseWaitForCommitResult {
@@ -45,12 +44,17 @@ export function useWaitForCommit(): UseWaitForCommitResult {
       while (Date.now() < deadline) {
         await (client as unknown as ClientWithTransactions).syncState();
 
+        // `TransactionFilter.ids` takes `Vec<TransactionId>` by value, so
+        // wasm-bindgen moves each id into WASM and zeroes the JS wrapper's
+        // pointer. Reusing the caller's `txId` across iterations traps with
+        // "null pointer passed to rust" on the second poll. `targetHex` is
+        // already a snapshot — rebuild a fresh id from it each time.
         const records = await (
           client as unknown as ClientWithTransactions
         ).getTransactions(
           typeof txId === "string"
             ? TransactionFilter.all()
-            : TransactionFilter.ids([txId])
+            : TransactionFilter.ids([TransactionId.fromHex(targetHex)])
         );
 
         const record = records.find(

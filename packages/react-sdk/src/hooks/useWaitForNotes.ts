@@ -30,7 +30,11 @@ export function useWaitForNotes(): UseWaitForNotesResult {
       const timeoutMs = Math.max(0, options.timeoutMs ?? 10_000);
       const intervalMs = Math.max(1, options.intervalMs ?? 1_000);
       const minCount = Math.max(1, options.minCount ?? 1);
-      const accountId = parseAccountId(options.accountId);
+
+      // Validate the account reference up front so a malformed id still
+      // rejects before the first sync, then release the handle — the ones
+      // actually handed to WASM are rebuilt per poll below.
+      (parseAccountId(options.accountId) as { free?: () => void }).free?.();
 
       let waited = 0;
 
@@ -38,8 +42,15 @@ export function useWaitForNotes(): UseWaitForNotesResult {
         await runExclusiveSafe(() =>
           (client as unknown as ClientWithNotes).syncState()
         );
+        // `getConsumableNotes` takes `Option<AccountId>` by value, so
+        // wasm-bindgen moves the handle out of JS on every call. Reusing one
+        // `AccountId` across iterations traps with "null pointer passed to
+        // rust" on the second poll — i.e. exactly when the wait actually has
+        // to wait. Build a fresh handle each time.
         const consumable = await runExclusiveSafe(() =>
-          (client as unknown as ClientWithNotes).getConsumableNotes(accountId)
+          (client as unknown as ClientWithNotes).getConsumableNotes(
+            parseAccountId(options.accountId)
+          )
         );
         if (consumable.length >= minCount) {
           return consumable;
