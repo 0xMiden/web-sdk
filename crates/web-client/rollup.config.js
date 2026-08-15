@@ -314,8 +314,9 @@ const wasmOptArgs = [
   "--debuginfo",
   // Let memory-packing drop zero runs even from the MT build's imported
   // shared memory, which binaryen won't otherwise assume starts zeroed.
-  // Safe: the SDK always instantiates a fresh (spec-zeroed)
-  // WebAssembly.Memory. Without this, MT keeps ~8MB of zeroed MASP bytes.
+  // Safe: the SDK's loaders always instantiate a fresh (spec-zeroed)
+  // WebAssembly.Memory — do not pass a reused memory to init. Without this
+  // flag the MT binary keeps ~8MB of zeroed-out MASP debug bytes.
   "--zero-filled-memory",
 ];
 

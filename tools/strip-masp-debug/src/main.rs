@@ -1,21 +1,23 @@
 //! Strips MASP `debug_info` sections from Miden packages embedded in a compiled WASM binary.
 //!
 //! The protocol crates `include_bytes!` their MAST packages assembled with debug info — ~8MB
-//! of rodata in the browser bundle — and expose no build-time knob to turn it off. This tool
-//! rewrites each embedded package in place via [`Package::without_debug_info`], padding the
-//! result back to its exact original length with a zero-filled custom section (WASM data
-//! offsets are baked constants and must not move); wasm-opt's memory-packing pass then drops
-//! the zero runs from the emitted file.
+//! of rodata in the browser bundle — and expose no build-time knob to turn it off. The strip
+//! itself is the VM's own [`Package::without_debug_info`]; the work here is locating packages
+//! inside the linked binary and rewriting them without moving any bytes: each stripped package
+//! is padded back to its exact original length with a zero-filled custom section (WASM data
+//! offsets are baked constants), and wasm-opt's memory-packing pass then drops the zero runs
+//! from the emitted file.
 //!
 //! Wired into production builds via the `WASM_OPT_BIN` shim
 //! `crates/web-client/scripts/wasm-opt-with-masp-strip.sh` (see `rollup.config.js`). Dev and
 //! fast builds skip it so VM errors keep `assert.err` messages and source spans.
 
 use std::cmp::Ordering;
+use std::io::Cursor;
 use std::path::Path;
 use std::process::ExitCode;
 
-use miden_core::serde::{ByteReader, Deserializable, DeserializationError, Serializable};
+use miden_core::serde::{Deserializable, Serializable};
 use miden_mast_package::{Package, Section, SectionId};
 
 const MAGIC: &[u8] = b"MASP";
@@ -66,15 +68,17 @@ fn strip_file(path: &Path) -> Result<(usize, usize), String> {
     let mut search_from = 0usize;
     while let Some(rel) = find(&data[search_from..], MAGIC) {
         let off = search_from + rel;
-        // Default advance: past this magic. Overwritten with the package end on success, so a
-        // blob that fails to parse (false-positive magic) is simply skipped.
+        // Default advance: past this magic, so a false-positive match is simply skipped.
         search_from = off + MAGIC.len();
 
-        let mut reader = CountingReader::new(&data[off..]);
-        let Ok(pkg) = Package::read_from(&mut reader) else {
+        // The package length isn't known up front; parsing from the offset consumes exactly
+        // one package, so the cursor position afterwards is the original encoded length.
+        let mut cursor = Cursor::new(&data[off..]);
+        let Ok(pkg) = Package::read_from(&mut cursor) else {
             continue;
         };
-        let orig_len = reader.pos;
+        let orig_len = cursor.position() as usize;
+        search_from = off + orig_len;
 
         let Ok(stripped) = pkg.without_debug_info() else {
             continue;
@@ -83,12 +87,10 @@ fn strip_file(path: &Path) -> Result<(usize, usize), String> {
         let lean_len = stripped.to_bytes().len();
         if lean_len >= orig_len {
             // Nothing to gain (already stripped, or debug-free).
-            search_from = off + orig_len;
             continue;
         }
 
         let Some(padded) = pad_to_len(stripped, orig_len) else {
-            search_from = off + orig_len;
             continue;
         };
 
@@ -103,7 +105,6 @@ fn strip_file(path: &Path) -> Result<(usize, usize), String> {
         data[off..off + orig_len].copy_from_slice(&padded);
         count += 1;
         zeroed += orig_len - lean_len;
-        search_from = off + orig_len;
     }
 
     if count > 0 {
@@ -141,57 +142,4 @@ fn pad_to_len(mut pkg: Package, target: usize) -> Option<Vec<u8>> {
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-/// [`ByteReader`] over a slice that tracks how many bytes were consumed, so the length of a
-/// package embedded mid-file can be recovered after `Package::read_from`.
-struct CountingReader<'a> {
-    source: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> CountingReader<'a> {
-    fn new(source: &'a [u8]) -> Self {
-        Self { source, pos: 0 }
-    }
-}
-
-impl ByteReader for CountingReader<'_> {
-    fn read_u8(&mut self) -> Result<u8, DeserializationError> {
-        self.check_eor(1)?;
-        let byte = self.source[self.pos];
-        self.pos += 1;
-        Ok(byte)
-    }
-
-    fn peek_u8(&self) -> Result<u8, DeserializationError> {
-        self.check_eor(1)?;
-        Ok(self.source[self.pos])
-    }
-
-    fn read_slice(&mut self, len: usize) -> Result<&[u8], DeserializationError> {
-        self.check_eor(len)?;
-        let slice = &self.source[self.pos..self.pos + len];
-        self.pos += len;
-        Ok(slice)
-    }
-
-    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], DeserializationError> {
-        self.check_eor(N)?;
-        let mut result = [0u8; N];
-        result.copy_from_slice(&self.source[self.pos..self.pos + N]);
-        self.pos += N;
-        Ok(result)
-    }
-
-    fn check_eor(&self, num_bytes: usize) -> Result<(), DeserializationError> {
-        if self.pos + num_bytes > self.source.len() {
-            return Err(DeserializationError::UnexpectedEOF);
-        }
-        Ok(())
-    }
-
-    fn has_more_bytes(&self) -> bool {
-        self.pos < self.source.len()
-    }
 }
