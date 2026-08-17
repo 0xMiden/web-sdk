@@ -1,12 +1,12 @@
 # Changelog
 
-## 0.16.0-rc.2 (TBA)
+## 0.16.0-rc.2 (2026-08-17)
 
 ### Changes
 
 * [CHANGE][web] The published WASM binaries are ~30% smaller (single-threaded variant: 27.4MB → 18.8MB). Production builds now strip the debug metadata of the Miden packages embedded in the binary (MASM source spans, `assert.err` message text), so a failed VM assertion reports its error code without the human-readable message. Dev builds (`MIDEN_WEB_DEV=true`) keep full diagnostics. ([web-sdk#297](https://github.com/0xMiden/web-sdk/pull/297))
 
-## 0.16.0-rc.1 (TBA)
+## 0.16.0-rc.1 (2026-08-14)
 
 ### Changes
 
