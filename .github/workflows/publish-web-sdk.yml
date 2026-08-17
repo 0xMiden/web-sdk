@@ -213,8 +213,10 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain stable
 
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # The shared installer verifies the immutable digest recorded in the
+        # repository before extracting the native binary. WASM_OPT_BIN avoids
+        # resolving to the npm package's ~10x slower JS shim.
+        run: ./scripts/install-binaryen.sh
 
       # Single workspace install — used for web-client build (when needed),
       # react-sdk build (which consumes the WASM dist), and vite-plugin build.
@@ -233,34 +235,9 @@ jobs:
 
       - name: Verify WASM is optimized
         if: needs.check-version.outputs.should_publish_web == 'true'
-        # The dist layout used to be a single flat `dist/assets/` tree.
-        # After the ST/MT split (PR #134), each variant has its own
-        # subtree: `dist/st/assets/`, `dist/st/workers/assets/`,
-        # `dist/mt/assets/`, `dist/mt/workers/assets/`. Hard-coding
-        # `dist/assets/` made find error with "No such file or
-        # directory" and bash -e killed the step before the gate even
-        # evaluated. Walk the whole `dist/` tree instead and verify
-        # every .wasm individually — both variants must stay under
-        # 25 MB.
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          wasm_files=$(find crates/web-client/dist -name '*.wasm' -type f)
-          if [ -z "$wasm_files" ]; then
-            echo "::error::No .wasm files found under crates/web-client/dist — build did not produce output."
-            exit 1
-          fi
-          max_size=$((25 * 1024 * 1024))
-          fail=0
-          while IFS= read -r wasm_file; do
-            size=$(stat --format=%s "$wasm_file")
-            echo "WASM size: $((size / 1024 / 1024))MB ($size bytes) — $wasm_file"
-            if [ "$size" -gt "$max_size" ]; then
-              echo "::error::WASM at $wasm_file is $((size / 1024 / 1024))MB — exceeds 25MB limit. wasm-opt likely failed silently."
-              fail=1
-            fi
-          done <<< "$wasm_files"
-          exit "$fail"
+        # The variant-specific limits reject both unoptimized output and a
+        # silently skipped MASP strip while leaving normal growth headroom.
+        run: ./scripts/verify-wasm-size.sh
 
       # ── Node.js platform packages ─────────────────────────────────────
       # Tied to the web-client publish; ship only when web-client itself

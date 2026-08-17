@@ -369,7 +369,7 @@ Two long-lived branches:
 - **`main`** — released to npm under the `latest` tag. Stable.
 - **`next`** — pre-release integration. Released to npm under the `next` tag when a PR carries the `patch release` label.
 
-The publish workflow gates the WASM artifact with a 25 MB upper-bound check — if `wasm-opt` ever silently fails (the rollup plugin swallows errors), the bloated binary never reaches npm.
+The publish workflow gates the optimized WASM artifacts at 25 MiB for ST and 35 MiB for MT. These variant-specific limits reject both an optimizer failure and a skipped MASP debug strip before the package reaches npm.
 
 ---
 

@@ -37,6 +37,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       non_docs: ${{ steps.filter.outputs.non_docs }}
+      release_wasm: ${{ steps.filter.outputs.release_wasm }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -47,12 +48,24 @@ jobs:
               - '!**/*.md'
               - '!**/*.txt'
               - '!docs/**'
+            release_wasm:
+              - '.github/workflows/publish-web-sdk.yml'
+              - '.github/workflows/test.yml'
+              - 'Cargo.lock'
+              - 'crates/web-client/rollup.config.js'
+              - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
+              - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'rust-toolchain.toml'
+              - 'scripts/install-binaryen.sh'
+              - 'scripts/verify-wasm-size.sh'
+              - 'tools/strip-masp-debug/**'
 
   build-web-client-dist-folder:
     # Uses the `release-fast` cargo profile (LTO off, codegen-units=16) and
     # skips wasm-opt — both via the MIDEN_FAST_BUILD env var. The shipped
     # artifact is built with the canonical full-optimization `release`
-    # profile by the `verify-release-build` job (push to main/next only).
+    # profile by the `verify-release-build` job (push to main/next, plus PRs
+    # that change the release-WASM toolchain).
     # sccache + WarpBuilds/rust-cache layer together: rust-cache gives a
     # warm target/ directory, sccache gives finer per-crate caching that
     # survives even when target/ is partially invalidated.
@@ -187,7 +200,8 @@ jobs:
         # gives readable stack traces at a fraction of the cost.
         # MIDEN_FAST_BUILD does the rest (LTO off, codegen-units=16, no
         # wasm-opt). PR CI doesn't ship the artifact — verify-release-build
-        # uses the canonical full profile on push to main/next.
+        # uses the canonical full profile on push to main/next and on PRs
+        # that change the release-WASM toolchain.
         run: MIDEN_FAST_BUILD=true pnpm --filter @miden-sdk/miden-sdk run build
 
       - name: Save cache - dist folder
@@ -208,13 +222,16 @@ jobs:
         run: sccache --show-stats || true
 
   # Verifies the canonical (full-optimization) release build of the WASM
-  # artifact. Runs only on push to main/next so PR CI stays fast — but the
-  # shipped artifact is always exercised before it can land on main.
+  # artifact. Runs on every push to main/next and on PRs that change the
+  # release-WASM toolchain, keeping ordinary PR CI fast while testing build
+  # plumbing before it can merge.
   verify-release-build:
     name: Verify release WASM build
     runs-on: warp-ubuntu-latest-x64-8x
     needs: [changes]
-    if: github.event_name == 'push' && needs.changes.outputs.non_docs == 'true'
+    if: |
+      (github.event_name == 'push' && needs.changes.outputs.non_docs == 'true') ||
+      (github.event_name == 'pull_request' && needs.changes.outputs.release_wasm == 'true')
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
       # action sets RUSTC_WRAPPER=sccache as a step output on success — we
@@ -281,8 +298,8 @@ jobs:
             echo "sccache --start-server failed (rc=$rc); running without wrapper"
           fi
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # Keep release verification byte-for-byte aligned with publishing.
+        run: ./scripts/install-binaryen.sh
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
@@ -308,6 +325,12 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Build project (full release profile)
         run: pnpm --filter @miden-sdk/miden-sdk run build
+      - name: Verify release WASM sizes
+        run: ./scripts/verify-wasm-size.sh
+      - name: Install Chromium for the MT smoke test
+        run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+      - name: Smoke-test the optimized MT artifact
+        run: pnpm --filter @miden-sdk/miden-sdk exec node scripts/verify-release-mt.mjs
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
