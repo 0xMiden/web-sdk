@@ -119,25 +119,45 @@ fn strip_file(path: &Path) -> Result<(usize, usize), String> {
 /// Re-serializes `pkg` padded to exactly `target` bytes with a zero-filled custom section, so
 /// baked WASM pointers and `include_bytes!` lengths stay valid while memory-packing drops the
 /// zeros from the emitted file.
-fn pad_to_len(mut pkg: Package, target: usize) -> Option<Vec<u8>> {
-    let id = SectionId::custom(PAD_SECTION_ID).ok()?;
-    pkg.sections.push(Section { id, data: Vec::new().into() });
-    let base = pkg.to_bytes().len();
-    if base > target {
-        return None;
-    }
+///
+/// A section frames both its id and its data length as vint64s, so for a *fixed* id the reachable
+/// serialized lengths skip the one value just past each 7-bit data-length boundary (deficits of
+/// exactly 128, 16385, 2097154, … bytes). When such a gap lands on `target`, a single data-length
+/// choice can never hit it — with the caller now treating an un-paddable package as a hard error,
+/// that would break the release build. Lengthening the padding section's id by one byte shifts the
+/// framing off the boundary, so trying a few id lengths makes every reachable target exact.
+/// Returns `None` only when even an empty padding section already overshoots `target`.
+fn pad_to_len(pkg: Package, target: usize) -> Option<Vec<u8>> {
+    for extra in 0..=4usize {
+        // '-' is a valid section-id character and the base id already starts with a letter, so an
+        // extended id stays a well-formed custom section id.
+        let id_name: String =
+            PAD_SECTION_ID.chars().chain(std::iter::repeat_n('-', extra)).collect();
+        let Ok(id) = SectionId::custom(&id_name) else { continue };
 
-    // The section framing encodes the data length as a varint, so growing the padding can grow
-    // the framing by a byte or two; iterate until the total lands exactly on target.
-    let mut pad_len = target - base;
-    for _ in 0..8 {
-        pkg.sections.last_mut().expect("padding section was just pushed").data =
-            vec![0u8; pad_len].into();
-        let bytes = pkg.to_bytes();
-        match bytes.len().cmp(&target) {
-            Ordering::Equal => return Some(bytes),
-            Ordering::Greater => pad_len = pad_len.checked_sub(bytes.len() - target)?,
-            Ordering::Less => pad_len += target - bytes.len(),
+        let mut padded = pkg.clone();
+        padded.sections.push(Section { id, data: Vec::new().into() });
+        let base = padded.to_bytes().len();
+        if base > target {
+            // Even an empty padding section overshoots; a longer id only makes it worse.
+            return None;
+        }
+
+        // The data length's varint framing can grow by a byte as the padding grows, so iterate
+        // until the total lands exactly on target, or give up on this id and try a longer one.
+        let mut pad_len = target - base;
+        for _ in 0..8 {
+            padded.sections.last_mut().expect("padding section was just pushed").data =
+                vec![0u8; pad_len].into();
+            let bytes = padded.to_bytes();
+            match bytes.len().cmp(&target) {
+                Ordering::Equal => return Some(bytes),
+                Ordering::Greater => match pad_len.checked_sub(bytes.len() - target) {
+                    Some(n) => pad_len = n,
+                    None => break,
+                },
+                Ordering::Less => pad_len += target - bytes.len(),
+            }
         }
     }
     None
@@ -278,12 +298,18 @@ mod tests {
 
     #[test]
     fn padding_handles_varint_boundaries() {
-        for extra in [32, 127, 128, 255, 16_383, 16_384] {
+        // Sweep a contiguous range of deficits across the 1->2-byte data-length varint boundary
+        // (~+128), plus values straddling the 2->3-byte boundary (~+16384). Every target must be
+        // reachable exactly: for a fixed padding id, the value just past each boundary is
+        // unreachable, so a contiguous sweep (not a hand-picked set) is what exercises the gap.
+        let deficits = (100usize..=300).chain([16_399, 16_400, 16_401, 16_402, 16_403]);
+        for extra in deficits {
             let package = empty_package("padding");
             let digest = package.digest();
             let target = package.to_bytes().len() + extra;
-            let padded = pad_to_len(package, target).expect("padding should converge");
-            assert_eq!(padded.len(), target);
+            let padded = pad_to_len(package, target)
+                .unwrap_or_else(|| panic!("padding should converge for deficit +{extra}"));
+            assert_eq!(padded.len(), target, "wrong length at deficit +{extra}");
             assert_eq!(Package::read_from_bytes_trusted(&padded).unwrap().digest(), digest);
         }
     }
