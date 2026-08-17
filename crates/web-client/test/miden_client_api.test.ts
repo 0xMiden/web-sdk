@@ -916,7 +916,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   });
 
   mockTest(
-    "transactions.preview returns a TransactionSummary",
+    "transactions.preview returns a TransactionSummary with storage-delta accessors",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -935,11 +935,28 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           amount: 1000n,
         });
 
+        const storage = summary.accountDelta().storage();
+        const valueDeltas = storage.valueDeltas();
+        const maps = storage.maps();
+
         return {
           hasSummary: summary != null,
           hasOutputNotes: typeof summary.outputNotes === "function",
           outputNotesCount: summary.outputNotes().numNotes(),
           hasAccountDelta: typeof summary.accountDelta === "function",
+          // New storage-delta accessors.
+          hasValueDeltas: typeof storage.valueDeltas === "function",
+          hasMaps: typeof storage.maps === "function",
+          valueDeltasIsArray: Array.isArray(valueDeltas),
+          mapsIsArray: Array.isArray(maps),
+          // Shape of a value-slot delta, if any (a faucet mint mutates a value slot).
+          valueDeltaCount: valueDeltas.length,
+          firstSlotNameType: valueDeltas[0]
+            ? typeof valueDeltas[0].slotName
+            : null,
+          firstValueHex: valueDeltas[0] ? valueDeltas[0].value.toHex() : null,
+          // The bare values() list stays available and aligned in length.
+          valuesCount: storage.values().length,
         };
       });
 
@@ -947,6 +964,16 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.hasOutputNotes).toBe(true);
       expect(result.outputNotesCount).toBeGreaterThan(0);
       expect(result.hasAccountDelta).toBe(true);
+      expect(result.hasValueDeltas).toBe(true);
+      expect(result.hasMaps).toBe(true);
+      expect(result.valueDeltasIsArray).toBe(true);
+      expect(result.mapsIsArray).toBe(true);
+      // valueDeltas() and values() describe the same value slots.
+      expect(result.valueDeltaCount).toBe(result.valuesCount);
+      // A basic fungible faucet mint updates its issuance value slot.
+      expect(result.valueDeltaCount).toBeGreaterThan(0);
+      expect(result.firstSlotNameType).toBe("string");
+      expect(result.firstValueHex).toMatch(/^0x[0-9a-f]+$/);
     }
   );
 

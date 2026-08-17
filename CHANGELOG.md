@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.10 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `AccountStorageDelta` now exposes storage changes with their slot names and full map deltas. `valueDeltas()` returns `{ slotName, value }` per changed value slot (the existing `values()` still returns bare `Word[]`), and `maps()` returns `{ slotName, entries() }` where each entry is `{ key, value }` (both `Word`). This lets consumers read storage-map changes — e.g. multisig signer sets or per-procedure thresholds — and label value-slot changes from a `TransactionSummary.accountDelta().storage()`. ([web-sdk#NN](https://github.com/0xMiden/web-sdk/pull/NN))
+
+```ts
+const storage = summary.accountDelta().storage();
+for (const v of storage.valueDeltas()) {
+  console.log(v.slotName, v.value.toHex());
+}
+for (const m of storage.maps()) {
+  for (const e of m.entries()) console.log(m.slotName, e.key.toHex(), "->", e.value.toHex());
+}
+```
+
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements
