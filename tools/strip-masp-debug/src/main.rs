@@ -290,7 +290,14 @@ mod tests {
         {
             assert_eq!(reparsed.digest(), digest);
             assert!(!reparsed.sections.iter().any(|section| section.id.is_debug()));
-            assert!(reparsed.sections.iter().any(|section| section.id.as_str() == PAD_SECTION_ID));
+            // The padding id may gain trailing '-' bytes when a package's length lands on a
+            // varint-framing gap (see pad_to_len), so match the prefix, not the exact string.
+            assert!(
+                reparsed
+                    .sections
+                    .iter()
+                    .any(|section| section.id.as_str().starts_with(PAD_SECTION_ID))
+            );
         }
 
         assert_eq!(strip_file(&file.0).unwrap(), (0, 0));
@@ -298,11 +305,12 @@ mod tests {
 
     #[test]
     fn padding_handles_varint_boundaries() {
-        // Sweep a contiguous range of deficits across the 1->2-byte data-length varint boundary
-        // (~+128), plus values straddling the 2->3-byte boundary (~+16384). Every target must be
-        // reachable exactly: for a fixed padding id, the value just past each boundary is
-        // unreachable, so a contiguous sweep (not a hand-picked set) is what exercises the gap.
-        let deficits = (100usize..=300).chain([16_399, 16_400, 16_401, 16_402, 16_403]);
+        // Sweep contiguous ranges of deficits across the 1->2-byte (~+128) and 2->3-byte
+        // (~+16384) data-length varint boundaries. For a fixed padding id the value just past each
+        // boundary is unreachable, so a contiguous sweep (not hand-picked points) is what actually
+        // exercises the gap — and staying contiguous keeps the test honest if PAD_SECTION_ID's
+        // length ever changes and shifts where the gap falls.
+        let deficits = (100usize..=300).chain(16_380..=16_420);
         for extra in deficits {
             let package = empty_package("padding");
             let digest = package.digest();
@@ -310,7 +318,12 @@ mod tests {
             let padded = pad_to_len(package, target)
                 .unwrap_or_else(|| panic!("padding should converge for deficit +{extra}"));
             assert_eq!(padded.len(), target, "wrong length at deficit +{extra}");
-            assert_eq!(Package::read_from_bytes_trusted(&padded).unwrap().digest(), digest);
+            let reparsed = Package::read_from_bytes_trusted(&padded).unwrap();
+            assert_eq!(reparsed.digest(), digest, "padding changed the digest at deficit +{extra}");
+            assert!(
+                reparsed.sections.iter().any(|s| s.id.as_str().starts_with(PAD_SECTION_ID)),
+                "padding section missing at deficit +{extra}"
+            );
         }
     }
 
