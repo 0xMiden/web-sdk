@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import Dexie from "dexie";
 import {
   openDatabase,
@@ -317,12 +317,83 @@ describe("ensureClientVersion: empty clientVersion", () => {
   it("skips version enforcement when clientVersion is empty string", async () => {
     const name = uniqueDbName();
     const mdb = trackMidenDb(new MidenDatabase(name));
-    // Pass empty string — should open successfully and skip enforcement
     const success = await mdb.open("");
     expect(success).toBe(true);
-
     // No version record should be stored
     const versionRecord = await mdb.settings.get(CLIENT_VERSION_SETTING_KEY);
     expect(versionRecord).toBeUndefined();
+  });
+});
+
+// ============================================================
+// Concurrent openDatabase & Version Reset Race (Issue #287)
+// ============================================================
+describe("concurrent openDatabase initialization (Issue #287)", () => {
+  it("handles concurrent openDatabase calls during a store reset without race conditions", async () => {
+    const name = uniqueDbName();
+
+    // 1. Initialize DB with version 1.0.0
+    await openDatabase(name, "1.0.0");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("old-data"),
+    });
+    db1.dexie.close();
+
+    // 2. Simulate concurrent initialization from Main Thread and Web Worker with new major version 2.0.0
+    const [res1, res2] = await Promise.all([
+      openDatabase(name, "2.0.0"),
+      openDatabase(name, "2.0.0"),
+    ]);
+
+    expect(res1).toBe(name);
+    expect(res2).toBe(name);
+
+    const activeDb = getDatabase(name);
+    openMidenDbs.push(activeDb);
+
+    // Assert DB is open and functioning
+    expect(activeDb.dexie.isOpen()).toBe(true);
+
+    // Version is updated to 2.0.0
+    const versionRecord = await activeDb.settings.get(
+      CLIENT_VERSION_SETTING_KEY
+    );
+    expect(versionRecord).toBeDefined();
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("2.0.0");
+
+    // Old sentinel was cleaned during reset
+    const sentinel = await activeDb.settings.get("sentinel");
+    expect(sentinel).toBeUndefined();
+  });
+
+  it("works with navigator.locks when available in browser/worker environments", async () => {
+    const name = uniqueDbName();
+
+    const mockLocks = {
+      request: vi.fn(
+        async (_lockName: string, callback: () => Promise<unknown>) => {
+          return await callback();
+        }
+      ),
+    };
+
+    vi.stubGlobal("navigator", { locks: mockLocks });
+
+    try {
+      const dbId = await openDatabase(name, "3.0.0");
+      expect(dbId).toBe(name);
+      expect(mockLocks.request).toHaveBeenCalledWith(
+        `miden-db-init:${name}`,
+        expect.any(Function)
+      );
+      const db = getDatabase(name);
+      openMidenDbs.push(db);
+      expect(db.dexie.isOpen()).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
