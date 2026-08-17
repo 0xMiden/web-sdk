@@ -314,9 +314,12 @@ const wasmOptArgs = [
   "--debuginfo",
   // Let memory-packing drop zero runs even from the MT build's imported
   // shared memory, which binaryen won't otherwise assume starts zeroed.
-  // Safe: the SDK's loaders always instantiate a fresh (spec-zeroed)
-  // WebAssembly.Memory — do not pass a reused memory to init. Without this
-  // flag the MT binary keeps ~8MB of zeroed-out MASP debug bytes.
+  // Safe for the SDK's init paths: the primary MT instance creates fresh
+  // spec-zeroed memory; Rayon workers reuse that memory only after its data
+  // segments were initialized, and code never writes to the omitted static
+  // zero ranges. Do not add a public init path for arbitrary pre-populated
+  // memory without revisiting this assumption. Without this flag the MT
+  // binary keeps ~8MB of zeroed-out MASP debug bytes.
   "--zero-filled-memory",
 ];
 

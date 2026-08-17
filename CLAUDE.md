@@ -95,7 +95,7 @@ Both branches have protection enabled; required status checks mirror across the 
 
 The release-publish gate compares the local `package.json` version against the **npm registry** (not against the previous git commit) — see `scripts/check-{web-client,react-sdk,vite-plugin}-version-release.sh`. So a release tag publishes whichever of the four packages have versions not yet on npm; bumping a single package is a clean release of just that one.
 
-WASM size is gated at 25 MB in the publish workflow — if `wasm-opt` ever silently fails, the bloated binary never reaches npm.
+Release WASM size is gated at 25 MiB for ST and 35 MiB for MT. These limits reject both a `wasm-opt` failure and a skipped MASP debug strip before publishing.
 
 Crate publishing (`miden-idxdb-store`, `miden-client-web`) goes through `.github/workflows/publish-crates-release.yml` and uses the `CARGO_REGISTRY_TOKEN` org secret.
 
