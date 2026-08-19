@@ -135,6 +135,11 @@ function ExecuteButton({ multisigId, request, anchor }) {
 Both hooks reject with `code: "OPERATION_BUSY"` if called while a previous call
 is still in flight.
 
+Both are also scoped to the client that produced them. Changing clients clears
+`anchor` and `summary`, and a call still in flight across the swap rejects with
+`code: "STALE_CLIENT"` rather than returning a value bound to the chain you
+left. Capture again on the new client.
+
 ## Notes
 
 - **Verify anchors from untrusted parties.** An anchor validates its own

@@ -270,6 +270,78 @@ describe("usePreview", () => {
     });
   });
 
+  describe("client swap", () => {
+    it("drops the derived summary when the client changes", async () => {
+      const mockClient = createMockWebClient({
+        executeForSummary: vi
+          .fn()
+          .mockResolvedValue(createMockTransactionSummary()),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result, rerender } = renderHook(() => usePreview());
+
+      await act(async () => {
+        await result.current.preview({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+      expect(result.current.summary).not.toBeNull();
+
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+      });
+      rerender();
+
+      expect(result.current.summary).toBeNull();
+      expect(result.current.error).toBeNull();
+    });
+
+    it("rejects a preview that lands after the client changed", async () => {
+      let release: (value: unknown) => void = () => {};
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const mockClient = createMockWebClient({
+        executeForSummary: vi.fn(async () => {
+          await gate;
+          return createMockTransactionSummary();
+        }),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result, rerender } = renderHook(() => usePreview());
+
+      let derived: Promise<unknown> = Promise.resolve();
+      act(() => {
+        derived = result.current.preview({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+      });
+      rerender();
+
+      await act(async () => {
+        release(undefined);
+        await expect(derived).rejects.toMatchObject({
+          code: "STALE_CLIENT",
+        });
+      });
+
+      // The summary is bound to the chain we left, so it must reach neither
+      // state nor the caller — and it must not re-dirty the cleared error.
+      expect(result.current.summary).toBeNull();
+      expect(result.current.error).toBeNull();
+    });
+  });
+
   describe("reset", () => {
     it("clears the summary and error", async () => {
       const mockClient = createMockWebClient();

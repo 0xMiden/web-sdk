@@ -1280,7 +1280,9 @@ and `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
-call is in flight.
+call is in flight, and with `code: "STALE_CLIENT"` if the client changes
+mid-call — an anchor and a summary are both bound to one chain, so changing
+clients also clears `anchor` and `summary`.
 
 An anchor validates its own internal consistency on `deserialize`, so it can
 never be malformed — but it can be pinned to the wrong block. When it came from

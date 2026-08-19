@@ -102,7 +102,11 @@ export function usePreview(): UsePreviewResult {
         return derived;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setError(error);
+        // A stale summary is an artifact of the client we left, so it belongs
+        // in the rejection but not in the state the swap just cleared.
+        if (!(error instanceof MidenError && error.code === "STALE_CLIENT")) {
+          setError(error);
+        }
         throw error;
       } finally {
         setIsPreviewing(false);

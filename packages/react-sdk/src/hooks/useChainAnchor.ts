@@ -94,7 +94,11 @@ export function useChainAnchor(): UseChainAnchorResult {
         return captured;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setError(error);
+        // A stale capture is an artifact of the client we left, so it belongs
+        // in the rejection but not in the state the swap just cleared.
+        if (!(error instanceof MidenError && error.code === "STALE_CLIENT")) {
+          setError(error);
+        }
         throw error;
       } finally {
         setIsCapturing(false);

@@ -277,12 +277,15 @@ describe("useChainAnchor", () => {
 
       await act(async () => {
         release(undefined);
-        await expect(captured).rejects.toThrow(/client changed/i);
+        await expect(captured).rejects.toMatchObject({
+          code: "STALE_CLIENT",
+        });
       });
 
-      // The anchor belongs to the chain we left, so it must not be published
-      // to state or returned to the caller.
+      // The anchor belongs to the chain we left, so it must reach neither
+      // state nor the caller — and it must not re-dirty the cleared error.
       expect(result.current.anchor).toBeNull();
+      expect(result.current.error).toBeNull();
     });
   });
 
