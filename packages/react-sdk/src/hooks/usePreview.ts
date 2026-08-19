@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import type { TransactionSummary, PreviewTransactionOptions } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
@@ -54,6 +54,7 @@ export function usePreview(): UsePreviewResult {
   const { client, isReady, runExclusive } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
   const isBusyRef = useRef(false);
+  const clientRef = useRef(client);
 
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
@@ -91,6 +92,12 @@ export function usePreview(): UsePreviewResult {
               )
             : client.executeForSummary(accountIdObj, txRequest);
         });
+        if (clientRef.current !== client) {
+          throw new MidenError(
+            "The client changed while the summary was being derived; re-derive it on the new chain.",
+            { code: "STALE_CLIENT" }
+          );
+        }
         setSummary(derived);
         return derived;
       } catch (err) {
@@ -110,6 +117,14 @@ export function usePreview(): UsePreviewResult {
     setIsPreviewing(false);
     setError(null);
   }, []);
+
+  // A summary binds the reference block commitment, so it is no more portable
+  // across chains than the anchor it was derived at. Mirrors `useChainAnchor`.
+  useEffect(() => {
+    clientRef.current = client;
+    setSummary(null);
+    setError(null);
+  }, [client]);
 
   return {
     preview,

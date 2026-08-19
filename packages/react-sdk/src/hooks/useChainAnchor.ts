@@ -53,6 +53,7 @@ export function useChainAnchor(): UseChainAnchorResult {
   const { client, isReady, runExclusive } = useMiden();
   const runExclusiveSafe = runExclusive ?? runExclusiveDirect;
   const isBusyRef = useRef(false);
+  const clientRef = useRef(client);
 
   const [anchor, setAnchor] = useState<ChainAnchor | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -83,6 +84,12 @@ export function useChainAnchor(): UseChainAnchorResult {
         const captured = await runExclusiveSafe(() =>
           client.chainAnchorForRequest(txRequest)
         );
+        if (clientRef.current !== client) {
+          throw new MidenError(
+            "The client changed while the anchor was being captured; recapture it on the new chain.",
+            { code: "STALE_CLIENT" }
+          );
+        }
         setAnchor(captured);
         return captured;
       } catch (err) {
@@ -105,8 +112,11 @@ export function useChainAnchor(): UseChainAnchorResult {
 
   // An anchor is bound to one chain. Carrying it across a client swap would
   // replay against a header from the wrong network and fail somewhere deep in
-  // the executor, rather than pointing at the stale capture.
+  // the executor, rather than pointing at the stale capture. `clientRef` also
+  // lets an in-flight capture notice the swap: it would otherwise resolve after
+  // this effect and publish an anchor for the chain we just left.
   useEffect(() => {
+    clientRef.current = client;
     setAnchor(null);
     setError(null);
   }, [client]);

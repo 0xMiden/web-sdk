@@ -694,6 +694,8 @@ export class TransactionsResource {
    *
    * @param {TransactionRequest} request - The request the anchor is captured for.
    * @returns {Promise<ChainAnchor>} An anchor pinned to the current sync height.
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` if a sync lands
+   * mid-capture and leaves the anchor internally inconsistent. Retry.
    */
   async captureAnchor(request) {
     this.#client.assertNotTerminated();

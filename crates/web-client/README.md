@@ -538,6 +538,7 @@ await shipToCosigners(anchor.serialize(), summary.serialize());
 
 // Co-signer: re-derive at the proposer's anchor and compare before signing.
 const received = ChainAnchor.deserialize(anchorBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
 const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,

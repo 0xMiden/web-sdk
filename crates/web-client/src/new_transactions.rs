@@ -492,6 +492,11 @@ impl WebClient {
     /// event to surface the summary for signing. Capture the anchor first, derive the summary
     /// with `executeForSummaryAt`, and ship the anchor alongside the signed data; the same anchor
     /// then reproduces the summary during later verification and execution.
+    ///
+    /// # Errors
+    ///
+    /// Fails with code `INVALID_CHAIN_ANCHOR` if the captured block header and blockchain peaks
+    /// are inconsistent, which happens when a sync lands mid-capture. Retrying is the fix.
     #[js_export(js_name = "chainAnchorForRequest")]
     pub async fn chain_anchor_for_request(
         &self,

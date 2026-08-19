@@ -246,6 +246,44 @@ describe("useChainAnchor", () => {
       expect(result.current.anchor).toBeNull();
       expect(result.current.error).toBeNull();
     });
+
+    it("rejects a capture that lands after the client changed", async () => {
+      let release: (value: unknown) => void = () => {};
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const firstClient = createMockWebClient();
+      firstClient.chainAnchorForRequest = vi.fn(async () => {
+        await gate;
+        return createMockChainAnchor();
+      });
+      mockUseMiden.mockReturnValue({ client: firstClient, isReady: true });
+
+      const { result, rerender } = renderHook(() => useChainAnchor());
+
+      let captured: Promise<unknown> = Promise.resolve();
+      act(() => {
+        captured = result.current.captureAnchor({
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      // Swap the client while the capture is still in flight.
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+      });
+      rerender();
+
+      await act(async () => {
+        release(undefined);
+        await expect(captured).rejects.toThrow(/client changed/i);
+      });
+
+      // The anchor belongs to the chain we left, so it must not be published
+      // to state or returned to the caller.
+      expect(result.current.anchor).toBeNull();
+    });
   });
 
   describe("reset", () => {

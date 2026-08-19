@@ -1108,6 +1108,9 @@ export interface TransactionsResource {
    * await client.transactions.submit(account, request, { anchor });
    * ```
    *
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` if a sync lands
+   * mid-capture and leaves the anchor internally inconsistent. Retry.
+   *
    * @param request - The request the anchor is captured for.
    * @returns An anchor pinned to the current sync height.
    */
