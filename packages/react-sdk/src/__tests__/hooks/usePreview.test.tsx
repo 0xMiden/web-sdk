@@ -340,6 +340,42 @@ describe("usePreview", () => {
       expect(result.current.summary).toBeNull();
       expect(result.current.error).toBeNull();
     });
+
+    it("keeps a failure from the abandoned client out of error state", async () => {
+      let reject: (reason: unknown) => void = () => {};
+      const gate = new Promise((_, rej) => {
+        reject = rej;
+      });
+      const mockClient = createMockWebClient({
+        executeForSummary: vi.fn(() => gate),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result, rerender } = renderHook(() => usePreview());
+
+      let derived: Promise<unknown> = Promise.resolve();
+      act(() => {
+        derived = result.current.preview({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+      });
+      rerender();
+
+      await act(async () => {
+        reject(new Error("old chain fell over"));
+        await expect(derived).rejects.toThrow("old chain fell over");
+      });
+
+      // The caller still sees it, but it must not surface as an error about
+      // the chain the user has already moved to.
+      expect(result.current.error).toBeNull();
+    });
   });
 
   describe("reset", () => {
