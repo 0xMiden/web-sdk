@@ -94,9 +94,10 @@ export function useChainAnchor(): UseChainAnchorResult {
         return captured;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        // A stale capture is an artifact of the client we left, so it belongs
-        // in the rejection but not in the state the swap just cleared.
-        if (!(error instanceof MidenError && error.code === "STALE_CLIENT")) {
+        // Anything the client we left produced — including a plain failure —
+        // is an artifact of that chain, so it belongs in the rejection but not
+        // in the state the swap just cleared.
+        if (clientRef.current === client) {
           setError(error);
         }
         throw error;

@@ -287,6 +287,40 @@ describe("useChainAnchor", () => {
       expect(result.current.anchor).toBeNull();
       expect(result.current.error).toBeNull();
     });
+
+    it("keeps a failure from the abandoned client out of error state", async () => {
+      let reject: (reason: unknown) => void = () => {};
+      const gate = new Promise((_, rej) => {
+        reject = rej;
+      });
+      const firstClient = createMockWebClient();
+      firstClient.chainAnchorForRequest = vi.fn(() => gate);
+      mockUseMiden.mockReturnValue({ client: firstClient, isReady: true });
+
+      const { result, rerender } = renderHook(() => useChainAnchor());
+
+      let captured: Promise<unknown> = Promise.resolve();
+      act(() => {
+        captured = result.current.captureAnchor({
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+      });
+      rerender();
+
+      await act(async () => {
+        reject(new Error("old chain fell over"));
+        await expect(captured).rejects.toThrow("old chain fell over");
+      });
+
+      // The caller still sees it, but it must not surface as an error about
+      // the chain the user has already moved to.
+      expect(result.current.error).toBeNull();
+    });
   });
 
   describe("reset", () => {

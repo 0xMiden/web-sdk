@@ -136,9 +136,11 @@ Both hooks reject with `code: "OPERATION_BUSY"` if called while a previous call
 is still in flight.
 
 Both are also scoped to the client that produced them. Changing clients clears
-`anchor` and `summary`, and a call still in flight across the swap rejects with
-`code: "STALE_CLIENT"` rather than returning a value bound to the chain you
-left. Capture again on the new client.
+`anchor`, `summary`, and `error`, and a call still in flight across the swap
+rejects rather than returning a value bound to the chain you left — with
+`code: "STALE_CLIENT"` if it would otherwise have succeeded. Nothing from the
+abandoned client reaches `error` state either, so handle these rejections at
+the call site. Capture again on the new client.
 
 ## Notes
 
