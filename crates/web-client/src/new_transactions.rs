@@ -505,7 +505,7 @@ impl WebClient {
         maybe_wrap_send(fut)
             .await
             .map(ChainAnchor::from)
-            .map_err(|err| js_error_with_context(err, "failed to capture chain anchor"))
+            .map_err(|err| map_anchor_err(err, "failed to capture chain anchor"))
     }
 
     /// Executes a transaction against the specified account using `anchor` as the reference block
@@ -537,7 +537,10 @@ impl WebClient {
             transaction_request.into(),
             anchor.into(),
         ));
-        maybe_wrap_send(fut).await.map(TransactionResult::from).map_err(map_anchor_err)
+        maybe_wrap_send(fut)
+            .await
+            .map(TransactionResult::from)
+            .map_err(|err| map_anchor_err(err, "failed to execute transaction at anchor"))
     }
 
     /// Executes a transaction at `anchor` and returns the `TransactionSummary` the account is
@@ -575,7 +578,7 @@ impl WebClient {
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
-            Err(err) => Err(map_anchor_err(err)),
+            Err(err) => Err(map_anchor_err(err, "failed to execute transaction at anchor")),
         }
     }
 
@@ -768,18 +771,23 @@ impl WebClient {
     }
 }
 
-/// Maps an anchored-execution failure to a JS error, tagging anchor-validation failures with a
-/// machine-readable code.
+/// Maps an anchor-path failure to a JS error, tagging anchor-validation failures with a
+/// machine-readable code so callers can retry the capture rather than surface a generic error.
 ///
-/// The likely caller mistake is pairing an anchor with a request whose authenticated input notes
-/// it does not track, which callers need to distinguish from a generic execution failure in order
-/// to prompt for a fresh capture. The rest of the surface establishes this pattern with
-/// `TRANSACTION_ALREADY_AUTHORIZED`.
-fn map_anchor_err(err: ClientError) -> JsErr {
+/// In practice this fires during capture: the anchor is assembled from three separate store reads
+/// (sync height, that block's header, the current blockchain peaks) and validated for mutual
+/// consistency, so a sync landing from another tab mid-capture yields an inconsistent anchor.
+/// Retrying is the correct response, which is why it is worth distinguishing.
+///
+/// Execution-time anchor rejections do not currently reach this arm — upstream stringifies them
+/// into `DataStoreError::other` rather than surfacing `ClientError::ChainAnchorError` — so they
+/// arrive as plain messages. They are routed through here anyway so they pick the code up if that
+/// changes; don't document a code for them until it does.
+fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
     match err {
         ClientError::ChainAnchorError(anchor_err) => {
             from_str_err_with_code(&anchor_err.to_string(), "INVALID_CHAIN_ANCHOR")
         },
-        err => js_error_with_context(err, "failed to execute transaction at anchor"),
+        err => js_error_with_context(err, context),
     }
 }

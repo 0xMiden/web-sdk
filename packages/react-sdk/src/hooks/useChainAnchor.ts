@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import type { ChainAnchor, CaptureAnchorOptions } from "../types";
 import { runExclusiveDirect } from "../utils/runExclusive";
@@ -102,6 +102,14 @@ export function useChainAnchor(): UseChainAnchorResult {
     setIsCapturing(false);
     setError(null);
   }, []);
+
+  // An anchor is bound to one chain. Carrying it across a client swap would
+  // replay against a header from the wrong network and fail somewhere deep in
+  // the executor, rather than pointing at the stale capture.
+  useEffect(() => {
+    setAnchor(null);
+    setError(null);
+  }, [client]);
 
   return {
     captureAnchor,

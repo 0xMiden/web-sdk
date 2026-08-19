@@ -60,7 +60,10 @@ anchor**. Deriving it at the local sync height produces a different summary, so
 the comparison would always fail.
 
 ```tsx
-import { ChainAnchor, TransactionSummary, usePreview } from "@miden-sdk/react";
+import { usePreview } from "@miden-sdk/react";
+// `@miden-sdk/react` re-exports these as types only — import the runtime
+// classes from the SDK package to call their static `deserialize`.
+import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
 
 function VerifyProposal({ multisigId, request, anchorBytes, summaryBytes }) {
   const { preview, isPreviewing, error } = usePreview();

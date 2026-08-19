@@ -99,6 +99,51 @@ test.describe("chain anchor", () => {
     expect(result.executedBlock).toEqual(result.blockNum);
   });
 
+  test("execution rejects a note created after the anchored block", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      // Anchor at the tip *before* the note exists.
+      const probe = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+      const anchor = await client.chainAnchorForRequest(probe);
+      const anchorBlock = anchor.blockNum();
+
+      // Mint a note, which lands in a block after the anchor.
+      const { createdNoteId } = await helpers.mockMint(
+        wallet.id(),
+        faucet.id()
+      );
+
+      const inputNote = await client.getInputNote(createdNoteId);
+      const consumeRequest = client.newConsumeTransactionRequest([
+        inputNote.toNote(),
+      ]);
+
+      let errorMessage = null;
+      try {
+        await client.executeTransactionAt(wallet.id(), consumeRequest, anchor);
+      } catch (e) {
+        errorMessage = String(e);
+      }
+
+      return { errorMessage, anchorBlock };
+    });
+
+    expect(result.errorMessage).toMatch(
+      /created in a block past the transaction reference block/
+    );
+    // The reference block it complains about is the anchor's, not the tip —
+    // proof the anchor was honored rather than silently ignored.
+    expect(result.errorMessage).toContain(`(${result.anchorBlock})`);
+  });
+
   test("deserialize rejects bytes that are not a valid anchor", async ({
     run,
   }) => {

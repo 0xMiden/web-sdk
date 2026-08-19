@@ -222,6 +222,32 @@ describe("useChainAnchor", () => {
     });
   });
 
+  describe("client swap", () => {
+    it("drops the captured anchor when the client changes", async () => {
+      const firstClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: firstClient, isReady: true });
+
+      const { result, rerender } = renderHook(() => useChainAnchor());
+
+      await act(async () => {
+        await result.current.captureAnchor({
+          request: createMockTransactionRequest(),
+        });
+      });
+      expect(result.current.anchor).not.toBeNull();
+
+      // An anchor from the previous chain must not survive the swap.
+      mockUseMiden.mockReturnValue({
+        client: createMockWebClient(),
+        isReady: true,
+      });
+      rerender();
+
+      expect(result.current.anchor).toBeNull();
+      expect(result.current.error).toBeNull();
+    });
+  });
+
   describe("reset", () => {
     it("clears the captured anchor and error", async () => {
       const mockClient = createMockWebClient();
