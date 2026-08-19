@@ -191,7 +191,7 @@ await shipToCosigners({
 });
 
 // ── Co-signer ─────────────────────────────────────────────
-const anchor = ChainAnchor.deserialize(anchorBytes);
+const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
 
 // Re-derive at the proposer's anchor and compare before signing. Deriving at
@@ -200,14 +200,14 @@ const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,
   request,
-  anchor,
+  anchor: received,
 });
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
   throw new Error("proposal does not match the summary presented for signing");
 }
 
 // ── Executor ──────────────────────────────────────────────
-await client.transactions.submit(multisig, request, { anchor });
+await client.transactions.submit(multisig, request, { anchor: received });
 ```
 
 Notes on anchors:

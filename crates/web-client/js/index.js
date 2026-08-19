@@ -956,11 +956,13 @@ class WebClient {
         }
 
         const wasm = await getWasmOrThrow();
+        const serializedTransactionRequest = transactionRequest.serialize();
+        const serializedAnchor = anchor.serialize();
         const serializedResultBytes = await this.callMethodWithWorker(
           MethodName.EXECUTE_TRANSACTION_AT,
           accountId.toString(),
-          transactionRequest.serialize(),
-          anchor.serialize()
+          serializedTransactionRequest,
+          serializedAnchor
         );
 
         return wasm.TransactionResult.deserialize(

@@ -537,19 +537,19 @@ const summary = await client.transactions.preview({
 await shipToCosigners(anchor.serialize(), summary.serialize());
 
 // Co-signer: re-derive at the proposer's anchor and compare before signing.
-const anchor = ChainAnchor.deserialize(anchorBytes);
+const received = ChainAnchor.deserialize(anchorBytes);
 const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,
   request,
-  anchor,
+  anchor: received,
 });
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
   throw new Error("proposal does not match the summary presented for signing");
 }
 
 // Executor: replay at the same anchor, whatever the local height is by now.
-await client.transactions.submit(multisig, request, { anchor });
+await client.transactions.submit(multisig, request, { anchor: received });
 ```
 
 The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request. An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block: when it came from an untrusted party, compare `anchor.commitment()` against the commitment bound into the summary before executing with it.

@@ -7,7 +7,7 @@ import type {
 } from "@miden-sdk/miden-sdk";
 
 /** A request, or a factory that builds one from the client. */
-export type TransactionRequestInput =
+type TransactionRequestInput =
   | TransactionRequest
   | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
 

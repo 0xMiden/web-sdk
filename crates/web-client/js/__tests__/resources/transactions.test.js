@@ -960,6 +960,15 @@ describe("TransactionsResource", () => {
       expect(inner.executeForSummary).not.toHaveBeenCalled();
       expect(summary).toBe("anchoredSummary");
     });
+
+    it("rejects an anchor on an operation that builds its own request", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.preview({ operation: "send", anchor: "anchorObj" })
+      ).rejects.toThrow(/does not accept an anchor for operation "send"/);
+      expect(inner.executeForSummaryAt).not.toHaveBeenCalled();
+      expect(inner.executeForSummary).not.toHaveBeenCalled();
+    });
   });
 
   describe("chain anchor", () => {

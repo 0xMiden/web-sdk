@@ -449,7 +449,7 @@ impl WebClient {
         let mut builder = client.new_transaction_batch();
 
         for native_req in native_reqs {
-            builder = maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
+            maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
         }
@@ -537,10 +537,7 @@ impl WebClient {
             transaction_request.into(),
             anchor.into(),
         ));
-        maybe_wrap_send(fut)
-            .await
-            .map(TransactionResult::from)
-            .map_err(|err| js_error_with_context(err, "failed to execute transaction at anchor"))
+        maybe_wrap_send(fut).await.map(TransactionResult::from).map_err(map_anchor_err)
     }
 
     /// Executes a transaction at `anchor` and returns the `TransactionSummary` the account is
@@ -578,7 +575,7 @@ impl WebClient {
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
-            Err(err) => Err(js_error_with_context(err, "failed to execute transaction at anchor")),
+            Err(err) => Err(map_anchor_err(err)),
         }
     }
 
@@ -768,5 +765,21 @@ impl WebClient {
         };
 
         Ok(consume_transaction_request.into())
+    }
+}
+
+/// Maps an anchored-execution failure to a JS error, tagging anchor-validation failures with a
+/// machine-readable code.
+///
+/// The likely caller mistake is pairing an anchor with a request whose authenticated input notes
+/// it does not track, which callers need to distinguish from a generic execution failure in order
+/// to prompt for a fresh capture. The rest of the surface establishes this pattern with
+/// `TRANSACTION_ALREADY_AUTHORIZED`.
+fn map_anchor_err(err: ClientError) -> JsErr {
+    match err {
+        ClientError::ChainAnchorError(anchor_err) => {
+            from_str_err_with_code(&anchor_err.to_string(), "INVALID_CHAIN_ANCHOR")
+        },
+        err => js_error_with_context(err, "failed to execute transaction at anchor"),
     }
 }

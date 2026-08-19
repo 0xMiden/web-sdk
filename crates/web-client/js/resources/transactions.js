@@ -391,6 +391,17 @@ export class TransactionsResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
+    // Only `custom` can be anchored. Every other operation builds its request
+    // here, so the caller cannot hold an anchor captured for it — accepting one
+    // would execute against a request the anchor never tracked, surfacing as an
+    // opaque error from deep inside the executor.
+    if (opts.anchor && opts.operation !== "custom") {
+      throw new Error(
+        `preview does not accept an anchor for operation "${opts.operation}"; ` +
+          `capture one with captureAnchor(request) and use operation: "custom"`
+      );
+    }
+
     let accountId;
     let request;
 
