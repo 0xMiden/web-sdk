@@ -203,6 +203,24 @@ const methodHandlers = {
     const serializedResult = result.serialize();
     return serializedResult.buffer;
   },
+  [MethodName.EXECUTE_TRANSACTION_AT]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [accountIdHex, serializedTransactionRequest, serializedAnchor] = args;
+    const accountId = wasm.AccountId.fromHex(accountIdHex);
+    const transactionRequest = wasm.TransactionRequest.deserialize(
+      new Uint8Array(serializedTransactionRequest)
+    );
+    const anchor = wasm.ChainAnchor.deserialize(
+      new Uint8Array(serializedAnchor)
+    );
+    const result = await wasmWebClient.executeTransactionAt(
+      accountId,
+      transactionRequest,
+      anchor
+    );
+    const serializedResult = result.serialize();
+    return serializedResult.buffer;
+  },
   [MethodName.PROVE_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [serializedTransactionResult, proverPayload] = args;

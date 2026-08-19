@@ -1,5 +1,26 @@
 import { NoteType, TransactionFilter } from "@miden-sdk/miden-sdk";
-import type { Note, TransactionId } from "@miden-sdk/miden-sdk";
+import type {
+  Note,
+  TransactionId,
+  TransactionRequest,
+  WasmWebClient as WebClient,
+} from "@miden-sdk/miden-sdk";
+
+/** A request, or a factory that builds one from the client. */
+export type TransactionRequestInput =
+  | TransactionRequest
+  | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+
+/** Resolves the factory form of a transaction request to a concrete request. */
+export async function resolveTransactionRequest(
+  request: TransactionRequestInput,
+  client: WebClient
+): Promise<TransactionRequest> {
+  if (typeof request === "function") {
+    return await request(client);
+  }
+  return request;
+}
 
 type ClientWithTransactions = {
   syncState: () => Promise<unknown>;

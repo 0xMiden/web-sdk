@@ -1,10 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import type {
-  TransactionRequest,
-  WasmWebClient as WebClient,
-} from "@miden-sdk/miden-sdk";
-import type {
   TransactionStage,
   TransactionResult,
   ExecuteTransactionOptions,
@@ -17,6 +13,7 @@ import { useMidenStore } from "../store/MidenStore";
 import {
   waitForTransactionCommit,
   extractFullNotes,
+  resolveTransactionRequest,
 } from "../utils/transactions";
 
 export interface UseTransactionResult {
@@ -34,16 +31,16 @@ export interface UseTransactionResult {
   reset: () => void;
 }
 
-type TransactionRequestFactory = (
-  client: WebClient
-) => TransactionRequest | Promise<TransactionRequest>;
-
 /**
  * Hook to execute arbitrary transaction requests.
  *
  * Always uses the 4-step pipeline (execute → prove → submit → apply)
  * with prover fallback support. When `privateNoteTarget` is set,
  * additionally waits for commit and delivers private output notes.
+ *
+ * Pass `anchor` to execute against a pinned reference block instead of the
+ * current sync height, so a summary signed at that block reproduces exactly.
+ * Capture one with `useChainAnchor`.
  *
  * @example
  * ```tsx
@@ -111,12 +108,21 @@ export function useTransaction(): UseTransactionResult {
 
         // Resolve request outside runExclusiveSafe so the "executing" stage
         // is observable before transitioning to "proving"
-        const txRequest = await resolveRequest(options.request, client);
+        const txRequest = await resolveTransactionRequest(
+          options.request,
+          client
+        );
 
         // Step 1: Execute
         const txResult = await runExclusiveSafe(() => {
           const accountIdObj = parseAccountId(options.accountId);
-          return client.executeTransaction(accountIdObj, txRequest);
+          return options.anchor
+            ? client.executeTransactionAt(
+                accountIdObj,
+                txRequest,
+                options.anchor
+              )
+            : client.executeTransaction(accountIdObj, txRequest);
         });
 
         // Step 2: Prove (with fallback)
@@ -192,14 +198,4 @@ export function useTransaction(): UseTransactionResult {
     error,
     reset,
   };
-}
-
-async function resolveRequest(
-  request: TransactionRequest | TransactionRequestFactory,
-  client: WebClient
-): Promise<TransactionRequest> {
-  if (typeof request === "function") {
-    return await request(client);
-  }
-  return request;
 }

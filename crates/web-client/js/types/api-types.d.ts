@@ -17,6 +17,7 @@ import type {
   TransactionStoreUpdate,
   ProvenTransaction,
   TransactionSummary,
+  ChainAnchor,
   TransactionRecord,
   InputNoteRecord,
   OutputNoteRecord,
@@ -317,6 +318,31 @@ export interface ExportAccountOptions {}
 // ════════════════════════════════════════════════════════════════
 // Transaction types
 // ════════════════════════════════════════════════════════════════
+
+/**
+ * Mixin for the methods that take a caller-built `TransactionRequest`, letting
+ * them execute against a pinned reference block instead of the current sync
+ * height.
+ *
+ * Deliberately not part of {@link TransactionOptions}: `send`, `mint`,
+ * `consume` and friends build their request internally, so a caller can never
+ * hold an anchor captured for one.
+ */
+export interface AnchoredOptions {
+  /**
+   * A {@link ChainAnchor} from `transactions.captureAnchor(request)`, pinning
+   * execution to the reference block the anchor was captured at.
+   *
+   * Since protocol 0.16 a signed transaction summary binds the reference block
+   * commitment, so signatures only authorize an execution at that exact block.
+   * Supplying the proposer's anchor is what makes the signed summary reproduce
+   * on a client whose sync height has since advanced.
+   *
+   * When the anchor came from an untrusted party, compare `anchor.commitment()`
+   * against an independently trusted value before using it.
+   */
+  anchor?: ChainAnchor;
+}
 
 export interface TransactionOptions {
   waitForConfirmation?: boolean;
@@ -735,7 +761,7 @@ export interface PreviewPswapCancelOptions {
   note: NoteInput;
 }
 
-export interface PreviewCustomOptions {
+export interface PreviewCustomOptions extends AnchoredOptions {
   operation: "custom";
   account: AccountRef;
   request: TransactionRequest;
@@ -1055,13 +1081,37 @@ export interface TransactionsResource {
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
-   * @param options - Optional transaction options (prover, confirmation).
+   * @param options - Optional transaction options (prover, confirmation, anchor).
    */
   submit(
     account: AccountRef,
     request: TransactionRequest,
-    options?: TransactionOptions
+    options?: TransactionOptions & AnchoredOptions
   ): Promise<TransactionSubmitResult>;
+
+  /**
+   * Capture a {@link ChainAnchor} at the current sync height for `request`,
+   * pinning the reference block that a later execution can replay against.
+   *
+   * The anchor tracks the creation blocks of the request's authenticated input
+   * notes, so it stays valid for that request once the chain advances. Pass it
+   * back through the `anchor` option on {@link preview}, {@link executeRequest},
+   * or {@link submit}; serialize it with `anchor.serialize()` to ship it
+   * alongside a summary awaiting signatures.
+   *
+   * ```ts
+   * const anchor  = await client.transactions.captureAnchor(request);
+   * const summary = await client.transactions.preview({
+   *   operation: "custom", account, request, anchor,
+   * });
+   * // ... collect signatures over `summary`, shipping `anchor.serialize()` ...
+   * await client.transactions.submit(account, request, { anchor });
+   * ```
+   *
+   * @param request - The request the anchor is captured for.
+   * @returns An anchor pinned to the current sync height.
+   */
+  captureAnchor(request: TransactionRequest): Promise<ChainAnchor>;
 
   /**
    * Execute a transaction request locally — nothing is proven, submitted, or
@@ -1082,11 +1132,14 @@ export interface TransactionsResource {
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
+   * @param options - Pass `anchor` to execute against a pinned reference block
+   *   instead of the current sync height.
    * @returns A handle to the executed transaction, ready to prove.
    */
   executeRequest(
     account: AccountRef,
-    request: TransactionRequest
+    request: TransactionRequest,
+    options?: AnchoredOptions
   ): Promise<TransactionExecution>;
 
   /**

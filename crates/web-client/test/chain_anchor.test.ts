@@ -1,0 +1,117 @@
+// @ts-nocheck
+import { test, expect } from "./test-setup";
+
+// CHAIN ANCHOR TESTS
+// =======================================================================================================
+
+test.describe("chain anchor", () => {
+  test("anchored execution references the anchor block, not the tip", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+
+      // Capture at the current tip. A mint consumes no notes, so nothing
+      // beyond the reference block needs tracking.
+      const anchor = await client.chainAnchorForRequest(request);
+      const anchorBlock = anchor.blockNum();
+
+      // Advance past the anchor so the local tip no longer matches it.
+      await client.proveBlock();
+      await client.proveBlock();
+      await client.proveBlock();
+      await client.syncState();
+      const tip = await client.getSyncHeight();
+
+      const anchored = await client.executeTransactionAt(
+        faucet.id(),
+        request,
+        anchor
+      );
+      const anchoredBlock = anchored
+        .executedTransaction()
+        .blockHeader()
+        .blockNum();
+
+      // The same anchor handle is still usable — the binding borrows it.
+      const atTip = await client.executeTransaction(faucet.id(), request);
+      const tipBlock = atTip.executedTransaction().blockHeader().blockNum();
+
+      return {
+        anchorBlock,
+        tip,
+        anchoredBlock,
+        tipBlock,
+        anchorStillReadable: anchor.blockNum(),
+      };
+    });
+
+    expect(result.tip).toBeGreaterThan(result.anchorBlock);
+    expect(result.anchoredBlock).toEqual(result.anchorBlock);
+    expect(result.tipBlock).toEqual(result.tip);
+    expect(result.anchorStillReadable).toEqual(result.anchorBlock);
+  });
+
+  test("an anchor round-trips through serialization", async ({ run }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+
+      const anchor = await client.chainAnchorForRequest(request);
+      const restored = sdk.ChainAnchor.deserialize(anchor.serialize());
+
+      // Executing against the restored anchor still pins the reference block,
+      // which is the whole point of shipping it to a co-signer.
+      await client.proveBlock();
+      await client.syncState();
+      const executed = await client.executeTransactionAt(
+        faucet.id(),
+        request,
+        restored
+      );
+
+      return {
+        blockNum: anchor.blockNum(),
+        restoredBlockNum: restored.blockNum(),
+        commitment: anchor.commitment().toHex(),
+        restoredCommitment: restored.commitment().toHex(),
+        headerBlockNum: restored.blockHeader().blockNum(),
+        executedBlock: executed.executedTransaction().blockHeader().blockNum(),
+      };
+    });
+
+    expect(result.restoredBlockNum).toEqual(result.blockNum);
+    expect(result.restoredCommitment).toEqual(result.commitment);
+    expect(result.headerBlockNum).toEqual(result.blockNum);
+    expect(result.executedBlock).toEqual(result.blockNum);
+  });
+
+  test("deserialize rejects bytes that are not a valid anchor", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      let errorMessage = null;
+      try {
+        sdk.ChainAnchor.deserialize(new Uint8Array([1, 2, 3, 4]));
+      } catch (e) {
+        errorMessage = String(e);
+      }
+      return { errorMessage };
+    });
+
+    expect(result.errorMessage).toMatch(/failed to deserialize/);
+  });
+});

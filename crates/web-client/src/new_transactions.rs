@@ -27,6 +27,7 @@ use miden_client::transaction::{
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
+use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
@@ -480,6 +481,105 @@ impl WebClient {
             .await
             .map(TransactionResult::from)
             .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
+    }
+
+    /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the creation
+    /// blocks of the request's authenticated input notes so the request can later execute
+    /// against the anchor.
+    ///
+    /// This is the capture entry point for flows that never see a successful execution at capture
+    /// time — e.g. a multisig proposal, where execution intentionally fails with the unauthorized
+    /// event to surface the summary for signing. Capture the anchor first, derive the summary
+    /// with `executeForSummaryAt`, and ship the anchor alongside the signed data; the same anchor
+    /// then reproduces the summary during later verification and execution.
+    #[js_export(js_name = "chainAnchorForRequest")]
+    pub async fn chain_anchor_for_request(
+        &self,
+        transaction_request: &TransactionRequest,
+    ) -> Result<ChainAnchor, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        let fut = Box::pin(client.chain_anchor_for_request(&native_request));
+        maybe_wrap_send(fut)
+            .await
+            .map(ChainAnchor::from)
+            .map_err(|err| js_error_with_context(err, "failed to capture chain anchor"))
+    }
+
+    /// Executes a transaction against the specified account using `anchor` as the reference block
+    /// instead of the current sync height, without submitting it or updating the local database.
+    ///
+    /// Since protocol 0.16 the signed transaction summary binds the reference block commitment, so
+    /// signatures collected over a summary only authorize an execution whose reference block is
+    /// the one the summary was built at. This method makes such an execution reproducible on any
+    /// client regardless of its sync height.
+    ///
+    /// Callers holding an anchor from an untrusted source should first compare
+    /// `anchor.commitment()` against an independently trusted value, e.g. the block commitment
+    /// bound into the signed transaction summary.
+    ///
+    /// # Errors
+    /// - If an authenticated input note's creation block is not tracked by the anchor.
+    /// - If an input note was created after the anchored reference block.
+    #[js_export(js_name = "executeTransactionAt")]
+    pub async fn execute_transaction_at(
+        &self,
+        account_id: &AccountId,
+        transaction_request: &TransactionRequest,
+        anchor: &ChainAnchor,
+    ) -> Result<TransactionResult, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let fut = Box::pin(client.execute_transaction_at(
+            account_id.into(),
+            transaction_request.into(),
+            anchor.into(),
+        ));
+        maybe_wrap_send(fut)
+            .await
+            .map(TransactionResult::from)
+            .map_err(|err| js_error_with_context(err, "failed to execute transaction at anchor"))
+    }
+
+    /// Executes a transaction at `anchor` and returns the `TransactionSummary` the account is
+    /// being asked to authorize — the anchored counterpart of `executeForSummary`.
+    ///
+    /// This is what lets a co-signer verify a proposal: re-deriving the summary at the proposer's
+    /// anchor reproduces it exactly, so it can be compared against the summary they were asked to
+    /// sign. Deriving it at the local sync height instead would produce a different summary and
+    /// the comparison would always fail.
+    ///
+    /// # Errors
+    /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
+    /// - If there is an internal failure during execution.
+    #[js_export(js_name = "executeForSummaryAt")]
+    pub async fn execute_for_summary_at(
+        &self,
+        account_id: &AccountId,
+        transaction_request: &TransactionRequest,
+        anchor: &ChainAnchor,
+    ) -> Result<TransactionSummary, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let fut = Box::pin(client.execute_transaction_at(
+            account_id.into(),
+            transaction_request.into(),
+            anchor.into(),
+        ));
+        match maybe_wrap_send(fut).await {
+            Ok(_) => Err(from_str_err_with_code(
+                "transaction is already fully authorized, so no transaction summary was \
+                 produced during execution; submit it with execute instead",
+                "TRANSACTION_ALREADY_AUTHORIZED",
+            )),
+            Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
+                summary,
+            ))) => Ok(TransactionSummary::from(*summary)),
+            Err(err) => Err(js_error_with_context(err, "failed to execute transaction at anchor")),
+        }
     }
 
     /// Executes a transaction and returns the `TransactionSummary` the account is being asked

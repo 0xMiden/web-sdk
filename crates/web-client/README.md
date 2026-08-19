@@ -519,6 +519,43 @@ Nothing is persisted until `apply` runs — stopping after `submit()` leaves the
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+### Chain-Anchored Execution
+
+Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
+
+A `ChainAnchor` pins the reference block so the same summary reproduces on any client:
+
+```typescript
+// Proposer: capture, derive the summary at the anchor, ship both.
+const anchor = await client.transactions.captureAnchor(request);
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor,
+});
+await shipToCosigners(anchor.serialize(), summary.serialize());
+
+// Co-signer: re-derive at the proposer's anchor and compare before signing.
+const anchor = ChainAnchor.deserialize(anchorBytes);
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+await client.transactions.submit(multisig, request, { anchor });
+```
+
+The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request. An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block: when it came from an untrusted party, compare `anchor.commitment()` against the commitment bound into the summary before executing with it.
+
+See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple

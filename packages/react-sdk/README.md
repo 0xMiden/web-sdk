@@ -1176,6 +1176,7 @@ yourself.
 Built-in features:
 - **Auto pre-sync** before executing (disable with `skipSync: true`)
 - **Concurrency guard** prevents double-executions while a transaction is in-flight
+- **Anchored execution** via `anchor` — pins the reference block so a summary signed at that block reproduces exactly (see [`useChainAnchor()`](#usechainanchor--usepreview))
 
 ```tsx
 import { useTransaction } from '@miden-sdk/react';
@@ -1208,6 +1209,83 @@ function CustomTransactionButton({ accountId }: { accountId: string }) {
   );
 }
 ```
+
+#### `useChainAnchor()` / `usePreview()`
+
+Capture a reference block, derive the summary pending authorization at it, and
+execute against it later — the pair behind multisig proposals and offline
+co-signing.
+
+Since protocol 0.16 a signed transaction summary binds the reference block
+commitment, so signatures only authorize an execution at that exact block. In a
+flow that collects signatures and executes later, the proposer, co-signers, and
+executor are all at different sync heights — a `ChainAnchor` is what makes them
+agree on one summary.
+
+```tsx
+import { useChainAnchor, usePreview, useTransaction } from '@miden-sdk/react';
+import { ChainAnchor } from '@miden-sdk/miden-sdk';
+
+// Proposer: capture the anchor, derive the summary at it, ship both.
+function Propose({ multisigId, request }) {
+  const { captureAnchor } = useChainAnchor();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        const anchor = await captureAnchor({ request });
+        const summary = await preview({ accountId: multisigId, request, anchor });
+        await shipToCosigners(anchor.serialize(), summary.serialize());
+      }}
+    >
+      Propose
+    </button>
+  );
+}
+
+// Co-signer: re-derive at the proposer's anchor and compare before signing.
+// Deriving at the local sync height yields a different summary every time.
+function Verify({ multisigId, request, anchorBytes, proposed }) {
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        const anchor = ChainAnchor.deserialize(anchorBytes);
+        const derived = await preview({ accountId: multisigId, request, anchor });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+function Execute({ multisigId, request, anchor }) {
+  const { execute } = useTransaction();
+  return (
+    <button onClick={() => execute({ accountId: multisigId, request, anchor })}>
+      Execute
+    </button>
+  );
+}
+```
+
+`useChainAnchor()` returns `{ captureAnchor, anchor, isCapturing, error, reset }`
+and `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
+`preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
+transaction needs no further signatures — submit it with `useTransaction`
+instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
+call is in flight.
+
+An anchor validates its own internal consistency on `deserialize`, so it can
+never be malformed — but it can be pinned to the wrong block. When it came from
+an untrusted party, compare `anchor.commitment()` against the commitment bound
+into the summary before executing with it.
 
 #### `useCompile()`
 

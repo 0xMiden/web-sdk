@@ -164,3 +164,57 @@ Notes on the staged form:
 - **`apply` fires transaction observers** (e.g. PSWAP lineage tracking), the same as the one-shot `submit` path. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
+## Chain-Anchored Execution
+
+By default a transaction executes against the client's current sync height. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution whose reference block is the one the summary was built at.
+
+That is a problem for any flow that collects signatures and executes later — a multisig proposal, offline co-signing — because the proposer, each co-signer, and the eventual executor are all at different heights. Re-deriving the summary locally produces a different summary, and the signatures no longer match.
+
+A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on any client:
+
+```typescript
+// ── Proposer ──────────────────────────────────────────────
+const anchor = await client.transactions.captureAnchor(request);
+
+// `preview` derives the summary the account is being asked to authorize.
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor,
+});
+
+await shipToCosigners({
+  anchor: anchor.serialize(),
+  summary: summary.serialize(),
+});
+
+// ── Co-signer ─────────────────────────────────────────────
+const anchor = ChainAnchor.deserialize(anchorBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+
+// Re-derive at the proposer's anchor and compare before signing. Deriving at
+// the local sync height would produce a different summary every time.
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// ── Executor ──────────────────────────────────────────────
+await client.transactions.submit(multisig, request, { anchor });
+```
+
+Notes on anchors:
+
+- **Verify anchors from untrusted parties.** An anchor validates its own internal consistency on `deserialize`, so it can never be malformed — but it can be pinned to the wrong block. Compare `anchor.commitment()` against the block commitment bound into the summary you were asked to sign before executing with it.
+- **An anchor is captured for a specific request.** It tracks the creation blocks of that request's authenticated input notes, which is why `captureAnchor` takes the request. Executing a different request against it fails if that request consumes a note the anchor doesn't track.
+- **The `anchor` option is only on the request-taking methods** — `preview({ operation: "custom" })`, `executeRequest`, and `submit`. `send`, `mint`, `consume` and friends build their request internally, so there is no request to have captured an anchor for.
+- **Anchored execution skips the recency check**, since it deliberately references a block older than the tip.
+- **Foreign account proofs are fetched at the anchor's block**, so requests with foreign accounts additionally need the node to serve account state at that height.
+- **The anchor handle is reusable.** Unlike a `TransactionProver`, it is borrowed rather than consumed, so one anchor can drive the preview and the execution.

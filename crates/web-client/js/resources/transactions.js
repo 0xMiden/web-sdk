@@ -379,6 +379,13 @@ export class TransactionsResource {
    * Node.js the code prefixes the message instead) when the transaction
    * executes successfully, since a fully authorized transaction produces
    * no summary. See {@link PreviewOptions}.
+   *
+   * With `operation: "custom"` you may pass an `anchor` from
+   * {@link captureAnchor} to derive the summary at a pinned reference block
+   * rather than the current sync height. A co-signer verifying a proposal must
+   * use the proposer's anchor: since protocol 0.16 the summary binds the
+   * reference block commitment, so deriving it locally at a different height
+   * produces a different summary and the comparison always fails.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -438,7 +445,9 @@ export class TransactionsResource {
         throw new Error(`Unknown preview operation: ${opts.operation}`);
     }
 
-    return await this.#inner.executeForSummary(accountId, request);
+    return opts.anchor
+      ? await this.#inner.executeForSummaryAt(accountId, request, opts.anchor)
+      : await this.#inner.executeForSummary(accountId, request);
   }
 
   async execute(opts) {
@@ -662,6 +671,24 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Capture a {@link ChainAnchor} at the current sync height for `request`,
+   * pinning the reference block that a later execution can replay against.
+   *
+   * The anchor tracks the creation blocks of the request's authenticated input
+   * notes, so it stays valid for that request once the chain advances. Pass it
+   * back to {@link preview}, {@link executeRequest}, or {@link submit} via
+   * their `anchor` option. Serialize it with `anchor.serialize()` to ship it
+   * alongside a summary awaiting signatures.
+   *
+   * @param {TransactionRequest} request - The request the anchor is captured for.
+   * @returns {Promise<ChainAnchor>} An anchor pinned to the current sync height.
+   */
+  async captureAnchor(request) {
+    this.#client.assertNotTerminated();
+    return await this.#inner.chainAnchorForRequest(request);
+  }
+
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -669,7 +696,8 @@ export class TransactionsResource {
     return await this.#submitOrSubmitWithProver(
       accountId,
       request,
-      opts?.prover
+      opts?.prover,
+      opts?.anchor
     );
   }
 
@@ -693,14 +721,19 @@ export class TransactionsResource {
    *
    * @param {AccountRef} account - The account executing the transaction.
    * @param {TransactionRequest} request - The pre-built transaction request.
+   * @param {{ anchor?: ChainAnchor }} [opts] - Pass `anchor` to execute against
+   *   a pinned reference block instead of the current sync height, reproducing
+   *   the summary that was signed at that block.
    * @returns {Promise<TransactionExecution>} A handle to the executed
    *   transaction, ready to prove.
    */
-  async executeRequest(account, request) {
+  async executeRequest(account, request, opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
-    const result = await this.#inner.executeTransaction(accountId, request);
+    const result = opts?.anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, opts.anchor)
+      : await this.#inner.executeTransaction(accountId, request);
     return new TransactionExecution(this.#inner, this.#client, this, result);
   }
 
@@ -1020,8 +1053,10 @@ export class TransactionsResource {
     return input;
   }
 
-  async #submitOrSubmitWithProver(accountId, request, perCallProver) {
-    const result = await this.#inner.executeTransaction(accountId, request);
+  async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
+    const result = anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, anchor)
+      : await this.#inner.executeTransaction(accountId, request);
     const proven = await proveResult(
       this.#inner,
       this.#client.defaultProver,

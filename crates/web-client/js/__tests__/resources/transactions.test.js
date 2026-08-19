@@ -105,6 +105,9 @@ function makeInner(overrides = {}) {
       .mockResolvedValue({ toNote: vi.fn().mockReturnValue("noteFromRecord") }),
     getConsumableNotes: vi.fn().mockResolvedValue([]),
     executeForSummary: vi.fn().mockResolvedValue("summary"),
+    executeForSummaryAt: vi.fn().mockResolvedValue("anchoredSummary"),
+    executeTransactionAt: vi.fn().mockResolvedValue(txResult),
+    chainAnchorForRequest: vi.fn().mockResolvedValue("anchor"),
     executeProgram: vi.fn().mockResolvedValue("programResult"),
     syncState: vi.fn().mockResolvedValue(undefined),
     syncChain: vi.fn().mockResolvedValue(undefined),
@@ -938,6 +941,75 @@ describe("TransactionsResource", () => {
       await expect(resource.preview({ operation: "unknown" })).rejects.toThrow(
         "Unknown preview operation: unknown"
       );
+    });
+
+    it("derives the summary at the anchor when one is supplied", async () => {
+      const { resource, inner } = makeResource();
+      const customRequest = { type: "custom" };
+      const summary = await resource.preview({
+        operation: "custom",
+        account: "0xacc",
+        request: customRequest,
+        anchor: "anchorObj",
+      });
+      expect(inner.executeForSummaryAt).toHaveBeenCalledWith(
+        expect.anything(),
+        customRequest,
+        "anchorObj"
+      );
+      expect(inner.executeForSummary).not.toHaveBeenCalled();
+      expect(summary).toBe("anchoredSummary");
+    });
+  });
+
+  describe("chain anchor", () => {
+    it("captureAnchor delegates to the client and returns the anchor", async () => {
+      const { resource, inner, client } = makeResource();
+      const request = { type: "custom" };
+      const anchor = await resource.captureAnchor(request);
+      expect(client.assertNotTerminated).toHaveBeenCalled();
+      expect(inner.chainAnchorForRequest).toHaveBeenCalledWith(request);
+      expect(anchor).toBe("anchor");
+    });
+
+    it("executeRequest pins execution to the anchor when given one", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "custom" };
+      const executed = await resource.executeRequest("0xaccHex", request, {
+        anchor: "anchorObj",
+      });
+      expect(inner.executeTransactionAt).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request,
+        "anchorObj"
+      );
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+      expect(executed.result).toBe(inner._txResult);
+    });
+
+    it("executeRequest without an anchor keeps the sync-height path", async () => {
+      const { resource, inner } = makeResource();
+      await resource.executeRequest("0xaccHex", {}, {});
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    it("submit pins execution to the anchor and still proves and applies", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "custom" };
+      const { txId } = await resource.submit("0xaccHex", request, {
+        anchor: "anchorObj",
+      });
+      expect(inner.executeTransactionAt).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request,
+        "anchorObj"
+      );
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+      expect(inner.proveTransaction).toHaveBeenCalled();
+      expect(inner.submitProvenTransaction).toHaveBeenCalled();
+      expect(inner.applyTransaction).toHaveBeenCalled();
+      expect(txId).toBeDefined();
     });
   });
 

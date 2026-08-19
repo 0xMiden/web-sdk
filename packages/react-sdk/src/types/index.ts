@@ -13,6 +13,8 @@ import type {
   TransactionRecord,
   TransactionRequest,
   TransactionScript,
+  TransactionSummary,
+  ChainAnchor,
   AdviceInputs,
   AccountStorageRequirements,
   NoteType,
@@ -42,6 +44,8 @@ export type {
   TransactionId,
   TransactionRecord,
   TransactionRequest,
+  TransactionSummary,
+  ChainAnchor,
   NoteType,
   Note,
   AccountStorageMode,
@@ -567,6 +571,38 @@ export interface ExecuteTransactionOptions {
    * AccountRef form (hex string, bech32, AccountId, Account, AccountHeader).
    */
   privateNoteTarget?: AccountRef;
+  /**
+   * Execute against a pinned reference block instead of the current sync
+   * height, so a summary signed at that block reproduces exactly. Capture one
+   * with {@link useChainAnchor}.
+   */
+  anchor?: ChainAnchor;
+}
+
+// Chain anchor
+
+/** Options for capturing a {@link ChainAnchor}. */
+export interface CaptureAnchorOptions {
+  /** The request the anchor is captured for. */
+  request:
+    | TransactionRequest
+    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+}
+
+/** Options for deriving a {@link TransactionSummary} without submitting. */
+export interface PreviewTransactionOptions {
+  /** Account ID the transaction applies to */
+  accountId: AccountRef;
+  /** Transaction request or builder */
+  request:
+    | TransactionRequest
+    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+  /**
+   * Derive the summary at a pinned reference block. Required when verifying a
+   * proposal: the summary binds the reference block commitment, so deriving it
+   * at the local sync height produces a different summary.
+   */
+  anchor?: ChainAnchor;
 }
 
 // Transaction result
