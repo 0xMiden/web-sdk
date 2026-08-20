@@ -32,20 +32,22 @@ export async function resolveTransactionRequest(
 }
 
 /**
- * Reject an `anchor` that is present but nullish.
+ * Reject an `anchor` that is present but falsy — except `undefined`, which is
+ * how an optional property spells "absent".
  *
  * Anchored branches are selected by truthiness, so `{ anchor: null }` would
- * otherwise execute at the current tip — the one outcome anchoring exists to
+ * otherwise execute at the current tip: the one outcome anchoring exists to
  * prevent. It is easy to hit, because `useChainAnchor().anchor` is `null` until
- * the capture resolves.
+ * the capture resolves, and `cond && anchor` yields `false`.
  */
-export function assertAnchorNotNullish(options: object): void {
-  if ("anchor" in options && options.anchor == null) {
-    throw new Error(
-      "anchor was null or undefined; await captureAnchor(request) before " +
-        "passing it, or omit the option entirely to execute at the current tip"
-    );
-  }
+export function assertAnchorValueUsable(options: { anchor?: unknown }): void {
+  const { anchor } = options;
+  if (anchor === undefined || anchor) return;
+  throw new Error(
+    `anchor was ${anchor === null ? "null" : JSON.stringify(anchor)}; await ` +
+      "captureAnchor(request) before passing it, or omit the option entirely " +
+      "to execute at the current tip"
+  );
 }
 
 type ClientWithTransactions = {

@@ -2,7 +2,7 @@ use miden_client::SliceReader;
 use miden_client::utils::{Deserializable, Serializable};
 
 use crate::js_error_with_context;
-use crate::platform::{JsBytes, JsErr, bytes_to_js};
+use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
 
 #[cfg(all(feature = "testing", feature = "browser"))]
 pub mod test_utils;
@@ -20,6 +20,34 @@ pub fn deserialize_from_bytes<T: Deserializable>(bytes: &JsBytes) -> Result<T, J
     let mut reader = SliceReader::new(&vec);
     let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
     T::read_from(&mut reader).map_err(|e| js_error_with_context(e, &context))
+}
+
+/// Deserializes platform bytes that came from an untrusted party.
+///
+/// Differs from [`deserialize_from_bytes`] in two ways, both of which matter only for a type
+/// whose serialized form is a transport blob rather than local persistence:
+///
+/// - Allocation is budgeted to the input length, so a forged length prefix cannot make the reader
+///   reserve more than the bytes on the wire could justify. Upstream documents the unbudgeted
+///   reader as trusted-input-only.
+/// - Trailing bytes are rejected, which keeps the encoding canonical on read. Otherwise unboundedly
+///   many byte strings decode to the same value, and anyone treating the blob as a cache or dedup
+///   key gets a false distinction.
+pub fn deserialize_untrusted_bytes<T: Deserializable + Serializable>(
+    bytes: &JsBytes,
+) -> Result<T, JsErr> {
+    let vec = crate::platform::js_to_bytes(bytes);
+    let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());
+    let value = T::read_from_bytes_with_budget(&vec, vec.len())
+        .map_err(|e| js_error_with_context(e, &context))?;
+    // The encoding is deterministic, so a value that re-encodes shorter than its own input was
+    // read from bytes carrying a suffix the reader ignored.
+    if value.to_bytes().len() != vec.len() {
+        return Err(from_str_err(&alloc::format!(
+            "{context}: trailing bytes after a complete value"
+        )));
+    }
+    Ok(value)
 }
 
 #[cfg(all(test, feature = "browser"))]

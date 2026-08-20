@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TransactionsResource } from "../../resources/transactions.js";
 
@@ -970,6 +971,30 @@ describe("TransactionsResource", () => {
       expect(inner.executeForSummary).not.toHaveBeenCalled();
     });
 
+    it("rejects an anchor on every operation that builds its own request", async () => {
+      // Guards against drift: the anchor rule keys off a hardcoded set, so a
+      // new built-in operation that is not added to it would silently accept an
+      // anchor captured for some other request.
+      const source = readFileSync(
+        new URL("../../resources/transactions.js", import.meta.url),
+        "utf8"
+      );
+      const previewBody = source.slice(
+        source.indexOf("async preview(opts)"),
+        source.indexOf("async executeRequest(")
+      );
+      const cases = [...previewBody.matchAll(/^\s{6}case "(\w+)":/gm)].map(
+        (m) => m[1]
+      );
+      expect(cases.length).toBeGreaterThan(1);
+      for (const operation of cases.filter((c) => c !== "custom")) {
+        const { resource } = makeResource();
+        await expect(
+          resource.preview({ operation, anchor: "anchorObj" })
+        ).rejects.toThrow(/does not accept an anchor/);
+      }
+    });
+
     it("reports an unknown operation rather than the anchor rule", async () => {
       const { resource } = makeResource();
       await expect(
@@ -986,7 +1011,7 @@ describe("TransactionsResource", () => {
           request: "req",
           anchor: null,
         })
-      ).rejects.toThrow(/anchor was null or undefined/);
+      ).rejects.toThrow(/await captureAnchor/);
       expect(inner.executeForSummary).not.toHaveBeenCalled();
     });
   });
@@ -1023,15 +1048,29 @@ describe("TransactionsResource", () => {
       expect(inner.executeTransactionAt).not.toHaveBeenCalled();
     });
 
-    it("rejects a null anchor rather than executing at the tip", async () => {
+    it.each([
+      ["null", null],
+      ["false", false],
+      ["an empty string", ""],
+    ])(
+      "rejects %s as an anchor rather than executing at the tip",
+      async (_label, anchor) => {
+        const { resource, inner } = makeResource();
+        await expect(
+          resource.executeRequest("0xaccHex", {}, { anchor })
+        ).rejects.toThrow(/await captureAnchor/);
+        await expect(
+          resource.submit("0xaccHex", {}, { anchor })
+        ).rejects.toThrow(/await captureAnchor/);
+        expect(inner.executeTransaction).not.toHaveBeenCalled();
+        expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+      }
+    );
+
+    it("treats an explicitly undefined anchor as omitted", async () => {
       const { resource, inner } = makeResource();
-      await expect(
-        resource.executeRequest("0xaccHex", {}, { anchor: null })
-      ).rejects.toThrow(/anchor was null or undefined/);
-      await expect(
-        resource.submit("0xaccHex", {}, { anchor: null })
-      ).rejects.toThrow(/anchor was null or undefined/);
-      expect(inner.executeTransaction).not.toHaveBeenCalled();
+      await resource.executeRequest("0xaccHex", {}, { anchor: undefined });
+      expect(inner.executeTransaction).toHaveBeenCalled();
       expect(inner.executeTransactionAt).not.toHaveBeenCalled();
     });
 

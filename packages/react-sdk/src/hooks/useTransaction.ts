@@ -13,7 +13,7 @@ import { useMidenStore } from "../store/MidenStore";
 import {
   waitForTransactionCommit,
   extractFullNotes,
-  assertAnchorNotNullish,
+  assertAnchorValueUsable,
   resolveTransactionRequest,
 } from "../utils/transactions";
 
@@ -96,7 +96,7 @@ export function useTransaction(): UseTransactionResult {
         );
       }
 
-      assertAnchorNotNullish(options);
+      assertAnchorValueUsable(options);
 
       isBusyRef.current = true;
       setIsLoading(true);

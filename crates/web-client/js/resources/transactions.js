@@ -4,15 +4,6 @@ import {
   resolveTransactionIdHex,
 } from "../utils.js";
 
-/**
- * Reject an `anchor` that is present but nullish.
- *
- * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
- * otherwise fall through and execute at the current tip. That is the one
- * failure mode anchoring exists to prevent, and it is easy to hit: the natural
- * source of an anchor is `useChainAnchor().anchor`, which is `null` until the
- * capture resolves.
- */
 /** Preview operations that build their own request, and so cannot be anchored. */
 const PREVIEW_BUILT_IN_OPERATIONS = new Set([
   "send",
@@ -25,13 +16,24 @@ const PREVIEW_BUILT_IN_OPERATIONS = new Set([
   "pswapCancel",
 ]);
 
-function assertAnchorNotNullish(opts) {
-  if (opts && "anchor" in opts && opts.anchor == null) {
-    throw new Error(
-      "anchor was null or undefined; await captureAnchor(request) before " +
-        "passing it, or omit the option entirely to execute at the current tip"
-    );
-  }
+/**
+ * Reject an `anchor` that is present but falsy — except `undefined`, which is
+ * how an optional property spells "absent".
+ *
+ * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
+ * otherwise fall through and execute at the current tip: the one outcome
+ * anchoring exists to prevent. It is easy to hit, because the natural source of
+ * an anchor is `useChainAnchor().anchor`, which is `null` until the capture
+ * resolves, and `cond && anchor` yields `false`.
+ */
+function assertAnchorValueUsable(opts) {
+  const anchor = opts?.anchor;
+  if (anchor === undefined || anchor) return;
+  throw new Error(
+    `anchor was ${anchor === null ? "null" : JSON.stringify(anchor)}; await ` +
+      "captureAnchor(request) before passing it, or omit the option entirely " +
+      "to execute at the current tip"
+  );
 }
 
 /**
@@ -421,7 +423,7 @@ export class TransactionsResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    assertAnchorNotNullish(opts);
+    assertAnchorValueUsable(opts);
 
     // Only `custom` can be anchored. Every other operation builds its request
     // here, so the caller cannot hold an anchor captured for it — accepting one
@@ -738,7 +740,7 @@ export class TransactionsResource {
 
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
-    assertAnchorNotNullish(opts);
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     return await this.#submitOrSubmitWithProver(
@@ -777,7 +779,7 @@ export class TransactionsResource {
    */
   async executeRequest(account, request, opts) {
     this.#client.assertNotTerminated();
-    assertAnchorNotNullish(opts);
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     const result = opts?.anchor

@@ -90,6 +90,10 @@ test.describe("chain anchor", () => {
         restoredCommitment: restored.commitment().toHex(),
         headerBlockNum: restored.blockHeader().blockNum(),
         executedBlock: executed.executedTransaction().blockHeader().blockNum(),
+        // The bytes are a transport format between parties, so re-encoding a
+        // decoded anchor has to reproduce them exactly.
+        bytes: Array.from(anchor.serialize()),
+        restoredBytes: Array.from(restored.serialize()),
       };
     });
 
@@ -97,6 +101,7 @@ test.describe("chain anchor", () => {
     expect(result.restoredCommitment).toEqual(result.commitment);
     expect(result.headerBlockNum).toEqual(result.blockNum);
     expect(result.executedBlock).toEqual(result.blockNum);
+    expect(result.restoredBytes).toEqual(result.bytes);
   });
 
   test("execution rejects a note created after the anchored block", async ({
@@ -148,15 +153,56 @@ test.describe("chain anchor", () => {
     run,
   }) => {
     const result = await run(async ({ sdk }) => {
+      const attempt = (bytes: Uint8Array) => {
+        try {
+          sdk.ChainAnchor.deserialize(bytes);
+          return null;
+        } catch (e) {
+          return String(e);
+        }
+      };
+      return {
+        garbage: attempt(new Uint8Array([1, 2, 3, 4])),
+        empty: attempt(new Uint8Array()),
+        truncated: attempt(new Uint8Array(64)),
+      };
+    });
+
+    expect(result.garbage).toMatch(/failed to deserialize/);
+    expect(result.empty).toMatch(/failed to deserialize/);
+    expect(result.truncated).toMatch(/failed to deserialize/);
+  });
+
+  test("deserialize rejects an anchor with bytes appended", async ({ run }) => {
+    // The bytes travel between mutually distrusting parties, so the decoder
+    // must not accept a suffix it silently ignores — that would make two
+    // different blobs decode to one anchor.
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      const request = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+
+      const bytes = (await client.chainAnchorForRequest(request)).serialize();
+      const padded = new Uint8Array(bytes.length + 1);
+      padded.set(bytes);
+
       let errorMessage = null;
       try {
-        sdk.ChainAnchor.deserialize(new Uint8Array([1, 2, 3, 4]));
+        sdk.ChainAnchor.deserialize(padded);
       } catch (e) {
         errorMessage = String(e);
       }
-      return { errorMessage };
+      // The unpadded bytes must still be accepted.
+      const cleanBlockNum = sdk.ChainAnchor.deserialize(bytes).blockNum();
+      return { errorMessage, cleanBlockNum };
     });
 
-    expect(result.errorMessage).toMatch(/failed to deserialize/);
+    expect(result.errorMessage).toMatch(/trailing bytes/);
+    expect(result.cleanBlockNum).toBeGreaterThanOrEqual(0);
   });
 });

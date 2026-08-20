@@ -4,7 +4,7 @@ use miden_client::transaction::ChainAnchor as NativeChainAnchor;
 use super::block_header::BlockHeader;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 
 /// A self-contained, verifiable anchor that pins transaction execution to a specific reference
 /// block instead of the client's current sync height.
@@ -36,9 +36,14 @@ impl ChainAnchor {
     ///
     /// Rejects bytes whose partial blockchain is inconsistent with the header, so an anchor from
     /// an untrusted source cannot be malformed — only pinned to the wrong block, which
-    /// [`Self::commitment`] detects.
+    /// [`Self::commitment`] detects. Allocation is budgeted to the input length and trailing
+    /// bytes are rejected, since these bytes arrive from a counterparty rather than local
+    /// storage.
+    ///
+    /// The encoding carries no version tag, so anchors are only interchangeable between parties
+    /// on compatible SDK versions; a skew surfaces here as a generic deserialization failure.
     pub fn deserialize(bytes: JsBytes) -> Result<ChainAnchor, JsErr> {
-        deserialize_from_bytes::<NativeChainAnchor>(&bytes).map(ChainAnchor)
+        deserialize_untrusted_bytes::<NativeChainAnchor>(&bytes).map(ChainAnchor)
     }
 
     /// Returns the number of the anchored reference block.

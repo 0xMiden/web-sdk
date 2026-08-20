@@ -553,7 +553,11 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 await client.transactions.submit(multisig, request, { anchor: received });
 ```
 
-The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request. An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block: when it came from an untrusted party, compare `anchor.commitment()` against the commitment bound into the summary before executing with it.
+The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
+
+An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block. When it came from an untrusted party, re-derive the summary at that anchor with `preview` and compare `toCommitment()` against the summary you were asked to sign; a match binds the anchor and the request together, and is the check to gate signing on. Comparing `anchor.commitment()` on its own is only meaningful against a block commitment you already trust from elsewhere.
+
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store. So every party must also agree on the account state: if the account moved between the proposal and the verification, the re-derived summary will not match even though the anchor is correct. That mismatch is the most common reason a multisig flow fails, and it fails closed — a co-signer refuses to sign rather than signing the wrong thing.
 
 See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
 

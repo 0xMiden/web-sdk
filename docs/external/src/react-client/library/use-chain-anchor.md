@@ -148,8 +148,17 @@ the call site. Capture again on the new client.
 
 - **Verify anchors from untrusted parties.** An anchor validates its own
   internal consistency on `deserialize`, so it can never be malformed — but it
-  can be pinned to the wrong block. Compare `anchor.commitment()` against the
-  commitment bound into the summary before executing with it.
+  can be pinned to the wrong block. Re-derive the summary at the received anchor
+  with `usePreview` and compare `toCommitment()` against the summary you were
+  asked to sign; a match binds the anchor and the request together, and is the
+  check to gate signing on. Comparing `anchor.commitment()` on its own only
+  helps against a block commitment you already trust from elsewhere.
+- **An anchor pins chain data, not account state.** Account records and
+  authenticated input notes still come from each participant's own local store,
+  so all parties must agree on the account state too. If the account moved
+  between the proposal and the verification, the re-derived summary will not
+  match even though the anchor is correct — the most common reason a multisig
+  flow fails. It fails closed: the co-signer refuses to sign.
 - **An anchor is captured for a specific request.** It tracks that request's
   authenticated input notes, so executing a different request against it fails
   if the new request consumes a note the anchor doesn't track.

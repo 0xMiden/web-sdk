@@ -284,10 +284,28 @@ describe("usePreview", () => {
             request: createMockTransactionRequest(),
             anchor: null as never,
           })
-        ).rejects.toThrow(/anchor was null or undefined/);
+        ).rejects.toThrow(/await captureAnchor/);
       });
 
       expect(mockClient.executeForSummary).not.toHaveBeenCalled();
+      expect(mockClient.executeForSummaryAt).not.toHaveBeenCalled();
+    });
+
+    it("treats an explicitly undefined anchor as omitted", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => usePreview());
+
+      await act(async () => {
+        await result.current.preview({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          anchor: undefined,
+        });
+      });
+
+      expect(mockClient.executeForSummary).toHaveBeenCalled();
       expect(mockClient.executeForSummaryAt).not.toHaveBeenCalled();
     });
 

@@ -5,7 +5,7 @@ import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
 import {
-  assertAnchorNotNullish,
+  assertAnchorValueUsable,
   resolveTransactionRequest,
 } from "../utils/transactions";
 
@@ -76,7 +76,7 @@ export function usePreview(): UsePreviewResult {
         );
       }
 
-      assertAnchorNotNullish(options);
+      assertAnchorValueUsable(options);
 
       isBusyRef.current = true;
       setIsPreviewing(true);
