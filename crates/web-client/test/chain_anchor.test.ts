@@ -308,8 +308,12 @@ test.describe("chain anchor", () => {
     });
 
     expect(result.tip).toBeGreaterThan(result.anchorBlock);
+    // The assertion the test exists for: the summary's own reference block is
+    // the anchor's, not the tip it would have used unanchored.
     expect(result.summaryBlockCommitment).toBe(result.anchorCommitment);
     expect(result.inputNotesCount).toBe(1);
-    expect(result.expirationDelta).toBeGreaterThan(0);
+    // Reported as 0 for a request that sets no expiration, which is this one.
+    // Asserted to pin that the accessor reads the summary rather than throwing.
+    expect(result.expirationDelta).toBe(0);
   });
 });
