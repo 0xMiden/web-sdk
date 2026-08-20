@@ -133,7 +133,9 @@ function ExecuteButton({ multisigId, request, anchor }) {
   `useTransaction` instead.
 
 Both hooks reject with `code: "OPERATION_BUSY"` if called while a previous call
-is still in flight.
+is still in flight. `captureAnchor` additionally rejects with
+`code: "INVALID_CHAIN_ANCHOR"` when a sync lands mid-capture and leaves the
+anchor internally inconsistent; retrying is the correct response.
 
 Both are also scoped to the client that produced them. Changing clients clears
 `anchor`, `summary`, and `error`, and a call still in flight across the swap

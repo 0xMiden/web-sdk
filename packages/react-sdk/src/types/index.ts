@@ -1,5 +1,6 @@
 import { AuthScheme } from "@miden-sdk/miden-sdk";
 import type { AccountRef } from "../utils/accountParsing";
+import type { TransactionRequestInput } from "../utils/transactions";
 import type {
   WasmWebClient as WebClient,
   Account,
@@ -560,9 +561,7 @@ export interface ExecuteTransactionOptions {
   /** Account ID the transaction applies to */
   accountId: AccountRef;
   /** Transaction request or builder */
-  request:
-    | TransactionRequest
-    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+  request: TransactionRequestInput;
   /** Skip auto-sync before transaction. Default: false */
   skipSync?: boolean;
   /**
@@ -584,9 +583,7 @@ export interface ExecuteTransactionOptions {
 /** Options for capturing a {@link ChainAnchor}. */
 export interface CaptureAnchorOptions {
   /** The request the anchor is captured for. */
-  request:
-    | TransactionRequest
-    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+  request: TransactionRequestInput;
 }
 
 /** Options for deriving a {@link TransactionSummary} without submitting. */
@@ -594,9 +591,7 @@ export interface PreviewTransactionOptions {
   /** Account ID the transaction applies to */
   accountId: AccountRef;
   /** Transaction request or builder */
-  request:
-    | TransactionRequest
-    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+  request: TransactionRequestInput;
   /**
    * Derive the summary at a pinned reference block. Required when verifying a
    * proposal: the summary binds the reference block commitment, so deriving it

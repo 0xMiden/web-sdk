@@ -969,6 +969,26 @@ describe("TransactionsResource", () => {
       expect(inner.executeForSummaryAt).not.toHaveBeenCalled();
       expect(inner.executeForSummary).not.toHaveBeenCalled();
     });
+
+    it("reports an unknown operation rather than the anchor rule", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.preview({ operation: "nope", anchor: "anchorObj" })
+      ).rejects.toThrow(/Unknown preview operation: nope/);
+    });
+
+    it("rejects a null anchor instead of silently previewing at the tip", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.preview({
+          operation: "custom",
+          account: "0xacc",
+          request: "req",
+          anchor: null,
+        })
+      ).rejects.toThrow(/anchor was null or undefined/);
+      expect(inner.executeForSummary).not.toHaveBeenCalled();
+    });
   });
 
   describe("chain anchor", () => {
@@ -1000,6 +1020,18 @@ describe("TransactionsResource", () => {
       const { resource, inner } = makeResource();
       await resource.executeRequest("0xaccHex", {}, {});
       expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    it("rejects a null anchor rather than executing at the tip", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.executeRequest("0xaccHex", {}, { anchor: null })
+      ).rejects.toThrow(/anchor was null or undefined/);
+      await expect(
+        resource.submit("0xaccHex", {}, { anchor: null })
+      ).rejects.toThrow(/anchor was null or undefined/);
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
       expect(inner.executeTransactionAt).not.toHaveBeenCalled();
     });
 

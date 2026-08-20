@@ -5,6 +5,36 @@ import {
 } from "../utils.js";
 
 /**
+ * Reject an `anchor` that is present but nullish.
+ *
+ * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
+ * otherwise fall through and execute at the current tip. That is the one
+ * failure mode anchoring exists to prevent, and it is easy to hit: the natural
+ * source of an anchor is `useChainAnchor().anchor`, which is `null` until the
+ * capture resolves.
+ */
+/** Preview operations that build their own request, and so cannot be anchored. */
+const PREVIEW_BUILT_IN_OPERATIONS = new Set([
+  "send",
+  "mint",
+  "bridge",
+  "consume",
+  "swap",
+  "pswapCreate",
+  "pswapConsume",
+  "pswapCancel",
+]);
+
+function assertAnchorNotNullish(opts) {
+  if (opts && "anchor" in opts && opts.anchor == null) {
+    throw new Error(
+      "anchor was null or undefined; await captureAnchor(request) before " +
+        "passing it, or omit the option entirely to execute at the current tip"
+    );
+  }
+}
+
+/**
  * Prove an executed transaction, resolving the prover exactly the way the
  * one-shot `submit()` pipeline does: the per-call prover if given, else the
  * client's default prover, else the built-in local prover. Shared by
@@ -391,11 +421,14 @@ export class TransactionsResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
+    assertAnchorNotNullish(opts);
+
     // Only `custom` can be anchored. Every other operation builds its request
     // here, so the caller cannot hold an anchor captured for it — accepting one
     // would execute against a request the anchor never tracked, surfacing as an
-    // opaque error from deep inside the executor.
-    if (opts.anchor && opts.operation !== "custom") {
+    // opaque error from deep inside the executor. An unrecognized operation
+    // falls through to the switch, so it reports that rather than the anchor.
+    if (opts.anchor && PREVIEW_BUILT_IN_OPERATIONS.has(opts.operation)) {
       throw new Error(
         `preview does not accept an anchor for operation "${opts.operation}"; ` +
           `capture one with captureAnchor(request) and use operation: "custom"`
@@ -694,8 +727,9 @@ export class TransactionsResource {
    *
    * @param {TransactionRequest} request - The request the anchor is captured for.
    * @returns {Promise<ChainAnchor>} An anchor pinned to the current sync height.
-   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` if a sync lands
-   * mid-capture and leaves the anchor internally inconsistent. Retry.
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` (on Node.js the code
+   * prefixes the message instead) if a sync lands mid-capture and leaves the
+   * anchor internally inconsistent. Retry.
    */
   async captureAnchor(request) {
     this.#client.assertNotTerminated();
@@ -704,6 +738,7 @@ export class TransactionsResource {
 
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorNotNullish(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     return await this.#submitOrSubmitWithProver(
@@ -742,6 +777,7 @@ export class TransactionsResource {
    */
   async executeRequest(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorNotNullish(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     const result = opts?.anchor

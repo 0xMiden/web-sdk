@@ -577,7 +577,8 @@ impl WebClient {
         match maybe_wrap_send(fut).await {
             Ok(_) => Err(from_str_err_with_code(
                 "transaction is already fully authorized, so no transaction summary was \
-                 produced during execution; submit it with execute instead",
+                 produced during execution; submit it with executeTransactionAt against the \
+                 same anchor instead",
                 "TRANSACTION_ALREADY_AUTHORIZED",
             )),
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
@@ -791,7 +792,7 @@ impl WebClient {
 fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
     match err {
         ClientError::ChainAnchorError(anchor_err) => {
-            from_str_err_with_code(&anchor_err.to_string(), "INVALID_CHAIN_ANCHOR")
+            from_str_err_with_code(&format!("{context}: {anchor_err}"), "INVALID_CHAIN_ANCHOR")
         },
         err => js_error_with_context(err, context),
     }

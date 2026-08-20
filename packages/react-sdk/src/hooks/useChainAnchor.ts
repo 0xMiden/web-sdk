@@ -14,7 +14,7 @@ export interface UseChainAnchorResult {
   isCapturing: boolean;
   /** Error if capture failed */
   error: Error | null;
-  /** Reset the hook state */
+  /** Clear the captured anchor and error. Does not cancel a running capture. */
   reset: () => void;
 }
 
@@ -31,7 +31,12 @@ export interface UseChainAnchorResult {
  * The anchor tracks the creation blocks of the request's authenticated input
  * notes, so it stays valid for that request once the chain advances. Serialize
  * it with `anchor.serialize()` to send it to co-signers, and rebuild it with
- * `ChainAnchor.deserialize(bytes)`.
+ * `ChainAnchor.deserialize(bytes)` — importing the class itself from
+ * `@miden-sdk/miden-sdk`, since this package re-exports it as a type only.
+ *
+ * Rejects with `code: "OPERATION_BUSY"` if a capture is already running, and
+ * with `code: "INVALID_CHAIN_ANCHOR"` if a sync lands mid-capture and leaves
+ * the anchor internally inconsistent — retry that one.
  *
  * @example
  * ```tsx
@@ -109,9 +114,11 @@ export function useChainAnchor(): UseChainAnchorResult {
     [client, isReady, runExclusiveSafe]
   );
 
+  // Deliberately leaves `isCapturing` alone: reset clears results, it does not
+  // cancel a running capture. Forcing the flag to false would re-enable a
+  // button that the busy guard still rejects.
   const reset = useCallback(() => {
     setAnchor(null);
-    setIsCapturing(false);
     setError(null);
   }, []);
 

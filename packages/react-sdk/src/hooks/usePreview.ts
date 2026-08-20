@@ -4,7 +4,10 @@ import type { TransactionSummary, PreviewTransactionOptions } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
-import { resolveTransactionRequest } from "../utils/transactions";
+import {
+  assertAnchorNotNullish,
+  resolveTransactionRequest,
+} from "../utils/transactions";
 
 export interface UsePreviewResult {
   /** Derive the transaction summary awaiting authorization */
@@ -15,7 +18,7 @@ export interface UsePreviewResult {
   isPreviewing: boolean;
   /** Error if the preview failed */
   error: Error | null;
-  /** Reset the hook state */
+  /** Clear the derived summary and error. Does not cancel a running preview. */
   reset: () => void;
 }
 
@@ -73,6 +76,8 @@ export function usePreview(): UsePreviewResult {
         );
       }
 
+      assertAnchorNotNullish(options);
+
       isBusyRef.current = true;
       setIsPreviewing(true);
       setError(null);
@@ -117,9 +122,11 @@ export function usePreview(): UsePreviewResult {
     [client, isReady, runExclusiveSafe]
   );
 
+  // Deliberately leaves `isPreviewing` alone: reset clears results, it does not
+  // cancel a running preview. Forcing the flag to false would re-enable a
+  // button that the busy guard still rejects.
   const reset = useCallback(() => {
     setSummary(null);
-    setIsPreviewing(false);
     setError(null);
   }, []);
 

@@ -270,6 +270,46 @@ describe("usePreview", () => {
     });
   });
 
+  describe("input validation", () => {
+    it("rejects a null anchor rather than deriving at the tip", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => usePreview());
+
+      await act(async () => {
+        await expect(
+          result.current.preview({
+            accountId: "0xaccount",
+            request: createMockTransactionRequest(),
+            anchor: null as never,
+          })
+        ).rejects.toThrow(/anchor was null or undefined/);
+      });
+
+      expect(mockClient.executeForSummary).not.toHaveBeenCalled();
+      expect(mockClient.executeForSummaryAt).not.toHaveBeenCalled();
+    });
+
+    it("rejects a request factory that resolves to null", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => usePreview());
+
+      await act(async () => {
+        await expect(
+          result.current.preview({
+            accountId: "0xaccount",
+            request: (() => null) as never,
+          })
+        ).rejects.toThrow(/factory returned null or undefined/);
+      });
+
+      expect(mockClient.executeForSummary).not.toHaveBeenCalled();
+    });
+  });
+
   describe("client swap", () => {
     it("drops the derived summary when the client changes", async () => {
       const mockClient = createMockWebClient({

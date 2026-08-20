@@ -7,7 +7,7 @@ import type {
 } from "@miden-sdk/miden-sdk";
 
 /** A request, or a factory that builds one from the client. */
-type TransactionRequestInput =
+export type TransactionRequestInput =
   | TransactionRequest
   | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
 
@@ -16,10 +16,36 @@ export async function resolveTransactionRequest(
   request: TransactionRequestInput,
   client: WebClient
 ): Promise<TransactionRequest> {
-  if (typeof request === "function") {
-    return await request(client);
+  const resolved =
+    typeof request === "function" ? await request(client) : request;
+  // Passing a nullish request into wasm surfaces as "null pointer passed to
+  // rust", which reads like a consumed handle and sends the reader hunting in
+  // the wrong place.
+  if (resolved == null) {
+    throw new Error(
+      typeof request === "function"
+        ? "the transaction request factory returned null or undefined"
+        : "a transaction request is required"
+    );
   }
-  return request;
+  return resolved;
+}
+
+/**
+ * Reject an `anchor` that is present but nullish.
+ *
+ * Anchored branches are selected by truthiness, so `{ anchor: null }` would
+ * otherwise execute at the current tip — the one outcome anchoring exists to
+ * prevent. It is easy to hit, because `useChainAnchor().anchor` is `null` until
+ * the capture resolves.
+ */
+export function assertAnchorNotNullish(options: object): void {
+  if ("anchor" in options && options.anchor == null) {
+    throw new Error(
+      "anchor was null or undefined; await captureAnchor(request) before " +
+        "passing it, or omit the option entirely to execute at the current tip"
+    );
+  }
 }
 
 type ClientWithTransactions = {
