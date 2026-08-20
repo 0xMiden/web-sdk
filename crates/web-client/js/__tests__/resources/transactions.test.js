@@ -1083,21 +1083,75 @@ describe("TransactionsResource", () => {
 
     // These build their own request, so an anchor cannot apply. Ignoring it
     // would execute at the tip while the caller believed it was pinned.
-    it.each([
-      ["send", (r, a) => r.send({ account: "0xaccHex", anchor: a })],
-      ["mint", (r, a) => r.mint({ account: "0xaccHex", anchor: a })],
-      ["consume", (r, a) => r.consume({ account: "0xaccHex", anchor: a })],
-      ["swap", (r, a) => r.swap({ account: "0xaccHex", anchor: a })],
-      ["execute", (r, a) => r.execute({ account: "0xaccHex", anchor: a })],
-      ["batch", (r, a) => r.batch({ account: "0xaccHex", anchor: a })],
-      ["submitBatch", (r, a) => r.submitBatch("0xaccHex", [], { anchor: a })],
-    ])("%s rejects an anchor instead of ignoring it", async (name, call) => {
+    const OPTS_METHODS = [
+      "send",
+      "createNetworkNote",
+      "mint",
+      "bridge",
+      "consume",
+      "consumeAll",
+      "swap",
+      "pswapCreate",
+      "pswapConsume",
+      "pswapCancel",
+      "execute",
+      "batch",
+    ];
+
+    it.each(OPTS_METHODS)(
+      "%s rejects an anchor instead of ignoring it",
+      async (name) => {
+        const { resource, inner } = makeResource();
+        await expect(
+          resource[name]({ account: "0xaccHex", anchor: { blockNum: () => 1 } })
+        ).rejects.toThrow(/does not accept an anchor/);
+        expect(inner.executeTransaction).not.toHaveBeenCalled();
+        expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+      }
+    );
+
+    it("submitBatch rejects an anchor instead of ignoring it", async () => {
       const { resource, inner } = makeResource();
-      await expect(call(resource, { blockNum: () => 1 })).rejects.toThrow(
-        /does not accept an anchor/
-      );
+      await expect(
+        resource.submitBatch("0xaccHex", [], { anchor: { blockNum: () => 1 } })
+      ).rejects.toThrow(/does not accept an anchor/);
       expect(inner.executeTransaction).not.toHaveBeenCalled();
-      expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    // Derive the guarded set from source so a new request-building method
+    // cannot be added without either a guard or a deliberate exemption here.
+    it("guards every request-building method", () => {
+      const source = readFileSync(
+        new URL("../../resources/transactions.js", import.meta.url),
+        "utf8"
+      );
+      const EXEMPT = new Set([
+        // Take an anchor legitimately.
+        "preview",
+        "submit",
+        "executeRequest",
+        "submitBatch",
+        // Never execute a transaction against a reference block, so there is
+        // no tip for an ignored anchor to silently fall back to.
+        "executeProgram",
+        "prove",
+        "waitForConfirmation",
+      ]);
+      const declared = [
+        ...source.matchAll(/^ {2}async ([a-zA-Z]+)\(opts\) \{/gm),
+      ].map((m) => m[1]);
+      const guarded = new Set(
+        [
+          ...source.matchAll(/rejectUnexpectedAnchor\(opts, "([a-zA-Z]+)"/g),
+        ].map((m) => m[1])
+      );
+
+      expect(declared.length).toBeGreaterThan(1);
+      const unguarded = declared.filter(
+        (m) => !guarded.has(m) && !EXEMPT.has(m)
+      );
+      expect(unguarded).toEqual([]);
+      expect(new Set(OPTS_METHODS)).toEqual(guarded);
     });
 
     it("treats an explicitly undefined anchor as omitted", async () => {

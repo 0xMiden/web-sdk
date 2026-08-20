@@ -22,9 +22,9 @@ export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
  *
  * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
  * otherwise fall through and execute at the current tip: the one outcome
- * anchoring exists to prevent. It is easy to hit, because the natural source of
- * an anchor is `useChainAnchor().anchor`, which is `null` until the capture
- * resolves, and `cond && anchor` yields `false`.
+ * anchoring exists to prevent. It is easy to hit, because an anchor usually
+ * lives in a state slot that holds `null` until the capture resolves, and
+ * `cond && anchor` yields `false`.
  */
 function assertAnchorValueUsable(opts) {
   const anchor = opts?.anchor;
@@ -157,6 +157,7 @@ export class TransactionsResource {
    * confirmation. Provide exactly one of `recipient` or `script`.
    */
   async createNetworkNote(opts) {
+    rejectUnexpectedAnchor(opts, "createNetworkNote", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -262,6 +263,7 @@ export class TransactionsResource {
   }
 
   async bridge(opts) {
+    rejectUnexpectedAnchor(opts, "bridge", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
@@ -299,6 +301,7 @@ export class TransactionsResource {
   }
 
   async consumeAll(opts) {
+    rejectUnexpectedAnchor(opts, "consumeAll", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -363,6 +366,7 @@ export class TransactionsResource {
 
   /** Create a partial-swap (PSWAP) note. See {@link PswapCreateOptions}. */
   async pswapCreate(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCreate", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCreateRequest(
@@ -385,6 +389,7 @@ export class TransactionsResource {
 
   /** Consume (fully or partially fill) a PSWAP note. See {@link PswapConsumeOptions}. */
   async pswapConsume(opts) {
+    rejectUnexpectedAnchor(opts, "pswapConsume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapConsumeRequest(
@@ -407,6 +412,7 @@ export class TransactionsResource {
 
   /** Cancel a PSWAP note as its creator and reclaim the offered asset. See {@link PswapCancelOptions}. */
   async pswapCancel(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCancel", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCancelRequest(

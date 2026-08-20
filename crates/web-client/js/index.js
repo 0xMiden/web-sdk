@@ -946,19 +946,22 @@ class WebClient {
   async executeTransactionAt(accountId, transactionRequest, anchor) {
     return this._serializeWasmCall(async () => {
       try {
+        // Before the worker branch: on the main-thread path a nullish anchor
+        // would otherwise reach wasm and surface as "null pointer passed to
+        // rust", which reads like a consumed handle.
+        if (!anchor) {
+          throw new Error(
+            `anchor was ${String(anchor)}; executeTransactionAt requires one — ` +
+              "use executeTransaction to execute at the current tip"
+          );
+        }
+
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
           return await wasmWebClient.executeTransactionAt(
             accountId,
             transactionRequest,
             anchor
-          );
-        }
-
-        if (!anchor) {
-          throw new Error(
-            `anchor was ${String(anchor)}; executeTransactionAt requires one — ` +
-              "use executeTransaction to execute at the current tip"
           );
         }
 

@@ -1,7 +1,7 @@
 /**
  * Codes assigned by the Rust client rather than this package. They arrive on
  * errors thrown out of WASM, so they are not `MidenError`s and not part of the
- * closed union above.
+ * closed `MidenErrorCode` union.
  *
  * On Node these are a `"CODE: "` prefix on the message rather than a property,
  * because the napi bindings cannot attach one.

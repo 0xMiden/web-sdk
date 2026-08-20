@@ -35,6 +35,10 @@ export interface UsePreviewResult {
  * That code comes from the client rather than this package, so on Node it
  * prefixes the message instead of appearing as a property.
  *
+ * Also rejects with `code: "OPERATION_BUSY"` if a preview is already running,
+ * and `code: "STALE_CLIENT"` if the client is swapped mid-call. Both originate
+ * here and are always properties.
+ *
  * Pass `anchor` to derive the summary at a pinned reference block. A co-signer
  * verifying a proposal must do this with the proposer's anchor: the summary
  * binds the reference block commitment, so deriving it at the local sync height

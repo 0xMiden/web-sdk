@@ -185,8 +185,9 @@ describe("extractFullNote", () => {
 });
 
 describe("assertAnchorValueUsable", () => {
-  // Shared by useTransaction, usePreview and the anchored resource methods, so
-  // testing it directly covers every call site at once.
+  // Shared by useTransaction and usePreview, so testing it directly covers
+  // both call sites. The web-client package has its own copy of this guard
+  // with its own tests; the two are intentionally duplicated across packages.
   it.each([
     ["null", null],
     ["false", false],

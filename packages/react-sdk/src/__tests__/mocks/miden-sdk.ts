@@ -214,9 +214,12 @@ export const createMockChainAnchor = (blockNum: number = 100) => ({
 
 // Mock TransactionSummary
 export const createMockTransactionSummary = (
-  commitment: string = "0xsummary"
+  commitment: string = "0xsummary",
+  blockCommitment: string = "0xblock"
 ) => ({
   toCommitment: vi.fn(() => createMockWord(commitment)),
+  blockCommitment: vi.fn(() => createMockWord(blockCommitment)),
+  expirationDelta: vi.fn(() => 256),
   accountDelta: vi.fn(() => ({})),
   inputNotes: vi.fn(() => ({})),
   outputNotes: vi.fn(() => ({})),
