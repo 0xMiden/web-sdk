@@ -526,6 +526,8 @@ Transactions execute against the client's current sync height by default. Since 
 A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
 
 ```typescript
+import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+
 // Proposer: capture, derive the summary at the anchor, ship both.
 const anchor = await client.transactions.captureAnchor(request);
 const summary = await client.transactions.preview({
@@ -555,7 +557,16 @@ await client.transactions.submit(multisig, request, { anchor: received });
 
 The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
 
-An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block. When it came from an untrusted party, re-derive the summary at that anchor with `preview` and compare `toCommitment()` against the summary you were asked to sign; a match binds the anchor and the request together, and is the check to gate signing on. Comparing `anchor.commitment()` on its own is only meaningful against a block commitment you already trust from elsewhere.
+An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block. When it came from an untrusted party, there are two checks:
+
+```typescript
+// Cheap: the summary signs its reference block, so the anchor must match it.
+if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
+  throw new Error("anchor is not the block this summary was built at");
+}
+```
+
+That rules out a substituted anchor on its own. The re-derivation in the snippet above is the stronger check and the one to gate signing on, because it binds the request and your local account state as well, not just the block. Doing both is cheap: the comparison above fails fast before you spend an execution on `preview`.
 
 An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store. So every party must also agree on the account state: if the account moved between the proposal and the verification, the re-derived summary will not match even though the anchor is correct. That mismatch is the most common reason a multisig flow fails, and it fails closed — a co-signer refuses to sign rather than signing the wrong thing.
 

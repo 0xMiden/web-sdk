@@ -32,6 +32,8 @@ export interface UsePreviewResult {
  * multisig below its signing threshold. A transaction that is already fully
  * authorized produces no summary, and this rejects with an error whose `code`
  * is `"TRANSACTION_ALREADY_AUTHORIZED"`; use `useTransaction` to submit it.
+ * That code comes from the client rather than this package, so on Node it
+ * prefixes the message instead of appearing as a property.
  *
  * Pass `anchor` to derive the summary at a pinned reference block. A co-signer
  * verifying a proposal must do this with the proposer's anchor: the summary

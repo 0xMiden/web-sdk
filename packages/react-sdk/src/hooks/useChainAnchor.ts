@@ -40,6 +40,11 @@ export interface UseChainAnchorResult {
  * with `code: "INVALID_CHAIN_ANCHOR"` if a sync lands mid-capture and leaves
  * the anchor internally inconsistent — retry that one.
  *
+ * `INVALID_CHAIN_ANCHOR` comes from the client rather than this package, so on
+ * Node it prefixes the message (`"INVALID_CHAIN_ANCHOR: ..."`) instead of
+ * appearing as a property; the napi bindings cannot attach one. `OPERATION_BUSY`
+ * originates here and is always a property.
+ *
  * @example
  * ```tsx
  * function ProposeButton({ accountId, request }: Props) {

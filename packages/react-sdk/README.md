@@ -1280,7 +1280,9 @@ and `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
-call is in flight. An anchor and a summary are both bound to one chain, so
+call is in flight. Codes originating in the client rather than this package
+(`TRANSACTION_ALREADY_AUTHORIZED`, `INVALID_CHAIN_ANCHOR`) prefix the message on
+Node instead of appearing as a property. An anchor and a summary are both bound to one chain, so
 changing clients clears `anchor`, `summary` and `error`, and a call in flight
 across the swap rejects instead of resolving — with `code: "STALE_CLIENT"` if
 it would otherwise have succeeded. Those rejections never reach `error` state,

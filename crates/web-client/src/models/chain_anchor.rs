@@ -20,10 +20,10 @@ use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 /// Both invariants (chain length matches the header's block number, peaks hash to the header's
 /// chain commitment) are enforced natively on construction and on [`Self::deserialize`], so an
 /// anchor received from an untrusted party can never be malformed — only pinned to the wrong
-/// block. To rule that out, re-derive the summary at the received anchor and compare it against
-/// the summary you were asked to sign; a match binds the anchor and the request together.
-/// Comparing [`Self::commitment`] on its own only helps against a block commitment already
-/// trusted from elsewhere, since a `TransactionSummary` exposes no reference-block accessor.
+/// block. To rule that out, compare [`Self::commitment`] against
+/// `TransactionSummary::blockCommitment()`, which is signed into the summary. Re-deriving the
+/// summary at the anchor and comparing `toCommitment()` is the stronger check, since it also
+/// binds the request and the local account state.
 #[derive(Clone)]
 #[js_export]
 pub struct ChainAnchor(NativeChainAnchor);

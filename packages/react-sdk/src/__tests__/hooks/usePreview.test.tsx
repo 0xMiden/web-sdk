@@ -50,6 +50,23 @@ describe("usePreview", () => {
       });
     });
 
+    it("throws when a client exists but is still initializing", async () => {
+      // The `!isReady` half of the guard: a real window during provider
+      // startup that the client-is-null case does not reach.
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: false });
+
+      const { result } = renderHook(() => usePreview());
+
+      await expect(
+        result.current.preview({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        })
+      ).rejects.toThrow("Miden client is not ready");
+      expect(mockClient.executeForSummary).not.toHaveBeenCalled();
+    });
+
     it("derives the summary at the sync height when no anchor is given", async () => {
       const summary = createMockTransactionSummary();
       const mockClient = createMockWebClient({
@@ -260,7 +277,10 @@ describe("usePreview", () => {
             accountId: "0xaccount",
             request: createMockTransactionRequest(),
           })
-        ).rejects.toThrow("A preview is already in progress");
+        ).rejects.toMatchObject({
+          code: "OPERATION_BUSY",
+          message: expect.stringContaining("already in progress"),
+        });
       });
 
       await act(async () => {

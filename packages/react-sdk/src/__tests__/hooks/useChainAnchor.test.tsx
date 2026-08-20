@@ -48,6 +48,22 @@ describe("useChainAnchor", () => {
       });
     });
 
+    it("throws when a client exists but is still initializing", async () => {
+      // The `!isReady` half of the guard: a real window during provider
+      // startup that the client-is-null case does not reach.
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: false });
+
+      const { result } = renderHook(() => useChainAnchor());
+
+      await expect(
+        result.current.captureAnchor({
+          request: createMockTransactionRequest(),
+        })
+      ).rejects.toThrow("Miden client is not ready");
+      expect(mockClient.chainAnchorForRequest).not.toHaveBeenCalled();
+    });
+
     it("captures an anchor for the request and exposes it", async () => {
       const anchor = createMockChainAnchor(42);
       const mockClient = createMockWebClient({
@@ -212,7 +228,10 @@ describe("useChainAnchor", () => {
           result.current.captureAnchor({
             request: createMockTransactionRequest(),
           })
-        ).rejects.toThrow("An anchor capture is already in progress");
+        ).rejects.toMatchObject({
+          code: "OPERATION_BUSY",
+          message: expect.stringContaining("already in progress"),
+        });
       });
 
       await act(async () => {

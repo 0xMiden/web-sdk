@@ -137,6 +137,12 @@ is still in flight. `captureAnchor` additionally rejects with
 `code: "INVALID_CHAIN_ANCHOR"` when a sync lands mid-capture and leaves the
 anchor internally inconsistent; retrying is the correct response.
 
+`OPERATION_BUSY` and `STALE_CLIENT` originate in this package and are always
+properties on the error. `TRANSACTION_ALREADY_AUTHORIZED` and
+`INVALID_CHAIN_ANCHOR` come from the client, so on Node they prefix the message
+(`"INVALID_CHAIN_ANCHOR: ..."`) rather than appearing as a property — the napi
+bindings cannot attach one. In the browser all four are properties.
+
 Both are also scoped to the client that produced them. Changing clients clears
 `anchor`, `summary`, and `error`, and a call still in flight across the swap
 rejects rather than returning a value bound to the chain you left — with
@@ -148,11 +154,17 @@ the call site. Capture again on the new client.
 
 - **Verify anchors from untrusted parties.** An anchor validates its own
   internal consistency on `deserialize`, so it can never be malformed — but it
-  can be pinned to the wrong block. Re-derive the summary at the received anchor
-  with `usePreview` and compare `toCommitment()` against the summary you were
-  asked to sign; a match binds the anchor and the request together, and is the
-  check to gate signing on. Comparing `anchor.commitment()` on its own only
-  helps against a block commitment you already trust from elsewhere.
+  can be pinned to the wrong block. A summary signs its reference block, so
+  start by checking `anchor.commitment()` against `summary.blockCommitment()` —
+  that rules out a substituted anchor and costs nothing. Then re-derive the
+  summary at the received anchor with `usePreview` and compare
+  `toCommitment()`; that is the check to gate signing on, because it binds the
+  request and your local account state as well as the block.
+- **Anchored execution skips the recency check**, since it deliberately
+  references a block older than the tip. `useTransaction` syncs before
+  executing unless you pass `skipSync`, so this is only observable with
+  `{ skipSync: true, anchor }` — that combination will execute against an old
+  block where an unanchored execute would refuse.
 - **An anchor pins chain data, not account state.** Account records and
   authenticated input notes still come from each participant's own local store,
   so all parties must agree on the account state too. If the account moved

@@ -1062,6 +1062,10 @@ describe("TransactionsResource", () => {
       ["null", null],
       ["false", false],
       ["an empty string", ""],
+      // The two values that make JSON.stringify misbehave in the error path:
+      // it throws on a BigInt and renders NaN as "null".
+      ["a zero bigint", 0n],
+      ["NaN", NaN],
     ])(
       "rejects %s as an anchor rather than executing at the tip",
       async (_label, anchor) => {

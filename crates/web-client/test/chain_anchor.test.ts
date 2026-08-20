@@ -133,6 +133,14 @@ test.describe("chain anchor", () => {
       const bytes = anchor.serialize();
       const restored = sdk.ChainAnchor.deserialize(bytes);
 
+      // Move the tip away from the anchor before executing. Without this the
+      // anchor block and the tip coincide, and the assertion below would hold
+      // even if the anchor were ignored entirely.
+      await client.proveBlock();
+      await client.proveBlock();
+      await client.syncState();
+      const tip = await client.getSyncHeight();
+
       const executed = await client.executeTransactionAt(
         wallet.id(),
         consumeRequest,
@@ -146,6 +154,7 @@ test.describe("chain anchor", () => {
         restoredCommitment: restored.commitment().toHex(),
         bytes: Array.from(bytes),
         restoredBytes: Array.from(restored.serialize()),
+        tip,
         executedBlock: executed.executedTransaction().blockHeader().blockNum(),
       };
     });
@@ -153,6 +162,7 @@ test.describe("chain anchor", () => {
     expect(result.restoredBlockNum).toEqual(result.blockNum);
     expect(result.restoredCommitment).toEqual(result.commitment);
     expect(result.restoredBytes).toEqual(result.bytes);
+    expect(result.tip).toBeGreaterThan(result.blockNum);
     expect(result.executedBlock).toEqual(result.blockNum);
   });
 

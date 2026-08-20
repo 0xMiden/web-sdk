@@ -174,6 +174,8 @@ That is a problem for any flow that collects signatures and executes later — a
 A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
 
 ```typescript
+import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+
 // ── Proposer ──────────────────────────────────────────────
 const anchor = await client.transactions.captureAnchor(request);
 
@@ -207,12 +209,17 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 }
 
 // ── Executor ──────────────────────────────────────────────
+// `request` here carries the collected signatures in its advice map; attaching
+// them is part of the signing protocol, not the anchor.
 await client.transactions.submit(multisig, request, { anchor: received });
 ```
 
 Notes on anchors:
 
-- **Verify anchors from untrusted parties.** An anchor validates its own internal consistency on `deserialize`, so it can never be malformed — but it can be pinned to the wrong block. Re-derive the summary at the received anchor with `preview` and compare `toCommitment()` against the summary you were asked to sign; a match binds the anchor and the request together. Comparing `anchor.commitment()` on its own only helps against a block commitment you already trust from elsewhere.
+- **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring. Submit the same request the co-signers verified — a request that differs from the one they signed over produces a different summary and the transaction is rejected.
+- **A co-signer must already track the account.** Verification runs a real execution, so the account has to exist in that participant's local store: a public account can be pulled in with `accounts.getOrImport`, but a private account requires its state to be transferred out of band. Without it, `preview` fails to find the account rather than returning a mismatch.
+
+- **Verify anchors from untrusted parties.** An anchor validates its own internal consistency on `deserialize`, so it can never be malformed — but it can be pinned to the wrong block. A summary signs its reference block, so start by checking `anchor.commitment()` against `summary.blockCommitment()` — that rules out a substituted anchor and costs nothing. Then re-derive the summary at the received anchor with `preview` and compare `toCommitment()`; that is the check to gate signing on, because it binds the request and your local account state as well as the block.
 - **An anchor pins chain data, not account state.** Account records and authenticated input notes still come from each participant's own local store, so all parties must agree on the account state too. If the account moved between the proposal and the verification, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails. It fails closed: the co-signer refuses to sign.
 - **An anchor is captured for a specific request.** It tracks the creation blocks of that request's authenticated input notes, which is why `captureAnchor` takes the request. Executing a different request against it fails if that request consumes a note the anchor doesn't track.
 - **The `anchor` option is only on the request-taking methods** — `preview({ operation: "custom" })`, `executeRequest`, and `submit`. `send`, `mint`, `consume` and friends build their request internally, so there is no request to have captured an anchor for.

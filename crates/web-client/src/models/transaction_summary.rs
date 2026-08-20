@@ -53,6 +53,25 @@ impl TransactionSummary {
         self.0.user_params().as_elements().iter().map(Into::into).collect()
     }
 
+    /// Returns the commitment of the reference block this summary was built against.
+    ///
+    /// Signed into the summary, so a co-signer can check a received [`ChainAnchor`] against it
+    /// directly: `anchor.commitment()` must equal this. That is cheaper than re-deriving the
+    /// summary, and it is the check the Rust client documents.
+    ///
+    /// [`ChainAnchor`]: crate::models::chain_anchor::ChainAnchor
+    #[js_export(js_name = "blockCommitment")]
+    pub fn block_commitment(&self) -> Word {
+        self.0.block_commitment().into()
+    }
+
+    /// Returns the number of blocks after the reference block within which the transaction
+    /// must be included.
+    #[js_export(js_name = "expirationDelta")]
+    pub fn expiration_delta(&self) -> u16 {
+        self.0.expiration_delta()
+    }
+
     /// Computes the commitment to this `TransactionSummary`.
     #[js_export(js_name = "toCommitment")]
     pub fn to_commitment(&self) -> Word {
