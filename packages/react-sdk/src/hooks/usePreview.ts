@@ -4,6 +4,7 @@ import type { TransactionSummary, PreviewTransactionOptions } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
+import type { CodedError } from "../utils/errors";
 import {
   assertAnchorValueUsable,
   resolveTransactionRequest,
@@ -16,8 +17,8 @@ export interface UsePreviewResult {
   summary: TransactionSummary | null;
   /** Whether a preview is in progress */
   isPreviewing: boolean;
-  /** Error if the preview failed */
-  error: Error | null;
+  /** Error if the preview failed. Carries `code` for the cases documented below. */
+  error: CodedError | null;
   /** Clear the derived summary and error. Does not cancel a running preview. */
   reset: () => void;
 }
@@ -61,7 +62,7 @@ export function usePreview(): UsePreviewResult {
 
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useState<CodedError | null>(null);
 
   const preview = useCallback(
     async (options: PreviewTransactionOptions): Promise<TransactionSummary> => {

@@ -110,9 +110,13 @@ test.describe("chain anchor", () => {
   }) => {
     // The anchors above are captured for mint requests, which have no
     // authenticated input notes and so track no blocks. Only a request that
-    // consumes a note exercises the populated partial blockchain — the shape
-    // every real anchored flow uses, and the one the worker rebuilds on every
-    // anchored execution.
+    // consumes a note exercises the populated partial blockchain, which is the
+    // shape every real anchored flow uses.
+    //
+    // This covers the codec, not the worker plumbing: the harness terminates
+    // the worker, so the serialize/deserialize pair below runs on the main
+    // thread. That is the same pair the worker performs, so a codec regression
+    // is caught here; the postMessage wiring itself is not exercised.
     const result = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
       const { createdNoteId } = await helpers.mockMint(

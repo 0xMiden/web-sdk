@@ -459,5 +459,40 @@ describe("usePreview", () => {
       expect(result.current.isPreviewing).toBe(false);
       expect(result.current.error).toBeNull();
     });
+
+    it("leaves isPreviewing set when the preview is still running", async () => {
+      // reset() clears results; it does not cancel. Asserting this after a
+      // settled preview would be vacuous, since `finally` already cleared it.
+      let resolve: (value: unknown) => void = () => {};
+      const gate = new Promise((res) => {
+        resolve = res;
+      });
+      const mockClient = createMockWebClient({
+        executeForSummary: vi.fn(() => gate),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => usePreview());
+
+      let pending: Promise<unknown> = Promise.resolve();
+      act(() => {
+        pending = result.current.preview({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+      expect(result.current.isPreviewing).toBe(true);
+
+      act(() => {
+        result.current.reset();
+      });
+      expect(result.current.isPreviewing).toBe(true);
+
+      await act(async () => {
+        resolve(createMockTransactionSummary());
+        await pending;
+      });
+      expect(result.current.isPreviewing).toBe(false);
+    });
   });
 });

@@ -3,6 +3,7 @@ import { useMiden } from "../context/MidenProvider";
 import type { ChainAnchor, CaptureAnchorOptions } from "../types";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
+import type { CodedError } from "../utils/errors";
 import { resolveTransactionRequest } from "../utils/transactions";
 
 export interface UseChainAnchorResult {
@@ -12,8 +13,8 @@ export interface UseChainAnchorResult {
   anchor: ChainAnchor | null;
   /** Whether a capture is in progress */
   isCapturing: boolean;
-  /** Error if capture failed */
-  error: Error | null;
+  /** Error if capture failed. Carries `code` for the cases documented below. */
+  error: CodedError | null;
   /** Clear the captured anchor and error. Does not cancel a running capture. */
   reset: () => void;
 }
@@ -63,7 +64,7 @@ export function useChainAnchor(): UseChainAnchorResult {
 
   const [anchor, setAnchor] = useState<ChainAnchor | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useState<CodedError | null>(null);
 
   const captureAnchor = useCallback(
     async (options: CaptureAnchorOptions): Promise<ChainAnchor> => {

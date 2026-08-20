@@ -34,6 +34,10 @@ const serializeError = (error) => {
       stack: error.stack,
       cause: error.cause ? serializeError(error.cause) : undefined,
       code: error.code,
+      // Remediation text the Rust layer attaches alongside `code`. Without it
+      // here, a worker-backed failure is less diagnosable than the identical
+      // failure on the main thread.
+      help: error.help,
     };
   }
 

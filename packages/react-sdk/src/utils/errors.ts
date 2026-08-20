@@ -1,3 +1,27 @@
+/**
+ * Codes assigned by the Rust client rather than this package. They arrive on
+ * errors thrown out of WASM, so they are not `MidenError`s and not part of the
+ * closed union above.
+ *
+ * On Node these are a `"CODE: "` prefix on the message rather than a property,
+ * because the napi bindings cannot attach one.
+ */
+export type WasmErrorCode =
+  | "INVALID_CHAIN_ANCHOR"
+  | "TRANSACTION_ALREADY_AUTHORIZED";
+
+/**
+ * An `Error` that may carry a machine-readable `code`.
+ *
+ * Hooks surface this rather than a bare `Error` so the codes their docs tell
+ * you to branch on are reachable without a cast. The `(string & {})` arm keeps
+ * unrecognized codes from a newer client assignable while preserving
+ * autocomplete on the known ones.
+ */
+export type CodedError = Error & {
+  readonly code?: MidenErrorCode | WasmErrorCode | (string & {});
+};
+
 export type MidenErrorCode =
   | "WASM_CLASS_MISMATCH"
   | "WASM_POINTER_CONSUMED"

@@ -168,7 +168,7 @@ export {
 export type { NoteAttachmentData } from "./utils/noteAttachment";
 export { bytesToBigInt, bigIntToBytes, concatBytes } from "./utils/bytes";
 export { MidenError, wrapWasmError } from "./utils/errors";
-export type { MidenErrorCode } from "./utils/errors";
+export type { CodedError, MidenErrorCode, WasmErrorCode } from "./utils/errors";
 export { waitForWalletDetection } from "./utils/walletDetection";
 export type { WalletAdapterLike } from "./utils/walletDetection";
 export {

@@ -1288,8 +1288,17 @@ so handle them at the call site.
 
 An anchor validates its own internal consistency on `deserialize`, so it can
 never be malformed — but it can be pinned to the wrong block. When it came from
-an untrusted party, compare `anchor.commitment()` against the commitment bound
-into the summary before executing with it.
+an untrusted party, re-derive the summary at the received anchor with
+`usePreview` and compare `toCommitment()` against the summary you were asked to
+sign; a match binds the anchor and the request together. Comparing
+`anchor.commitment()` on its own only helps against a block commitment you
+already trust from elsewhere.
+
+An anchor pins chain data, not account state — account records and
+authenticated input notes still come from each participant's local store. If
+the account moved between the proposal and the verification, the re-derived
+summary will not match even though the anchor is correct. It fails closed: the
+co-signer refuses to sign.
 
 #### `useCompile()`
 

@@ -406,9 +406,11 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const anchor = await client.transactions.captureAnchor(mintRequest);
         const anchorBlock = anchor.blockNum();
 
-        // Advance past the anchor so the tip no longer matches it.
-        client.proveBlock();
-        client.proveBlock();
+        // Advance past the anchor so the tip no longer matches it. These must
+        // be awaited: the assertion below requires the tip to have actually
+        // moved, and proveBlock bypasses the serializing wrapper.
+        await client.proveBlock();
+        await client.proveBlock();
         await client.sync();
         const tip = await client.getSyncHeight();
 

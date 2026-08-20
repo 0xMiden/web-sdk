@@ -791,9 +791,13 @@ impl WebClient {
 /// changes; don't document a code for them until it does.
 fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
     match err {
-        ClientError::ChainAnchorError(anchor_err) => {
-            from_str_err_with_code(&format!("{context}: {anchor_err}"), "INVALID_CHAIN_ANCHOR")
-        },
+        ClientError::ChainAnchorError(anchor_err) => from_str_err_with_code(
+            &format!(
+                "{context}: {anchor_err}; a sync may have landed during capture, so retrying is \
+                 usually the fix"
+            ),
+            "INVALID_CHAIN_ANCHOR",
+        ),
         err => js_error_with_context(err, context),
     }
 }
