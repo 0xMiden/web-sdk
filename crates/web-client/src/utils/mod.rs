@@ -24,18 +24,24 @@ pub fn deserialize_from_bytes<T: Deserializable>(bytes: &JsBytes) -> Result<T, J
 
 /// Deserializes platform bytes that came from an untrusted party.
 ///
-/// Differs from [`deserialize_from_bytes`] by rejecting trailing bytes, which keeps the encoding
-/// canonical on read. That matters for a type whose serialized form is a transport blob rather
-/// than local persistence: otherwise unboundedly many byte strings decode to the same value, and
-/// anyone treating the blob as a cache or dedup key gets a false distinction.
+/// Differs from [`deserialize_from_bytes`] by rejecting bytes left over after a complete value.
+/// That matters for a type whose serialized form is a transport blob rather than local
+/// persistence, since anyone treating the blob as a cache or dedup key would otherwise get a
+/// false distinction between a value and the same value with a suffix.
+///
+/// It rejects suffixes, not every non-canonical encoding: a non-minimal length prefix is consumed
+/// by the reader and still decodes. Catching that as well would mean re-encoding the decoded value
+/// and comparing, a full second serialization of the partial blockchain on a path the worker runs
+/// for every anchored execution — too much for a dedup-key edge case that cannot change the value.
 ///
 /// Deliberately does NOT use `read_from_bytes_with_budget`. A budget bounds a collection's claimed
-/// length by `remaining / min_serialized_size()`, and that default is `size_of::<Self>()` — larger
-/// than the on-wire size for every type in a `ChainAnchor`, because `BlockHeader` omits its derived
-/// commitments from the encoding. Any budget tied to the input length therefore rejects legitimate
-/// anchors that track even one block. Allocation is bounded instead by the reader itself:
-/// collection reads stream through `read_many_iter().collect()`, which reserves nothing up front,
-/// so a forged length prefix cannot allocate beyond the bytes actually present.
+/// length by `remaining / min_serialized_size()`. The collection types override that to 1, but
+/// `BlockHeader` does not, so it inherits the `size_of::<Self>()` default — larger than its
+/// on-wire size, because it omits its derived commitments from the encoding. Any budget tied to
+/// the input length therefore rejects legitimate anchors that track even one block. Allocation is
+/// bounded instead by how collections decode: `Vec` collects an iterator of `Result`, whose lower
+/// size hint is zero and so reserves nothing up front, and the map types loop without reserving.
+/// A forged length prefix cannot allocate beyond the bytes actually present.
 pub fn deserialize_untrusted_bytes<T: Deserializable>(bytes: &JsBytes) -> Result<T, JsErr> {
     let vec = crate::platform::js_to_bytes(bytes);
     let context = alloc::format!("failed to deserialize {}", core::any::type_name::<T>());

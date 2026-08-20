@@ -38,6 +38,24 @@ function assertAnchorValueUsable(opts) {
 }
 
 /**
+ * Reject an `anchor` passed to a method that cannot honor one.
+ *
+ * Only the request-taking methods can be anchored, because an anchor is
+ * captured for a specific request. Everywhere else the option is meaningless —
+ * but silently ignoring it executes at the tip while the caller believes their
+ * transaction is pinned, which is the failure anchoring exists to prevent. The
+ * names are close enough to confuse (`execute` vs `executeRequest`,
+ * `submitBatch` vs `submit`) that this has to be loud.
+ */
+function rejectUnexpectedAnchor(opts, method, alternative) {
+  if (opts?.anchor === undefined) return;
+  throw new Error(
+    `${method}() does not accept an anchor because it builds its own ` +
+      `request; use ${alternative} with a request you captured the anchor for`
+  );
+}
+
+/**
  * Prove an executed transaction, resolving the prover exactly the way the
  * one-shot `submit()` pipeline does: the per-call prover if given, else the
  * client's default prover, else the built-in local prover. Shared by
@@ -69,6 +87,7 @@ export class TransactionsResource {
   }
 
   async send(opts) {
+    rejectUnexpectedAnchor(opts, "send", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -224,6 +243,7 @@ export class TransactionsResource {
   }
 
   async mint(opts) {
+    rejectUnexpectedAnchor(opts, "mint", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildMintRequest(opts, wasm);
@@ -260,6 +280,7 @@ export class TransactionsResource {
   }
 
   async consume(opts) {
+    rejectUnexpectedAnchor(opts, "consume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildConsumeRequest(opts, wasm);
@@ -322,6 +343,7 @@ export class TransactionsResource {
   }
 
   async swap(opts) {
+    rejectUnexpectedAnchor(opts, "swap", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildSwapRequest(opts, wasm);
@@ -498,6 +520,7 @@ export class TransactionsResource {
   }
 
   async execute(opts) {
+    rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = this.#buildExecuteRequest(opts, wasm);
@@ -524,6 +547,7 @@ export class TransactionsResource {
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async batch(opts) {
+    rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -606,6 +630,7 @@ export class TransactionsResource {
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async submitBatch(account, requests, options) {
+    rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 

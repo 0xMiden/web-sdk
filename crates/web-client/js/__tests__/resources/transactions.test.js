@@ -1081,6 +1081,25 @@ describe("TransactionsResource", () => {
       }
     );
 
+    // These build their own request, so an anchor cannot apply. Ignoring it
+    // would execute at the tip while the caller believed it was pinned.
+    it.each([
+      ["send", (r, a) => r.send({ account: "0xaccHex", anchor: a })],
+      ["mint", (r, a) => r.mint({ account: "0xaccHex", anchor: a })],
+      ["consume", (r, a) => r.consume({ account: "0xaccHex", anchor: a })],
+      ["swap", (r, a) => r.swap({ account: "0xaccHex", anchor: a })],
+      ["execute", (r, a) => r.execute({ account: "0xaccHex", anchor: a })],
+      ["batch", (r, a) => r.batch({ account: "0xaccHex", anchor: a })],
+      ["submitBatch", (r, a) => r.submitBatch("0xaccHex", [], { anchor: a })],
+    ])("%s rejects an anchor instead of ignoring it", async (name, call) => {
+      const { resource, inner } = makeResource();
+      await expect(call(resource, { blockNum: () => 1 })).rejects.toThrow(
+        /does not accept an anchor/
+      );
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+      expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
     it("treats an explicitly undefined anchor as omitted", async () => {
       const { resource, inner } = makeResource();
       await resource.executeRequest("0xaccHex", {}, { anchor: undefined });

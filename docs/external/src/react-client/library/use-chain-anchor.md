@@ -154,12 +154,16 @@ the call site. Capture again on the new client.
 
 - **Verify anchors from untrusted parties.** An anchor validates its own
   internal consistency on `deserialize`, so it can never be malformed — but it
-  can be pinned to the wrong block. A summary signs its reference block, so
-  start by checking `anchor.commitment()` against `summary.blockCommitment()` —
-  that rules out a substituted anchor and costs nothing. Then re-derive the
-  summary at the received anchor with `usePreview` and compare
-  `toCommitment()`; that is the check to gate signing on, because it binds the
-  request and your local account state as well as the block.
+  can be pinned to the wrong block, or to a block that does not exist. A
+  summary signs its reference block, so checking `anchor.commitment()` against
+  `summary.blockCommitment()` detects a mismatched anchor without paying for an
+  execution, and re-deriving with `usePreview` confirms the request, anchor and
+  summary agree.
+- **Agreement is not approval.** The request, anchor and summary all come from
+  the proposer, so they agree with each other for any request the proposer
+  chose — including one that drains the account. Before signing, inspect
+  `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()` and
+  `summary.expirationDelta()` and confirm they are what you meant to approve.
 - **Anchored execution skips the recency check**, since it deliberately
   references a block older than the tip. `useTransaction` syncs before
   executing unless you pass `skipSync`, so this is only observable with

@@ -557,16 +557,17 @@ await client.transactions.submit(multisig, request, { anchor: received });
 
 The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
 
-An anchor validates its own internal consistency on `deserialize`, so it can never be malformed, but it can be pinned to the wrong block. When it came from an untrusted party, there are two checks:
+The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
 
 ```typescript
-// Cheap: the summary signs its reference block, so the anchor must match it.
+// The summary signs its reference block, so a mismatched anchor is detectable
+// without paying for an execution.
 if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
   throw new Error("anchor is not the block this summary was built at");
 }
 ```
 
-That rules out a substituted anchor on its own. The re-derivation in the snippet above is the stronger check and the one to gate signing on, because it binds the request and your local account state as well, not just the block. Doing both is cheap: the comparison above fails fast before you spend an execution on `preview`.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live — and confirm it matches what you agreed to. `ChainAnchor` enforces that its header and partial blockchain are consistent with each other; that does not make the block real, so if it matters, fetch the header for `anchor.blockNum()` yourself and compare.
 
 An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store. So every party must also agree on the account state: if the account moved between the proposal and the verification, the re-derived summary will not match even though the anchor is correct. That mismatch is the most common reason a multisig flow fails, and it fails closed — a co-signer refuses to sign rather than signing the wrong thing.
 
