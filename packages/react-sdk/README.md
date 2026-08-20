@@ -1227,15 +1227,21 @@ import { useChainAnchor, usePreview, useTransaction } from '@miden-sdk/react';
 import { ChainAnchor } from '@miden-sdk/miden-sdk';
 
 // Proposer: capture the anchor, derive the summary at it, ship both.
-function Propose({ multisigId, request }) {
-  const { captureAnchor } = useChainAnchor();
+function Propose({ multisigId, buildRequest }) {
+  const { captureAnchor, anchoredRequest } = useChainAnchor();
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
-        const anchor = await captureAnchor({ request });
-        const summary = await preview({ accountId: multisigId, request, anchor });
+        const anchor = await captureAnchor({ request: buildRequest });
+        // anchoredRequest, not buildRequest: a factory resolves to a new
+        // request each call, and the anchor pins only the one it captured.
+        const summary = await preview({
+          accountId: multisigId,
+          request: anchoredRequest,
+          anchor,
+        });
         await shipToCosigners(anchor.serialize(), summary.serialize());
       }}
     >
@@ -1275,8 +1281,12 @@ function Execute({ multisigId, request, anchor }) {
 }
 ```
 
-`useChainAnchor()` returns `{ captureAnchor, anchor, isCapturing, error, reset }`
-and `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
+`useChainAnchor()` returns
+`{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
+`usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
+`anchoredRequest` is the exact request the anchor was captured for; preview and
+execute against it rather than re-resolving a factory, which would build a
+different transaction than the one the anchor pins.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous

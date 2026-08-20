@@ -28,8 +28,65 @@ describe("useChainAnchor", () => {
       const { result } = renderHook(() => useChainAnchor());
 
       expect(result.current.anchor).toBeNull();
+      expect(result.current.anchoredRequest).toBeNull();
       expect(result.current.isCapturing).toBe(false);
       expect(result.current.error).toBeNull();
+    });
+  });
+
+  describe("anchoredRequest", () => {
+    // A factory yields a new request per call, and a builder that mints an
+    // output note draws a fresh serial number, so re-resolving would execute
+    // something the anchor does not pin. Distinct objects per call here; a
+    // factory returning one shared mock could not detect the difference.
+    it("exposes the exact request the anchor was captured for", async () => {
+      const built: unknown[] = [];
+      const factory = vi.fn(() => {
+        const request = createMockTransactionRequest();
+        built.push(request);
+        return request;
+      });
+      const mockClient = createMockWebClient();
+      mockClient.chainAnchorForRequest = vi.fn(async () =>
+        createMockChainAnchor(7)
+      );
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => useChainAnchor());
+
+      await act(async () => {
+        await result.current.captureAnchor({ request: factory });
+      });
+
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(built).toHaveLength(1);
+      // The object handed to the client is the one published, so a caller
+      // passing it onward executes precisely what was anchored.
+      expect(mockClient.chainAnchorForRequest).toHaveBeenCalledWith(built[0]);
+      expect(result.current.anchoredRequest).toBe(built[0]);
+      // A second resolution would be a different object entirely.
+      expect(factory()).not.toBe(built[0]);
+    });
+
+    it("drops the request when reset", async () => {
+      const mockClient = createMockWebClient();
+      mockClient.chainAnchorForRequest = vi.fn(async () =>
+        createMockChainAnchor(7)
+      );
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => useChainAnchor());
+      await act(async () => {
+        await result.current.captureAnchor({
+          request: createMockTransactionRequest(),
+        });
+      });
+      expect(result.current.anchoredRequest).not.toBeNull();
+
+      act(() => result.current.reset());
+
+      expect(result.current.anchoredRequest).toBeNull();
+      expect(result.current.anchor).toBeNull();
     });
   });
 

@@ -267,4 +267,49 @@ test.describe("chain anchor", () => {
     expect(result.errorMessage).toMatch(/trailing bytes/);
     expect(result.cleanBlockNum).toBeGreaterThanOrEqual(0);
   });
+
+  // The co-signing path this feature exists for: a summary derived at an
+  // anchor, on an account whose transactions are not self-authorizing. Asserts
+  // the summary's own reference block rather than just that a summary came
+  // back, so swapping the implementation to the unanchored `executeForSummary`
+  // fails here — that call would reference the advanced tip instead.
+  test("a summary derived at an anchor references the anchor block", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId, notes } =
+        await helpers.setupMultisigWithConsumableNote();
+
+      const request = client.newConsumeTransactionRequest(notes);
+      const anchor = await client.chainAnchorForRequest(request);
+      const anchorBlock = anchor.blockNum();
+      const anchorCommitment = anchor.commitment().toHex();
+
+      // Move the tip past the anchor so the two commitments cannot coincide.
+      await client.proveBlock();
+      await client.proveBlock();
+      await client.syncState();
+      const tip = (await client.getSyncHeight()) as number;
+
+      const summary = await client.executeForSummaryAt(
+        multisigAccountId,
+        request,
+        anchor
+      );
+
+      return {
+        anchorBlock,
+        anchorCommitment,
+        tip,
+        summaryBlockCommitment: summary.blockCommitment().toHex(),
+        expirationDelta: summary.expirationDelta(),
+        inputNotesCount: summary.inputNotes().numNotes(),
+      };
+    });
+
+    expect(result.tip).toBeGreaterThan(result.anchorBlock);
+    expect(result.summaryBlockCommitment).toBe(result.anchorCommitment);
+    expect(result.inputNotesCount).toBe(1);
+    expect(result.expirationDelta).toBeGreaterThan(0);
+  });
 });

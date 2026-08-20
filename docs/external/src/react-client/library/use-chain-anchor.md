@@ -31,13 +31,18 @@ submitting anything.
 ```tsx
 import { useChainAnchor, usePreview } from "@miden-sdk/react";
 
-function ProposeButton({ multisigId, request }) {
-  const { captureAnchor, isCapturing } = useChainAnchor();
+function ProposeButton({ multisigId, buildRequest }) {
+  const { captureAnchor, anchoredRequest, isCapturing } = useChainAnchor();
   const { preview, isPreviewing } = usePreview();
 
   const propose = async () => {
-    const anchor = await captureAnchor({ request });
-    const summary = await preview({ accountId: multisigId, request, anchor });
+    const anchor = await captureAnchor({ request: buildRequest });
+    // `anchoredRequest`, not `buildRequest`: see the note below.
+    const summary = await preview({
+      accountId: multisigId,
+      request: anchoredRequest,
+      anchor,
+    });
 
     await shipToCosigners({
       anchor: anchor.serialize(),
@@ -116,12 +121,26 @@ function ExecuteButton({ multisigId, request, anchor }) {
 
 ## API
 
-`useChainAnchor()` returns `{ captureAnchor, anchor, isCapturing, error, reset }`.
+`useChainAnchor()` returns
+`{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }`.
 
 - `captureAnchor({ request }) → Promise<ChainAnchor>` captures at the current
   sync height. `request` accepts a `TransactionRequest` or a factory receiving
   the client, matching `useTransaction`.
-- `anchor` holds the most recent capture; `reset()` clears it and any error.
+- `anchor` holds the most recent capture; `reset()` clears it, `anchoredRequest`
+  and any error.
+- `anchoredRequest` holds the exact request that anchor was captured for.
+
+:::warning Preview and execute against `anchoredRequest`
+
+A factory resolves to a new `TransactionRequest` on every call, and any builder
+that creates an output note draws a fresh serial number from the client's RNG.
+Passing the factory on to `preview` or `execute` therefore builds a *different*
+transaction from the one the anchor pins — the summary your co-signers verified
+would not match the one submitted, and their signatures would not apply. Reuse
+`anchoredRequest`, or capture from a concrete `TransactionRequest` you hold.
+
+:::
 
 `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
 

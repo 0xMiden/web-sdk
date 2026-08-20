@@ -1,9 +1,91 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import ts from "typescript";
 import {
   PREVIEW_BUILT_IN_OPERATIONS,
   TransactionsResource,
 } from "../../resources/transactions.js";
+
+// ── Source analysis ────────────────────────────────────────────────────────────
+//
+// The anchor rules key off hardcoded sets, so a method or operation added later
+// could quietly sidestep them. These walk the real AST rather than matching
+// text: a regex over source ties the check to parameter naming, indentation and
+// identifier-safe labels, none of which the rules actually depend on.
+
+function parseResource(source) {
+  return ts.createSourceFile(
+    "transactions.js",
+    source,
+    ts.ScriptTarget.Latest,
+    true
+  );
+}
+
+function findClass(sourceFile) {
+  const found = sourceFile.statements.find(
+    (s) => ts.isClassDeclaration(s) && s.name?.text === "TransactionsResource"
+  );
+  if (!found) throw new Error("TransactionsResource class not found");
+  return found;
+}
+
+/**
+ * Every async method that takes at least one parameter, and every method name
+ * passed to `rejectUnexpectedAnchor`.
+ */
+function analyzeResource(source) {
+  const sourceFile = parseResource(source);
+  const declared = findClass(sourceFile)
+    .members.filter(
+      (m) =>
+        ts.isMethodDeclaration(m) &&
+        ts.isIdentifier(m.name) &&
+        m.parameters.length > 0
+    )
+    .map((m) => m.name.text);
+
+  const guarded = new Set();
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "rejectUnexpectedAnchor" &&
+      node.arguments.length > 1 &&
+      ts.isStringLiteral(node.arguments[1])
+    ) {
+      guarded.add(node.arguments[1].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  return { declared, guarded };
+}
+
+/** The switch-case labels inside `preview`, excluding "custom". */
+function previewCaseLabels(source) {
+  const method = findClass(parseResource(source)).members.find(
+    (m) =>
+      ts.isMethodDeclaration(m) &&
+      ts.isIdentifier(m.name) &&
+      m.name.text === "preview"
+  );
+  if (!method) throw new Error("preview method not found");
+
+  const labels = [];
+  const visit = (node) => {
+    // Only the switch that dispatches on the operation; a nested switch in a
+    // helper would not be reached because this starts at the method body.
+    if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression)) {
+      labels.push(node.expression.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(method.body);
+
+  return labels.filter((l) => l !== "custom");
+}
 
 // ── Wasm mock factory ──────────────────────────────────────────────────────────
 
@@ -982,16 +1064,11 @@ describe("TransactionsResource", () => {
         new URL("../../resources/transactions.js", import.meta.url),
         "utf8"
       );
-      // Bounded to `preview` alone — the next methods have switches of their
-      // own, and picking those up would make the comparison meaningless.
-      const start = source.indexOf("  async preview(opts) {");
-      const end = source.indexOf("  async execute(opts) {", start);
-      expect(start).toBeGreaterThan(-1);
-      expect(end).toBeGreaterThan(start);
-      const previewBody = source.slice(start, end);
-      const cases = [...previewBody.matchAll(/\bcase "(\w+)":/g)].map(
-        (m) => m[1]
-      );
+      // Read the switch out of the parsed method rather than a slice of text:
+      // a case label is a string literal, so it can hold characters no
+      // identifier regex would match, and formatting must not affect the set.
+      const cases = previewCaseLabels(source);
+      expect(cases.length).toBeGreaterThan(1);
       // Exact equality, not a subset: a case added at any indentation must
       // either be in the set or fail here.
       expect(new Set(cases.filter((c) => c !== "custom"))).toEqual(
@@ -1132,26 +1209,31 @@ describe("TransactionsResource", () => {
         "executeRequest",
         "submitBatch",
         // Never execute a transaction against a reference block, so there is
-        // no tip for an ignored anchor to silently fall back to.
+        // no tip for an ignored anchor to silently fall back to: executeProgram
+        // runs a program, submitProven submits an already-proven result, and
+        // list and waitFor do not execute anything. None takes an options bag
+        // an anchor could hide in, except waitFor, whose opts is a timeout.
         "executeProgram",
-        "prove",
-        "waitForConfirmation",
+        "submitProven",
+        "list",
+        "waitFor",
+        // Receives the request directly and has no options bag.
+        "captureAnchor",
       ]);
-      const declared = [
-        ...source.matchAll(/^ {2}async ([a-zA-Z]+)\(opts\) \{/gm),
-      ].map((m) => m[1]);
-      const guarded = new Set(
-        [
-          ...source.matchAll(/rejectUnexpectedAnchor\(opts, "([a-zA-Z]+)"/g),
-        ].map((m) => m[1])
-      );
+      const { declared, guarded } = analyzeResource(source);
 
-      expect(declared.length).toBeGreaterThan(1);
+      // A method is invisible to this walk only if it declares no parameters,
+      // and such a method cannot receive an anchor to ignore.
+      expect(declared.length).toBeGreaterThan(15);
+      expect(declared).toEqual(expect.arrayContaining(OPTS_METHODS));
+
       const unguarded = declared.filter(
         (m) => !guarded.has(m) && !EXEMPT.has(m)
       );
       expect(unguarded).toEqual([]);
-      expect(new Set(OPTS_METHODS)).toEqual(guarded);
+      // submitBatch is guarded too, but takes its options third, so it is
+      // exercised by its own test rather than the shared it.each above.
+      expect(guarded).toEqual(new Set([...OPTS_METHODS, "submitBatch"]));
     });
 
     it("treats an explicitly undefined anchor as omitted", async () => {

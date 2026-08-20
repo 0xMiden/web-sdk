@@ -70,6 +70,88 @@ export async function setupWalletAndFaucet(
 }
 
 /**
+ * Builds a 2-of-3 multisig account and leaves a note sitting consumable by it.
+ *
+ * Transactions on this account do not self-authorize, which is what makes
+ * `executeForSummary`/`executeForSummaryAt` return a summary rather than
+ * rejecting with `TRANSACTION_ALREADY_AUTHORIZED`. That is the co-signing shape
+ * chain anchors exist to serve.
+ */
+export async function setupMultisigWithConsumableNote(
+  client: any,
+  sdk: any
+): Promise<{ multisigAccountId: any; notes: any[] }> {
+  const walletSeed = new Uint8Array(32);
+  crypto.getRandomValues(walletSeed);
+
+  const approverKeys = [
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+  ];
+  const multisigComponent = sdk.createAuthFalcon512RpoMultisig(
+    new sdk.AuthFalcon512RpoMultisigConfig(
+      approverKeys.map((key) => key.publicKey().toCommitment()),
+      2
+    )
+  );
+
+  const built = new sdk.AccountBuilder(walletSeed)
+    .storageMode(sdk.AccountStorageMode.private())
+    .withAuthComponent(multisigComponent)
+    .withBasicWalletComponent()
+    .build();
+
+  const multisigAccountId = built.account.id();
+  await client.newAccount(built.account, false);
+  for (const key of approverKeys) {
+    await client.keystore.insert(multisigAccountId, key);
+  }
+
+  // Fund a regular wallet, then have it send a note to the multisig. Minting
+  // straight to the multisig would leave nothing for it to consume.
+  const { wallet, faucet } = await setupWalletAndFaucet(client, sdk);
+  const { createdNoteId } = await mockMint(
+    client,
+    sdk,
+    wallet.id(),
+    faucet.id()
+  );
+  await mockConsume(client, sdk, wallet.id(), createdNoteId);
+
+  const sendRequest = await client.newSendTransactionRequest(
+    wallet.id(),
+    multisigAccountId,
+    faucet.id(),
+    sdk.NoteType.Public,
+    sdk.u64(100),
+    null,
+    null
+  );
+  const sendTxId = await client.submitNewTransaction(wallet.id(), sendRequest);
+  await client.proveBlock();
+  await client.syncState();
+
+  const [sendTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([sendTxId])
+  );
+  const notes = await Promise.all(
+    sendTxRecord
+      .outputNotes()
+      .notes()
+      .map(async (note: any) => {
+        const record = await client.getInputNote(note.id().toString());
+        if (!record) {
+          throw new Error(`Note ${note.id().toString()} not found`);
+        }
+        return record.toNote();
+      })
+  );
+
+  return { multisigAccountId, notes };
+}
+
+/**
  * Mints tokens on the mock chain and commits the block.
  * Returns transaction ID and created note ID.
  */

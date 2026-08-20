@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
-import type { ChainAnchor, CaptureAnchorOptions } from "../types";
+import type {
+  ChainAnchor,
+  CaptureAnchorOptions,
+  TransactionRequest,
+} from "../types";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { MidenError } from "../utils/errors";
 import type { CodedError } from "../utils/errors";
@@ -11,11 +15,25 @@ export interface UseChainAnchorResult {
   captureAnchor: (options: CaptureAnchorOptions) => Promise<ChainAnchor>;
   /** The most recently captured anchor */
   anchor: ChainAnchor | null;
+  /**
+   * The exact request `anchor` was captured for.
+   *
+   * Pass this to `preview` and `execute` rather than re-resolving the input.
+   * When `request` is a factory, calling it again yields a different object,
+   * and builders that draw on the client's RNG — anything creating an output
+   * note — produce a materially different transaction. The anchor would then
+   * pin a request nobody executes, and the summary a co-signer verified would
+   * not match the one submitted.
+   */
+  anchoredRequest: TransactionRequest | null;
   /** Whether a capture is in progress */
   isCapturing: boolean;
   /** Error if capture failed. Carries `code` for the cases documented below. */
   error: CodedError | null;
-  /** Clear the captured anchor and error. Does not cancel a running capture. */
+  /**
+   * Clear the captured anchor, its request, and the error. Does not cancel a
+   * running capture.
+   */
   reset: () => void;
 }
 
@@ -45,15 +63,26 @@ export interface UseChainAnchorResult {
  * appearing as a property; the napi bindings cannot attach one. `OPERATION_BUSY`
  * originates here and is always a property.
  *
+ * Preview and execute against the returned `anchoredRequest`, not the value you
+ * passed in. If `request` is a factory it resolves to a new object per call,
+ * and any builder that mints an output note draws a fresh serial number from
+ * the client's RNG — so a second call yields a transaction the anchor does not
+ * pin and the co-signers did not approve.
+ *
  * @example
  * ```tsx
- * function ProposeButton({ accountId, request }: Props) {
- *   const { captureAnchor, isCapturing } = useChainAnchor();
+ * function ProposeButton({ accountId, buildRequest }: Props) {
+ *   const { captureAnchor, anchoredRequest, isCapturing } = useChainAnchor();
  *   const { preview } = usePreview();
  *
  *   const propose = async () => {
- *     const anchor = await captureAnchor({ request });
- *     const summary = await preview({ accountId, request, anchor });
+ *     const anchor = await captureAnchor({ request: buildRequest });
+ *     // anchoredRequest, not buildRequest: the anchor pins this exact object.
+ *     const summary = await preview({
+ *       accountId,
+ *       request: anchoredRequest!,
+ *       anchor,
+ *     });
  *     await shipToCosigners(anchor.serialize(), summary.serialize());
  *   };
  *
@@ -68,6 +97,8 @@ export function useChainAnchor(): UseChainAnchorResult {
   const clientRef = useRef(client);
 
   const [anchor, setAnchor] = useState<ChainAnchor | null>(null);
+  const [anchoredRequest, setAnchoredRequest] =
+    useState<TransactionRequest | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<CodedError | null>(null);
 
@@ -103,6 +134,9 @@ export function useChainAnchor(): UseChainAnchorResult {
           );
         }
         setAnchor(captured);
+        // Publish the resolved request, not `options.request`: a factory
+        // resolves to a new object each call, and only this one is pinned.
+        setAnchoredRequest(txRequest);
         return captured;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -126,6 +160,7 @@ export function useChainAnchor(): UseChainAnchorResult {
   // button that the busy guard still rejects.
   const reset = useCallback(() => {
     setAnchor(null);
+    setAnchoredRequest(null);
     setError(null);
   }, []);
 
@@ -137,12 +172,14 @@ export function useChainAnchor(): UseChainAnchorResult {
   useEffect(() => {
     clientRef.current = client;
     setAnchor(null);
+    setAnchoredRequest(null);
     setError(null);
   }, [client]);
 
   return {
     captureAnchor,
     anchor,
+    anchoredRequest,
     isCapturing,
     error,
     reset,
