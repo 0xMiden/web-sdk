@@ -213,13 +213,21 @@ const methodHandlers = {
     const anchor = wasm.ChainAnchor.deserialize(
       new Uint8Array(serializedAnchor)
     );
-    const result = await wasmWebClient.executeTransactionAt(
-      accountId,
-      transactionRequest,
-      anchor
-    );
-    const serializedResult = result.serialize();
-    return serializedResult.buffer;
+    try {
+      const result = await wasmWebClient.executeTransactionAt(
+        accountId,
+        transactionRequest,
+        anchor
+      );
+      const serializedResult = result.serialize();
+      return serializedResult.buffer;
+    } finally {
+      // Rebuilt from bytes on every anchored execution and the largest
+      // transient here, since it carries a partial blockchain. The binding
+      // borrows it, so it is dead once the call settles; waiting for the
+      // finalizer would let linear memory track GC pressure on a tiny wrapper.
+      anchor.free();
+    }
   },
   [MethodName.PROVE_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();

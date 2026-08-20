@@ -345,5 +345,39 @@ describe("useChainAnchor", () => {
       expect(result.current.isCapturing).toBe(false);
       expect(result.current.error).toBeNull();
     });
+
+    it("leaves isCapturing set when the capture is still running", async () => {
+      // reset() clears results; it does not cancel. Asserting this after a
+      // settled capture would be vacuous, since `finally` already cleared it.
+      let resolve: (value: unknown) => void = () => {};
+      const gate = new Promise((res) => {
+        resolve = res;
+      });
+      const mockClient = createMockWebClient({
+        chainAnchorForRequest: vi.fn(() => gate),
+      });
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+      const { result } = renderHook(() => useChainAnchor());
+
+      let pending: Promise<unknown> = Promise.resolve();
+      act(() => {
+        pending = result.current.captureAnchor({
+          request: createMockTransactionRequest(),
+        });
+      });
+      expect(result.current.isCapturing).toBe(true);
+
+      act(() => {
+        result.current.reset();
+      });
+      expect(result.current.isCapturing).toBe(true);
+
+      await act(async () => {
+        resolve(createMockChainAnchor());
+        await pending;
+      });
+      expect(result.current.isCapturing).toBe(false);
+    });
   });
 });

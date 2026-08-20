@@ -26,7 +26,8 @@ export interface UseChainAnchorResult {
  * commitment, so signatures collected over a summary only authorize an
  * execution at that exact block. Any flow that collects signatures and executes
  * later — multisig, offline co-signing — captures an anchor next to the summary
- * and ships both, so the summary reproduces on a client at any sync height.
+ * and ships both, so the summary reproduces on a client at a different sync height, provided both
+ * parties agree on the account state.
  *
  * The anchor tracks the creation blocks of the request's authenticated input
  * notes, so it stays valid for that request once the chain advances. Serialize

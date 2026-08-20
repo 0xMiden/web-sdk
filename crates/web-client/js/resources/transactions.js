@@ -5,7 +5,7 @@ import {
 } from "../utils.js";
 
 /** Preview operations that build their own request, and so cannot be anchored. */
-const PREVIEW_BUILT_IN_OPERATIONS = new Set([
+export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
   "send",
   "mint",
   "bridge",
@@ -29,10 +29,11 @@ const PREVIEW_BUILT_IN_OPERATIONS = new Set([
 function assertAnchorValueUsable(opts) {
   const anchor = opts?.anchor;
   if (anchor === undefined || anchor) return;
+  // String() rather than JSON.stringify: the latter throws on a BigInt and
+  // renders NaN as "null", and this is an error path that must not itself fail.
   throw new Error(
-    `anchor was ${anchor === null ? "null" : JSON.stringify(anchor)}; await ` +
-      "captureAnchor(request) before passing it, or omit the option entirely " +
-      "to execute at the current tip"
+    `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
+      "passing it, or omit the option entirely to execute at the current tip"
   );
 }
 

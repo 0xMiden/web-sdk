@@ -955,6 +955,13 @@ class WebClient {
           );
         }
 
+        if (!anchor) {
+          throw new Error(
+            `anchor was ${String(anchor)}; executeTransactionAt requires one — ` +
+              "use executeTransaction to execute at the current tip"
+          );
+        }
+
         const wasm = await getWasmOrThrow();
         const serializedTransactionRequest = transactionRequest.serialize();
         const serializedAnchor = anchor.serialize();

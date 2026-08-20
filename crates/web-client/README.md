@@ -523,7 +523,7 @@ To submit a proof produced somewhere that shares nothing with this client (a det
 
 Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
 
-A `ChainAnchor` pins the reference block so the same summary reproduces on any client:
+A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
 
 ```typescript
 // Proposer: capture, derive the summary at the anchor, ship both.

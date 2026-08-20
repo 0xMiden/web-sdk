@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TransactionsResource } from "../../resources/transactions.js";
+import {
+  PREVIEW_BUILT_IN_OPERATIONS,
+  TransactionsResource,
+} from "../../resources/transactions.js";
 
 // ── Wasm mock factory ──────────────────────────────────────────────────────────
 
@@ -979,14 +982,21 @@ describe("TransactionsResource", () => {
         new URL("../../resources/transactions.js", import.meta.url),
         "utf8"
       );
-      const previewBody = source.slice(
-        source.indexOf("async preview(opts)"),
-        source.indexOf("async executeRequest(")
-      );
-      const cases = [...previewBody.matchAll(/^\s{6}case "(\w+)":/gm)].map(
+      // Bounded to `preview` alone — the next methods have switches of their
+      // own, and picking those up would make the comparison meaningless.
+      const start = source.indexOf("  async preview(opts) {");
+      const end = source.indexOf("  async execute(opts) {", start);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const previewBody = source.slice(start, end);
+      const cases = [...previewBody.matchAll(/\bcase "(\w+)":/g)].map(
         (m) => m[1]
       );
-      expect(cases.length).toBeGreaterThan(1);
+      // Exact equality, not a subset: a case added at any indentation must
+      // either be in the set or fail here.
+      expect(new Set(cases.filter((c) => c !== "custom"))).toEqual(
+        PREVIEW_BUILT_IN_OPERATIONS
+      );
       for (const operation of cases.filter((c) => c !== "custom")) {
         const { resource } = makeResource();
         await expect(

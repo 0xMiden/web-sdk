@@ -23,8 +23,9 @@ test.describe("chain anchor", () => {
       const anchor = await client.chainAnchorForRequest(request);
       const anchorBlock = anchor.blockNum();
 
-      // Advance past the anchor so the local tip no longer matches it.
-      await client.proveBlock();
+      // Advance past the anchor so the local tip no longer matches it. Two
+      // blocks rather than one, so "used the tip" and "off by one from the
+      // anchor" are distinguishable failures.
       await client.proveBlock();
       await client.proveBlock();
       await client.syncState();
@@ -102,6 +103,53 @@ test.describe("chain anchor", () => {
     expect(result.headerBlockNum).toEqual(result.blockNum);
     expect(result.executedBlock).toEqual(result.blockNum);
     expect(result.restoredBytes).toEqual(result.bytes);
+  });
+
+  test("an anchor that tracks blocks round-trips through serialization", async ({
+    run,
+  }) => {
+    // The anchors above are captured for mint requests, which have no
+    // authenticated input notes and so track no blocks. Only a request that
+    // consumes a note exercises the populated partial blockchain — the shape
+    // every real anchored flow uses, and the one the worker rebuilds on every
+    // anchored execution.
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const { createdNoteId } = await helpers.mockMint(
+        wallet.id(),
+        faucet.id()
+      );
+
+      const inputNote = await client.getInputNote(createdNoteId);
+      const consumeRequest = client.newConsumeTransactionRequest([
+        inputNote.toNote(),
+      ]);
+
+      const anchor = await client.chainAnchorForRequest(consumeRequest);
+      const bytes = anchor.serialize();
+      const restored = sdk.ChainAnchor.deserialize(bytes);
+
+      const executed = await client.executeTransactionAt(
+        wallet.id(),
+        consumeRequest,
+        restored
+      );
+
+      return {
+        blockNum: anchor.blockNum(),
+        restoredBlockNum: restored.blockNum(),
+        commitment: anchor.commitment().toHex(),
+        restoredCommitment: restored.commitment().toHex(),
+        bytes: Array.from(bytes),
+        restoredBytes: Array.from(restored.serialize()),
+        executedBlock: executed.executedTransaction().blockHeader().blockNum(),
+      };
+    });
+
+    expect(result.restoredBlockNum).toEqual(result.blockNum);
+    expect(result.restoredCommitment).toEqual(result.commitment);
+    expect(result.restoredBytes).toEqual(result.bytes);
+    expect(result.executedBlock).toEqual(result.blockNum);
   });
 
   test("execution rejects a note created after the anchored block", async ({

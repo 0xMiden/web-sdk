@@ -13,14 +13,17 @@ use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 /// signatures collected over a summary only authorize an execution whose reference block is the
 /// one the summary was built at. Flows that collect signatures and execute later — multisig
 /// proposals, offline co-signing — capture an anchor alongside the summary and replay execution
-/// against it, so the summary reproduces exactly on a client at any sync height.
+/// against it, so the summary reproduces exactly on a client at a different sync height,
+/// provided both parties agree on the account state.
 ///
 /// The anchor bundles the reference block header with a partial blockchain consistent with it.
 /// Both invariants (chain length matches the header's block number, peaks hash to the header's
 /// chain commitment) are enforced natively on construction and on [`Self::deserialize`], so an
-/// anchor received from an untrusted party only needs its [`Self::commitment`] compared against
-/// an independently trusted value — e.g. the block commitment bound into the signed summary —
-/// before it is safe to execute against.
+/// anchor received from an untrusted party can never be malformed — only pinned to the wrong
+/// block. To rule that out, re-derive the summary at the received anchor and compare it against
+/// the summary you were asked to sign; a match binds the anchor and the request together.
+/// Comparing [`Self::commitment`] on its own only helps against a block commitment already
+/// trusted from elsewhere, since a `TransactionSummary` exposes no reference-block accessor.
 #[derive(Clone)]
 #[js_export]
 pub struct ChainAnchor(NativeChainAnchor);
@@ -36,9 +39,8 @@ impl ChainAnchor {
     ///
     /// Rejects bytes whose partial blockchain is inconsistent with the header, so an anchor from
     /// an untrusted source cannot be malformed — only pinned to the wrong block, which
-    /// [`Self::commitment`] detects. Allocation is budgeted to the input length and trailing
-    /// bytes are rejected, since these bytes arrive from a counterparty rather than local
-    /// storage.
+    /// [`Self::commitment`] detects. Trailing bytes are rejected, since these bytes arrive from a
+    /// counterparty rather than local storage and the blob is naturally treated as an identity.
     ///
     /// The encoding carries no version tag, so anchors are only interchangeable between parties
     /// on compatible SDK versions; a skew surfaces here as a generic deserialization failure.

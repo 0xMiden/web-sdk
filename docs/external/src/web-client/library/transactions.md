@@ -171,7 +171,7 @@ By default a transaction executes against the client's current sync height. Sinc
 
 That is a problem for any flow that collects signatures and executes later — a multisig proposal, offline co-signing — because the proposer, each co-signer, and the eventual executor are all at different heights. Re-deriving the summary locally produces a different summary, and the signatures no longer match.
 
-A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on any client:
+A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
 
 ```typescript
 // ── Proposer ──────────────────────────────────────────────
