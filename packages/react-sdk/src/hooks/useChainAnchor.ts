@@ -54,6 +54,15 @@ export interface UseChainAnchorResult {
  * `ChainAnchor.deserialize(bytes)` — importing the class itself from
  * `@miden-sdk/miden-sdk`, since this package re-exports it as a type only.
  *
+ * The caller owns the returned anchor. `anchor` in state is the same object,
+ * so neither `reset()` nor a client swap frees it — doing so would invalidate
+ * a handle the caller may still hold. An anchor carries a partial blockchain,
+ * so call `anchor.free()` once done with it rather than waiting for the
+ * finalizer, in a flow that captures repeatedly.
+ *
+ * Runs on the main thread: capturing walks the chain in WASM without the
+ * worker, so it blocks the UI briefly and queues other client calls behind it.
+ *
  * Rejects with `code: "OPERATION_BUSY"` if a capture is already running, and
  * with `code: "INVALID_CHAIN_ANCHOR"` if a sync lands mid-capture and leaves
  * the anchor internally inconsistent — retry that one.

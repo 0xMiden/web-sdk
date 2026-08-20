@@ -82,7 +82,11 @@ impl BlockHeader {
         self.0.tx_kernel_commitment().into()
     }
 
-    /// Returns the proof commitment.
+    /// Returns the block commitment, not a distinct proof commitment.
+    ///
+    /// The protocol's `BlockHeader` has no `proof_commitment` field — this accessor outlived it
+    /// and is an alias for [`Self::commitment`]. Renaming or removing it would break the public
+    /// API, so it is documented rather than changed here. Prefer `commitment()`.
     #[js_export(js_name = "proofCommitment")]
     pub fn proof_commitment(&self) -> Word {
         self.0.commitment().into()

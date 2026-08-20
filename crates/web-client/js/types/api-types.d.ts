@@ -1112,6 +1112,10 @@ export interface TransactionsResource {
    * prefixes the message instead) if a sync lands mid-capture and leaves the
    * anchor internally inconsistent. Retry.
    *
+   * The caller owns the returned anchor. It carries a partial blockchain, so in
+   * a flow that captures repeatedly, call `anchor.free()` once done rather than
+   * leaving it to the finalizer.
+   *
    * @param request - The request the anchor is captured for.
    * @returns An anchor pinned to the current sync height.
    */

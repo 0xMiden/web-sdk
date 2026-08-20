@@ -177,12 +177,23 @@ the call site. Capture again on the new client.
   summary signs its reference block, so checking `anchor.commitment()` against
   `summary.blockCommitment()` detects a mismatched anchor without paying for an
   execution, and re-deriving with `usePreview` confirms the request, anchor and
-  summary agree.
+  summary agree. Neither check proves the block exists: `ChainAnchor` only
+  validates its header against its own partial blockchain, and both sides of
+  that are computable over an invented chain. Fetch the header for
+  `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare
+  commitments.
 - **Agreement is not approval.** The request, anchor and summary all come from
   the proposer, so they agree with each other for any request the proposer
   chose — including one that drains the account. Before signing, inspect
   `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()` and
   `summary.expirationDelta()` and confirm they are what you meant to approve.
+  `expirationDelta()` returns `0` when no expiration was set, meaning the
+  authorization never expires — not that it already has.
+- **The summary does not cover the transaction script.** Its commitment is
+  built from the account delta, the input and output note commitments, the
+  reference block, the expiration delta and the user params — not the script
+  root, advice map, note arguments or foreign-account inputs. Two requests with
+  the same effects share one commitment, so the same signatures authorize both.
 - **Anchored execution skips the recency check**, since it deliberately
   references a block older than the tip. `useTransaction` syncs before
   executing unless you pass `skipSync`, so this is only observable with
@@ -190,12 +201,26 @@ the call site. Capture again on the new client.
   block where an unanchored execute would refuse.
 - **An anchor pins chain data, not account state.** Account records and
   authenticated input notes still come from each participant's own local store,
-  so all parties must agree on the account state too. If the account moved
-  between the proposal and the verification, the re-derived summary will not
+  so all parties must agree on the account state too. If the account moved in a
+  way that changes the transaction's effects, the re-derived summary will not
   match even though the anchor is correct — the most common reason a multisig
-  flow fails. It fails closed: the co-signer refuses to sign.
-- **An anchor is captured for a specific request.** It tracks that request's
-  authenticated input notes, so executing a different request against it fails
-  if the new request consumes a note the anchor doesn't track.
+  flow fails.
+
+  A match does not prove the reverse. The summary binds the account *delta*,
+  not the state it applies to, so divergence that leaves the delta and note
+  sets unchanged — an unrelated nonce bump, assets arriving, or a change to a
+  multisig's signer set or threshold — produces an identical commitment and
+  passes verification. Signatures gathered under one threshold remain valid
+  after it is lowered. Check the state you care about directly.
+- **`usePreview` and `useChainAnchor` run on the main thread.** Both execute a
+  full transaction in the VM, and neither is offloaded to the worker (matching
+  the existing unanchored `executeForSummary`), so a preview blocks the UI and
+  queues other client calls behind it. Only `useTransaction().execute` is
+  worker-backed.
+- **An anchor is captured for a specific request, but is not an identity for
+  one.** It tracks that request's authenticated input notes, so a different
+  request fails against it only when it needs a block the anchor doesn't
+  track — which never happens for a request with no authenticated input notes.
+  What binds a request to a summary is the summary commitment, not the anchor.
 - **The anchor handle is reusable** — it is borrowed rather than consumed, so
   one anchor can drive the preview and the execution.

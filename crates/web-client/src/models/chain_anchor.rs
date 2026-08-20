@@ -20,10 +20,17 @@ use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 /// Both invariants (chain length matches the header's block number, peaks hash to the header's
 /// chain commitment) are enforced natively on construction and on [`Self::deserialize`], so an
 /// anchor received from an untrusted party can never be malformed — only pinned to the wrong
-/// block. To rule that out, compare [`Self::commitment`] against
-/// `TransactionSummary::blockCommitment()`, which is signed into the summary. Re-deriving the
-/// summary at the anchor and comparing `toCommitment()` is the stronger check, since it also
+/// block, or to one that never existed. To rule out the wrong block, compare [`Self::commitment`]
+/// against `TransactionSummary::blockCommitment()`, which is signed into the summary. Re-deriving
+/// the summary at the anchor and comparing `toCommitment()` is the stronger check, since it also
 /// binds the request and the local account state.
+///
+/// Neither detects a fabricated block: both of the invariants above are computable over an
+/// entirely invented chain. Fetch the header for [`Self::block_num`] from a node and compare
+/// commitments to confirm the block is real. A transaction on a nonexistent block cannot be
+/// submitted and its signature cannot be moved onto a real one, so the cost is a wasted proof
+/// rather than loss of funds — but the header supplies the block number, timestamp and fee
+/// parameters that execution runs against.
 #[derive(Clone)]
 #[js_export]
 pub struct ChainAnchor(NativeChainAnchor);

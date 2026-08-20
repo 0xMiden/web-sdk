@@ -39,6 +39,17 @@ export interface UsePreviewResult {
  * and `code: "STALE_CLIENT"` if the client is swapped mid-call. Both originate
  * here and are always properties.
  *
+ * Runs the transaction in the VM on the main thread — unlike
+ * `useTransaction().execute`, this is not offloaded to the worker (matching the
+ * client's unanchored `executeForSummary`), so it blocks the UI for the
+ * duration and queues other client calls behind it.
+ *
+ * A returned summary proves the request, anchor and summary agree; it does not
+ * prove intent. Its commitment covers the account delta, the note commitments,
+ * the reference block, the expiration delta and the user params — not the
+ * transaction script or advice inputs. Note that `expirationDelta()` returns 0
+ * to mean no expiration was set, not that it has already expired.
+ *
  * Pass `anchor` to derive the summary at a pinned reference block. A co-signer
  * verifying a proposal must do this with the proposer's anchor: the summary
  * binds the reference block commitment, so deriving it at the local sync height

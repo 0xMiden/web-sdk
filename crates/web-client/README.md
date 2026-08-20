@@ -567,9 +567,11 @@ if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
 }
 ```
 
-Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live — and confirm it matches what you agreed to. `ChainAnchor` enforces that its header and partial blockchain are consistent with each other; that does not make the block real, so if it matters, fetch the header for `anchor.blockNum()` yourself and compare.
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
 
-An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store. So every party must also agree on the account state: if the account moved between the proposal and the verification, the re-derived summary will not match even though the anchor is correct. That mismatch is the most common reason a multisig flow fails, and it fails closed — a co-signer refuses to sign rather than signing the wrong thing.
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
+
+A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
 See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
 

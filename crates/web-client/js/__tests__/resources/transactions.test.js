@@ -1082,6 +1082,17 @@ describe("TransactionsResource", () => {
       }
     });
 
+    it.each([null, undefined, false, 0])(
+      "captureAnchor rejects a %s request rather than passing it to wasm",
+      async (request) => {
+        const { resource, inner } = makeResource();
+        await expect(resource.captureAnchor(request)).rejects.toThrow(
+          /captureAnchor requires a request/
+        );
+        expect(inner.chainAnchorForRequest).not.toHaveBeenCalled();
+      }
+    );
+
     it("reports an unknown operation rather than the anchor rule", async () => {
       const { resource } = makeResource();
       await expect(

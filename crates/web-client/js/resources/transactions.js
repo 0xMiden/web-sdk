@@ -767,6 +767,12 @@ export class TransactionsResource {
    */
   async captureAnchor(request) {
     this.#client.assertNotTerminated();
+    if (!request) {
+      throw new Error(
+        `captureAnchor requires a request, received ${String(request)}; an ` +
+          "anchor is captured for the notes a specific request consumes"
+      );
+    }
     return await this.#inner.chainAnchorForRequest(request);
   }
 

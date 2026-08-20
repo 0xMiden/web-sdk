@@ -1299,18 +1299,30 @@ it would otherwise have succeeded. Those rejections never reach `error` state,
 so handle them at the call site.
 
 An anchor validates its own internal consistency on `deserialize`, so it can
-never be malformed — but it can be pinned to the wrong block. When it came from
-an untrusted party, re-derive the summary at the received anchor with
-`usePreview` and compare `toCommitment()` against the summary you were asked to
-sign; a match binds the anchor and the request together. Comparing
-`anchor.commitment()` on its own only helps against a block commitment you
-already trust from elsewhere.
+never be malformed — but it can be pinned to the wrong block, or to a block that
+never existed. When it came from an untrusted party, re-derive the summary at
+the received anchor with `usePreview` and compare `toCommitment()` against the
+summary you were asked to sign, and fetch the header for `anchor.blockNum()`
+with `RpcClient.getBlockHeaderByNumber` to confirm the block is real — the
+anchor's own invariants are computable over an invented chain.
+
+A match proves the request, anchor and summary agree with each other. It does
+not prove intent, and it does not cover the transaction script: the commitment
+is built from the account delta, the note commitments, the reference block, the
+expiration delta and the user params, so two requests with identical effects
+share one commitment. Inspect the effects before signing.
 
 An anchor pins chain data, not account state — account records and
-authenticated input notes still come from each participant's local store. If
-the account moved between the proposal and the verification, the re-derived
-summary will not match even though the anchor is correct. It fails closed: the
-co-signer refuses to sign.
+authenticated input notes still come from each participant's local store. If the
+account moved in a way that changes the transaction's effects, the re-derived
+summary will not match even though the anchor is correct. The converse does not
+hold: because the summary binds the *delta* rather than the state it applies to,
+an unrelated nonce bump, arriving assets, or a change to a multisig's signer set
+or threshold leaves the commitment identical and passes verification. Check the
+state you care about directly.
+
+Note that `usePreview` and `useChainAnchor` run their VM execution on the main
+thread — only `useTransaction().execute` is worker-backed.
 
 #### `useCompile()`
 

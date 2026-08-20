@@ -74,6 +74,9 @@ impl TransactionSummary {
 
     /// Returns the number of blocks after the reference block within which the transaction
     /// must be included.
+    ///
+    /// Returns 0 when no expiration was set, meaning the transaction never expires — not that it
+    /// expires immediately. Treat a deadline as `blockNum() + delta` only when `delta != 0`.
     #[js_export(js_name = "expirationDelta")]
     pub fn expiration_delta(&self) -> u16 {
         self.0.expiration_delta()
