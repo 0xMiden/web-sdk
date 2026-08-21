@@ -6,6 +6,14 @@
 //!
 //! **Note:** This implementation is only available when targeting WebAssembly
 
+// `#[wasm_bindgen(getter_with_clone)]` expands to a `.clone()` per field, including
+// the `Copy` ones, and clippy attributes the generated calls to the attribute's own
+// span — so an `allow` on the struct or the attribute does not reach them. Nothing
+// here is hand-written, and the attribute is required for the `String` and `Vec`
+// fields on the same structs. wasm-bindgen 0.2.108 predates the fix upstream; drop
+// this once that dependency moves.
+#![allow(clippy::clone_on_copy)]
+
 extern crate alloc;
 
 use alloc::boxed::Box;
