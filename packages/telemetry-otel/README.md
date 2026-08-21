@@ -107,6 +107,12 @@ field:
 | `miden.error_stack` | verbatim error stack |
 | `miden.account_id` | account the operation acted on |
 
+`miden.account_id` will not appear in practice yet: the SDK declares
+`sensitive.accountId` on the type but does not currently populate it, so the
+guard for that attribute never fires. It is read defensively here so the
+attribute starts appearing on its own if a later SDK version fills the field
+in — do not build a dashboard that assumes it is there today.
+
 By default the SDK omits the `sensitive` key from an observation entirely, and
 this binding records nothing in its place — no placeholder, no inferred value,
 and no empty-valued attributes for a UI to render as blank rows. An observation

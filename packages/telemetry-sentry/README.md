@@ -82,8 +82,12 @@ scheduled afterwards:
 
 ## Sensitive detail
 
-An observation's `sensitive` channel carries verbatim error text, and account
-identifiers where the SDK supplies them. It is opt-in at **both** ends:
+An observation's `sensitive` channel carries verbatim error text — the
+untouched `error.message` and stack, neither classified nor redacted, and
+populated only when an operation fails. It also declares an `accountId` field,
+which the SDK does not currently populate; entries with no value are filtered
+out before the report is built, so nothing appears in its place. It is opt-in
+at **both** ends:
 `observeSensitive: true` when you construct the client, and
 `includeSensitive: true` here. Either one left alone and nothing from that
 channel reaches Sentry.
