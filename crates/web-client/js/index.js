@@ -628,6 +628,13 @@ class WebClient {
    * error, the ordering, or the chain — and a throwing observer is swallowed
    * by the sink, so telemetry cannot fail an operation.
    *
+   * The observation's safe fields carry no identifier and no error text, so
+   * they are fit to send anywhere. Verbatim error detail goes in `sensitive`,
+   * which is populated only on failure and only when this client was
+   * constructed with `observeSensitive: true`. There is deliberately no
+   * per-call way to ask for it: the flag comes from the instance, which
+   * sealed it at construction.
+   *
    * @param {() => Promise<any>} fn - The async function to execute.
    * @param {string} [opName] - Operation name to observe this call under.
    *   Omit to leave the call unobserved.
@@ -649,10 +656,26 @@ class WebClient {
             });
             return value;
           } catch (error) {
+            // Built only when the channel is on, and left off the
+            // observation entirely otherwise — not as `undefined`, not as an
+            // empty object. A consumer branching on
+            // `"sensitive" in observation` has to be able to tell "not
+            // enabled" from "enabled but nothing to report".
+            const sensitive =
+              this._observeSensitive === true
+                ? {
+                    errorMessage:
+                      error instanceof Error ? error.message : String(error),
+                    ...(error instanceof Error && error.stack
+                      ? { errorStack: error.stack }
+                      : {}),
+                  }
+                : undefined;
             emitObservation({
               op: opName,
               outcome: "error",
               durationMs: performance.now() - startedAt,
+              ...(sensitive !== undefined ? { sensitive } : {}),
             });
             throw error;
           }
@@ -1545,12 +1568,15 @@ _setStandaloneWebClient(WebClient);
 
 /**
  * @internal Test-only seam. Exercises `_serializeWasmCall`'s observation
- * contract without constructing a real WASM-backed client.
+ * contract without constructing a real WASM-backed client. The host carries
+ * the flag exactly as the constructor would have sealed it — a normalized
+ * boolean — because `_serializeWasmCall` takes no per-call override.
  */
-export function __serializeWasmCallForTest(fn, opName) {
+export function __serializeWasmCallForTest(fn, opName, observabilityConfig) {
   const host = {
     _withInnerLockDepth: 0,
     _wasmCallChain: Promise.resolve(),
+    _observeSensitive: observabilityConfig?.observeSensitive === true,
     _serializeWasmCall: WebClient.prototype._serializeWasmCall,
   };
   return host._serializeWasmCall(fn, opName);
