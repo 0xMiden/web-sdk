@@ -168,6 +168,18 @@ describe("the high-fidelity flag is construction-only", () => {
     expect(client._observeSensitive).toBe(false);
   });
 
+  // Internal state, so it stays out of anything that walks the client's own
+  // keys — a spread, a `JSON.stringify`, a debug dump a consumer pastes into
+  // a bug report.
+  it("stays off the client's enumerable surface", () => {
+    const client = newClient();
+    expect(Object.keys(client)).not.toContain("_observeSensitive");
+    expect(client.propertyIsEnumerable("_observeSensitive")).toBe(false);
+    expect(JSON.stringify(client)).not.toContain("_observeSensitive");
+    // Still readable: the SDK's own emission path depends on it.
+    expect(client._observeSensitive).toBe(false);
+  });
+
   it("cannot be switched on through the client proxy", () => {
     const proxy = createClientProxy(newClient());
     expect(proxy._observeSensitive).toBe(false);
