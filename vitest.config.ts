@@ -12,6 +12,7 @@ export default defineConfig({
   test: {
     projects: [
       "./packages/react-sdk/vitest.config.ts",
+      "./packages/telemetry-sentry/vitest.config.ts",
       "./packages/vite-plugin/vitest.config.ts",
       "./crates/web-client/vitest.config.js",
     ],

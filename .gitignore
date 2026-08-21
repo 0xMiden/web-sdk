@@ -30,6 +30,11 @@ coverage/
 packages/react-sdk/dist/
 packages/react-sdk/coverage/
 packages/react-sdk/node_modules/
+!packages/telemetry-sentry/
+!packages/telemetry-sentry/**
+packages/telemetry-sentry/dist/
+packages/telemetry-sentry/coverage/
+packages/telemetry-sentry/node_modules/
 !packages/vite-plugin/
 !packages/vite-plugin/**
 packages/vite-plugin/dist/
