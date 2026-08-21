@@ -61,6 +61,9 @@
         "test/test-app/**/*.{js,html}",
       ],
     },
+    "packages/telemetry-otel": {
+      "entry": ["src/__tests__/**/*.test.ts"],
+    },
     "packages/telemetry-sentry": {
       "entry": ["src/__tests__/**/*.test.ts"],
     },

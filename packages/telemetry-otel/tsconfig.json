@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    // No declarationMap/sourceMap: `files` publishes dist/ but not src/, so
+    // emitted maps would point at a path the tarball does not contain. The
+    // emitted JS is unminified ESM with its comments intact, which is what
+    // matters for a package whose claim is that you can audit it by reading it.
+    "outDir": "dist",
+    "rootDir": "src",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/__tests__"]
+}

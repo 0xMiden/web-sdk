@@ -10,6 +10,7 @@
 # and runs `pnpm install` independently when exercised.
 packages:
   - 'packages/react-sdk'
+  - 'packages/telemetry-otel'
   - 'packages/telemetry-sentry'
   - 'packages/vite-plugin'
   - 'crates/web-client'
