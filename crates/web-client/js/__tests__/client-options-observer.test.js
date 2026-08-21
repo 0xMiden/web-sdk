@@ -69,6 +69,15 @@ describe("ClientOptions observer wiring", () => {
     expect(hasObserver()).toBe(false);
   });
 
+  // A second client built with a malformed observer must not silently take
+  // telemetry away from the first one.
+  it("leaves an already-registered observer alone when the new one is not callable", () => {
+    const observer = vi.fn();
+    applyObserverOptions({ observer });
+    applyObserverOptions({ observer: "not-a-function" });
+    expect(hasObserver()).toBe(true);
+  });
+
   it("does not warn when observeSensitive is absent", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     applyObserverOptions({ observer: () => {} });
