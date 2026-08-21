@@ -9,7 +9,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.93"
-version      = "0.16.0"
+version      = "0.15.9"
 
 [profile.dev]
 codegen-units = 16
@@ -36,8 +36,8 @@ codegen-units = 16
 # Workspace crates. The `version` of each is required by `cargo publish` (it replaces the path
 # dep in the published manifest) and must track `workspace.package.version` so a release can
 # publish them to crates.io. See CONTRIBUTING.md ("Releasing").
-idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.16.0" }
-js-export-macro = { path = "crates/js-export-macro", version = "0.16.0" }
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.15.9" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.15.9" }
 
 # Client crates
 miden-client              = { default-features = false, version = "0.15.5" }
