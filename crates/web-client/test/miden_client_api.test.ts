@@ -382,6 +382,56 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "chain anchor: captureAnchor pins executeRequest to the anchor block",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.AccountType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const lowLevel = await window.MockWasmWebClient.createClient();
+        const mintRequest = await lowLevel.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(500)
+        );
+
+        const anchor = await client.transactions.captureAnchor(mintRequest);
+        const anchorBlock = anchor.blockNum();
+
+        // Advance past the anchor so the tip no longer matches it. These must
+        // be awaited: the assertion below requires the tip to have actually
+        // moved, and proveBlock bypasses the serializing wrapper.
+        await client.proveBlock();
+        await client.proveBlock();
+        await client.sync();
+        const tip = await client.getSyncHeight();
+
+        const executed = await client.transactions.executeRequest(
+          faucet,
+          mintRequest,
+          { anchor }
+        );
+        const executedBlock = executed.result
+          .executedTransaction()
+          .blockHeader()
+          .blockNum();
+
+        return { anchorBlock, tip, executedBlock };
+      });
+
+      expect(result.tip).toBeGreaterThan(result.anchorBlock);
+      expect(result.executedBlock).toBe(result.anchorBlock);
+    }
+  );
+
   // Regression test for #2011: the JS wrapper was building OutputNoteArray
   // while the WASM binding for withOwnOutputNotes switched to NoteArray,
   // causing `expected instance of NoteArray` at runtime.

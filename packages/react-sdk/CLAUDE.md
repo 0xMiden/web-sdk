@@ -450,7 +450,9 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` — `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` — creator only, reclaims unfilled offered asset | `TransactionResult` |
 | `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` — creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
-| `useTransaction()` | `transact({ ... })` | `TransactionResult` (custom tx) |
+| `useTransaction()` | `execute({ ..., anchor? })` | `TransactionResult` (custom tx; `anchor` pins the reference block) |
+| `useChainAnchor()` | `captureAnchor({ request })` | `ChainAnchor` (pins the current reference block for later replay) |
+| `usePreview()` | `preview({ accountId, request, anchor? })` | `TransactionSummary` awaiting authorization; rejects `TRANSACTION_ALREADY_AUTHORIZED` when none is pending |
 | `useExecuteProgram()` | `execute(...)` | program output |
 | `useCompile()` | `compile({ source })` | `{ component, txScript, noteScript }` |
 | `useWaitForCommit()` | `waitForCommit({ txId })` | resolves when committed on-chain |

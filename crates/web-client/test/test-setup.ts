@@ -497,6 +497,100 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             faucet,
           };
         },
+        // Mirrors setupMultisigWithConsumableNote in test-helpers.ts. Kept
+        // inline because browser helpers run inside page.evaluate and cannot
+        // reach the module.
+        setupMultisigWithConsumableNote: async () => {
+          const c = window.client;
+          const walletSeed = new Uint8Array(32);
+          crypto.getRandomValues(walletSeed);
+
+          const approverKeys = [
+            window.AuthSecretKey.rpoFalconWithRNG(),
+            window.AuthSecretKey.rpoFalconWithRNG(),
+            window.AuthSecretKey.rpoFalconWithRNG(),
+          ];
+          const multisigComponent = window.createAuthFalcon512RpoMultisig(
+            new window.AuthFalcon512RpoMultisigConfig(
+              approverKeys.map((key) => key.publicKey().toCommitment()),
+              2
+            )
+          );
+
+          const built = new window.AccountBuilder(walletSeed)
+            .storageMode(window.AccountStorageMode.private())
+            .withAuthComponent(multisigComponent)
+            .withBasicWalletComponent()
+            .build();
+
+          const multisigAccountId = built.account.id();
+          await c.newAccount(built.account, false);
+          for (const key of approverKeys) {
+            await c.keystore.insert(multisigAccountId, key);
+          }
+
+          const { wallet, faucet } =
+            await window.helpers.setupWalletAndFaucet();
+          const mintRequest = await c.newMintTransactionRequest(
+            wallet.id(),
+            faucet.id(),
+            window.NoteType.Private,
+            BigInt(1000)
+          );
+          const mintTxId = await c.submitNewTransaction(
+            faucet.id(),
+            mintRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+          const [mintRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([mintTxId])
+          );
+          const mintedNotes = await Promise.all(
+            mintRecord
+              .outputNotes()
+              .notes()
+              .map(async (note) =>
+                (await c.getInputNote(note.id().toString())).toNote()
+              )
+          );
+          await c.submitNewTransaction(
+            wallet.id(),
+            c.newConsumeTransactionRequest(mintedNotes)
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const sendRequest = await c.newSendTransactionRequest(
+            wallet.id(),
+            multisigAccountId,
+            faucet.id(),
+            window.NoteType.Public,
+            BigInt(100),
+            null,
+            null
+          );
+          const sendTxId = await c.submitNewTransaction(
+            wallet.id(),
+            sendRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [sendRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([sendTxId])
+          );
+          const notes = await Promise.all(
+            sendRecord
+              .outputNotes()
+              .notes()
+              .map(async (note) =>
+                (await c.getInputNote(note.id().toString())).toNote()
+              )
+          );
+
+          return { multisigAccountId, notes };
+        },
 
         mockMint: async (targetId, faucetId, opts) => {
           const c = window.client;
@@ -1065,6 +1159,8 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
   const h = await import("./test-helpers");
   return {
     setupWalletAndFaucet: () => h.setupWalletAndFaucet(client, sdk),
+    setupMultisigWithConsumableNote: () =>
+      h.setupMultisigWithConsumableNote(client, sdk),
     mockMint: (targetId: any, faucetId: any, opts?: any) =>
       h.mockMint(client, sdk, targetId, faucetId, opts),
     mockConsume: (accountId: any, noteId: string) =>

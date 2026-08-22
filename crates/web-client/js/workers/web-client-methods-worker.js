@@ -34,6 +34,10 @@ const serializeError = (error) => {
       stack: error.stack,
       cause: error.cause ? serializeError(error.cause) : undefined,
       code: error.code,
+      // Remediation text the Rust layer attaches alongside `code`. Without it
+      // here, a worker-backed failure is less diagnosable than the identical
+      // failure on the main thread.
+      help: error.help,
     };
   }
 
@@ -202,6 +206,32 @@ const methodHandlers = {
     );
     const serializedResult = result.serialize();
     return serializedResult.buffer;
+  },
+  [MethodName.EXECUTE_TRANSACTION_AT]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [accountIdHex, serializedTransactionRequest, serializedAnchor] = args;
+    const accountId = wasm.AccountId.fromHex(accountIdHex);
+    const transactionRequest = wasm.TransactionRequest.deserialize(
+      new Uint8Array(serializedTransactionRequest)
+    );
+    const anchor = wasm.ChainAnchor.deserialize(
+      new Uint8Array(serializedAnchor)
+    );
+    try {
+      const result = await wasmWebClient.executeTransactionAt(
+        accountId,
+        transactionRequest,
+        anchor
+      );
+      const serializedResult = result.serialize();
+      return serializedResult.buffer;
+    } finally {
+      // Rebuilt from bytes on every anchored execution and the largest
+      // transient here, since it carries a partial blockchain. The binding
+      // borrows it, so it is dead once the call settles; waiting for the
+      // finalizer would let linear memory track GC pressure on a tiny wrapper.
+      anchor.free();
+    }
   },
   [MethodName.PROVE_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
