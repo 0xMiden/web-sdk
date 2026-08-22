@@ -7,7 +7,7 @@ use super::input_notes::InputNotes;
 use super::output_notes::OutputNotes;
 use super::word::Word;
 use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 
 /// Represents a transaction summary.
 #[derive(Clone)]
@@ -22,8 +22,13 @@ impl TransactionSummary {
     }
 
     /// Deserializes a summary from bytes.
+    ///
+    /// Uses the untrusted path, like [`ChainAnchor::deserialize`]: a summary crosses the same
+    /// wire, from the same counterparty, in the same envelope.
+    ///
+    /// [`ChainAnchor::deserialize`]: crate::models::chain_anchor::ChainAnchor::deserialize
     pub fn deserialize(bytes: JsBytes) -> Result<TransactionSummary, JsErr> {
-        deserialize_from_bytes::<NativeTransactionSummary>(&bytes).map(TransactionSummary)
+        deserialize_untrusted_bytes::<NativeTransactionSummary>(&bytes).map(TransactionSummary)
     }
 
     /// Returns the account delta described by the summary.
@@ -51,6 +56,30 @@ impl TransactionSummary {
     #[js_export(js_name = "userParams")]
     pub fn user_params(&self) -> Vec<Felt> {
         self.0.user_params().as_elements().iter().map(Into::into).collect()
+    }
+
+    /// Returns the commitment of the reference block this summary was built against.
+    ///
+    /// Signed into the summary, so a co-signer can check a received [`ChainAnchor`] against it
+    /// directly: `anchor.commitment()` must equal this. Cheaper than re-deriving the summary.
+    ///
+    /// It proves the anchor and the summary agree, not that either is what you meant to sign —
+    /// a proposer supplies both. Inspect the summary's effects before signing.
+    ///
+    /// [`ChainAnchor`]: crate::models::chain_anchor::ChainAnchor
+    #[js_export(js_name = "blockCommitment")]
+    pub fn block_commitment(&self) -> Word {
+        self.0.block_commitment().into()
+    }
+
+    /// Returns the number of blocks after the reference block within which the transaction
+    /// must be included.
+    ///
+    /// Returns 0 when no expiration was set, meaning the transaction never expires — not that it
+    /// expires immediately. Treat a deadline as `blockNum() + delta` only when `delta != 0`.
+    #[js_export(js_name = "expirationDelta")]
+    pub fn expiration_delta(&self) -> u16 {
+        self.0.expiration_delta()
     }
 
     /// Computes the commitment to this `TransactionSummary`.

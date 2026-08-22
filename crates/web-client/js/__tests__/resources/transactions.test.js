@@ -1,5 +1,91 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TransactionsResource } from "../../resources/transactions.js";
+import ts from "typescript";
+import {
+  PREVIEW_BUILT_IN_OPERATIONS,
+  TransactionsResource,
+} from "../../resources/transactions.js";
+
+// ── Source analysis ────────────────────────────────────────────────────────────
+//
+// The anchor rules key off hardcoded sets, so a method or operation added later
+// could quietly sidestep them. These walk the real AST rather than matching
+// text: a regex over source ties the check to parameter naming, indentation and
+// identifier-safe labels, none of which the rules actually depend on.
+
+function parseResource(source) {
+  return ts.createSourceFile(
+    "transactions.js",
+    source,
+    ts.ScriptTarget.Latest,
+    true
+  );
+}
+
+function findClass(sourceFile) {
+  const found = sourceFile.statements.find(
+    (s) => ts.isClassDeclaration(s) && s.name?.text === "TransactionsResource"
+  );
+  if (!found) throw new Error("TransactionsResource class not found");
+  return found;
+}
+
+/**
+ * Every async method that takes at least one parameter, and every method name
+ * passed to `rejectUnexpectedAnchor`.
+ */
+function analyzeResource(source) {
+  const sourceFile = parseResource(source);
+  const declared = findClass(sourceFile)
+    .members.filter(
+      (m) =>
+        ts.isMethodDeclaration(m) &&
+        ts.isIdentifier(m.name) &&
+        m.parameters.length > 0
+    )
+    .map((m) => m.name.text);
+
+  const guarded = new Set();
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "rejectUnexpectedAnchor" &&
+      node.arguments.length > 1 &&
+      ts.isStringLiteral(node.arguments[1])
+    ) {
+      guarded.add(node.arguments[1].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  return { declared, guarded };
+}
+
+/** The switch-case labels inside `preview`, excluding "custom". */
+function previewCaseLabels(source) {
+  const method = findClass(parseResource(source)).members.find(
+    (m) =>
+      ts.isMethodDeclaration(m) &&
+      ts.isIdentifier(m.name) &&
+      m.name.text === "preview"
+  );
+  if (!method) throw new Error("preview method not found");
+
+  const labels = [];
+  const visit = (node) => {
+    // Only the switch that dispatches on the operation; a nested switch in a
+    // helper would not be reached because this starts at the method body.
+    if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression)) {
+      labels.push(node.expression.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(method.body);
+
+  return labels.filter((l) => l !== "custom");
+}
 
 // ── Wasm mock factory ──────────────────────────────────────────────────────────
 
@@ -105,6 +191,9 @@ function makeInner(overrides = {}) {
       .mockResolvedValue({ toNote: vi.fn().mockReturnValue("noteFromRecord") }),
     getConsumableNotes: vi.fn().mockResolvedValue([]),
     executeForSummary: vi.fn().mockResolvedValue("summary"),
+    executeForSummaryAt: vi.fn().mockResolvedValue("anchoredSummary"),
+    executeTransactionAt: vi.fn().mockResolvedValue(txResult),
+    chainAnchorForRequest: vi.fn().mockResolvedValue("anchor"),
     executeProgram: vi.fn().mockResolvedValue("programResult"),
     syncState: vi.fn().mockResolvedValue(undefined),
     syncChain: vi.fn().mockResolvedValue(undefined),
@@ -938,6 +1027,249 @@ describe("TransactionsResource", () => {
       await expect(resource.preview({ operation: "unknown" })).rejects.toThrow(
         "Unknown preview operation: unknown"
       );
+    });
+
+    it("derives the summary at the anchor when one is supplied", async () => {
+      const { resource, inner } = makeResource();
+      const customRequest = { type: "custom" };
+      const summary = await resource.preview({
+        operation: "custom",
+        account: "0xacc",
+        request: customRequest,
+        anchor: "anchorObj",
+      });
+      expect(inner.executeForSummaryAt).toHaveBeenCalledWith(
+        expect.anything(),
+        customRequest,
+        "anchorObj"
+      );
+      expect(inner.executeForSummary).not.toHaveBeenCalled();
+      expect(summary).toBe("anchoredSummary");
+    });
+
+    it("rejects an anchor on an operation that builds its own request", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.preview({ operation: "send", anchor: "anchorObj" })
+      ).rejects.toThrow(/does not accept an anchor for operation "send"/);
+      expect(inner.executeForSummaryAt).not.toHaveBeenCalled();
+      expect(inner.executeForSummary).not.toHaveBeenCalled();
+    });
+
+    it("rejects an anchor on every operation that builds its own request", async () => {
+      // Guards against drift: the anchor rule keys off a hardcoded set, so a
+      // new built-in operation that is not added to it would silently accept an
+      // anchor captured for some other request.
+      const source = readFileSync(
+        new URL("../../resources/transactions.js", import.meta.url),
+        "utf8"
+      );
+      // Read the switch out of the parsed method rather than a slice of text:
+      // a case label is a string literal, so it can hold characters no
+      // identifier regex would match, and formatting must not affect the set.
+      const cases = previewCaseLabels(source);
+      expect(cases.length).toBeGreaterThan(1);
+      // Exact equality, not a subset: a case added at any indentation must
+      // either be in the set or fail here.
+      expect(new Set(cases.filter((c) => c !== "custom"))).toEqual(
+        PREVIEW_BUILT_IN_OPERATIONS
+      );
+      for (const operation of cases.filter((c) => c !== "custom")) {
+        const { resource } = makeResource();
+        await expect(
+          resource.preview({ operation, anchor: "anchorObj" })
+        ).rejects.toThrow(/does not accept an anchor/);
+      }
+    });
+
+    it.each([null, undefined, false, 0])(
+      "captureAnchor rejects a %s request rather than passing it to wasm",
+      async (request) => {
+        const { resource, inner } = makeResource();
+        await expect(resource.captureAnchor(request)).rejects.toThrow(
+          /captureAnchor requires a request/
+        );
+        expect(inner.chainAnchorForRequest).not.toHaveBeenCalled();
+      }
+    );
+
+    it("reports an unknown operation rather than the anchor rule", async () => {
+      const { resource } = makeResource();
+      await expect(
+        resource.preview({ operation: "nope", anchor: "anchorObj" })
+      ).rejects.toThrow(/Unknown preview operation: nope/);
+    });
+
+    it("rejects a null anchor instead of silently previewing at the tip", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.preview({
+          operation: "custom",
+          account: "0xacc",
+          request: "req",
+          anchor: null,
+        })
+      ).rejects.toThrow(/await captureAnchor/);
+      expect(inner.executeForSummary).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("chain anchor", () => {
+    it("captureAnchor delegates to the client and returns the anchor", async () => {
+      const { resource, inner, client } = makeResource();
+      const request = { type: "custom" };
+      const anchor = await resource.captureAnchor(request);
+      expect(client.assertNotTerminated).toHaveBeenCalled();
+      expect(inner.chainAnchorForRequest).toHaveBeenCalledWith(request);
+      expect(anchor).toBe("anchor");
+    });
+
+    it("executeRequest pins execution to the anchor when given one", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "custom" };
+      const executed = await resource.executeRequest("0xaccHex", request, {
+        anchor: "anchorObj",
+      });
+      expect(inner.executeTransactionAt).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request,
+        "anchorObj"
+      );
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+      expect(executed.result).toBe(inner._txResult);
+    });
+
+    it("executeRequest without an anchor keeps the sync-height path", async () => {
+      const { resource, inner } = makeResource();
+      await resource.executeRequest("0xaccHex", {}, {});
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["null", null],
+      ["false", false],
+      ["an empty string", ""],
+      // The two values that make JSON.stringify misbehave in the error path:
+      // it throws on a BigInt and renders NaN as "null".
+      ["a zero bigint", 0n],
+      ["NaN", NaN],
+    ])(
+      "rejects %s as an anchor rather than executing at the tip",
+      async (_label, anchor) => {
+        const { resource, inner } = makeResource();
+        await expect(
+          resource.executeRequest("0xaccHex", {}, { anchor })
+        ).rejects.toThrow(/await captureAnchor/);
+        await expect(
+          resource.submit("0xaccHex", {}, { anchor })
+        ).rejects.toThrow(/await captureAnchor/);
+        expect(inner.executeTransaction).not.toHaveBeenCalled();
+        expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+      }
+    );
+
+    // These build their own request, so an anchor cannot apply. Ignoring it
+    // would execute at the tip while the caller believed it was pinned.
+    const OPTS_METHODS = [
+      "send",
+      "createNetworkNote",
+      "mint",
+      "bridge",
+      "consume",
+      "consumeAll",
+      "swap",
+      "pswapCreate",
+      "pswapConsume",
+      "pswapCancel",
+      "execute",
+      "batch",
+    ];
+
+    it.each(OPTS_METHODS)(
+      "%s rejects an anchor instead of ignoring it",
+      async (name) => {
+        const { resource, inner } = makeResource();
+        await expect(
+          resource[name]({ account: "0xaccHex", anchor: { blockNum: () => 1 } })
+        ).rejects.toThrow(/does not accept an anchor/);
+        expect(inner.executeTransaction).not.toHaveBeenCalled();
+        expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+      }
+    );
+
+    it("submitBatch rejects an anchor instead of ignoring it", async () => {
+      const { resource, inner } = makeResource();
+      await expect(
+        resource.submitBatch("0xaccHex", [], { anchor: { blockNum: () => 1 } })
+      ).rejects.toThrow(/does not accept an anchor/);
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+    });
+
+    // Derive the guarded set from source so a new request-building method
+    // cannot be added without either a guard or a deliberate exemption here.
+    it("guards every request-building method", () => {
+      const source = readFileSync(
+        new URL("../../resources/transactions.js", import.meta.url),
+        "utf8"
+      );
+      const EXEMPT = new Set([
+        // Take an anchor legitimately.
+        "preview",
+        "submit",
+        "executeRequest",
+        "submitBatch",
+        // Never execute a transaction against a reference block, so there is
+        // no tip for an ignored anchor to silently fall back to: executeProgram
+        // runs a program, submitProven submits an already-proven result, and
+        // list and waitFor do not execute anything. None takes an options bag
+        // an anchor could hide in, except waitFor, whose opts is a timeout.
+        "executeProgram",
+        "submitProven",
+        "list",
+        "waitFor",
+        // Receives the request directly and has no options bag.
+        "captureAnchor",
+      ]);
+      const { declared, guarded } = analyzeResource(source);
+
+      // A method is invisible to this walk only if it declares no parameters,
+      // and such a method cannot receive an anchor to ignore.
+      expect(declared.length).toBeGreaterThan(15);
+      expect(declared).toEqual(expect.arrayContaining(OPTS_METHODS));
+
+      const unguarded = declared.filter(
+        (m) => !guarded.has(m) && !EXEMPT.has(m)
+      );
+      expect(unguarded).toEqual([]);
+      // submitBatch is guarded too, but takes its options third, so it is
+      // exercised by its own test rather than the shared it.each above.
+      expect(guarded).toEqual(new Set([...OPTS_METHODS, "submitBatch"]));
+    });
+
+    it("treats an explicitly undefined anchor as omitted", async () => {
+      const { resource, inner } = makeResource();
+      await resource.executeRequest("0xaccHex", {}, { anchor: undefined });
+      expect(inner.executeTransaction).toHaveBeenCalled();
+      expect(inner.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    it("submit pins execution to the anchor and still proves and applies", async () => {
+      const { resource, inner } = makeResource();
+      const request = { type: "custom" };
+      const { txId } = await resource.submit("0xaccHex", request, {
+        anchor: "anchorObj",
+      });
+      expect(inner.executeTransactionAt).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" }),
+        request,
+        "anchorObj"
+      );
+      expect(inner.executeTransaction).not.toHaveBeenCalled();
+      expect(inner.proveTransaction).toHaveBeenCalled();
+      expect(inner.submitProvenTransaction).toHaveBeenCalled();
+      expect(inner.applyTransaction).toHaveBeenCalled();
+      expect(txId).toBeDefined();
     });
   });
 

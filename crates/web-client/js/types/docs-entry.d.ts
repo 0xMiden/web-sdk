@@ -18,6 +18,7 @@ export {
   AdviceMap,
   AssetVault,
   BasicFungibleFaucetComponent,
+  ChainAnchor,
   EthAddress,
   Felt,
   InputNoteRecord,

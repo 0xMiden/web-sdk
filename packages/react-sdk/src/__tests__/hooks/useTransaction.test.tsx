@@ -10,6 +10,7 @@ import {
   createMockTransactionRequest,
   createMockTransactionResult,
   createMockNote,
+  createMockChainAnchor,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -129,6 +130,115 @@ describe("useTransaction", () => {
 
       expect(requestFactory).toHaveBeenCalledWith(mockClient);
       expect(mockClient.executeTransaction).toHaveBeenCalled();
+    });
+  });
+
+  describe("anchored execution", () => {
+    it("pins execution to the anchor when one is supplied", async () => {
+      const mockTxResult = createMockTransactionResult("0xtxAnchored");
+      const mockClient = createMockWebClient({
+        executeTransactionAt: vi.fn().mockResolvedValue(mockTxResult),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      const request = createMockTransactionRequest();
+      const anchor = createMockChainAnchor(42);
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request,
+          anchor,
+        });
+      });
+
+      expect(mockClient.executeTransactionAt).toHaveBeenCalledWith(
+        expect.anything(),
+        request,
+        anchor
+      );
+      expect(mockClient.executeTransaction).not.toHaveBeenCalled();
+      // The rest of the pipeline is unchanged by anchoring.
+      expect(mockClient.proveTransaction).toHaveBeenCalled();
+      expect(mockClient.submitProvenTransaction).toHaveBeenCalled();
+      expect(mockClient.applyTransaction).toHaveBeenCalled();
+      expect(result.current.stage).toBe("complete");
+    });
+
+    it("keeps the sync-height path when no anchor is supplied", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      expect(mockClient.executeTransaction).toHaveBeenCalled();
+      expect(mockClient.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    // This hook is the one that submits, so a silently unanchored execution
+    // here spends against a different reference block than the one signed for.
+    it.each([
+      ["null", null],
+      ["false", false],
+      ["empty string", ""],
+    ])("rejects a %s anchor instead of executing at the tip", async (_l, v) => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await expect(
+        result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          anchor: v as never,
+        })
+      ).rejects.toThrow(/await captureAnchor/);
+
+      expect(mockClient.executeTransaction).not.toHaveBeenCalled();
+      expect(mockClient.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    it("treats an undefined anchor as omitted", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          anchor: undefined,
+        });
+      });
+
+      expect(mockClient.executeTransaction).toHaveBeenCalled();
+      expect(mockClient.executeTransactionAt).not.toHaveBeenCalled();
     });
   });
 

@@ -519,6 +519,62 @@ Nothing is persisted until `apply` runs — stopping after `submit()` leaves the
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+### Chain-Anchored Execution
+
+Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
+
+A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
+
+```typescript
+import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+
+// Proposer: capture, derive the summary at the anchor, ship both.
+const anchor = await client.transactions.captureAnchor(request);
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor,
+});
+await shipToCosigners(anchor.serialize(), summary.serialize());
+
+// Co-signer: re-derive at the proposer's anchor and compare before signing.
+const received = ChainAnchor.deserialize(anchorBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor: received,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+await client.transactions.submit(multisig, request, { anchor: received });
+```
+
+The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
+
+The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
+
+```typescript
+// The summary signs its reference block, so a mismatched anchor is detectable
+// without paying for an execution.
+if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
+  throw new Error("anchor is not the block this summary was built at");
+}
+```
+
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
+
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
+
+A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
+
+See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple

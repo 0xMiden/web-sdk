@@ -619,7 +619,7 @@ where
         }
         // Stable, machine-readable code for the ClientError variants JS callers
         // branch on, so they don't have to match the (changeable) message text.
-        // The worker shim's serializeError already forwards `code`.
+        // The worker shim's serializeError forwards both `code` and `help`.
         if let Some(code) = code_from_error(&err) {
             let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }

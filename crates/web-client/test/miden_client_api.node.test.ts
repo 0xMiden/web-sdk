@@ -707,6 +707,16 @@ test.describe("MidenClient API - Mock Chain", () => {
     ).rejects.toThrow("TRANSACTION_ALREADY_AUTHORIZED");
   });
 
+  test("chain anchor: captureAnchor pins executeRequest to the anchor block", async ({
+    sdk,
+  }) => {
+    // Same reason as the custom-TransactionRequest case above: captureAnchor
+    // takes a raw request, and this file has no low-level request builder.
+    // The napi bindings themselves are covered by chain_anchor.test.ts, which
+    // runs under the nodejs project.
+    test.skip(true, "requires MockWasmWebClient low-level wiring");
+  });
+
   test("standalone createP2IDNote creates a valid note", async ({ sdk }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");

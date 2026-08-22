@@ -51,6 +51,8 @@ export { usePswapCancel } from "./hooks/usePswapCancel";
 export { usePswapCancelByOrder } from "./hooks/usePswapCancelByOrder";
 export { useCreateNetworkNote } from "./hooks/useCreateNetworkNote";
 export { useTransaction } from "./hooks/useTransaction";
+export { useChainAnchor } from "./hooks/useChainAnchor";
+export { usePreview } from "./hooks/usePreview";
 export { useExecuteProgram } from "./hooks/useExecuteProgram";
 export { useCompile } from "./hooks/useCompile";
 export { useSessionAccount } from "./hooks/useSessionAccount";
@@ -105,6 +107,8 @@ export type {
   PswapLineagesResult,
   PswapLineageResult,
   ExecuteTransactionOptions,
+  CaptureAnchorOptions,
+  PreviewTransactionOptions,
   TransactionResult,
   ExecuteProgramOptions,
   ExecuteProgramResult,
@@ -137,6 +141,8 @@ export type {
   TransactionFilter,
   TransactionRecord,
   TransactionRequest,
+  TransactionSummary,
+  ChainAnchor,
   NoteType,
   Note,
   AccountStorageMode,
@@ -162,7 +168,7 @@ export {
 export type { NoteAttachmentData } from "./utils/noteAttachment";
 export { bytesToBigInt, bigIntToBytes, concatBytes } from "./utils/bytes";
 export { MidenError, wrapWasmError } from "./utils/errors";
-export type { MidenErrorCode } from "./utils/errors";
+export type { CodedError, MidenErrorCode, WasmErrorCode } from "./utils/errors";
 export { waitForWalletDetection } from "./utils/walletDetection";
 export type { WalletAdapterLike } from "./utils/walletDetection";
 export {
@@ -190,6 +196,8 @@ export type { UsePswapCancelResult } from "./hooks/usePswapCancel";
 export type { UsePswapCancelByOrderResult } from "./hooks/usePswapCancelByOrder";
 export type { UseCreateNetworkNoteResult } from "./hooks/useCreateNetworkNote";
 export type { UseTransactionResult } from "./hooks/useTransaction";
+export type { UseChainAnchorResult } from "./hooks/useChainAnchor";
+export type { UsePreviewResult } from "./hooks/usePreview";
 export type { UseExportStoreResult } from "./hooks/useExportStore";
 export type {
   UseImportStoreResult,

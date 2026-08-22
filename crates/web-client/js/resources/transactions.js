@@ -4,6 +4,57 @@ import {
   resolveTransactionIdHex,
 } from "../utils.js";
 
+/** Preview operations that build their own request, and so cannot be anchored. */
+export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
+  "send",
+  "mint",
+  "bridge",
+  "consume",
+  "swap",
+  "pswapCreate",
+  "pswapConsume",
+  "pswapCancel",
+]);
+
+/**
+ * Reject an `anchor` that is present but falsy — except `undefined`, which is
+ * how an optional property spells "absent".
+ *
+ * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
+ * otherwise fall through and execute at the current tip: the one outcome
+ * anchoring exists to prevent. It is easy to hit, because an anchor usually
+ * lives in a state slot that holds `null` until the capture resolves, and
+ * `cond && anchor` yields `false`.
+ */
+function assertAnchorValueUsable(opts) {
+  const anchor = opts?.anchor;
+  if (anchor === undefined || anchor) return;
+  // String() rather than JSON.stringify: the latter throws on a BigInt and
+  // renders NaN as "null", and this is an error path that must not itself fail.
+  throw new Error(
+    `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
+      "passing it, or omit the option entirely to execute at the current tip"
+  );
+}
+
+/**
+ * Reject an `anchor` passed to a method that cannot honor one.
+ *
+ * Only the request-taking methods can be anchored, because an anchor is
+ * captured for a specific request. Everywhere else the option is meaningless —
+ * but silently ignoring it executes at the tip while the caller believes their
+ * transaction is pinned, which is the failure anchoring exists to prevent. The
+ * names are close enough to confuse (`execute` vs `executeRequest`,
+ * `submitBatch` vs `submit`) that this has to be loud.
+ */
+function rejectUnexpectedAnchor(opts, method, alternative) {
+  if (opts?.anchor === undefined) return;
+  throw new Error(
+    `${method}() does not accept an anchor because it builds its own ` +
+      `request; use ${alternative} with a request you captured the anchor for`
+  );
+}
+
 /**
  * Prove an executed transaction, resolving the prover exactly the way the
  * one-shot `submit()` pipeline does: the per-call prover if given, else the
@@ -36,6 +87,7 @@ export class TransactionsResource {
   }
 
   async send(opts) {
+    rejectUnexpectedAnchor(opts, "send", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -105,6 +157,7 @@ export class TransactionsResource {
    * confirmation. Provide exactly one of `recipient` or `script`.
    */
   async createNetworkNote(opts) {
+    rejectUnexpectedAnchor(opts, "createNetworkNote", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -191,6 +244,7 @@ export class TransactionsResource {
   }
 
   async mint(opts) {
+    rejectUnexpectedAnchor(opts, "mint", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildMintRequest(opts, wasm);
@@ -209,6 +263,7 @@ export class TransactionsResource {
   }
 
   async bridge(opts) {
+    rejectUnexpectedAnchor(opts, "bridge", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
@@ -227,6 +282,7 @@ export class TransactionsResource {
   }
 
   async consume(opts) {
+    rejectUnexpectedAnchor(opts, "consume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildConsumeRequest(opts, wasm);
@@ -245,6 +301,7 @@ export class TransactionsResource {
   }
 
   async consumeAll(opts) {
+    rejectUnexpectedAnchor(opts, "consumeAll", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -289,6 +346,7 @@ export class TransactionsResource {
   }
 
   async swap(opts) {
+    rejectUnexpectedAnchor(opts, "swap", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildSwapRequest(opts, wasm);
@@ -308,6 +366,7 @@ export class TransactionsResource {
 
   /** Create a partial-swap (PSWAP) note. See {@link PswapCreateOptions}. */
   async pswapCreate(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCreate", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCreateRequest(
@@ -330,6 +389,7 @@ export class TransactionsResource {
 
   /** Consume (fully or partially fill) a PSWAP note. See {@link PswapConsumeOptions}. */
   async pswapConsume(opts) {
+    rejectUnexpectedAnchor(opts, "pswapConsume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapConsumeRequest(
@@ -352,6 +412,7 @@ export class TransactionsResource {
 
   /** Cancel a PSWAP note as its creator and reclaim the offered asset. See {@link PswapCancelOptions}. */
   async pswapCancel(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCancel", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCancelRequest(
@@ -379,10 +440,31 @@ export class TransactionsResource {
    * Node.js the code prefixes the message instead) when the transaction
    * executes successfully, since a fully authorized transaction produces
    * no summary. See {@link PreviewOptions}.
+   *
+   * With `operation: "custom"` you may pass an `anchor` from
+   * {@link captureAnchor} to derive the summary at a pinned reference block
+   * rather than the current sync height. A co-signer verifying a proposal must
+   * use the proposer's anchor: since protocol 0.16 the summary binds the
+   * reference block commitment, so deriving it locally at a different height
+   * produces a different summary and the comparison always fails.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+
+    assertAnchorValueUsable(opts);
+
+    // Only `custom` can be anchored. Every other operation builds its request
+    // here, so the caller cannot hold an anchor captured for it — accepting one
+    // would execute against a request the anchor never tracked, surfacing as an
+    // opaque error from deep inside the executor. An unrecognized operation
+    // falls through to the switch, so it reports that rather than the anchor.
+    if (opts.anchor && PREVIEW_BUILT_IN_OPERATIONS.has(opts.operation)) {
+      throw new Error(
+        `preview does not accept an anchor for operation "${opts.operation}"; ` +
+          `capture one with captureAnchor(request) and use operation: "custom"`
+      );
+    }
 
     let accountId;
     let request;
@@ -438,10 +520,13 @@ export class TransactionsResource {
         throw new Error(`Unknown preview operation: ${opts.operation}`);
     }
 
-    return await this.#inner.executeForSummary(accountId, request);
+    return opts.anchor
+      ? await this.#inner.executeForSummaryAt(accountId, request, opts.anchor)
+      : await this.#inner.executeForSummary(accountId, request);
   }
 
   async execute(opts) {
+    rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = this.#buildExecuteRequest(opts, wasm);
@@ -468,6 +553,7 @@ export class TransactionsResource {
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async batch(opts) {
+    rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -550,6 +636,7 @@ export class TransactionsResource {
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async submitBatch(account, requests, options) {
+    rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -662,14 +749,43 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Capture a {@link ChainAnchor} at the current sync height for `request`,
+   * pinning the reference block that a later execution can replay against.
+   *
+   * The anchor tracks the creation blocks of the request's authenticated input
+   * notes, so it stays valid for that request once the chain advances. Pass it
+   * back to {@link preview}, {@link executeRequest}, or {@link submit} via
+   * their `anchor` option. Serialize it with `anchor.serialize()` to ship it
+   * alongside a summary awaiting signatures.
+   *
+   * @param {TransactionRequest} request - The request the anchor is captured for.
+   * @returns {Promise<ChainAnchor>} An anchor pinned to the current sync height.
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` (on Node.js the code
+   * prefixes the message instead) if a sync lands mid-capture and leaves the
+   * anchor internally inconsistent. Retry.
+   */
+  async captureAnchor(request) {
+    this.#client.assertNotTerminated();
+    if (!request) {
+      throw new Error(
+        `captureAnchor requires a request, received ${String(request)}; an ` +
+          "anchor is captured for the notes a specific request consumes"
+      );
+    }
+    return await this.#inner.chainAnchorForRequest(request);
+  }
+
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     return await this.#submitOrSubmitWithProver(
       accountId,
       request,
-      opts?.prover
+      opts?.prover,
+      opts?.anchor
     );
   }
 
@@ -693,14 +809,20 @@ export class TransactionsResource {
    *
    * @param {AccountRef} account - The account executing the transaction.
    * @param {TransactionRequest} request - The pre-built transaction request.
+   * @param {{ anchor?: ChainAnchor }} [opts] - Pass `anchor` to execute against
+   *   a pinned reference block instead of the current sync height, reproducing
+   *   the summary that was signed at that block.
    * @returns {Promise<TransactionExecution>} A handle to the executed
    *   transaction, ready to prove.
    */
-  async executeRequest(account, request) {
+  async executeRequest(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
-    const result = await this.#inner.executeTransaction(accountId, request);
+    const result = opts?.anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, opts.anchor)
+      : await this.#inner.executeTransaction(accountId, request);
     return new TransactionExecution(this.#inner, this.#client, this, result);
   }
 
@@ -1020,8 +1142,10 @@ export class TransactionsResource {
     return input;
   }
 
-  async #submitOrSubmitWithProver(accountId, request, perCallProver) {
-    const result = await this.#inner.executeTransaction(accountId, request);
+  async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
+    const result = anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, anchor)
+      : await this.#inner.executeTransaction(accountId, request);
     const proven = await proveResult(
       this.#inner,
       this.#client.defaultProver,
