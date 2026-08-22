@@ -43,6 +43,60 @@ test.describe("mint transaction tests", () => {
     expect(result.allHaveOneOutput).toBe(true);
     expect(result.balance).toEqual("3000");
   });
+
+  test("note collections throw catchable errors for out-of-bounds getNote", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+      const { transactionId: mintTransactionId, createdNoteId } =
+        await helpers.mockMint(wallet.id(), faucet.id());
+      const { transactionId: consumeTransactionId } = await helpers.mockConsume(
+        wallet.id(),
+        createdNoteId
+      );
+
+      const transactions = await client.getTransactions();
+      const mintRecord = transactions.find(
+        (tx) => tx.id().toHex() === mintTransactionId
+      );
+      const consumeRecord = transactions.find(
+        (tx) => tx.id().toHex() === consumeTransactionId
+      );
+
+      if (!mintRecord || !consumeRecord) {
+        throw new Error("expected mint and consume transaction records");
+      }
+
+      const outputNotes = mintRecord.outputNotes();
+      const inputNotes = consumeRecord.inputNotes();
+
+      const outputNoteId = outputNotes.getNote(0).id().toString();
+      const inputNoteId = inputNotes.getNote(0).id().toString();
+
+      let outputError = "";
+      try {
+        outputNotes.getNote(outputNotes.numNotes());
+      } catch (err) {
+        outputError = err.message;
+      }
+
+      let inputError = "";
+      try {
+        inputNotes.getNote(inputNotes.numNotes());
+      } catch (err) {
+        inputError = err.message;
+      }
+
+      return { outputNoteId, inputNoteId, outputError, inputError };
+    });
+
+    expect(result.outputNoteId).toBe(result.inputNoteId);
+    expect(result.outputError).toContain("OutputNotes index out of bounds");
+    expect(result.outputError).toContain("index 1");
+    expect(result.inputError).toContain("InputNotes index out of bounds");
+    expect(result.inputError).toContain("index 1");
+  });
 });
 
 // NEW_CONSUME_TRANSACTION TESTS

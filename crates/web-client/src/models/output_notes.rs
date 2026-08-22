@@ -3,6 +3,7 @@ use miden_client::transaction::RawOutputNotes as NativeRawOutputNotes;
 
 use super::output_note::OutputNote;
 use super::word::Word;
+use crate::platform::{JsErr, from_str_err};
 
 /// Contains a list of output notes of a transaction. The list can be empty if the transaction does
 /// not produce any notes.
@@ -32,8 +33,16 @@ impl OutputNotes {
 
     /// Returns the output note at the specified index.
     #[js_export(js_name = "getNote")]
-    pub fn get_note(&self, index: u32) -> OutputNote {
-        self.0.get_note(index as usize).into()
+    pub fn get_note(&self, index: u32) -> Result<OutputNote, JsErr> {
+        let index = index as usize;
+        let length = self.0.num_notes();
+        if index >= length {
+            return Err(from_str_err(&format!(
+                "OutputNotes index out of bounds: tried to access index {index} with length {length}"
+            )));
+        }
+
+        Ok(self.0.get_note(index).into())
     }
 
     /// Returns all output notes as a vector.
