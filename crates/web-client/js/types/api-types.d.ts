@@ -524,9 +524,11 @@ export interface BatchOptions {
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the V1 batch API returns
-   * only a block number, so we poll chain height rather than per-tx status.
+   * Poll until the local sync height reaches the block number returned by the
+   * submission. Note that number is the node's chain tip AS OF submission, so
+   * this confirms the client has caught up to that point — not that the batch
+   * has committed. To observe the batch itself, poll the account nonce or
+   * `transactions.list()`.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
@@ -1176,8 +1178,9 @@ export interface TransactionsResource {
    * operations are submitted atomically — either every tx in the batch
    * lands or none does.
    *
-   * V1 supports only same-account batches (mirrors the underlying Rust
-   * `Client::new_transaction_batch()` constraint).
+   * V1 supports only same-account batches. This is a limitation of this web
+   * API, not of the underlying Rust client, whose `BatchBuilder::push` takes
+   * an account per request.
    *
    * @param options - Batch options including the account and operations.
    */
@@ -1190,7 +1193,9 @@ export interface TransactionsResource {
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   * @param options - Optional batch settings (waitForConfirmation, timeout).
+   *   The V1 batch API takes no prover: batches always prove locally in WASM,
+   *   even on a client configured with `proverUrl`.
    */
   submitBatch(
     account: AccountRef,

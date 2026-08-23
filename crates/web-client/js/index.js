@@ -554,9 +554,9 @@ class WebClient {
    * On the worker path this is redundant with the worker's own message queue
    * for ordering, but it is not free: the callback resolves only when the
    * worker posts its response, so the chain slot is held for the entire
-   * round trip and later calls queue behind it. On the direct path it is load-bearing —
-   * without it, concurrent main-thread callers would panic with
-   * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
+   * round trip and later calls queue behind it. On the direct path it is
+   * load-bearing — without it, concurrent main-thread callers would panic
+   * with "recursive use of an object detected" (wasm-bindgen's RefCell).
    *
    * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
    * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
@@ -881,28 +881,16 @@ class WebClient {
   /**
    * Submits pre-serialized transaction requests as one atomic batch.
    *
-   * Every transaction in the batch is executed and proven, and the batch proof
-   * produced, inside a single WASM call. Forwarding that call to the worker
-   * keeps the main thread free for the whole batch — when there is a worker.
-   * Under `useWorker: false` this still runs in-thread and blocks, as before.
+   * Every transaction is executed and proven, and the batch proof produced,
+   * inside a single WASM call, so this is forwarded to the worker to keep the
+   * main thread free for its duration. Under `useWorker: false` it still runs
+   * in-thread and blocks, as before.
    *
-   * Note that the batch is always proven locally: the V1 batch API takes no
-   * prover, so a client configured with `proverUrl` still proves every
-   * transaction on-device here, unlike `submit()`.
-   *
-   * Freeing the main thread is not the same as making the client concurrent.
-   * The call holds `_serializeWasmCall` for its whole duration, so reads and
-   * syncs still queue behind it; what changes is that the page keeps painting
-   * and responding to input.
-   *
-   * On a multi-threaded build served cross-origin-isolated, the proofs also
-   * pick up the worker's rayon pool, which the SDK brings up in the worker's
-   * WASM instance at init. That only changes anything for consumers who did
-   * not follow the MT readme and call `initThreadPool` on the main thread
-   * themselves; rayon's pool is per-instance, so a main-thread pool never
-   * applied here anyway. It parallelizes the interior of each proof, not the
-   * transactions against each other — those are proven strictly in order,
-   * since each executes against the post-state of the one before it.
+   * Two caveats worth knowing. The batch is always proven locally — the V1
+   * batch API takes no prover, so `proverUrl` does not apply here as it does
+   * to `submit()`. And a free main thread is not a concurrent client: the call
+   * holds `_serializeWasmCall` throughout, so reads and syncs still queue
+   * behind it; what changes is that the page keeps painting.
    *
    * @param {AccountId} accountId - Account every request executes against.
    * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.
@@ -911,20 +899,38 @@ class WebClient {
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
     const requests = normalizeSerializedRequests(serializedTransactionRequests);
+    if (!this.worker) {
+      return this._submitBatchInThread(accountId, requests);
+    }
 
     return this._serializeWasmCall(async () => {
       try {
-        if (!this.worker) {
-          const wasmWebClient = await this.getWasmWebClient();
-          return await wasmWebClient.submitNewTransactionBatch(
-            accountId,
-            requests
-          );
-        }
-
         return await this.callMethodWithWorker(
           MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
           accountId.toString(),
+          requests
+        );
+      } catch (error) {
+        console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Runs a batch on this thread's WASM instance. Shared by the no-worker case
+   * above and by `MockWebClient`, which always takes this path.
+   *
+   * @param {AccountId} accountId
+   * @param {Uint8Array[]} requests - Already normalized.
+   * @returns {Promise<number>}
+   */
+  async _submitBatchInThread(accountId, requests) {
+    return this._serializeWasmCall(async () => {
+      try {
+        const wasmWebClient = await this.getWasmWebClient();
+        return await wasmWebClient.submitNewTransactionBatch(
+          accountId,
           requests
         );
       } catch (error) {
@@ -1471,15 +1477,14 @@ class MockWebClient extends WebClient {
   /**
    * Mock clients deliberately keep batching on the main thread.
    *
-   * Every other worker-forwarded method round-trips the mock chain: the
-   * serialized chain travels to the worker and the mutated chain is adopted
-   * back. That works because a submitted transaction lands in the mock chain's
-   * `pending_transactions`, which is serialized. A submitted *batch* lands in
-   * `pending_batches`, which `MockChain`'s serializer does not write and its
-   * deserializer resets to empty. Shipping the chain back would therefore
-   * silently discard the whole batch while the shared store had already
-   * recorded its per-transaction updates — the account nonce would advance
-   * while the chain never saw the batch, and no later sync would reconcile it.
+   * The mock submit and sync handlers round-trip the mock chain: the serialized
+   * chain travels to the worker and the mutated chain is adopted back. That
+   * works for a submitted transaction, which lands in `pending_transactions`
+   * and is serialized. A submitted *batch* lands in `pending_batches`, which
+   * `MockChain`'s serializer does not write and its deserializer resets to
+   * empty. Shipping the chain back would therefore discard the whole batch
+   * while the shared store had already recorded its per-transaction updates —
+   * the nonce would advance on a chain that never saw the batch.
    *
    * There is nothing to gain by forwarding anyway: mock clients exist for
    * tests, where a blocked main thread costs nothing. Overriding is still
@@ -1487,25 +1492,15 @@ class MockWebClient extends WebClient {
    *
    * This keeps the batch out of its own round trip, not out of every later
    * one. Any mock single-submit still adopts a worker-returned chain, so a
-   * batch left un-proved when one runs is dropped the same way. Pre-existing,
+   * batch left unproved when one runs is dropped the same way. Pre-existing,
    * and unchanged here — call `proveBlock()` after a mock batch before
    * submitting anything else.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
-    const requests = normalizeSerializedRequests(serializedTransactionRequests);
-
-    return this._serializeWasmCall(async () => {
-      try {
-        const wasmWebClient = await this.getWasmWebClient();
-        return await wasmWebClient.submitNewTransactionBatch(
-          accountId,
-          requests
-        );
-      } catch (error) {
-        console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
-        throw error;
-      }
-    });
+    return this._submitBatchInThread(
+      accountId,
+      normalizeSerializedRequests(serializedTransactionRequests)
+    );
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {

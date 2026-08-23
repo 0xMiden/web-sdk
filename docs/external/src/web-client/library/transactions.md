@@ -99,7 +99,8 @@ const { blockNumber } = await client.transactions.batch({
   ],
   waitForConfirmation: true,
 });
-console.log(`Batch landed in block ${blockNumber}`);
+// The node's chain tip as of submission, not the block the batch commits in.
+console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
 ### Operation kinds

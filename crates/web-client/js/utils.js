@@ -214,9 +214,7 @@ export async function hashSeed(seed) {
  */
 export function normalizeSerializedRequests(serializedTransactionRequests) {
   if (!Array.isArray(serializedTransactionRequests)) {
-    throw new TypeError(
-      "submitNewTransactionBatch expects an array of serialized transaction requests"
-    );
+    throw new TypeError("expected an array of serialized transaction requests");
   }
 
   const { length } = serializedTransactionRequests;
@@ -227,11 +225,13 @@ export function normalizeSerializedRequests(serializedTransactionRequests) {
   for (let index = 0; index < length; index++) {
     const bytes = serializedTransactionRequests[index];
 
-    // Duck-typed rather than `instanceof`, so a byte view from another realm
-    // is accepted. A `DataView` has no BYTES_PER_ELEMENT and a wider typed
-    // array has a larger one; both would have their contents reinterpreted as
-    // bytes and fail much later as an opaque Rust deserialization error naming
-    // no index — which is exactly what this check exists to prevent.
+    // wasm-bindgen would itself reject a non-`Uint8Array` element, but with a
+    // generic "array contains a value of the wrong type" that names no index
+    // and unwinds through `throw_str`. Checking here names the offending entry
+    // and, because it is duck-typed rather than `instanceof`, additionally
+    // accepts byte views from another realm, which wasm-bindgen's `dyn_into`
+    // would refuse. A `DataView` has no BYTES_PER_ELEMENT and a wider typed
+    // array has a larger one; neither carries the bytes the caller means.
     if (!ArrayBuffer.isView(bytes) || bytes.BYTES_PER_ELEMENT !== 1) {
       throw new TypeError(
         `serialized transaction request at index ${index} is not a Uint8Array`

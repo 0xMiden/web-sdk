@@ -369,9 +369,8 @@ describe("normalizeSerializedRequests", () => {
   it("rejects a non-array argument", () => {
     expect(() => normalizeSerializedRequests(null)).toThrow(TypeError);
     expect(() => normalizeSerializedRequests(new Uint8Array([1]))).toThrow(
-      /expects an array/
+      /expected an array/
     );
-    // Array-like but not an array: `.map` would have skipped it silently.
     expect(() => normalizeSerializedRequests({ length: 1, 0: null })).toThrow(
       TypeError
     );
@@ -386,6 +385,12 @@ describe("normalizeSerializedRequests", () => {
     expect(() =>
       normalizeSerializedRequests([{ serialize: () => new Uint8Array() }])
     ).toThrow(/index 0/);
+  });
+
+  it("rejects a bare ArrayBuffer, which carries no view", () => {
+    expect(() => normalizeSerializedRequests([new ArrayBuffer(4)])).toThrow(
+      /index 0/
+    );
   });
 
   it("rejects views whose elements are not single bytes", () => {

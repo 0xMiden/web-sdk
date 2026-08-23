@@ -20,8 +20,7 @@ export const MethodName = Object.freeze({
   PROVE_TRANSACTION: "proveTransaction",
   SUBMIT_NEW_TRANSACTION: "submitNewTransaction",
   SUBMIT_NEW_TRANSACTION_MOCK: "submitNewTransactionMock",
-  // No mock counterpart: mock clients keep batching on the main thread,
-  // because a pending batch is not part of the serialized mock chain.
+  // No mock counterpart — see MockWebClient.submitNewTransactionBatch.
   SUBMIT_NEW_TRANSACTION_BATCH: "submitNewTransactionBatch",
   SUBMIT_NEW_TRANSACTION_WITH_PROVER: "submitNewTransactionWithProver",
   SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK: "submitNewTransactionWithProverMock",

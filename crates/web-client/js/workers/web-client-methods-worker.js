@@ -534,10 +534,9 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's pool inside THIS worker's WASM instance — same
-      // rationale as the INIT path above: every mock method that reaches the
-      // worker proves here, and a pool initialized in any other instance does
-      // not parallelize it. (Mock batching is the one exception; it stays on
-      // the main thread, so it never benefits from this pool.)
+      // rationale as the INIT path above: any proving that happens here uses
+      // this instance, and a pool initialized in another one does not
+      // parallelize it.
       if (
         numThreads &&
         numThreads > 1 &&
