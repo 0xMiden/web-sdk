@@ -555,7 +555,7 @@ The runtime types come from `@miden-sdk/react` (re-exported from `@miden-sdk/mid
 - the installed `.d.ts` for `@miden-sdk/react` (hook return types and option types)
 - the installed `.d.ts` for `@miden-sdk/miden-sdk` (`MidenClient`, `Account`, `AccountId`, `Note`, `Word`, etc.)
 
-Path layout differs across package managers (npm flat, pnpm nested, Yarn PnP virtual), so resolve them via your IDE's "Go to Definition" or the installed package surface rather than hard-coded paths.
+Path layout differs across package managers — npm flattens, pnpm nests behind symlinks, and Yarn's Plug-n-Play mode serves them from a virtual filesystem with no real directory at all — so resolve them via your IDE's "Go to Definition" or the installed package surface rather than hard-coded paths.
 
 Common app-developer types:
 
