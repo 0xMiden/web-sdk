@@ -20,6 +20,8 @@ export const MethodName = Object.freeze({
   PROVE_TRANSACTION: "proveTransaction",
   SUBMIT_NEW_TRANSACTION: "submitNewTransaction",
   SUBMIT_NEW_TRANSACTION_MOCK: "submitNewTransactionMock",
+  SUBMIT_NEW_TRANSACTION_BATCH: "submitNewTransactionBatch",
+  SUBMIT_NEW_TRANSACTION_BATCH_MOCK: "submitNewTransactionBatchMock",
   SUBMIT_NEW_TRANSACTION_WITH_PROVER: "submitNewTransactionWithProver",
   SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK: "submitNewTransactionWithProverMock",
   SYNC_STATE: "syncState",

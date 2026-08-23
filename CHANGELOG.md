@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0-rc.4 (TBA)
+
+### Enhancements
+
+* [FEATURE][web] `transactions.batch()` and `transactions.submitBatch()` now run in the Web Worker instead of on the main thread. A batch executes and proves every transaction in it, plus the batch proof, inside one WASM call — which previously fell through to the main-thread instance, freezing the UI for the whole batch while a single `submit()` of the same work did not. Batch proving also now uses the worker's rayon thread pool, which the main-thread WASM instance never initializes, so batches were single-threaded on top of being blocking. Mock-chain clients round-trip their in-memory chain through the worker the same way single submits already did. ([#313](https://github.com/0xMiden/web-sdk/pull/313))
+
 ## 0.16.0-rc.3 (2026-08-23)
 
 ### Changes

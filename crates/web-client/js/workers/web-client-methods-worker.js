@@ -287,6 +287,18 @@ const methodHandlers = {
       serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
   },
+  [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [accountIdHex, serializedTransactionRequests] = args;
+    const accountId = wasm.AccountId.fromHex(accountIdHex);
+    const requests = serializedTransactionRequests.map(
+      (bytes) => new Uint8Array(bytes)
+    );
+
+    // Returns a plain block number, so unlike the single-submit handlers there
+    // is no result object to serialize back across the boundary.
+    return await wasmWebClient.submitNewTransactionBatch(accountId, requests);
+  },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [accountIdHex, serializedTransactionRequest, proverPayload] = args;
@@ -439,6 +451,37 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
     submissionHeight: result.submissionHeight,
     serializedTransactionResult: result.serializedTransactionResult,
     serializedTransactionUpdate: result.serializedTransactionUpdate,
+    serializedMockChain: updatedMockChain,
+    serializedMockNoteTransportNode: updatedMockNoteTransportNode,
+  };
+};
+
+methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_BATCH_MOCK] = async (args) => {
+  const wasm = await getWasmOrThrow();
+  let serializedMockNoteTransportNode = args.pop();
+  let serializedMockChain = args.pop();
+  serializedMockChain = new Uint8Array(serializedMockChain);
+  serializedMockNoteTransportNode = serializedMockNoteTransportNode
+    ? new Uint8Array(serializedMockNoteTransportNode)
+    : null;
+
+  wasmWebClient = new wasm.WebClient();
+  await wasmWebClient.createMockClient(
+    wasmSeed,
+    serializedMockChain,
+    serializedMockNoteTransportNode
+  );
+
+  const blockNumber =
+    await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_BATCH](args);
+
+  const updatedMockChain = (await wasmWebClient.serializeMockChain()).buffer;
+  const updatedMockNoteTransportNode = (
+    await wasmWebClient.serializeMockNoteTransportNode()
+  ).buffer;
+
+  return {
+    blockNumber,
     serializedMockChain: updatedMockChain,
     serializedMockNoteTransportNode: updatedMockNoteTransportNode,
   };

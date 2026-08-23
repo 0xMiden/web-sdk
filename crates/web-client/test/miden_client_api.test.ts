@@ -257,6 +257,46 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.uncommittedAfter).toBe(0);
   });
 
+  mockTest(
+    "transactions.batch runs in the worker and hands the chain back",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.AccountType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const { blockNumber } = await client.transactions.batch({
+          account: faucet,
+          operations: [
+            { kind: "mint", to: wallet, amount: 100n },
+            { kind: "mint", to: wallet, amount: 200n },
+          ],
+        });
+
+        // The batch executes against the worker's own mock chain. If the
+        // mutated chain were not adopted back onto the main-thread client,
+        // this sync would run against a chain that never saw the batch and
+        // neither minted note would show up.
+        client.proveBlock();
+        await client.sync();
+
+        const consumable = await client.notes.listAvailable({
+          account: wallet,
+        });
+
+        return { blockNumber, consumableCount: consumable.length };
+      });
+
+      expect(result.blockNumber).toBeGreaterThan(0);
+      expect(result.consumableCount).toBe(2);
+    }
+  );
+
   mockTest("notes.list and notes.get", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();

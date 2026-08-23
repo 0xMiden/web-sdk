@@ -108,7 +108,6 @@ const WRITE_METHODS = new Set([
   "sendPrivateNote",
   "sendPrivateOutputNote",
   "setSetting",
-  "submitNewTransactionBatch",
   "submitProvenTransaction",
 ]);
 
@@ -877,6 +876,42 @@ class WebClient {
     });
   }
 
+  /**
+   * Submits pre-serialized transaction requests as one atomic batch.
+   *
+   * Every transaction in the batch is executed and proven, and the batch proof
+   * produced, inside a single WASM call. Forwarding that call to the worker
+   * keeps the main thread free for the whole batch, and lets the proofs use
+   * the worker's rayon pool — rayon is per-WASM-instance, and only the
+   * worker's instance initializes one.
+   *
+   * @param {AccountId} accountId - Account every request executes against.
+   * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.
+   * @returns {Promise<number>} Block number the batch was accepted into.
+   */
+  async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
+    return this._serializeWasmCall(async () => {
+      try {
+        if (!this.worker) {
+          const wasmWebClient = await this.getWasmWebClient();
+          return await wasmWebClient.submitNewTransactionBatch(
+            accountId,
+            serializedTransactionRequests
+          );
+        }
+
+        return await this.callMethodWithWorker(
+          MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
+          accountId.toString(),
+          serializedTransactionRequests
+        );
+      } catch (error) {
+        console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
+        throw error;
+      }
+    });
+  }
+
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {
     return this._serializeWasmCall(async () => {
       try {
@@ -1407,6 +1442,57 @@ class MockWebClient extends WebClient {
       return transactionResult.id();
     } catch (error) {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mock-chain variant: the worker holds its own client, so the in-memory mock
+   * chain has to travel with the call and the mutated chain has to be adopted
+   * back on the main thread afterwards. A real client needs none of this
+   * because both instances read the same IndexedDB store.
+   */
+  async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
+    try {
+      if (!this.worker) {
+        return await super.submitNewTransactionBatch(
+          accountId,
+          serializedTransactionRequests
+        );
+      }
+
+      const wasmWebClient = await this.getWasmWebClient();
+      const wasm = await getWasmOrThrow();
+      const serializedMockChain = (await wasmWebClient.serializeMockChain())
+        .buffer;
+      const serializedMockNoteTransportNode = (
+        await wasmWebClient.serializeMockNoteTransportNode()
+      ).buffer;
+
+      const result = await this.callMethodWithWorker(
+        MethodName.SUBMIT_NEW_TRANSACTION_BATCH_MOCK,
+        accountId.toString(),
+        serializedTransactionRequests,
+        serializedMockChain,
+        serializedMockNoteTransportNode
+      );
+
+      const newMockChain = new Uint8Array(result.serializedMockChain);
+      const newMockNoteTransportNode = result.serializedMockNoteTransportNode
+        ? new Uint8Array(result.serializedMockNoteTransportNode)
+        : undefined;
+
+      this.wasmWebClient = new wasm.WebClient();
+      this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
+      await this.wasmWebClient.createMockClient(
+        this.seed,
+        newMockChain,
+        newMockNoteTransportNode
+      );
+
+      return result.blockNumber;
+    } catch (error) {
+      console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
       throw error;
     }
   }
