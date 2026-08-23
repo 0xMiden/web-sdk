@@ -2,6 +2,11 @@
 
 ## 0.16.0-rc.3 (TBA)
 
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.16.0-rc.2 (from 0.16.0-rc.1). This is the first published client that contains chain-anchored execution, so it is what makes the `ChainAnchor` surfaces below work — they were merged against a client release that did not have them yet. ([#308](https://github.com/0xMiden/web-sdk/pull/308), client [#2421](https://github.com/0xMiden/rust-sdk/pull/2421))
+* [CHANGE][web] `IdxdbStore`'s `Store::remove_address` and `Store::remove_setting` now return `bool` — `true` when the address was tracked, or the key was present — following the upstream trait, which stopped discarding that outcome. The `WebClient.removeAccountAddress` and `WebClient.removeSetting` JS methods are unaffected and still resolve to nothing. ([#308](https://github.com/0xMiden/web-sdk/pull/308), client [#2416](https://github.com/0xMiden/rust-sdk/pull/2416))
+
 ### Enhancements
 
 * [FEATURE][web] Added chain-anchored execution: `transactions.captureAnchor(request)` returns a serializable `ChainAnchor` pinning the current reference block, and `transactions.executeRequest`, `submit`, and `preview({ operation: "custom" })` accept it as an `anchor` option. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so a summary signed at one block only reproduces when re-executed at that block — this is what lets a multisig proposer, its co-signers, and the eventual executor agree on a summary despite being at different sync heights. ([#301](https://github.com/0xMiden/web-sdk/pull/301), client [#2421](https://github.com/0xMiden/rust-sdk/pull/2421))

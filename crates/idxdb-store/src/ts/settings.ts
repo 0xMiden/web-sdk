@@ -49,12 +49,22 @@ export async function insertSetting(
   }
 }
 
-export async function removeSetting(dbId: string, key: string): Promise<void> {
+// Reports whether the key was present, which the `Store` trait requires of
+// `remove_setting`. Dexie's `Collection.delete()` resolves to the number of
+// records it removed, so the answer needs no extra read.
+export async function removeSetting(
+  dbId: string,
+  key: string
+): Promise<boolean> {
   try {
     const db = getDatabase(dbId);
-    await db.settings.where("key").equals(key).delete();
+    const deleted = await db.settings.where("key").equals(key).delete();
+    return deleted > 0;
   } catch (error) {
     logWebStoreError(error, `Error deleting setting with key: ${key}`);
+    // Unreachable: logWebStoreError rethrows. Present so the compiler can see
+    // that no path returns undefined.
+    throw error;
   }
 }
 

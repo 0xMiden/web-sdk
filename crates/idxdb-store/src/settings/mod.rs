@@ -33,10 +33,10 @@ impl IdxdbStore {
         Ok(setting.map(|setting| setting.value))
     }
 
-    pub(crate) async fn remove_setting(&self, key: String) -> Result<(), StoreError> {
+    pub(crate) async fn remove_setting(&self, key: String) -> Result<bool, StoreError> {
         let promise = idxdb_remove_setting(self.db_id(), key);
-        await_js_value(promise, "failed to delete setting value").await?;
-        Ok(())
+        let removed: bool = await_js(promise, "failed to delete setting value").await?;
+        Ok(removed)
     }
 
     pub(crate) async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
