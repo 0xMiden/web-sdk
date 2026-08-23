@@ -127,15 +127,19 @@ pub async fn insert_account_address(
     Ok(())
 }
 
-pub async fn remove_account_address(db_id: &str, address: Address) -> Result<(), JsValue> {
+/// Resolves to whether the address was tracked, which `Store::remove_address`
+/// reports to its caller.
+pub async fn remove_account_address(db_id: &str, address: Address) -> Result<bool, JsValue> {
     let serialized_address = address.to_bytes();
     let promise = crate::account::js_bindings::idxdb_remove_account_address(
         db_id,
         serialized_address.clone(),
     );
-    JsFuture::from(promise).await?;
+    let removed = JsFuture::from(promise).await?;
 
-    Ok(())
+    removed
+        .as_bool()
+        .ok_or_else(|| JsValue::from_str("removeAccountAddress did not resolve to a boolean"))
 }
 
 pub fn parse_account_record_idxdb_object(

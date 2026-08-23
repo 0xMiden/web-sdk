@@ -71,17 +71,26 @@ describe("settings", () => {
     expect(got!.value).toBe("Ag==");
   });
 
-  it("removes a setting", async () => {
+  it("removes a setting, reporting that the key was present", async () => {
     const dbId = await openTestDb();
     await insertSetting(dbId, "k1", new Uint8Array([1]));
-    await removeSetting(dbId, "k1");
+    expect(await removeSetting(dbId, "k1")).toBe(true);
     expect(await getSetting(dbId, "k1")).toBeNull();
   });
 
-  it("removeSetting on a missing key is a no-op", async () => {
+  it("removeSetting on a missing key is a no-op, and says so", async () => {
     const dbId = await openTestDb();
-    await removeSetting(dbId, "nope");
-    // No throw means success.
+    // `Store::remove_setting` returns this verbatim, and callers distinguish
+    // "deleted something" from "there was nothing to delete" by it — so a
+    // no-op has to answer false rather than merely not throwing.
+    expect(await removeSetting(dbId, "nope")).toBe(false);
+  });
+
+  it("reports false on a second removal of the same key", async () => {
+    const dbId = await openTestDb();
+    await insertSetting(dbId, "k1", new Uint8Array([1]));
+    expect(await removeSetting(dbId, "k1")).toBe(true);
+    expect(await removeSetting(dbId, "k1")).toBe(false);
   });
 
   it("listSettingKeys excludes internal keys", async () => {

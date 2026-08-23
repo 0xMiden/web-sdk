@@ -449,7 +449,7 @@ impl Store for IdxdbStore {
         self.insert_address(address, &account_id).await
     }
 
-    async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+    async fn remove_address(&self, address: Address) -> Result<bool, StoreError> {
         // Tag removal moved upstream — `Self::remove_note_tag` is the
         // caller's responsibility per the new trait contract.
         self.remove_address(address).await
@@ -466,7 +466,7 @@ impl Store for IdxdbStore {
         self.get_setting(key).await
     }
 
-    async fn remove_setting(&self, key: String) -> Result<(), StoreError> {
+    async fn remove_setting(&self, key: String) -> Result<bool, StoreError> {
         self.remove_setting(key).await
     }
 
