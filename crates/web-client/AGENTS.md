@@ -21,6 +21,7 @@ are doing rather than guessing from the type signatures alone.
 | `skills/web-client-usage/SKILL.md` | Any code that calls `MidenClient` — initialization, the resource API, sync ordering, type conversions, transaction flows, custom contracts, private note transport. |
 | `skills/frontend-pitfalls/SKILL.md` | Before shipping. WASM initialization, concurrent access, cross-origin isolation, `BigInt` at the WASM boundary. These are the failures that survive code review and break in production. |
 | `skills/signer-integration/SKILL.md` | Wiring an external signer (Para, Turnkey, a wallet adapter) or implementing a custom one. |
+| `skills/frontend-source-guide/SKILL.md` | Anything the other skills don't cover — driving `WasmWebClient` directly, or troubleshooting SDK internals. Maps this repository's source so you can read the implementation instead of guessing. |
 
 Building a React app? `@miden-sdk/react` wraps this client in hooks and ships
 its own guide at `node_modules/@miden-sdk/react/AGENTS.md`. Prefer the hooks for

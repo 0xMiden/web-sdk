@@ -199,7 +199,7 @@ a consumer on 0.15 gets 0.15 guidance.
 
 | Package | Ships |
 |---|---|
-| `@miden-sdk/miden-sdk` (`crates/web-client/`) | `web-client-usage`, `frontend-pitfalls`, `signer-integration` |
+| `@miden-sdk/miden-sdk` (`crates/web-client/`) | `web-client-usage`, `frontend-pitfalls`, `signer-integration`, `frontend-source-guide` |
 | `@miden-sdk/react` (`packages/react-sdk/`) | `react-sdk-patterns`, `testing-patterns` |
 | `@miden-sdk/vite-plugin` (`packages/vite-plugin/`) | `vite-wasm-setup` |
 
