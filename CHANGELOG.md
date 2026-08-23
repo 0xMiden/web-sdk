@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] `transactions.batch()` and `transactions.submitBatch()` now run in the Web Worker instead of on the main thread. A batch executes and proves every transaction in it, plus the batch proof, inside one WASM call — which previously fell through to the main-thread instance, freezing the UI for the whole batch while a single `submit()` of the same work did not. Batch proving also now uses the worker's rayon thread pool, which the main-thread WASM instance never initializes, so batches were single-threaded on top of being blocking. Mock-chain clients keep batching on the main thread, because a submitted batch is not part of the serialized mock chain and so cannot survive the round trip; this costs nothing, since mock clients exist for tests. ([#313](https://github.com/0xMiden/web-sdk/pull/313))
+* [FEATURE][web] `transactions.batch()` and `transactions.submitBatch()` now run in the Web Worker instead of on the main thread. A batch executes and proves every transaction in it, plus the batch proof, inside one WASM call — which previously fell through to the main-thread instance, freezing the UI for the whole batch while a single `submit()` of the same work did not. On a multi-threaded build the proofs now also use the worker's rayon pool, which the SDK brings up at worker init — relevant only if you had not called `initThreadPool` on the main thread yourself, since rayon's pool is per-instance. Mock-chain clients keep batching on the main thread, because a submitted batch is not part of the serialized mock chain and so cannot survive the round trip; this costs nothing, since mock clients exist for tests. ([#313](https://github.com/0xMiden/web-sdk/pull/313))
 
 ## 0.16.0-rc.3 (2026-08-23)
 

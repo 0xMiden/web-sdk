@@ -881,9 +881,16 @@ class WebClient {
    *
    * Every transaction in the batch is executed and proven, and the batch proof
    * produced, inside a single WASM call. Forwarding that call to the worker
-   * keeps the main thread free for the whole batch, and lets the proofs use
-   * the worker's rayon pool — rayon is per-WASM-instance, and only the
-   * worker's instance initializes one.
+   * keeps the main thread free for the whole batch.
+   *
+   * On a multi-threaded build the proofs also pick up the worker's rayon pool,
+   * which the SDK brings up in the worker's WASM instance at init. That only
+   * changes anything for consumers who did not follow the MT readme and call
+   * `initThreadPool` on the main thread themselves; rayon's pool is
+   * per-instance, so a main-thread pool never applied here anyway. It
+   * parallelizes the interior of each proof, not the transactions against each
+   * other — those are proven strictly in order, since each executes against
+   * the post-state of the one before it.
    *
    * @param {AccountId} accountId - Account every request executes against.
    * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.
