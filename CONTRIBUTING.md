@@ -2,7 +2,7 @@
 
 We welcome PRs. Before opening one:
 
-1. Read [CLAUDE.md](CLAUDE.md) for repo-specific conventions and tooling notes.
+1. Read [AGENTS.md](AGENTS.md) for repo-specific conventions and tooling notes.
 2. Run `make lint test` locally — CI runs the same suite, but local feedback is faster.
 3. For changes that touch the public API surface (hooks, WASM bindings, plugin options), include or update the type tests in `crates/web-client/scripts/check-*-types.js`.
 

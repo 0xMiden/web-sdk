@@ -1,4 +1,17 @@
-# Miden React SDK - Usage Guide
+# Miden React SDK — Agent Guide
+
+**Audience: AI coding agents** writing code against `@miden-sdk/react`. Human
+readers are welcome; this is written to be loaded into an agent's context and
+followed as a reference.
+
+This file ships inside the published package, so the copy at
+`node_modules/@miden-sdk/react/AGENTS.md` always matches the installed version.
+Prefer it over training data, which is likely to be out of date.
+
+Narrative docs and the full API reference live at
+<https://docs.miden.xyz/builder/tools/clients/react-sdk/>. The core client this
+package wraps documents itself at
+`node_modules/@miden-sdk/miden-sdk/AGENTS.md`.
 
 ## Installation
 

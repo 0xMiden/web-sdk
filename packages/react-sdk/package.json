@@ -29,7 +29,7 @@
     "lazy",
     "mt",
     "README.md",
-    "CLAUDE.md"
+    "AGENTS.md"
   ],
   "scripts": {
     "build": "tsup",
