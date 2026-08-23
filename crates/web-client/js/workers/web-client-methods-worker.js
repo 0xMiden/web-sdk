@@ -291,13 +291,15 @@ const methodHandlers = {
     const wasm = await getWasmOrThrow();
     const [accountIdHex, serializedTransactionRequests] = args;
     const accountId = wasm.AccountId.fromHex(accountIdHex);
-    // Already normalized to `Uint8Array`s on the main thread, and structured
-    // clone preserves that, so they pass straight through.
-    const requests = serializedTransactionRequests;
-
+    // The requests were normalized to `Uint8Array`s on the main thread and
+    // structured clone preserves that, so they need no handling here.
+    //
     // Returns a plain block number, so unlike the single-submit handlers there
     // is no result object to serialize back across the boundary.
-    return await wasmWebClient.submitNewTransactionBatch(accountId, requests);
+    return await wasmWebClient.submitNewTransactionBatch(
+      accountId,
+      serializedTransactionRequests
+    );
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -532,8 +534,10 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's pool inside THIS worker's WASM instance — same
-      // rationale as the INIT path above: all proving executes here, and a
-      // pool initialized in any other instance does not parallelize it.
+      // rationale as the INIT path above: every mock method that reaches the
+      // worker proves here, and a pool initialized in any other instance does
+      // not parallelize it. (Mock batching is the one exception; it stays on
+      // the main thread, so it never benefits from this pool.)
       if (
         numThreads &&
         numThreads > 1 &&

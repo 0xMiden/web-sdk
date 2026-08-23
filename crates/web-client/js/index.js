@@ -248,6 +248,44 @@ export const getWasmOrThrow = async () => {
  * web client is instantiated. Users should now use the WebClient.createClient static call.
  */
 /**
+ * Coerce batch request bytes into the `Uint8Array[]` WASM expects.
+ *
+ * Shared by `WebClient` and `MockWebClient` so routing is the only thing that
+ * differs between them, and applied before the worker branch so a given input
+ * behaves the same whether or not a worker exists.
+ *
+ * @param {unknown} serializedTransactionRequests
+ * @returns {Uint8Array[]}
+ */
+function normalizeSerializedRequests(serializedTransactionRequests) {
+  if (!Array.isArray(serializedTransactionRequests)) {
+    throw new TypeError(
+      "submitNewTransactionBatch expects an array of serialized transaction requests"
+    );
+  }
+
+  return serializedTransactionRequests.map((bytes, index) => {
+    if (bytes instanceof Uint8Array) {
+      return bytes;
+    }
+    // A view from another realm fails `instanceof` but is still valid bytes,
+    // so re-wrap it over the same memory rather than rejecting it.
+    if (ArrayBuffer.isView(bytes)) {
+      return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    }
+    if (bytes instanceof ArrayBuffer) {
+      return new Uint8Array(bytes);
+    }
+    // Anything else — null, a plain array, a stray TransactionRequest someone
+    // forgot to serialize — would coerce to the wrong bytes and resurface much
+    // later as an opaque "failed to deserialize" from Rust, naming no index.
+    throw new TypeError(
+      `serialized transaction request at index ${index} is not a Uint8Array`
+    );
+  });
+}
+
+/**
  * Create a Proxy that forwards missing properties to the underlying WASM
  * WebClient.
  */
@@ -898,12 +936,7 @@ class WebClient {
    *   block the batch commits in. Sync to learn where it landed.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
-    // Normalize here rather than in the worker handler so both branches accept
-    // the same inputs; structured clone would otherwise let an ArrayBuffer
-    // through only when a worker happens to exist.
-    const requests = serializedTransactionRequests.map((bytes) =>
-      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-    );
+    const requests = normalizeSerializedRequests(serializedTransactionRequests);
 
     return this._serializeWasmCall(async () => {
       try {
@@ -1485,12 +1518,14 @@ class MockWebClient extends WebClient {
    * submitting anything else.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
+    const requests = normalizeSerializedRequests(serializedTransactionRequests);
+
     return this._serializeWasmCall(async () => {
       try {
         const wasmWebClient = await this.getWasmWebClient();
         return await wasmWebClient.submitNewTransactionBatch(
           accountId,
-          serializedTransactionRequests
+          requests
         );
       } catch (error) {
         console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);

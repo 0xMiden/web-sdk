@@ -40,9 +40,6 @@ describe("MethodName", () => {
     expect(MethodName.SUBMIT_NEW_TRANSACTION_BATCH).toBe(
       "submitNewTransactionBatch"
     );
-    // Mock clients batch on the main thread, so there is deliberately no
-    // `SUBMIT_NEW_TRANSACTION_BATCH_MOCK` — see MockWebClient in index.js.
-    expect(MethodName.SUBMIT_NEW_TRANSACTION_BATCH_MOCK).toBeUndefined();
     expect(MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER).toBe(
       "submitNewTransactionWithProver"
     );

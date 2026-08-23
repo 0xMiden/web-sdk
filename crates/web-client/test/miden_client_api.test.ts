@@ -304,14 +304,18 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
               { kind: "mint", to: wallet, amount: 200n },
             ],
           }));
+
+          // Both must be awaited: the assertion depends on the block actually
+          // being sealed first, and proveBlock bypasses the serializing
+          // wrapper. Kept inside the spied window so that `sync` — which does
+          // go to the worker — proves the spy itself is wired up. Without that
+          // positive control the negative assertion below would pass even if
+          // the spy recorded nothing at all.
+          await client.proveBlock();
+          await client.sync();
         } finally {
           Worker.prototype.postMessage = originalPostMessage;
         }
-
-        // Both must be awaited: the assertion depends on the block actually
-        // being sealed first, and proveBlock bypasses the serializing wrapper.
-        await client.proveBlock();
-        await client.sync();
 
         const consumable = await client.notes.listAvailable({
           account: wallet,
@@ -331,7 +335,14 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(typeof result.blockNumber).toBe("number");
       expect(result.blockNumber).toBeGreaterThanOrEqual(0);
       expect(result.consumableCount).toBe(2);
-      expect(result.postedMethods).not.toContain("submitNewTransactionBatch");
+
+      // Positive control first: `sync` is worker-forwarded on a mock client, so
+      // if this is missing the spy never worked and the negative assertion
+      // below proves nothing.
+      expect(result.postedMethods).toContain("syncStateMock");
+      // Name-exact matching would miss a reintroduced `...BatchMock` variant,
+      // which is exactly the shape a future mock-forwarding attempt would take.
+      expect(result.postedMethods.filter((m) => /batch/i.test(m))).toEqual([]);
     }
   );
 

@@ -550,7 +550,8 @@ export class TransactionsResource {
    * atomically — either every tx in the batch lands or none does.
    *
    * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission — not the block the batch commits in.
    */
   async batch(opts) {
     rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
@@ -633,7 +634,8 @@ export class TransactionsResource {
    * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
    *   The batch is proved with the client's configured prover; the V1 batch API
    *   has no per-call prover override.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission — not the block the batch commits in.
    */
   async submitBatch(account, requests, options) {
     rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");

@@ -534,7 +534,10 @@ export interface BatchOptions {
 }
 
 export interface BatchSubmitResult {
-  /** The block number the batch was accepted into. */
+  /**
+   * The node's chain tip as of submission — not the block the batch commits
+   * in. Sync to learn where it landed.
+   */
   blockNumber: number;
 }
 
