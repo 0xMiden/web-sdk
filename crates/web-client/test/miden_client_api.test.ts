@@ -257,8 +257,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.uncommittedAfter).toBe(0);
   });
 
+  // Regression guard for the mock batching path. A batch lands in the mock
+  // chain's `pending_batches`, which is not part of what `MockChain`
+  // serializes, so routing this through the worker like every other
+  // forwarded method would drop the batch on the way back and leave zero
+  // consumable notes here. Keep mock batching on the main thread.
   mockTest(
-    "transactions.batch runs in the worker and hands the chain back",
+    "transactions.batch mints both notes on a mock chain",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -278,12 +283,8 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           ],
         });
 
-        // The batch executes against the worker's own mock chain. If the
-        // mutated chain were not adopted back onto the main-thread client,
-        // this sync would run against a chain that never saw the batch and
-        // neither minted note would show up. Both must be awaited: the
-        // assertion depends on the block actually being sealed first, and
-        // proveBlock bypasses the serializing wrapper.
+        // Both must be awaited: the assertion depends on the block actually
+        // being sealed first, and proveBlock bypasses the serializing wrapper.
         await client.proveBlock();
         await client.sync();
 
@@ -297,8 +298,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       // The mock node returns the tip as of submission, not the block the
       // batch lands in, and a fresh mock chain starts at 0 — so only the type
       // and non-negativity are meaningful here. `consumableCount` is the
-      // assertion that actually discriminates: it is 2 only if the mutated
-      // chain made it back to the main-thread client.
+      // assertion that actually discriminates.
       expect(typeof result.blockNumber).toBe("number");
       expect(result.blockNumber).toBeGreaterThanOrEqual(0);
       expect(result.consumableCount).toBe(2);

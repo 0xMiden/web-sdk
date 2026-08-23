@@ -456,37 +456,6 @@ methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK] = async (
   };
 };
 
-methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_BATCH_MOCK] = async (args) => {
-  const wasm = await getWasmOrThrow();
-  let serializedMockNoteTransportNode = args.pop();
-  let serializedMockChain = args.pop();
-  serializedMockChain = new Uint8Array(serializedMockChain);
-  serializedMockNoteTransportNode = serializedMockNoteTransportNode
-    ? new Uint8Array(serializedMockNoteTransportNode)
-    : null;
-
-  wasmWebClient = new wasm.WebClient();
-  await wasmWebClient.createMockClient(
-    wasmSeed,
-    serializedMockChain,
-    serializedMockNoteTransportNode
-  );
-
-  const blockNumber =
-    await methodHandlers[MethodName.SUBMIT_NEW_TRANSACTION_BATCH](args);
-
-  const updatedMockChain = (await wasmWebClient.serializeMockChain()).buffer;
-  const updatedMockNoteTransportNode = (
-    await wasmWebClient.serializeMockNoteTransportNode()
-  ).buffer;
-
-  return {
-    blockNumber,
-    serializedMockChain: updatedMockChain,
-    serializedMockNoteTransportNode: updatedMockNoteTransportNode,
-  };
-};
-
 /**
  * Process a single message event.
  */

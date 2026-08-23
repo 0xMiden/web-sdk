@@ -1447,65 +1447,30 @@ class MockWebClient extends WebClient {
   }
 
   /**
-   * Mock-chain variant: the worker holds its own client, so the in-memory mock
-   * chain has to travel with the call and the mutated chain has to be adopted
-   * back on the main thread afterwards. A real client needs none of this
-   * because both instances read the same IndexedDB store.
+   * Mock clients deliberately keep batching on the main thread.
    *
-   * Snapshot, worker call, and adoption are one critical section on
-   * `_serializeWasmCall`. Anything less lets a second caller snapshot the same
-   * pre-batch chain and overwrite this batch's result when it adopts its own —
-   * including a mock `syncState`, which ships its snapshot to the worker and
-   * has the worker rebuild from it. The no-worker case is inlined rather than
-   * delegated to `super`, because the base wrapper takes the same chain and
-   * nesting it here would deadlock. `MockWebClient#syncState` is shaped the
-   * same way for the same reason.
+   * Every other worker-forwarded method round-trips the mock chain: the
+   * serialized chain travels to the worker and the mutated chain is adopted
+   * back. That works because a submitted transaction lands in the mock chain's
+   * `pending_transactions`, which is serialized. A submitted *batch* lands in
+   * `pending_batches`, which `MockChain`'s serializer does not write and its
+   * deserializer resets to empty. Shipping the chain back would therefore
+   * silently discard the whole batch while the shared store had already
+   * recorded its per-transaction updates — the account nonce would advance
+   * while the chain never saw the batch, and no later sync would reconcile it.
+   *
+   * There is nothing to gain by forwarding anyway: mock clients exist for
+   * tests, where a blocked main thread costs nothing. Overriding is still
+   * required, because inheriting the base wrapper would forward to the worker.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
     return this._serializeWasmCall(async () => {
       try {
         const wasmWebClient = await this.getWasmWebClient();
-
-        if (!this.worker) {
-          return await wasmWebClient.submitNewTransactionBatch(
-            accountId,
-            serializedTransactionRequests
-          );
-        }
-
-        const wasm = await getWasmOrThrow();
-        const serializedMockChain = (await wasmWebClient.serializeMockChain())
-          .buffer;
-        const serializedMockNoteTransportNode = (
-          await wasmWebClient.serializeMockNoteTransportNode()
-        ).buffer;
-
-        const result = await this.callMethodWithWorker(
-          MethodName.SUBMIT_NEW_TRANSACTION_BATCH_MOCK,
-          accountId.toString(),
-          serializedTransactionRequests,
-          serializedMockChain,
-          serializedMockNoteTransportNode
+        return await wasmWebClient.submitNewTransactionBatch(
+          accountId,
+          serializedTransactionRequests
         );
-
-        const newMockChain = new Uint8Array(result.serializedMockChain);
-        const newMockNoteTransportNode = result.serializedMockNoteTransportNode
-          ? new Uint8Array(result.serializedMockNoteTransportNode)
-          : undefined;
-
-        // Publish only once initialized. Assigning first would expose a client
-        // whose inner is still `None` to anything that reads
-        // `this.wasmWebClient` during the await.
-        const adopted = new wasm.WebClient();
-        await adopted.createMockClient(
-          this.seed,
-          newMockChain,
-          newMockNoteTransportNode
-        );
-        this.wasmWebClient = adopted;
-        this.wasmWebClientPromise = Promise.resolve(adopted);
-
-        return result.blockNumber;
       } catch (error) {
         console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
         throw error;
