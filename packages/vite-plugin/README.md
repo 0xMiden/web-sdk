@@ -10,6 +10,32 @@ npm install @miden-sdk/vite-plugin --save-dev
 pnpm add @miden-sdk/vite-plugin --dev
 ```
 
+## For AI coding agents
+
+This package ships `AGENTS.md` and a `skills/vite-wasm-setup/` guide inside the
+tarball, version-matched to the code you installed. Agents do not read
+`node_modules` unprompted, so paste this into your project's root `AGENTS.md`
+or `CLAUDE.md`:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date —
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide for the
+package you are touching:
+
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — core client
+- `node_modules/@miden-sdk/react/AGENTS.md` — React hooks
+- `node_modules/@miden-sdk/vite-plugin/AGENTS.md` — bundler setup
+
+Each one indexes task-specific skills in its package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+<!-- END:miden-agent-rules -->
+```
+
 ## Usage
 
 ```typescript
