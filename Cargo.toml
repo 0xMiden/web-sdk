@@ -45,11 +45,11 @@ idxdb-store     = { default-features = false, package = "miden-idxdb-store", pat
 js-export-macro = { path = "crates/js-export-macro", version = "0.16.0-rc.2" }
 
 # Client crates
-# Cargo.lock intentionally follows the rust-sdk v0.16.0-rc.1 release graph. Broad
+# Cargo.lock intentionally follows the rust-sdk v0.16.0-rc.2 release graph. Broad
 # `cargo update` runs may select newer transitive versions; validate those against
 # this release before accepting lockfile changes.
-miden-client              = { default-features = false, version = "0.16.0-rc.1" }
-miden-client-sqlite-store = { default-features = false, version = "0.16.0-rc.1" }
+miden-client              = { default-features = false, version = "0.16.0-rc.2" }
+miden-client-sqlite-store = { default-features = false, version = "0.16.0-rc.2" }
 
 # External dependencies
 async-trait = { version = "0.1" }
@@ -57,7 +57,7 @@ chrono      = { version = "0.4" }
 hex         = { version = "0.4" }
 miette      = { features = ["fancy"], version = "7.6" }
 # napi-rs powers the Node.js binding of the web-client crate. Matches the
-# version pin in miden-client 0.16.0-rc.1.
+# version pin in miden-client 0.16.0-rc.2.
 napi        = { default-features = false, features = ["async", "napi8"], version = "3" }
 napi-build  = { version = "2" }
 napi-derive = { default-features = false, version = "3" }

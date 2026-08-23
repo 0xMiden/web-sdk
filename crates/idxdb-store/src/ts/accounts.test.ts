@@ -401,13 +401,30 @@ describe("addresses", () => {
     expect(result).toHaveLength(1);
   });
 
-  it("removes an address", async () => {
+  it("removes an address, reporting that it was tracked", async () => {
     const dbId = await openTestDb();
     const addr = new Uint8Array([0xaa, 0xbb]);
     await insertAccountAddress(dbId, ACC, addr);
-    await removeAccountAddress(dbId, addr);
+    expect(await removeAccountAddress(dbId, addr)).toBe(true);
     const result = await getAccountAddresses(dbId, ACC);
     expect(result).toEqual([]);
+  });
+
+  it("reports false for an address that was never tracked", async () => {
+    const dbId = await openTestDb();
+    // `Store::remove_address` returns this verbatim; callers use it to tell an
+    // untracked address from one they just stopped tracking.
+    expect(await removeAccountAddress(dbId, new Uint8Array([0xde, 0xad]))).toBe(
+      false
+    );
+  });
+
+  it("reports false on a second removal of the same address", async () => {
+    const dbId = await openTestDb();
+    const addr = new Uint8Array([0xaa, 0xbb]);
+    await insertAccountAddress(dbId, ACC, addr);
+    expect(await removeAccountAddress(dbId, addr)).toBe(true);
+    expect(await removeAccountAddress(dbId, addr)).toBe(false);
   });
 });
 

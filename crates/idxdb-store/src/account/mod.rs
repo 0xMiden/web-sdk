@@ -743,7 +743,7 @@ impl IdxdbStore {
         Ok(())
     }
 
-    pub(crate) async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+    pub(crate) async fn remove_address(&self, address: Address) -> Result<bool, StoreError> {
         remove_account_address(self.db_id(), address).await.map_err(|js_error| {
             StoreError::DatabaseError(format!("failed to remove account address: {js_error:?}"))
         })

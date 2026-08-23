@@ -710,13 +710,23 @@ export async function insertAccountAddress(dbId, accountId, address) {
         logWebStoreError(error, `Error inserting address with value: ${String(address)} for the account ID ${accountId}`);
     }
 }
+// Reports whether the address was tracked, which the `Store` trait requires of
+// `remove_address`. Dexie's `Collection.delete()` resolves to the number of
+// records it removed, so the answer needs no extra read.
 export async function removeAccountAddress(dbId, address) {
     try {
         const db = getDatabase(dbId);
-        await db.addresses.where("address").equals(address).delete();
+        const deleted = await db.addresses
+            .where("address")
+            .equals(address)
+            .delete();
+        return deleted > 0;
     }
     catch (error) {
         logWebStoreError(error, `Error removing address with value: ${String(address)}`);
+        // Unreachable: logWebStoreError rethrows. Present so the compiler can see
+        // that no path returns undefined.
+        throw error;
     }
 }
 export async function upsertForeignAccountCode(dbId, accountId, code, codeRoot) {
