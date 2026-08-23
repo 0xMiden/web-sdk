@@ -119,7 +119,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 ### V1 constraints
 
 - **Single account.** Every operation runs against the `account` passed at the top level. Mixing accounts across operations throws — V2 will lift this constraint.
-- **No per-tx ids in the result.** `batch` returns `{ blockNumber }`. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()` after `waitForConfirmation` succeeds.
+- **No per-tx ids in the result.** `batch` returns `{ blockNumber }`, the node's chain tip as of submission. To inspect individual transactions, sync state and query with `client.transactions.list()`.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
 
 ### `submitBatch` — pre-built requests
@@ -137,7 +137,7 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
+The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the node's chain tip as of submission, not the block the batch commits in. `waitForConfirmation` polls the local sync height until it reaches that number. Because the number is the tip as of submission, that confirms the client has caught up to the submission point — not that the batch has committed. The batch's own effects are already in the local store when the call returns; to see chain inclusion, sync and check `client.transactions.list()` status. The `timeout` option still applies; default is 60 seconds.
 
 ## Manual Transaction Lifecycle
 

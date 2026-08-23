@@ -394,8 +394,9 @@ describe("normalizeSerializedRequests", () => {
   });
 
   it("rejects views whose elements are not single bytes", () => {
-    // Reinterpreting these as bytes would produce plausible-looking garbage
-    // that only fails deep inside the Rust deserializer.
+    // A wider typed array's lanes would be reinterpreted as raw bytes. A
+    // DataView's bytes would be fine; it is excluded to keep the contract to
+    // a single accepted shape.
     expect(() => normalizeSerializedRequests([new Float64Array([1])])).toThrow(
       /index 0/
     );
@@ -428,6 +429,16 @@ describe("normalizeSerializedRequests", () => {
     expect(Array.from(out)).toEqual([3, 4, 5]);
     expect(out.byteOffset).toBe(0);
     expect(out.buffer.byteLength).toBe(3);
+  });
+
+  it("accepts a byte view from another realm, which wasm-bindgen would refuse", async () => {
+    const vm = await import("node:vm");
+    const foreign = vm.runInNewContext("new Uint8Array([7, 8, 9])");
+    expect(foreign instanceof Uint8Array).toBe(false);
+
+    const [out] = normalizeSerializedRequests([foreign]);
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out)).toEqual([7, 8, 9]);
   });
 
   it("converts a single-byte view of another type to a Uint8Array", () => {

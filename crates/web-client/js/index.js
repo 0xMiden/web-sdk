@@ -1233,10 +1233,10 @@ class MockWebClient extends WebClient {
   }
 
   initializeWorker() {
-    // Pass `numThreads` exactly like the real INIT path: every prove runs
-    // inside the worker's own WASM instance, and rayon's pool is
-    // per-instance — without this, mock-client proving (including the
-    // integration suite) silently runs single-threaded.
+    // Pass `numThreads` exactly like the real INIT path: rayon's pool is
+    // per-instance, so without this any mock proving that does reach the
+    // worker — single submits and syncs, though not batches, which stay on
+    // the main thread — silently runs single-threaded.
     let numThreads = 1;
     try {
       if (

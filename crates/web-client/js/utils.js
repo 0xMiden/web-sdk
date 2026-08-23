@@ -225,16 +225,16 @@ export function normalizeSerializedRequests(serializedTransactionRequests) {
   for (let index = 0; index < length; index++) {
     const bytes = serializedTransactionRequests[index];
 
-    // wasm-bindgen would itself reject a non-`Uint8Array` element, but with a
-    // generic "array contains a value of the wrong type" that names no index
-    // and unwinds through `throw_str`. Checking here names the offending entry
-    // and, because it is duck-typed rather than `instanceof`, additionally
-    // accepts byte views from another realm, which wasm-bindgen's `dyn_into`
-    // would refuse. A `DataView` has no BYTES_PER_ELEMENT and a wider typed
-    // array has a larger one; neither carries the bytes the caller means.
+    // wasm-bindgen would itself reject anything that is not a `Uint8Array`,
+    // but with a generic "array contains a value of the wrong type" that names
+    // no index. Checking here names the offending entry, and `isView` is a
+    // realm-independent brand check, so it also accepts byte views from
+    // another realm that wasm-bindgen's `instanceof`-based `dyn_into` refuses.
+    // A wider typed array is excluded because its lanes would be reinterpreted
+    // as raw bytes; a `DataView` only because the contract is a byte view.
     if (!ArrayBuffer.isView(bytes) || bytes.BYTES_PER_ELEMENT !== 1) {
       throw new TypeError(
-        `serialized transaction request at index ${index} is not a Uint8Array`
+        `serialized transaction request at index ${index} is not a single-byte typed-array view`
       );
     }
 

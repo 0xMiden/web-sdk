@@ -503,7 +503,7 @@ const { blockNumber } = await client.transactions.submitBatch(wallet, [
 ]);
 ```
 
-The V1 batch primitive returns only the block number — there are no per-tx ids in the result. `waitForConfirmation` polls local sync height until it reaches `blockNumber` (rather than per-tx polling like singular `send` / `consume`).
+The V1 batch primitive returns only a block number — there are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. `waitForConfirmation` polls the local sync height until it reaches that number. Because the number is the tip as of submission, that confirms the client has caught up to the submission point — not that the batch has committed. The batch's own effects are already in the local store when the call returns; to see chain inclusion, sync and check `client.transactions.list()` status.
 
 ### Manual Transaction Lifecycle
 

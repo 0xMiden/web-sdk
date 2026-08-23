@@ -668,6 +668,10 @@ export class TransactionsResource {
    * expires. The Rust V1 batch API returns only a block number — there are no
    * per-tx ids to poll on, so we wait on the chain height instead.
    *
+   * Note this is a weaker guarantee than it looks: `blockNumber` is the tip as
+   * of submission, so reaching it does not mean the batch committed. See
+   * https://github.com/0xMiden/web-sdk/issues/314.
+   *
    * @param {number} blockNumber - The block height to wait for.
    * @param {object} [opts] - Polling options (timeout, interval).
    */
