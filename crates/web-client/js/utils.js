@@ -201,3 +201,68 @@ export async function hashSeed(seed) {
     `Invalid seed type: expected string or Uint8Array, got ${typeof seed}`
   );
 }
+
+/**
+ * Coerce batch request bytes into the `Uint8Array[]` WASM expects.
+ *
+ * Shared by `WebClient` and `MockWebClient` so routing is the only thing that
+ * differs between them, and applied before the worker branch so a given input
+ * behaves the same whether or not a worker exists.
+ *
+ * @param {unknown} serializedTransactionRequests
+ * @returns {Uint8Array[]}
+ */
+export function normalizeSerializedRequests(serializedTransactionRequests) {
+  if (!Array.isArray(serializedTransactionRequests)) {
+    throw new TypeError(
+      "submitNewTransactionBatch expects an array of serialized transaction requests"
+    );
+  }
+
+  const { length } = serializedTransactionRequests;
+  const requests = new Array(length);
+
+  // Indexed rather than `.map`, which skips holes: a sparse array would
+  // otherwise pass unvalidated and reach WASM as `undefined` entries.
+  for (let index = 0; index < length; index++) {
+    const bytes = serializedTransactionRequests[index];
+
+    // Duck-typed rather than `instanceof`, so a byte view from another realm
+    // is accepted. A `DataView` has no BYTES_PER_ELEMENT and a wider typed
+    // array has a larger one; both would have their contents reinterpreted as
+    // bytes and fail much later as an opaque Rust deserialization error naming
+    // no index — which is exactly what this check exists to prevent.
+    if (!ArrayBuffer.isView(bytes) || bytes.BYTES_PER_ELEMENT !== 1) {
+      throw new TypeError(
+        `serialized transaction request at index ${index} is not a Uint8Array`
+      );
+    }
+
+    // Also catches a detached buffer, which presents as zero-length. No
+    // serialized request is empty, so this can only be a caller mistake.
+    if (bytes.byteLength === 0) {
+      throw new TypeError(
+        `serialized transaction request at index ${index} is empty`
+      );
+    }
+
+    // Structured clone copies a view's ENTIRE backing buffer and then restores
+    // the offset, so a request sliced out of one large buffer would ship that
+    // whole buffer to the worker. Copy anything that does not span its buffer
+    // exactly; the common case — a `serialize()` result, which owns its buffer
+    // — passes through untouched.
+    requests[index] =
+      bytes instanceof Uint8Array &&
+      bytes.byteOffset === 0 &&
+      bytes.byteLength === bytes.buffer.byteLength
+        ? bytes
+        : new Uint8Array(
+            bytes.buffer.slice(
+              bytes.byteOffset,
+              bytes.byteOffset + bytes.byteLength
+            )
+          );
+  }
+
+  return requests;
+}

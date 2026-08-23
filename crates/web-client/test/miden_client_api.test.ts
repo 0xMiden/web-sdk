@@ -336,13 +336,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.blockNumber).toBeGreaterThanOrEqual(0);
       expect(result.consumableCount).toBe(2);
 
-      // Positive control first: `sync` is worker-forwarded on a mock client, so
-      // if this is missing the spy never worked and the negative assertion
-      // below proves nothing.
-      expect(result.postedMethods).toContain("syncStateMock");
-      // Name-exact matching would miss a reintroduced `...BatchMock` variant,
-      // which is exactly the shape a future mock-forwarding attempt would take.
-      expect(result.postedMethods.filter((m) => /batch/i.test(m))).toEqual([]);
+      // Exact, not just "no batch method": a mock batch routed through the
+      // worker under ANY name would break the same way, and `pending_transactions`
+      // IS serialized, so a reintroduced per-transaction forwarding could still
+      // produce consumableCount === 2 and slip past a narrower check. `sync` is
+      // worker-forwarded on a mock client, so its presence here doubles as
+      // proof that the spy was actually wired up.
+      expect(result.postedMethods).toEqual(["syncStateMock"]);
     }
   );
 

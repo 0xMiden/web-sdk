@@ -8,6 +8,7 @@ import {
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
+  normalizeSerializedRequests,
 } from "../utils.js";
 
 // ── WASM mock helpers ──────────────────────────────────────────────────────────
@@ -345,5 +346,88 @@ describe("hashSeed", () => {
 
   it("throws TypeError for object input", async () => {
     await expect(hashSeed({ seed: "bad" })).rejects.toThrow(TypeError);
+  });
+});
+
+describe("normalizeSerializedRequests", () => {
+  it("passes through a Uint8Array that owns its buffer, without copying", () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const [out] = normalizeSerializedRequests([bytes]);
+    expect(out).toBe(bytes);
+  });
+
+  it("preserves order and contents across several requests", () => {
+    const a = new Uint8Array([1, 2]);
+    const b = new Uint8Array([3, 4, 5]);
+    expect(normalizeSerializedRequests([a, b])).toEqual([a, b]);
+  });
+
+  it("returns an empty array for an empty batch", () => {
+    expect(normalizeSerializedRequests([])).toEqual([]);
+  });
+
+  it("rejects a non-array argument", () => {
+    expect(() => normalizeSerializedRequests(null)).toThrow(TypeError);
+    expect(() => normalizeSerializedRequests(new Uint8Array([1]))).toThrow(
+      /expects an array/
+    );
+    // Array-like but not an array: `.map` would have skipped it silently.
+    expect(() => normalizeSerializedRequests({ length: 1, 0: null })).toThrow(
+      TypeError
+    );
+  });
+
+  it("names the offending index when an element is not a byte view", () => {
+    const good = new Uint8Array([1]);
+    expect(() => normalizeSerializedRequests([good, null])).toThrow(/index 1/);
+    expect(() => normalizeSerializedRequests([good, [1, 2, 3]])).toThrow(
+      /index 1/
+    );
+    expect(() =>
+      normalizeSerializedRequests([{ serialize: () => new Uint8Array() }])
+    ).toThrow(/index 0/);
+  });
+
+  it("rejects views whose elements are not single bytes", () => {
+    // Reinterpreting these as bytes would produce plausible-looking garbage
+    // that only fails deep inside the Rust deserializer.
+    expect(() => normalizeSerializedRequests([new Float64Array([1])])).toThrow(
+      /index 0/
+    );
+    expect(() =>
+      normalizeSerializedRequests([new DataView(new ArrayBuffer(8))])
+    ).toThrow(/index 0/);
+    expect(() => normalizeSerializedRequests([new Uint16Array([1])])).toThrow(
+      /index 0/
+    );
+  });
+
+  it("rejects a hole in a sparse array rather than skipping it", () => {
+    const sparse = new Array(2);
+    sparse[0] = new Uint8Array([1]);
+    expect(() => normalizeSerializedRequests(sparse)).toThrow(/index 1/);
+  });
+
+  it("rejects an empty request", () => {
+    expect(() => normalizeSerializedRequests([new Uint8Array(0)])).toThrow(
+      /index 0 is empty/
+    );
+  });
+
+  it("copies a view that does not span its buffer, so postMessage cannot ship the whole buffer", () => {
+    const backing = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const view = backing.subarray(2, 5);
+    const [out] = normalizeSerializedRequests([view]);
+
+    expect(out).not.toBe(view);
+    expect(Array.from(out)).toEqual([3, 4, 5]);
+    expect(out.byteOffset).toBe(0);
+    expect(out.buffer.byteLength).toBe(3);
+  });
+
+  it("converts a single-byte view of another type to a Uint8Array", () => {
+    const [out] = normalizeSerializedRequests([new Int8Array([1, -1])]);
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out)).toEqual([1, 255]);
   });
 });

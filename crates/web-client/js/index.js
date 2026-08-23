@@ -1,6 +1,7 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { withSyncLock } from "./syncLock.js";
+import { normalizeSerializedRequests } from "./utils.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
@@ -247,44 +248,6 @@ export const getWasmOrThrow = async () => {
  * Because of this implementation, the only breaking change for end users is in the way the
  * web client is instantiated. Users should now use the WebClient.createClient static call.
  */
-/**
- * Coerce batch request bytes into the `Uint8Array[]` WASM expects.
- *
- * Shared by `WebClient` and `MockWebClient` so routing is the only thing that
- * differs between them, and applied before the worker branch so a given input
- * behaves the same whether or not a worker exists.
- *
- * @param {unknown} serializedTransactionRequests
- * @returns {Uint8Array[]}
- */
-function normalizeSerializedRequests(serializedTransactionRequests) {
-  if (!Array.isArray(serializedTransactionRequests)) {
-    throw new TypeError(
-      "submitNewTransactionBatch expects an array of serialized transaction requests"
-    );
-  }
-
-  return serializedTransactionRequests.map((bytes, index) => {
-    if (bytes instanceof Uint8Array) {
-      return bytes;
-    }
-    // A view from another realm fails `instanceof` but is still valid bytes,
-    // so re-wrap it over the same memory rather than rejecting it.
-    if (ArrayBuffer.isView(bytes)) {
-      return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    }
-    if (bytes instanceof ArrayBuffer) {
-      return new Uint8Array(bytes);
-    }
-    // Anything else — null, a plain array, a stray TransactionRequest someone
-    // forgot to serialize — would coerce to the wrong bytes and resurface much
-    // later as an opaque "failed to deserialize" from Rust, naming no index.
-    throw new TypeError(
-      `serialized transaction request at index ${index} is not a Uint8Array`
-    );
-  });
-}
-
 /**
  * Create a Proxy that forwards missing properties to the underlying WASM
  * WebClient.
@@ -588,9 +551,10 @@ class WebClient {
    * Concurrent calls are queued and executed one at a time.
    *
    * Wraps both the direct (in-thread) path and the worker-dispatched path.
-   * On the worker path this is redundant with the worker's own message queue,
-   * but harmless (the chain resolves immediately on the main thread once the
-   * worker's postMessage returns). On the direct path it is load-bearing —
+   * On the worker path this is redundant with the worker's own message queue
+   * for ordering, but it is not free: the callback resolves only when the
+   * worker posts its response, so the chain slot is held for the entire
+   * round trip and later calls queue behind it. On the direct path it is load-bearing —
    * without it, concurrent main-thread callers would panic with
    * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
    *
@@ -919,16 +883,26 @@ class WebClient {
    *
    * Every transaction in the batch is executed and proven, and the batch proof
    * produced, inside a single WASM call. Forwarding that call to the worker
-   * keeps the main thread free for the whole batch.
+   * keeps the main thread free for the whole batch — when there is a worker.
+   * Under `useWorker: false` this still runs in-thread and blocks, as before.
    *
-   * On a multi-threaded build the proofs also pick up the worker's rayon pool,
-   * which the SDK brings up in the worker's WASM instance at init. That only
-   * changes anything for consumers who did not follow the MT readme and call
-   * `initThreadPool` on the main thread themselves; rayon's pool is
-   * per-instance, so a main-thread pool never applied here anyway. It
-   * parallelizes the interior of each proof, not the transactions against each
-   * other — those are proven strictly in order, since each executes against
-   * the post-state of the one before it.
+   * Note that the batch is always proven locally: the V1 batch API takes no
+   * prover, so a client configured with `proverUrl` still proves every
+   * transaction on-device here, unlike `submit()`.
+   *
+   * Freeing the main thread is not the same as making the client concurrent.
+   * The call holds `_serializeWasmCall` for its whole duration, so reads and
+   * syncs still queue behind it; what changes is that the page keeps painting
+   * and responding to input.
+   *
+   * On a multi-threaded build served cross-origin-isolated, the proofs also
+   * pick up the worker's rayon pool, which the SDK brings up in the worker's
+   * WASM instance at init. That only changes anything for consumers who did
+   * not follow the MT readme and call `initThreadPool` on the main thread
+   * themselves; rayon's pool is per-instance, so a main-thread pool never
+   * applied here anyway. It parallelizes the interior of each proof, not the
+   * transactions against each other — those are proven strictly in order,
+   * since each executes against the post-state of the one before it.
    *
    * @param {AccountId} accountId - Account every request executes against.
    * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.

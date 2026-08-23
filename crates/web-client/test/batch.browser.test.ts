@@ -134,9 +134,9 @@ test.describe("submitNewTransactionBatch tests", () => {
 
     expect(result.blockNum).toBeGreaterThan(0);
 
-    // The batch itself must have been proven in the worker, not on the main
-    // thread. Only the syncState polling runs after the spy is removed, so the
-    // batch call is the only thing that can contribute this entry.
+    // The batch must have been dispatched to the worker rather than run on the
+    // main thread. Only the syncState polling runs after the spy is removed, so
+    // the batch call is the only thing that can contribute this entry.
     expect(result.postedMethods).toContain("submitNewTransactionBatch");
 
     // Explicit state-stacking check: if BatchBuilder didn't stack state between

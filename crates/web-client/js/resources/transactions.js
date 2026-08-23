@@ -549,6 +549,9 @@ export class TransactionsResource {
    * operations are executed, proven individually and as a batch, and submitted
    * atomically — either every tx in the batch lands or none does.
    *
+   * The V1 batch API takes no prover, so all of that proving happens locally in
+   * WASM even on a client configured with `ClientOptions.proverUrl`.
+   *
    * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission — not the block the batch commits in.
@@ -632,8 +635,9 @@ export class TransactionsResource {
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.
    * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
-   *   The batch is proved with the client's configured prover; the V1 batch API
-   *   has no per-call prover override.
+   *   The V1 batch API takes no prover, so the batch is always proved locally
+   *   in WASM — `ClientOptions.proverUrl` does not apply to it, and there is
+   *   no per-call override.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission — not the block the batch commits in.
    */
