@@ -281,8 +281,10 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         // The batch executes against the worker's own mock chain. If the
         // mutated chain were not adopted back onto the main-thread client,
         // this sync would run against a chain that never saw the batch and
-        // neither minted note would show up.
-        client.proveBlock();
+        // neither minted note would show up. Both must be awaited: the
+        // assertion depends on the block actually being sealed first, and
+        // proveBlock bypasses the serializing wrapper.
+        await client.proveBlock();
         await client.sync();
 
         const consumable = await client.notes.listAvailable({
@@ -292,7 +294,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         return { blockNumber, consumableCount: consumable.length };
       });
 
-      expect(result.blockNumber).toBeGreaterThan(0);
+      // The mock node returns the tip as of submission, not the block the
+      // batch lands in, and a fresh mock chain starts at 0 — so only the type
+      // and non-negativity are meaningful here. `consumableCount` is the
+      // assertion that actually discriminates: it is 2 only if the mutated
+      // chain made it back to the main-thread client.
+      expect(typeof result.blockNumber).toBe("number");
+      expect(result.blockNumber).toBeGreaterThanOrEqual(0);
       expect(result.consumableCount).toBe(2);
     }
   );
