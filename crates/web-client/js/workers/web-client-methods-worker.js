@@ -291,13 +291,9 @@ const methodHandlers = {
     const wasm = await getWasmOrThrow();
     const [accountIdHex, serializedTransactionRequests] = args;
     const accountId = wasm.AccountId.fromHex(accountIdHex);
-    // Structured clone already hands back `Uint8Array`s for the resource-layer
-    // caller, so only normalize what isn't one — copying every request would
-    // scale with the batch. The low-level method is exported and called
-    // directly in tests, hence the guard rather than a bare pass-through.
-    const requests = serializedTransactionRequests.map((bytes) =>
-      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-    );
+    // Already normalized to `Uint8Array`s on the main thread, and structured
+    // clone preserves that, so they pass straight through.
+    const requests = serializedTransactionRequests;
 
     // Returns a plain block number, so unlike the single-submit handlers there
     // is no result object to serialize back across the boundary.

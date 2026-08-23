@@ -894,23 +894,31 @@ class WebClient {
    *
    * @param {AccountId} accountId - Account every request executes against.
    * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.
-   * @returns {Promise<number>} Block number the batch was accepted into.
+   * @returns {Promise<number>} The node's chain tip as of submission — not the
+   *   block the batch commits in. Sync to learn where it landed.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
+    // Normalize here rather than in the worker handler so both branches accept
+    // the same inputs; structured clone would otherwise let an ArrayBuffer
+    // through only when a worker happens to exist.
+    const requests = serializedTransactionRequests.map((bytes) =>
+      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+    );
+
     return this._serializeWasmCall(async () => {
       try {
         if (!this.worker) {
           const wasmWebClient = await this.getWasmWebClient();
           return await wasmWebClient.submitNewTransactionBatch(
             accountId,
-            serializedTransactionRequests
+            requests
           );
         }
 
         return await this.callMethodWithWorker(
           MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
           accountId.toString(),
-          serializedTransactionRequests
+          requests
         );
       } catch (error) {
         console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
@@ -1469,6 +1477,12 @@ class MockWebClient extends WebClient {
    * There is nothing to gain by forwarding anyway: mock clients exist for
    * tests, where a blocked main thread costs nothing. Overriding is still
    * required, because inheriting the base wrapper would forward to the worker.
+   *
+   * This keeps the batch out of its own round trip, not out of every later
+   * one. Any mock single-submit still adopts a worker-returned chain, so a
+   * batch left un-proved when one runs is dropped the same way. Pre-existing,
+   * and unchanged here — call `proveBlock()` after a mock batch before
+   * submitting anything else.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
     return this._serializeWasmCall(async () => {

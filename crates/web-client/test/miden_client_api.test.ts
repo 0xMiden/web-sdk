@@ -275,13 +275,38 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           maxSupply: 10_000_000n,
         });
 
-        const { blockNumber } = await client.transactions.batch({
-          account: faucet,
-          operations: [
-            { kind: "mint", to: wallet, amount: 100n },
-            { kind: "mint", to: wallet, amount: 200n },
-          ],
-        });
+        // The inverse of the real-client assertion in batch.browser.test.ts: a
+        // mock batch must NOT cross to the worker, because the worker would
+        // hand back a chain whose `pending_batches` the serializer dropped.
+        const postedMethods: string[] = [];
+        const originalPostMessage = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function (
+          this: Worker,
+          message: unknown,
+          ...rest: unknown[]
+        ) {
+          const methodName = (message as { methodName?: unknown } | null)
+            ?.methodName;
+          if (typeof methodName === "string") {
+            postedMethods.push(methodName);
+          }
+          return (
+            originalPostMessage as (this: Worker, ...args: unknown[]) => void
+          ).call(this, message, ...rest);
+        } as typeof Worker.prototype.postMessage;
+
+        let blockNumber: number;
+        try {
+          ({ blockNumber } = await client.transactions.batch({
+            account: faucet,
+            operations: [
+              { kind: "mint", to: wallet, amount: 100n },
+              { kind: "mint", to: wallet, amount: 200n },
+            ],
+          }));
+        } finally {
+          Worker.prototype.postMessage = originalPostMessage;
+        }
 
         // Both must be awaited: the assertion depends on the block actually
         // being sealed first, and proveBlock bypasses the serializing wrapper.
@@ -292,7 +317,11 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           account: wallet,
         });
 
-        return { blockNumber, consumableCount: consumable.length };
+        return {
+          blockNumber,
+          consumableCount: consumable.length,
+          postedMethods,
+        };
       });
 
       // The mock node returns the tip as of submission, not the block the
@@ -302,6 +331,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(typeof result.blockNumber).toBe("number");
       expect(result.blockNumber).toBeGreaterThanOrEqual(0);
       expect(result.consumableCount).toBe(2);
+      expect(result.postedMethods).not.toContain("submitNewTransactionBatch");
     }
   );
 
