@@ -14,8 +14,8 @@ pnpm add @miden-sdk/vite-plugin --dev
 
 This package ships `AGENTS.md` and a `skills/vite-wasm-setup/` guide inside the
 tarball, version-matched to the code you installed. Agents do not read
-`node_modules` unprompted, so paste this into your project's root `AGENTS.md`
-or `CLAUDE.md`:
+`node_modules` unprompted, so point yours at it with `npm create @miden-sdk@latest`,
+or paste this into your project's root `AGENTS.md` or `CLAUDE.md` by hand:
 
 ```markdown
 <!-- BEGIN:miden-agent-rules -->

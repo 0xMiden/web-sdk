@@ -74,9 +74,15 @@ always version-matched to the code you have installed:
 - `node_modules/@miden-sdk/miden-sdk/skills/` — task-scoped guides (client
   usage, production pitfalls, signer integration)
 
-Agents do not look inside `node_modules` on their own. To make yours read these
-automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
-of your project:
+Agents do not look inside `node_modules` on their own, so point yours at these:
+
+```bash
+npm create @miden-sdk@latest
+```
+
+That writes the block below into your project's `AGENTS.md` and `CLAUDE.md`,
+syncs the skills into `.claude/skills/`, and adds a `prepare` script so they
+refresh on every install. To do it by hand instead, paste this in yourself:
 
 ```markdown
 <!-- BEGIN:miden-agent-rules -->
