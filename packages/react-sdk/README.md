@@ -26,6 +26,37 @@ npm install @miden-sdk/react @miden-sdk/miden-sdk
 pnpm add @miden-sdk/react @miden-sdk/miden-sdk
 ```
 
+## For AI coding agents
+
+This package ships agent-facing documentation inside the tarball, so it is
+always version-matched to the code you have installed:
+
+- `node_modules/@miden-sdk/react/AGENTS.md` — hook-by-hook usage guide
+- `node_modules/@miden-sdk/react/skills/` — React patterns and testing patterns
+
+Agents do not look inside `node_modules` on their own. To make yours read these
+automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
+of your project:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date —
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide for the
+package you are touching:
+
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — core client
+- `node_modules/@miden-sdk/react/AGENTS.md` — React hooks
+- `node_modules/@miden-sdk/vite-plugin/AGENTS.md` — bundler setup
+
+Each one indexes task-specific skills in its package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+<!-- END:miden-agent-rules -->
+```
+
 ## Testing
 
 From `packages/react-sdk`:

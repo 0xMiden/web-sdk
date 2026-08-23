@@ -29,7 +29,8 @@
     "lazy",
     "mt",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "skills"
   ],
   "scripts": {
     "build": "tsup",

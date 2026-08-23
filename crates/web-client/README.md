@@ -65,6 +65,38 @@ pnpm add @miden-sdk/miden-sdk@next
 
 > **Note:** The `next` version of the SDK must be used in conjunction with a locally running Miden node built from the `next` branch of the `miden-node` repository. This is necessary because the public testnet runs the stable `main` branch, which may not be compatible with the latest development features in `next`. Instructions to run a local node can be found [here](https://github.com/0xMiden/miden-node/tree/next) on the `next` branch of the `miden-node` repository. Additionally, if you plan to leverage delegated proving in your application, you may need to run a local prover (see [Remote prover instructions](https://github.com/0xMiden/miden-node/tree/next/bin/remote-prover)).
 
+## For AI coding agents
+
+This package ships agent-facing documentation inside the tarball, so it is
+always version-matched to the code you have installed:
+
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — start here
+- `node_modules/@miden-sdk/miden-sdk/skills/` — task-scoped guides (client
+  usage, production pitfalls, signer integration)
+
+Agents do not look inside `node_modules` on their own. To make yours read these
+automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
+of your project:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date —
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide for the
+package you are touching:
+
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — core client
+- `node_modules/@miden-sdk/react/AGENTS.md` — React hooks
+- `node_modules/@miden-sdk/vite-plugin/AGENTS.md` — bundler setup
+
+Each one indexes task-specific skills in its package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+<!-- END:miden-agent-rules -->
+```
+
 ## Entry Points: Eager / Lazy × ST / MT
 
 The SDK ships **four** entry points with an identical public API. They vary along two orthogonal axes:
