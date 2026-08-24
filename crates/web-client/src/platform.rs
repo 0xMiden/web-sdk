@@ -206,7 +206,7 @@ pub(crate) fn maybe_wrap_send<F: std::future::Future>(
 
 /// Platform-specific client authenticator type.
 #[cfg(feature = "browser")]
-pub(crate) type ClientAuth = crate::web_keystore::WebKeyStore<miden_client::crypto::RandomCoin>;
+pub(crate) type ClientAuth = crate::web_keystore::WebKeyStore<rand::rngs::StdRng>;
 
 /// Platform-specific client authenticator type.
 #[cfg(feature = "nodejs")]
