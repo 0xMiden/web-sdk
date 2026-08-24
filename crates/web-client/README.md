@@ -492,7 +492,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here.
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported: a `custom` request's own account is ignored rather than rejected. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here.
 
 For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
 

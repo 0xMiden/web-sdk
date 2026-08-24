@@ -138,7 +138,7 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the chain tip caveat described above. Setting `waitForConfirmation: true` polls the local sync height until it reaches that number, which confirms the client has caught up to the submission point rather than that the batch has committed. The `timeout` option still applies; default is 60 seconds.
+The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the node's chain tip at submission, per the caveat above. Setting `waitForConfirmation: true` polls the local sync height until it reaches that number, which confirms the client has caught up to the submission point rather than that the batch has committed. The `timeout` option still applies; default is 60 seconds.
 
 ## Manual Transaction Lifecycle
 
