@@ -30,6 +30,16 @@ coverage/
 packages/react-sdk/dist/
 packages/react-sdk/coverage/
 packages/react-sdk/node_modules/
+!packages/telemetry-otel/
+!packages/telemetry-otel/**
+packages/telemetry-otel/dist/
+packages/telemetry-otel/coverage/
+packages/telemetry-otel/node_modules/
+!packages/telemetry-sentry/
+!packages/telemetry-sentry/**
+packages/telemetry-sentry/dist/
+packages/telemetry-sentry/coverage/
+packages/telemetry-sentry/node_modules/
 !packages/vite-plugin/
 !packages/vite-plugin/**
 packages/vite-plugin/dist/

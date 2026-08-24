@@ -11,6 +11,8 @@ module.exports = [
       "docs/**/*",
       "crates/idxdb-store/src/**",
       "packages/react-sdk/**",
+      "packages/telemetry-otel/**",
+      "packages/telemetry-sentry/**",
       "packages/vite-plugin/**",
       "vitest.config.ts",
     ],

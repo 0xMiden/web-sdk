@@ -7,14 +7,16 @@
     "build:web-client": "pnpm --filter @miden-sdk/miden-sdk run build",
     "build:react-sdk": "pnpm --filter @miden-sdk/react run build",
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
+    "build:telemetry-sentry": "pnpm --filter @miden-sdk/telemetry-sentry run build",
+    "build:telemetry-otel": "pnpm --filter @miden-sdk/telemetry-otel run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
     "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
     "prepare": "lefthook install || true",
-    "check:publint": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --workspace-concurrency=1 exec publint",
-    "check:attw": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --workspace-concurrency=1 exec attw --pack .",
-    "check:publish": "pnpm run build:web-client && pnpm run build:react-sdk && pnpm run build:vite-plugin && pnpm run check:publint && pnpm run check:attw"
+    "check:publint": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --filter @miden-sdk/telemetry-sentry --filter @miden-sdk/telemetry-otel --workspace-concurrency=1 exec publint",
+    "check:attw": "pnpm --filter @miden-sdk/miden-sdk --filter @miden-sdk/react --filter @miden-sdk/vite-plugin --filter @miden-sdk/telemetry-sentry --filter @miden-sdk/telemetry-otel --workspace-concurrency=1 exec attw --pack .",
+    "check:publish": "pnpm run build:web-client && pnpm run build:react-sdk && pnpm run build:vite-plugin && pnpm run build:telemetry-sentry && pnpm run build:telemetry-otel && pnpm run check:publint && pnpm run check:attw"
   },
   "dependencies": {
     "prettier": "^3.8.1"
