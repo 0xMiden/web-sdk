@@ -525,7 +525,7 @@ export interface BatchOptions {
   operations: BatchOperation[];
   /**
    * Poll until the local sync height reaches the block number returned by the
-   * submission. Note that number is the node's chain tip AS OF submission, so
+   * submission. Note that number is the node's chain tip as of submission, so
    * this confirms the client has caught up to that point — not that the batch
    * has committed. To observe the batch itself, poll the account nonce or
    * `transactions.list()`.

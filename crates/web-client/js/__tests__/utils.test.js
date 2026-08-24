@@ -362,7 +362,7 @@ describe("normalizeSerializedRequests", () => {
     expect(normalizeSerializedRequests([a, b])).toEqual([a, b]);
   });
 
-  it("returns an empty array for an empty batch", () => {
+  it("returns an empty array for empty input", () => {
     expect(normalizeSerializedRequests([])).toEqual([]);
   });
 

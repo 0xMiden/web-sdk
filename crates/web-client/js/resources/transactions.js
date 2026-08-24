@@ -569,8 +569,9 @@ export class TransactionsResource {
     }
 
     // Build each TransactionRequest. Per-op builders all use the batch-level
-    // `account` — V1 only supports same-account batches, mirroring the Rust
-    // constraint. We forward `opts.account` into each per-op options object so
+    // `account`: V1 only supports same-account batches. That is this wrapper's
+    // constraint, not the Rust client's, whose `BatchBuilder::push` takes an
+    // account per request. We forward `opts.account` into each per-op options so
     // the existing builders' `resolveAccountRef` produces fresh AccountIds
     // when needed.
     const requests = [];

@@ -435,6 +435,32 @@ class WebClient {
       // rejection for real awaiters.
       this.ready.catch(() => {});
 
+      // A worker that dies after init — an uncaught error in its script, or an
+      // OOM — fires `error` and then nothing else, so without this every
+      // in-flight call would await a response that can no longer arrive. That
+      // wedges the client rather than just the call: `_serializeWasmCall`
+      // chains on the pending promise, so a never-settling request blocks
+      // every later one behind it. A batch is the largest allocation this SDK
+      // makes and so the likeliest cause of such a death.
+      const failAllPending = (reason) => {
+        const error = new Error(`WebClient: worker failed — ${reason}`);
+        console.error(error);
+        this.readyRejecter?.(error);
+        for (const { reject } of this.pendingRequests.values()) {
+          reject(error);
+        }
+        this.pendingRequests.clear();
+      };
+      this.worker.addEventListener("error", (event) => {
+        failAllPending(event.message ?? "uncaught error in worker script");
+      });
+      // Fires when a response cannot be structured-cloned into this realm.
+      // Only the specific request is lost, but its id is not recoverable from
+      // the event, so the whole map has to go.
+      this.worker.addEventListener("messageerror", () => {
+        failAllPending("a response could not be deserialized");
+      });
+
       // Listen for messages from the worker.
       this.worker.addEventListener("message", async (event) => {
         const data = event.data;
@@ -886,11 +912,11 @@ class WebClient {
    * main thread free for its duration. Under `useWorker: false` it still runs
    * in-thread and blocks, as before.
    *
-   * Two caveats worth knowing. The batch is always proven locally — the V1
-   * batch API takes no prover, so `proverUrl` does not apply here as it does
-   * to `submit()`. And a free main thread is not a concurrent client: the call
-   * holds `_serializeWasmCall` throughout, so reads and syncs still queue
-   * behind it; what changes is that the page keeps painting.
+   * The batch is always proven locally — the V1 batch API takes no prover, so
+   * `proverUrl` does not apply here as it does to `submit()`. And a free main
+   * thread is not a concurrent client: the call holds `_serializeWasmCall`
+   * throughout, so other client calls still queue behind it. What changes is
+   * that the page keeps painting.
    *
    * @param {AccountId} accountId - Account every request executes against.
    * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.
@@ -1234,9 +1260,8 @@ class MockWebClient extends WebClient {
 
   initializeWorker() {
     // Pass `numThreads` exactly like the real INIT path: rayon's pool is
-    // per-instance, so without this any mock proving that does reach the
-    // worker — single submits and syncs, though not batches, which stay on
-    // the main thread — silently runs single-threaded.
+    // per-instance, so without this any mock proving that reaches the worker
+    // silently runs single-threaded.
     let numThreads = 1;
     try {
       if (
@@ -1486,15 +1511,12 @@ class MockWebClient extends WebClient {
    * while the shared store had already recorded its per-transaction updates —
    * the nonce would advance on a chain that never saw the batch.
    *
-   * There is nothing to gain by forwarding anyway: mock clients exist for
-   * tests, where a blocked main thread costs nothing. Overriding is still
-   * required, because inheriting the base wrapper would forward to the worker.
+   * Overriding is required rather than merely preferable: inheriting the base
+   * wrapper would forward to the worker, since a mock client has one.
    *
-   * This keeps the batch out of its own round trip, not out of every later
-   * one. Any mock single-submit still adopts a worker-returned chain, so a
-   * batch left unproved when one runs is dropped the same way. Pre-existing,
-   * and unchanged here — call `proveBlock()` after a mock batch before
-   * submitting anything else.
+   * Note that this keeps the batch out of its own round trip, not out of every
+   * later one — call `proveBlock()` after a mock batch, before submitting
+   * anything else.
    */
   async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
     return this._submitBatchInThread(

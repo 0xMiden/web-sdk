@@ -291,9 +291,6 @@ const methodHandlers = {
     const wasm = await getWasmOrThrow();
     const [accountIdHex, serializedTransactionRequests] = args;
     const accountId = wasm.AccountId.fromHex(accountIdHex);
-    // The requests were normalized to `Uint8Array`s on the main thread and
-    // structured clone preserves that, so they need no handling here.
-    //
     // Returns a plain block number, so unlike the single-submit handlers there
     // is no result object to serialize back across the boundary.
     return await wasmWebClient.submitNewTransactionBatch(
