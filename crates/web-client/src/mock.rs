@@ -51,13 +51,19 @@ impl WebClient {
         };
 
         let store_name = "mock_client_db".to_owned();
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| from_str_err("Failed to initialize IdxdbStore"))?,
         );
-        let keystore = WebKeyStore::new_with_callbacks(rng, store_name, None, None, None);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name,
+            None,
+            None,
+            None,
+        );
 
         self.setup_client(
             mock_rpc_api.clone(),

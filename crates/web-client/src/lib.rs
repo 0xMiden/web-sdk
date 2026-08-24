@@ -21,7 +21,6 @@ use js_export_macro::js_export;
 #[cfg(feature = "browser")]
 use js_sys::{Function, Reflect};
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
-use miden_client::crypto::RandomCoin;
 #[cfg(feature = "nodejs")]
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
@@ -30,15 +29,15 @@ use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient}
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::{Client, ClientError, ErrorHint, Felt};
+use miden_client::{Client, ClientError, ClientRng, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
 #[cfg(feature = "nodejs")]
 use platform::maybe_wrap_send;
 use platform::{AsyncCell, ClientAuth, JsErr, from_str_err};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
 #[cfg(feature = "browser")]
 use tracing::Level;
 #[cfg(feature = "browser")]
@@ -389,13 +388,21 @@ impl WebClient {
         let store_name =
             store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
 
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
         );
-        let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
+        // The keystore gets its own stream so signature nonces don't share state with the
+        // client's RNG.
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name.clone(),
+            None,
+            None,
+            None,
+        );
 
         self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
@@ -442,14 +449,19 @@ impl WebClient {
         let store_name =
             store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
 
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
         );
-        let keystore =
-            WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name,
+            get_key_cb,
+            insert_key_cb,
+            sign_cb,
+        );
 
         self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
@@ -461,8 +473,8 @@ impl WebClient {
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
         store: Arc<dyn Store>,
-        keystore: WebKeyStore<RandomCoin>,
-        rng: RandomCoin,
+        keystore: WebKeyStore<StdRng>,
+        rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
@@ -548,7 +560,7 @@ impl WebClient {
         rpc_client: Arc<dyn NodeRpcClient>,
         store: Arc<dyn Store>,
         keystore: FilesystemKeyStore,
-        rng: RandomCoin,
+        rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
     ) -> Result<(), JsErr> {
         let client = maybe_wrap_send(async move {
@@ -582,23 +594,22 @@ impl WebClient {
     }
 }
 
-pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
-    let mut rng = match seed {
+pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
+    match seed {
         Some(seed_bytes) => {
-            if seed_bytes.len() == 32 {
-                let mut seed_array = [0u8; 32];
-                seed_array.copy_from_slice(&seed_bytes);
-                StdRng::from_seed(seed_array)
-            } else {
-                return Err(from_str_err("Seed must be exactly 32 bytes"));
-            }
+            let seed_array: [u8; 32] = seed_bytes
+                .try_into()
+                .map_err(|_| from_str_err("Seed must be exactly 32 bytes"))?;
+            Ok(StdRng::from_seed(seed_array))
         },
-        None => StdRng::from_rng(&mut rand::rng()),
-    };
-    let coin_seed: [u64; 4] = rng.random();
-    // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
-    // vanishing and `new_unchecked` matches the upstream Rust client's usage.
-    Ok(RandomCoin::new(coin_seed.map(Felt::new_unchecked).into()))
+        None => Ok(StdRng::from_rng(&mut rand::rng())),
+    }
+}
+
+/// Builds a standalone [`ClientRng`] for the note constructors that need a `FeltRng` without
+/// going through a client.
+pub(crate) fn create_felt_rng() -> ClientRng {
+    ClientRng::new(Box::new(StdRng::from_rng(&mut rand::rng())))
 }
 
 // ERROR HANDLING HELPERS

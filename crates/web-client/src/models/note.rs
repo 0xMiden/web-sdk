@@ -1,10 +1,9 @@
 use js_export_macro::js_export;
+use miden_client::Word as NativeWord;
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::block::BlockNumber as NativeBlockNumber;
-use miden_client::crypto::RandomCoin;
 use miden_client::note::{Note as NativeNote, NoteAssets as NativeNoteAssets, P2idNote, P2ideNote};
-use miden_client::{Felt as NativeFelt, Word as NativeWord};
 
 use super::NoteType;
 use super::account_id::AccountId;
@@ -114,11 +113,7 @@ impl Note {
         note_type: NoteType,
         attachment: &NoteAttachment,
     ) -> Result<Self, JsErr> {
-        let coin_seed: [u64; 4] = rand::random();
-        // `coin_seed` is freshly random `u64`s; values at or beyond the modulus would only
-        // happen with vanishing probability and `new_unchecked` is what the upstream Rust
-        // client uses in the same spot.
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        let mut rng = crate::create_felt_rng();
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
@@ -150,9 +145,7 @@ impl Note {
         note_type: NoteType,
         attachment: &NoteAttachment,
     ) -> Result<Self, JsErr> {
-        let coin_seed: [u64; 4] = rand::random();
-        // See `create_p2id_note` for why `new_unchecked` is fine here.
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        let mut rng = crate::create_felt_rng();
 
         let native_note_assets: NativeNoteAssets = assets.into();
         let native_assets: Vec<NativeAsset> = native_note_assets.iter().copied().collect();
@@ -190,9 +183,7 @@ impl Note {
         destination_network: u32,
         destination_address: &EthAddress,
     ) -> Result<Self, JsErr> {
-        let coin_seed: [u64; 4] = rand::random();
-        // See `create_p2id_note` for why `new_unchecked` is fine here.
-        let mut rng = RandomCoin::new(coin_seed.map(NativeFelt::new_unchecked).into());
+        let mut rng = crate::create_felt_rng();
 
         let native_assets: NativeNoteAssets = assets.into();
 
