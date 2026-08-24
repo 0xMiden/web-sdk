@@ -1204,6 +1204,13 @@ export interface TransactionsResource {
    *   which does not currently work — see its own documentation and #314).
    *   The V1 batch API takes no prover: batches always prove locally in WASM,
    *   even on a client configured with `proverUrl`.
+   *
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's fixed 30s ceiling, and since the builder
+   *   aborts on the first failed signature, one timeout fails the whole batch.
+   *   A callback that throws a non-`Error` is currently reported as a
+   *   successful signature. Both are shared with every worker-forwarded
+   *   method; tracked in #316.
    */
   submitBatch(
     account: AccountRef,
