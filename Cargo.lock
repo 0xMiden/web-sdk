@@ -2385,7 +2385,7 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.16.0-rc.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=replace-random-coin#b36b001e66f8c1438f1a2ddf47d91fa2abacc1d1"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=replace-random-coin#cd55c64f26623b43c9384578f2432e1eb822433e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2424,7 +2424,7 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.16.0-rc.2"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=replace-random-coin#b36b001e66f8c1438f1a2ddf47d91fa2abacc1d1"
+source = "git+https://github.com/0xMiden/rust-sdk?branch=replace-random-coin#cd55c64f26623b43c9384578f2432e1eb822433e"
 dependencies = [
  "anyhow",
  "async-trait",
