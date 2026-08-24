@@ -474,9 +474,9 @@ console.log(`Balance: ${balance}`);
 
 ### Batch Operations
 
-Submit multiple operations against a single account as one proven batch. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
 
-"Batch" here is not an all-or-nothing chain guarantee. The client proves the transactions together and submits them through the node's `SubmitProvenBatch` endpoint, but the node fans a batch out into one validator submission per transaction, and each one must build on the current mempool state under the normal submission rules. What the batch does guarantee is local: the per-transaction store updates are applied to your local store in a single atomic step.
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." Two things it does *not* mean: the transactions still have to build on the current mempool state under the normal submission rules, and locally the batch's store updates are applied in one step whose failure is reported separately (see below).
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
@@ -494,7 +494,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones — `account` is set once at the batch level, and neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported; a `TransactionRequest` carries no account of its own, so a `custom` operation executes against the batch-level account like every other kind. On a mock client, call `proveBlock()` after a batch and before submitting anything else — a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here.
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported; a `TransactionRequest` carries no account of its own, so a `custom` operation executes against the batch-level account like every other kind. On a mock client, call `proveBlock()` after a batch and before submitting anything else — a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
 
 For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
 

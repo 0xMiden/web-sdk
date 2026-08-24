@@ -341,7 +341,7 @@ export class MidenClient {
    * intentional, so a caller can drain and proceed without being blocked
    * indefinitely by concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits the sync lock
+   * Caveat for `syncState`: it awaits the sync lock
    * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
    * call onto the chain, so a `syncState` that is queued on the sync
    * lock — but has not yet begun its WASM phase — is not visible to

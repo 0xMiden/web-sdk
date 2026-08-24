@@ -87,9 +87,9 @@ Check status using methods on the `TransactionStatus` object:
 
 ## Batch Operations
 
-Submit multiple operations against a single account as one proven batch. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
+Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
 
-"Batch" here is not an all-or-nothing chain guarantee. The client proves the transactions together and submits them through the node's `SubmitProvenBatch` endpoint, but the node fans a batch out into one validator submission per transaction, and each one must build on the current mempool state under the normal submission rules. What the batch does guarantee is local: the per-transaction store updates are applied to the local store in a single atomic step.
+The guarantee comes from the node's `SubmitProvenTxBatch` RPC contract: "All transactions in this batch will be considered atomic, and be committed together or not all." It does not exempt the transactions from building on the current mempool state under the normal submission rules.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
@@ -123,7 +123,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 - **Single account.** Every operation runs against the `account` passed at the top level; the builder operations have no per-operation account, and a `TransactionRequest` carries none, so a `custom` operation runs against the batch account too. V2 will lift this constraint.
 - **No per-tx ids in the result.** `batch` returns `{ blockNumber }`, the node's chain tip as of submission. To inspect individual transactions, sync state and query with `client.transactions.list()`.
 - **On a mock client, call `proveBlock()` after a batch** before submitting anything else. A submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker adopts a chain that never saw it.
-- **Always proven locally.** The V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not to batching.
+- **Always proven locally.** The V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not to batching. The batch proof itself is always local; the per-transaction proofs use the Rust client's configured prover, which this crate never sets.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
 
 ### `submitBatch` — pre-built requests
