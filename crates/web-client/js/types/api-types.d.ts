@@ -472,10 +472,12 @@ export interface ConsumeAllOptions extends TransactionOptions {
 }
 
 /**
- * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...) minus the
- * `account` field — the executing account is set once at the batch level
- * and shared by every operation (V1 single-account constraint).
+ * A single operation inside a transaction batch. Each shape carries the
+ * request-building fields of its singular options type (`SendOptions`,
+ * `MintOptions`, ...) and none of the per-submission ones: `account` is set
+ * once at the batch level (the V1 single-account constraint), and neither
+ * `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which
+ * selects a different request shape, has any per-operation meaning.
  */
 export type BatchOperation =
   | {
@@ -524,9 +526,16 @@ export interface BatchOptions {
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the V1 batch API returns
-   * only a block number, so we poll chain height rather than per-tx status.
+   * Poll until the local sync height reaches the block number returned by the
+   * submission.
+   *
+   * Does not currently work on a batch: the poll's sync step calls a method
+   * that does not exist, so it cannot advance the height and the call throws
+   * `Batch confirmation timed out` unless the client is already at or past
+   * that height. Even once fixed it would be a weak signal, since the number
+   * is the tip as of submission rather than the batch's commit block. See
+   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
+   * `transactions.list()` or the account nonce instead.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
@@ -534,7 +543,10 @@ export interface BatchOptions {
 }
 
 export interface BatchSubmitResult {
-  /** The block number the batch was accepted into. */
+  /**
+   * The node's chain tip as of submission — not the block the batch commits
+   * in. Sync to learn where it landed.
+   */
   blockNumber: number;
 }
 
@@ -1169,12 +1181,13 @@ export interface TransactionsResource {
 
   /**
    * Execute a heterogeneous batch of operations against a single account.
-   * Each operation is built, proven individually and as a batch, and all
-   * operations are submitted atomically — either every tx in the batch
-   * lands or none does.
+   * Each operation is proven individually as it is added, then a single batch
+   * proof is produced over all of them and submitted as one batch — the node
+   * commits them together or not at all.
    *
-   * V1 supports only same-account batches (mirrors the underlying Rust
-   * `Client::new_transaction_batch()` constraint).
+   * V1 supports only same-account batches. This is a limitation of this web
+   * API, not of the underlying Rust client, whose `BatchBuilder::push` takes
+   * an account per request.
    *
    * @param options - Batch options including the account and operations.
    */
@@ -1187,7 +1200,20 @@ export interface TransactionsResource {
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout, prover).
+   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
+   *   which does not currently work — see its own documentation and #314).
+   *   The V1 batch API takes no prover: batches always prove locally in WASM,
+   *   even on a client configured with `proverUrl`.
+   *
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's fixed 30s ceiling, and since signing happens
+   *   at push time and this wrapper treats a failed push as fatal, one timeout
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`) loses its reason and surfaces as
+   *   the generic `sign callback must return a Uint8Array`. Both are shared
+   *   with every worker-forwarded method; tracked in #316. Relatedly,
+   *   `lastAuthError()` reads the main-thread instance, so it does not report
+   *   a forwarded batch's auth error.
    */
   submitBatch(
     account: AccountRef,

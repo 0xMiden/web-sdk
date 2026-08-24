@@ -1,6 +1,7 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { withSyncLock } from "./syncLock.js";
+import { normalizeSerializedRequests } from "./utils.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
@@ -108,7 +109,6 @@ const WRITE_METHODS = new Set([
   "sendPrivateNote",
   "sendPrivateOutputNote",
   "setSetting",
-  "submitNewTransactionBatch",
   "submitProvenTransaction",
 ]);
 
@@ -551,11 +551,12 @@ class WebClient {
    * Concurrent calls are queued and executed one at a time.
    *
    * Wraps both the direct (in-thread) path and the worker-dispatched path.
-   * On the worker path this is redundant with the worker's own message queue,
-   * but harmless (the chain resolves immediately on the main thread once the
-   * worker's postMessage returns). On the direct path it is load-bearing —
-   * without it, concurrent main-thread callers would panic with
-   * "recursive use of an object detected" (wasm-bindgen's internal RefCell).
+   * On the worker path this is redundant with the worker's own message queue
+   * for ordering, but it is not free: the callback resolves only when the
+   * worker posts its response, so the chain slot is held for the entire
+   * round trip and later calls queue behind it. On the direct path it is
+   * load-bearing — without it, concurrent main-thread callers would panic
+   * with "recursive use of an object detected" (wasm-bindgen's RefCell).
    *
    * Re-entrancy: when invoked from inside a `_withInnerWebClient(fn)`
    * callback — detected via `_withInnerLockDepth > 0` — `fn` runs inline
@@ -595,13 +596,14 @@ class WebClient {
    * this is intentional, so a caller can drain and then proceed without
    * being blocked indefinitely by a concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits
-   * `acquireSyncLock` (Web Locks) BEFORE wrapping its WASM call in
+   * Caveat for `syncState`: it awaits the sync lock
+   * (`withSyncLock`) BEFORE wrapping its WASM call in
    * `_serializeWasmCall`, so a sync that is queued on the sync lock but
    * has not yet reached its WASM phase is not on the chain and will not
    * be awaited. Every other serialized method (`executeTransaction`,
-   * `newWallet`, `submitNewTransaction`, `proveTransaction`,
-   * `applyTransaction`, and the proxy-fallback reads) routes through
+   * `newWallet`, `submitNewTransaction`, `submitNewTransactionBatch`,
+   * `proveTransaction`, `applyTransaction`, and the proxy-fallback reads)
+   * routes through
    * the chain synchronously on call and is always observed.
    *
    * @returns {Promise<void>}
@@ -872,6 +874,75 @@ class WebClient {
         return transactionResult.id();
       } catch (error) {
         console.error("INDEX.JS: Error in submitNewTransaction:", error);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Submits pre-serialized transaction requests as one atomic batch.
+   *
+   * Every transaction is executed and proven, and the batch proof produced,
+   * inside a single WASM call, so this is forwarded to the worker to keep the
+   * main thread free for its duration. Without a worker — `useWorker: false`,
+   * or an environment with no `Worker` — it still runs in-thread and blocks,
+   * as before.
+   *
+   * The batch is always proven locally — the V1 batch API takes no prover, so
+   * `proverUrl` does not apply here as it does to `submit()`. And a free main
+   * thread is not a concurrent client: the call holds `_serializeWasmCall`
+   * throughout, so reads, syncs, and other forwarded methods still queue
+   * behind it. What changes is that the page keeps painting.
+   *
+   * @param {AccountId} accountId - Account every request executes against.
+   * @param {Uint8Array[]} serializedTransactionRequests - Serialized requests.
+   * @returns {Promise<number>} The node's chain tip as of submission — not the
+   *   block the batch commits in. Sync to learn where it landed.
+   */
+  async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
+    const requests = normalizeSerializedRequests(serializedTransactionRequests);
+    if (!this.worker) {
+      return this._submitBatchInThread(accountId, requests);
+    }
+
+    return this._serializeWasmCall(async () => {
+      try {
+        return await this.callMethodWithWorker(
+          MethodName.SUBMIT_NEW_TRANSACTION_BATCH,
+          accountId.toString(),
+          requests
+        );
+      } catch (error) {
+        console.error(
+          "INDEX.JS: Error in submitNewTransactionBatch (worker):",
+          error
+        );
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Runs a batch on this thread's WASM instance. Shared by the no-worker case
+   * above and by `MockWebClient`, which always takes this path.
+   *
+   * @param {AccountId} accountId
+   * @param {Uint8Array[]} requests - Already normalized.
+   * @returns {Promise<number>}
+   */
+  async _submitBatchInThread(accountId, requests) {
+    return this._serializeWasmCall(async () => {
+      try {
+        const wasmWebClient = await this.getWasmWebClient();
+        return await wasmWebClient.submitNewTransactionBatch(
+          accountId,
+          requests
+        );
+      } catch (error) {
+        console.error(
+          "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
+          error
+        );
         throw error;
       }
     });
@@ -1170,10 +1241,9 @@ class MockWebClient extends WebClient {
   }
 
   initializeWorker() {
-    // Pass `numThreads` exactly like the real INIT path: every prove runs
-    // inside the worker's own WASM instance, and rayon's pool is
-    // per-instance — without this, mock-client proving (including the
-    // integration suite) silently runs single-threaded.
+    // Pass `numThreads` exactly like the real INIT path: rayon's pool is
+    // per-instance, so without this any mock proving that reaches the worker
+    // silently runs single-threaded.
     let numThreads = 1;
     try {
       if (
@@ -1409,6 +1479,32 @@ class MockWebClient extends WebClient {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
       throw error;
     }
+  }
+
+  /**
+   * Mock clients deliberately keep batching on the main thread.
+   *
+   * The mock submit handlers round-trip the mock chain: the serialized chain
+   * travels to the worker and the mutated chain is adopted back. That works
+   * for a submitted transaction, which lands in `pending_transactions` and is
+   * serialized. A submitted *batch* lands in `pending_batches`, which
+   * `MockChain`'s serializer does not write and its deserializer resets to
+   * empty. Shipping the chain back would therefore discard the whole batch
+   * while the shared store had already recorded its per-transaction updates —
+   * the nonce would advance on a chain that never saw the batch.
+   *
+   * Overriding is required rather than merely preferable: inheriting the base
+   * wrapper would forward to the worker, since a mock client has one.
+   *
+   * Note that this keeps the batch out of its own round trip, not out of every
+   * later one — call `proveBlock()` after a mock batch, before submitting
+   * anything else.
+   */
+  async submitNewTransactionBatch(accountId, serializedTransactionRequests) {
+    return this._submitBatchInThread(
+      accountId,
+      normalizeSerializedRequests(serializedTransactionRequests)
+    );
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {

@@ -37,6 +37,9 @@ describe("MethodName", () => {
     expect(MethodName.SUBMIT_NEW_TRANSACTION_MOCK).toBe(
       "submitNewTransactionMock"
     );
+    expect(MethodName.SUBMIT_NEW_TRANSACTION_BATCH).toBe(
+      "submitNewTransactionBatch"
+    );
     expect(MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER).toBe(
       "submitNewTransactionWithProver"
     );

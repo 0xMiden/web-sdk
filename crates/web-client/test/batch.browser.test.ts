@@ -12,6 +12,7 @@ interface BatchSubmitResult {
   blockNum: number;
   nonceBefore: string;
   nonceAfter: string;
+  postedMethods: string[];
 }
 
 const submitTwoTxBatch = async (
@@ -57,10 +58,36 @@ const submitTwoTxBatch = async (
         null
       );
 
-      const blockNum = await client.submitNewTransactionBatch(senderAccountId, [
-        sendRequest1.serialize(),
-        sendRequest2.serialize(),
-      ]);
+      // Record what crosses to the worker while the batch runs. Nothing else
+      // about a batch looks different from main-thread batching, so without
+      // this the routing could regress back to blocking the UI and every
+      // functional assertion below would still pass.
+      const postedMethods: string[] = [];
+      const originalPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (
+        this: Worker,
+        message: unknown,
+        ...rest: unknown[]
+      ) {
+        const methodName = (message as { methodName?: unknown } | null)
+          ?.methodName;
+        if (typeof methodName === "string") {
+          postedMethods.push(methodName);
+        }
+        return (
+          originalPostMessage as (this: Worker, ...args: unknown[]) => void
+        ).call(this, message, ...rest);
+      } as typeof Worker.prototype.postMessage;
+
+      let blockNum: number;
+      try {
+        blockNum = await client.submitNewTransactionBatch(senderAccountId, [
+          sendRequest1.serialize(),
+          sendRequest2.serialize(),
+        ]);
+      } finally {
+        Worker.prototype.postMessage = originalPostMessage;
+      }
 
       // Poll until the sender nonce has advanced by 2, giving the node time to
       // finalize the batch's block.
@@ -76,7 +103,7 @@ const submitTwoTxBatch = async (
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
 
-      return { blockNum, nonceBefore, nonceAfter };
+      return { blockNum, nonceBefore, nonceAfter, postedMethods };
     },
     {
       _senderAccount: senderAccount,
@@ -106,6 +133,11 @@ test.describe("submitNewTransactionBatch tests", () => {
     );
 
     expect(result.blockNum).toBeGreaterThan(0);
+
+    // The batch must have been dispatched to the worker rather than run on the
+    // main thread. Only the syncState polling runs after the spy is removed, so
+    // the batch call is the only thing that can contribute this entry.
+    expect(result.postedMethods).toContain("submitNewTransactionBatch");
 
     // Explicit state-stacking check: if BatchBuilder didn't stack state between
     // pushes, both txs would carry the same initial_account_state and the node

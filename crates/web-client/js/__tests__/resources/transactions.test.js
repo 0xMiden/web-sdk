@@ -2133,7 +2133,11 @@ describe("TransactionsResource", () => {
       );
     });
 
-    it("submitBatch with waitForConfirmation polls sync height until block lands", async () => {
+    // These three mocks supply `syncStateWithTimeout`, which does not exist on
+    // the real client — so they exercise the poll loop's shape, not a working
+    // feature. `waitForConfirmation` on a batch is broken in production; see
+    // https://github.com/0xMiden/web-sdk/issues/314.
+    it("submitBatch with waitForConfirmation exits once getSyncHeight reaches the block", async () => {
       const heights = [99, 99, 100];
       const { resource, inner } = makeResource({
         submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
@@ -2155,7 +2159,7 @@ describe("TransactionsResource", () => {
       expect(inner.getSyncHeight).toHaveBeenCalled();
     });
 
-    it("submitBatch waitForConfirmation tolerates transient sync failures", async () => {
+    it("submitBatch waitForConfirmation swallows a rejected sync attempt", async () => {
       // First syncState rejects, next call resolves; getSyncHeight returns the
       // target on the first read so the poll loop exits cleanly.
       const sync = vi.fn();

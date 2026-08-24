@@ -417,7 +417,8 @@ impl WebClient {
 
     /// Executes a batch of transactions against the specified account, proves them individually
     /// and as a batch, submits the batch to the network, and atomically applies the per-tx
-    /// updates to the local store. Returns the block number the batch was accepted into.
+    /// updates to the local store. Returns the node's chain tip as of submission — not the block
+    /// the batch commits in, which only a later sync reveals.
     ///
     /// All transactions must target the same local account — the `account_id` argument.
     /// Each element of `transaction_requests` is the serialized-bytes form of a

@@ -545,12 +545,19 @@ export class TransactionsResource {
   }
 
   /**
-   * Submit a heterogeneous batch of operations against a single account. All
-   * operations are executed, proven individually and as a batch, and submitted
-   * atomically — either every tx in the batch lands or none does.
+   * Submit a heterogeneous batch of operations against a single account. Each
+   * operation is executed and proven individually, then a single batch proof
+   * is produced over all of them and submitted as one batch — the node commits
+   * them together or not at all.
    *
-   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * The V1 batch API takes no prover, so all of that proving happens locally in
+   * WASM even on a client configured with `ClientOptions.proverUrl`.
+   *
+   * @param {BatchOptions} opts - Batch options: the account, the operations
+   *   array, and `timeout` / `waitForConfirmation` — the latter does not
+   *   currently work, see `submitBatch`.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission — not the block the batch commits in.
    */
   async batch(opts) {
     rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
@@ -565,8 +572,10 @@ export class TransactionsResource {
     }
 
     // Build each TransactionRequest. Per-op builders all use the batch-level
-    // `account` — V1 only supports same-account batches, mirroring the Rust
-    // constraint. We forward `opts.account` into each per-op options object so
+    // `account`: V1 only supports same-account batches. That is a limitation of
+    // this web API — the WASM entry point takes one account for the whole call
+    // — not of the Rust client, whose `BatchBuilder::push` takes an account per
+    // request. We forward `opts.account` into each per-op options so
     // the existing builders' `resolveAccountRef` produces fresh AccountIds
     // when needed.
     const requests = [];
@@ -630,10 +639,23 @@ export class TransactionsResource {
    *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.
-   * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
-   *   The batch is proved with the client's configured prover; the V1 batch API
-   *   has no per-call prover override.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @param {object} [options] - Optional settings (timeout, and
+   *   `waitForConfirmation`, which does not currently work — see #314).
+   *   The V1 batch API takes no prover, so the batch is always proved locally
+   *   in WASM — `ClientOptions.proverUrl` does not apply to it, and there is
+   *   no per-call override.
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's 30s ceiling, and since signing happens at
+   *   push time and this wrapper treats a failed push as fatal, one timeout
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`)
+   *   loses its reason and surfaces as the generic
+   *   `sign callback must return a Uint8Array`. Both are shared with every
+   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
+   *   reads the main-thread instance, so it does not report a forwarded
+   *   batch's auth error.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission — not the block the batch commits in.
    */
   async submitBatch(account, requests, options) {
     rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
@@ -661,6 +683,13 @@ export class TransactionsResource {
    * Polls until the local sync height reaches `blockNumber` or the timeout
    * expires. The Rust V1 batch API returns only a block number — there are no
    * per-tx ids to poll on, so we wait on the chain height instead.
+   *
+   * This does not currently work: `syncStateWithTimeout` below does not exist,
+   * so the call throws, the bare catch swallows it, and nothing here advances
+   * the height — the loop times out unless the client is already at or past
+   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
+   * looks, since `blockNumber` is the tip as of submission rather than the
+   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
    *
    * @param {number} blockNumber - The block height to wait for.
    * @param {object} [opts] - Polling options (timeout, interval).
