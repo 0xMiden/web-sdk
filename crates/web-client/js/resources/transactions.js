@@ -647,9 +647,11 @@ export class TransactionsResource {
    *   With an external keystore and a worker, each of the batch's signature
    *   callbacks has the worker's 30s ceiling, and since the builder aborts on
    *   the first failed signature, one timeout fails the whole batch. A callback
-   *   that throws a non-`Error` is currently reported as a successful
-   *   signature. Both are shared with every worker-forwarded method; tracked
-   *   in #316.
+   *   that throws a non-`Error` loses its reason and surfaces as the generic
+   *   `sign callback must return a Uint8Array`. Both are shared with every
+   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
+   *   reads the main-thread instance, so it does not report a forwarded
+   *   batch's auth error.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission — not the block the batch commits in.
    */

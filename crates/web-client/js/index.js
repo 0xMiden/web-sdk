@@ -912,7 +912,10 @@ class WebClient {
           requests
         );
       } catch (error) {
-        console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
+        console.error(
+          "INDEX.JS: Error in submitNewTransactionBatch (worker):",
+          error
+        );
         throw error;
       }
     });
@@ -935,7 +938,10 @@ class WebClient {
           requests
         );
       } catch (error) {
-        console.error("INDEX.JS: Error in submitNewTransactionBatch:", error);
+        console.error(
+          "INDEX.JS: Error in submitNewTransactionBatch (in-thread):",
+          error
+        );
         throw error;
       }
     });
