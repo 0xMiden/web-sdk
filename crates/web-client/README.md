@@ -490,9 +490,9 @@ const { blockNumber } = await client.transactions.batch({
 console.log(`Batch submitted at chain tip ${blockNumber}`);
 ```
 
-Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones — `account` is set once at the batch level, and `prover`, `waitForConfirmation`, `timeout`, and `returnNote` have no per-operation meaning.
+Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). Each operation carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones — `account` is set once at the batch level, and neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported; a `TransactionRequest` carries no account of its own, so a `custom` operation executes against the batch-level account like every other kind. On a mock client, call `proveBlock()` after a batch and before submitting anything else — a submitted batch is not part of the serialized mock chain, so a later mock submit would adopt a chain that never saw it. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here.
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported; a `TransactionRequest` carries no account of its own, so a `custom` operation executes against the batch-level account like every other kind. On a mock client, call `proveBlock()` after a batch and before submitting anything else — a submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker would adopt a chain that never saw it. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here.
 
 For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
 
@@ -503,9 +503,14 @@ const { blockNumber } = await client.transactions.submitBatch(wallet, [
 ]);
 ```
 
-The V1 batch primitive returns only a block number — there are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll never advances the height itself and the call throws `Batch confirmation timed out` unless something else (an auto-sync, another caller) happens to catch the client up first. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns.
+The V1 batch primitive returns only a block number — there are no per-tx ids in the result, and the number is the node's chain tip as of submission, not the block the batch commits in. Even were it the commit block, `waitForConfirmation` would confirm only that the client had caught up to it, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
 
-One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise naming `BatchSubmittedButUpdateBuildFailed` or `BatchSubmittedButApplyFailed`. The batch is on chain in that case, so retrying would submit it twice — sync instead.
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One more failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice — sync instead.
 
 ### Manual Transaction Lifecycle
 

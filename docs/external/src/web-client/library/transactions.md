@@ -105,7 +105,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 ### Operation kinds
 
-`BatchOperation` is a discriminated union on `kind`. Each shape carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones — `account` is set once at the batch level, and `prover`, `waitForConfirmation`, `timeout`, and `returnNote` have no per-operation meaning:
+`BatchOperation` is a discriminated union on `kind`. Each shape carries the request-building fields of its singular options object (`SendOptions`, `MintOptions`, …) and none of the per-submission ones — `account` is set once at the batch level, and neither `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which selects a different request shape, has any per-operation meaning:
 
 | `kind` | Fields |
 |---|---|
@@ -120,7 +120,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 - **Single account.** Every operation runs against the `account` passed at the top level; the builder operations have no per-operation account, and a `TransactionRequest` carries none, so a `custom` operation runs against the batch account too. V2 will lift this constraint.
 - **No per-tx ids in the result.** `batch` returns `{ blockNumber }`, the node's chain tip as of submission. To inspect individual transactions, sync state and query with `client.transactions.list()`.
-- **On a mock client, call `proveBlock()` after a batch** before submitting anything else. A submitted batch is not part of the serialized mock chain, so a later mock submit adopts a chain that never saw it.
+- **On a mock client, call `proveBlock()` after a batch** before submitting anything else. A submitted batch is not part of the serialized mock chain, so a later mock submit that round-trips through the worker adopts a chain that never saw it.
 - **Always proven locally.** The V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not to batching.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
 
@@ -139,7 +139,16 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the node's chain tip at submission, per the caveat above. Even were it the commit block, reaching it would confirm only that the client had caught up, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll never advances the height itself and the call throws `Batch confirmation timed out` unless something else (an auto-sync, another caller) happens to catch the client up first. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The `timeout` option still applies; default is 60 seconds.
+The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the node's chain tip at submission, per the caveat above. Even were it the commit block, reaching it would confirm only that the client had caught up, not that the batch committed. `waitForConfirmation` on a batch does not currently work: its poll calls a sync method that does not exist, so the poll cannot advance the height itself and the call throws `Batch confirmation timed out` unless the client is already at or past that height. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314); prefer syncing and checking `client.transactions.list()` yourself. The `timeout` option still applies; default is 60 seconds.
+
+The batch's own effects are already in the local store when the call returns, so what you are waiting for is chain inclusion:
+
+```typescript
+await client.sync();
+const txs = await client.transactions.list();
+```
+
+One failure mode worth handling: the node can accept a batch and the local store update still fail, which surfaces as a rejected promise whose message contains `batch was accepted at block N but building store updates failed` (or `applying to the store failed`). The node has taken the batch in that case, so retrying would submit it twice — sync instead.
 
 ## Manual Transaction Lifecycle
 

@@ -475,9 +475,9 @@ export interface ConsumeAllOptions extends TransactionOptions {
  * A single operation inside a transaction batch. Each shape carries the
  * request-building fields of its singular options type (`SendOptions`,
  * `MintOptions`, ...) and none of the per-submission ones: `account` is set
- * once at the batch level (the V1 single-account constraint), and `prover`,
- * `waitForConfirmation`, `timeout`, and `returnNote` have no per-operation
- * meaning inside a batch.
+ * once at the batch level (the V1 single-account constraint), and neither
+ * `prover`, `waitForConfirmation` and `timeout` nor `returnNote`, which
+ * selects a different request shape, has any per-operation meaning.
  */
 export type BatchOperation =
   | {
@@ -527,10 +527,15 @@ export interface BatchOptions {
   operations: BatchOperation[];
   /**
    * Poll until the local sync height reaches the block number returned by the
-   * submission. Note that number is the node's chain tip as of submission, so
-   * this confirms the client has caught up to that point — not that the batch
-   * has committed. To observe the batch itself, poll the account nonce or
-   * `transactions.list()`.
+   * submission.
+   *
+   * Does not currently work on a batch: the poll's sync step calls a method
+   * that does not exist, so it cannot advance the height and the call throws
+   * `Batch confirmation timed out` unless the client is already at or past
+   * that height. Even once fixed it would be a weak signal, since the number
+   * is the tip as of submission rather than the batch's commit block. See
+   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
+   * `transactions.list()` or the account nonce instead.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
@@ -1195,7 +1200,8 @@ export interface TransactionsResource {
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout).
+   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
+   *   which does not currently work — see its own documentation and #314).
    *   The V1 batch API takes no prover: batches always prove locally in WASM,
    *   even on a client configured with `proverUrl`.
    */
