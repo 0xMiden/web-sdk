@@ -13,40 +13,37 @@ This guide demonstrates how to send, batch, and retrieve transactions using the 
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-  const client = await MidenClient.create();
+    const client = await MidenClient.create();
 
-  // List all transactions
-  const allTransactions = await client.transactions.list();
+    // List all transactions
+    const allTransactions = await client.transactions.list();
 
-  for (const tx of allTransactions) {
-    console.log("Transaction ID:", tx.id().toString());
-    console.log("Account ID:", tx.accountId().toString());
-    console.log("Block Number:", tx.blockNum().toString());
+    for (const tx of allTransactions) {
+        console.log("Transaction ID:", tx.id().toString());
+        console.log("Account ID:", tx.accountId().toString());
+        console.log("Block Number:", tx.blockNum().toString());
 
-    // Check transaction status
-    const status = tx.transactionStatus();
-    if (status.isPending()) {
-      console.log("Status: Pending");
-    } else if (status.isCommitted()) {
-      console.log("Status: Committed in block", status.getBlockNum());
-      console.log("Committed at:", status.getCommitTimestamp());
-    } else if (status.isDiscarded()) {
-      console.log("Status: Discarded");
+        // Check transaction status
+        const status = tx.transactionStatus();
+        if (status.isPending()) {
+            console.log("Status: Pending");
+        } else if (status.isCommitted()) {
+            console.log("Status: Committed in block", status.getBlockNum());
+            console.log("Committed at:", status.getCommitTimestamp());
+        } else if (status.isDiscarded()) {
+            console.log("Status: Discarded");
+        }
+
+        // Account state changes
+        console.log("Initial State:", tx.initAccountState().toHex());
+        console.log("Final State:", tx.finalAccountState().toHex());
+
+        // Notes information
+        console.log("Input Note Nullifiers:", tx.inputNoteNullifiers().map(n => n.toHex()));
+        console.log("Output Notes:", tx.outputNotes().toString());
     }
-
-    // Account state changes
-    console.log("Initial State:", tx.initAccountState().toHex());
-    console.log("Final State:", tx.finalAccountState().toHex());
-
-    // Notes information
-    console.log(
-      "Input Note Nullifiers:",
-      tx.inputNoteNullifiers().map((n) => n.toHex())
-    );
-    console.log("Output Notes:", tx.outputNotes().toString());
-  }
 } catch (error) {
-  console.error("Failed to retrieve transactions:", error.message);
+    console.error("Failed to retrieve transactions:", error.message);
 }
 ```
 
@@ -56,34 +53,32 @@ try {
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-  const client = await MidenClient.create();
+    const client = await MidenClient.create();
 
-  // Get uncommitted transactions
-  const uncommitted = await client.transactions.list({ status: "uncommitted" });
-  for (const tx of uncommitted) {
-    console.log("Uncommitted:", tx.id().toString());
-  }
+    // Get uncommitted transactions
+    const uncommitted = await client.transactions.list({ status: "uncommitted" });
+    for (const tx of uncommitted) {
+        console.log("Uncommitted:", tx.id().toString());
+    }
 
-  // Get specific transactions by ID
-  const specific = await client.transactions.list({ ids: [txId1, txId2] });
+    // Get specific transactions by ID
+    const specific = await client.transactions.list({ ids: [txId1, txId2] });
 
-  // Get expired transactions
-  const expired = await client.transactions.list({ expiredBefore: 1000 });
+    // Get expired transactions
+    const expired = await client.transactions.list({ expiredBefore: 1000 });
 } catch (error) {
-  console.error("Failed to filter transactions:", error.message);
+    console.error("Failed to filter transactions:", error.message);
 }
 ```
 
 ## Transaction Statuses
 
 Transactions can have the following statuses:
-
 - **Pending** — Transaction is waiting to be processed
 - **Committed** — Transaction has been successfully included in a block
 - **Discarded** — Transaction was discarded and will not be processed
 
 Check status using methods on the `TransactionStatus` object:
-
 - `isPending()` — Returns `true` if the transaction is pending
 - `isCommitted()` — Returns `true` if the transaction is committed
 - `isDiscarded()` — Returns `true` if the transaction is discarded
@@ -112,14 +107,14 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 `BatchOperation` is a discriminated union on `kind`. Each shape mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level:
 
-| `kind`      | Fields                                                                            |
-| ----------- | --------------------------------------------------------------------------------- |
-| `"send"`    | `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?`               |
-| `"mint"`    | `to`, `amount`, `type?`                                                           |
-| `"consume"` | `notes` (single `NoteInput` or array)                                             |
-| `"swap"`    | `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
-| `"execute"` | `script`, `foreignAccounts?`                                                      |
-| `"custom"`  | `request: TransactionRequest` (escape hatch for pre-built requests)               |
+| `kind` | Fields |
+|---|---|
+| `"send"` | `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
+| `"mint"` | `to`, `amount`, `type?` |
+| `"consume"` | `notes` (single `NoteInput` or array) |
+| `"swap"` | `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
+| `"execute"` | `script`, `foreignAccounts?` |
+| `"custom"` | `request: TransactionRequest` (escape hatch for pre-built requests) |
 
 ### V1 constraints
 
@@ -143,7 +138,7 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the node's chain tip as of submission, not the block the batch commits in. `waitForConfirmation` polls the local sync height until it reaches that number. Because the number is the tip as of submission, that confirms the client has caught up to the submission point — not that the batch has committed. The batch's own effects are already in the local store when the call returns; to see chain inclusion, sync and check `client.transactions.list()` status. The `timeout` option still applies; default is 60 seconds.
+The V1 batch primitive returns only a block number — there are no per-tx ids to poll — and that number is the chain tip caveat described above. Setting `waitForConfirmation: true` polls the local sync height until it reaches that number, which confirms the client has caught up to the submission point rather than that the batch has committed. The `timeout` option still applies; default is 60 seconds.
 
 ## Manual Transaction Lifecycle
 
@@ -223,12 +218,12 @@ await client.transactions.submit(multisig, request, { anchor: received });
 
 Notes on anchors:
 
-- **Signature collection is a separate concern.** An anchor makes signatures _reproducible_ across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
+- **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
 
 - **What the summary actually covers.** The signed commitment is built from exactly six things: the account delta, the input-note commitment, the output-note commitment, the reference block commitment, the expiration delta, and the user params. The transaction script root, the advice map, note arguments and foreign-account inputs are **not** among them. Two different requests that produce the same delta and the same note sets therefore produce the same commitment, and one set of signatures authorizes both. Do not rely on "a different request would be rejected" — it would not be. Accounts that need the script itself bound should use the transaction-script allowlist component from `miden-standards`.
 - **A co-signer must already track the account.** Verification runs a real execution, so the account has to exist in that participant's local store: a public account can be pulled in with `accounts.getOrImport`, but a private account requires its state to be transferred out of band. Without it, `preview` fails to find the account rather than returning a mismatch.
 
-- **Re-deriving a summary proves consistency, not intent.** When a proposer sends you a request, an anchor and a summary, all three come from them. Checking `anchor.commitment()` against `summary.blockCommitment()`, and re-deriving the summary at that anchor to compare `toCommitment()`, proves only that the three agree with each other — which they will, for any request the proposer chose, including one that drains the account. These checks catch a corrupted or substituted _component_; they say nothing about what the transaction does.
+- **Re-deriving a summary proves consistency, not intent.** When a proposer sends you a request, an anchor and a summary, all three come from them. Checking `anchor.commitment()` against `summary.blockCommitment()`, and re-deriving the summary at that anchor to compare `toCommitment()`, proves only that the three agree with each other — which they will, for any request the proposer chose, including one that drains the account. These checks catch a corrupted or substituted *component*; they say nothing about what the transaction does.
 
   Before signing, inspect the effects: `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()` and `summary.expirationDelta()`, and confirm they are what you meant to approve.
 
@@ -243,11 +238,9 @@ Notes on anchors:
     throw new Error("anchor does not name a block on this chain");
   }
   ```
-
 - **An anchor pins chain data, not account state.** Account records and authenticated input notes still come from each participant's own local store, so all parties must agree on the account state too. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
 
-  **A match does not mean the two parties agree on account state.** The summary binds the account _delta_ — the change — not the state it applies to. Divergence that leaves the delta and the note sets identical produces a byte-identical commitment and passes verification: an unrelated nonce bump, assets arriving, or, for a multisig, a change to the signer set or threshold. That last one matters most, because signatures gathered under one threshold remain valid after it is lowered. A `signature.masm` account additionally binds the final nonce as `summary.userParams()[0]`, which does pin the absolute pre-state; the multisig component discards it and zeroes those params, so it has no such binding. Check whatever state you actually care about — nonce, signer set, threshold, balances — directly, rather than inferring it from a matching summary.
-
+  **A match does not mean the two parties agree on account state.** The summary binds the account *delta* — the change — not the state it applies to. Divergence that leaves the delta and the note sets identical produces a byte-identical commitment and passes verification: an unrelated nonce bump, assets arriving, or, for a multisig, a change to the signer set or threshold. That last one matters most, because signatures gathered under one threshold remain valid after it is lowered. A `signature.masm` account additionally binds the final nonce as `summary.userParams()[0]`, which does pin the absolute pre-state; the multisig component discards it and zeroes those params, so it has no such binding. Check whatever state you actually care about — nonce, signer set, threshold, balances — directly, rather than inferring it from a matching summary.
 - **An anchor is captured for a specific request, but it is not an identity for one.** It tracks the creation blocks of that request's authenticated input notes, which is why `captureAnchor` takes the request. A different request executes against it happily as long as every block it needs is tracked — which is always true for a request with no authenticated input notes. What binds a request to a summary is the summary commitment, not the anchor.
 - **The `anchor` option is only on the request-taking methods** — `preview({ operation: "custom" })`, `executeRequest`, and `submit`. `send`, `mint`, `consume` and friends build their request internally, so there is no request to have captured an anchor for.
 - **Anchored execution skips the recency check**, since it deliberately references a block older than the tip.
@@ -257,6 +250,5 @@ Notes on anchors:
   const delta = summary.expirationDelta();
   const expiresAt = delta === 0 ? null : anchor.blockNum() + delta;
   ```
-
 - **Foreign account proofs are fetched at the anchor's block**, so requests with foreign accounts additionally need the node to serve account state at that height.
 - **The anchor handle is reusable.** Unlike a `TransactionProver`, it is borrowed rather than consumed, so one anchor can drive the preview and the execution.

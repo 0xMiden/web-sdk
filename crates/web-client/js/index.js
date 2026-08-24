@@ -1476,10 +1476,10 @@ class MockWebClient extends WebClient {
   /**
    * Mock clients deliberately keep batching on the main thread.
    *
-   * The mock submit and sync handlers round-trip the mock chain: the serialized
-   * chain travels to the worker and the mutated chain is adopted back. That
-   * works for a submitted transaction, which lands in `pending_transactions`
-   * and is serialized. A submitted *batch* lands in `pending_batches`, which
+   * The mock submit handlers round-trip the mock chain: the serialized chain
+   * travels to the worker and the mutated chain is adopted back. That works
+   * for a submitted transaction, which lands in `pending_transactions` and is
+   * serialized. A submitted *batch* lands in `pending_batches`, which
    * `MockChain`'s serializer does not write and its deserializer resets to
    * empty. Shipping the chain back would therefore discard the whole batch
    * while the shared store had already recorded its per-transaction updates —

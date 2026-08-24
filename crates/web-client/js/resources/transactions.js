@@ -639,6 +639,8 @@ export class TransactionsResource {
    *   The V1 batch API takes no prover, so the batch is always proved locally
    *   in WASM — `ClientOptions.proverUrl` does not apply to it, and there is
    *   no per-call override.
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's 30s ceiling, and a timeout fails the batch.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission — not the block the batch commits in.
    */
