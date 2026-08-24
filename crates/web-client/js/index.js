@@ -596,8 +596,8 @@ class WebClient {
    * this is intentional, so a caller can drain and then proceed without
    * being blocked indefinitely by a concurrent workload.
    *
-   * Caveat for `syncState`: it awaits
-   * `acquireSyncLock` (Web Locks) BEFORE wrapping its WASM call in
+   * Caveat for `syncState`: it awaits the sync lock
+   * (`withSyncLock`) BEFORE wrapping its WASM call in
    * `_serializeWasmCall`, so a sync that is queued on the sync lock but
    * has not yet reached its WASM phase is not on the chain and will not
    * be awaited. Every other serialized method (`executeTransaction`,

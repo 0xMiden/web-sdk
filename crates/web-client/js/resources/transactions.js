@@ -644,7 +644,10 @@ export class TransactionsResource {
    *   in WASM — `ClientOptions.proverUrl` does not apply to it, and there is
    *   no per-call override.
    *   With an external keystore and a worker, each of the batch's signature
-   *   callbacks has the worker's 30s ceiling, and a timeout fails the batch.
+   *   callbacks has the worker's 30s ceiling, and one timeout fails the whole
+   *   batch. A callback that throws a non-`Error` is currently reported as a
+   *   successful signature. Both are shared with every worker-forwarded
+   *   method; tracked in #316.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission — not the block the batch commits in.
    */

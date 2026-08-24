@@ -342,7 +342,8 @@ export class MidenClient {
    * indefinitely by concurrent workload.
    *
    * Caveat for `syncState`: it awaits the sync lock
-   * (`acquireSyncLock`, which uses Web Locks) BEFORE putting its WASM
+   * (`withSyncLock`, which uses Web Locks where available and an
+   * in-process promise chain otherwise) BEFORE putting its WASM
    * call onto the chain, so a `syncState` that is queued on the sync
    * lock — but has not yet begun its WASM phase — is not visible to
    * `waitForIdle` and will not be awaited. Other methods (`newWallet`,
