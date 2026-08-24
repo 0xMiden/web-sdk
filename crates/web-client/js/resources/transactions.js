@@ -647,8 +647,8 @@ export class TransactionsResource {
    *   With an external keystore and a worker, each of the batch's signature
    *   callbacks has the worker's 30s ceiling, and since signing happens at
    *   push time and this wrapper treats a failed push as fatal, one timeout
-   *   fails the whole batch. A rejection
-   *   whose thrown value has no truthy `.message` (a bare string, `{ code }`)
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`)
    *   loses its reason and surfaces as the generic
    *   `sign callback must return a Uint8Array`. Both are shared with every
    *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`

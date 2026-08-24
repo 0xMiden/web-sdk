@@ -601,8 +601,9 @@ class WebClient {
    * `_serializeWasmCall`, so a sync that is queued on the sync lock but
    * has not yet reached its WASM phase is not on the chain and will not
    * be awaited. Every other serialized method (`executeTransaction`,
-   * `newWallet`, `submitNewTransaction`, `proveTransaction`,
-   * `applyTransaction`, and the proxy-fallback reads) routes through
+   * `newWallet`, `submitNewTransaction`, `submitNewTransactionBatch`,
+   * `proveTransaction`, `applyTransaction`, and the proxy-fallback reads)
+   * routes through
    * the chain synchronously on call and is always observed.
    *
    * @returns {Promise<void>}

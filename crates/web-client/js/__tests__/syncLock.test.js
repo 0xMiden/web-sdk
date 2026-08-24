@@ -79,8 +79,8 @@ describe("hasWebLocks", () => {
 // ── withSyncLock — Web-Locks-unavailable path ─────────────────────────────────
 //
 // In the node-test env, `navigator` is undefined, so `hasWebLocks()` returns
-// false and `withSyncLock` runs `fn` directly (relying on the WASM-level
-// mutex to serialize across methods within the tab). These tests cover that
+// false and `withSyncLock` serializes on an in-process promise chain kept per
+// `dbId` instead of on Web Locks. These tests cover that
 // branch; the Web-Locks branch is exercised by the Playwright integration
 // suite under `crates/web-client/test/sync_lock.test.ts`.
 
