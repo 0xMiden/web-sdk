@@ -472,10 +472,12 @@ export interface ConsumeAllOptions extends TransactionOptions {
 }
 
 /**
- * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...) minus the
- * `account` field — the executing account is set once at the batch level
- * and shared by every operation (V1 single-account constraint).
+ * A single operation inside a transaction batch. Each shape carries the
+ * request-building fields of its singular options type (`SendOptions`,
+ * `MintOptions`, ...) and none of the per-submission ones: `account` is set
+ * once at the batch level (the V1 single-account constraint), and `prover`,
+ * `waitForConfirmation`, `timeout`, and `returnNote` have no per-operation
+ * meaning inside a batch.
  */
 export type BatchOperation =
   | {
