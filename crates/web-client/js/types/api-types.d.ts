@@ -1181,9 +1181,12 @@ export interface TransactionsResource {
 
   /**
    * Execute a heterogeneous batch of operations against a single account.
-   * Each operation is built, proven individually and as a batch, and all
-   * operations are submitted atomically — either every tx in the batch
-   * lands or none does.
+   * Each operation is built and proven individually, then proven again and
+   * submitted together as one batch.
+   *
+   * This is not an all-or-nothing chain guarantee: the node fans a batch out
+   * into one validator submission per transaction. What is atomic is the
+   * local store update.
    *
    * V1 supports only same-account batches. This is a limitation of this web
    * API, not of the underlying Rust client, whose `BatchBuilder::push` takes
@@ -1194,7 +1197,7 @@ export interface TransactionsResource {
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
 
   /**
-   * Submit pre-built TransactionRequests as an atomic batch. Plural
+   * Submit pre-built TransactionRequests as one proven batch. Plural
    * counterpart of {@link submit} — for callers that already have built
    * requests in hand and want to skip the high-level operation builders.
    *

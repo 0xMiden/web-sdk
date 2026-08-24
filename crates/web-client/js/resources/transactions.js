@@ -546,13 +546,19 @@ export class TransactionsResource {
 
   /**
    * Submit a heterogeneous batch of operations against a single account. All
-   * operations are executed, proven individually and as a batch, and submitted
-   * atomically — either every tx in the batch lands or none does.
+   * operations are executed and proven individually, then proven again and
+   * submitted together as one batch.
+   *
+   * Not an all-or-nothing chain guarantee: the node fans a batch out into one
+   * validator submission per transaction. What is atomic is the local store
+   * update.
    *
    * The V1 batch API takes no prover, so all of that proving happens locally in
    * WASM even on a client configured with `ClientOptions.proverUrl`.
    *
-   * @param {BatchOptions} opts - Batch options including the account, operations array, and confirmation settings.
+   * @param {BatchOptions} opts - Batch options: the account, the operations
+   *   array, and `timeout` / `waitForConfirmation` — the latter does not
+   *   currently work, see `submitBatch`.
    * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
    *   submission — not the block the batch commits in.
    */
@@ -629,7 +635,7 @@ export class TransactionsResource {
   }
 
   /**
-   * Submit pre-built TransactionRequests as an atomic batch. Lower-level
+   * Submit pre-built TransactionRequests as one proven batch. Lower-level
    * counterpart of `batch()` — for callers that already have built requests in
    * hand. Equivalent to `submit()` but plural.
    *

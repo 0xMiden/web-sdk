@@ -879,12 +879,13 @@ class WebClient {
   }
 
   /**
-   * Submits pre-serialized transaction requests as one atomic batch.
+   * Submits pre-serialized transaction requests as one proven batch.
    *
    * Every transaction is executed and proven, and the batch proof produced,
    * inside a single WASM call, so this is forwarded to the worker to keep the
-   * main thread free for its duration. Under `useWorker: false` it still runs
-   * in-thread and blocks, as before.
+   * main thread free for its duration. Without a worker — `useWorker: false`,
+   * or an environment with no `Worker` — it still runs in-thread and blocks,
+   * as before.
    *
    * The batch is always proven locally — the V1 batch API takes no prover, so
    * `proverUrl` does not apply here as it does to `submit()`. And a free main

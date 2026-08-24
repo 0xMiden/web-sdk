@@ -474,7 +474,9 @@ console.log(`Balance: ${balance}`);
 
 ### Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+Submit multiple operations against a single account as one proven batch. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
+
+"Batch" here is not an all-or-nothing chain guarantee. The client proves the transactions together and submits them through the node's `SubmitProvenBatch` endpoint, but the node fans a batch out into one validator submission per transaction, and each one must build on the current mempool state under the normal submission rules. What the batch does guarantee is local: the per-transaction store updates are applied to your local store in a single atomic step.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({

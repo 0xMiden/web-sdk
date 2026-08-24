@@ -372,9 +372,10 @@ export class MidenClient {
    * Meaningful only with `useWorker: false`: under the worker shim the
    * sign callback fires against the worker's WASM keystore, while this
    * accessor reads the main-thread instance — which never signed — so it
-   * returns `null`. Consumers that need this signal (e.g. external
-   * keystores with lock-aware sign callbacks) already require
-   * `useWorker: false` for the callback to be reachable at all.
+   * returns `null`. The callback itself still fires under the worker (it is
+   * proxied back to the main thread); it is only this accessor that cannot
+   * see the error, so consumers who need the signal require
+   * `useWorker: false`.
    *
    * @returns {any} The raw thrown value, or `null`.
    */
