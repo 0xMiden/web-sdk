@@ -441,6 +441,17 @@ describe("normalizeSerializedRequests", () => {
     expect(Array.from(out)).toEqual([7, 8, 9]);
   });
 
+  it("copies a prefix view, which starts at zero but does not span its buffer", () => {
+    const buffer = new ArrayBuffer(8);
+    new Uint8Array(buffer).set([1, 2, 3, 4, 5, 6, 7, 8]);
+    const prefix = new Uint8Array(buffer, 0, 3);
+
+    const [out] = normalizeSerializedRequests([prefix]);
+    expect(out).not.toBe(prefix);
+    expect(out.buffer.byteLength).toBe(3);
+    expect(Array.from(out)).toEqual([1, 2, 3]);
+  });
+
   it("converts a single-byte view of another type to a Uint8Array", () => {
     const [out] = normalizeSerializedRequests([new Int8Array([1, -1])]);
     expect(out).toBeInstanceOf(Uint8Array);

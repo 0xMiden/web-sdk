@@ -72,12 +72,12 @@ The SDK ships **four** entry points with an identical public API. They vary alon
 - **WASM init timing** — _eager_ awaits at module load (top-level `await`); _lazy_ leaves init to an explicit `MidenClient.ready()` or first awaiting SDK method.
 - **WASM threading model** — _ST_ (single-threaded) loads in any browser context; _MT_ (multi-threaded, `wasm-bindgen-rayon`) parallelizes proving across hardware threads but **requires the page to be cross-origin-isolated**.
 
-| Import path                         | Timing | Threading | When WASM initializes                | Hosting requirement                    |
-| ----------------------------------- | ------ | --------- | ------------------------------------ | -------------------------------------- |
-| `@miden-sdk/miden-sdk`              | eager  | ST        | At module evaluation (TLA)           | None — works anywhere                  |
-| `@miden-sdk/miden-sdk/lazy`         | lazy   | ST        | On `ready()` / first `await`         | None — works anywhere                  |
-| `@miden-sdk/miden-sdk/mt`           | eager  | **MT**    | At module evaluation (TLA)           | Cross-origin isolation (see below)     |
-| `@miden-sdk/miden-sdk/mt/lazy`      | lazy   | **MT**    | On `ready()` / first `await`         | Cross-origin isolation (see below)     |
+| Import path                    | Timing | Threading | When WASM initializes        | Hosting requirement                |
+| ------------------------------ | ------ | --------- | ---------------------------- | ---------------------------------- |
+| `@miden-sdk/miden-sdk`         | eager  | ST        | At module evaluation (TLA)   | None — works anywhere              |
+| `@miden-sdk/miden-sdk/lazy`    | lazy   | ST        | On `ready()` / first `await` | None — works anywhere              |
+| `@miden-sdk/miden-sdk/mt`      | eager  | **MT**    | At module evaluation (TLA)   | Cross-origin isolation (see below) |
+| `@miden-sdk/miden-sdk/mt/lazy` | lazy   | **MT**    | On `ready()` / first `await` | Cross-origin isolation (see below) |
 
 The default subpaths (`/`, `/lazy`) ship the single-threaded WASM and load in any browser context. The `/mt` family enables wasm-bindgen-rayon, which gives ~3–5× faster `proveTransactionWithProver` on commodity laptops at the cost of a hard hosting requirement.
 
@@ -330,7 +330,7 @@ Follow the steps below to produce the contents that get published to npm (`dist/
 4. **Inspect the artifacts**
    - `dist/index.js` is the ESM entry point referenced by `"main"`/`"browser"`/`"exports"`.
    - `dist/index.d.ts` and the rest of the `.d.ts` files provide the TypeScript surface.
-   Use `npm pack` if you want to preview the exact tarball that would be published.
+     Use `npm pack` if you want to preview the exact tarball that would be published.
 
 > Tip: during development you can set `MIDEN_WEB_DEV=true` before running `pnpm build` (or run `npm run build-dev`) to skip the clean step and keep extra debugging metadata in the bundled output. This debugging metadata also includes debug symbols for the generated wasm binary
 
@@ -359,11 +359,18 @@ const client = await MidenClient.createDevnet();
 // 2. Create a wallet and a token (faucet account)
 const wallet = await client.accounts.create();
 const dagToken = await client.accounts.create({
-  type: AccountType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
+  type: AccountType.FungibleFaucet,
+  symbol: "DAG",
+  decimals: 8,
+  maxSupply: 10_000_000n,
 });
 
 // 3. Mint tokens
-const mintTxId = await client.transactions.mint({ account: dagToken, to: wallet, amount: 1000n });
+const mintTxId = await client.transactions.mint({
+  account: dagToken,
+  to: wallet,
+  amount: 1000n,
+});
 await client.transactions.waitFor(mintTxId.toHex());
 
 // 4. Consume the minted note
@@ -374,7 +381,7 @@ await client.transactions.send({
   account: wallet,
   to: "0xBOB",
   token: dagToken,
-  amount: 100n
+  amount: 100n,
 });
 
 // 6. Check balance
@@ -400,7 +407,7 @@ const wallet2 = await client.accounts.create({
   storage: "public",
   type: AccountType.ImmutableWallet,
   auth: AuthScheme.ECDSA,
-  seed: "deterministic"
+  seed: "deterministic",
 });
 
 console.log(wallet.id().toString()); // account id as hex
@@ -416,7 +423,7 @@ const faucet = await client.accounts.create({
   type: AccountType.FungibleFaucet,
   symbol: "DAG",
   decimals: 8,
-  maxSupply: 10_000_000n
+  maxSupply: 10_000_000n,
 });
 
 console.log(faucet.id().toString());
@@ -433,14 +440,14 @@ import { BasicFungibleFaucetComponent } from "@miden-sdk/miden-sdk";
 
 const faucet = BasicFungibleFaucetComponent.fromAccount(account);
 
-faucet.symbol().toString();       // "DAG"
-faucet.tokenName();               // "DAG Token"
-faucet.decimals();                // 8
-faucet.maxSupply().toString();    // "10000000"
-faucet.tokenSupply().toString();  // amount minted so far, e.g. "0"
-faucet.description();             // string | undefined
-faucet.logoUri();                 // string | undefined
-faucet.externalLink();            // string | undefined
+faucet.symbol().toString(); // "DAG"
+faucet.tokenName(); // "DAG Token"
+faucet.decimals(); // 8
+faucet.maxSupply().toString(); // "10000000"
+faucet.tokenSupply().toString(); // amount minted so far, e.g. "0"
+faucet.description(); // string | undefined
+faucet.logoUri(); // string | undefined
+faucet.externalLink(); // string | undefined
 ```
 
 ### Send Tokens
@@ -450,7 +457,7 @@ const txId = await client.transactions.send({
   account: wallet,
   to: "0xBOB",
   token: dagToken,
-  amount: 100n
+  amount: 100n,
 });
 ```
 
@@ -481,7 +488,7 @@ const { blockNumber } = await client.transactions.batch({
   account: wallet,
   operations: [
     { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob,   token: dagToken, amount: 30n, type: "public" },
+    { kind: "send", to: bob, token: dagToken, amount: 30n, type: "public" },
     { kind: "consume", notes: pendingNotes },
   ],
   waitForConfirmation: true,
@@ -492,7 +499,7 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 Operations are discriminated by `kind`: `"send"`, `"mint"`, `"consume"`, `"swap"`, `"execute"`, and `"custom"` (escape hatch for a pre-built `TransactionRequest`). The shape of each operation mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level.
 
-V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported.
+V1 supports only same-account batches — every operation must execute against the `account` passed at the top level. Mixing accounts in one batch is not supported. A batch is also always proven locally: the V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not here.
 
 For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
 
@@ -572,7 +579,7 @@ Before signing, inspect what the transaction actually does — `summary.accountD
 
 An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
 
-A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
+A match, however, does not prove the two parties agree on account state. The summary binds the account _delta_, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
 See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
 
@@ -589,7 +596,7 @@ are discovered on sync.
 await client.transactions.pswapCreate({
   account: wallet,
   offer: { token: aToken, amount: 100n },
-  request: { token: bToken, amount: 25n }
+  request: { token: bToken, amount: 25n },
 });
 await client.sync();
 
@@ -626,7 +633,7 @@ await client.transactions.bridge({
   token: dagToken, // faucet of the asset being bridged
   amount: 100n,
   destinationNetwork: 1, // AggLayer-assigned network id
-  destinationAddress: "0x000000000000000000000000000000000000dEaD"
+  destinationAddress: "0x000000000000000000000000000000000000dEaD",
 });
 ```
 

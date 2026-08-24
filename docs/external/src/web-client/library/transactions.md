@@ -123,8 +123,9 @@ console.log(`Batch submitted at chain tip ${blockNumber}`);
 
 ### V1 constraints
 
-- **Single account.** Every operation runs against the `account` passed at the top level; operations cannot name their own. V2 will lift this constraint.
+- **Single account.** Every operation runs against the `account` passed at the top level; the builder operations have no per-operation account, and a `custom` request's own account is ignored. V2 will lift this constraint.
 - **No per-tx ids in the result.** `batch` returns `{ blockNumber }`, the node's chain tip as of submission. To inspect individual transactions, sync state and query with `client.transactions.list()`.
+- **Always proven locally.** The V1 batch API takes no prover, so `ClientOptions.proverUrl` applies to `submit()` but not to batching.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
 
 ### `submitBatch` — pre-built requests
