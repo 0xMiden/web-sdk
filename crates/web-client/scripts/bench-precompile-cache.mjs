@@ -45,7 +45,9 @@ const flag = (name, fallback) => {
   return i === -1 ? fallback : args[i + 1];
 };
 const distDir = path.resolve(
-  args[0] && !args[0].startsWith("--") ? args[0] : path.join(scriptDir, "../dist/st")
+  args[0] && !args[0].startsWith("--")
+    ? args[0]
+    : path.join(scriptDir, "../dist/st")
 );
 const numPages = Number(flag("--pages", "3"));
 const numProves = Number(flag("--proves", "3"));
@@ -262,7 +264,9 @@ const benchInPage = async ({ variant, proves, spans }) => {
 
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
-  return s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  return s.length % 2
+    ? s[s.length >> 1]
+    : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 const fmt = (ms) => `${ms.toFixed(0)}ms`;
 
