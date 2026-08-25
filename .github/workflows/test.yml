@@ -52,6 +52,8 @@ jobs:
               - '.github/workflows/publish-web-sdk.yml'
               - '.github/workflows/test.yml'
               - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/web-client/Cargo.toml'
               - 'crates/web-client/rollup.config.js'
               - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
               - 'crates/web-client/scripts/verify-release-mt.mjs'
