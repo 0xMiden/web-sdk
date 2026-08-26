@@ -13,6 +13,9 @@ export default defineConfig({
     projects: [
       "./packages/react-sdk/vitest.config.ts",
       "./packages/vite-plugin/vitest.config.ts",
+      "./packages/adapter/base/vitest.config.ts",
+      "./packages/adapter/miden/vitest.config.ts",
+      "./packages/adapter/react/vitest.config.ts",
       "./crates/web-client/vitest.config.js",
     ],
   },
