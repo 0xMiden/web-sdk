@@ -51,6 +51,8 @@ jobs:
       should_publish_vite: ${{ steps.check_vite.outputs.should_publish }}
       vite_version: ${{ steps.check_vite.outputs.current_version }}
       dist_tag: ${{ steps.event.outputs.dist_tag }}
+      adopted_plan: ${{ steps.plan_adopted.outputs.plan }}
+      adopted_count: ${{ steps.plan_adopted.outputs.count }}
       checkout_ref: ${{ steps.event.outputs.checkout_ref }}
     steps:
       - name: Resolve event-specific config
@@ -94,6 +96,23 @@ jobs:
         id: check_vite
         if: github.event_name == 'release'
         run: ./scripts/check-vite-plugin-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
+
+      # The packages adopted from the wallet-adapter / para / turnkey repos are
+      # gated from scripts/publish-manifest.json rather than one bespoke script
+      # each. Adding a package to that manifest is all a new package needs.
+      - name: Build publish plan for adopted packages
+        id: plan_adopted
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            PLAN=$(./scripts/publish-plan.sh plan release "$GITHUB_SHA")
+          else
+            PLAN=$(./scripts/publish-plan.sh plan pr "${{ github.event.pull_request.base.sha }}")
+          fi
+          echo "plan<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$PLAN" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "count=$(printf '%s' "$PLAN" | jq 'length')" >> "$GITHUB_OUTPUT"
+          printf '%s' "$PLAN" | jq -r '.[] | "will publish \(.name)@\(.version) (level \(.level))"'
 
   build-native-nodejs:
     needs: check-version
@@ -148,7 +167,8 @@ jobs:
       (
         needs.check-version.outputs.should_publish_web == 'true' ||
         needs.check-version.outputs.should_publish_react == 'true' ||
-        needs.check-version.outputs.should_publish_vite == 'true'
+        needs.check-version.outputs.should_publish_vite == 'true' ||
+        needs.check-version.outputs.adopted_count != '0'
       )
     # Must be a github-hosted runner — npm's provenance verifier rejects
     # attestations from "self-hosted" runners (Warp, etc.) with
@@ -309,6 +329,18 @@ jobs:
         if: needs.check-version.outputs.should_publish_vite == 'true'
         run: pnpm --filter @miden-sdk/vite-plugin publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
 
+      # ── Adopted packages (wallet-adapter / para / turnkey) ────────────
+      # Published in dependency-level order so a dependent never lands before
+      # the package it pins. The script counts what it attempted against the
+      # plan length, so a loop that publishes nothing cannot report success.
+
+      - name: Publish adopted packages
+        if: needs.check-version.outputs.adopted_count != '0'
+        run: |
+          ./scripts/publish-plan.sh publish \
+            '${{ needs.check-version.outputs.adopted_plan }}' \
+            "${{ needs.check-version.outputs.dist_tag }}"
+
       # ── Reporting ─────────────────────────────────────────────────────
 
       - name: Done (web-client)
@@ -344,7 +376,8 @@ jobs:
       needs.check-version.result == 'success' &&
       needs.check-version.outputs.should_publish_web != 'true' &&
       needs.check-version.outputs.should_publish_react != 'true' &&
-      needs.check-version.outputs.should_publish_vite != 'true'
+      needs.check-version.outputs.should_publish_vite != 'true' &&
+      needs.check-version.outputs.adopted_count == '0'
     runs-on: ubuntu-24.04
     steps:
       - name: Skipped publish (all packages)
