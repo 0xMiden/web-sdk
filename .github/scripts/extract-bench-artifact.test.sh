@@ -110,6 +110,44 @@ check "a traversing entry cannot masquerade as a member" "" "$out3"
 check "no spoofed results.json" "no" \
   "$([ -f "$dest3/results.json" ] && echo yes || echo no)"
 
+# --- symlink entries -------------------------------------------------------
+
+# `unzip -j` restores symlinks: an entry named results.json carrying the Unix
+# symlink mode bit becomes a link to any absolute path the fork picks, and the
+# size check, the `[ -f ]` test and the renderer's readFileSync all follow it.
+# The reporter renders results.json into a PUBLIC PR comment, so that is an
+# arbitrary-file read with a public sink.
+secret="$work/secret.txt"
+printf 'SECRET CONTENT' > "$secret"
+zips="$work/symlink.zip"
+python3 - "$zips" "$secret" <<'PY'
+import sys, zipfile
+out, target = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w") as z:
+    info = zipfile.ZipInfo("results.json")
+    info.create_system = 3            # Unix
+    info.external_attr = 0o120777 << 16  # S_IFLNK
+    z.writestr(info, target)
+    z.writestr("pr.json", '{"number":7}')
+PY
+dests="$work/ds"
+"$subject" "$zips" "$dests" >/dev/null 2>&1
+check "a symlink entry does not become a symlink" "no" \
+  "$([ -L "$dests/results.json" ] && echo yes || echo no)"
+check "a symlink entry does not read through to its target" "no" \
+  "$(grep -q 'SECRET CONTENT' "$dests/results.json" 2>/dev/null && echo yes || echo no)"
+check "the secret file is not modified" "SECRET CONTENT" "$(cat "$secret")"
+
+# Duplicate names would let `-p` concatenate a second payload behind a benign
+# first one.
+zipd="$work/dup.zip"
+make_zip "$zipd" 'results.json={"schemaVersion":2}' 'results.json={"evil":1}' 'pr.json={"number":7}'
+destd="$work/dd"
+outd=$("$subject" "$zipd" "$destd" 2>/dev/null)
+check "duplicate member names are refused" "" "$outd"
+check "no concatenated results.json" "no" \
+  "$([ -f "$destd/results.json" ] && echo yes || echo no)"
+
 # --- partial and absent artifacts ------------------------------------------
 
 # bench.yml uploads unconditionally, so a job that died before running the
@@ -128,19 +166,25 @@ zip5="$work/big.zip"
 python3 - "$work/big.zip" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
-    # Compresses to a few hundred bytes and inflates well past the cap.
-    z.writestr("results.json", "0" * 5_000_000)
+    # ~500 KB compressed, 500 MB inflated. A cap checked with `wc -c` after
+    # extraction would have written all of it to disk first.
+    z.writestr("results.json", "0" * 500_000_000)
     z.writestr("pr.json", '{"number":7}')
 PY
 dest5="$work/d5"
 out5=$("$subject" "$zip5" "$dest5" 4194304 2>"$work/e5")
 check "an oversized member is dropped, not rendered" "" "$out5"
 check "the size refusal is announced" "yes" \
-  "$(grep -q "refusing to render" "$work/e5" && echo yes || echo no)"
+  "$(grep -q "exceeds the" "$work/e5" && echo yes || echo no)"
 check "the oversized file is removed" "no" \
   "$([ -f "$dest5/results.json" ] && echo yes || echo no)"
 check "a member under the cap survives" "yes" \
   "$([ -f "$dest5/pr.json" ] && echo yes || echo no)"
+# The cap has to bound what is WRITTEN, not just what is kept. `head -c` stops
+# the stream at the limit, so the peak on disk is the cap plus one byte — not the
+# 500 MB the archive would have inflated to.
+check "nothing near the inflated size ever hit the disk" "yes" \
+  "$([ "$(du -sk "$dest5" | cut -f1)" -lt 8192 ] && echo yes || echo no)"
 
 # --- usage -----------------------------------------------------------------
 

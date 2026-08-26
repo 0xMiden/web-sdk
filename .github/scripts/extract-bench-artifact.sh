@@ -34,11 +34,23 @@
 # inspecting it afterwards: the escaped files are not in it. Detection after the
 # fact is the wrong shape for this problem.
 #
-# `unzip -j` is. It discards every directory component of every entry name, so
-# no entry can address anything outside `-d`, and the explicit member list means
-# an entry that is not one of the two expected names is never even considered.
-# There is nothing left to sanitize because nothing about the archive's names is
-# used to choose a path.
+# `unzip -p` is. It writes the member to STDOUT and never touches the
+# filesystem, so the destination file is created by this script's own redirect:
+# nothing in the archive chooses a path, a file mode, or a link target, and
+# there is nothing left to sanitize.
+#
+# `unzip -j` was the first version of this and was not enough. It flattens entry
+# names, which does confine the traversal, but it still RESTORES SYMLINKS — an
+# entry named `results.json` carrying the symlink mode bit becomes a link to any
+# absolute path the fork chooses, and the size check, the `[ -f ]` test and the
+# renderer's `readFileSync` all follow it. That turns the reporter into an
+# arbitrary-file-read whose output is a public PR comment, and with a duplicate
+# entry of the same name `-o` writes THROUGH the link.
+#
+# The byte cap is applied by `head -c` on the stream rather than by `wc -c`
+# afterwards, so it bounds what is actually written. A cap checked after
+# extraction is not a cap: a 2 MiB zip of compressible bytes inflates to
+# gigabytes on disk before anything measures it.
 #
 # Usage: extract-bench-artifact.sh <zip> <dest-dir> [max-bytes-per-file]
 # Exit:  0 with the files extracted, or 0 having extracted nothing if the
@@ -74,28 +86,52 @@ fi
 mkdir -p "$dest"
 
 for member in "${members[@]}"; do
-  # `-j` junks paths, `-o` overwrites (a zip may carry duplicate names), and the
-  # member is matched against the full stored name, so `a/results.json` does not
-  # match `results.json`.
-  #
-  # Exit 11 is "no matching files", which is the ordinary shape of an artifact
-  # from a bench job that failed before writing results. Anything else is a
-  # broken or hostile archive: drop what came out of it and report nothing.
-  rc=0
-  unzip -o -j -d "$dest" "$zip_path" "$member" > /dev/null || rc=$?
-  if [ "$rc" -eq 11 ]; then
-    continue
-  fi
-  if [ "$rc" -ne 0 ]; then
-    echo "::notice title=Proving Benchmark::Could not read ${member} from the artifact (unzip rc=${rc}); nothing to post." >&2
-    rm -f "${dest:?}/${member}"
+  out="${dest:?}/${member}"
+  rm -f "$out"
+
+  # A zip may carry the same name twice, and `-p` would concatenate both to
+  # stdout — a way to hide a second payload behind a benign-looking first one.
+  # One entry per member or none.
+  matches=$(unzip -Z1 "$zip_path" "$member" 2>/dev/null | grep -c . || true)
+  if [ "$matches" -gt 1 ]; then
+    echo "::notice title=Proving Benchmark::The artifact carries ${matches} entries named ${member}; refusing to render." >&2
     continue
   fi
 
-  size=$(wc -c < "$dest/$member" | tr -d '[:space:]')
+  # `head -c` is given one byte more than the cap so an over-cap member is
+  # detectable by size afterwards rather than being silently truncated into
+  # something that might still parse.
+  set +e
+  unzip -p "$zip_path" "$member" 2>/dev/null | head -c "$((max_bytes + 1))" > "$out"
+  codes=("${PIPESTATUS[@]}")
+  set -e
+  unzip_rc=${codes[0]}
+
+  # 11 is "no matching files", the ordinary shape of an artifact from a bench job
+  # that died before writing results. 141 is SIGPIPE, which only happens because
+  # `head` closed the stream at the cap — handled by the size check below.
+  # Anything else is a broken or hostile archive.
+  if [ "$unzip_rc" -eq 11 ]; then
+    rm -f "$out"
+    continue
+  fi
+  if [ "$unzip_rc" -ne 0 ] && [ "$unzip_rc" -ne 141 ]; then
+    echo "::notice title=Proving Benchmark::Could not read ${member} from the artifact (unzip rc=${unzip_rc}); nothing to post." >&2
+    rm -f "$out"
+    continue
+  fi
+
+  size=$(wc -c < "$out" | tr -d '[:space:]')
   if [ "$size" -gt "$max_bytes" ]; then
-    echo "::notice title=Proving Benchmark::${member} is ${size} bytes (limit ${max_bytes}); refusing to render." >&2
-    rm -f "${dest:?}/${member}"
+    echo "::notice title=Proving Benchmark::${member} exceeds the ${max_bytes}-byte limit; refusing to render." >&2
+    rm -f "$out"
+    continue
+  fi
+  # An empty member is not a member. `-p` on an entry that exists but is empty
+  # is indistinguishable here from one that produced nothing, and either way
+  # there is no JSON to parse.
+  if [ "$size" -eq 0 ]; then
+    rm -f "$out"
   fi
 done
 
