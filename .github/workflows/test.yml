@@ -48,15 +48,22 @@ jobs:
               - '!**/*.md'
               - '!**/*.txt'
               - '!docs/**'
+            # Every manifest of a crate compiled into the shipped WASM is
+            # listed alongside Cargo.lock: a feature-only edit changes what
+            # gets compiled without moving the lockfile, so Cargo.lock alone
+            # does not catch it.
             release_wasm:
               - '.github/workflows/publish-web-sdk.yml'
               - '.github/workflows/test.yml'
               - 'Cargo.lock'
               - 'Cargo.toml'
+              - 'crates/idxdb-store/Cargo.toml'
+              - 'crates/js-export-macro/Cargo.toml'
               - 'crates/web-client/Cargo.toml'
               - 'crates/web-client/rollup.config.js'
               - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
               - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'patches/**'
               - 'rust-toolchain.toml'
               - 'scripts/install-binaryen.sh'
               - 'scripts/verify-wasm-size.sh'

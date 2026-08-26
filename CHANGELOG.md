@@ -4,7 +4,9 @@
 
 ### Fixes
 
-* [FIX][web] The single-threaded WASM build now caches the precompile prover's preprocessed STARK data (the BytePairLut table, its low-degree extension, and Merkle commitment) for the lifetime of the WASM instance, matching the multi-threaded build. Previously every prove or verify that raised a precompile claim — e.g. a transaction authenticated with an ECDSA/keccak key — rebuilt it from scratch. Measured in headless Chromium on an Apple-silicon Mac (full-optimization build): repeat ECDSA proofs in the same instance drop by ~0.3–0.4s (~6–8% of a ~5s proof); the first proof is unchanged, and Falcon-authenticated transactions raise no claim and are unaffected. Bundle size is unchanged. ([#318](https://github.com/0xMiden/web-sdk/issues/318))
+* [FIX][web] The single-threaded WASM build now caches the precompile prover's preprocessed STARK data (the BytePairLut table, its low-degree extension, and Merkle commitment) for the lifetime of the WASM instance, matching the multi-threaded build. Previously every prove or verify that raised a precompile claim — e.g. a transaction authenticated with an ECDSA/keccak key — rebuilt it from scratch. Measured in headless Chromium on an Apple-silicon Mac (full-optimization build): repeat ECDSA proofs in the same instance drop by ~0.3–0.4s (~6–8% of a ~5s proof); the first proof is unchanged, and Falcon-authenticated transactions raise no claim and are unaffected. The cached data is held until the WASM instance is torn down, so a long-lived page trades some retained memory for the speedup. ([#319](https://github.com/0xMiden/web-sdk/pull/319), issue [#318](https://github.com/0xMiden/web-sdk/issues/318))
+
+## 0.16.0-rc.3 (2026-08-23)
 
 ### Changes
 

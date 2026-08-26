@@ -39,20 +39,62 @@ import { chromium } from "@playwright/test";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
+const USAGE =
+  "  node scripts/bench-precompile-cache.mjs [dist-st-dir] " +
+  "[--pages N] [--proves M] [--variants ecdsa,falcon] [--spans]";
+
 const args = process.argv.slice(2);
+
+const usage = (message) => {
+  console.error(`${message}\n\nUsage:\n${USAGE}`);
+  process.exit(2);
+};
+
 const flag = (name, fallback) => {
   const i = args.indexOf(name);
-  return i === -1 ? fallback : args[i + 1];
+  if (i === -1) return fallback;
+  const value = args[i + 1];
+  // Catch `--pages` at the end of argv and `--pages --spans`, both of which
+  // would otherwise parse to NaN and silently run zero iterations.
+  if (value === undefined || value.startsWith("--")) {
+    usage(`${name} requires a value.`);
+  }
+  return value;
 };
+
+const count = (name, fallback) => {
+  const raw = flag(name, fallback);
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    usage(`${name} must be a positive integer, got "${raw}".`);
+  }
+  return value;
+};
+
+const KNOWN_VARIANTS = new Set(["ecdsa", "falcon"]);
+
 const distDir = path.resolve(
   args[0] && !args[0].startsWith("--")
     ? args[0]
     : path.join(scriptDir, "../dist/st")
 );
-const numPages = Number(flag("--pages", "3"));
-const numProves = Number(flag("--proves", "3"));
-const variants = flag("--variants", "ecdsa,falcon").split(",");
+const numPages = count("--pages", "3");
+const numProves = count("--proves", "3");
+const variants = flag("--variants", "ecdsa,falcon")
+  .split(",")
+  .map((variant) => variant.trim());
 const withSpans = args.includes("--spans");
+
+// An unrecognized variant would otherwise fall through to the Falcon branch
+// below while keeping the caller's label, reporting the control condition as
+// if it were the ECDSA measurement.
+for (const variant of variants) {
+  if (!KNOWN_VARIANTS.has(variant)) {
+    usage(
+      `Unknown variant "${variant}". Expected one of: ${[...KNOWN_VARIANTS].join(", ")}.`
+    );
+  }
+}
 
 const contentTypes = new Map([
   [".js", "text/javascript; charset=utf-8"],
@@ -90,15 +132,30 @@ const server = createServer(async (request, response) => {
       "Content-Type",
       contentTypes.get(path.extname(filePath)) ?? "application/octet-stream"
     );
-    createReadStream(filePath).pipe(response);
+    // `pipe` does not forward source errors, and the headers are already sent
+    // by this point, so a mid-read failure can only be surfaced by tearing the
+    // response down — otherwise the browser stalls on the asset forever.
+    createReadStream(filePath)
+      .on("error", (error) => {
+        console.error(`[server] read failed for ${filePath}: ${error}`);
+        response.destroy(error);
+      })
+      .pipe(response);
   } catch {
     response.writeHead(404).end();
   }
 });
 
 await new Promise((resolve, reject) => {
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", resolve);
+  const onListenError = (error) => reject(error);
+  server.once("error", onListenError);
+  server.listen(0, "127.0.0.1", () => {
+    // Leaving the startup listener attached would let the first post-startup
+    // error settle an already-resolved promise and vanish.
+    server.off("error", onListenError);
+    server.on("error", (error) => console.error(`[server] ${error}`));
+    resolve();
+  });
 });
 
 const address = server.address();
@@ -280,30 +337,54 @@ try {
       // Fresh context + page per iteration: a fresh wasm instantiation means a
       // cold OnceLock, so prove #1 measures the uncached path every time.
       const context = await browser.newContext();
-      const page = await context.newPage();
-      page.on("pageerror", (err) => console.error(`[pageerror] ${err}`));
-      await page.goto(`http://127.0.0.1:${address.port}/`);
+      try {
+        const page = await context.newPage();
+        // An uncaught page error means the timings for this iteration are
+        // unexplained, so fail the run rather than fold suspect numbers into
+        // the medians.
+        const pageErrors = [];
+        page.on("pageerror", (error) => {
+          console.error(`[pageerror] ${error}`);
+          pageErrors.push(error);
+        });
+        await page.goto(`http://127.0.0.1:${address.port}/`);
 
-      const r = await page.evaluate(benchInPage, {
-        variant,
-        proves: numProves,
-        spans: withSpans,
-      });
-      results.push({ page: pageIdx, ...r });
-      console.log(
-        `${variant} page ${pageIdx}: ${r.proveMs.map(fmt).join("  ")}` +
-          (r.measures.length
-            ? `\n  spans: ${r.measures.map((m) => `${m.name}=${fmt(m.ms)}`).join("  ")}`
-            : "")
-      );
-      await context.close();
+        const r = await page.evaluate(benchInPage, {
+          variant,
+          proves: numProves,
+          spans: withSpans,
+        });
+        if (pageErrors.length) {
+          throw new Error(
+            `${variant} page ${pageIdx} raised ${pageErrors.length} page error(s); first: ${pageErrors[0]}`
+          );
+        }
+        results.push({ page: pageIdx, ...r });
+        console.log(
+          `${variant} page ${pageIdx}: ${r.proveMs.map(fmt).join("  ")}` +
+            (r.measures.length
+              ? `\n  spans: ${r.measures.map((m) => `${m.name}=${fmt(m.ms)}`).join("  ")}`
+              : "")
+        );
+      } finally {
+        await context.close();
+      }
     }
   }
 } finally {
-  await browser?.close();
-  await new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
+  // Settle both teardowns independently: a failing browser close must not skip
+  // the server close, and neither may replace the benchmark's own error.
+  const teardown = await Promise.allSettled([
+    browser?.close(),
+    new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    }),
+  ]);
+  for (const outcome of teardown) {
+    if (outcome.status === "rejected") {
+      console.error(`[teardown] ${outcome.reason}`);
+    }
+  }
 }
 
 console.log(`\ndist: ${distDir}`);
