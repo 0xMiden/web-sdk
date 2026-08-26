@@ -683,6 +683,34 @@ function pairedAgreement(base, head) {
   };
 }
 
+/**
+ * The same delta computed over EVERY retained prove rather than over each
+ * repetition's fastest one.
+ *
+ * The headline estimator takes a minimum per repetition, which is what buys its
+ * low variance — and which also throws away any slowdown that does not land on
+ * the fastest prove of a repetition. A change that makes two proves in three 50%
+ * slower leaves the headline at +0.00%, because the untouched third prove is
+ * still the minimum. That is not a hypothetical property of minima; it is the
+ * common shape of a regression in a garbage collector, a lock, a retry path, or
+ * a cold cache, and users experience the mean, not the best case.
+ *
+ * So this is computed alongside and reported when the two disagree. It is
+ * deliberately NOT the verdict: its variance is much higher (a plain mean over
+ * these samples measured sd 5.39% against the estimator's 1.79%), so promoting
+ * it would trade a blind spot for a noisy bot. Reporting the disagreement costs
+ * nothing and is the only signal that the blind spot was hit.
+ */
+function meanDeltaPct(base, head) {
+  if (base === null) return null;
+  const baseMean = mean(base.samples.flat());
+  const headMean = mean(head.samples.flat());
+  if (!Number.isFinite(baseMean) || !Number.isFinite(headMean)) return null;
+  if (baseMean === 0) return null;
+  const pct = ((headMean - baseMean) / baseMean) * 100;
+  return Number.isFinite(pct) ? pct : null;
+}
+
 function computeRows(results) {
   const rows = results.benchmarks.map((b) => {
     // `value` is the mean of per-rep minima — see the estimator comment in
@@ -728,6 +756,14 @@ function computeRows(results) {
     const beyond = clearsFloor && agreement.consistent;
     const unresolved = clearsFloor && !agreement.consistent;
     const isWorse = LOWER_IS_BETTER ? deltaValue > 0 : deltaValue < 0;
+    // Flagged when the mean moved past the floor but the headline did not: that
+    // is the signature of a slowdown that missed every repetition's fastest
+    // prove, which the headline estimator cannot see by construction.
+    const meanPct = meanDeltaPct(b.base, b.head);
+    const meanOnly =
+      meanPct !== null &&
+      !clearsFloor &&
+      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
     return {
       ...b,
       deltaValue,
@@ -737,6 +773,8 @@ function computeRows(results) {
       unresolved,
       agreement,
       isWorse,
+      meanPct,
+      meanOnly,
       emoji: beyond
         ? isWorse
           ? EMOJI_WORSE
@@ -993,6 +1031,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     "<summary><b>Methodology and raw samples</b></summary>",
     // Same blank-line trap as above.
     "",
+    `- The timed interval is the \`proveTransaction\` call on a client constructed without a web worker. Prover construction, transaction execution, the faucet draw and the production worker round-trip are outside it, so a change confined to any of those does not move this number.`,
     `- Each benchmark keeps **${results.reps} ${plural(results.reps, "rep")} × ${results.provesPerRep} warm ${plural(results.provesPerRep, "prove")}** on \`${results.runner}\` (${results.threads} ${plural(results.threads, "thread")}, \`${results.profile}\` / \`${results.variant}\`). One extra repetition and the first prove of every page run first and are discarded.`,
     // With one retained prove per repetition there is no minimum to take, so
     // the interference-filtering half of the rationale describes something that
@@ -1021,7 +1060,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
           `- A movement is only called significant when it clears the noise floor **and** every repetition's paired difference agrees on its direction. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result.`,
           `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
           `- A wide gap between the reported figure and the max has two causes and the samples below do not separate them: interference within a repetition, and the proof-of-work grind differing between repetitions. Neither invalidates the comparison — both sides ran interleaved on the same machine — but a gap much wider than usual is worth a second look.`,
-          `- Base and head are built and measured in the same job on the same runner, so runner-to-runner drift cancels out.`,
+          `- Base and head are **measured** in the same job on the same runner, so runner-to-runner drift cancels out. The base dist may have been *built* by an earlier run of this workflow and restored from cache — the cache key covers the toolchain and the build commands, so the bytes match what this run would have produced.`,
           `- Δ % = (head − base) / base on that figure. Lower is better for every benchmark in this suite.`,
         ]
       : [
@@ -1052,6 +1091,26 @@ function buildLegend() {
     `<sub>${EMOJI_WORSE} slower beyond the noise floor · ${EMOJI_BETTER} faster beyond the noise floor · ` +
     `${EMOJI_UNRESOLVED} beyond the floor but the repetitions disagree · ${EMOJI_NOISE} within the noise floor</sub>`
   );
+}
+
+/**
+ * Rendered only when the headline estimator's blind spot was actually hit, for
+ * the same reason as the unresolved note: an explanation of a state the comment
+ * is not in is noise.
+ */
+function buildMeanOnlyNote(rows) {
+  const flagged = rows.filter((r) => r.meanOnly);
+  if (flagged.length === 0) return "";
+  const leader = flagged[0];
+  return [
+    `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean but not on the reported figure.**`,
+    `> ${codeSpan(leader.name)} is ${formatSignedPct(leader.deltaPct)} on the mean of each repetition's *fastest* prove —`,
+    `> within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of *every* prove.`,
+    `> The reported figure takes a minimum per repetition, so a slowdown that misses the fastest prove of`,
+    `> each repetition is invisible to it: think a collection pause, a lock, a retry, or a cold cache.`,
+    `> The mean is far noisier (5.39% against 1.79%), so this is not a verdict — but it is worth a look at`,
+    `> the raw samples below before concluding nothing changed.`,
+  ].join("\n");
 }
 
 /**
@@ -1106,6 +1165,8 @@ function assemble(
     blocks.push(buildHeadOnlyNote());
   const unresolvedNote = buildUnresolvedNote(rows);
   if (unresolvedNote) blocks.push(unresolvedNote);
+  const meanOnlyNote = buildMeanOnlyNote(rows);
+  if (meanOnlyNote) blocks.push(meanOnlyNote);
   if (THRESHOLD_PROVISIONAL) blocks.push(buildProvisionalNote(results, ctx));
   for (const notice of notices) blocks.push(notice);
   blocks.push(buildContextTable(results, ctx, rows));

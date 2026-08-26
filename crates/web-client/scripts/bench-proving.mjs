@@ -148,10 +148,12 @@ if (proves < 2) {
 if ((reps * (proves - 1)) % 2 === 1) {
   console.warn(
     `[warn] reps × (proves-1) = ${reps * (proves - 1)} is odd, so the retained ` +
-      `proves cannot be split evenly between base and head: one side runs ` +
-      `second once more than the other, which biases the comparison against ` +
-      `it by an amount this estimator cannot bound. Use an even --reps, or an ` +
-      `odd --proves.`
+      `proves cannot be split evenly between base and head. HEAD is the side ` +
+      `that runs second once more than base — the leftover always falls there, ` +
+      `because the discarded warm-up rep shifts the flip — so the bias runs ` +
+      `AGAINST the pull request and this run is likelier to report a ` +
+      `regression than to hide one. The amount is not bounded by this ` +
+      `estimator. Use an even --reps, or an odd --proves.`
   );
 }
 
@@ -305,7 +307,12 @@ const setupInPage = async ({ threads: wantThreads }) => {
   }
 
   // initThreadPool must configure the SAME wasm instance the client proves on.
-  // Assert that rather than assume it.
+  // What follows checks that, plus the resulting pool SIZE. Neither is a check
+  // that `proveTransaction` dispatches onto the pool: `rayonThreadCount` reports
+  // how many threads exist, not whether the prove used them. A build that
+  // silently proved single-threaded inside an 8-thread pool would still pass
+  // here. The sdk exposes mtProbeAsync for that if this ever needs to be
+  // airtight.
   const wasm = await sdk.getWasmOrThrow();
   if (wasm.rayonThreadCount !== sdk.rayonThreadCount) {
     throw new Error(

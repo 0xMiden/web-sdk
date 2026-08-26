@@ -39,22 +39,23 @@ permissions:
   checks: write
 
 concurrency:
-  # Two quick pushes produce two reporters racing to update the same comment.
-  # Keyed on the head repo + branch because a `workflow_run` payload has no
-  # reliable PR number to key on — `pull_requests` is empty for fork-originated
-  # runs, which is the case this workflow exists to serve.
-  group: >-
-    bench-comment-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref }}
-  # NOT cancel-in-progress. Since the branch is the only available key, two open
-  # PRs sharing one fork branch land in the same group, and cancelling would
-  # delete one PR's report to deliver the other's. Serializing costs a wait;
-  # cancelling costs a comment that never appears.
+  # One group per triggering bench run, so no reporter can ever displace another.
   #
-  # A superseded bench run still reaches this workflow — bench.yml uploads with
-  # `if: always()` and this trigger has no conclusion filter, so a cancelled run
-  # arrives here like any other. What keeps its stale numbers off the PR is
-  # `Verify PR identity`, which declines a report whose head sha is no longer the
-  # PR's. Serialization only decides the order they try in.
+  # Grouping by branch — the obvious choice, and what this used to do — loses
+  # reports, whichever way `cancel-in-progress` is set. GitHub keeps at most one
+  # running and one PENDING run per group and cancels the pending one whenever a
+  # newer run queues, so `cancel-in-progress: false` does not mean "everything
+  # eventually runs": a burst of pushes leaves the middle reporters cancelled
+  # without ever starting. And `true` cancels across the two open PRs that can
+  # share one fork branch. Keying on the run id sidesteps both, because two
+  # reporters for the same bench run cannot exist.
+  #
+  # What that gives up is serialization of comment updates. It costs nothing
+  # here: a superseded bench run still reaches this workflow (bench.yml uploads
+  # with `if: always()` and this trigger has no conclusion filter), and what
+  # keeps its stale numbers off the PR is `Verify PR identity` declining any
+  # report whose head sha is no longer the PR's — not the order they ran in.
+  group: bench-comment-${{ github.event.workflow_run.id || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -117,6 +118,10 @@ jobs:
           # headroom that still refuses a zip bomb before it lands.
           MAX_ZIP_BYTES: 2097152
         with:
+          # github-script defaults retries to 0, so a single GitHub 5xx or a
+          # secondary rate limit fails the step — and on the trusted side that
+          # reddens the default branch over an outage nobody in the PR caused.
+          retries: 3
           script: |
             const fs = require('fs');
 
@@ -208,6 +213,10 @@ jobs:
           BENCH_RUN_ID: ${{ steps.run.outputs.id }}
           REPORT_DIR: ${{ runner.temp }}/bench-report
         with:
+          # github-script defaults retries to 0, so a single GitHub 5xx or a
+          # secondary rate limit fails the step — and on the trusted side that
+          # reddens the default branch over an outage nobody in the PR caused.
+          retries: 3
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -284,7 +293,13 @@ jobs:
               refuse(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
               return;
             }
-            if (pr.head.repo?.full_name !== run.head_repository?.full_name) {
+            // Compared only when both sides are actually present. `undefined !==
+            // undefined` is false, so two nullish values used to read as a match
+            // and skip this gate entirely — the one gate that ties the claimed PR
+            // to the fork the run came from.
+            const claimedRepo = pr.head.repo?.full_name;
+            const runRepo = run.head_repository?.full_name;
+            if (!claimedRepo || !runRepo || claimedRepo !== runRepo) {
               refuse('PR head repo does not match the triggering run');
               return;
             }
@@ -364,6 +379,7 @@ jobs:
           set -e
           if [ "$render_rc" -eq 3 ]; then
             echo "::error title=Proving Benchmark::The comment renderer failed on its own code path (exit 3), not on the artifact. This is a bug in .github/scripts/render-bench-comment.mjs or its environment."
+            echo "reason=The comment renderer failed on its own code path, not on the benchmark report. This is a fault on the reporting side, not in the pull request." >> "$GITHUB_OUTPUT"
             exit 1
           fi
           if [ "$render_rc" -ne 0 ]; then
@@ -391,8 +407,6 @@ jobs:
           header: proving-benchmark
           number: ${{ steps.pr.outputs.number }}
           path: ${{ runner.temp }}/body.md
-          # A bot that posts when nothing moved trains people to ignore it.
-          skip_unchanged: true
 
       # `neutral` never blocks merge, which is the stated requirement. It also
       # keeps the result out of the conversation timeline for people who would
@@ -404,14 +418,33 @@ jobs:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
           BODY_PATH: ${{ runner.temp }}/body.md
+          # This step is the reason a failed comment is not a lost report: the
+          # check run carries the same body. It reports that failure itself
+          # rather than leaving it to the fallback step, which would have to
+          # overwrite THIS check run — and its report — to say so.
+          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
+          # github-script defaults retries to 0, so a single GitHub 5xx or a
+          # secondary rate limit fails the step — and on the trusted side that
+          # reddens the default branch over an outage nobody in the PR caused.
+          retries: 3
           script: |
             const fs = require('fs');
             // check-run output.summary is capped at 65535 chars; the renderer
             // caps the comment body at 60000, so it always fits. No slicing
             // here — a second, unannounced truncation would be the only place
             // in this pipeline that drops content silently.
-            const summary = fs.readFileSync(process.env.BODY_PATH, 'utf8');
+            const report = fs.readFileSync(process.env.BODY_PATH, 'utf8');
+            const commentFailed = process.env.COMMENT_OUTCOME === 'failure';
+            const summary = commentFailed
+              ? [
+                  '> **This report could not be posted as a pull request comment.**',
+                  '> The pull request may have been closed or locked while the benchmark was running.',
+                  '> The full report follows.',
+                  '',
+                  report,
+                ].join('\n')
+              : report;
             const head_sha = process.env.HEAD_SHA;
             const name = 'Proving Benchmark';
             const body = {
@@ -422,7 +455,12 @@ jobs:
               status: 'completed',
               conclusion: 'neutral',
               details_url: process.env.RUN_URL,
-              output: { title: 'Proving benchmark (informational)', summary },
+              output: {
+                title: commentFailed
+                  ? 'Proving benchmark (comment could not be posted)'
+                  : 'Proving benchmark (informational)',
+                summary,
+              },
             };
 
             // Update in place rather than stacking a second check run on the
@@ -487,9 +525,7 @@ jobs:
       # of it, which is why this can run on paths where the artifact was refused
       # as hostile.
       - name: Report that nothing was posted
-        if: >-
-          always() && steps.run.outputs.id != '' &&
-          (steps.render.outputs.ok != 'true' || steps.comment.outcome == 'failure')
+        if: always() && steps.run.outputs.id != '' && steps.render.outputs.ok != 'true' 
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -500,10 +536,12 @@ jobs:
           REPORT_USABLE: ${{ steps.report.outputs.usable }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           RENDER_REASON: ${{ steps.render.outputs.reason }}
-          # A posted comment that failed to post is the one case where the render
-          # succeeded, so it needs its own signal rather than the ladder's.
-          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+          FETCH_OUTCOME: ${{ steps.fetch.outcome }}
         with:
+          # github-script defaults retries to 0, so a single GitHub 5xx or a
+          # secondary rate limit fails the step — and on the trusted side that
+          # reddens the default branch over an outage nobody in the PR caused.
+          retries: 3
           script: |
             const head_sha = process.env.HEAD_SHA;
             if (!head_sha) {
@@ -515,19 +553,15 @@ jobs:
             // step outputs. Inference cannot tell the renderer's refusal apart
             // from the earlier baseSha bail, and naming the wrong cause is worse
             // than naming a vague one.
-            // A comment that failed to post is not a refusal — the report was
-            // rendered and is in the log — so it gets its own sentence rather
-            // than one of the refusal reasons below.
             const reason =
-              (process.env.COMMENT_OUTCOME === 'failure'
-                ? 'The benchmark report rendered but could not be posted as a comment — the pull request may have been closed or locked while the benchmark was running. The rendered report is in the reporter log.'
-                : '') ||
               process.env.RENDER_REASON ||
-              (process.env.REPORT_USABLE !== 'true'
-                ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
-                : !process.env.PR_NUMBER
-                  ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
-                  : 'The benchmark report was not published; the reporter log has the specific reason.');
+              (process.env.FETCH_OUTCOME === 'failure'
+                ? 'The reporter could not fetch the benchmark artifact from the GitHub API. This is a fault on the reporting side, not in the pull request.'
+                : process.env.REPORT_USABLE !== 'true'
+                  ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
+                  : !process.env.PR_NUMBER
+                    ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
+                    : 'The benchmark report was not published; the reporter log has the specific reason.');
 
             const name = 'Proving Benchmark';
             const summary = [

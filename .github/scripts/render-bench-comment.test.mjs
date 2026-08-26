@@ -930,13 +930,19 @@ test("a head-only run does not claim the two sides were interleaved", () => {
     ctx()
   );
   assert.doesNotMatch(body, /one prove at a time, alternating/);
-  assert.doesNotMatch(body, /Base and head are built and measured in the same/);
+  assert.doesNotMatch(
+    body,
+    /Base and head are \*\*measured\*\* in the same job/
+  );
   assert.doesNotMatch(body, /both sides ran interleaved/);
 
   // ... and still does when there IS a base.
   const compared = renderComment(results(), ctx());
   assert.match(compared, /one prove at a time, alternating/);
-  assert.match(compared, /Base and head are built and measured in the same/);
+  assert.match(compared, /Base and head are \*\*measured\*\* in the same job/);
+  // The base dist can come from cache, so the claim must not say both were BUILT
+  // in this job — only that both were measured in it.
+  assert.doesNotMatch(compared, /built and measured in the same job/);
 });
 
 test("still refuses an artifact with no head measurements", () => {
@@ -1418,4 +1424,60 @@ test("the reporter's trigger still names the workflow that produces the artifact
     wanted.includes(producerName),
     `bench-comment.yml triggers on [${wanted.join(", ")}] but bench.yml is named "${producerName}"`
   );
+});
+
+test("surfaces a slowdown that missed every repetition's fastest prove", () => {
+  // The headline estimator takes a minimum per repetition, so a change that
+  // slows two proves in three by 50% leaves it at ±0.00% — the untouched prove
+  // is still the minimum. That is the shape of a collection pause, a lock, or a
+  // retry, and it was completely invisible: verdict "no significant change",
+  // nothing else in the comment. The mean is too noisy to be the verdict, so it
+  // is reported as a disagreement instead.
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+      },
+      benchmark: {
+        base: { samples: Array.from({ length: 6 }, () => [1000, 1000, 1000]) },
+        head: { samples: Array.from({ length: 6 }, () => [1000, 1500, 1500]) },
+      },
+    }),
+    ctx()
+  );
+
+  assert.match(body, /moved on the mean but not on the reported figure/);
+  assert.match(body, /\+33\.33% on the mean of \*every\* prove/);
+  // Still not a verdict: the headline must stay honest about what it measured.
+  assert.match(body, /No significant change/);
+});
+
+test("does not cry mean-only when the two statistics agree", () => {
+  // The note must not appear on an ordinary run, or it becomes the thing readers
+  // learn to skip past.
+  const agreeing = renderComment(results(), ctx());
+  assert.doesNotMatch(agreeing, /moved on the mean but not/);
+
+  // Nor when the headline itself already cleared the floor — the movement is
+  // reported normally in that case and a second note would just be noise.
+  const clear = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+      },
+      benchmark: {
+        base: { samples: Array.from({ length: 6 }, () => [1000, 1000, 1000]) },
+        head: { samples: Array.from({ length: 6 }, () => [1200, 1200, 1200]) },
+      },
+    }),
+    ctx()
+  );
+  assert.match(clear, /slower/);
+  assert.doesNotMatch(clear, /moved on the mean but not/);
 });

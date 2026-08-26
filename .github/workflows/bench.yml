@@ -157,7 +157,7 @@ jobs:
         run: |
           probe_out=$("$SCCACHE_PATH" --start-server 2>&1) && rc=0 || rc=$?
           echo "$probe_out"
-          if [ $rc -eq 0 ]; then
+          if [ "$rc" -eq 0 ]; then
             echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
             echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
           else
@@ -232,7 +232,13 @@ jobs:
           # `tr -d` first: `tr -c` would turn the trailing newline into another
           # separator, leaving a stray `-` in the middle of the key.
           rustc_version=$(rustc --version | tr -d '\n' | tr -c '[:alnum:].' '-')
-          echo "key=${RUNNER_OS}-bench-dist-mt-release-${SALT}-${rustc_version}-${WORKFLOW_HASH:0:16}-${BASE_SHA}" >> "$GITHUB_OUTPUT"
+          # wasm-opt runs over the dist and its version changes the bytes, but it
+          # comes from apt/binaryen rather than the pinned Rust toolchain, so
+          # `rustc --version` does not move when it does. Without this a base
+          # dist built by an older wasm-opt is benched against a head dist built
+          # by a newer one, and the difference is attributed to the PR.
+          wasm_opt_version=$(wasm-opt --version 2>/dev/null | tr -d '\n' | tr -c '[:alnum:].' '-' || echo none)
+          echo "key=${RUNNER_OS}-bench-dist-mt-release-${SALT}-${rustc_version}-${wasm_opt_version}-${WORKFLOW_HASH:0:16}-${BASE_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Restore cache - base MT dist
         id: base-dist-cache
@@ -248,6 +254,14 @@ jobs:
         id: base-build
         if: github.event_name == 'pull_request' && steps.base-dist-cache.outputs.cache-hit != 'true'
         continue-on-error: true
+        # Bounded so an overrun degrades to a head-only run instead of consuming
+        # the job. `continue-on-error` only covers a base build that FAILS; one
+        # that merely runs long would take the head build and the benchmark down
+        # with it and produce no report at all. This build gets its own cold
+        # target dir inside the worktree, which the rust-cache restore does not
+        # reach, so a slow cold `-Z build-std` release build is the normal case
+        # rather than the exceptional one.
+        timeout-minutes: 45
         shell: bash
         env:
           BASE_SHA: ${{ steps.shas.outputs.base_sha }}
@@ -325,8 +339,15 @@ jobs:
             extra=(--base "$RUNNER_TEMP/dist-calib" --calibrate)
           elif [ -d "$RUNNER_TEMP/dist-base" ]; then
             extra=(--base "$RUNNER_TEMP/dist-base")
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # A head-only run on a PR makes NO comparison, which is the one
+            # outcome a reader might mistake for "no regression". Says so as a
+            # warning annotation so it is visible on the run, not only in the log.
+            echo "::warning title=Proving Benchmark::The base dist could not be built, so this run measures head only and makes no comparison. A proving regression would not be visible in it."
           else
-            echo "::warning title=Proving Benchmark::Base dist unavailable (build failed); reporting head-only."
+            # On workflow_dispatch the base build is gated off and never ran, so
+            # nothing failed here.
+            echo "Base dist not built for this event; reporting head-only."
           fi
           node crates/web-client/scripts/bench-proving.mjs \
             "${extra[@]}" \
@@ -449,6 +470,12 @@ jobs:
           path: ${{ runner.temp }}/report/
           retention-days: 5
           if-no-files-found: warn
+          # v4 artifacts are immutable and scoped to the RUN, not the attempt.
+          # Without this, "Re-run failed jobs" keeps attempt 1's artifact, the
+          # re-upload 409s at the end of another 90-minute build, and the
+          # reporter — which lists artifacts per run, not per attempt — publishes
+          # attempt 1's numbers under a link to attempt 2.
+          overwrite: true
 
       - name: Show sccache stats
         if: always()

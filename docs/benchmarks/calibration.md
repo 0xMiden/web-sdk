@@ -178,6 +178,44 @@ already includes everything above. That is the point: the threshold is defined
 as "what this measurement setup does when nothing changed", not as a theoretical
 bound.
 
+### What the estimator cannot see
+
+Every variance reduction above is bought by discarding data, and each discard is
+a specific class of regression that this benchmark will report as `±0.00%`. None
+of these is a reason to change the estimator — a noisier bot that nobody trusts
+catches nothing at all — but they bound what a green result means.
+
+- **A slowdown that misses the fastest prove.** The per-repetition minimum keeps
+  one prove and drops the rest, so a change that makes two proves in three 50%
+  slower moves the reported figure not at all: the untouched prove is still the
+  minimum. That is the shape of a collection pause, a lock, a retry, or a cache
+  that now misses on some fraction of calls. The renderer computes the same
+  delta over *every* retained prove as a cross-check and prints a note when the
+  two disagree, which is the only signal that this case was hit. The note is
+  deliberately not a verdict, because the mean carries 5.39% σ against the
+  estimator's 1.79%.
+- **A cold-start regression.** Prove #0 of every page is discarded, and the
+  entire first repetition is a warm-up. A change that only makes the *first*
+  prove slower — a bigger precompile table, more one-time allocation, extra
+  lazy-init work — is invisible by construction. Proving cost after warm-up is
+  what this benchmark measures, and a user's first prove is not that.
+- **Anything outside the timed interval.** The timer wraps the
+  `proveTransaction` call and nothing else. Prover construction
+  (`newLocalProver`), transaction execution, the faucet draw, the sync, and the
+  production worker round-trip are all outside it. A regression confined to any
+  of them cannot move this number, and the web worker path in particular is
+  never exercised — the benchmark deliberately constructs the client with
+  `globalThis.Worker` undefined, because a worker-backed prove reports the
+  round-trip rather than the compute.
+- **Both sides share one machine, simultaneously.** Base and head are separate
+  browser contexts open at the same time, each having called `initThreadPool` for
+  the full thread count. Only one of the two proves at any instant, so they do
+  not contend for CPU during the timed interval, but they do share caches, memory
+  bandwidth, and whatever the idle context's pool threads cost while parked. That
+  is a symmetric cost — it is present on both sides, so it inflates the floor
+  rather than favouring either side — and it is part of why the floor is as wide
+  as it is.
+
 ## Applying the result
 
 Set `THRESHOLD_PCT` in `.github/scripts/render-bench-comment.mjs` to the
