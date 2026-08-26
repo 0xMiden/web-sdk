@@ -133,6 +133,8 @@ jobs:
           fi
       - name: make - clippy-wasm
         run: make clippy-wasm
+      - name: make - check-wasm-features
+        run: make check-wasm-features
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true

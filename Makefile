@@ -32,8 +32,32 @@ format-check: ## Run format using nightly toolchain but only in check mode
 	pnpm --silent exec prettier . --check
 	pnpm --silent exec eslint .
 
+.PHONY: check-wasm-features
+check-wasm-features: ## Verify the ST WASM build still resolves the dependency features it needs
+	# miden-precompiles-prover caches its preprocessed STARK bundle only under
+	# its `std` feature, which crates/web-client turns on via a feature-only
+	# dependency. Nothing else fails if that resolution regresses: the cache
+	# just goes quiet and every precompile-raising prove gets slow again
+	# (issue #318). Two copies of the crate would be as bad as zero — the
+	# direct dep would carry `std` while the prover called the other one.
+	@resolved="$$(cargo tree --package miden-client-web --target wasm32-unknown-unknown \
+		--edges normal --format '{p} {f}' --prefix none \
+		| grep '^miden-precompiles-prover v' | sed 's/ (\*)$$//' | sort -u)" || exit 1; \
+	if [ "$$(printf '%s\n' "$$resolved" | grep -c .)" -ne 1 ]; then \
+		echo "error: expected exactly one resolved miden-precompiles-prover, found:"; \
+		printf '%s\n' "$$resolved"; \
+		exit 1; \
+	fi; \
+	printf '%s\n' "$$resolved" | grep -Eq '(^| |,)std($$|,)' || { \
+		echo "error: the ST WASM build resolves miden-precompiles-prover without 'std',"; \
+		echo "       so the preprocessed-STARK cache is disabled (issue #318). Resolved as:"; \
+		printf '%s\n' "$$resolved"; \
+		exit 1; \
+	}; \
+	echo "ok: ST WASM resolves $$resolved"
+
 .PHONY: lint
-lint: fix-wasm format clippy-wasm typos-check rust-client-ts-lint web-client-check-methods ## Run all linting tasks at once
+lint: fix-wasm format clippy-wasm typos-check rust-client-ts-lint web-client-check-methods check-wasm-features ## Run all linting tasks at once
 
 .PHONY: toml
 toml: ## Runs Format for all TOML files
@@ -110,6 +134,17 @@ integration-test-web-client: ## Run integration tests for the web client (with a
 integration-test-web-client-webkit: ## Run web client tests (webkit)
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test --project=webkit
+
+.PHONY: bench-precompile-cache
+BENCH_ARGS ?=
+bench-precompile-cache: ## Benchmark the precompile preprocessed-table cache (needs a built dist/st)
+	# Manual, not part of any CI gate — it launches Chromium and each prove
+	# takes seconds. Pass flags through BENCH_ARGS, e.g.
+	# `make bench-precompile-cache BENCH_ARGS="--pages 5 --variants ecdsa"`.
+	# To isolate the cache itself rather than generic first-prove warm-up,
+	# build dist/st with and without the feature and point the script at each
+	# saved copy — the first positional argument is the dist dir.
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-precompile-cache.mjs $(BENCH_ARGS)
 
 .PHONY: integration-test-remote-prover-web-client
 integration-test-remote-prover-web-client: ## Run integration tests for the web client with remote prover

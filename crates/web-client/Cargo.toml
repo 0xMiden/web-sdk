@@ -79,9 +79,14 @@ miden-client = { features = ["testing"], workspace = true }
 # process-lifetime `OnceLock`; without `std` every prove/verify that raises a
 # precompile claim (e.g. an ECDSA-authenticated transaction) rebuilds it from
 # scratch. The MT build already gets `std` transitively via
-# `miden-client/concurrent`; this makes the ST build match. The bundle is held
-# until the WASM instance is torn down — there is no eviction API — so this
-# trades retained memory for the repeat-prove speedup.
+# `miden-client/concurrent`; this makes the ST build match.
+#
+# The trade is memory: ~50 MiB retained per proving hash function (2 MiB table
+# + 16 MiB LDE at log_blowup 3 + ~32 MiB of Merkle digest layers), held until
+# the WASM instance is torn down — the cache is a function-local `OnceLock`, so
+# there is no eviction API. In practice that is one slot, not five:
+# `TransactionProver.newLocalProver()` builds `ProvingOptions::default()`,
+# which is Blake3_256.
 #
 # Deliberately NOT `miden-prover/std` or `miden-processor/std`: those would
 # compile miden-processor's std-gated threaded trace build, which traps on
@@ -97,10 +102,14 @@ miden-client = { features = ["testing"], workspace = true }
 # spinlock) and `LazyLock` becomes `std::sync::LazyLock`, which links
 # parking_lot into the ST build. parking_lot_core has no `nightly` feature
 # here, so on wasm32 it selects the parker that panics on any blocking
-# acquisition — safe only because the ST build is single-threaded and every
-# in-graph lock site is uncontended and non-reentrant. This is the same
-# configuration the MT build has shipped all along. None of the newly-`std`
-# crates reach a thread, filesystem, or `std::time` path from the web client.
+# acquisition. That is reachable only by blocking, and the ST build has one
+# thread — so only a re-entrant acquisition could trip it, which would have
+# hung the old spinlock just as surely. parking_lot's eventual-fairness timer,
+# the other wasm32 hazard, is inert: parking_lot_core compiles its
+# `TimeoutInstant` down to a ZST on this target precisely because `Instant`
+# panics here. The MT build has shipped this same configuration all along.
+# None of the newly-`std` crates reach a thread, filesystem, or `std::time`
+# path from the web client.
 #
 # See issue #318.
 miden-precompiles-prover = { features = ["std"], workspace = true }

@@ -378,6 +378,9 @@ try {
     browser?.close(),
     new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
+      // `close` only stops accepting; without this it waits out the
+      // keep-alive timeout on any socket Chromium left open.
+      server.closeAllConnections();
     }),
   ]);
   for (const outcome of teardown) {
