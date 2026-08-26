@@ -89,6 +89,16 @@ const THRESHOLD_PROVISIONAL = true;
  */
 const LOWER_IS_BETTER = true;
 
+/**
+ * The configuration the 1.79% estimator spread was measured at.
+ *
+ * `reps` and `provesPerRep` come from the artifact, so a run that reports one
+ * repetition of one prove must not inherit a standard deviation measured over
+ * six of three. Below these counts the comment says the figure does not apply.
+ */
+const CALIBRATED_REPS = 6;
+const CALIBRATED_PROVES_PER_REP = 3;
+
 const NUM_FMT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
@@ -148,8 +158,14 @@ function sanitizeText(value, maxLen = MAX_NAME_CHARS, fallback = "(unnamed)") {
   }
   const cleaned = raw
     .replace(/[`|<>@\\&]/g, " ")
-    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, " ")
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}]/gu, " ")
     .replace(/[\p{Default_Ignorable_Code_Point}\u2800]/gu, " ")
+    // Keep at most two combining marks per base character. Unbounded stacking
+    // ("zalgo") renders as a cell many lines tall that pushes the rest of the
+    // table off the screen, and no real benchmark name needs a third. Stripping
+    // marks outright would instead mangle legitimate text, so this caps rather
+    // than removes.
+    .replace(/(\p{M}\p{M})\p{M}+/gu, "$1")
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length === 0) return fallback;
@@ -225,10 +241,16 @@ function requireFinite(value, path) {
   return value;
 }
 
-function requireInt(value, path, { min = 0 } = {}) {
+function requireInt(
+  value,
+  path,
+  { min = 0, max = Number.MAX_SAFE_INTEGER } = {}
+) {
   requireFinite(value, path);
-  if (!Number.isInteger(value) || value < min) {
-    fail(`${path} must be an integer >= ${min}, got ${describeValue(value)}`);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    fail(
+      `${path} must be an integer in [${min}, ${max}], got ${describeValue(value)}`
+    );
   }
   return value;
 }
@@ -337,11 +359,19 @@ function normalizeResults(input) {
     );
   }
 
-  const reps = requireInt(results.reps, "reps", { min: 1 });
+  // Bounded, because these three are still artifact-authored and the comment
+  // prints them as statements of fact about what ran ("6 reps × 3 warm proves,
+  // 8 threads"). They cannot be recomputed the way the measurements are — the
+  // reporter has no independent knowledge of the bench configuration — so the
+  // most that can be done is refuse values no real run could produce, which at
+  // least keeps the claim within a believable range and stops a single sample
+  // from being dressed up as a large one.
+  const reps = requireInt(results.reps, "reps", { min: 1, max: 1000 });
   const provesPerRep = requireInt(results.provesPerRep, "provesPerRep", {
     min: 1,
+    max: 1000,
   });
-  const threads = requireInt(results.threads, "threads", { min: 1 });
+  const threads = requireInt(results.threads, "threads", { min: 1, max: 1024 });
 
   if (!Array.isArray(results.benchmarks)) {
     fail(
@@ -491,6 +521,41 @@ function plural(n, singular, pluralForm = `${singular}s`) {
 const EMOJI_WORSE = "🔺";
 const EMOJI_BETTER = "🔻";
 const EMOJI_NOISE = "➖";
+const EMOJI_UNRESOLVED = "❔";
+
+/**
+ * Do the per-repetition pairs agree with the aggregate about the direction?
+ *
+ * The threshold alone tests a ratio of two means and throws away the spread that
+ * produced them, even though the samples are right there in the artifact. Six
+ * repetitions clustered at +5.3% and a pair of repetitions straddling zero can
+ * report the same aggregate percentage, and only one of them is a result.
+ *
+ * Base and head are driven interleaved within a repetition, so repetition `i` of
+ * one side pairs with repetition `i` of the other: the two saw the same machine,
+ * the same thermal state and the same neighbours. That makes the per-repetition
+ * differences a legitimate paired sample, and requiring all of them to share the
+ * aggregate's sign is a sign test — for the default six repetitions it is the
+ * 2/2^6 ≈ 3% tail, without assuming normality.
+ *
+ * A repetition with an exactly zero difference neither agrees nor contradicts,
+ * so it is not counted against consistency.
+ */
+function pairedAgreement(base, head) {
+  const reps = Math.min(base.samples.length, head.samples.length);
+  if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
+  const deltas = [];
+  for (let i = 0; i < reps; i += 1) {
+    deltas.push(minOf(head.samples[i]) - minOf(base.samples[i]));
+  }
+  const direction = Math.sign(mean(deltas));
+  if (direction === 0) return { consistent: false, agree: 0, reps };
+  const agree = deltas.filter((d) => Math.sign(d) === direction).length;
+  const contradicting = deltas.filter(
+    (d) => d !== 0 && Math.sign(d) !== direction
+  ).length;
+  return { consistent: contradicting === 0, agree, reps };
+}
 
 function computeRows(results) {
   const rows = results.benchmarks.map((b) => {
@@ -514,9 +579,22 @@ function computeRows(results) {
     if (deltaPct !== null && !Number.isFinite(deltaPct))
       fail(`${b.name}: delta percentage is not finite`);
     const magnitude = deltaPct === null ? 0 : Math.abs(deltaPct);
+    const agreement =
+      b.base === null
+        ? { consistent: false, agree: 0, reps: 0 }
+        : pairedAgreement(b.base, b.head);
+    // Two independent conditions, and both have to hold. The threshold is the
+    // smallest movement worth reporting at all; the paired agreement is whether
+    // the repetitions actually support a movement of that direction. A movement
+    // that clears the floor on aggregate while its repetitions disagree is
+    // neither a result nor noise — it is unresolved, and saying so is more
+    // honest than picking one of the two labels.
+    //
     // `magnitude > 0` so a threshold of zero does not classify an exactly
     // unchanged benchmark as a movement — and then as an improvement.
-    const beyond = magnitude > 0 && magnitude >= THRESHOLD_PCT;
+    const clearsFloor = magnitude > 0 && magnitude >= THRESHOLD_PCT;
+    const beyond = clearsFloor && agreement.consistent;
+    const unresolved = clearsFloor && !agreement.consistent;
     const isWorse = LOWER_IS_BETTER ? deltaValue > 0 : deltaValue < 0;
     return {
       ...b,
@@ -524,8 +602,16 @@ function computeRows(results) {
       deltaPct,
       magnitude,
       beyond,
+      unresolved,
+      agreement,
       isWorse,
-      emoji: beyond ? (isWorse ? EMOJI_WORSE : EMOJI_BETTER) : EMOJI_NOISE,
+      emoji: beyond
+        ? isWorse
+          ? EMOJI_WORSE
+          : EMOJI_BETTER
+        : unresolved
+          ? EMOJI_UNRESOLVED
+          : EMOJI_NOISE,
     };
   });
 
@@ -563,7 +649,18 @@ function buildVerdict(rows) {
 
   const thresholdText = `${THRESHOLD_PROVISIONAL ? "provisional " : ""}±${formatPct(THRESHOLD_PCT)}`;
   const moved = rows.filter((r) => r.beyond);
+  const unresolved = rows.filter((r) => r.unresolved);
   const worst = comparable[0];
+
+  if (moved.length === 0 && unresolved.length > 0) {
+    // Clears the floor but the repetitions disagree about the direction. Calling
+    // that "no significant change" would bury it, and calling it a regression
+    // would assert something the samples do not support.
+    const leader = unresolved[0];
+    const rest =
+      unresolved.length > 1 ? ` (+${unresolved.length - 1} more)` : "";
+    return `### ${EMOJI_UNRESOLVED} Unresolved ${formatSignedPct(leader.deltaPct)}: ${codeSpan(leader.name)} moved beyond the floor but its repetitions disagree${rest}`;
+  }
 
   if (moved.length === 0) {
     // The heading has to be readable at a glance in a notification list, so it
@@ -766,9 +863,16 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     "",
     `- Each benchmark keeps **${results.reps} ${plural(results.reps, "rep")} × ${results.provesPerRep} warm ${plural(results.provesPerRep, "prove")}** on \`${results.runner}\` (${results.threads} ${plural(results.threads, "thread")}, \`${results.profile}\` / \`${results.variant}\`). One extra repetition and the first prove of every page run first and are discarded.`,
     `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its clean compute cost. Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima cancels that lottery.`,
-    `- Measured over six calibration runs of identical binaries, this estimator holds a standard deviation of 1.79%, against 2.96% for a global minimum and 5.39% for a plain median.`,
+    // The 1.79% figure was measured at 6 reps × 3 warm proves. It is a property
+    // of the estimator AT THAT SAMPLE SIZE, and `reps` / `provesPerRep` are
+    // artifact-authored — so a thinner run must not inherit the claim.
+    results.reps >= CALIBRATED_REPS &&
+    results.provesPerRep >= CALIBRATED_PROVES_PER_REP
+      ? `- Measured over six calibration runs of identical binaries, this estimator holds a standard deviation of 1.79%, against 2.96% for a global minimum and 5.39% for a plain median.`
+      : `- This run used fewer samples than the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown.`,
     ...(compared
       ? [
+          `- A movement is only called significant when it clears the noise floor **and** every repetition's paired difference agrees on its direction. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result.`,
           `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
           `- A wide gap between the reported figure and the max means the runner was busy. It does not invalidate the comparison (both sides ran interleaved on the same machine) but it is worth a second look.`,
           `- Base and head are built and measured in the same job on the same runner, so runner-to-runner drift cancels out.`,
@@ -798,7 +902,26 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
 }
 
 function buildLegend() {
-  return `<sub>${EMOJI_WORSE} slower beyond the noise floor · ${EMOJI_BETTER} faster beyond the noise floor · ${EMOJI_NOISE} within the noise floor</sub>`;
+  return (
+    `<sub>${EMOJI_WORSE} slower beyond the noise floor · ${EMOJI_BETTER} faster beyond the noise floor · ` +
+    `${EMOJI_UNRESOLVED} beyond the floor but the repetitions disagree · ${EMOJI_NOISE} within the noise floor</sub>`
+  );
+}
+
+/**
+ * Only rendered when something actually came out unresolved, so the common case
+ * does not carry an explanation of a state it is not in.
+ */
+function buildUnresolvedNote(rows) {
+  const unresolved = rows.filter((r) => r.unresolved);
+  if (unresolved.length === 0) return "";
+  const leader = unresolved[0];
+  return [
+    `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but the`,
+    `> per-repetition pairs do not agree on its direction — ${codeSpan(leader.name)} agrees in only`,
+    `> ${leader.agreement.agree} of ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}. That is a spread too wide to call, not a result. Re-run, or`,
+    `> raise \`--reps\` to narrow it.`,
+  ].join("\n");
 }
 
 function buildFooter(ctx) {
@@ -829,6 +952,8 @@ function assemble(
   if (ctx.calibration) blocks.push(buildCalibrationNote(ctx));
   if (rows.length > 0 && rows.every((r) => r.base === null))
     blocks.push(buildHeadOnlyNote());
+  const unresolvedNote = buildUnresolvedNote(rows);
+  if (unresolvedNote) blocks.push(unresolvedNote);
   if (THRESHOLD_PROVISIONAL) blocks.push(buildProvisionalNote(results, ctx));
   for (const notice of notices) blocks.push(notice);
   blocks.push(buildContextTable(results, ctx, rows));

@@ -152,13 +152,17 @@ bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt
 	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs $(BENCH_ARGS)
 
 .PHONY: test-bench-scripts
-test-bench-scripts: ## Unit-test the benchmark comment renderer
+test-bench-scripts: ## Unit-test the benchmark comment renderer and artifact extraction
 	# Lives outside the vitest projects on purpose: those carry a 95% coverage
 	# threshold scoped to shipped package sources, and CI plumbing has no
 	# business inside that gate.
 	# Explicit path, not a glob — `node --test` only globs from Node 21 and CI
 	# pins Node 20.
 	node --test .github/scripts/render-bench-comment.test.mjs
+	# The extraction step is the only part of the reporter that handles a
+	# fork-controlled archive, so it lives in a script that can be tested rather
+	# than inline in the workflow where nothing could reach it.
+	bash .github/scripts/extract-bench-artifact.test.sh
 
 .PHONY: bench-proving-calibrate
 bench-proving-calibrate: ## Measure the benchmark's own noise floor (see docs/benchmarks/calibration.md)

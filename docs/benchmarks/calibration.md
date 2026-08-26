@@ -41,12 +41,33 @@ time — rare enough that the bot keeps its credibility. Tighter than the measur
 floor turns the bot into a false-positive generator, and a bot that cries wolf
 gets muted within a week.
 
-Two caveats on that 0.3%. It assumes the deltas are roughly normal, which the
-grind lottery below argues against in the tails, so treat it as an order of
-magnitude rather than a rate. And it is the rate for **one** benchmark: this
-suite has exactly one today, but N independent benchmarks each tested at 3σ give
-a familywise false-positive rate near `N × 0.3%`, so adding benchmarks means
-either widening the threshold or accepting more noise in the verdict.
+Three caveats on that 0.3%, and the first is the one that bites.
+
+**σ is estimated, not known.** 0.3% is the tail of a normal distribution with a
+*known* standard deviation. Divide a fresh observation by an σ estimated from `n`
+runs and the result follows a t distribution with `n − 1` degrees of freedom, not
+a normal: beyond 3 that is roughly 0.7% at `n = 20`, 0.55% at `n = 30`, and about
+**3%** at the `n = 6` the current placeholder rests on. So 20–30 runs is the
+minimum for the figure to mean anything, and even then 3σ is closer to a 0.5%
+rate than a 0.3% one. Treat the threshold as "rare", not as a calibrated rate.
+
+**Normality.** It assumes the deltas are roughly normal, which the grind lottery
+below argues against in the tails.
+
+**One benchmark.** It is the rate for a single benchmark. This suite has exactly
+one today, but N independent benchmarks each tested at 3σ give a familywise
+false-positive rate near `N × 0.3%`, so adding benchmarks means either widening
+the threshold or accepting more noise in the verdict.
+
+The renderer does not rest the verdict on the threshold alone, for exactly these
+reasons. A movement is reported as significant only when it clears the floor
+**and** every repetition's paired difference agrees on its direction; base and
+head run interleaved within a repetition, so those differences are a genuine
+paired sample and the agreement requirement is a sign test that assumes nothing
+about the shape of the distribution (2/2⁶ ≈ 3% at the default six repetitions).
+A movement that clears the floor while its repetitions disagree is reported as
+**unresolved** rather than as a result — which is the honest label for an
+aggregate whose spread is wider than the effect.
 
 ## Why the estimator is what it is
 
@@ -70,14 +91,20 @@ six calibration runs of identical binaries, on a (busy) developer laptop:
   Fiat-Shamir transcript, hence how long the prover grinds to hit
   `QUERY_POW_BITS`. The grind is a geometric random variable: its expected work
   is fixed, its actual work is not. A *global* minimum would just pick the
-  luckiest draw and inherit that lottery's heavy tail; averaging the
+  luckiest draw and inherit the whole spread of that lottery; averaging the
   per-repetition minima shrinks it towards its expectation.
+
+  A geometric distribution is skewed, not heavy-tailed — its tail decays
+  exponentially — so the word to use is "skewed". The practical consequence is
+  the same for a minimum, which is drawn towards the luckiest draw either way.
 
   Note **shrinks**, not cancels. Base and head are separate pages served from
   separate dists, so each runs its own setup and draws its own grind — the
   comparison is not paired on the grind, and the residual is what more
-  repetitions buy down. This is the dominant term in the floor, and the only way
-  to remove it outright is a deterministic faucet (see the last section).
+  repetitions buy down. It is likely the largest single term in the floor, but
+  nothing here has decomposed the variance to prove that: doing so needs a
+  seeded faucet, which would also remove the term outright (see the last
+  section). Until then, treat the attribution as a hypothesis.
 
 Three further corrections, also measured:
 

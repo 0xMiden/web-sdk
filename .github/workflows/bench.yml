@@ -17,10 +17,20 @@ on:
     # spending on a PR that cannot move a proving number. `paths-ignore` only
     # skips when EVERY changed file matches, so a PR touching docs and code
     # still runs.
+    # Deliberately a denylist and not an allowlist. An allowlist that misses a
+    # path ships an unmeasured regression, which is the failure this bot exists
+    # to prevent; a denylist that misses a path only wastes a run. So only
+    # directories that provably cannot reach the WASM proving path are listed —
+    # the published JS packages all depend on `@miden-sdk/miden-sdk`, never the
+    # other way round, so nothing in them participates in building its dist.
     paths-ignore:
       - "**.md"
       - "docs/**"
       - "LICENSE"
+      - "packages/react-sdk/**"
+      - "packages/vite-plugin/**"
+      - "packages/node-sdk-*/**"
+      - ".github/ISSUE_TEMPLATE/**"
   # Calibration: bench the merge-base against ITSELF. The true delta is zero,
   # so whatever the run reports is this runner's measurement noise. Run it a
   # dozen times and set `THRESHOLD_PCT` in .github/scripts/render-bench-comment.mjs
@@ -44,11 +54,16 @@ permissions:
   contents: read
 
 concurrency:
+  # Keyed on the PR NUMBER, not on the head branch. One fork branch can back two
+  # open PRs with different bases, and keying on the branch made them cancel each
+  # other's benchmark — so whichever PR was pushed to second was the only one
+  # that ever got a result.
+  #
   # On workflow_dispatch there is no PR and no head_ref, so every dispatch from
   # one branch would collapse onto the same key — and with cancel-in-progress
   # each calibration dispatch would kill the previous one, which is exactly what
   # the calibration procedure must not do. Keyed on the run id for those.
-  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || format('{0}-{1}', github.ref, github.run_id) }}"
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}"
   cancel-in-progress: true
 
 env:
@@ -176,8 +191,10 @@ jobs:
       # Cheap and fails fast: a broken renderer would otherwise only surface
       # after ~20 minutes of building, and then only as a missing comment.
       # Explicit path, not a glob — `node --test` only globs from Node 21.
-      - name: Test the comment renderer
-        run: node --test .github/scripts/render-bench-comment.test.mjs
+      - name: Test the comment renderer and the artifact extraction
+        run: |
+          node --test .github/scripts/render-bench-comment.test.mjs
+          bash .github/scripts/extract-bench-artifact.test.sh
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -202,7 +219,9 @@ jobs:
           SALT: ${{ env.RUST_CACHE_KEY }}
         run: |
           set -euo pipefail
-          rustc_version=$(rustc --version | tr -c '[:alnum:].' '-')
+          # `tr -d` first: `tr -c` would turn the trailing newline into another
+          # separator, leaving a stray `-` in the middle of the key.
+          rustc_version=$(rustc --version | tr -d '\n' | tr -c '[:alnum:].' '-')
           echo "key=${RUNNER_OS}-bench-dist-mt-release-${SALT}-${rustc_version}-${WORKFLOW_HASH:0:16}-${BASE_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Restore cache - base MT dist
@@ -233,6 +252,22 @@ jobs:
           # build-st halves the work: the bench is MT-only.
           pnpm --filter @miden-sdk/miden-sdk run build-mt
           mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-base"
+
+      # A second full checkout with its own node_modules and release `target/` is
+      # tens of GB, and the head build, the Chromium download and the benchmark
+      # all still have to fit. Reclaimed unconditionally: the base build is
+      # continue-on-error, and the failure path is the one that most needs the
+      # space back, since it falls through to a head-only run.
+      - name: Reclaim the base worktree
+        if: always() && steps.base-dist-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ -d "$RUNNER_TEMP/base-src" ]; then
+            git worktree remove --force "$RUNNER_TEMP/base-src" || rm -rf "$RUNNER_TEMP/base-src"
+            git worktree prune
+          fi
+          df -h /
 
       - name: Save cache - base MT dist
         if: steps.base-dist-cache.outputs.cache-hit != 'true' && steps.base-build.outcome == 'success'

@@ -252,6 +252,100 @@ test("refuses an artifact built against an older schema", () => {
   );
 });
 
+// --- Verdict: the threshold is necessary but not sufficient ----------------
+
+test("refuses to call a movement significant when the repetitions disagree", () => {
+  // The threshold tests a ratio of two means and throws away the spread that
+  // produced them, even though the samples are in the artifact. These head
+  // repetitions straddle the base badly — +50%, +50%, −38% — and average to a
+  // movement that clears the floor. Calling that a regression asserts something
+  // the repetitions do not support.
+  const body = renderComment(
+    results({
+      top: { reps: 3, provesPerRep: 1 },
+      benchmark: {
+        base: { samples: [[100], [100], [100]] },
+        head: { samples: [[150], [150], [62]] },
+      },
+    }),
+    ctx()
+  );
+  const heading = body.split("\n")[0];
+  assert.match(heading, /Unresolved/);
+  assert.doesNotMatch(heading, /slower/);
+  assert.match(body, /\*\*1 benchmark unresolved\.\*\*/);
+  assert.match(body, /agrees in only\n> 2 of 3 repetitions/);
+  assert.match(benchmarkRows(body)[0], /❔/u);
+});
+
+test("calls a consistent movement significant", () => {
+  // Same aggregate size as the unresolved case above, but every repetition
+  // agrees on the direction, so there is a result to report.
+  const body = renderComment(
+    results({
+      top: { reps: 3, provesPerRep: 1 },
+      benchmark: {
+        base: { samples: [[100], [100], [100]] },
+        head: { samples: [[120], [121], [119]] },
+      },
+    }),
+    ctx()
+  );
+  const heading = body.split("\n")[0];
+  assert.match(heading, /⚠️ \+20\.00% slower/);
+  // The legend always names the unresolved state; the NOTE only appears when
+  // something is actually in it.
+  assert.doesNotMatch(body, /benchmark unresolved/);
+  assert.match(benchmarkRows(body)[0], /🔺/u);
+});
+
+test("does not inherit the calibrated spread for a thinner run", () => {
+  // The 1.79% figure was measured at 6 reps × 3 warm proves, and both counts are
+  // artifact-authored. A single sample per side must not be dressed up in a
+  // standard deviation measured over eighteen.
+  const thin = renderComment(
+    results({
+      top: { reps: 1, provesPerRep: 1 },
+      benchmark: {
+        base: { samples: [[1000]] },
+        head: { samples: [[1010]] },
+      },
+    }),
+    ctx()
+  );
+  assert.doesNotMatch(thin, /holds a standard deviation of 1\.79%/);
+  assert.match(thin, /fewer samples than the 6 × 3/);
+
+  const full = renderComment(
+    results({
+      top: { reps: 6, provesPerRep: 3 },
+      benchmark: {
+        base: { samples: Array.from({ length: 6 }, () => [1000, 1200, 1400]) },
+        head: { samples: Array.from({ length: 6 }, () => [1010, 1200, 1400]) },
+      },
+    }),
+    ctx()
+  );
+  assert.match(full, /holds a standard deviation of 1\.79%/);
+});
+
+test("refuses artifact-authored counts no real run could produce", () => {
+  // These three cannot be recomputed — the reporter has no independent
+  // knowledge of the bench configuration — so the comment prints them as fact.
+  // Bounding them is the most that can be done.
+  for (const [field, value] of [
+    ["reps", 1_000_000],
+    ["provesPerRep", 1_000_000],
+    ["threads", 1_000_000],
+  ]) {
+    assert.throws(
+      () => renderComment(results({ top: { [field]: value } }), ctx()),
+      new RegExp(`${field} must be an integer in`),
+      `${field} was accepted at ${value}`
+    );
+  }
+});
+
 test("classifies movement against the threshold", () => {
   const within = renderComment(results(), ctx());
   assert.match(within, /No significant change/);
@@ -357,7 +451,7 @@ test("headlines the worst regression, not the biggest mover", () => {
 
 /** Benchmark result rows, as opposed to the context table's label/value rows. */
 const benchmarkRows = (body) =>
-  body.split("\n").filter((line) => /^\| (?:🔺|🔻|➖) \|/u.test(line));
+  body.split("\n").filter((line) => /^\| (?:🔺|🔻|➖|❔) \|/u.test(line));
 
 test("strips markup and mentions from fork-controlled benchmark names", () => {
   const hostile =
@@ -445,6 +539,11 @@ test("renders no invisible or control characters", () => {
     "\u009F",
     "\u3164",
     "\u2800",
+    "\u115F",
+    "\u1160",
+    "\uFFA0",
+    "\uE000",
+    "\uFFFF",
   ];
   const body = renderComment(
     results({ benchmark: { name: `a${invisible.join("")}b` } }),
@@ -461,6 +560,27 @@ test("renders no invisible or control characters", () => {
       `U+${ch.codePointAt(0).toString(16).toUpperCase()} survived`
     );
   }
+});
+
+test("caps stacked combining marks without mangling legitimate text", () => {
+  // Unbounded stacking renders as a cell many lines tall that pushes the rest of
+  // the table off the screen — the same failure the blank-glyph strip exists for.
+  const zalgo = renderComment(
+    results({ benchmark: { name: `a${"\u0301".repeat(60)}b` } }),
+    ctx()
+  );
+  const row = benchmarkRows(zalgo)[0];
+  assert.ok(
+    (row.match(/\p{M}/gu) ?? []).length <= 2,
+    `combining marks survived: ${JSON.stringify(row)}`
+  );
+
+  // Stripping marks outright would break real names, so the cap must not.
+  const legit = renderComment(
+    results({ benchmark: { name: "café / naïve / 日本語 / 😀" } }),
+    ctx()
+  );
+  assert.match(benchmarkRows(legit)[0], /café \/ naïve \/ 日本語 \/ 😀/);
 });
 
 test("strips a lone surrogate rather than returning ill-formed UTF-16", () => {
@@ -579,7 +699,12 @@ test("degrades an unrecognized run URL to text instead of linking it", () => {
   ]) {
     const body = renderComment(results(), ctx({ runUrl }));
     assert.ok(!body.includes(runUrl), `${runUrl} was rendered as a link`);
-    assert.doesNotMatch(body, /\]\(the workflow run\)/, "malformed link");
+    // Assert the positive shape: the fallback is bare text, so it must appear
+    // and must not be sitting inside a markdown link target. `doesNotMatch` on
+    // `](the workflow run)` alone could never fail, since the renderer has no
+    // code path that would emit it.
+    assert.match(body, /attached to the workflow run as/);
+    assert.doesNotMatch(body, /\((?:the workflow run|bench run)/);
   }
 });
 
