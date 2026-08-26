@@ -1,0 +1,40 @@
+{
+  "name": "@miden-sdk/create-miden-para-react",
+  "version": "0.15.1",
+  "description": "Create a Vite react-ts app preconfigured with Miden + Para's Vite setup",
+  "type": "module",
+  "bin": "./bin/create-miden-para-react.mjs",
+  "files": [
+    "bin",
+    "template",
+    "README.md",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "author": "Miden Labs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/para-sdk.git",
+    "directory": "packages/create-miden-para-react"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/para-sdk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "create-vite",
+    "vite",
+    "react",
+    "typescript",
+    "miden",
+    "para"
+  ],
+  "scripts": {
+    "publish": "npm publish"
+  }
+}
