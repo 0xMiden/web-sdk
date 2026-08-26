@@ -1,0 +1,41 @@
+{
+  "name": "@miden-sdk/miden-wallet-adapter-reactui",
+  "version": "0.16.0-rc.4",
+  "description": "React UI Components for connecting Miden-compatible wallets to your dApp.",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/adapter/reactui"
+  },
+  "author": "Demox Labs",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc && yarn copy-files",
+    "clean": "rimraf dist/ node_modules/",
+    "copy-files": "copyfiles styles.css dist/",
+    "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown"
+  },
+  "dependencies": {
+    "@miden-sdk/miden-wallet-adapter-base": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-miden": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-react": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react-dom": "^19.0.4",
+    "copyfiles": "^2.4.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "peerDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
+}

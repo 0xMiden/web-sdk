@@ -1,0 +1,96 @@
+{
+  "name": "@miden-sdk/para-react",
+  "version": "0.16.0-rc.4",
+  "description": "React hook that wires Para accounts into a Miden client",
+  "license": "MIT",
+  "author": "Miden Labs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/para/react"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk",
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./vite": {
+      "import": {
+        "types": "./dist/paraVitePlugin.d.mts",
+        "default": "./dist/paraVitePlugin.mjs"
+      },
+      "require": {
+        "types": "./dist/paraVitePlugin.d.ts",
+        "default": "./dist/paraVitePlugin.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "package.json"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@getpara/react-sdk-lite": "^2.11.0",
+    "@getpara/web-sdk": "^2.11.0",
+    "@miden-sdk/para": "^0.16.0-rc.4",
+    "@miden-sdk/miden-sdk": "^0.16.0-rc.4",
+    "@miden-sdk/react": "^0.16.0-rc.4",
+    "@tanstack/react-query": "^5.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "vite-plugin-node-polyfills": "^0.22.0"
+  },
+  "peerDependenciesMeta": {
+    "vite-plugin-node-polyfills": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@getpara/react-sdk-lite": "^2.11.0",
+    "@getpara/web-sdk": "^2.11.0",
+    "@miden-sdk/miden-sdk": "workspace:*",
+    "@miden-sdk/react": "workspace:*",
+    "@tanstack/react-query": "^5.90.12",
+    "@types/node": "^25.3.5",
+    "@types/react": "^19.2.5",
+    "tsup": "^8.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "@miden-sdk/para": "workspace:*"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "miden",
+    "para",
+    "react",
+    "hook",
+    "wallet"
+  ],
+  "type": "commonjs"
+}
