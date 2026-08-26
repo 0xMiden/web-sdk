@@ -2452,6 +2452,7 @@ dependencies = [
  "miden-client",
  "miden-client-sqlite-store",
  "miden-idxdb-store",
+ "miden-precompiles-prover",
  "napi",
  "napi-build",
  "napi-derive",

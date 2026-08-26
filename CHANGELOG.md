@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0-rc.4 (TBA)
+
+### Fixes
+
+* [FIX][web] The single-threaded WASM build now caches the precompile prover's preprocessed STARK data (the BytePairLut table, its low-degree extension, and Merkle commitment) for the lifetime of the WASM instance, matching the multi-threaded build. Previously every prove or verify that raised a precompile claim — e.g. a transaction authenticated with an ECDSA/keccak key — rebuilt it from scratch. Repeat proofs in the same instance no longer redo that work; the wall-time saving was below run-to-run variance when measured on a fast desktop, so treat it as removing redundant work rather than as a specific speedup. The trade is memory: roughly 50 MiB is retained until the WASM instance is torn down, and an app that proves both through the default path and through an explicit `TransactionProver.newLocalProver()` retains two such caches. Falcon-authenticated transactions raise no precompile claim and are unaffected. ([#319](https://github.com/0xMiden/web-sdk/pull/319), issue [#318](https://github.com/0xMiden/web-sdk/issues/318))
+
 ## 0.16.0-rc.3 (2026-08-23)
 
 ### Changes

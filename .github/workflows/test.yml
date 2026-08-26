@@ -48,13 +48,23 @@ jobs:
               - '!**/*.md'
               - '!**/*.txt'
               - '!docs/**'
+            # Every in-repo manifest that can change the shipped WASM is
+            # listed alongside Cargo.lock — including js-export-macro, which
+            # is host-compiled but expands into the WASM. A feature-only edit
+            # changes what gets compiled without moving the lockfile, so
+            # Cargo.lock alone does not catch it.
             release_wasm:
               - '.github/workflows/publish-web-sdk.yml'
               - '.github/workflows/test.yml'
               - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/idxdb-store/Cargo.toml'
+              - 'crates/js-export-macro/Cargo.toml'
+              - 'crates/web-client/Cargo.toml'
               - 'crates/web-client/rollup.config.js'
               - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
               - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'patches/**'
               - 'rust-toolchain.toml'
               - 'scripts/install-binaryen.sh'
               - 'scripts/verify-wasm-size.sh'
