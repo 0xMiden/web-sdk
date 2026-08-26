@@ -342,8 +342,8 @@ export class MidenWalletAdapter extends BaseMessageSignerWalletAdapter {
       if ("errorMessage" in result) {
         throw new WalletTransactionError(result.errorMessage);
       }
-      const notes = result.outputNotes.map((serNote) => {
-        const u8Arr = b64ToU8(serNote);
+      const notes = result.outputNotes.map((serializedNote) => {
+        const u8Arr = b64ToU8(serializedNote);
         return Note.deserialize(u8Arr);
       });
       return {

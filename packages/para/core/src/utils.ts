@@ -88,7 +88,7 @@ export const getUncompressedPublicKeyFromWallet = async (
   return publicKey;
 };
 
-export const txSummaryToJosn = (
+export const txSummaryToJson = (
   txSummary: TransactionSummary
 ): TxSummaryJson => {
   const inputNotes = txSummary

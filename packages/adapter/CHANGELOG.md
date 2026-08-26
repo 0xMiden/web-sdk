@@ -155,7 +155,7 @@
 
 ### Changes
 
-* Remove unnecessary webpack dependecy from `miden-wallet-adapter-miden` packages
+* Remove unnecessary webpack dependency from `miden-wallet-adapter-miden` packages
 * Update code examples in readmes
 * Add repository links for package listings
 

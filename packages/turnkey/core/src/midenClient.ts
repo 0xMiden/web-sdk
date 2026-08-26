@@ -93,7 +93,7 @@ export async function createMidenTurnkeyClient(
     },
     autoSync: true,
   });
-  const accountId = await createAccont(
+  const accountId = await createAccount(
     client,
     opts.storageMode,
     turnkeyConfig,
@@ -102,7 +102,7 @@ export async function createMidenTurnkeyClient(
   return { client, accountId };
 }
 
-export async function createAccont(
+export async function createAccount(
   midenClient: MidenClient,
   storageMode: AccountStorageMode,
   config: TConfig,

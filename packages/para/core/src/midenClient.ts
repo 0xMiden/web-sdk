@@ -10,7 +10,7 @@ import {
   evmPkToCommitment,
   fromHexSig,
   getUncompressedPublicKeyFromWallet,
-  txSummaryToJosn,
+  txSummaryToJson,
 } from "./utils.js";
 import type { MidenAccountOpts, Opts, TxSummaryJson } from "./types.js";
 import type { MidenClient } from "@miden-sdk/miden-sdk";
@@ -37,7 +37,7 @@ export const signCb = (
     const inputs = SigningInputs.deserialize(signingInputs);
     let commitment = inputs.toCommitment().toHex().slice(2);
     const hashed = bytesToHex(keccak256(hexToBytes(commitment)));
-    const txSummaryJson = txSummaryToJosn(inputs.transactionSummaryPayload());
+    const txSummaryJson = txSummaryToJson(inputs.transactionSummaryPayload());
     if (showSigningModal) {
       const confirmed = await signingModal(txSummaryJson);
       if (!confirmed) {
