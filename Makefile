@@ -145,7 +145,10 @@ bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt
 	# you want to compare (build with the FULL release profile — MIDEN_FAST_BUILD
 	# drops LTO and wasm-opt, so its numbers describe a binary nobody ships).
 	#
-	#   make bench-proving BENCH_ARGS="--base /tmp/dist-base --head crates/web-client/dist/mt"
+	# Relative paths resolve against crates/web-client, which is where
+	# `pnpm --filter ... exec` runs:
+	#
+	#   make bench-proving BENCH_ARGS="--base /tmp/dist-base --head dist/mt"
 	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs $(BENCH_ARGS)
 
 .PHONY: test-bench-scripts

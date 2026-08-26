@@ -13,10 +13,18 @@ name: Proving Benchmark
 
 on:
   pull_request:
+    # A 90-minute job on an 8-core runner that builds WASM twice is not worth
+    # spending on a PR that cannot move a proving number. `paths-ignore` only
+    # skips when EVERY changed file matches, so a PR touching docs and code
+    # still runs.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
   # Calibration: bench the merge-base against ITSELF. The true delta is zero,
   # so whatever the run reports is this runner's measurement noise. Run it a
-  # dozen times and set `thresholdPct` in bench-proving.mjs to 3 sigma of the
-  # reported deltas — see docs/benchmarks/calibration.md.
+  # dozen times and set `THRESHOLD_PCT` in .github/scripts/render-bench-comment.mjs
+  # to 3 sigma of the reported deltas — see docs/benchmarks/calibration.md.
   workflow_dispatch:
     inputs:
       calibrate:
@@ -24,15 +32,23 @@ on:
         type: boolean
         default: true
       reps:
-        description: "Interleaved repetitions"
+        # MUST match the PR default below. A floor measured at one rep count
+        # does not transfer to another: the spread of a mean of per-rep minima
+        # scales with 1/sqrt(reps), so calibrating at 8 and applying it to 5
+        # would leave the threshold ~26% too tight.
+        description: "Interleaved repetitions (keep in sync with the PR default)"
         type: string
-        default: "8"
+        default: "6"
 
 permissions:
   contents: read
 
 concurrency:
-  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  # On workflow_dispatch there is no PR and no head_ref, so every dispatch from
+  # one branch would collapse onto the same key — and with cancel-in-progress
+  # each calibration dispatch would kill the previous one, which is exactly what
+  # the calibration procedure must not do. Keyed on the run id for those.
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || format('{0}-{1}', github.ref, github.run_id) }}"
   cancel-in-progress: true
 
 env:
@@ -43,9 +59,12 @@ env:
   # a different core count would look like a code regression.
   BENCH_THREADS: "8"
   # Interleaved base/head repetitions, and proves per repetition. The first
-  # prove of each page is discarded as cold, so provesPerRep=4 yields 3 warm
-  # samples per side per rep.
-  BENCH_REPS: ${{ inputs.reps || '5' }}
+  # prove of each page is discarded as cold, so BENCH_PROVES=4 yields 3 warm
+  # samples per side per rep. Keep the count of retained proves per run —
+  # reps × (proves-1) — EVEN, or the ABBA order flip cannot split them evenly
+  # between the two sides and one side pays the second-position penalty once
+  # more than the other. The script warns when this is violated.
+  BENCH_REPS: ${{ inputs.reps || '6' }}
   BENCH_PROVES: "4"
 
 jobs:
@@ -84,10 +103,7 @@ jobs:
             # HEAD; HEAD^1 would silently bench two different commits.
             base_sha=$(git rev-parse HEAD)
           fi
-          {
-            echo "base_sha=$base_sha"
-            echo "merge_sha=$(git rev-parse HEAD)"
-          } >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "Base: $base_sha"
 
       - name: Cleanup large tools for build space
@@ -230,9 +246,6 @@ jobs:
         id: bench
         shell: bash
         env:
-          BASE_SHA: ${{ steps.shas.outputs.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
           # Recorded in results.json so the comment can name where the numbers
           # came from — a threshold calibrated on one runner class is
           # meaningless on another. Keep in sync with `runs-on` above.
@@ -263,9 +276,6 @@ jobs:
       # The PR identity this run believes it belongs to. The reporter re-derives
       # all of it from workflow_run fields and the pulls API, and refuses on
       # mismatch — this file is a hint, never an authority.
-      # The PR identity this run believes it belongs to. The reporter re-derives
-      # all of it from workflow_run fields and the pulls API, and refuses on
-      # mismatch — this file is a hint, never an authority.
       - name: Record PR context
         if: always()
         shell: bash
@@ -279,6 +289,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EVENT_NAME: ${{ github.event_name }}
+          CALIBRATE: ${{ github.event_name == 'workflow_dispatch' && inputs.calibrate || false }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/report"
@@ -286,9 +297,8 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ]; then
             head_sha="$PR_HEAD_SHA"
             base_ref="$PR_BASE_REF"
-            pr_number="$PR_NUMBER"
             jq -n \
-              --argjson number "$pr_number" \
+              --argjson number "$PR_NUMBER" \
               --arg head_sha "$head_sha" \
               --arg base_sha "$BASE_SHA" \
               --arg base_ref "$base_ref" \
@@ -300,27 +310,38 @@ jobs:
             # which is what a calibration run should do.
             head_sha="$GITHUB_SHA"
             base_ref="${GITHUB_REF_NAME:-calibration}"
-            pr_number=0
           fi
 
           # Rendering context for the job summary below. The reporter rebuilds
           # its own from trusted values rather than reading this one.
+          #
+          # No prNumber: nothing in the renderer reads it, and a calibration run
+          # has no number to put here. `calibration` is here rather than in
+          # results.json because it is a fact about the triggering event, and the
+          # renderer must not take it from a file the PR author can write.
           jq -n \
             --arg owner "$OWNER" \
             --arg repo "$REPO_NAME" \
-            --argjson prNumber "$pr_number" \
             --arg headSha "$head_sha" \
             --arg baseSha "$BASE_SHA" \
             --arg baseRef "$base_ref" \
             --arg runId "$RUN_ID" \
             --arg runUrl "$RUN_URL" \
-            '{owner: $owner, repo: $repo, prNumber: $prNumber, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl}' \
+            --argjson calibration "${CALIBRATE:-false}" \
+            '{owner: $owner, repo: $repo, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl, calibration: $calibration}' \
             > "$RUNNER_TEMP/report/ctx.json"
 
       # Free, permissionless, and works on forks even if the reporter breaks.
-      # This is the fallback surface, so write it unconditionally. Rendering
-      # untrusted data here is harmless: a job summary carries no token and
-      # lives on the fork's own run page.
+      # This is the fallback surface, so write it unconditionally.
+      #
+      # The markdown here is rendered from PR-controlled data by the PR's own
+      # copy of the renderer, and a fork's `pull_request` run is recorded in THIS
+      # repo's Actions log, not the fork's — so a maintainer reading it sees
+      # attacker-authored text presented as this job's official summary. It is
+      # not an escalation (the job holds no token and the file is not scanned for
+      # workflow commands), but do not mistake it for trusted output. The PR
+      # comment, which is rendered on the privileged side, is the surface that
+      # gets the hardened renderer.
       - name: Job summary
         if: always()
         shell: bash
@@ -329,7 +350,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f "$RUNNER_TEMP/report/results.json" ]; then
-            node .github/scripts/render-bench-comment.mjs \
+            # --summary: a step summary allows ~1 MiB, so it does not need the
+            # comment's 60 kB degradation ladder.
+            node .github/scripts/render-bench-comment.mjs --summary \
               "$RUNNER_TEMP/report/results.json" \
               "$RUNNER_TEMP/report/ctx.json" \
               >> "$GITHUB_STEP_SUMMARY"

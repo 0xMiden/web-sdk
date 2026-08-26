@@ -76,8 +76,13 @@ jobs:
         run: |
           set -euo pipefail
           run_id="${DISPATCH_RUN_ID:-$EVENT_RUN_ID}"
-          if [ -z "$run_id" ]; then
-            echo "::error title=Proving Benchmark::No bench run id to report on."
+          # Digits only, and bounded. The dispatch input is a free-form string:
+          # unvalidated, a newline in it injects further step outputs through
+          # $GITHUB_OUTPUT, and the value goes on to be interpolated into a URL
+          # and an API call. `[[ =~ ]]` rather than grep because grep matches
+          # per line and would accept a multi-line value.
+          if [[ ! "$run_id" =~ ^[0-9]{1,20}$ ]]; then
+            echo "::error title=Proving Benchmark::Not a run id."
             exit 1
           fi
           echo "id=$run_id" >> "$GITHUB_OUTPUT"
@@ -92,13 +97,29 @@ jobs:
           run-id: ${{ steps.run.outputs.id }}
           github-token: ${{ github.token }}
 
-      # A missing artifact means the bench job failed or was cancelled. That is
-      # not a reason to turn an informational bot red — say nothing and stop.
-      - name: Stop if no report
-        if: steps.download.outcome != 'success'
+      # A missing artifact means the bench job failed or was cancelled. So does
+      # an artifact with no results.json: bench.yml uploads unconditionally, so
+      # a job that died before `Run benchmark` still produces one carrying only
+      # pr.json and ctx.json. Neither is a reason to turn an informational bot
+      # red — say nothing and stop.
+      - name: Check the report is usable
+        id: report
+        if: steps.download.outcome == 'success'
         shell: bash
         run: |
-          echo "::notice title=Proving Benchmark::No report artifact on run ${{ steps.run.outputs.id }}; nothing to post."
+          set -euo pipefail
+          if [ -f report/results.json ] && [ -f report/pr.json ]; then
+            echo "usable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop if no report
+        if: steps.report.outputs.usable != 'true'
+        shell: bash
+        env:
+          # Through env, never interpolated into the script body.
+          RUN_ID: ${{ steps.run.outputs.id }}
+        run: |
+          echo "::notice title=Proving Benchmark::No usable report on run ${RUN_ID}; nothing to post."
 
       # Everything in the artifact was written by code the PR author controls.
       # The claimed PR number is cross-checked against fields only GitHub
@@ -109,8 +130,10 @@ jobs:
       # workflow_run.pull_requests is EMPTY for fork PRs, so it is never read.
       - name: Verify PR identity
         id: pr
-        if: steps.download.outcome == 'success'
+        if: steps.report.outputs.usable == 'true'
         uses: actions/github-script@v7
+        env:
+          BENCH_RUN_ID: ${{ steps.run.outputs.id }}
         with:
           script: |
             const fs = require('fs');
@@ -129,25 +152,46 @@ jobs:
               return;
             }
 
+            // The triggering run is in the payload on the workflow_run path. On
+            // workflow_dispatch it is not, but it is still fetchable by id —
+            // fetch it, so both paths get the same cross-check. Skipping the
+            // check on dispatch let anyone who can dispatch this workflow point
+            // it at any run and post that artifact's chosen PR number.
+            let run = context.payload.workflow_run;
+            if (!run) {
+              const { data } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: Number(process.env.BENCH_RUN_ID),
+              });
+              run = data;
+            }
+            if (run.name !== 'Proving Benchmark') {
+              core.setFailed(`Run ${run.id} is "${run.name}", not a Proving Benchmark run.`);
+              return;
+            }
+
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: number,
             });
 
-            // On workflow_dispatch there is no triggering run to cross-check
-            // against, so the API lookup above is the only authority. On the
-            // real path, tie the artifact to the run that produced it.
-            const run = context.payload.workflow_run;
-            if (run) {
-              if (pr.head.sha !== run.head_sha) {
-                core.setFailed(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
-                return;
-              }
-              if (pr.head.repo?.full_name !== run.head_repository?.full_name) {
-                core.setFailed('PR head repo does not match the triggering run');
-                return;
-              }
+            // Tie the artifact to the run that produced it, using only fields
+            // GitHub populates. Without this a fork could forge a number and
+            // post under this bot's token onto somebody else's PR.
+            //
+            // The residual is narrow and self-inflicted: one fork branch can back
+            // two open PRs (different bases), which share a head sha and head
+            // repo, so an artifact from one can be reported on the other. Both
+            // belong to the same author, so there is nothing to gain.
+            if (pr.head.sha !== run.head_sha) {
+              core.setFailed(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
+              return;
+            }
+            if (pr.head.repo?.full_name !== run.head_repository?.full_name) {
+              core.setFailed('PR head repo does not match the triggering run');
+              return;
             }
 
             if (pr.state !== 'open') {
@@ -171,7 +215,6 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
           RUN_ID: ${{ steps.run.outputs.id }}
@@ -182,22 +225,26 @@ jobs:
           # not read from the artifact — the artifact only supplies measurements.
           # baseSha is the one field with no trusted source here (it is the
           # merge-base the bench actually measured), so it is taken from the
-          # artifact and validated as a 40-hex sha before use.
+          # artifact and checked to be a lowercase hex sha before use.
+          #
+          # `[[ =~ ]]` and not `grep`: grep matches per LINE and so would accept
+          # a multi-line value whose first line happens to look like a sha.
           base_sha=$(jq -r '.baseSha // ""' report/pr.json)
-          if ! printf '%s' "$base_sha" | grep -Eq '^[0-9a-f]{7,40}$'; then
+          if [[ ! "$base_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
             echo "::error title=Proving Benchmark::Artifact baseSha is not a commit sha."
             exit 1
           fi
+          # calibration is false by definition here: this job only ever posts on
+          # a pull_request-triggered bench run, and a calibration run has no PR.
           jq -n \
             --arg owner "$OWNER" \
             --arg repo "$REPO_NAME" \
-            --argjson prNumber "$PR_NUMBER" \
             --arg headSha "$HEAD_SHA" \
             --arg baseSha "$base_sha" \
             --arg baseRef "$BASE_REF" \
             --arg runId "$RUN_ID" \
             --arg runUrl "$RUN_URL" \
-            '{owner: $owner, repo: $repo, prNumber: $prNumber, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl}' \
+            '{owner: $owner, repo: $repo, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl, calibration: false}' \
             > ctx.json
           node .github/scripts/render-bench-comment.mjs \
             report/results.json \
@@ -229,11 +276,11 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('body.md', 'utf8');
-            // check-run output.summary is capped at 65535 chars.
-            const summary = body.length > 65000
-              ? `${body.slice(0, 65000)}\n\n_Truncated; see the [full report](${process.env.RUN_URL})._`
-              : body;
+            // check-run output.summary is capped at 65535 chars; the renderer
+            // caps the comment body at 60000, so it always fits. No slicing
+            // here — a second, unannounced truncation would be the only place
+            // in this pipeline that drops content silently.
+            const summary = fs.readFileSync('body.md', 'utf8');
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,

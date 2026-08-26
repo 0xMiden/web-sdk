@@ -35,13 +35,17 @@
 //   - The mock chain's worker round-trip is broken, and on MT the worker would
 //     also start a SECOND rayon pool in its own wasm instance — 16 threads on
 //     8 cores. The client is constructed with `Worker` hidden so it takes the
-//     documented no-worker branch.
+//     documented no-worker branch. (Both sides' pages do each hold a rayon pool
+//     open for the length of a rep, but only one side proves at a time and idle
+//     workers park, so the cost is symmetric and cancels in the interleave.)
 //   - The faucet is not seedable on this branch (generate_faucet uses
 //     StdRng::from_os_rng), so its id — and hence the note commitment, the
 //     nullifier, the Fiat-Shamir transcript and the proof-of-work grind length
-//     — is fresh per run. Setup therefore happens once per REP, not once per
-//     side, so the median across reps absorbs grind jitter instead of letting
-//     it land whole in the base-vs-head delta.
+//     — is fresh per setup. Base and head are separate pages against separate
+//     dists, so each runs its OWN setup and draws its own grind: the comparison
+//     is NOT paired on the grind. Averaging per-rep minima over several reps is
+//     what shrinks that difference; it does not cancel it. Removing it outright
+//     needs a seedable faucet — see docs/benchmarks/calibration.md.
 
 import { createReadStream } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
@@ -111,7 +115,11 @@ const HEAD_DIR = resolveDist(headDir);
 const BASE_DIR = baseDirRaw ? resolveDist(baseDirRaw) : null;
 
 const threads = count("--threads", "8");
-const reps = count("--reps", "5");
+// Even by default, and bench.yml matches it on both triggers. The ABBA order
+// flip below balances over ALL proves, but prove #0 of each page is discarded,
+// and `proves - 1` is odd — so the retained proves only come out even-handed
+// across an even number of reps. See the warning after the driver loop.
+const reps = count("--reps", "6");
 // Extra proves are the cheap way to buy samples: setup (mint + block + sync)
 // dominates a rep's cost and is not measured, while each extra prove is one
 // more chance for `min` to catch an uncontended run.
@@ -121,6 +129,18 @@ const outPath = flag("--out", null);
 if (proves < 2) {
   usage(
     "--proves must be at least 2: the first prove of each page is discarded as cold."
+  );
+}
+
+// Not fatal — a deliberately short run is a legitimate thing to ask for — but
+// silence here would hand back a number carrying a known directional bias.
+if ((reps * (proves - 1)) % 2 === 1) {
+  console.warn(
+    `[warn] reps × (proves-1) = ${reps * (proves - 1)} is odd, so the retained ` +
+      `proves cannot be split evenly between base and head. One side runs ` +
+      `second once more than the other, worth roughly ` +
+      `${(1.19 / (reps * (proves - 1))).toFixed(3)}% of bias against it. ` +
+      `Use an even --reps, or an odd --proves.`
   );
 }
 
@@ -523,7 +543,8 @@ try {
         // client pays.
         const warm = all.slice(1);
         if (!isWarmup) samples[side.label].push(warm);
-        const tag = isWarmup ? "warmup" : `rep ${rep - 1}`;
+        // 1-based, matching how the comment renderer labels the same rows.
+        const tag = isWarmup ? "warmup" : `rep ${rep}`;
         console.log(
           `${side.label} ${tag}: ${all.map(fmt).join("  ")}` +
             (isWarmup
@@ -574,21 +595,26 @@ try {
 //
 // `min` / `median` / `max` over all samples are retained as a spread check.
 const mean = (xs) => xs.reduce((total, x) => total + x, 0) / xs.length;
+// Reduced rather than `Math.min(...xs)`: the spread form throws a RangeError
+// past ~125k arguments, and reaching that only after a run this expensive would
+// be a bad way to find out.
+const minOf = (xs) => xs.reduce((lo, x) => (x < lo ? x : lo), Infinity);
+const maxOf = (xs) => xs.reduce((hi, x) => (x > hi ? x : hi), -Infinity);
 
 const summarize = (groups) => {
   const usable = groups.filter((group) => group.length > 0);
   const flat = usable.flat();
   if (!flat.length) return null;
-  const perRepMin = usable.map((group) => Math.min(...group));
+  const perRepMin = usable.map(minOf);
   return {
     // The reported figure. `statistic` names it so the renderer and the
     // comment can never drift from what was actually computed.
     statistic: "mean-of-per-rep-minima",
     value: mean(perRepMin),
     perRepMin: perRepMin.map((x) => Number(x.toFixed(3))),
-    min: Math.min(...flat),
+    min: minOf(flat),
     median: median(flat),
-    max: Math.max(...flat),
+    max: maxOf(flat),
     samples: usable.map((group) => group.map((x) => Number(x.toFixed(3)))),
   };
 };
@@ -603,20 +629,22 @@ const results = {
   variant: "mt",
   profile: "release",
   threads: observedThreads ?? threads,
+  // RETAINED counts, which is what the reported statistic was computed over.
+  // The executed counts are alongside so the artifact still records the config:
+  // a warm-up rep and the first prove of every page run and are thrown away.
   reps,
-  provesPerRep: proves,
-  // 5% is 3 sigma of the estimator above as measured on a loaded developer
-  // laptop (sd 1.79% over six calibration runs of identical binaries). It is
-  // still PROVISIONAL: the number that matters is the one measured on the CI
-  // runner, which is quieter and will almost certainly be tighter. See
-  // docs/benchmarks/calibration.md.
-  thresholdPct: 5,
-  thresholdProvisional: true,
+  provesPerRep: proves - 1,
+  repsExecuted: reps + 1,
+  provesExecutedPerRep: proves,
+  // No `thresholdPct` / `thresholdProvisional` / `lowerIsBetter` here: those
+  // decide the verdict, and .github/scripts/render-bench-comment.mjs renders
+  // this file on the side that holds a write token, from an artifact a fork
+  // controls. They are pinned there instead. Changing the noise floor means
+  // editing THRESHOLD_PCT in that file — see docs/benchmarks/calibration.md.
   benchmarks: [
     {
       name: "prove / consume / ecdsa-k256-keccak",
       unit: "ms",
-      lowerIsBetter: true,
       base: summarize(samples.base),
       head: summarize(samples.head),
     },
