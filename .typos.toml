@@ -6,4 +6,3 @@ extend-exclude = ["*.d.ts", "*.json", "*.lock", "*.map", "crates/idxdb-store/src
 # React's media event is spelled `onSeeked`; it appears in typedoc output
 # generated from @types/react, so it cannot be spelled "correctly".
 Seeked = "Seeked"
-
