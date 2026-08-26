@@ -72,6 +72,17 @@ dest=$2
 # exhaust the renderer, which holds every sample in memory while building the
 # raw block: a ~200 KB zip inflates to ~200 MB of JSON.
 max_bytes=${3:-4194304}
+# Unvalidated, a non-numeric cap reaches `$((max_bytes + 1))`, where bash treats
+# the word as a variable name and `set -u` aborts mid-loop with
+# "nope: unbound variable" — a shell diagnostic in place of a usage error, after
+# the destination has already been created.
+case $max_bytes in
+  '' | *[!0-9]*)
+    echo "usage: $(basename "$0") <zip> <dest-dir> [max-bytes-per-file]" >&2
+    echo "max-bytes-per-file must be a non-negative integer, got: ${max_bytes}" >&2
+    exit 2
+    ;;
+esac
 
 # Exactly what the reporter reads. `ctx.json` is deliberately absent: the
 # reporter rebuilds its rendering context from trusted event fields and must
@@ -79,7 +90,11 @@ max_bytes=${3:-4194304}
 members=(results.json pr.json)
 
 if [ ! -f "$zip_path" ]; then
-  echo "::error title=Proving Benchmark::No artifact archive at ${zip_path}."
+  # stderr, like every other diagnostic here: the caller reads stdout through a
+  # command substitution to get the sentinel, so anything written there is
+  # swallowed whole — including this, which is the one message that explains why
+  # the run produced nothing.
+  echo "::error title=Proving Benchmark::No artifact archive at ${zip_path}." >&2
   exit 1
 fi
 
@@ -106,6 +121,18 @@ for member in "${members[@]}"; do
   codes=("${PIPESTATUS[@]}")
   set -e
   unzip_rc=${codes[0]}
+  head_rc=${codes[1]}
+
+  # `head` owns the only write to $out, so its status decides whether the file on
+  # disk is the whole member. A failure part-way through a write (ENOSPC being
+  # the realistic one) leaves a prefix behind, and a truncated prefix of a large
+  # JSON document can still parse as valid JSON — fewer benchmarks, or fewer
+  # samples in the last one — which would be published as a real result.
+  if [ "$head_rc" -ne 0 ]; then
+    echo "::notice title=Proving Benchmark::Failed while writing ${member} (rc=${head_rc}); refusing to render a partial file." >&2
+    rm -f "$out"
+    continue
+  fi
 
   # 11 is "no matching files", the ordinary shape of an artifact from a bench job
   # that died before writing results. 141 is SIGPIPE, which only happens because

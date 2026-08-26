@@ -193,6 +193,33 @@ check "no arguments is a usage error" "2" "$?"
 "$subject" "$work/nope.zip" "$work/d6" >/dev/null 2>&1
 check "a missing archive fails loudly" "1" "$?"
 
+# The caller reads stdout through a command substitution to get the sentinel, so
+# a diagnostic written there is swallowed — and the missing-archive message is the
+# one that explains why a run produced nothing.
+missing_out=$("$subject" "$work/nope.zip" "$work/d6b" 2>"$work/e6b" || true)
+check "the missing-archive message is not on stdout" "" "$missing_out"
+check "the missing-archive message reaches stderr" "yes" \
+  "$(grep -q "No artifact archive" "$work/e6b" && echo yes || echo no)"
+
+# A non-numeric cap used to reach `$((max_bytes + 1))`, where bash reads the word
+# as a variable name and `set -u` aborts mid-loop with "unbound variable" — a
+# shell trace in place of a usage error, after the destination was created.
+"$subject" "$zip1" "$work/d7" nope >/dev/null 2>"$work/e7"
+check "a non-numeric byte cap is a usage error" "2" "$?"
+check "the byte-cap error names the argument" "yes" \
+  "$(grep -q "max-bytes-per-file must be" "$work/e7" && echo yes || echo no)"
+check "no shell trace leaks for a bad byte cap" "no" \
+  "$(grep -q "unbound variable" "$work/e7" && echo yes || echo no)"
+"$subject" "$zip1" "$work/d8" -5 >/dev/null 2>&1
+check "a negative byte cap is a usage error" "2" "$?"
+
+# A cap of zero admits nothing, which is the boundary of the size check rather
+# than an error: every member comes out empty and empty is not a member.
+zero_out=$("$subject" "$zip1" "$work/d9" 0 2>/dev/null)
+check "a zero byte cap yields nothing usable" "" "$zero_out"
+check "a zero byte cap leaves no files behind" "no" \
+  "$([ -f "$work/d9/results.json" ] && echo yes || echo no)"
+
 echo
 echo "# pass $pass"
 echo "# fail $fail"

@@ -248,7 +248,99 @@ test("refuses an artifact built against an older schema", () => {
   // artifact supply the statistics.
   assert.throws(
     () => renderComment(results({ top: { schemaVersion: 1 } }), ctx()),
-    /schemaVersion must be 2/
+    /schemaVersion 1 came from the bench script on the PR head/
+  );
+});
+
+test("the schema rejection names both sides of the pipeline, not just the numbers", () => {
+  // Whoever reads this is looking at a default-branch workflow log for a PR they
+  // did not write. "must be 2, got 3" does not tell them which half to change.
+  let message = "";
+  try {
+    renderComment(results({ top: { schemaVersion: 3 } }), ctx());
+  } catch (error) {
+    message = error.message;
+  }
+  assert.match(message, /PR head/);
+  assert.match(message, /default\s+branch/);
+  assert.match(message, /ACCEPTED_SCHEMA_VERSIONS/);
+});
+
+// --- Recomputed statistics: finite in, non-finite out ----------------------
+
+test("refuses a recomputed mean that overflows even though every sample is finite", () => {
+  // mean() sums before it divides, so two finite samples at the top of the
+  // double range overflow to Infinity. A head-only run has no delta, so the
+  // downstream delta checks never see it and the row renders as "∞".
+  assert.throws(
+    () =>
+      renderComment(
+        results({
+          benchmark: { base: null, head: { samples: [[1e308], [1e308]] } },
+          top: { reps: 2, provesPerRep: 1 },
+        }),
+        ctx()
+      ),
+    /value \(recomputed\) must be a finite number/
+  );
+});
+
+test("no head-only report can render an infinity", () => {
+  // The guard above is the mechanism; this is the property it exists for.
+  for (const sample of [1e308, Number.MAX_VALUE, 1e307]) {
+    let body = "";
+    try {
+      body = renderComment(
+        results({
+          benchmark: {
+            base: null,
+            head: { samples: [[sample], [sample], [sample]] },
+          },
+          top: { reps: 3, provesPerRep: 1 },
+        }),
+        ctx()
+      );
+    } catch {
+      continue;
+    }
+    assert.doesNotMatch(body, /∞|Infinity|NaN/);
+  }
+});
+
+// --- Negative timings ------------------------------------------------------
+
+test("refuses negative sample timings", () => {
+  // A negative elapsed time is not a slow benchmark, it is not a measurement.
+  assert.throws(
+    () =>
+      renderComment(
+        results({
+          benchmark: { base: null, head: { samples: [[-1], [-1]] } },
+          top: { reps: 2, provesPerRep: 1 },
+        }),
+        ctx()
+      ),
+    /must be a non-negative duration/
+  );
+});
+
+test("a negative baseline cannot invert the sign of the verdict", () => {
+  // (-11 - -10) / -10 = +0.1, so a pair of negative sides rendered a 10%
+  // SLOWER head as "+10.00% faster" — the sign of the percentage taken from the
+  // sign of the baseline.
+  assert.throws(
+    () =>
+      renderComment(
+        results({
+          benchmark: {
+            base: { samples: [[-10], [-10]] },
+            head: { samples: [[-11], [-11]] },
+          },
+          top: { reps: 2, provesPerRep: 1 },
+        }),
+        ctx()
+      ),
+    /must be a non-negative duration/
   );
 });
 
@@ -638,18 +730,18 @@ test("refuses a delta that overflows to a non-finite number", () => {
       ),
     /not finite/
   );
+  // The other half of this test used to pair side(-Number.MAX_VALUE) against
+  // side(Number.MAX_VALUE). Both inputs are now refused before any delta is
+  // computed — the negative one as not a duration, the positive one because
+  // summing two MAX_VALUEs overflows while recomputing the mean — so the pair no
+  // longer reaches the delta at all. Each guard is covered on its own above.
   assert.throws(
     () =>
       renderComment(
-        results({
-          benchmark: {
-            base: side(-Number.MAX_VALUE),
-            head: side(Number.MAX_VALUE),
-          },
-        }),
+        results({ benchmark: { base: side(1), head: side(Number.MAX_VALUE) } }),
         ctx()
       ),
-    /not finite/
+    /must be a finite number, got Infinity/
   );
 });
 

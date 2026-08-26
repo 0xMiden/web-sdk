@@ -40,11 +40,21 @@ permissions:
 
 concurrency:
   # Two quick pushes produce two reporters racing to update the same comment.
-  # Keyed on the head repo + branch rather than the workflow name so unrelated
-  # PRs never cancel each other.
+  # Keyed on the head repo + branch because a `workflow_run` payload has no
+  # reliable PR number to key on — `pull_requests` is empty for fork-originated
+  # runs, which is the case this workflow exists to serve.
   group: >-
     bench-comment-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref }}
-  cancel-in-progress: true
+  # NOT cancel-in-progress. Since the branch is the only available key, two open
+  # PRs sharing one fork branch land in the same group, and cancelling would
+  # delete one PR's report to deliver the other's. Serializing costs a wait;
+  # cancelling costs a comment that never appears.
+  #
+  # This does not resurrect the stale-comment race it was added for: two quick
+  # pushes to one PR cancel each other in bench.yml, which is keyed on the PR
+  # number, so the superseded run never uploads an artifact and no second
+  # reporter is ever triggered for it.
+  cancel-in-progress: false
 
 jobs:
   comment:
@@ -148,13 +158,16 @@ jobs:
       # pr.json and ctx.json. Neither is a reason to turn an informational bot
       # red — say nothing and stop.
       #
-      # A HOSTILE archive is not a reason either. Confinement is structural here
-      # (`unzip -j` discards every entry name's directory components, and only
-      # the two expected basenames are extracted at all), so there is no
-      # traversal left to detect and nothing to go red about. The previous two
-      # versions of this step tried to detect one instead, and both were
-      # defeated: the escaped file is by definition not in the directory being
-      # inspected.
+      # A HOSTILE archive is not a reason either. Confinement is structural: the
+      # extractor runs `unzip -p`, which writes the member to STDOUT and never
+      # touches the filesystem itself, so this side chooses every destination
+      # path. An entry name cannot steer a write, and a member stored as a
+      # symlink cannot be restored as one, because nothing here asks unzip to
+      # create anything. `-j` was the previous mechanism and was not enough — it
+      # strips directory components but still lets unzip do the writing, symlinks
+      # included. Earlier versions tried to DETECT a traversal instead, and both
+      # were defeated for the same reason: a file that escaped the directory is
+      # by definition not in the directory being inspected.
       - name: Extract the report
         id: report
         if: steps.fetch.outputs.fetched == 'true'
@@ -333,11 +346,25 @@ jobs:
           # A results.json the renderer rejects is a fork feeding the bot
           # garbage. Report nothing rather than turning a default-branch
           # workflow red over a payload the PR author chose.
-          if ! node .github/scripts/render-bench-comment.mjs \
+          #
+          # Exit 3 is the renderer saying the fault is ITS OWN — a bug in
+          # first-party code, or the environment it runs in — and that has to be
+          # loud. Collapsing both into one silent notice is how a renderer that
+          # crashes on every input disables benchmark reporting repo-wide while
+          # this workflow keeps reporting success.
+          set +e
+          node .github/scripts/render-bench-comment.mjs \
             "$REPORT_DIR/results.json" \
             "$RUNNER_TEMP/ctx.json" \
-            > "$BODY_PATH"; then
-            echo "::notice title=Proving Benchmark::Report could not be rendered; nothing to post."
+            > "$BODY_PATH"
+          render_rc=$?
+          set -e
+          if [ "$render_rc" -eq 3 ]; then
+            echo "::error title=Proving Benchmark::The comment renderer failed on its own code path (exit 3), not on the artifact. This is a bug in .github/scripts/render-bench-comment.mjs or its environment."
+            exit 1
+          fi
+          if [ "$render_rc" -ne 0 ]; then
+            echo "::notice title=Proving Benchmark::Report could not be rendered (exit ${render_rc}); nothing to post."
             exit 0
           fi
           echo "Rendered $(wc -c < "$BODY_PATH") bytes"
@@ -424,6 +451,98 @@ jobs:
               if (mine) {
                 // Explicit payload: PATCH check-runs does not take `head_sha`,
                 // and spreading the create body would send it.
+                await github.rest.checks.update({
+                  owner: body.owner,
+                  repo: body.repo,
+                  check_run_id: mine.id,
+                  name: body.name,
+                  status: body.status,
+                  conclusion: body.conclusion,
+                  details_url: body.details_url,
+                  output: body.output,
+                });
+              } else {
+                await github.rest.checks.create(body);
+              }
+            } catch (error) {
+              core.warning(`Could not publish the benchmark check run: ${error.message}`);
+            }
+
+      # Every refusal upstream of here is deliberately silent on the PR, and the
+      # sum of those silences is a bot that is indistinguishable from a broken
+      # one. A PR author who sees no benchmark comment cannot tell whether the
+      # bench job died, the artifact was rejected, the schema drifted, or the
+      # feature was turned off — and the workflow logs that hold the answer are
+      # on the default branch's run, which is not linked from their PR.
+      #
+      # So: one neutral check run saying nothing was posted and pointing at the
+      # log. Neutral, so it still never blocks a merge.
+      #
+      # Only first-party strings reach the summary. The artifact supplies no part
+      # of it, which is why this can run on paths where the artifact was refused
+      # as hostile.
+      - name: Report that nothing was posted
+        if: always() && steps.render.outputs.ok != 'true' && steps.run.outputs.id != ''
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          # workflow_run.head_sha, not the artifact's claim: this path is reached
+          # precisely when the artifact could not be trusted or parsed.
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT_USABLE: ${{ steps.report.outputs.usable }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          script: |
+            const head_sha = process.env.HEAD_SHA;
+            if (!head_sha) {
+              core.info('No workflow_run head sha (manual dispatch); nothing to annotate.');
+              return;
+            }
+
+            const reason =
+              process.env.REPORT_USABLE !== 'true'
+                ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
+                : !process.env.PR_NUMBER
+                  ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
+                  : 'The report was rejected by the comment renderer, so nothing was posted.';
+
+            const name = 'Proving Benchmark';
+            const summary = [
+              reason,
+              '',
+              `[Reporter log](${process.env.RUN_URL}) — the specific reason is a notice in the job log.`,
+              '',
+              'This check is informational and never blocks a merge.',
+            ].join('\n');
+            const body = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name,
+              head_sha,
+              status: 'completed',
+              conclusion: 'neutral',
+              details_url: process.env.RUN_URL,
+              output: { title: 'Proving benchmark: no comment posted', summary },
+            };
+
+            // Same read-modify-write as the success path, for the same reason:
+            // a re-run must not stack a second check run on one commit. This
+            // deliberately shares the check NAME with the success path, so a
+            // later successful render replaces this notice instead of sitting
+            // next to it.
+            try {
+              const { data: existing } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: head_sha,
+                check_name: name,
+                per_page: 100,
+              });
+              const mine = existing.check_runs.find(
+                (run) => run.app?.slug === 'github-actions',
+              );
+              if (mine) {
                 await github.rest.checks.update({
                   owner: body.owner,
                   repo: body.repo,

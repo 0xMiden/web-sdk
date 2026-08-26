@@ -155,9 +155,28 @@ per-repetition `samples` array, and ignores the `value` / `min` / `median` /
 `max` that `bench-proving.mjs` writes alongside them — otherwise an artifact
 could keep authoring the verdict by arithmetic rather than by flag. So `samples`
 is the load-bearing field of the schema: it must hold exactly `reps` groups of
-`provesPerRep` finite numbers, or the renderer refuses the artifact and the bot
-posts nothing. Changing the shape of that array means bumping `schemaVersion` on
-both sides.
+`provesPerRep` non-negative finite numbers, or the renderer refuses the artifact
+and the bot posts nothing.
+
+### The two halves are never at the same revision
+
+`workflow_run` always runs the workflow and scripts from the repository's
+**default branch**, never from the PR. So a change to the renderer — the
+threshold, the verdict rules, the schema — takes effect for every open PR the
+moment it lands on the default branch, and has no effect at all while it sits in
+a PR. Two consequences worth knowing before you change either half:
+
+- **A PR targeting `next` is judged by `main`'s renderer.** Editing
+  `THRESHOLD_PCT` on `next` changes nothing until `next` reaches `main`. Verify a
+  renderer change by dispatching the reporter, not by reading the diff on your
+  branch.
+- **Bumping `schemaVersion` has a required order.** The renderer accepts a *set*
+  of versions (`ACCEPTED_SCHEMA_VERSIONS`); teach it the new version and land
+  that on the default branch **first**, then bump the producer in
+  `bench-proving.mjs`, then drop the old version once no open PR can still be
+  carrying the old producer. Bumping the producer first, or swapping the
+  renderer's single accepted version, silences the bot for every open PR until
+  each one rebases.
 
 The current placeholder is **5.4%** — 3σ of the 1.79% measured below
 (3 × 1.79 = 5.37, rounded up).

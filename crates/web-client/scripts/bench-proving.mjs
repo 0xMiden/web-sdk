@@ -58,6 +58,10 @@ import { chromium } from "@playwright/test";
 const USAGE = [
   "  node scripts/bench-proving.mjs --head <dist-mt-dir> [--base <dist-mt-dir>]",
   "       [--threads N] [--reps N] [--proves M] [--out results.json]",
+  "       [--calibrate]",
+  "",
+  "  --calibrate  Point --base at the same dist as --head to measure the noise",
+  "               floor. Suppresses the identical-dist guard and labels the run.",
 ].join("\n");
 
 const args = process.argv.slice(2);
@@ -324,14 +328,20 @@ const setupInPage = async ({ threads: wantThreads }) => {
       CLIENT_SEED,
       undefined
     );
-  } catch {
-    globalThis.Worker = RealWorker;
-    await deleteMockDb();
-    client = await sdk.MockWasmWebClient.createClient(
-      null,
-      null,
-      CLIENT_SEED,
-      undefined
+  } catch (error) {
+    // Deliberately no retry with the real `Worker` restored. That fallback is
+    // exactly the construction path the comment above rules out, so it would
+    // buy a client at the cost of the rayon sub-workers this side is trying not
+    // to have — and it would do so on ONE side, since the two sides are opened
+    // independently. A base measured with contending sub-workers against a head
+    // measured without them produces a difference that is entirely an artifact
+    // of the fallback, reported as a performance result. Failing here costs a
+    // benchmark run; succeeding quietly costs the number its credibility.
+    throw new Error(
+      `createClient failed on its no-worker branch: ${error?.message ?? error}. ` +
+        `Not retrying with Worker restored — that would measure this side under ` +
+        `rayon contention the other side does not have.`,
+      { cause: error }
     );
   } finally {
     globalThis.Worker = RealWorker;
@@ -479,11 +489,16 @@ const openSide = async (browser, url, label, repIndex) => {
         return ms;
       },
       // Report rather than throw: a failing close would replace whatever error
-      // the iteration was already unwinding with.
+      // the iteration was already unwinding with. Recorded, though, because a
+      // context that would not close leaves a live page — and its wasm rayon
+      // pool — contending with every repetition that follows, which is the exact
+      // interference the estimator assumes is absent. The caller checks the
+      // record and stops rather than measuring against it.
       close: () =>
-        context
-          .close()
-          .catch((error) => console.error(`[teardown] context: ${error}`)),
+        context.close().catch((error) => {
+          console.error(`[teardown] ${label} context: ${error}`);
+          teardownFailures.push(`${label} context: ${error}`);
+        }),
     };
   } catch (error) {
     await context.close().catch(() => {});
@@ -493,6 +508,11 @@ const openSide = async (browser, url, label, repIndex) => {
 
 const servers = [];
 let browser;
+// Every teardown that rejected. A benchmark whose resources would not release is
+// not a benchmark that succeeded: mid-run it means later repetitions were
+// measured against a page that should have been gone, and at the end it means
+// this process is about to report a clean pass while leaving something running.
+const teardownFailures = [];
 // Grouped per rep, not flattened: the comment prints them per rep, and a
 // whole rep drifting is a different story from one prove drifting.
 const samples = { base: [], head: [] };
@@ -561,6 +581,15 @@ try {
     } finally {
       await Promise.allSettled(sides.map((side) => side.close()));
     }
+    // Between repetitions, not after all of them: continuing would measure the
+    // next repetition alongside whatever failed to close.
+    if (teardownFailures.length) {
+      throw new Error(
+        `a page context failed to close after ${isWarmup ? "the warmup" : `rep ${rep}`}, ` +
+          `so the repetitions after it would be measured against a live page: ` +
+          `${teardownFailures.join("; ")}`
+      );
+    }
   }
 } finally {
   // Settle every teardown independently: a failing browser close must not skip
@@ -580,6 +609,7 @@ try {
   for (const outcome of teardown) {
     if (outcome.status === "rejected") {
       console.error(`[teardown] ${outcome.reason}`);
+      teardownFailures.push(String(outcome.reason));
     }
   }
 }
@@ -702,4 +732,19 @@ if (outPath) {
   console.log(`\nwrote ${resolved}`);
 } else {
   console.log(`\nJSON: ${JSON.stringify(results)}`);
+}
+
+// The measurements are complete and written, so they are worth keeping — but a
+// browser or server that would not close means this process is about to exit 0
+// with something still holding a port or a pid. On a self-hosted runner that
+// outlives the job and lands in the NEXT run's numbers as interference, which is
+// the failure this whole script is built to avoid. Report the results, then say
+// plainly that the run is not clean.
+if (teardownFailures.length) {
+  console.error(
+    `\n${teardownFailures.length} teardown ${teardownFailures.length === 1 ? "failure" : "failures"} — ` +
+      `the results above were written, but resources were left open:\n` +
+      teardownFailures.map((failure) => `  - ${failure}`).join("\n")
+  );
+  process.exitCode = 1;
 }

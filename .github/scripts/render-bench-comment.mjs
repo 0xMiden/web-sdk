@@ -51,8 +51,23 @@ const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
  * reporter always runs the default branch's renderer against an artifact built
  * by the PR head's producer), so a version that does not move when the contract
  * moves lets a stale producer's numbers be relabelled by a newer renderer.
+ *
+ * A SET, not a single number, and that is the whole point. The two halves live
+ * in different trees — `crates/web-client/scripts/` and `.github/scripts/` — so
+ * bumping them in one commit is not something the layout encourages, and with an
+ * exact-match check either split order silences the bot for every open PR in the
+ * interval: a producer-first split emits v3 at a v2 renderer, a renderer-first
+ * split emits v2 at a v3 renderer.
+ *
+ * HOW TO BUMP THE SCHEMA, in this order:
+ *   1. Add the new version here alongside the old one, and teach this file to
+ *      read both. Merge to the DEFAULT BRANCH — nothing else takes effect,
+ *      because `workflow_run` only ever runs the default branch's copy.
+ *   2. Bump `schemaVersion` in bench-proving.mjs to the new version.
+ *   3. Once no open PR can still be carrying the old producer, drop the old
+ *      version from this set and delete the compatibility branch.
  */
-const SCHEMA_VERSION = 2;
+const ACCEPTED_SCHEMA_VERSIONS = new Set([2]);
 
 /**
  * Total sample values accepted across all benchmarks.
@@ -218,6 +233,13 @@ function sanitizeUnit(value) {
 /** Used only in error messages, which also end up in logs a human reads. */
 function describeValue(value) {
   let text;
+  // JSON.stringify turns Infinity, -Infinity and NaN all into the string
+  // "null", so every non-finite diagnostic this file emits — the case where the
+  // actual value is the whole point — read "got null" and sent the reader
+  // looking for a missing field instead of an overflow.
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return String(value);
+  }
   try {
     text = typeof value === "string" ? value : JSON.stringify(value);
   } catch {
@@ -230,8 +252,17 @@ function describeValue(value) {
 // Validation
 // ---------------------------------------------------------------------------
 
+/**
+ * Every rejection of artifact content goes through here, and the marker it sets
+ * is what lets `main` tell "the fork sent us garbage" apart from "this renderer
+ * has a bug". Both used to surface as the same generic notice, so a TypeError in
+ * first-party code — or an EACCES reading a path — silently disabled benchmark
+ * reporting for every PR while the trusted workflow stayed green.
+ */
 function fail(message) {
-  throw new TypeError(`benchmark results: ${message}`);
+  const error = new TypeError(`benchmark results: ${message}`);
+  error.rejectedArtifact = true;
+  throw error;
 }
 
 function requireFinite(value, path) {
@@ -291,7 +322,20 @@ function normalizeSamples(value, path, reps, provesPerRep, budget) {
     if (budget.remaining < 0) {
       fail(`too many samples; the cap is ${MAX_SAMPLE_VALUES} values`);
     }
-    return group.map((n, j) => requireFinite(n, `${path}[${i}][${j}]`));
+    return group.map((n, j) => {
+      // Every sample is a duration in milliseconds measured by
+      // `performance.now()`, so a negative one is not a slow benchmark — it is
+      // not a measurement at all. Accepting them let a pair of negative sides
+      // render `+10.00% faster` off `(-11 - -10) / -10`, with the sign of the
+      // percentage flipped by the sign of the baseline.
+      const value = requireFinite(n, `${path}[${i}][${j}]`);
+      if (value < 0) {
+        fail(
+          `${path}[${i}][${j}] must be a non-negative duration, got ${describeValue(value)}`
+        );
+      }
+      return value;
+    });
   });
 }
 
@@ -337,13 +381,22 @@ function normalizeSide(value, path, reps, provesPerRep, budget) {
     budget
   );
   const flat = samples.flat();
+  // Each input is finite and the arithmetic still is not: mean() sums before it
+  // divides, so two samples of 1e308 overflow to Infinity and the row renders
+  // as "∞". The delta checks in computeRows do not catch it, because a
+  // head-only run has no delta to check. This module promises no non-finite
+  // value ever reaches a comment; that promise has to be kept where the values
+  // are produced, not only where they are combined.
   return {
     // The mean of each rep's fastest prove — see the estimator comment in
     // bench-proving.mjs for why both levels are there.
-    value: mean(samples.map(minOf)),
-    median: medianOf(flat),
-    min: minOf(flat),
-    max: maxOf(flat),
+    value: requireFinite(
+      mean(samples.map(minOf)),
+      `${path}.value (recomputed)`
+    ),
+    median: requireFinite(medianOf(flat), `${path}.median (recomputed)`),
+    min: requireFinite(minOf(flat), `${path}.min (recomputed)`),
+    max: requireFinite(maxOf(flat), `${path}.max (recomputed)`),
     samples,
   };
 }
@@ -353,9 +406,19 @@ function normalizeResults(input) {
 
   // An unknown schema means the producer and this renderer disagree about what
   // the fields mean. Guessing would emit confident, wrong numbers.
-  if (results.schemaVersion !== SCHEMA_VERSION) {
+  //
+  // The message names both SIDES, not just both numbers. Whoever reads this is
+  // looking at a default-branch workflow log for a PR they did not write, and
+  // "must be 2, got 3" tells them nothing about why two numbers that should
+  // match do not.
+  if (!ACCEPTED_SCHEMA_VERSIONS.has(results.schemaVersion)) {
+    const accepted = [...ACCEPTED_SCHEMA_VERSIONS].join(", ");
     fail(
-      `schemaVersion must be ${SCHEMA_VERSION}, got ${describeValue(results.schemaVersion)}`
+      `schemaVersion ${describeValue(results.schemaVersion)} came from the bench ` +
+        `script on the PR head; this renderer runs from the repository's default ` +
+        `branch and reads [${accepted}]. The two halves of this pipeline are always ` +
+        `at different revisions — see ACCEPTED_SCHEMA_VERSIONS in ` +
+        `.github/scripts/render-bench-comment.mjs for how to bump it without an outage.`
     );
   }
 
@@ -869,7 +932,12 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     results.reps >= CALIBRATED_REPS &&
     results.provesPerRep >= CALIBRATED_PROVES_PER_REP
       ? `- Measured over six calibration runs of identical binaries, this estimator holds a standard deviation of 1.79%, against 2.96% for a global minimum and 5.39% for a plain median.`
-      : `- This run used fewer samples than the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown.`,
+      : // Saying the spread is unknown and then gating on ±5.4% — which IS that
+        // spread, tripled — reads as a contradiction unless the comment says
+        // which of the two it is doing. It keeps applying the cutoff, because a
+        // fixed magnitude gate is still better than calling every movement
+        // significant; it just cannot claim a confidence level behind it.
+        `- This run used fewer samples than the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. The ±${formatPct(THRESHOLD_PCT)} cutoff below is still applied, as a fixed magnitude gate rather than as a confidence level.`,
     ...(compared
       ? [
           `- A movement is only called significant when it clears the noise floor **and** every repetition's paired difference agrees on its direction. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result.`,
@@ -1093,6 +1161,14 @@ export function renderSummary(results, ctx) {
 const USAGE =
   "usage: node render-bench-comment.mjs [--summary] <results.json> <ctx.json>\n";
 
+/**
+ * Exit codes, which the calling workflow branches on:
+ *   0 rendered; 1 the artifact was refused (the fork's problem, stay quiet);
+ *   2 bad usage; 3 this script or its environment broke (our problem, be loud).
+ */
+const EXIT_REJECTED = 1;
+const EXIT_INTERNAL_ERROR = 3;
+
 /** Usage: node render-bench-comment.mjs [--summary] <results.json> <ctx.json> */
 export async function main(argv = process.argv.slice(2)) {
   // `--summary` selects the job-summary budget (~1 MiB) over the comment budget
@@ -1117,8 +1193,15 @@ export async function main(argv = process.argv.slice(2)) {
     // bytes verbatim, and those bytes are fork-controlled. Unsanitized, a
     // crafted results.json starts a log line in this write-token job with a
     // real `::error::` / `::add-mask::` workflow command.
-    process.stderr.write(`failed to read inputs: ${logLine(error.message)}\n`);
-    return 1;
+    //
+    // A SyntaxError here is the fork's doing; anything else (ENOENT on ctx.json,
+    // EACCES, a full disk) is ours, and EXIT_INTERNAL_ERROR is what makes the
+    // difference visible instead of blaming the PR author for our own breakage.
+    const ours = !(error instanceof SyntaxError);
+    process.stderr.write(
+      `failed to read inputs: ${logLine(error.message)}${ours ? " (not an artifact problem)" : ""}\n`
+    );
+    return ours ? EXIT_INTERNAL_ERROR : EXIT_REJECTED;
   }
 
   try {
@@ -1127,9 +1210,18 @@ export async function main(argv = process.argv.slice(2)) {
       : renderComment(results, ctx);
     process.stdout.write(`${body}\n`);
   } catch (error) {
-    // Refusing loudly is the point: a wrong comment is worse than none.
-    process.stderr.write(`refusing to render: ${logLine(error.message)}\n`);
-    return 1;
+    // Refusing loudly is the point: a wrong comment is worse than none. But
+    // "loudly" has to distinguish the two reasons a render can fail, because
+    // only one of them is the PR author's problem and only one of them should
+    // page whoever owns this workflow.
+    if (error?.rejectedArtifact) {
+      process.stderr.write(`refusing to render: ${logLine(error.message)}\n`);
+      return EXIT_REJECTED;
+    }
+    process.stderr.write(
+      `renderer bug — this is not the artifact's fault: ${logLine(error?.stack ?? String(error))}\n`
+    );
+    return EXIT_INTERNAL_ERROR;
   }
   return 0;
 }
