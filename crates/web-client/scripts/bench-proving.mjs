@@ -134,13 +134,19 @@ if (proves < 2) {
 
 // Not fatal — a deliberately short run is a legitimate thing to ask for — but
 // silence here would hand back a number carrying a known directional bias.
+// No figure is attached to the imbalance on purpose. The +1.19% second-position
+// penalty is per prove, but the reported statistic is a mean of per-rep MINIMA,
+// and a minimum is not linear in a per-prove penalty: if a rep's fastest prove
+// ran first on both sides the penalty cancels outright, and if it ran second on
+// one side it lands in full. Scaling 1.19% by the retained prove count would be
+// precision this design cannot support.
 if ((reps * (proves - 1)) % 2 === 1) {
   console.warn(
     `[warn] reps × (proves-1) = ${reps * (proves - 1)} is odd, so the retained ` +
-      `proves cannot be split evenly between base and head. One side runs ` +
-      `second once more than the other, worth roughly ` +
-      `${(1.19 / (reps * (proves - 1))).toFixed(3)}% of bias against it. ` +
-      `Use an even --reps, or an odd --proves.`
+      `proves cannot be split evenly between base and head: one side runs ` +
+      `second once more than the other, which biases the comparison against ` +
+      `it by an amount this estimator cannot bound. Use an even --reps, or an ` +
+      `odd --proves.`
   );
 }
 
@@ -601,14 +607,23 @@ const mean = (xs) => xs.reduce((total, x) => total + x, 0) / xs.length;
 const minOf = (xs) => xs.reduce((lo, x) => (x < lo ? x : lo), Infinity);
 const maxOf = (xs) => xs.reduce((hi, x) => (x > hi ? x : hi), -Infinity);
 
+// `samples` is the whole payload, and the summary alongside it is for a human
+// reading this script's stdout or the raw artifact.
+//
+// The renderer does NOT read `value` / `min` / `median` / `max`: it recomputes
+// all four from `samples`, because on the reporting side this file is
+// fork-controlled input to a job holding a write token, and a summary that
+// disagrees with its own samples would let the artifact author the verdict.
+// Keep the two consistent anyway — they are read side by side during a
+// calibration run — but nothing downstream depends on it.
 const summarize = (groups) => {
   const usable = groups.filter((group) => group.length > 0);
   const flat = usable.flat();
   if (!flat.length) return null;
   const perRepMin = usable.map(minOf);
   return {
-    // The reported figure. `statistic` names it so the renderer and the
-    // comment can never drift from what was actually computed.
+    // `statistic` names the figure so this script's own output and the comment
+    // can never describe it differently.
     statistic: "mean-of-per-rep-minima",
     value: mean(perRepMin),
     perRepMin: perRepMin.map((x) => Number(x.toFixed(3))),
@@ -620,7 +635,16 @@ const summarize = (groups) => {
 };
 
 const results = {
-  schemaVersion: 1,
+  // 2, not 1: `reps` / `provesPerRep` became the RETAINED counts, and the
+  // renderer now recomputes the statistics from `samples` instead of reading
+  // them. The reporting job always runs the DEFAULT branch's renderer against
+  // an artifact built by the PR head's producer, so the two halves are
+  // routinely at different revisions — a version that does not move when the
+  // meaning of a field moves is decoration.
+  // Contract for v2, enforced in .github/scripts/render-bench-comment.mjs:
+  // `samples` is mandatory and holds exactly `reps` groups of `provesPerRep`
+  // finite numbers.
+  schemaVersion: 2,
   status: BASE_DIR ? "ok" : "head-only",
   calibration: CALIBRATION,
   // Named so the comment can say where the numbers came from; a threshold

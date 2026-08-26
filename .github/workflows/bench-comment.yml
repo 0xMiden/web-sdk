@@ -87,13 +87,23 @@ jobs:
           fi
           echo "id=$run_id" >> "$GITHUB_OUTPUT"
 
+      # Extracted to RUNNER_TEMP, deliberately NOT into the workspace.
+      #
+      # The zip is fork-controlled, and download-artifact bundles a copy of
+      # unzip-stream whose path guard is `^`-anchored and non-global: it strips
+      # only LEADING `../`, so an entry named `a/../../<path>` still escapes the
+      # extraction directory. With `path: report` that escape lands in the
+      # trusted default-branch checkout — including the renderer script the next
+      # step executes with pull-requests:write. Extracting outside the workspace
+      # means a traversal can only reach scratch space nothing runs from, and the
+      # step below then refuses the artifact outright.
       - name: Download benchmark report
         id: download
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: proving-bench-report
-          path: report
+          path: ${{ runner.temp }}/bench-report
           run-id: ${{ steps.run.outputs.id }}
           github-token: ${{ github.token }}
 
@@ -102,15 +112,56 @@ jobs:
       # a job that died before `Run benchmark` still produces one carrying only
       # pr.json and ctx.json. Neither is a reason to turn an informational bot
       # red — say nothing and stop.
+      #
+      # A malformed artifact is different from an unusable one. Unexpected entry
+      # names, or a checkout that moved during extraction, mean the zip was built
+      # to escape its directory rather than to report a benchmark; that fails the
+      # job loudly. It is the one condition here worth going red for.
       - name: Check the report is usable
         id: report
         if: steps.download.outcome == 'success'
         shell: bash
+        env:
+          REPORT_DIR: ${{ runner.temp }}/bench-report
+          # The real thing is tens of KB. The cap only has to be far below what
+          # would OOM node: a ~200 KB zip inflates to ~200 MB of JSON, and the
+          # renderer builds the whole samples block in memory.
+          MAX_JSON_BYTES: 4194304
         run: |
           set -euo pipefail
-          if [ -f report/results.json ] && [ -f report/pr.json ]; then
-            echo "usable=true" >> "$GITHUB_OUTPUT"
+
+          # Every path the artifact is allowed to contain. bench.yml writes
+          # exactly these three, flat.
+          unexpected=$(cd "$REPORT_DIR" && find . -mindepth 1 \
+            -not -path './results.json' \
+            -not -path './pr.json' \
+            -not -path './ctx.json' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error title=Proving Benchmark::Artifact contains unexpected paths:"
+            printf '%s\n' "$unexpected"
+            exit 1
           fi
+
+          # If extraction escaped into the checkout, the working tree moved.
+          if [ -n "$(git -C "$GITHUB_WORKSPACE" status --porcelain)" ]; then
+            echo "::error title=Proving Benchmark::Trusted checkout was modified by artifact extraction."
+            git -C "$GITHUB_WORKSPACE" status --porcelain
+            exit 1
+          fi
+
+          if [ ! -f "$REPORT_DIR/results.json" ] || [ ! -f "$REPORT_DIR/pr.json" ]; then
+            exit 0
+          fi
+
+          for f in results.json pr.json; do
+            size=$(wc -c < "$REPORT_DIR/$f" | tr -d '[:space:]')
+            if [ "$size" -gt "$MAX_JSON_BYTES" ]; then
+              echo "::notice title=Proving Benchmark::${f} is ${size} bytes (limit ${MAX_JSON_BYTES}); refusing to render."
+              exit 0
+            fi
+          done
+
+          echo "usable=true" >> "$GITHUB_OUTPUT"
 
       - name: Stop if no report
         if: steps.report.outputs.usable != 'true'
@@ -134,21 +185,36 @@ jobs:
         uses: actions/github-script@v7
         env:
           BENCH_RUN_ID: ${{ steps.run.outputs.id }}
+          REPORT_DIR: ${{ runner.temp }}/bench-report
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
+
+            // Nothing below calls core.setFailed. Every rejection here is either
+            // a fork feeding the bot garbage or an ordinary push landing between
+            // the bench run and this one — bench.yml cancels in progress, so the
+            // race is the common case, not the exception. An informational bot
+            // that goes red on a race is a bot people mute. core.error still
+            // annotates the run, so a real forgery attempt is visible in the log
+            // without failing a default-branch workflow.
+            const refuse = (message) => {
+              core.error(`Proving Benchmark: ${message}`);
+            };
 
             let claimed;
             try {
-              claimed = JSON.parse(fs.readFileSync('report/pr.json', 'utf8'));
+              claimed = JSON.parse(
+                fs.readFileSync(path.join(process.env.REPORT_DIR, 'pr.json'), 'utf8'),
+              );
             } catch (error) {
-              core.setFailed(`report/pr.json missing or malformed: ${error.message}`);
+              refuse(`pr.json missing or malformed: ${error.message}`);
               return;
             }
 
             const number = Number(claimed.number);
             if (!Number.isInteger(number) || number <= 0 || number > 1e7) {
-              core.setFailed(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
+              refuse(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
               return;
             }
 
@@ -167,15 +233,23 @@ jobs:
               run = data;
             }
             if (run.name !== 'Proving Benchmark') {
-              core.setFailed(`Run ${run.id} is "${run.name}", not a Proving Benchmark run.`);
+              refuse(`Run ${run.id} is "${run.name}", not a Proving Benchmark run.`);
               return;
             }
 
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: number,
-            });
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: number,
+              }));
+            } catch (error) {
+              // A number that does not resolve is a forged or stale artifact,
+              // not an outage worth failing the workflow over.
+              refuse(`PR #${number} could not be read: ${error.message}`);
+              return;
+            }
 
             // Tie the artifact to the run that produced it, using only fields
             // GitHub populates. Without this a fork could forge a number and
@@ -186,11 +260,11 @@ jobs:
             // repo, so an artifact from one can be reported on the other. Both
             // belong to the same author, so there is nothing to gain.
             if (pr.head.sha !== run.head_sha) {
-              core.setFailed(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
+              refuse(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
               return;
             }
             if (pr.head.repo?.full_name !== run.head_repository?.full_name) {
-              core.setFailed('PR head repo does not match the triggering run');
+              refuse('PR head repo does not match the triggering run');
               return;
             }
 
@@ -219,6 +293,11 @@ jobs:
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
           RUN_ID: ${{ steps.run.outputs.id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
+          REPORT_DIR: ${{ runner.temp }}/bench-report
+          # Written to scratch space, not the workspace: the checkout stays
+          # exactly as actions/checkout left it, which is what makes the
+          # tree-modified check above meaningful.
+          BODY_PATH: ${{ runner.temp }}/body.md
         run: |
           set -euo pipefail
           # The rendering context is rebuilt from values GitHub gave THIS job,
@@ -229,10 +308,10 @@ jobs:
           #
           # `[[ =~ ]]` and not `grep`: grep matches per LINE and so would accept
           # a multi-line value whose first line happens to look like a sha.
-          base_sha=$(jq -r '.baseSha // ""' report/pr.json)
+          base_sha=$(jq -r '.baseSha // ""' "$REPORT_DIR/pr.json" || true)
           if [[ ! "$base_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
-            echo "::error title=Proving Benchmark::Artifact baseSha is not a commit sha."
-            exit 1
+            echo "::notice title=Proving Benchmark::Artifact baseSha is not a commit sha; nothing to post."
+            exit 0
           fi
           # calibration is false by definition here: this job only ever posts on
           # a pull_request-triggered bench run, and a calibration run has no PR.
@@ -245,22 +324,29 @@ jobs:
             --arg runId "$RUN_ID" \
             --arg runUrl "$RUN_URL" \
             '{owner: $owner, repo: $repo, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl, calibration: false}' \
-            > ctx.json
-          node .github/scripts/render-bench-comment.mjs \
-            report/results.json \
-            ctx.json \
-            > body.md
-          echo "Rendered $(wc -c < body.md) bytes"
+            > "$RUNNER_TEMP/ctx.json"
+          # A results.json the renderer rejects is a fork feeding the bot
+          # garbage. Report nothing rather than turning a default-branch
+          # workflow red over a payload the PR author chose.
+          if ! node .github/scripts/render-bench-comment.mjs \
+            "$REPORT_DIR/results.json" \
+            "$RUNNER_TEMP/ctx.json" \
+            > "$BODY_PATH"; then
+            echo "::notice title=Proving Benchmark::Report could not be rendered; nothing to post."
+            exit 0
+          fi
+          echo "Rendered $(wc -c < "$BODY_PATH") bytes"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Post sticky comment
-        if: steps.pr.outputs.number
+        if: steps.render.outputs.ok == 'true'
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
         with:
           # Distinct from the `linked-client-pr` header used by
           # inject-linked-client-pr, so the two bots never clobber each other.
           header: proving-benchmark
           number: ${{ steps.pr.outputs.number }}
-          path: body.md
+          path: ${{ runner.temp }}/body.md
           # A bot that posts when nothing moved trains people to ignore it.
           skip_unchanged: true
 
@@ -268,11 +354,12 @@ jobs:
       # keeps the result out of the conversation timeline for people who would
       # rather read it in the Checks tab.
       - name: Publish neutral check run
-        if: steps.pr.outputs.number
+        if: steps.render.outputs.ok == 'true'
         uses: actions/github-script@v7
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
+          BODY_PATH: ${{ runner.temp }}/body.md
         with:
           script: |
             const fs = require('fs');
@@ -280,14 +367,37 @@ jobs:
             // caps the comment body at 60000, so it always fits. No slicing
             // here — a second, unannounced truncation would be the only place
             // in this pipeline that drops content silently.
-            const summary = fs.readFileSync('body.md', 'utf8');
-            await github.rest.checks.create({
+            const summary = fs.readFileSync(process.env.BODY_PATH, 'utf8');
+            const head_sha = process.env.HEAD_SHA;
+            const name = 'Proving Benchmark';
+            const body = {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: 'Proving Benchmark',
-              head_sha: process.env.HEAD_SHA,
+              name,
+              head_sha,
               status: 'completed',
               conclusion: 'neutral',
               details_url: process.env.RUN_URL,
               output: { title: 'Proving benchmark (informational)', summary },
+            };
+
+            // Update in place rather than stacking a second check run on the
+            // same commit. Re-rendering happens routinely — a dispatch smoke
+            // test, or a bench re-run for one head — and the Checks tab shows
+            // every created run, so `create` alone reads as N conflicting
+            // benchmark results for one commit.
+            const { data: existing } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: head_sha,
+              check_name: name,
+              per_page: 100,
             });
+            const mine = existing.check_runs.find(
+              (run) => run.app?.slug === 'github-actions',
+            );
+            if (mine) {
+              await github.rest.checks.update({ ...body, check_run_id: mine.id });
+            } else {
+              await github.rest.checks.create(body);
+            }

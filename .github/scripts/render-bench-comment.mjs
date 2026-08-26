@@ -41,7 +41,28 @@ const MAX_SUMMARY_CHARS = 900000;
 /** Repo-local runbook for turning the provisional noise floor into a measured one. */
 const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
 
-const SCHEMA_VERSION = 1;
+/**
+ * Bumped whenever the MEANING of a field changes, not merely when one is added.
+ *
+ * v2: the summary statistics are no longer read from the artifact at all — they
+ * are recomputed here from `samples`, which is now mandatory — and
+ * `reps`/`provesPerRep` became the RETAINED counts rather than the configured
+ * ones. Both halves of the pipeline are routinely at different revisions (the
+ * reporter always runs the default branch's renderer against an artifact built
+ * by the PR head's producer), so a version that does not move when the contract
+ * moves lets a stale producer's numbers be relabelled by a newer renderer.
+ */
+const SCHEMA_VERSION = 2;
+
+/**
+ * Total sample values accepted across all benchmarks.
+ *
+ * The artifact is fork-controlled and the renderer holds every sample in memory
+ * while building the raw block, so an inflated results.json is an OOM in the
+ * job that carries the write token. A real run reports a few hundred values;
+ * this is three orders of magnitude of headroom and still bounded.
+ */
+const MAX_SAMPLE_VALUES = 200000;
 
 /**
  * Noise floor, in percent: a movement smaller than this is reported as noise.
@@ -93,10 +114,19 @@ const NUM_FMT = new Intl.NumberFormat("en-US", {
  *   Cf — every format character: bidi overrides (U+202E, U+2066–U+2069) reverse
  *        the rest of the line a human reads, and zero-width chars / soft hyphen
  *        / BOM make two different names render identically
+ *   Cs — surrogates. JSON can encode a LONE one (`"\ud800"`), which survives
+ *        `JSON.parse` and makes the returned body ill-formed UTF-16; the GitHub
+ *        API then rejects the request or stores a replacement char. Code-point
+ *        truncation does not help — the lone surrogate IS a code point.
+ *   Default_Ignorable_Code_Point — the blank-but-not-`\s` glyphs, as a property
+ *        rather than a hand-written list. Hangul fillers (U+115F, U+1160,
+ *        U+3164), U+FFA0, variation selectors and the rest are all covered;
+ *        without this a name of 80 fillers renders as an empty cell 160 columns
+ *        wide. U+2800 BRAILLE PATTERN BLANK is not default-ignorable, so it is
+ *        still listed by hand.
  *
- * Whitespace is then collapsed — including the blank-but-not-`\s` glyphs, since
- * without them a name of 80 Hangul fillers renders as an empty cell 160 columns
- * wide — and the result is truncated so one long name cannot dominate.
+ * Whitespace is then collapsed and the result truncated so one long name cannot
+ * dominate.
  *
  * Stripping is only half the job: text that survives this still has to go
  * through `codeSpan` before it reaches the body. See that function.
@@ -118,8 +148,8 @@ function sanitizeText(value, maxLen = MAX_NAME_CHARS, fallback = "(unnamed)") {
   }
   const cleaned = raw
     .replace(/[`|<>@\\&]/g, " ")
-    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
-    .replace(/[\u3164\u2800]/g, " ")
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, " ")
+    .replace(/[\p{Default_Ignorable_Code_Point}\u2800]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length === 0) return fallback;
@@ -211,40 +241,46 @@ function requireObject(value, path) {
 }
 
 /**
- * Samples may arrive flat (`[a, b, c, d, e, f]`) or already grouped per rep
- * (`[[a, b, c], [d, e, f]]`). We normalize to per-rep groups because the raw
- * block reports per-rep spread — that is what tells a reader whether a delta
- * is a real shift or one slow rep dragging the median.
+ * Samples arrive grouped per rep: `[[a, b, c], [d, e, f]]`.
+ *
+ * The grouping is not cosmetic — it is what the headline estimator is defined
+ * over (the mean of each rep's fastest prove) — so a flat array is refused
+ * rather than guessed at. It also has to agree with the declared retained
+ * counts: an artifact that says six reps and ships two groups is internally
+ * inconsistent, and every number derived from it would be mislabelled.
  */
-function normalizeSamples(value, path, reps, provesPerRep) {
-  if (value === undefined || value === null) return [];
+function normalizeSamples(value, path, reps, provesPerRep, budget) {
   if (!Array.isArray(value))
-    fail(`${path} must be an array, got ${describeValue(value)}`);
-
-  if (value.length > 0 && Array.isArray(value[0])) {
-    return (
-      value
-        .map((group, i) => {
-          if (!Array.isArray(group))
-            fail(`${path}[${i}] must be an array of numbers`);
-          return group.map((n, j) => requireFinite(n, `${path}[${i}][${j}]`));
-        })
-        // An empty group would render as a labelled rep line with no values.
-        .filter((group) => group.length > 0)
+    fail(
+      `${path} must be an array of per-rep arrays, got ${describeValue(value)}`
     );
-  }
+  if (value.length !== reps)
+    fail(`${path} must hold ${reps} per-rep groups, got ${value.length}`);
 
-  const flat = value.map((n, i) => requireFinite(n, `${path}[${i}]`));
-  if (reps > 0 && provesPerRep > 0 && flat.length === reps * provesPerRep) {
-    const grouped = [];
-    for (let i = 0; i < reps; i += 1) {
-      grouped.push(flat.slice(i * provesPerRep, (i + 1) * provesPerRep));
+  return value.map((group, i) => {
+    if (!Array.isArray(group))
+      fail(`${path}[${i}] must be an array of numbers`);
+    if (group.length !== provesPerRep) {
+      fail(
+        `${path}[${i}] must hold ${provesPerRep} ${plural(provesPerRep, "sample")}, got ${group.length}`
+      );
     }
-    return grouped;
-  }
-  // Shape we cannot attribute to reps: show it as one undifferentiated run
-  // rather than inventing a grouping.
-  return flat.length > 0 ? [flat] : [];
+    budget.remaining -= group.length;
+    if (budget.remaining < 0) {
+      fail(`too many samples; the cap is ${MAX_SAMPLE_VALUES} values`);
+    }
+    return group.map((n, j) => requireFinite(n, `${path}[${i}][${j}]`));
+  });
+}
+
+const mean = (xs) => xs.reduce((total, x) => total + x, 0) / xs.length;
+const minOf = (xs) => xs.reduce((lo, x) => (x < lo ? x : lo), Infinity);
+const maxOf = (xs) => xs.reduce((hi, x) => (x > hi ? x : hi), -Infinity);
+
+function medianOf(xs) {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 /**
@@ -254,28 +290,39 @@ function normalizeSamples(value, path, reps, provesPerRep) {
  * which is what happens when the base dist fails to build — bench.yml warns and
  * carries on deliberately, reporting head-only. Refusing that shape here would
  * turn the documented fallback into a hard failure.
+ *
+ * EVERY STATISTIC IS RECOMPUTED FROM `samples`. The artifact's own `value`,
+ * `min`, `median`, `max`, `statistic` and `perRepMin` are ignored outright.
+ *
+ * Pinning the threshold and the direction on this side was only half the job:
+ * with the NUMBERS still trusted, a fork kept full control of the verdict by
+ * arithmetic instead of by flag — samples showing head 10% slower, a `value`
+ * pair claiming 8% faster, and a comment posted under this repo's token that
+ * asserts in its own methodology section that the figure is the mean of the
+ * per-rep minima of exactly those samples. Recomputing makes that sentence
+ * true. The producer rounds `samples` to 3 decimals and computes its own
+ * summary from the unrounded values, so the two differ in the sub-microsecond
+ * digits; nothing here compares them.
  */
-function normalizeSide(value, path, reps, provesPerRep) {
+function normalizeSide(value, path, reps, provesPerRep, budget) {
   if (value === undefined || value === null) return null;
   const side = requireObject(value, path);
+  const samples = normalizeSamples(
+    side.samples,
+    `${path}.samples`,
+    reps,
+    provesPerRep,
+    budget
+  );
+  const flat = samples.flat();
   return {
-    // `value` is the headline estimator the bench script computed (the mean of
-    // each repetition's fastest prove). An artifact from an older bench script
-    // has no such field, so fall back to the median — a schema skew should
-    // degrade the statistic, not throw the whole comment away.
-    value: requireFinite(
-      side.value === undefined ? side.median : side.value,
-      `${path}.value`
-    ),
-    median: requireFinite(side.median, `${path}.median`),
-    min: requireFinite(side.min, `${path}.min`),
-    max: requireFinite(side.max, `${path}.max`),
-    samples: normalizeSamples(
-      side.samples,
-      `${path}.samples`,
-      reps,
-      provesPerRep
-    ),
+    // The mean of each rep's fastest prove — see the estimator comment in
+    // bench-proving.mjs for why both levels are there.
+    value: mean(samples.map(minOf)),
+    median: medianOf(flat),
+    min: minOf(flat),
+    max: maxOf(flat),
+    samples,
   };
 }
 
@@ -307,19 +354,30 @@ function normalizeResults(input) {
   // are constants on the producing side too, so nothing is lost by pinning
   // them on the trusted side, and a fork loses the ability to author the
   // verdict this bot posts.
+  // Shared across every side of every benchmark: the cap that matters is the
+  // total the renderer holds at once, not the per-benchmark count.
+  const budget = { remaining: MAX_SAMPLE_VALUES };
+
   const benchmarks = results.benchmarks.map((entry, i) => {
     const b = requireObject(entry, `benchmarks[${i}]`);
     const head = normalizeSide(
       b.head,
       `benchmarks[${i}].head`,
       reps,
-      provesPerRep
+      provesPerRep,
+      budget
     );
     if (head === null) fail(`benchmarks[${i}].head has no measurements`);
     return {
       name: sanitizeText(b.name, MAX_NAME_CHARS, `benchmark #${i + 1}`),
       unit: sanitizeUnit(b.unit),
-      base: normalizeSide(b.base, `benchmarks[${i}].base`, reps, provesPerRep),
+      base: normalizeSide(
+        b.base,
+        `benchmarks[${i}].base`,
+        reps,
+        provesPerRep,
+        budget
+      ),
       head,
     };
   });
@@ -339,7 +397,12 @@ function normalizeResults(input) {
 // and matching the shell-side check in bench-comment.yml. An uppercase sha
 // would render a link nobody can match against a `git log`.
 const SHA_RE = /^[0-9a-f]{7,40}$/;
-const SLUG_RE = /^[A-Za-z0-9._-]+$/;
+// GitHub's own rule for both an owner and a repo name, minus the dot-segments:
+// a bare `..` passes a naive character-class check and then normalizes inside a
+// commit URL into a link to a different repo entirely. Same traversal
+// RUN_URL_RE was tightened against; both values are trusted here, but a
+// character class that permits `..` is not a property worth relying on.
+const SLUG_RE = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 // The exact shape both workflows build, rather than a loose path match: the
 // looser form accepted `..`, which GitHub normalizes into a link to whatever
 // repo the traversal lands on.
@@ -674,9 +737,6 @@ function buildSamplesBlock(rows, unit) {
         lines.push(`  ${label} (not measured)`);
         continue;
       }
-      if (data.samples.length === 0) {
-        lines.push(`  ${label} (no samples reported)`);
-      }
       data.samples.forEach((group, i) => {
         const values = group.map((v) => formatValue(v)).join(", ");
         lines.push(`  ${label} rep ${String(i + 1).padStart(2)}: ${values}`);
@@ -694,6 +754,11 @@ function buildSamplesBlock(rows, unit) {
 }
 
 function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
+  // On a head-only run there is no base side, so every sentence about the two
+  // being interleaved, alternated and built in one job describes something that
+  // did not happen. Saying it anyway next to the "no base measurements" banner
+  // makes the comment contradict itself.
+  const compared = rows.some((r) => r.base !== null);
   const parts = [
     "<details>",
     "<summary><b>Methodology and raw samples</b></summary>",
@@ -702,10 +767,17 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     `- Each benchmark keeps **${results.reps} ${plural(results.reps, "rep")} × ${results.provesPerRep} warm ${plural(results.provesPerRep, "prove")}** on \`${results.runner}\` (${results.threads} ${plural(results.threads, "thread")}, \`${results.profile}\` / \`${results.variant}\`). One extra repetition and the first prove of every page run first and are discarded.`,
     `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its clean compute cost. Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima cancels that lottery.`,
     `- Measured over six calibration runs of identical binaries, this estimator holds a standard deviation of 1.79%, against 2.96% for a global minimum and 5.39% for a plain median.`,
-    `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
-    `- A wide gap between the reported figure and the max means the runner was busy. It does not invalidate the comparison (both sides ran interleaved on the same machine) but it is worth a second look.`,
-    `- Base and head are built and measured in the same job on the same runner, so runner-to-runner drift cancels out.`,
-    `- Δ % = (head − base) / base on that figure. Lower is better for every benchmark in this suite.`,
+    ...(compared
+      ? [
+          `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
+          `- A wide gap between the reported figure and the max means the runner was busy. It does not invalidate the comparison (both sides ran interleaved on the same machine) but it is worth a second look.`,
+          `- Base and head are built and measured in the same job on the same runner, so runner-to-runner drift cancels out.`,
+          `- Δ % = (head − base) / base on that figure. Lower is better for every benchmark in this suite.`,
+        ]
+      : [
+          `- A wide gap between the reported figure and the max means the runner was busy. With no base side there is nothing to compare against, so treat these timings as a record of the run rather than as a result.`,
+        ]),
+    `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
     THRESHOLD_PROVISIONAL
       ? `- The ±${formatPct(THRESHOLD_PCT)} threshold is **provisional** — a placeholder, not a measured variance for this runner. [How to calibrate](${calibrationLink(ctx)}).`
       : `- The ±${formatPct(THRESHOLD_PCT)} threshold is the calibrated run-to-run variance for this runner.`,

@@ -92,6 +92,13 @@ Three further corrections, also measured:
   discarded, so what balances over the **retained** proves is
   `reps × (proves − 1)` — and only when that product is even. Keep it even
   (the default 6 × 3 is); the script warns when it is not.
+
+  The warning attaches no figure to the residual bias on purpose. The +1.19%
+  penalty is *per prove*, while the reported statistic is a mean of per-repetition
+  **minima**, and a minimum is not linear in a per-prove penalty: when a
+  repetition's fastest prove ran first on both sides the penalty cancels outright,
+  and when it ran second on one side it lands in full. Scaling 1.19% by the
+  retained prove count would be precision this estimator cannot support.
 - **Discard the first repetition.** The first repetition of a process pays
   OS-level warm-up (page cache, Chromium start-up, CPU governor ramp) that no
   later repetition pays.
@@ -114,6 +121,16 @@ purpose: the renderer runs on the privileged side of the `workflow_run` split,
 and the benchmark JSON it reads is written by a job the PR author controls. A
 threshold taken from that JSON would let a fork set its own noise floor and
 silence its own regression.
+
+For the same reason the renderer does not read the summary statistics either. It
+recomputes the reported figure, the median, the minimum and the maximum from the
+per-repetition `samples` array, and ignores the `value` / `min` / `median` /
+`max` that `bench-proving.mjs` writes alongside them — otherwise an artifact
+could keep authoring the verdict by arithmetic rather than by flag. So `samples`
+is the load-bearing field of the schema: it must hold exactly `reps` groups of
+`provesPerRep` finite numbers, or the renderer refuses the artifact and the bot
+posts nothing. Changing the shape of that array means bumping `schemaVersion` on
+both sides.
 
 The current placeholder is **5.4%** — 3σ of the 1.79% measured below
 (3 × 1.79 = 5.37, rounded up).

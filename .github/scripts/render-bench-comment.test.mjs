@@ -29,25 +29,44 @@ const ctx = (overrides = {}) => ({
   ...overrides,
 });
 
-const side = (value, median = value, max = value) => ({
-  statistic: "mean-of-per-rep-minima",
-  value,
-  perRepMin: [value],
-  min: value,
-  median,
-  max,
-  samples: [[value, median, max]],
-});
+/** Must match the fixture's `reps` / `provesPerRep`: the shape is enforced. */
+const REPS = 2;
+const PROVES_PER_REP = 3;
+
+/**
+ * A side whose RECOMPUTED statistic is exactly `value`.
+ *
+ * The renderer derives every figure from `samples` and ignores the artifact's
+ * own `value` / `min` / `median` / `max`, so a fixture cannot simply assert a
+ * number — it has to present samples whose mean-of-per-rep-minima is that
+ * number. Each rep's fastest prove is `value`; the others only move the spread.
+ *
+ * Scaled by `|value|` rather than multiplied, and falling back to `value` itself
+ * when the sum overflows, so the extremes the overflow tests use (5e-324,
+ * ±Number.MAX_VALUE) stay finite. A tie leaves the rep's minimum at `value`.
+ */
+const side = (value) => {
+  const slower = (k) => {
+    const scaled = value + Math.abs(value) * k;
+    return Number.isFinite(scaled) ? scaled : value;
+  };
+  return {
+    samples: [
+      [value, slower(0.4), slower(0.2)],
+      [slower(0.3), value, slower(0.5)],
+    ],
+  };
+};
 
 const results = (overrides = {}) => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   status: "ok",
   runner: "warp-ubuntu-latest-x64-8x",
   variant: "mt",
   profile: "release",
   threads: 8,
-  reps: 6,
-  provesPerRep: 3,
+  reps: REPS,
+  provesPerRep: PROVES_PER_REP,
   benchmarks: [
     {
       name: "prove / consume / ecdsa-k256-keccak",
@@ -62,49 +81,175 @@ const results = (overrides = {}) => ({
 
 const bench = (name, base, head) => ({ name, unit: "ms", base, head });
 
-test("reports `value`, not the median or the raw minimum", () => {
+test("reports the mean of per-rep minima, not the median or the global minimum", () => {
   // The methodology paragraph claims the mean of per-rep minima. If the
-  // renderer quietly used median (-20%) or min (-50%) instead, that paragraph
+  // renderer used the median or the global minimum instead, that paragraph
   // would become a lie while the comment still looked plausible.
+  //
+  // base per-rep minima 1000, 1000 -> 1000. Median over all six is 1250 and
+  // the global minimum is 1000, so a wrong estimator lands on a different %.
   const body = renderComment(
     results({
       benchmark: {
         base: {
-          value: 1000,
-          min: 900,
-          median: 2000,
-          max: 3000,
-          samples: [[900, 2000]],
+          samples: [
+            [1000, 3000, 3000],
+            [1000, 3000, 3000],
+          ],
         },
         head: {
-          value: 1010,
-          min: 450,
-          median: 1600,
-          max: 3000,
-          samples: [[450, 1600]],
+          samples: [
+            [1000, 1020, 5000],
+            [1020, 5000, 5000],
+          ],
         },
       },
     }),
     ctx()
   );
+  // (mean(1000, 1020) - 1000) / 1000 = +1.00%
   assert.match(body, /\+1\.00%/);
-  assert.doesNotMatch(body, /-20\.00%/, "fell back to the median");
-  assert.doesNotMatch(body, /-50\.00%/, "fell back to the raw minimum");
 });
 
-test("falls back to the median when `value` is absent", () => {
-  // Schema skew (an old artifact, a rolled-back bench script) should degrade
-  // to a slightly worse statistic, not throw away the whole comment.
+test("recomputes the statistics and ignores the summary the artifact claims", () => {
+  // Pinning the threshold and the direction on the trusted side was only half
+  // the job. With the NUMBERS still trusted, a fork kept full control of the
+  // verdict by arithmetic: samples showing head 10% slower, a `value` pair
+  // claiming 8% faster, and a comment posted under this repo's token whose own
+  // methodology section asserts the figure is the mean of those samples'
+  // per-rep minima.
   const body = renderComment(
     results({
       benchmark: {
-        base: { min: 900, median: 1000, max: 1100, samples: [[900, 1100]] },
-        head: { min: 900, median: 1100, max: 1300, samples: [[900, 1300]] },
+        base: {
+          statistic: "mean-of-per-rep-minima",
+          value: 1200,
+          perRepMin: [1200, 1200],
+          min: 1200,
+          median: 1200,
+          max: 1200,
+          samples: [
+            [1000, 1400, 1400],
+            [1000, 1400, 1400],
+          ],
+        },
+        head: {
+          statistic: "mean-of-per-rep-minima",
+          value: 1100,
+          perRepMin: [1100, 1100],
+          min: 1100,
+          median: 1100,
+          max: 1100,
+          samples: [
+            [1100, 1500, 1500],
+            [1100, 1500, 1500],
+          ],
+        },
       },
     }),
     ctx()
   );
-  assert.match(body, /\+10\.00%/);
+  const heading = body.split("\n")[0];
+  assert.match(heading, /\+10\.00% slower/, "the claimed summary won");
+  assert.doesNotMatch(heading, /faster/);
+  // The recomputed spread has to come from the samples too, not from the
+  // claimed min/max — otherwise the raw block contradicts its own numbers.
+  assert.match(body, /min 1,000\.0 {2}max 1,400\.0/);
+});
+
+test("refuses a side with no samples to recompute from", () => {
+  // A summary with no samples is unverifiable by construction, and the whole
+  // point of v2 is that nothing unverifiable reaches the comment.
+  for (const samples of [undefined, null, [], 1000]) {
+    assert.throws(
+      () =>
+        renderComment(
+          results({
+            benchmark: {
+              base: {
+                value: 1000,
+                min: 1000,
+                median: 1000,
+                max: 1000,
+                samples,
+              },
+              head: side(1010),
+            },
+          }),
+          ctx()
+        ),
+      /samples/
+    );
+  }
+});
+
+test("refuses samples that disagree with the declared retained counts", () => {
+  // An artifact claiming six reps and shipping two groups is internally
+  // inconsistent: every number derived from it would be mislabelled, and the
+  // per-rep block would attribute samples to reps that never ran.
+  const wrongGroups = { samples: [[1000, 1000, 1000]] };
+  const wrongWidth = {
+    samples: [
+      [1000, 1000],
+      [1000, 1000],
+    ],
+  };
+  const flat = { samples: [1000, 1000, 1000, 1000, 1000, 1000] };
+  for (const [label, bad] of [
+    ["group count", wrongGroups],
+    ["group width", wrongWidth],
+    ["flat array", flat],
+  ]) {
+    assert.throws(
+      () =>
+        renderComment(
+          results({ benchmark: { base: bad, head: side(1000) } }),
+          ctx()
+        ),
+      /samples/,
+      `${label} was accepted`
+    );
+  }
+});
+
+test("refuses an unbounded sample payload rather than exhausting memory", () => {
+  // A ~200 KB artifact inflates to ~200 MB of JSON, and the renderer holds
+  // every sample while building the raw block — an OOM in the job that carries
+  // the write token, i.e. an unprivileged DoS of the reporter by any fork PR.
+  const reps = 1000;
+  const provesPerRep = 300;
+  const wide = () => ({
+    samples: Array.from({ length: reps }, () =>
+      Array.from({ length: provesPerRep }, () => 1000)
+    ),
+  });
+  assert.throws(
+    () =>
+      renderComment(
+        results({
+          top: {
+            reps,
+            provesPerRep,
+            benchmarks: [
+              { name: "wide", unit: "ms", base: wide(), head: wide() },
+            ],
+          },
+        }),
+        ctx()
+      ),
+    /too many samples/
+  );
+});
+
+test("refuses an artifact built against an older schema", () => {
+  // The reporter always runs the DEFAULT branch's renderer against an artifact
+  // built by the PR head's producer, so the two are routinely at different
+  // revisions. v1 called `provesPerRep` the configured count and let the
+  // artifact supply the statistics.
+  assert.throws(
+    () => renderComment(results({ top: { schemaVersion: 1 } }), ctx()),
+    /schemaVersion must be 2/
+  );
 });
 
 test("classifies movement against the threshold", () => {
@@ -318,6 +463,17 @@ test("renders no invisible or control characters", () => {
   }
 });
 
+test("strips a lone surrogate rather than returning ill-formed UTF-16", () => {
+  // JSON can encode an UNPAIRED surrogate ("\ud800"), which survives
+  // JSON.parse. Code-point-aware truncation does not help — the lone surrogate
+  // IS a code point — and the GitHub API rejects or mangles the request.
+  for (const name of ["a\ud800b", "\udfffonly", `${"x".repeat(79)}\ud83d`]) {
+    const body = renderComment(results({ benchmark: { name } }), ctx());
+    assert.ok(body.isWellFormed(), `${JSON.stringify(name)}: ill-formed`);
+    assert.doesNotMatch(body, /[\p{Cs}]/u, "a surrogate reached the body");
+  }
+});
+
 test("returns a well-formed string even when truncating a name", () => {
   // Slicing by UTF-16 unit split surrogate pairs, which reaches the comment as
   // U+FFFD and a JSON API payload as a lone `\ud83d` escape.
@@ -335,7 +491,12 @@ test("refuses to render non-finite measurements rather than printing NaN", () =>
         renderComment(
           results({
             benchmark: {
-              base: { min: bad, median: bad, max: bad, samples: [[1]] },
+              base: {
+                samples: [
+                  [1000, bad, 1000],
+                  [1000, 1000, 1000],
+                ],
+              },
               head: side(1000),
             },
           }),
@@ -387,6 +548,20 @@ test("refuses a context whose shas or slugs are not well formed", () => {
   assert.throws(() =>
     renderComment(results(), ctx({ owner: "bad owner/../.." }))
   );
+  // A bare dot segment passes a naive character class and then normalizes
+  // inside a commit URL into a link to a different repo.
+  for (const slug of ["..", "."]) {
+    assert.throws(
+      () => renderComment(results(), ctx({ owner: slug })),
+      undefined,
+      `owner "${slug}" was accepted`
+    );
+    assert.throws(
+      () => renderComment(results(), ctx({ repo: slug })),
+      undefined,
+      `repo "${slug}" was accepted`
+    );
+  }
   assert.throws(
     () => renderComment(results(), ctx({ baseSha: "A1B2C3D4E5F6071" })),
     undefined,
@@ -425,6 +600,24 @@ test("renders a head-only run instead of refusing it", () => {
   assert.match(rows[0], /\| — \|/, "base cell should be an em dash");
   assert.match(rows[0], /n\/a/, "delta should be n/a");
   assert.match(body, /base \(not measured\)/);
+});
+
+test("a head-only run does not claim the two sides were interleaved", () => {
+  // Every sentence about alternating proves, flipping the order and building
+  // both sides in one job describes something that did not happen, and it sat
+  // directly under the "no base measurements" banner.
+  const body = renderComment(
+    results({ benchmark: { base: null, head: side(1000) } }),
+    ctx()
+  );
+  assert.doesNotMatch(body, /one prove at a time, alternating/);
+  assert.doesNotMatch(body, /Base and head are built and measured in the same/);
+  assert.doesNotMatch(body, /both sides ran interleaved/);
+
+  // ... and still does when there IS a base.
+  const compared = renderComment(results(), ctx());
+  assert.match(compared, /one prove at a time, alternating/);
+  assert.match(compared, /Base and head are built and measured in the same/);
 });
 
 test("still refuses an artifact with no head measurements", () => {
@@ -538,14 +731,12 @@ test("the summary variant keeps content the comment has to drop", () => {
   // forks, where ~1 MiB is allowed — was silently held to the comment's 60 kB
   // limit and degraded identically.
   const wide = (value) => ({
-    value,
-    min: value,
-    median: value,
-    max: value,
     samples: Array.from({ length: 40 }, () => [value, value, value, value]),
   });
   const input = results({
     top: {
+      reps: 40,
+      provesPerRep: 4,
       benchmarks: Array.from({ length: 60 }, (_, i) =>
         bench(`bench-${i}`, wide(1000 + i), wide(1200 + i))
       ),

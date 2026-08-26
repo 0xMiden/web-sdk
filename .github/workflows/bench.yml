@@ -186,12 +186,31 @@ jobs:
       # machine costs nothing in measurement noise — both sides are still
       # benched interleaved on THIS machine. Caching the artifact is not
       # caching the measurement.
+      # Keyed on more than the commit. The dist is a function of the base source
+      # AND of how this workflow builds it: the runner class, the toolchain that
+      # `rustup update` happened to resolve, and the build commands in this file.
+      # Keyed on base_sha alone, a cache entry saved before a build-flag change
+      # is restored after it, and the comparison silently benches head against a
+      # stale base. `hashFiles` on this workflow covers the runner label and the
+      # commands; RUST_CACHE_KEY is the manual salt for a toolchain bump.
+      - name: Build the base dist cache key
+        id: dist-key
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.shas.outputs.base_sha }}
+          WORKFLOW_HASH: ${{ hashFiles('.github/workflows/bench.yml') }}
+          SALT: ${{ env.RUST_CACHE_KEY }}
+        run: |
+          set -euo pipefail
+          rustc_version=$(rustc --version | tr -c '[:alnum:].' '-')
+          echo "key=${RUNNER_OS}-bench-dist-mt-release-${SALT}-${rustc_version}-${WORKFLOW_HASH:0:16}-${BASE_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Restore cache - base MT dist
         id: base-dist-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/dist-base
-          key: ${{ runner.os }}-bench-dist-mt-release-${{ steps.shas.outputs.base_sha }}
+          key: ${{ steps.dist-key.outputs.key }}
 
       # Built in a detached worktree so the head checkout stays pristine — in
       # particular so `inject-linked-client-pr` (which mutates Cargo.toml and
@@ -220,7 +239,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/dist-base
-          key: ${{ runner.os }}-bench-dist-mt-release-${{ steps.shas.outputs.base_sha }}
+          key: ${{ steps.dist-key.outputs.key }}
 
       # Runs on the head checkout only, and never posts: build.yml's build-wasm
       # job owns the single sticky comment for the linked-client patch.
@@ -349,16 +368,30 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          # Rendered to a file first, then appended. Redirecting the renderer
+          # straight at $GITHUB_STEP_SUMMARY appends whatever it managed to write
+          # before failing, and a half-written <details> swallows the rest of the
+          # summary. A refusal here also must not fail the job: reaching this step
+          # means the builds and the benchmark already succeeded, and losing that
+          # to a rendering problem would cost another ~20 minutes to retry.
+          rendered=""
           if [ -f "$RUNNER_TEMP/report/results.json" ]; then
             # --summary: a step summary allows ~1 MiB, so it does not need the
             # comment's 60 kB degradation ladder.
-            node .github/scripts/render-bench-comment.mjs --summary \
+            if node .github/scripts/render-bench-comment.mjs --summary \
               "$RUNNER_TEMP/report/results.json" \
               "$RUNNER_TEMP/report/ctx.json" \
-              >> "$GITHUB_STEP_SUMMARY"
+              > "$RUNNER_TEMP/summary.md"; then
+              rendered=yes
+            else
+              echo "::warning title=Proving Benchmark::Could not render the job summary; results.json is still attached to the run."
+            fi
+          fi
+          if [ -n "$rendered" ]; then
+            cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
           else
             {
-              echo "### Proving Benchmark did not produce results"
+              echo "### Proving Benchmark produced no readable results"
               echo ""
               echo "See the [run log]($RUN_URL)."
             } >> "$GITHUB_STEP_SUMMARY"
