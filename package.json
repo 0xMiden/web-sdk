@@ -11,6 +11,7 @@
     "build:telemetry-otel": "pnpm --filter @miden-sdk/telemetry-otel run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "hydrate:web-client": "node scripts/hydrate-web-client.mjs",
     "test:react-sdk": "pnpm --filter @miden-sdk/react run test:unit",
     "test:react-sdk:coverage": "pnpm --filter @miden-sdk/react run test:coverage",
     "prepare": "lefthook install || true",
