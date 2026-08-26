@@ -52,10 +52,11 @@ miden-client              = { default-features = false, version = "0.16.0-rc.2" 
 miden-client-sqlite-store = { default-features = false, version = "0.16.0-rc.2" }
 
 # VM crates
-# Feature-only dependency of the web-client: no code imports it. It exists to
-# flip `std` on for the one shared build of `miden-precompiles-prover`, so the
-# ST WASM build caches the preprocessed STARK bundle instead of rebuilding it
-# on every precompile-raising prove/verify (see crates/web-client/Cargo.toml).
+# Declared here only so crates/web-client can depend on it and turn `std` on —
+# no code imports it, and this stanza does not enable the feature itself. That
+# makes the ST WASM build cache the preprocessed STARK bundle instead of
+# rebuilding it on every precompile-raising prove/verify; the full rationale
+# and blast radius are in crates/web-client/Cargo.toml.
 # 0.29.1 is the version already locked via the rust-sdk 0.16.0-rc.2 graph.
 miden-precompiles-prover = { default-features = false, version = "0.29.1" }
 

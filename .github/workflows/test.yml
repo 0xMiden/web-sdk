@@ -48,10 +48,11 @@ jobs:
               - '!**/*.md'
               - '!**/*.txt'
               - '!docs/**'
-            # Every manifest of a crate compiled into the shipped WASM is
-            # listed alongside Cargo.lock: a feature-only edit changes what
-            # gets compiled without moving the lockfile, so Cargo.lock alone
-            # does not catch it.
+            # Every in-repo manifest that can change the shipped WASM is
+            # listed alongside Cargo.lock — including js-export-macro, which
+            # is host-compiled but expands into the WASM. A feature-only edit
+            # changes what gets compiled without moving the lockfile, so
+            # Cargo.lock alone does not catch it.
             release_wasm:
               - '.github/workflows/publish-web-sdk.yml'
               - '.github/workflows/test.yml'

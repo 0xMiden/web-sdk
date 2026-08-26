@@ -40,9 +40,12 @@ check-wasm-features: ## Verify the ST WASM build still resolves the dependency f
 	# just goes quiet and every precompile-raising prove gets slow again
 	# (issue #318). Two copies of the crate would be as bad as zero — the
 	# direct dep would carry `std` while the prover called the other one.
-	@resolved="$$(cargo tree --package miden-client-web --target wasm32-unknown-unknown \
-		--edges normal --format '{p} {f}' --prefix none \
-		| grep '^miden-precompiles-prover v' | sed 's/ (\*)$$//' | sort -u)" || exit 1; \
+	@tree="$$(cargo +nightly tree --package miden-client-web \
+		--target wasm32-unknown-unknown --no-default-features \
+		--features browser,testing --edges normal --format '{p} {f}' --prefix none)" \
+		|| { echo "error: cargo tree failed"; exit 1; }; \
+	resolved="$$(printf '%s\n' "$$tree" \
+		| grep '^miden-precompiles-prover v' | sed 's/ (\*)$$//' | sort -u)"; \
 	if [ "$$(printf '%s\n' "$$resolved" | grep -c .)" -ne 1 ]; then \
 		echo "error: expected exactly one resolved miden-precompiles-prover, found:"; \
 		printf '%s\n' "$$resolved"; \

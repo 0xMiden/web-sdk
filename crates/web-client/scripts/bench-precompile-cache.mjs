@@ -5,11 +5,17 @@
 // needs a preprocessed bundle (2^16-row BytePairLut table + coset LDE + Merkle
 // commitment). With `std` on that crate the bundle is cached in a
 // process-lifetime OnceLock; without it, every prove rebuilds it. This script
-// measures that: it executes ONE ECDSA transaction against an in-browser mock
-// chain (no network), then proves the same TransactionResult repeatedly in the
-// same wasm instance, timing each prove. prove #1 is the cold cache, proves
-// #2..M are warm. A Falcon-authenticated twin raises no precompile claim and
+// executes ONE ECDSA transaction against an in-browser mock chain (no network),
+// then proves the same TransactionResult repeatedly in the same wasm instance,
+// timing each prove. A Falcon-authenticated twin raises no precompile claim and
 // serves as the control.
+//
+// Read the WARM median as the headline. The cold-vs-warm gap within one run is
+// NOT a measurement of the cache: prove #1 also pays generic first-call warm-up
+// (JIT, allocator growth, other lazy statics), so it overstates the effect. The
+// only clean measurement is A/B across two binaries — build dist/st with and
+// without the feature, save each, and run this script against both, comparing
+// warm medians. See the `bench-precompile-cache` target in the Makefile.
 //
 // Two traps this script deliberately avoids:
 //   - On a mock client, proveTransaction without an explicit prover returns a
@@ -72,6 +78,15 @@ const count = (name, fallback) => {
 };
 
 const KNOWN_VARIANTS = new Set(["ecdsa", "falcon"]);
+const KNOWN_FLAGS = new Set(["--pages", "--proves", "--variants", "--spans"]);
+
+// Without this a misspelled flag is silently ignored and the run quietly
+// reports the default config as if it were what was asked for.
+for (const arg of args) {
+  if (arg.startsWith("--") && !KNOWN_FLAGS.has(arg)) {
+    usage(`Unknown flag "${arg}".`);
+  }
+}
 
 const distDir = path.resolve(
   args[0] && !args[0].startsWith("--")
@@ -101,6 +116,14 @@ const contentTypes = new Map([
   [".map", "application/json"],
   [".wasm", "application/wasm"],
 ]);
+
+// Fail here rather than ten seconds later, inside Chromium, as an opaque
+// "Failed to fetch dynamically imported module" from the 404ing static server.
+if (!(await stat(path.join(distDir, "index.js")).catch(() => null))) {
+  usage(
+    `No index.js under ${distDir} — build it first (\`pnpm run build-st\`).`
+  );
+}
 
 // Static server over the dist dir. No COOP/COEP: the ST build must work in
 // non-cross-origin-isolated contexts, so the bench runs in one too.
@@ -367,7 +390,11 @@ try {
               : "")
         );
       } finally {
-        await context.close();
+        // Report rather than throw: a failing context close here would replace
+        // whatever error the iteration was already unwinding with.
+        await context
+          .close()
+          .catch((error) => console.error(`[teardown] context: ${error}`));
       }
     }
   }

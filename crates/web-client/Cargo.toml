@@ -84,13 +84,17 @@ miden-client = { features = ["testing"], workspace = true }
 # The trade is memory: ~50 MiB retained per proving hash function (2 MiB table
 # + 16 MiB LDE at log_blowup 3 + ~32 MiB of Merkle digest layers), held until
 # the WASM instance is torn down — the cache is a function-local `OnceLock`, so
-# there is no eviction API. In practice that is one slot, not five:
-# `TransactionProver.newLocalProver()` builds `ProvingOptions::default()`,
-# which is Blake3_256.
+# there is no eviction API. There is one slot per hash function, but only two
+# are reachable: the zero-config path (`submitNewTransaction` proves with
+# `None`) falls through to miden-client's default
+# `LocalTransactionProver::default()`, which is `ProvingOptions::new(Poseidon2)`,
+# while `TransactionProver.newLocalProver()` uses `ProvingOptions::default()`,
+# which is Blake3_256. An app that does both retains ~100 MiB.
 #
-# Deliberately NOT `miden-prover/std` or `miden-processor/std`: those would
-# compile miden-processor's std-gated threaded trace build, which traps on
-# wasm32 (std::thread::scope).
+# Deliberately NOT `miden-prover/std`: its `std` pulls `miden-processor/std` AND
+# un-gates the call site in miden-prover that reaches miden-processor's
+# std-gated threaded trace build, which traps on wasm32 (std::thread::scope).
+# (The MT build does carry both — it has enough of a runtime for them.)
 #
 # Cargo unifies features per target, so this flips `std` for more than the one
 # crate. Verify the full blast radius with:
