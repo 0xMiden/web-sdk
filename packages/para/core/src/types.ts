@@ -1,3 +1,4 @@
+/** @public */
 export interface MidenClientOpts {
   endpoint?: string;
   noteTransportUrl?: string;
@@ -8,7 +9,7 @@ export interface MidenClientOpts {
   seed?: string;
 }
 
-export type MidenAccountStorageMode = 'public' | 'private';
+export type MidenAccountStorageMode = "public" | "private";
 
 export interface MidenAccountOpts {
   accountSeed?: string;

@@ -1,20 +1,20 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { renderHook, cleanup, act } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { renderHook, cleanup, act } from "@testing-library/react";
+import type { ReactNode } from "react";
 import {
   EventEmitter,
   WalletReadyState,
   type Adapter,
   type WalletAdapterEvents,
   type WalletName,
-} from '@miden-sdk/miden-wallet-adapter-base';
-import { WalletProvider } from '../WalletProvider';
-import { useWallet } from '../useWallet';
+} from "@miden-sdk/miden-wallet-adapter-base";
+import { WalletProvider } from "../WalletProvider";
+import { useWallet } from "../useWallet";
 
 class StubAdapter extends EventEmitter<WalletAdapterEvents> {
-  name = 'Stub Wallet' as WalletName<'Stub Wallet'>;
-  url = 'https://example.com';
-  icon = 'data:image/svg+xml;base64,';
+  name = "Stub Wallet" as WalletName<"Stub Wallet">;
+  url = "https://example.com";
+  icon = "data:image/svg+xml;base64,";
   readyState = WalletReadyState.Installed;
   address: string | null = null;
   publicKey: Uint8Array | null = null;
@@ -24,7 +24,7 @@ class StubAdapter extends EventEmitter<WalletAdapterEvents> {
 
   connect = vi.fn().mockResolvedValue(undefined);
   disconnect = vi.fn().mockResolvedValue(undefined);
-  requestTransaction = vi.fn().mockResolvedValue('tx-id');
+  requestTransaction = vi.fn().mockResolvedValue("tx-id");
   requestAssets = vi.fn().mockResolvedValue([]);
   requestGuardianInfo = vi.fn().mockResolvedValue({
     isGuardianAccount: false,
@@ -34,12 +34,14 @@ class StubAdapter extends EventEmitter<WalletAdapterEvents> {
   });
   requestPrivateNotes = vi.fn().mockResolvedValue([]);
   signBytes = vi.fn().mockResolvedValue(new Uint8Array());
-  importPrivateNote = vi.fn().mockResolvedValue('note-id');
+  importPrivateNote = vi.fn().mockResolvedValue("note-id");
   requestConsumableNotes = vi.fn().mockResolvedValue([]);
-  waitForTransaction = vi.fn().mockResolvedValue({ txHash: '', outputNotes: [] });
-  requestSend = vi.fn().mockResolvedValue('tx-id');
-  requestConsume = vi.fn().mockResolvedValue('tx-id');
-  createAccount = vi.fn().mockResolvedValue('account-id');
+  waitForTransaction = vi
+    .fn()
+    .mockResolvedValue({ txHash: "", outputNotes: [] });
+  requestSend = vi.fn().mockResolvedValue("tx-id");
+  requestConsume = vi.fn().mockResolvedValue("tx-id");
+  createAccount = vi.fn().mockResolvedValue("account-id");
 }
 
 const withWalletProvider = (adapter: Adapter) => {
@@ -48,13 +50,13 @@ const withWalletProvider = (adapter: Adapter) => {
   };
 };
 
-describe('requestGuardianInfo wiring (useWallet)', () => {
+describe("requestGuardianInfo wiring (useWallet)", () => {
   afterEach(() => {
     cleanup();
     localStorage.clear();
   });
 
-  it('is undefined before a wallet is selected', () => {
+  it("is undefined before a wallet is selected", () => {
     const stubAdapter = new StubAdapter();
     const { result } = renderHook(() => useWallet(), {
       wrapper: withWalletProvider(stubAdapter),
@@ -63,7 +65,7 @@ describe('requestGuardianInfo wiring (useWallet)', () => {
     expect(result.current.requestGuardianInfo).toBeUndefined();
   });
 
-  it('exposes requestGuardianInfo through the provider once selected', async () => {
+  it("exposes requestGuardianInfo through the provider once selected", async () => {
     const stubAdapter = new StubAdapter();
     const { result } = renderHook(() => useWallet(), {
       wrapper: withWalletProvider(stubAdapter),
@@ -71,10 +73,10 @@ describe('requestGuardianInfo wiring (useWallet)', () => {
 
     await act(() => result.current.select(stubAdapter.name));
 
-    expect(typeof result.current.requestGuardianInfo).toBe('function');
+    expect(typeof result.current.requestGuardianInfo).toBe("function");
   });
 
-  it('rejects and does not reach the adapter when not connected', async () => {
+  it("rejects and does not reach the adapter when not connected", async () => {
     const stubAdapter = new StubAdapter();
     const { result } = renderHook(() => useWallet(), {
       wrapper: withWalletProvider(stubAdapter),
@@ -87,21 +89,21 @@ describe('requestGuardianInfo wiring (useWallet)', () => {
   });
 });
 
-describe('connect re-drive when already connected (useWallet, 0xMiden/wallet#470)', () => {
+describe("connect re-drive when already connected (useWallet, 0xMiden/wallet#470)", () => {
   afterEach(() => {
     cleanup();
     localStorage.clear();
   });
 
-  it('re-drives adapter.connect() when connect() is called again while already connected', async () => {
+  it("re-drives adapter.connect() when connect() is called again while already connected", async () => {
     const stubAdapter = new StubAdapter();
     // A successful connect flips the adapter to connected and emits `connect`,
     // so the provider transitions to connected (mirrors a real handshake).
     stubAdapter.connect = vi.fn().mockImplementation(async () => {
       stubAdapter.connected = true;
-      stubAdapter.address = '0xabc';
+      stubAdapter.address = "0xabc";
       stubAdapter.publicKey = new Uint8Array([1, 2, 3]);
-      stubAdapter.emit('connect', '0xabc');
+      stubAdapter.emit("connect", "0xabc");
     });
 
     const { result } = renderHook(() => useWallet(), {

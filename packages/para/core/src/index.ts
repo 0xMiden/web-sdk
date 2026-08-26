@@ -1,12 +1,12 @@
-export * from './midenClient.js';
+export * from "./midenClient.js";
 export {
   evmPkToCommitment,
   getUncompressedPublicKeyFromWallet,
-} from './utils.js';
+} from "./utils.js";
 export type {
   MidenAccountOpts,
   Opts,
   MidenAccountStorageMode,
   TxSummaryJson,
-} from './types.js';
-export type { CustomSignConfirmStep } from './midenClient.js';
+} from "./types.js";
+export type { CustomSignConfirmStep } from "./midenClient.js";

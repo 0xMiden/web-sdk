@@ -1,9 +1,9 @@
-import type { FC, MouseEventHandler } from 'react';
-import { useCallback, useMemo } from 'react';
-import { useWallet } from '@miden-sdk/miden-wallet-adapter-react';
-import type { ButtonProps } from './Button';
-import { Button } from './Button';
-import { WalletIcon } from './WalletIcon';
+import type { FC, MouseEventHandler } from "react";
+import { useCallback, useMemo } from "react";
+import { useWallet } from "@miden-sdk/miden-wallet-adapter-react";
+import type { ButtonProps } from "./Button";
+import { Button } from "./Button";
+import { WalletIcon } from "./WalletIcon";
 
 export const WalletDisconnectButton: FC<ButtonProps> = ({
   children,
@@ -24,9 +24,9 @@ export const WalletDisconnectButton: FC<ButtonProps> = ({
 
   const content = useMemo(() => {
     if (children) return children;
-    if (disconnecting) return 'Disconnecting ...';
-    if (wallet) return 'Disconnect';
-    return 'Disconnect Wallet';
+    if (disconnecting) return "Disconnecting ...";
+    if (wallet) return "Disconnect";
+    return "Disconnect Wallet";
   }, [children, disconnecting, wallet]);
 
   return (

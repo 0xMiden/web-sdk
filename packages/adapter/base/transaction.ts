@@ -1,7 +1,7 @@
-import type { TransactionRequest } from '@miden-sdk/miden-sdk';
-import { u8ToB64 } from './helpers';
+import type { TransactionRequest } from "@miden-sdk/miden-sdk";
+import { u8ToB64 } from "./helpers";
 
-export type NoteTypeString = 'public' | 'private';
+export type NoteTypeString = "public" | "private";
 
 export interface MidenSendTransaction {
   senderAddress: string;
@@ -100,9 +100,9 @@ export class CustomTransaction implements MidenCustomTransaction {
 }
 
 export enum TransactionType {
-  Send = 'send',
-  Consume = 'consume',
-  Custom = 'custom',
+  Send = "send",
+  Consume = "consume",
+  Custom = "custom",
 }
 export type TransactionPayload =
   | MidenSendTransaction

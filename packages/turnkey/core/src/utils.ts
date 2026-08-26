@@ -13,6 +13,7 @@ export const fromTurnkeySig = (sig: { r: string; s: string; v: string }) => {
   return sigBuff;
 };
 
+/** @public */
 export const hexToBytes = (hex: string): Uint8Array => {
   if (hex.startsWith("0x")) {
     hex = hex.slice(2);
@@ -27,6 +28,7 @@ export const hexToBytes = (hex: string): Uint8Array => {
   return bytes;
 };
 
+/** @public */
 export async function fetchUncompressedPublicKey(input: {
   client: Turnkey;
   privateKeyId: string;
@@ -43,6 +45,7 @@ export async function fetchUncompressedPublicKey(input: {
   return uncompressedPublicKey;
 }
 
+/** @public */
 export function isValidUuid(s: string): boolean {
   const regex = /^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
   return regex.test(s);

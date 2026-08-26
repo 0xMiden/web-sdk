@@ -1,6 +1,6 @@
-import * as React from 'react';
-import { X } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import * as React from "react";
+import { X } from "lucide-react";
+import { cn } from "../../lib/utils";
 
 interface DialogProps {
   open?: boolean;
@@ -29,7 +29,7 @@ const DialogContent = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      'relative z-50 grid w-full max-w-lg gap-4 border bg-white p-6 shadow-lg',
+      "relative z-50 grid w-full max-w-lg gap-4 border bg-white p-6 shadow-lg",
       className
     )}
     {...props}
@@ -37,7 +37,7 @@ const DialogContent = React.forwardRef<
     {children}
   </div>
 ));
-DialogContent.displayName = 'DialogContent';
+DialogContent.displayName = "DialogContent";
 
 const DialogHeader = ({
   className,
@@ -45,13 +45,13 @@ const DialogHeader = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      'flex flex-col space-y-1.5 text-center sm:text-left',
+      "flex flex-col space-y-1.5 text-center sm:text-left",
       className
     )}
     {...props}
   />
 );
-DialogHeader.displayName = 'DialogHeader';
+DialogHeader.displayName = "DialogHeader";
 
 const DialogTitle = React.forwardRef<
   HTMLParagraphElement,
@@ -60,20 +60,20 @@ const DialogTitle = React.forwardRef<
   <h3
     ref={ref}
     className={cn(
-      'text-lg font-semibold leading-none tracking-tight',
+      "text-lg font-semibold leading-none tracking-tight",
       className
     )}
     {...props}
   />
 ));
-DialogTitle.displayName = 'DialogTitle';
+DialogTitle.displayName = "DialogTitle";
 
 const DialogDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, ...props }, ref) => (
-  <p ref={ref} className={cn('text-sm text-gray-600', className)} {...props} />
+  <p ref={ref} className={cn("text-sm text-gray-600", className)} {...props} />
 ));
-DialogDescription.displayName = 'DialogDescription';
+DialogDescription.displayName = "DialogDescription";
 
 export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription };

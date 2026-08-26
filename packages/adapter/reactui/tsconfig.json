@@ -19,14 +19,14 @@
     "downlevelIteration": true,
     "outDir": "dist",
     "declaration": true,
-    "sourceMap": true,
+    "sourceMap": true
   },
   "include": ["src"],
   "typedocOptions": {
     "entryPoints": ["src/index.ts"],
     "out": "docs",
     "compilerOptions": {
-        "ignoreCompilerErrors": true
+      "ignoreCompilerErrors": true
     }
   }
 }

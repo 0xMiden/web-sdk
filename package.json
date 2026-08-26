@@ -9,6 +9,8 @@
     "build:vite-plugin": "pnpm --filter @miden-sdk/vite-plugin run build",
     "build:telemetry-sentry": "pnpm --filter @miden-sdk/telemetry-sentry run build",
     "build:telemetry-otel": "pnpm --filter @miden-sdk/telemetry-otel run build",
+    "build:adapter": "pnpm --filter './packages/adapter/**' -r run build",
+    "build:signers": "pnpm --filter './packages/para/**' --filter './packages/turnkey/**' -r run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "hydrate:web-client": "node scripts/hydrate-web-client.mjs",

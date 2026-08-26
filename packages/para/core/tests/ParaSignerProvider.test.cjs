@@ -1,11 +1,11 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const Module = require('module');
-const ts = require('typescript');
-const React = require('react');
-const renderer = require('react-test-renderer');
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const Module = require("module");
+const ts = require("typescript");
+const React = require("react");
+const renderer = require("react-test-renderer");
 
 const { act } = renderer;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,16 +43,16 @@ const createMocks = (state = {}) => {
   const MockQueryClientProvider = ({ children }) => children;
 
   return {
-    '@tanstack/react-query': {
+    "@tanstack/react-query": {
       QueryClient: function () {},
       QueryClientProvider: MockQueryClientProvider,
     },
-    '@getpara/web-sdk': {
+    "@getpara/web-sdk": {
       ParaWeb: function () {
         return mockPara;
       },
     },
-    '@getpara/react-sdk-lite': {
+    "@getpara/react-sdk-lite": {
       ParaProvider: MockParaProvider,
       useClient: () => mockPara,
       useAccount: () => ({
@@ -75,16 +75,16 @@ const createMocks = (state = {}) => {
         },
       }),
     },
-    '@miden-sdk/react': {
+    "@miden-sdk/react": {
       SignerContext: SignerContextReact,
     },
-    '@miden-sdk/miden-sdk': {
+    "@miden-sdk/miden-sdk": {
       AccountStorageMode: {
-        public: () => ({ toString: () => 'public' }),
-        private: () => ({ toString: () => 'private' }),
+        public: () => ({ toString: () => "public" }),
+        private: () => ({ toString: () => "private" }),
       },
     },
-    '@miden-sdk/miden-para': {
+    "@miden-sdk/para": {
       signCb: (para, wallet, showModal, customStep) => {
         return async (pubKey, signingInputs) => {
           state.signCbCalls = (state.signCbCalls || 0) + 1;
@@ -98,7 +98,7 @@ const createMocks = (state = {}) => {
       evmPkToCommitment: async (publicKey) => {
         return {
           serialize: () => new Uint8Array(32).fill(0x42),
-          toHex: () => '0xcommitment',
+          toHex: () => "0xcommitment",
         };
       },
     },
@@ -113,32 +113,35 @@ const createMocks = (state = {}) => {
 const loadParaSignerProvider = (mocks = {}) => {
   const originalLoad = Module._load;
   Module._load = function patchedLoad(request, parent, isMain) {
-    if (request === 'react') return React;
+    if (request === "react") return React;
     if (mocks[request]) return mocks[request];
-    if (request.startsWith('@miden-sdk/miden-sdk')) {
-      return mocks['@miden-sdk/miden-sdk'];
+    if (request.startsWith("@miden-sdk/miden-sdk")) {
+      return mocks["@miden-sdk/miden-sdk"];
     }
-    if (request.startsWith('@getpara/web-sdk')) {
-      return mocks['@getpara/web-sdk'];
+    if (request.startsWith("@getpara/web-sdk")) {
+      return mocks["@getpara/web-sdk"];
     }
-    if (request.startsWith('@getpara/react-sdk-lite')) {
-      return mocks['@getpara/react-sdk-lite'];
+    if (request.startsWith("@getpara/react-sdk-lite")) {
+      return mocks["@getpara/react-sdk-lite"];
     }
-    if (request.startsWith('@tanstack/react-query')) {
-      return mocks['@tanstack/react-query'];
+    if (request.startsWith("@tanstack/react-query")) {
+      return mocks["@tanstack/react-query"];
     }
-    if (request.startsWith('@miden-sdk/miden-para')) {
-      return mocks['@miden-sdk/miden-para'];
+    if (request.startsWith("@miden-sdk/para")) {
+      return mocks["@miden-sdk/para"];
     }
-    if (request.startsWith('@miden-sdk/react')) {
-      return mocks['@miden-sdk/react'];
+    if (request.startsWith("@miden-sdk/react")) {
+      return mocks["@miden-sdk/react"];
     }
     return originalLoad.apply(this, [request, parent, isMain]);
   };
 
   try {
-    const filePath = path.resolve(__dirname, '../packages/use-miden-para-react/src/ParaSignerProvider.tsx');
-    const source = fs.readFileSync(filePath, 'utf8');
+    const filePath = path.resolve(
+      __dirname,
+      "../../react/src/ParaSignerProvider.tsx"
+    );
+    const source = fs.readFileSync(filePath, "utf8");
     const { outputText } = ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
@@ -177,9 +180,9 @@ const loadParaSignerProvider = (mocks = {}) => {
  */
 const renderProvider = async (ParaSignerProvider, mocks, props = {}) => {
   const defaultProps = {
-    apiKey: 'test-api-key',
-    environment: 'DEVELOPMENT',
-    children: React.createElement('div', null, 'Test'),
+    apiKey: "test-api-key",
+    environment: "DEVELOPMENT",
+    children: React.createElement("div", null, "Test"),
     ...props,
   };
 
@@ -199,7 +202,10 @@ const renderProvider = async (ParaSignerProvider, mocks, props = {}) => {
     rerender: async (newProps) => {
       await act(async () => {
         testRenderer.update(
-          React.createElement(ParaSignerProvider, { ...defaultProps, ...newProps })
+          React.createElement(ParaSignerProvider, {
+            ...defaultProps,
+            ...newProps,
+          })
         );
         await flushPromises();
       });
@@ -224,8 +230,8 @@ const renderHookInProvider = async (
   };
 
   const defaultProps = {
-    apiKey: 'test-api-key',
-    environment: 'DEVELOPMENT',
+    apiKey: "test-api-key",
+    environment: "DEVELOPMENT",
     children: React.createElement(Harness),
     ...providerProps,
   };
@@ -246,7 +252,10 @@ const renderHookInProvider = async (
     rerender: async (newProps) => {
       await act(async () => {
         testRenderer.update(
-          React.createElement(ParaSignerProvider, { ...defaultProps, ...newProps })
+          React.createElement(ParaSignerProvider, {
+            ...defaultProps,
+            ...newProps,
+          })
         );
         await flushPromises();
       });
@@ -257,7 +266,7 @@ const renderHookInProvider = async (
 // TESTS
 // ================================================================================================
 
-test('ParaSignerProvider renders children', async () => {
+test("ParaSignerProvider renders children", async () => {
   const state = {
     isLoggedIn: false,
     wallets: [],
@@ -266,37 +275,41 @@ test('ParaSignerProvider renders children', async () => {
   const { ParaSignerProvider, restore } = loadParaSignerProvider(mocks);
 
   try {
-    const childText = 'Test Child Content';
-    const { testRenderer, unmount } = await renderProvider(ParaSignerProvider, mocks, {
-      children: React.createElement('div', null, childText),
-    });
+    const childText = "Test Child Content";
+    const { testRenderer, unmount } = await renderProvider(
+      ParaSignerProvider,
+      mocks,
+      {
+        children: React.createElement("div", null, childText),
+      }
+    );
 
     const tree = testRenderer.toJSON();
-    assert.ok(tree || true, 'Provider should render');
+    assert.ok(tree || true, "Provider should render");
     unmount();
   } finally {
     restore();
   }
 });
 
-test('ParaSignerProvider provides SignerContext to descendants', async () => {
+test("ParaSignerProvider provides SignerContext to descendants", async () => {
   const state = {
     isLoggedIn: true,
-    wallets: [{ id: 'wallet-1', type: 'EVM' }],
+    wallets: [{ id: "wallet-1", type: "EVM" }],
   };
   const mocks = createMocks(state);
   const { ParaSignerProvider, restore } = loadParaSignerProvider(mocks);
 
   try {
     const { unmount } = await renderProvider(ParaSignerProvider, mocks);
-    assert.ok(true, 'Provider should render with SignerContext');
+    assert.ok(true, "Provider should render with SignerContext");
     unmount();
   } finally {
     restore();
   }
 });
 
-test('useParaSigner throws when used outside ParaSignerProvider', async () => {
+test("useParaSigner throws when used outside ParaSignerProvider", async () => {
   const state = {
     isLoggedIn: false,
     wallets: [],
@@ -320,20 +333,22 @@ test('useParaSigner throws when used outside ParaSignerProvider', async () => {
       error = e;
     }
 
-    assert.ok(error, 'Should throw when used outside provider');
+    assert.ok(error, "Should throw when used outside provider");
     assert.ok(
-      error.message.includes('useParaSigner must be used within ParaSignerProvider'),
-      'Error message should indicate provider requirement'
+      error.message.includes(
+        "useParaSigner must be used within ParaSignerProvider"
+      ),
+      "Error message should indicate provider requirement"
     );
   } finally {
     restore();
   }
 });
 
-test('useParaSigner returns para client and wallet', async () => {
+test("useParaSigner returns para client and wallet", async () => {
   const state = {
     isLoggedIn: true,
-    wallets: [{ id: 'wallet-1', type: 'EVM' }],
+    wallets: [{ id: "wallet-1", type: "EVM" }],
   };
   const mocks = createMocks(state);
   const { ParaSignerProvider, useParaSigner, restore } =
@@ -347,15 +362,15 @@ test('useParaSigner returns para client and wallet', async () => {
     );
 
     const result = getLatest();
-    assert.ok(result.para, 'Should have para client');
-    assert.ok('wallet' in result, 'Should have wallet property');
+    assert.ok(result.para, "Should have para client");
+    assert.ok("wallet" in result, "Should have wallet property");
     unmount();
   } finally {
     restore();
   }
 });
 
-test('isConnected is false initially when not logged in', async () => {
+test("isConnected is false initially when not logged in", async () => {
   const state = {
     isLoggedIn: false,
     wallets: [],
@@ -372,17 +387,21 @@ test('isConnected is false initially when not logged in', async () => {
     );
 
     const result = getLatest();
-    assert.strictEqual(result.isConnected, false, 'Should not be connected initially');
+    assert.strictEqual(
+      result.isConnected,
+      false,
+      "Should not be connected initially"
+    );
     unmount();
   } finally {
     restore();
   }
 });
 
-test('isConnected is true after Para login with EVM wallet', async () => {
+test("isConnected is true after Para login with EVM wallet", async () => {
   const state = {
     isLoggedIn: true,
-    wallets: [{ id: 'evm-wallet-1', type: 'EVM' }],
+    wallets: [{ id: "evm-wallet-1", type: "EVM" }],
   };
   const mocks = createMocks(state);
   const { ParaSignerProvider, useParaSigner, restore } =
@@ -402,7 +421,11 @@ test('isConnected is true after Para login with EVM wallet', async () => {
     });
 
     const result = getLatest();
-    assert.strictEqual(result.isConnected, true, 'Should be connected after login');
+    assert.strictEqual(
+      result.isConnected,
+      true,
+      "Should be connected after login"
+    );
     unmount();
   } finally {
     restore();
@@ -412,7 +435,7 @@ test('isConnected is true after Para login with EVM wallet', async () => {
 test("SignerContext includes correct name ('Para')", async () => {
   const state = {
     isLoggedIn: true,
-    wallets: [{ id: 'wallet-1', type: 'EVM' }],
+    wallets: [{ id: "wallet-1", type: "EVM" }],
   };
   const mocks = createMocks(state);
   const { ParaSignerProvider, restore } = loadParaSignerProvider(mocks);
@@ -427,12 +450,12 @@ test("SignerContext includes correct name ('Para')", async () => {
   }
 });
 
-test('Only EVM wallets are used for connection', async () => {
+test("Only EVM wallets are used for connection", async () => {
   const state = {
     isLoggedIn: true,
     wallets: [
-      { id: 'sol-wallet', type: 'SOLANA' },
-      { id: 'btc-wallet', type: 'BITCOIN' },
+      { id: "sol-wallet", type: "SOLANA" },
+      { id: "btc-wallet", type: "BITCOIN" },
     ],
   };
   const mocks = createMocks(state);
@@ -456,7 +479,7 @@ test('Only EVM wallets are used for connection', async () => {
     assert.strictEqual(
       result.isConnected,
       false,
-      'Should not be connected without EVM wallet'
+      "Should not be connected without EVM wallet"
     );
     unmount();
   } finally {

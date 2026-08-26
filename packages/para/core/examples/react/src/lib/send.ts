@@ -1,4 +1,4 @@
-import type { MidenClient } from '@miden-sdk/miden-sdk';
+import type { MidenClient } from "@miden-sdk/miden-sdk";
 
 export async function send(
   client: MidenClient,
@@ -13,7 +13,7 @@ export async function send(
     to: toAddress,
     token: faucetId,
     amount: amount * BigInt(1e8),
-    type: 'private',
+    type: "private",
     returnNote: true,
   });
   await client.notes.sendPrivate({ note: result.note, to: toAddress });

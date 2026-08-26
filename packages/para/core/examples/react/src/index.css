@@ -1,8 +1,8 @@
-@import 'tailwindcss';
+@import "tailwindcss";
 
 @font-face {
-  font-family: 'Departure Mono';
-  src: url('/DepartureMono-Regular.woff2') format('woff2');
+  font-family: "Departure Mono";
+  src: url("/DepartureMono-Regular.woff2") format("woff2");
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -23,7 +23,7 @@
   --color-input: oklch(0.9 0 0);
   --color-ring: oklch(0.65 0.25 27);
   --radius: 0.5rem;
-  --font-sans: 'Departure Mono', ui-monospace, monospace;
+  --font-sans: "Departure Mono", ui-monospace, monospace;
 }
 
 #para-signing-modal {

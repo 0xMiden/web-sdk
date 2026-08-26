@@ -6,8 +6,8 @@
   "types": "dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xMiden/wallet-adapter.git",
-    "directory": "packages/ui"
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/adapter/reactui"
   },
   "author": "Demox Labs",
   "license": "MIT",
@@ -35,6 +35,7 @@
     "react-dom": "^19.1.1"
   },
   "bugs": {
-    "url": "https://github.com/0xMiden/wallet-adapter/issues"
-  }
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
 }

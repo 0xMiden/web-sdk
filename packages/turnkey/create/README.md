@@ -1,11 +1,11 @@
-# @miden-sdk/create-miden-turnkey-react
+# @miden-sdk/create-turnkey-react
 
 CLI to scaffold a React + Vite app with Miden and Turnkey wallet integration.
 
 ## Usage
 
 ```bash
-yarn create @miden-sdk/miden-turnkey-react my-app
+yarn create @miden-sdk/turnkey-react my-app
 ```
 
 ### Options
@@ -13,7 +13,7 @@ yarn create @miden-sdk/miden-turnkey-react my-app
 - `--skip-install`: Skip automatic dependency installation
 
 ```bash
-yarn create @miden-sdk/miden-turnkey-react my-app --skip-install
+yarn create @miden-sdk/turnkey-react my-app --skip-install
 ```
 
 ## What's Included
@@ -25,8 +25,8 @@ The generated project includes:
 - **TypeScript** - Type safety
 - **@miden-sdk/miden-sdk** - Miden blockchain SDK
 - **@turnkey/react-wallet-kit** - Turnkey wallet integration
-- **@miden-sdk/miden-turnkey** - Miden + Turnkey integration layer
-- **@miden-sdk/miden-turnkey-react** - React hook for Miden + Turnkey
+- **@miden-sdk/turnkey** - Miden + Turnkey integration layer
+- **@miden-sdk/turnkey-react** - React hook for Miden + Turnkey
 
 ### Pre-configured Features
 

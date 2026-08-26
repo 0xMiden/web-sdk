@@ -1,25 +1,27 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const net = require('node:net');
-const { spawn, spawnSync } = require('node:child_process');
-const puppeteer = require('puppeteer');
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const net = require("node:net");
+const { spawn, spawnSync } = require("node:child_process");
+const puppeteer = require("puppeteer");
 
-const exampleRoot = path.resolve(__dirname, '../examples/react');
-const runExample = process.env.RUN_EXAMPLE_E2E === '1';
+const exampleRoot = path.resolve(__dirname, "../examples/react");
+const runExample = process.env.RUN_EXAMPLE_E2E === "1";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const packPackage = (cwd) => {
-  const destDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'miden-para-pack-')
+  const destDir = fs.mkdtempSync(path.join(os.tmpdir(), "miden-para-pack-"));
+  const result = spawnSync(
+    "npm",
+    ["pack", "--silent", "--pack-destination", destDir],
+    {
+      cwd,
+      encoding: "utf8",
+    }
   );
-  const result = spawnSync('npm', ['pack', '--silent', '--pack-destination', destDir], {
-    cwd,
-    encoding: 'utf8',
-  });
 
   if (result.status !== 0) {
     throw new Error(
@@ -27,7 +29,7 @@ const packPackage = (cwd) => {
     );
   }
 
-  const output = `${result.stdout || ''}${result.stderr || ''}`;
+  const output = `${result.stdout || ""}${result.stderr || ""}`;
   const matches = output.match(/[^\s]+\.tgz/g);
   if (!matches || matches.length === 0) {
     throw new Error(`npm pack did not output a tarball name:\n${output}`);
@@ -46,9 +48,9 @@ const copyExample = (targetDir) => {
     filter: (src) => {
       const rel = path.relative(exampleRoot, src);
       if (!rel) return true;
-      if (rel.startsWith('node_modules')) return false;
-      if (rel.startsWith('dist')) return false;
-      if (rel.startsWith('.vite')) return false;
+      if (rel.startsWith("node_modules")) return false;
+      if (rel.startsWith("dist")) return false;
+      if (rel.startsWith(".vite")) return false;
       return true;
     },
   });
@@ -78,9 +80,9 @@ const waitForExit = (child, timeoutMs = 5000) =>
       return;
     }
     const timeout = setTimeout(() => {
-      reject(new Error('Timed out waiting for process exit'));
+      reject(new Error("Timed out waiting for process exit"));
     }, timeoutMs);
-    child.once('close', () => {
+    child.once("close", () => {
       clearTimeout(timeout);
       resolve();
     });
@@ -89,45 +91,43 @@ const waitForExit = (child, timeoutMs = 5000) =>
 const getFreePort = () =>
   new Promise((resolve, reject) => {
     const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, "127.0.0.1", () => {
       const { port } = server.address();
       server.close(() => resolve(port));
     });
-    server.on('error', reject);
+    server.on("error", reject);
   });
 
 test(
-  'example app renders Connect Wallet button',
+  "example app renders Connect Wallet button",
   { skip: !runExample, timeout: 300000 },
   async (t) => {
     const tmpRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'miden-para-example-e2e-')
+      path.join(os.tmpdir(), "miden-para-example-e2e-")
     );
-    const tempExample = path.join(tmpRoot, 'app');
-    console.log('Copying example app to temp dir');
+    const tempExample = path.join(tmpRoot, "app");
+    console.log("Copying example app to temp dir");
     copyExample(tempExample);
 
-    console.log('Packing local SDK tarballs');
-    const rootTarball = packPackage(path.resolve(__dirname, '..'));
-    const hookTarball = packPackage(
-      path.resolve(__dirname, '../packages/use-miden-para-react')
-    );
+    console.log("Packing local SDK tarballs");
+    const rootTarball = packPackage(path.resolve(__dirname, ".."));
+    const hookTarball = packPackage(path.resolve(__dirname, "../../react"));
 
-    const pkgPath = path.join(tempExample, 'package.json');
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const pkgPath = path.join(tempExample, "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
     pkg.dependencies = pkg.dependencies ?? {};
-    pkg.dependencies['@miden-sdk/miden-para'] = `file:${rootTarball}`;
-    pkg.dependencies['@miden-sdk/use-miden-para-react'] = `file:${hookTarball}`;
+    pkg.dependencies["@miden-sdk/para"] = `file:${rootTarball}`;
+    pkg.dependencies["@miden-sdk/para-react"] = `file:${hookTarball}`;
     fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
-    console.log('Installing example dependencies');
-    const install = spawnSync('yarn', ['install', '--ignore-scripts'], {
+    console.log("Installing example dependencies");
+    const install = spawnSync("yarn", ["install", "--ignore-scripts"], {
       cwd: tempExample,
-      stdio: 'inherit',
+      stdio: "inherit",
       timeout: 180000,
     });
-    if (install.error && install.error.code === 'ETIMEDOUT') {
-      throw new Error('yarn install timed out after 180s');
+    if (install.error && install.error.code === "ETIMEDOUT") {
+      throw new Error("yarn install timed out after 180s");
     }
     assert.strictEqual(install.status, 0);
 
@@ -135,31 +135,31 @@ test(
     const url = `http://127.0.0.1:${port}`;
     const env = {
       ...process.env,
-      VITE_PARA_API_KEY: process.env.VITE_PARA_API_KEY || 'test-api-key',
-      CI: '1',
-      BROWSER: 'none',
+      VITE_PARA_API_KEY: process.env.VITE_PARA_API_KEY || "test-api-key",
+      CI: "1",
+      BROWSER: "none",
     };
 
-    console.log('Starting Vite dev server');
+    console.log("Starting Vite dev server");
     const child = spawn(
-      'yarn',
-      ['dev', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
+      "yarn",
+      ["dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
       {
         cwd: tempExample,
         env,
-        stdio: 'pipe',
-        detached: process.platform !== 'win32',
+        stdio: "pipe",
+        detached: process.platform !== "win32",
       }
     );
     if (child.unref) child.unref();
 
-    let output = '';
-    child.stdout.on('data', (data) => {
+    let output = "";
+    child.stdout.on("data", (data) => {
       const text = data.toString();
       output += text;
       process.stdout.write(text);
     });
-    child.stderr.on('data', (data) => {
+    child.stderr.on("data", (data) => {
       const text = data.toString();
       output += text;
       process.stderr.write(text);
@@ -169,13 +169,13 @@ test(
       if (child.exitCode !== null) return;
       if (child.pid) {
         try {
-          if (process.platform !== 'win32') {
-            process.kill(-child.pid, 'SIGTERM');
+          if (process.platform !== "win32") {
+            process.kill(-child.pid, "SIGTERM");
           } else {
-            child.kill('SIGTERM');
+            child.kill("SIGTERM");
           }
         } catch (error) {
-          child.kill('SIGTERM');
+          child.kill("SIGTERM");
         }
       }
       try {
@@ -183,13 +183,13 @@ test(
       } catch (error) {
         if (child.pid) {
           try {
-            if (process.platform !== 'win32') {
-              process.kill(-child.pid, 'SIGKILL');
+            if (process.platform !== "win32") {
+              process.kill(-child.pid, "SIGKILL");
             } else {
-              child.kill('SIGKILL');
+              child.kill("SIGKILL");
             }
           } catch (killError) {
-            child.kill('SIGKILL');
+            child.kill("SIGKILL");
           }
         }
         try {
@@ -207,14 +207,14 @@ test(
       await shutdown();
     });
 
-    console.log('Waiting for dev server to respond');
+    console.log("Waiting for dev server to respond");
     const serverReady = waitForServer(url, 90000);
     const serverExited = new Promise((_, reject) => {
-      child.once('exit', (code, signal) => {
+      child.once("exit", (code, signal) => {
         reject(
           new Error(
-            `Vite dev server exited early (code ${code ?? 'null'}, signal ${
-              signal ?? 'null'
+            `Vite dev server exited early (code ${code ?? "null"}, signal ${
+              signal ?? "null"
             }).\n${output}`
           )
         );
@@ -224,17 +224,17 @@ test(
     await Promise.race([serverReady, serverExited]);
 
     const browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
     try {
       const page = await browser.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
       await wait(500);
       await page.waitForFunction(
         () =>
-          Array.from(document.querySelectorAll('button')).some((button) =>
-            (button.textContent || '').includes('Connect Wallet')
+          Array.from(document.querySelectorAll("button")).some((button) =>
+            (button.textContent || "").includes("Connect Wallet")
           ),
         { timeout: 60000 }
       );

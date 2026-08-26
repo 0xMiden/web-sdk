@@ -1,7 +1,8 @@
-import ParaWeb, { Wallet } from '@getpara/web-sdk';
-import type { NoteType, TransactionSummary } from '@miden-sdk/miden-sdk';
-import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { TxSummaryJson } from './types';
+import ParaWeb, { Wallet } from "@getpara/web-sdk";
+import type { NoteType, TransactionSummary } from "@miden-sdk/miden-sdk";
+import { hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import { TxSummaryJson } from "./types";
+/** @public */
 export { hexToBytes };
 
 /**
@@ -10,7 +11,7 @@ export { hexToBytes };
  */
 export const fromHexSig = (hexString: string) => {
   if (hexString.length % 2 !== 0) {
-    throw new Error('Invalid string len');
+    throw new Error("Invalid string len");
   }
   const sigBytes = hexToBytes(hexString);
   const serialized = new Uint8Array(sigBytes.length + 2);
@@ -36,7 +37,7 @@ export const accountSeedFromStr = (str?: string) => {
  * Assumes input format `0x04${x}${y}` where x and y are 64-char hex strings.
  */
 export const evmPkToCommitment = async (uncompressedPublicKey: string) => {
-  const { Felt, Poseidon2, FeltArray } = await import('@miden-sdk/miden-sdk');
+  const { Felt, Poseidon2, FeltArray } = await import("@miden-sdk/miden-sdk");
   const withoutPrefix = uncompressedPublicKey.slice(4);
   const x = withoutPrefix.slice(0, 64);
   const y = withoutPrefix.slice(64); // hex encoded string
@@ -73,14 +74,14 @@ export const getUncompressedPublicKeyFromWallet = async (
   let publicKey = wallet.publicKey;
   if (!publicKey) {
     const { token } = await para.issueJwt();
-    const payload = JSON.parse(window.atob(token.split('.')[1]));
+    const payload = JSON.parse(window.atob(token.split(".")[1]));
     if (!payload.data) {
-      throw new Error('Got invalid jwt token');
+      throw new Error("Got invalid jwt token");
     }
     const wallets = payload.data.connectedWallets;
     const w = wallets.find((w) => w.id === wallet.id);
     if (!w) {
-      throw new Error('Wallet Not Found in jwt data');
+      throw new Error("Wallet Not Found in jwt data");
     }
     publicKey = w.publicKey;
   }
@@ -135,10 +136,10 @@ function noteTypeToString(noteType: NoteType) {
   // protocol 0.15 NoteType encoding: Private = 0, Public = 1.
   switch (noteType) {
     case 1:
-      return 'public';
+      return "public";
     case 0:
-      return 'private';
+      return "private";
     default:
-      return 'UNKNOWN';
+      return "UNKNOWN";
   }
 }

@@ -1,11 +1,11 @@
 import { isHttpClient, TurnkeyActivityError } from "@turnkey/http";
 import type { MidenClientOpts, TConfig } from "./types";
-import type { MidenClient, AccountType, AccountStorageMode } from "@miden-sdk/miden-sdk";
-import {
-  accountSeedFromStr,
-  evmPkToCommitment,
-  fromTurnkeySig,
-} from "./utils";
+import type {
+  MidenClient,
+  AccountType,
+  AccountStorageMode,
+} from "@miden-sdk/miden-sdk";
+import { accountSeedFromStr, evmPkToCommitment, fromTurnkeySig } from "./utils";
 import type { v1SignRawPayloadResult } from "@turnkey/core";
 import type { HandleSignMessageParams } from "@turnkey/react-wallet-kit";
 
@@ -93,7 +93,8 @@ export async function createMidenTurnkeyClient(
   client: MidenClient;
   accountId: string;
 }> {
-  const { MidenClient: MidenClientClass } = await import("@miden-sdk/miden-sdk");
+  const { MidenClient: MidenClientClass } =
+    await import("@miden-sdk/miden-sdk");
   const client = await MidenClientClass.create({
     rpcUrl: opts.endpoint,
     noteTransportUrl: opts.noteTransportUrl,
@@ -132,9 +133,8 @@ export async function createAccont(
 
   await midenClient.sync();
   const pkc = await evmPkToCommitment(compressedPublicKey);
-  const { AccountBuilder, AccountComponent, AccountStorageMode } = await import(
-    "@miden-sdk/miden-sdk"
-  );
+  const { AccountBuilder, AccountComponent, AccountStorageMode } =
+    await import("@miden-sdk/miden-sdk");
   const accountBuilder = new AccountBuilder(
     accountSeedFromStr(opts?.accountSeed) ?? new Uint8Array(32).fill(0)
   );

@@ -27,7 +27,7 @@ const STUB_PREFIX = "\0para-stub:";
  *
  * @example
  * ```ts
- * import { paraVitePlugin } from "@miden-sdk/use-miden-para-react/vite";
+ * import { paraVitePlugin } from "@miden-sdk/para-react/vite";
  *
  * export default defineConfig({
  *   plugins: [react(), midenVitePlugin(), paraVitePlugin()],
@@ -35,7 +35,12 @@ const STUB_PREFIX = "\0para-stub:";
  * ```
  */
 export function paraVitePlugin(options?: ParaVitePluginOptions): Plugin[] {
-  const polyfills = options?.polyfills ?? ["buffer", "crypto", "stream", "util"];
+  const polyfills = options?.polyfills ?? [
+    "buffer",
+    "crypto",
+    "stream",
+    "util",
+  ];
 
   // Resolve nodePolyfills from the consuming project's node_modules (not
   // from this package's location) using createRequire with process.cwd().
@@ -68,10 +73,10 @@ export function paraVitePlugin(options?: ParaVitePluginOptions): Plugin[] {
         path: args.path,
         namespace: "para-stub",
       }));
-      build.onLoad(
-        { filter: /.*/, namespace: "para-stub" },
-        () => ({ contents: "export default {};", loader: "js" as const })
-      );
+      build.onLoad({ filter: /.*/, namespace: "para-stub" }, () => ({
+        contents: "export default {};",
+        loader: "js" as const,
+      }));
     },
   };
 

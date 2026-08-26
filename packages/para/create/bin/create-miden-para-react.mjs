@@ -13,9 +13,20 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const templateConfigPath = resolve(__dirname, "..", "template", "vite.config.ts");
+const templateConfigPath = resolve(
+  __dirname,
+  "..",
+  "template",
+  "vite.config.ts"
+);
 const templateAppPath = resolve(__dirname, "..", "template", "src", "App.tsx");
-const templatePolyfillsPath = resolve(__dirname, "..", "template", "src", "polyfills.ts");
+const templatePolyfillsPath = resolve(
+  __dirname,
+  "..",
+  "template",
+  "src",
+  "polyfills.ts"
+);
 const templateOptionalConnectorsPath = resolve(
   __dirname,
   "..",
@@ -32,9 +43,10 @@ const localUseMidenParaReactPath =
 const useLocalDeps = process.env.MIDEN_PARA_LOCAL_DEPS === "1";
 
 const args = process.argv.slice(2);
-const target = args.find((arg) => !arg.startsWith("-")) ?? "miden-para-react-app";
+const target =
+  args.find((arg) => !arg.startsWith("-")) ?? "miden-para-react-app";
 const skipInstall = args.some(
-  (flag) => flag === "--skip-install" || flag === "--no-install",
+  (flag) => flag === "--skip-install" || flag === "--no-install"
 );
 const skipScaffold =
   args.some((flag) => flag === "--skip-scaffold" || flag === "--no-scaffold") ||
@@ -152,7 +164,7 @@ function ensurePolyfills(targetRoot) {
   const mainPath = join(targetRoot, "src", "main.tsx");
   if (existsSync(mainPath)) {
     const main = readFileSync(mainPath, "utf8");
-    if (!main.includes('./polyfills') && !main.includes("./polyfills")) {
+    if (!main.includes("./polyfills") && !main.includes("./polyfills")) {
       writeFileSync(mainPath, `import "./polyfills";\n${main}`);
       logStep(`Injected polyfills import into ${mainPath}`);
     }
@@ -281,8 +293,8 @@ function ensureMidenParaDependencies(targetRoot) {
     "@getpara/react-sdk-lite": "^2.2.0",
     "@getpara/evm-wallet-connectors": "^2.2.0",
     "@miden-sdk/miden-sdk": "^0.15.1",
-    "@miden-sdk/miden-para": midenParaVersion,
-    "@miden-sdk/use-miden-para-react": useMidenParaReactVersion,
+    "@miden-sdk/para": midenParaVersion,
+    "@miden-sdk/para-react": useMidenParaReactVersion,
     "@miden-sdk/react": "^0.15.1",
     "@tanstack/react-query": "^5.0.0",
   });
@@ -298,7 +310,6 @@ function ensureMidenParaDependencies(targetRoot) {
     esbuild: "^0.27.0",
   });
 
-
   Object.assign(pkg.resolutions, {
     "@getpara/react-sdk": "2.0.0-alpha.73",
     "@getpara/web-sdk": "2.0.0-alpha.73",
@@ -306,7 +317,7 @@ function ensureMidenParaDependencies(targetRoot) {
 
   Object.assign(pkg.scripts, {
     ...pkg.scripts,
-    'postinstall': 'setup-para'
+    postinstall: "setup-para",
   });
 
   delete pkg.peerDependencies;
@@ -353,6 +364,6 @@ function logStep(message) {
 
 function logEnvReminder(dirName) {
   logStep(
-    `Remember to use VITE_PARA_API_KEY like this:\n  cd ${dirName}\n  VITE_PARA_API_KEY=... npm run dev`,
+    `Remember to use VITE_PARA_API_KEY like this:\n  cd ${dirName}\n  VITE_PARA_API_KEY=... npm run dev`
   );
 }

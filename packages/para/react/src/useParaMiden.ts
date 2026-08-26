@@ -1,14 +1,14 @@
-'use client';
+"use client";
 
-import { useClient, useAccount, type Wallet } from '@getpara/react-sdk-lite';
-import type { MidenClient } from '@miden-sdk/miden-sdk';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useClient, useAccount, type Wallet } from "@getpara/react-sdk-lite";
+import type { MidenClient } from "@miden-sdk/miden-sdk";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createParaMidenClient,
   type Opts,
   type MidenAccountStorageMode,
   type CustomSignConfirmStep,
-} from '@miden-sdk/miden-para';
+} from "@miden-sdk/para";
 
 /**
  * React hook that converts Para React SDK context into a ready-to-use MidenClient.
@@ -26,18 +26,18 @@ import {
  */
 export function useParaMiden(
   nodeUrl: string,
-  storageMode: MidenAccountStorageMode = 'public',
-  opts: Omit<Opts, 'endpoint' | 'storageMode'> = {},
+  storageMode: MidenAccountStorageMode = "public",
+  opts: Omit<Opts, "endpoint" | "storageMode"> = {},
   showSigningModal: boolean = true,
   customSignConfirmStep?: CustomSignConfirmStep
 ) {
   const para = useClient();
   const { isConnected, embedded } = useAccount();
   const clientRef = useRef<MidenClient | null>(null);
-  const [accountId, setAccountId] = useState<string>('');
+  const [accountId, setAccountId] = useState<string>("");
 
   const evmWallets = useMemo(
-    () => embedded.wallets?.filter((wallet) => wallet.type === 'EVM'),
+    () => embedded.wallets?.filter((wallet) => wallet.type === "EVM"),
     [embedded.wallets]
   );
 

@@ -1,6 +1,6 @@
 {
-  "name": "@miden-sdk/miden-turnkey-react",
-  "version": "1.15.1",
+  "name": "@miden-sdk/turnkey-react",
+  "version": "0.15.9",
   "description": "React hook for Miden Turnkey integration",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -28,36 +28,38 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xMiden/turnkey-sdk.git",
-    "directory": "packages/use-miden-turnkey-react"
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/turnkey/react"
   },
   "publishConfig": {
     "access": "public"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.15.1",
-    "@miden-sdk/miden-turnkey": "^1.15.1",
-    "@miden-sdk/react": "^0.15.1",
+    "@miden-sdk/miden-sdk": "^0.15.9",
+    "@miden-sdk/turnkey": "^0.15.9",
+    "@miden-sdk/react": "^0.15.9",
     "@turnkey/core": "^1.8.2",
     "@turnkey/react-wallet-kit": "^1.6.2",
     "@turnkey/sdk-browser": "^5.13.4",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
-    "@miden-sdk/miden-sdk": "^0.15.1",
-    "@miden-sdk/react": "^0.15.1",
+    "@miden-sdk/miden-sdk": "workspace:*",
+    "@miden-sdk/react": "workspace:*",
     "@turnkey/core": "^1.8.2",
     "@turnkey/react-wallet-kit": "^1.6.2",
     "@turnkey/sdk-browser": "^5.13.4",
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
     "tsup": "^8.3.5",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@miden-sdk/turnkey": "workspace:*"
   },
   "files": [
     "dist"
   ],
   "bugs": {
-    "url": "https://github.com/0xMiden/turnkey-sdk/issues"
-  }
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
 }

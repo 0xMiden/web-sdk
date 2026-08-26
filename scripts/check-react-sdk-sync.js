@@ -15,6 +15,37 @@
 // Anything under `packages/*` that builds against the core is checked from the
 // moment it exists.
 //
+// Discovery is two levels deep because `packages/` holds both flat packages
+// (`packages/react-sdk`) and vendor families (`packages/adapter/base`,
+// `packages/para/react`, `packages/turnkey/core`). It is bounded at two: a
+// directory that has its own package.json is a leaf and is never descended
+// into. That bound is load-bearing rather than tidy — `packages/react-sdk`
+// carries three nameless subpath stub manifests (`lazy/`, `mt/`, `mt/lazy/`)
+// and the non-member wallet example, whose manifest DOES pin the core and is
+// versioned 0.1.0. An unbounded walk enrols the example as a workspace
+// consumer and then fails it on the major.minor rule.
+//
+// Discovery alone is not enough. It reports what it can see, so anything that
+// makes a package invisible — a family renamed, a level added, a move that
+// lands somewhere unscanned — shrinks the set being checked and still exits 0.
+// That is how the flat-only version of this loop behaved when the families
+// arrived: 11 packages present, 7 of them pinning the core, and the check
+// reported the same 4 consumers as before. So the discovered set is compared
+// against a committed snapshot, `scripts/expected-core-consumers.json`.
+//
+// The snapshot is GENERATED (`--update-expected`), never hand-typed. A
+// hand-typed list has to name the packages someone believes should consume the
+// core, and that judgement is exactly what breaks:
+//   - `@miden-sdk/vite-plugin` has never declared the core in any dependency
+//     field in any revision of its manifest, so listing it fails on day one
+//     and permanently.
+//   - `@miden-sdk/miden-wallet-adapter` (the barrel) and `-reactui` have zero
+//     source use of the core, so adding a dependency to satisfy the list
+//     writes a false dependency — and `check:knip` is a required Lint job.
+// A snapshot cannot contain a package discovery does not see, so neither trap
+// can arise. Its only job is to make a change in what discovery sees show up
+// in a reviewed diff instead of in a shrinking number nobody reads.
+//
 // Discovery deliberately keys off the `workspace:*` DEV dependency, not off
 // the pin being verified. Keying off the pin makes deleting it invisible: the
 // package drops out of the consumer set instead of failing, which is precisely
@@ -36,6 +67,10 @@ const webClientPath = path.join(
   "package.json"
 );
 const packagesDir = path.join(repoRoot, "packages");
+const expectedConsumersPath = path.join(
+  __dirname,
+  "expected-core-consumers.json"
+);
 const walletExamplePath = path.join(
   packagesDir,
   "react-sdk",
@@ -89,10 +124,82 @@ const expectedRange = prerelease
  */
 const consumers = [];
 
+// Directories that never hold a workspace package but do turn up inside
+// `packages/` once anything has been installed or built.
+const SKIPPED_DIRS = new Set(["node_modules", "dist", "build", "coverage"]);
+
+const isCandidateDir = (entry) =>
+  entry.isDirectory() &&
+  !entry.name.startsWith(".") &&
+  !SKIPPED_DIRS.has(entry.name);
+
+const manifestIn = (dirPath) => {
+  const manifestPath = path.join(dirPath, "package.json");
+  return fs.existsSync(manifestPath) ? manifestPath : null;
+};
+
+// Snapshot keys are repo-relative and forward-slashed so the committed file is
+// identical on every platform.
+const relFromRoot = (filePath) =>
+  path.relative(repoRoot, filePath).split(path.sep).join("/");
+
+const manifests = [];
+const emptyFamilies = [];
+
 for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue;
-  const manifestPath = path.join(packagesDir, entry.name, "package.json");
-  if (!fs.existsSync(manifestPath)) continue;
+  if (!isCandidateDir(entry)) continue;
+  const dirPath = path.join(packagesDir, entry.name);
+
+  // Has its own manifest: a leaf. Do not descend (see the header note on
+  // react-sdk's stub manifests and the wallet example).
+  const ownManifest = manifestIn(dirPath);
+  if (ownManifest) {
+    manifests.push({ dirPath, manifestPath: ownManifest });
+    continue;
+  }
+
+  // No manifest of its own: a family directory. Its leaves are the packages.
+  const leaves = [];
+  for (const leafEntry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    if (!isCandidateDir(leafEntry)) continue;
+    const leafDir = path.join(dirPath, leafEntry.name);
+    const leafManifest = manifestIn(leafDir);
+    if (!leafManifest) continue;
+    leaves.push({ dirPath: leafDir, manifestPath: leafManifest });
+  }
+
+  // A family that yields no manifest at all is the loud version of the bug
+  // this check exists for. Every directory under `packages/` is either a
+  // package or a family of packages; one that is neither means a move,
+  // rename or extra nesting level has taken packages out of view.
+  if (leaves.length === 0) {
+    emptyFamilies.push(relFromRoot(dirPath));
+    continue;
+  }
+  manifests.push(...leaves);
+}
+
+if (emptyFamilies.length > 0) {
+  console.error(
+    `No package.json found under: ${emptyFamilies.join(", ")}. Every ` +
+      `directory in packages/ must be either a package (its own ` +
+      `package.json) or a family of packages ` +
+      `(packages/<family>/<leaf>/package.json). A directory that is ` +
+      `neither means discovery has stopped seeing packages it used to ` +
+      `check. A directory under packages/ that is deliberately neither ` +
+      `belongs in SKIPPED_DIRS above — one reviewed line, same as blessing ` +
+      `a change to the expected set.`
+  );
+  process.exit(1);
+}
+
+// Sorted by path so the reported order, and the committed snapshot, do not
+// depend on readdir order (which is arbitrary on ext4).
+manifests.sort((a, b) =>
+  relFromRoot(a.dirPath).localeCompare(relFromRoot(b.dirPath))
+);
+
+for (const { dirPath, manifestPath } of manifests) {
   const pkg = readJson(manifestPath);
   const buildsAgainstCore =
     pkg.devDependencies?.[CORE] ||
@@ -100,7 +207,8 @@ for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
     pkg.dependencies?.[CORE];
   if (!buildsAgainstCore) continue;
   consumers.push({
-    label: pkg.name || `packages/${entry.name}`,
+    dir: relFromRoot(dirPath),
+    label: pkg.name || relFromRoot(dirPath),
     manifestPath,
     pkg,
     // A published pin lives in `peerDependencies` (the consumer installs the
@@ -121,6 +229,85 @@ if (consumers.length === 0) {
       `check is broken — it would pass vacuously, so it fails instead.`
   );
   process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Expected-set tripwire.
+//
+// Runs on the DISCOVERED set only, before the wallet example is appended: the
+// example is not a workspace package and is added unconditionally, so it would
+// make the comparison vacuously stable.
+//
+// A mismatch is not auto-fixed by `--fix`, for the same reason a version
+// mismatch is not: which packages consume the core is a decision, not a
+// derivation. `--update-expected` is the explicit blessing, and it leaves the
+// change in the diff for review.
+const shouldUpdateExpected = process.argv.includes("--update-expected");
+
+const discoveredConsumers = consumers.map((consumer) => ({
+  path: consumer.dir,
+  name: consumer.label,
+}));
+
+const describe = (entry) => `${entry.path} (${entry.name})`;
+
+if (shouldUpdateExpected) {
+  writeJson(expectedConsumersPath, {
+    comment:
+      "Generated by `node scripts/check-react-sdk-sync.js --update-expected`. " +
+      "Do not hand-edit. Every package under packages/ that builds against " +
+      CORE +
+      ", by directory and published name. Recording the DIRECTORY as well as " +
+      "the name is what makes a family rename or a move fail loudly instead " +
+      "of quietly shrinking the set the version-sync check covers.",
+    consumers: discoveredConsumers,
+  });
+  console.log(
+    `Wrote ${discoveredConsumers.length} consumers to ` +
+      `${relFromRoot(expectedConsumersPath)}: ` +
+      `${discoveredConsumers.map(describe).join(", ")}.`
+  );
+} else {
+  if (!fs.existsSync(expectedConsumersPath)) {
+    console.error(
+      `Missing ${relFromRoot(expectedConsumersPath)}. Generate it with ` +
+        `\`node scripts/check-react-sdk-sync.js --update-expected\` and ` +
+        `commit it.`
+    );
+    process.exit(1);
+  }
+
+  const expectedDoc = readJson(expectedConsumersPath);
+  const expectedConsumers = expectedDoc.consumers || [];
+  const expectedKeys = new Set(expectedConsumers.map(describe));
+  const discoveredKeys = new Set(discoveredConsumers.map(describe));
+
+  const missing = [...expectedKeys]
+    .filter((k) => !discoveredKeys.has(k))
+    .sort();
+  const unexpected = [...discoveredKeys]
+    .filter((k) => !expectedKeys.has(k))
+    .sort();
+
+  if (missing.length > 0 || unexpected.length > 0) {
+    console.error(
+      `Discovered consumers do not match ` +
+        `${relFromRoot(expectedConsumersPath)}.`
+    );
+    for (const key of missing) {
+      console.error(`  no longer discovered: ${key}`);
+    }
+    for (const key of unexpected) {
+      console.error(`  newly discovered:     ${key}`);
+    }
+    console.error(
+      `A package that is no longer discovered is no longer version-checked, ` +
+        `which is silent. If this change is intended, re-generate the ` +
+        `snapshot with \`node scripts/check-react-sdk-sync.js ` +
+        `--update-expected\` and commit it with the change that caused it.`
+    );
+    process.exit(1);
+  }
 }
 
 const walletExamplePkg = readJson(walletExamplePath);

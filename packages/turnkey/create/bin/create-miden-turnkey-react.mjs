@@ -13,7 +13,9 @@ const projectName = args[0];
 const skipInstall = args.includes("--skip-install");
 
 if (!projectName) {
-  console.error("Usage: npm create miden-turnkey-react@latest <project-name> [--skip-install]");
+  console.error(
+    "Usage: npm create miden-turnkey-react@latest <project-name> [--skip-install]"
+  );
   process.exit(1);
 }
 
@@ -50,7 +52,10 @@ try {
   writeFileSync(join(projectPath, "src", "App.tsx"), appTsx);
 
   // Copy src/polyfills.ts
-  const polyfills = readFileSync(join(templateDir, "src", "polyfills.ts"), "utf-8");
+  const polyfills = readFileSync(
+    join(templateDir, "src", "polyfills.ts"),
+    "utf-8"
+  );
   writeFileSync(join(projectPath, "src", "polyfills.ts"), polyfills);
 
   // Update main.tsx to import polyfills
@@ -72,8 +77,8 @@ try {
   pkg.dependencies = {
     ...pkg.dependencies,
     "@miden-sdk/miden-sdk": "^0.15.1",
-    "@miden-sdk/miden-turnkey": "^1.15.1",
-    "@miden-sdk/miden-turnkey-react": "^1.15.1",
+    "@miden-sdk/turnkey": "^1.15.1",
+    "@miden-sdk/turnkey-react": "^1.15.1",
     "@turnkey/react-wallet-kit": "^1.6.2",
     buffer: "^6.0.3",
     process: "^0.11.10",
@@ -127,7 +132,9 @@ if (!skipInstall) {
     });
   } catch (error) {
     console.error("Failed to install dependencies:", error.message);
-    console.log("You can install them manually with: npm install --legacy-peer-deps");
+    console.log(
+      "You can install them manually with: npm install --legacy-peer-deps"
+    );
   }
 } else {
   console.log("\n[6/6] Skipping dependency installation (--skip-install flag)");

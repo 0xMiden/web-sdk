@@ -1,4 +1,4 @@
-# @miden-sdk/miden-turnkey
+# @miden-sdk/turnkey
 
 Miden + Turnkey wallet integration SDK for building secure blockchain applications.
 
@@ -8,16 +8,16 @@ This monorepo contains the following packages:
 
 | Package | Description |
 |---------|-------------|
-| [`@miden-sdk/miden-turnkey`](/) | Core SDK for Miden + Turnkey integration |
-| [`@miden-sdk/miden-turnkey-react`](/packages/use-miden-turnkey-react) | React hook for easy integration |
-| [`@miden-sdk/create-miden-turnkey-react`](/packages/create-miden-turnkey-react) | CLI to scaffold new projects |
+| [`@miden-sdk/turnkey`](/) | Core SDK for Miden + Turnkey integration |
+| [`@miden-sdk/turnkey-react`](/packages/use-miden-turnkey-react) | React hook for easy integration |
+| [`@miden-sdk/create-turnkey-react`](/packages/create-miden-turnkey-react) | CLI to scaffold new projects |
 
 ## Quick Start
 
 ### Option 1: Scaffold a new project
 
 ```bash
-yarn create @miden-sdk/miden-turnkey-react my-app
+yarn create @miden-sdk/turnkey-react my-app
 cd my-app
 yarn dev
 ```
@@ -25,12 +25,12 @@ yarn dev
 ### Option 2: Add to an existing React project
 
 ```bash
-yarn add @miden-sdk/miden-turnkey @miden-sdk/miden-turnkey-react @miden-sdk/miden-sdk @turnkey/react-wallet-kit
+yarn add @miden-sdk/turnkey @miden-sdk/turnkey-react @miden-sdk/miden-sdk @turnkey/react-wallet-kit
 ```
 
 ```tsx
 import { TurnkeyProvider } from "@turnkey/react-wallet-kit";
-import { useTurnkeyMiden } from "@miden-sdk/miden-turnkey-react";
+import { useTurnkeyMiden } from "@miden-sdk/turnkey-react";
 
 function App() {
   return (
@@ -56,11 +56,11 @@ function MidenApp() {
 ### Option 3: Use the core SDK directly
 
 ```bash
-yarn add @miden-sdk/miden-turnkey @miden-sdk/miden-sdk @turnkey/http
+yarn add @miden-sdk/turnkey @miden-sdk/miden-sdk @turnkey/http
 ```
 
 ```typescript
-import { createMidenTurnkeyClient } from "@miden-sdk/miden-turnkey";
+import { createMidenTurnkeyClient } from "@miden-sdk/turnkey";
 import { TurnkeyClient } from "@turnkey/http";
 
 const turnkeyClient = new TurnkeyClient({
@@ -89,7 +89,7 @@ const { client, accountId } = await createMidenTurnkeyClient(
 ### Core SDK
 
 ```bash
-yarn add @miden-sdk/miden-turnkey
+yarn add @miden-sdk/turnkey
 ```
 
 **Peer Dependencies:**
@@ -101,11 +101,11 @@ yarn add @miden-sdk/miden-turnkey
 ### React Hook
 
 ```bash
-yarn add @miden-sdk/miden-turnkey-react
+yarn add @miden-sdk/turnkey-react
 ```
 
 **Peer Dependencies:**
-- `@miden-sdk/miden-turnkey@^1.0.0`
+- `@miden-sdk/turnkey@^1.0.0`
 - `@miden-sdk/miden-sdk@^0.13.0`
 - `@turnkey/react-wallet-kit@^1.6.2`
 - `react@^18.0.0 || ^19.0.0`
@@ -121,7 +121,7 @@ yarn add @miden-sdk/miden-turnkey-react
 
 ```bash
 # Clone the repository
-git clone https://github.com/0xPolygonMiden/miden-turnkey.git
+git clone https://github.com/0xMiden/web-sdk.git
 cd miden-turnkey
 
 # Install dependencies
@@ -182,7 +182,7 @@ Creates a Miden client with Turnkey signing integration.
 
 ### `useTurnkeyMiden(nodeUrl, storageMode?, opts?)`
 
-React hook for Miden + Turnkey integration. See [@miden-sdk/miden-turnkey-react README](/packages/use-miden-turnkey-react/README.md).
+React hook for Miden + Turnkey integration. See [@miden-sdk/turnkey-react README](/packages/use-miden-turnkey-react/README.md).
 
 ## Examples
 

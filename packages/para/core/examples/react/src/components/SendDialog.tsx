@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Loader2 } from 'lucide-react';
+import { useState } from "react";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Loader2 } from "lucide-react";
 
 interface SendDialogProps {
   isOpen: boolean;
@@ -22,9 +22,9 @@ export function SendDialog({
   balances,
   onSend,
 }: SendDialogProps) {
-  const [toAddress, setToAddress] = useState('');
-  const [amount, setAmount] = useState('');
-  const [selectedFaucet, setSelectedFaucet] = useState('');
+  const [toAddress, setToAddress] = useState("");
+  const [amount, setAmount] = useState("");
+  const [selectedFaucet, setSelectedFaucet] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,16 +39,16 @@ export function SendDialog({
       setTxHash(result.txHash);
       setTxTime((performance.now() - start) / 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Send failed');
+      setError(err instanceof Error ? err.message : "Send failed");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleClose = () => {
-    setToAddress('');
-    setAmount('');
-    setSelectedFaucet('');
+    setToAddress("");
+    setAmount("");
+    setSelectedFaucet("");
     setTxHash(null);
     setError(null);
     setTxTime(null);
@@ -154,7 +154,7 @@ export function SendDialog({
                     Sending...
                   </>
                 ) : (
-                  'Send'
+                  "Send"
                 )}
               </Button>
               <Button

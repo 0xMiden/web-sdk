@@ -1,97 +1,97 @@
 export class WalletError extends Error {
-    error: any;
+  error: any;
 
-    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-    constructor(message?: string, error?: any) {
-        super(message);
-        this.error = error;
-    }
+  // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
+  constructor(message?: string, error?: any) {
+    super(message);
+    this.error = error;
+  }
 }
 
 export class WalletNotReadyError extends WalletError {
-    name = 'WalletNotReadyError';
+  name = "WalletNotReadyError";
 }
 
 export class WalletLoadError extends WalletError {
-    name = 'WalletLoadError';
+  name = "WalletLoadError";
 }
 
 export class WalletConfigError extends WalletError {
-    name = 'WalletConfigError';
+  name = "WalletConfigError";
 }
 
 export class WalletConnectionError extends WalletError {
-    name = 'WalletConnectionError';
+  name = "WalletConnectionError";
 }
 
 export class WalletNotSelectedError extends WalletError {
-    name = 'WalletNotSelectedError';
+  name = "WalletNotSelectedError";
 }
 
 export class WalletDisconnectedError extends WalletError {
-    name = 'WalletDisconnectedError';
+  name = "WalletDisconnectedError";
 }
 
 export class WalletDisconnectionError extends WalletError {
-    name = 'WalletDisconnectionError';
+  name = "WalletDisconnectionError";
 }
 
 export class WalletAccountError extends WalletError {
-    name = 'WalletAccountError';
+  name = "WalletAccountError";
 }
 
 export class WalletAddressError extends WalletError {
-    name = 'WalletAddressError';
+  name = "WalletAddressError";
 }
 
 export class WalletKeypairError extends WalletError {
-    name = 'WalletKeypairError';
+  name = "WalletKeypairError";
 }
 
 export class WalletNotConnectedError extends WalletError {
-    name = 'WalletNotConnectedError';
+  name = "WalletNotConnectedError";
 }
 
 export class WalletSendTransactionError extends WalletError {
-    name = 'WalletSendTransactionError';
+  name = "WalletSendTransactionError";
 }
 
 export class WalletSignMessageError extends WalletError {
-    name = 'WalletSignMessageError';
+  name = "WalletSignMessageError";
 }
 
 export class WalletSignTransactionError extends WalletError {
-    name = 'WalletSignTransactionError';
+  name = "WalletSignTransactionError";
 }
 
 export class WalletTimeoutError extends WalletError {
-    name = 'WalletTimeoutError';
+  name = "WalletTimeoutError";
 }
 
 export class WalletWindowBlockedError extends WalletError {
-    name = 'WalletWindowBlockedError';
+  name = "WalletWindowBlockedError";
 }
 
 export class WalletWindowClosedError extends WalletError {
-    name = 'WalletWindowClosedError';
+  name = "WalletWindowClosedError";
 }
 
 export class WalletDecryptionNotAllowedError extends WalletError {
-    name = 'WalletDecryptionNotAllowedError';
+  name = "WalletDecryptionNotAllowedError";
 }
 
 export class WalletPrivateDataPermissionError extends WalletError {
-    name = 'WalletPrivateDataPermissionError';
+  name = "WalletPrivateDataPermissionError";
 }
 
 export class WalletDecryptionError extends WalletError {
-    name = 'WalletDecryptionError';
+  name = "WalletDecryptionError";
 }
 
 export class WalletRecordsError extends WalletError {
-    name = 'WalletRecordsError';
+  name = "WalletRecordsError";
 }
 
 export class WalletTransactionError extends WalletError {
-    name = 'WalletTransactionError';
+  name = "WalletTransactionError";
 }

@@ -1,11 +1,11 @@
-# @miden-sdk/miden-turnkey-react
+# @miden-sdk/turnkey-react
 
 React hook for integrating Miden with Turnkey wallet authentication.
 
 ## Installation
 
 ```bash
-yarn add @miden-sdk/miden-turnkey-react
+yarn add @miden-sdk/turnkey-react
 ```
 
 ## Peer Dependencies
@@ -13,7 +13,7 @@ yarn add @miden-sdk/miden-turnkey-react
 This package requires the following peer dependencies:
 
 ```bash
-yarn add @miden-sdk/miden-sdk @miden-sdk/miden-turnkey @turnkey/react-wallet-kit react
+yarn add @miden-sdk/miden-sdk @miden-sdk/turnkey @turnkey/react-wallet-kit react
 ```
 
 ## Usage
@@ -35,7 +35,7 @@ function App() {
 Then use the hook in your components:
 
 ```tsx
-import { useTurnkeyMiden } from "@miden-sdk/miden-turnkey-react";
+import { useTurnkeyMiden } from "@miden-sdk/turnkey-react";
 
 function MidenComponent() {
   const { client, accountId, turnkey, embeddedWallets } = useTurnkeyMiden(

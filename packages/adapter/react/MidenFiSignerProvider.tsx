@@ -8,8 +8,8 @@ import {
   useContext,
   type FC,
   type ReactNode,
-} from 'react';
-import { SignerContext, type SignerContextValue } from '@miden-sdk/react';
+} from "react";
+import { SignerContext, type SignerContextValue } from "@miden-sdk/react";
 import {
   type Adapter,
   AllowedPrivateData,
@@ -30,11 +30,11 @@ import {
   type CreateAccountParams,
   type InputNoteDetails,
   type TransactionOutput,
-} from '@miden-sdk/miden-wallet-adapter-base';
-import type { NoteFilterTypes, AccountComponent } from '@miden-sdk/miden-sdk';
-import { MidenWalletAdapter } from '@miden-sdk/miden-wallet-adapter-miden';
-import { useLocalStorage } from './useLocalStorage';
-import { WalletContext as CanonicalWalletContext } from './useWallet';
+} from "@miden-sdk/miden-wallet-adapter-base";
+import type { NoteFilterTypes, AccountComponent } from "@miden-sdk/miden-sdk";
+import { MidenWalletAdapter } from "@miden-sdk/miden-wallet-adapter-miden";
+import { useLocalStorage } from "./useLocalStorage";
+import { WalletContext as CanonicalWalletContext } from "./useWallet";
 
 // TYPES
 // ================================================================================================
@@ -58,29 +58,31 @@ export interface WalletContextState {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
 
-  requestTransaction?: MessageSignerWalletAdapterProps['requestTransaction'];
-  requestAssets?: MessageSignerWalletAdapterProps['requestAssets'];
-  requestGuardianInfo?: MessageSignerWalletAdapterProps['requestGuardianInfo'];
-  requestPrivateNotes?: MessageSignerWalletAdapterProps['requestPrivateNotes'];
-  signBytes?: MessageSignerWalletAdapterProps['signBytes'];
-  importPrivateNote?: MessageSignerWalletAdapterProps['importPrivateNote'];
-  requestConsumableNotes?: MessageSignerWalletAdapterProps['requestConsumableNotes'];
-  waitForTransaction?: MessageSignerWalletAdapterProps['waitForTransaction'];
-  requestSend?: MessageSignerWalletAdapterProps['requestSend'];
-  requestConsume?: MessageSignerWalletAdapterProps['requestConsume'];
-  createAccount?: MessageSignerWalletAdapterProps['createAccount'];
+  requestTransaction?: MessageSignerWalletAdapterProps["requestTransaction"];
+  requestAssets?: MessageSignerWalletAdapterProps["requestAssets"];
+  requestGuardianInfo?: MessageSignerWalletAdapterProps["requestGuardianInfo"];
+  requestPrivateNotes?: MessageSignerWalletAdapterProps["requestPrivateNotes"];
+  signBytes?: MessageSignerWalletAdapterProps["signBytes"];
+  importPrivateNote?: MessageSignerWalletAdapterProps["importPrivateNote"];
+  requestConsumableNotes?: MessageSignerWalletAdapterProps["requestConsumableNotes"];
+  waitForTransaction?: MessageSignerWalletAdapterProps["waitForTransaction"];
+  requestSend?: MessageSignerWalletAdapterProps["requestSend"];
+  requestConsume?: MessageSignerWalletAdapterProps["requestConsume"];
+  createAccount?: MessageSignerWalletAdapterProps["createAccount"];
 }
 
-const WalletContext = createContext<WalletContextState>({} as WalletContextState);
+const WalletContext = createContext<WalletContextState>(
+  {} as WalletContextState
+);
 
 // MIDENFI SIGNER PROVIDER
 // ================================================================================================
 
 export type SignerAccountType =
-  | 'RegularAccountImmutableCode'
-  | 'RegularAccountUpdatableCode'
-  | 'FungibleFaucet'
-  | 'NonFungibleFaucet';
+  | "RegularAccountImmutableCode"
+  | "RegularAccountUpdatableCode"
+  | "FungibleFaucet"
+  | "NonFungibleFaucet";
 
 export interface MidenFiSignerProviderProps {
   children: ReactNode;
@@ -103,7 +105,7 @@ export interface MidenFiSignerProviderProps {
   /** Account type for the signer account. Defaults to 'RegularAccountImmutableCode' */
   accountType?: SignerAccountType;
   /** Storage mode for the signer account ('private' | 'public'). Defaults to 'public' */
-  storageMode?: 'private' | 'public';
+  storageMode?: "private" | "public";
   /** Custom account components to include in the account (e.g. from a compiled .masp package) */
   customComponents?: AccountComponent[];
   /** Existing account ID to import instead of creating a new account */
@@ -173,15 +175,15 @@ const initialState: {
 export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   children,
   wallets: walletsProp,
-  appName = 'Miden DApp',
+  appName = "Miden DApp",
   network = WalletAdapterNetwork.Testnet,
   autoConnect = false,
   privateDataPermission = PrivateDataPermission.UponRequest,
   allowedPrivateData = AllowedPrivateData.None,
   onError,
-  localStorageKey = 'walletName',
-  accountType = 'RegularAccountImmutableCode',
-  storageMode = 'public',
+  localStorageKey = "walletName",
+  accountType = "RegularAccountImmutableCode",
+  storageMode = "public",
   customComponents,
   importAccountId,
 }) => {
@@ -246,11 +248,11 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     }
 
     adapters.forEach((adapter) =>
-      adapter.on('readyStateChange', handleReadyStateChange, adapter)
+      adapter.on("readyStateChange", handleReadyStateChange, adapter)
     );
     return () =>
       adapters.forEach((adapter) =>
-        adapter.off('readyStateChange', handleReadyStateChange, adapter)
+        adapter.off("readyStateChange", handleReadyStateChange, adapter)
       );
   }, [adapters]);
 
@@ -288,8 +290,8 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
       isUnloading.current = true;
     }
 
-    window.addEventListener('beforeunload', listener);
-    return () => window.removeEventListener('beforeunload', listener);
+    window.addEventListener("beforeunload", listener);
+    return () => window.removeEventListener("beforeunload", listener);
   }, [isUnloading]);
 
   // Handle the adapter's connect event.
@@ -329,13 +331,13 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   // Setup and teardown event listeners when the adapter changes
   useEffect(() => {
     if (adapter) {
-      adapter.on('connect', handleConnect);
-      adapter.on('disconnect', handleDisconnect);
-      adapter.on('error', handleError);
+      adapter.on("connect", handleConnect);
+      adapter.on("disconnect", handleDisconnect);
+      adapter.on("error", handleError);
       return () => {
-        adapter.off('connect', handleConnect);
-        adapter.off('disconnect', handleDisconnect);
-        adapter.off('error', handleError);
+        adapter.off("connect", handleConnect);
+        adapter.off("disconnect", handleDisconnect);
+        adapter.off("error", handleError);
       };
     }
   }, [adapter, handleConnect, handleDisconnect, handleError]);
@@ -384,7 +386,17 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
         isConnecting.current = false;
       }
     })();
-  }, [isConnecting, connected, autoConnect, adapter, readyState, setName, privateDataPermission, network, allowedPrivateData]);
+  }, [
+    isConnecting,
+    connected,
+    autoConnect,
+    adapter,
+    readyState,
+    setName,
+    privateDataPermission,
+    network,
+    allowedPrivateData,
+  ]);
 
   // Connect the adapter to the wallet
   const connect = useCallback(async () => {
@@ -405,8 +417,8 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     ) {
       setName(null);
 
-      if (typeof window !== 'undefined') {
-        window.open(adapter.url, '_blank');
+      if (typeof window !== "undefined") {
+        window.open(adapter.url, "_blank");
       }
 
       throw handleError(new WalletNotReadyError());
@@ -459,10 +471,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 
   // Request transaction
   const requestTransaction:
-    | MessageSignerWalletAdapterProps['requestTransaction']
+    | MessageSignerWalletAdapterProps["requestTransaction"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestTransaction' in adapter
+      adapter && "requestTransaction" in adapter
         ? async (transaction: MidenTransaction) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestTransaction(transaction);
@@ -473,10 +485,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 
   // Request assets
   const requestAssets:
-    | MessageSignerWalletAdapterProps['requestAssets']
+    | MessageSignerWalletAdapterProps["requestAssets"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestAssets' in adapter
+      adapter && "requestAssets" in adapter
         ? async () => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestAssets();
@@ -487,10 +499,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 
   // Request guardian info
   const requestGuardianInfo:
-    | MessageSignerWalletAdapterProps['requestGuardianInfo']
+    | MessageSignerWalletAdapterProps["requestGuardianInfo"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestGuardianInfo' in adapter
+      adapter && "requestGuardianInfo" in adapter
         ? async () => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestGuardianInfo();
@@ -501,10 +513,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 
   // Request private notes
   const requestPrivateNotes:
-    | MessageSignerWalletAdapterProps['requestPrivateNotes']
+    | MessageSignerWalletAdapterProps["requestPrivateNotes"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestPrivateNotes' in adapter
+      adapter && "requestPrivateNotes" in adapter
         ? async (noteFilterType: NoteFilterTypes, noteIds?: string[]) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestPrivateNotes(noteFilterType, noteIds);
@@ -513,10 +525,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     [adapter, handleError, connected]
   );
 
-  const signBytes: MessageSignerWalletAdapterProps['signBytes'] | undefined =
+  const signBytes: MessageSignerWalletAdapterProps["signBytes"] | undefined =
     useMemo(
       () =>
-        adapter && 'signBytes' in adapter
+        adapter && "signBytes" in adapter
           ? async (message: Uint8Array, kind: SignKind) => {
               if (!connected) throw handleError(new WalletNotConnectedError());
               return await adapter.signBytes(message, kind);
@@ -526,10 +538,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     );
 
   const importPrivateNote:
-    | MessageSignerWalletAdapterProps['importPrivateNote']
+    | MessageSignerWalletAdapterProps["importPrivateNote"]
     | undefined = useMemo(
     () =>
-      adapter && 'importPrivateNote' in adapter
+      adapter && "importPrivateNote" in adapter
         ? async (note: Uint8Array) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.importPrivateNote(note);
@@ -539,10 +551,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   );
 
   const requestConsumableNotes:
-    | MessageSignerWalletAdapterProps['requestConsumableNotes']
+    | MessageSignerWalletAdapterProps["requestConsumableNotes"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestConsumableNotes' in adapter
+      adapter && "requestConsumableNotes" in adapter
         ? async () => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestConsumableNotes();
@@ -552,10 +564,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   );
 
   const waitForTransaction:
-    | MessageSignerWalletAdapterProps['waitForTransaction']
+    | MessageSignerWalletAdapterProps["waitForTransaction"]
     | undefined = useMemo(
     () =>
-      adapter && 'waitForTransaction' in adapter
+      adapter && "waitForTransaction" in adapter
         ? async (txId: string, timeout?: number) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.waitForTransaction(txId, timeout);
@@ -565,10 +577,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   );
 
   const requestSend:
-    | MessageSignerWalletAdapterProps['requestSend']
+    | MessageSignerWalletAdapterProps["requestSend"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestSend' in adapter
+      adapter && "requestSend" in adapter
         ? async (transaction) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestSend(transaction);
@@ -578,10 +590,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   );
 
   const requestConsume:
-    | MessageSignerWalletAdapterProps['requestConsume']
+    | MessageSignerWalletAdapterProps["requestConsume"]
     | undefined = useMemo(
     () =>
-      adapter && 'requestConsume' in adapter
+      adapter && "requestConsume" in adapter
         ? async (transaction) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.requestConsume(transaction);
@@ -591,10 +603,10 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
   );
 
   const createAccount:
-    | MessageSignerWalletAdapterProps['createAccount']
+    | MessageSignerWalletAdapterProps["createAccount"]
     | undefined = useMemo(
     () =>
-      adapter && 'createAccount' in adapter
+      adapter && "createAccount" in adapter
         ? async (params?: CreateAccountParams) => {
             if (!connected) throw handleError(new WalletNotConnectedError());
             return await adapter.createAccount(params);
@@ -619,20 +631,32 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 
   // Keep signBytes in a ref so buildContext doesn't re-run when its identity changes.
   const signBytesRef = useRef(signBytes);
-  useEffect(() => { signBytesRef.current = signBytes; }, [signBytes]);
+  useEffect(() => {
+    signBytesRef.current = signBytes;
+  }, [signBytes]);
   const connectRef = useRef(connect);
-  useEffect(() => { connectRef.current = connect; }, [connect]);
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
   const disconnectRef = useRef(disconnect);
-  useEffect(() => { disconnectRef.current = disconnect; }, [disconnect]);
+  useEffect(() => {
+    disconnectRef.current = disconnect;
+  }, [disconnect]);
 
   const disconnectedCtx = useRef<SignerContextValue>({
-    signCb: async () => { throw new Error('MidenFi wallet not connected'); },
+    signCb: async () => {
+      throw new Error("MidenFi wallet not connected");
+    },
     accountConfig: null as any,
-    storeName: '',
-    name: 'MidenFi',
+    storeName: "",
+    name: "MidenFi",
     isConnected: false,
-    connect: async () => { await connectRef.current(); },
-    disconnect: async () => { await disconnectRef.current(); },
+    connect: async () => {
+      await connectRef.current();
+    },
+    disconnect: async () => {
+      await disconnectRef.current();
+    },
   });
 
   // The connected context ref — reused across renders to maintain referential identity.
@@ -657,14 +681,18 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 
       try {
         if (!cancelled) {
-          const { AccountStorageMode } = await import('@miden-sdk/miden-sdk');
+          const { AccountStorageMode } = await import("@miden-sdk/miden-sdk");
 
           const signCb = async (_: Uint8Array, signingInputs: Uint8Array) => {
-            const result = await signBytesRef.current!(signingInputs, 'signingInputs');
+            const result = await signBytesRef.current!(
+              signingInputs,
+              "signingInputs"
+            );
             return result;
           };
 
-          const resolvedStorageMode = AccountStorageMode.tryFromStr(storageMode);
+          const resolvedStorageMode =
+            AccountStorageMode.tryFromStr(storageMode);
 
           // Always hand the wallet's existing account ID to `initializeSignerAccount`
           // so it takes the import-by-id branch. The wallet already owns the account
@@ -684,7 +712,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
               importAccountId: importAccountId ?? address,
             },
             storeName: `midenfi_${address}`,
-            name: 'MidenFi',
+            name: "MidenFi",
             isConnected: true,
             connect: connectRef.current,
             disconnect: disconnectRef.current,
@@ -694,7 +722,7 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
           setSignerContext(ctx);
         }
       } catch (error) {
-        console.error('Failed to build MidenFi signer context:', error);
+        console.error("Failed to build MidenFi signer context:", error);
         if (!cancelled) {
           connectedCtxRef.current = null;
           setSignerContext(disconnectedCtx.current);
@@ -706,7 +734,15 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [connected, publicKey, address, accountType, storageMode, customComponents, importAccountId]);
+  }, [
+    connected,
+    publicKey,
+    address,
+    accountType,
+    storageMode,
+    customComponents,
+    importAccountId,
+  ]);
 
   const walletContextValue = useMemo(
     () => ({
@@ -794,7 +830,9 @@ export const MidenFiSignerProvider: FC<MidenFiSignerProviderProps> = ({
 export function useMidenFiWallet(): WalletContextState {
   const context = useContext(WalletContext);
   if (!context || Object.keys(context).length === 0) {
-    throw new Error('useMidenFiWallet must be used within MidenFiSignerProvider');
+    throw new Error(
+      "useMidenFiWallet must be used within MidenFiSignerProvider"
+    );
   }
   return context;
 }

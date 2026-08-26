@@ -1,9 +1,9 @@
-import { defineConfig } from 'tsup';
+import { defineConfig } from "tsup";
 
 export default defineConfig([
   {
-    entry: ['src/index.ts'],
-    format: ['cjs', 'esm'],
+    entry: ["src/index.ts"],
+    format: ["cjs", "esm"],
     sourcemap: true,
     dts: {
       compilerOptions: {
@@ -11,30 +11,27 @@ export default defineConfig([
       },
     },
     clean: true,
-    target: 'es2019',
+    target: "es2019",
     external: [
-      'react',
-      '@getpara/react-sdk-lite',
-      '@getpara/web-sdk',
-      '@miden-sdk/miden-para',
-      '@miden-sdk/miden-sdk',
-      '@miden-sdk/react',
-      '@tanstack/react-query',
+      "react",
+      "@getpara/react-sdk-lite",
+      "@getpara/web-sdk",
+      "@miden-sdk/para",
+      "@miden-sdk/miden-sdk",
+      "@miden-sdk/react",
+      "@tanstack/react-query",
     ],
   },
   {
-    entry: ['src/paraVitePlugin.ts'],
-    format: ['cjs', 'esm'],
+    entry: ["src/paraVitePlugin.ts"],
+    format: ["cjs", "esm"],
     sourcemap: true,
     dts: {
       compilerOptions: {
         skipLibCheck: true,
       },
     },
-    target: 'es2019',
-    external: [
-      'vite',
-      'vite-plugin-node-polyfills',
-    ],
+    target: "es2019",
+    external: ["vite", "vite-plugin-node-polyfills"],
   },
 ]);

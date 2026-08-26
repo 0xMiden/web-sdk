@@ -35,9 +35,8 @@ export default function Home() {
   useEffect(() => {
     if (client && accountId) {
       const fetchAddress = async () => {
-        const { Address, AccountId, NetworkId } = await import(
-          "@miden-sdk/miden-sdk"
-        );
+        const { Address, AccountId, NetworkId } =
+          await import("@miden-sdk/miden-sdk");
         const addr = Address.fromAccountId(
           AccountId.fromHex(accountId),
           "BasicWallet"

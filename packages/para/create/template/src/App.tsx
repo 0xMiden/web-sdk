@@ -1,7 +1,7 @@
-import './App.css';
-import '@getpara/react-sdk-lite/styles.css';
-import { ParaSignerProvider, useParaSigner } from '@miden-sdk/use-miden-para-react';
-import { MidenProvider, useSigner, useMiden } from '@miden-sdk/react';
+import "./App.css";
+import "@getpara/react-sdk-lite/styles.css";
+import { ParaSignerProvider, useParaSigner } from "@miden-sdk/para-react";
+import { MidenProvider, useSigner, useMiden } from "@miden-sdk/react";
 
 function App() {
   return (
@@ -10,7 +10,7 @@ function App() {
       environment="BETA"
       appName="Starter for MidenxPara"
     >
-      <MidenProvider config={{ rpcUrl: 'testnet' }}>
+      <MidenProvider config={{ rpcUrl: "testnet" }}>
         <Content />
       </MidenProvider>
     </ParaSignerProvider>
@@ -33,13 +33,13 @@ function Content() {
   return (
     <div>
       <button onClick={handleConnect}>
-        {signer?.isConnected ? 'Disconnect Para' : 'Connect with Para'}
+        {signer?.isConnected ? "Disconnect Para" : "Connect with Para"}
       </button>
       {signer?.isConnected && (
         <>
-          <p>Wallet: {wallet?.address ?? '—'}</p>
-          <p>Account: {signerAccountId ?? '—'}</p>
-          <p>Client ready: {isReady ? 'yes' : 'no'}</p>
+          <p>Wallet: {wallet?.address ?? "—"}</p>
+          <p>Account: {signerAccountId ?? "—"}</p>
+          <p>Client ready: {isReady ? "yes" : "no"}</p>
         </>
       )}
     </div>

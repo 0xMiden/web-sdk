@@ -2,14 +2,14 @@ import {
   AllowedPrivateData,
   PrivateDataPermission,
   WalletAdapterNetwork,
-} from '@miden-sdk/miden-wallet-adapter-base';
+} from "@miden-sdk/miden-wallet-adapter-base";
 import type {
   CSSProperties,
   FC,
   MouseEvent,
   PropsWithChildren,
   ReactElement,
-} from 'react';
+} from "react";
 
 export type ButtonProps = PropsWithChildren<{
   className?: string;
@@ -27,7 +27,7 @@ export type ButtonProps = PropsWithChildren<{
 export const Button: FC<ButtonProps> = (props) => {
   return (
     <button
-      className={`wallet-adapter-button ${props.className || ''}`}
+      className={`wallet-adapter-button ${props.className || ""}`}
       disabled={props.disabled}
       style={props.style}
       onClick={props.onClick}

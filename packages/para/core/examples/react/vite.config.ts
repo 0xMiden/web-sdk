@@ -1,17 +1,17 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import { nodePolyfills } from 'vite-plugin-node-polyfills';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
-import tailwindcss from '@tailwindcss/vite';
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
+import path from "path";
+import { fileURLToPath } from "url";
+import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
+import tailwindcss from "@tailwindcss/vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const optionalConnectorsPath = path.resolve(
   __dirname,
-  'src',
-  'optional-connectors.ts'
+  "src",
+  "optional-connectors.ts"
 );
 
 export default defineConfig({
@@ -21,38 +21,38 @@ export default defineConfig({
     topLevelAwait(),
     react(),
     nodePolyfills({
-      include: ['buffer', 'crypto', 'stream', 'util'],
+      include: ["buffer", "crypto", "stream", "util"],
     }),
   ],
-  assetsInclude: ['**/*.wasm'],
+  assetsInclude: ["**/*.wasm"],
   optimizeDeps: {
     exclude: [
-      '@miden-sdk/miden-sdk',
-      '@getpara/solana-wallet-connectors',
-      '@getpara/cosmos-wallet-connectors',
+      "@miden-sdk/miden-sdk",
+      "@getpara/solana-wallet-connectors",
+      "@getpara/cosmos-wallet-connectors",
     ],
     esbuildOptions: {
-      target: 'esnext',
+      target: "esnext",
     },
   },
   build: {
-    target: 'esnext',
+    target: "esnext",
     rollupOptions: {
       external: [
-        '@getpara/solana-wallet-connectors',
-        '@getpara/cosmos-wallet-connectors',
+        "@getpara/solana-wallet-connectors",
+        "@getpara/cosmos-wallet-connectors",
       ],
     },
   },
   resolve: {
-    dedupe: ['@getpara/web-sdk', '@getpara/react-sdk-lite'],
+    dedupe: ["@getpara/web-sdk", "@getpara/react-sdk-lite"],
     alias: {
-      '@getpara/solana-wallet-connectors': optionalConnectorsPath,
-      '@getpara/cosmos-wallet-connectors': optionalConnectorsPath,
+      "@getpara/solana-wallet-connectors": optionalConnectorsPath,
+      "@getpara/cosmos-wallet-connectors": optionalConnectorsPath,
     },
   },
   worker: {
-    format: 'es',
+    format: "es",
   },
   server: {
     fs: {

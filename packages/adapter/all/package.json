@@ -42,10 +42,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xMiden/wallet-adapter.git",
-    "directory": "packages/all"
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/adapter/all"
   },
   "bugs": {
-    "url": "https://github.com/0xMiden/wallet-adapter/issues"
-  }
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
 }

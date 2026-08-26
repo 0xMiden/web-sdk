@@ -1,7 +1,7 @@
 // Legacy exports for backward compatibility
-export * from './WalletProvider';
-export * from './useLocalStorage';
-export * from './useWallet';
+export * from "./WalletProvider";
+export * from "./useLocalStorage";
+export * from "./useWallet";
 
 // MidenFi Signer Provider - unified provider for @miden-sdk/react integration
 export {
@@ -13,4 +13,4 @@ export {
   type Wallet,
   type WalletContextState,
   type MidenFiWalletContextState,
-} from './MidenFiSignerProvider';
+} from "./MidenFiSignerProvider";
