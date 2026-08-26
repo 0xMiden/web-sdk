@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0-rc.4 (2026-08-26)
+
+### Fixes
+
+* [FIX][web] In-browser local proving no longer hangs forever on single-threaded WASM. The Miden VM/crypto stack is updated to 0.29.4, where the processor attempts the hasher-chiplet trace-builder thread with a fallible spawn and builds the trace serially when the target refuses to spawn — previously the refused spawn panicked, and under `panic=abort` the trapped module left the prove promise unsettled, so a sub-millisecond failure presented as an endless "slow prove". Targets that can spawn threads are unaffected. ([vm#3722](https://github.com/0xMiden/miden-vm/pull/3722))
+
 ## 0.16.0-rc.3 (2026-08-23)
 
 ### Changes
