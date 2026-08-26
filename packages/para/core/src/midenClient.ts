@@ -3,19 +3,19 @@ import {
   ParaWeb,
   SuccessfulSignatureRes,
   Wallet,
-} from '@getpara/web-sdk';
-import { keccak_256 as keccak256 } from '@noble/hashes/sha3.js';
+} from "@getpara/web-sdk";
+import { keccak_256 as keccak256 } from "@noble/hashes/sha3.js";
 import {
   accountSeedFromStr,
   evmPkToCommitment,
   fromHexSig,
   getUncompressedPublicKeyFromWallet,
-  txSummaryToJosn,
-} from './utils.js';
-import type { MidenAccountOpts, Opts, TxSummaryJson } from './types.js';
-import type { MidenClient } from '@miden-sdk/miden-sdk';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
-import { accountSelectionModal, signingModal } from './modalClient.js';
+  txSummaryToJson,
+} from "./utils.js";
+import type { MidenAccountOpts, Opts, TxSummaryJson } from "./types.js";
+import type { MidenClient } from "@miden-sdk/miden-sdk";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { accountSelectionModal, signingModal } from "./modalClient.js";
 
 export type CustomSignConfirmStep = (
   txSummaryJson: TxSummaryJson
@@ -33,26 +33,26 @@ export const signCb = (
   customSignConfirmStep?: CustomSignConfirmStep
 ) => {
   return async (_: Uint8Array, signingInputs: Uint8Array) => {
-    const { SigningInputs } = await import('@miden-sdk/miden-sdk');
+    const { SigningInputs } = await import("@miden-sdk/miden-sdk");
     const inputs = SigningInputs.deserialize(signingInputs);
     let commitment = inputs.toCommitment().toHex().slice(2);
     const hashed = bytesToHex(keccak256(hexToBytes(commitment)));
-    const txSummaryJson = txSummaryToJosn(inputs.transactionSummaryPayload());
+    const txSummaryJson = txSummaryToJson(inputs.transactionSummaryPayload());
     if (showSigningModal) {
       const confirmed = await signingModal(txSummaryJson);
       if (!confirmed) {
-        throw new Error('User cancelled signing');
+        throw new Error("User cancelled signing");
       }
     }
     if (customSignConfirmStep) {
       await customSignConfirmStep(txSummaryJson);
     }
-    console.time('Para Signing Time');
+    console.time("Para Signing Time");
     const res = await para.signMessage({
       walletId: wallet.id,
       messageBase64: hexStringToBase64(hashed),
     });
-    console.timeEnd('Para Signing Time');
+    console.timeEnd("Para Signing Time");
     const signature = (res as SuccessfulSignatureRes).signature;
     const sig = fromHexSig(signature);
     return sig;
@@ -69,7 +69,7 @@ async function createAccount(
   opts: MidenAccountOpts
 ) {
   const { AccountBuilder, AccountComponent, AccountStorageMode } =
-    await import('@miden-sdk/miden-sdk');
+    await import("@miden-sdk/miden-sdk");
 
   await client.sync();
   let pkc = await evmPkToCommitment(publicKey);
@@ -81,7 +81,7 @@ async function createAccount(
   // In protocol 0.15 the account type IS the storage mode (public/private visibility);
   // faucet-vs-wallet is determined by the components, not an account-type flag.
   const accountStorageMode =
-    opts.storageMode === 'private'
+    opts.storageMode === "private"
       ? AccountStorageMode.private()
       : AccountStorageMode.public();
 
@@ -95,7 +95,7 @@ async function createAccount(
 
   // If the account already exists on-chain (e.g. public), hydrate it instead of
   // recreating a “new” account with zero commitment, which causes submission to fail.
-  if (opts.storageMode !== 'private') {
+  if (opts.storageMode !== "private") {
     try {
       await client.accounts.import(account);
     } catch {
@@ -124,10 +124,10 @@ export async function createParaMidenClient(
   showSigningModal: boolean = true,
   customSignConfirmStep?: CustomSignConfirmStep
 ) {
-  const evmWallets = wallets.filter((wallet) => wallet.type === 'EVM');
+  const evmWallets = wallets.filter((wallet) => wallet.type === "EVM");
 
   if (!evmWallets?.length) {
-    throw new Error('No EVM wallets provided');
+    throw new Error("No EVM wallets provided");
   }
 
   const accountKeys = await Promise.all(
@@ -137,15 +137,20 @@ export async function createParaMidenClient(
   const wallet = evmWallets[selectedIndex] ?? evmWallets[0];
   const publicKey = accountKeys[selectedIndex] ?? accountKeys[0];
 
-  const { MidenClient } = await import('@miden-sdk/miden-sdk');
-  if (opts.storageMode === 'private' && !opts.accountSeed) {
-    throw new Error('accountSeed is required when using private storage mode');
+  const { MidenClient } = await import("@miden-sdk/miden-sdk");
+  if (opts.storageMode === "private" && !opts.accountSeed) {
+    throw new Error("accountSeed is required when using private storage mode");
   }
-  const signCallback = signCb(para, wallet, showSigningModal, customSignConfirmStep);
+  const signCallback = signCb(
+    para,
+    wallet,
+    showSigningModal,
+    customSignConfirmStep
+  );
   const noteTransportUrl =
     opts.noteTransportUrl ||
     opts.nodeTransportUrl ||
-    'https://transport.miden.io';
+    "https://transport.miden.io";
 
   const client = await MidenClient.create({
     rpcUrl: opts.endpoint,

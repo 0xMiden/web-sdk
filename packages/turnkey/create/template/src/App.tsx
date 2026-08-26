@@ -2,7 +2,7 @@ import {
   TurnkeyProvider,
   type TurnkeyProviderConfig,
 } from "@turnkey/react-wallet-kit";
-import { useTurnkeyMiden } from "@miden-sdk/miden-turnkey-react";
+import { useTurnkeyMiden } from "@miden-sdk/turnkey-react";
 import "@turnkey/react-wallet-kit/styles.css";
 
 // Miden configuration - customize these values for your app
@@ -26,7 +26,7 @@ function MidenDemo() {
     {
       accountSeed: midenConfig.accountSeed,
       noteTransportUrl: midenConfig.transportUrl,
-    },
+    }
   );
 
   const { user, handleLogin, createWallet } = turnkey;

@@ -1,12 +1,12 @@
-import { Loader2, Wallet } from 'lucide-react';
+import { Loader2, Wallet } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from './ui/dialog';
-import { Button } from './ui/button';
+} from "./ui/dialog";
+import { Button } from "./ui/button";
 
 export interface AssetBalance {
   assetId: string;

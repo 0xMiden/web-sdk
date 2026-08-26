@@ -1,5 +1,10 @@
-import { useSigner, useMiden, useAccount, useSyncState } from '@miden-sdk/react';
-import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
+import {
+  useSigner,
+  useMiden,
+  useAccount,
+  useSyncState,
+} from "@miden-sdk/react";
+import { useTurnkeySigner } from "@miden-sdk/turnkey-react";
 
 function App() {
   // Get signer context (from TurnkeySignerProvider)
@@ -40,10 +45,16 @@ function App() {
         {/* Connection Status */}
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>Connection Status</h2>
-          <StatusRow label="Signer Connected" value={signer?.isConnected ? 'Yes' : 'No'} />
-          <StatusRow label="Signer Name" value={signer?.name ?? 'None'} />
-          <StatusRow label="Miden Ready" value={isReady ? 'Yes' : 'No'} />
-          <StatusRow label="Initializing" value={isInitializing ? 'Yes' : 'No'} />
+          <StatusRow
+            label="Signer Connected"
+            value={signer?.isConnected ? "Yes" : "No"}
+          />
+          <StatusRow label="Signer Name" value={signer?.name ?? "None"} />
+          <StatusRow label="Miden Ready" value={isReady ? "Yes" : "No"} />
+          <StatusRow
+            label="Initializing"
+            value={isInitializing ? "Yes" : "No"}
+          />
           {error && <StatusRow label="Error" value={error.message} isError />}
         </div>
 
@@ -53,7 +64,11 @@ function App() {
             <h2 style={styles.sectionTitle}>Turnkey Account</h2>
             <StatusRow label="Address" value={account.address} truncate />
             {account.publicKey && (
-              <StatusRow label="Public Key" value={account.publicKey} truncate />
+              <StatusRow
+                label="Public Key"
+                value={account.publicKey}
+                truncate
+              />
             )}
           </div>
         )}
@@ -71,7 +86,7 @@ function App() {
                 />
                 <StatusRow
                   label="Is Faucet"
-                  value={accountResult.account.isFaucet() ? 'Yes' : 'No'}
+                  value={accountResult.account.isFaucet() ? "Yes" : "No"}
                 />
               </>
             )}
@@ -83,10 +98,14 @@ function App() {
           <div style={styles.section}>
             <h2 style={styles.sectionTitle}>Sync State</h2>
             <StatusRow label="Block Height" value={syncHeight.toString()} />
-            <StatusRow label="Syncing" value={isSyncing ? 'Yes' : 'No'} />
+            <StatusRow label="Syncing" value={isSyncing ? "Yes" : "No"} />
             <StatusRow
               label="Last Sync"
-              value={lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Never'}
+              value={
+                lastSyncTime
+                  ? new Date(lastSyncTime).toLocaleTimeString()
+                  : "Never"
+              }
             />
           </div>
         )}
@@ -98,7 +117,7 @@ function App() {
             {accountResult.assets.map((asset) => (
               <StatusRow
                 key={asset.assetId}
-                label={asset.symbol ?? 'Asset'}
+                label={asset.symbol ?? "Asset"}
                 value={`${asset.amount.toString()} (${truncate(asset.assetId, 16)})`}
               />
             ))}
@@ -111,7 +130,7 @@ function App() {
             style={signer?.isConnected ? styles.buttonSecondary : styles.button}
             onClick={handleConnect}
           >
-            {signer?.isConnected ? 'Disconnect' : 'Connect'}
+            {signer?.isConnected ? "Disconnect" : "Connect"}
           </button>
 
           {isReady && (
@@ -120,7 +139,7 @@ function App() {
               onClick={handleSync}
               disabled={isSyncing}
             >
-              {isSyncing ? 'Syncing...' : 'Sync'}
+              {isSyncing ? "Syncing..." : "Sync"}
             </button>
           )}
         </div>
@@ -129,14 +148,18 @@ function App() {
         <details style={styles.debug}>
           <summary style={styles.debugSummary}>Debug Info</summary>
           <pre style={styles.debugContent}>
-            {JSON.stringify({
-              signerConnected: signer?.isConnected,
-              signerName: signer?.name,
-              isReady,
-              isInitializing,
-              signerAccountId,
-              turnkeyAddress: account?.address,
-            }, null, 2)}
+            {JSON.stringify(
+              {
+                signerConnected: signer?.isConnected,
+                signerName: signer?.name,
+                isReady,
+                isInitializing,
+                signerAccountId,
+                turnkeyAddress: account?.address,
+              },
+              null,
+              2
+            )}
           </pre>
         </details>
       </div>
@@ -148,7 +171,7 @@ function StatusRow({
   label,
   value,
   isError = false,
-  truncate: shouldTruncate = false
+  truncate: shouldTruncate = false,
 }: {
   label: string;
   value: string;
@@ -159,10 +182,12 @@ function StatusRow({
   return (
     <div style={styles.statusRow}>
       <span style={styles.statusLabel}>{label}:</span>
-      <span style={{
-        ...styles.statusValue,
-        ...(isError ? styles.errorText : {})
-      }}>
+      <span
+        style={{
+          ...styles.statusValue,
+          ...(isError ? styles.errorText : {}),
+        }}
+      >
         {displayValue}
       </span>
     </div>
@@ -177,109 +202,109 @@ function truncate(str: string, maxLen: number): string {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '2rem',
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "2rem",
   },
   card: {
-    background: 'white',
-    borderRadius: '12px',
-    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-    padding: '2rem',
-    maxWidth: '500px',
-    width: '100%',
+    background: "white",
+    borderRadius: "12px",
+    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+    padding: "2rem",
+    maxWidth: "500px",
+    width: "100%",
   },
   title: {
-    fontSize: '1.5rem',
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: '0.5rem',
+    fontSize: "1.5rem",
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: "0.5rem",
   },
   subtitle: {
-    color: '#666',
-    marginBottom: '1.5rem',
+    color: "#666",
+    marginBottom: "1.5rem",
   },
   section: {
-    background: '#f8f9fa',
-    borderRadius: '8px',
-    padding: '1rem',
-    marginBottom: '1rem',
+    background: "#f8f9fa",
+    borderRadius: "8px",
+    padding: "1rem",
+    marginBottom: "1rem",
   },
   sectionTitle: {
-    fontSize: '0.875rem',
-    fontWeight: '600',
-    color: '#ff5500',
-    marginBottom: '0.75rem',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
+    fontSize: "0.875rem",
+    fontWeight: "600",
+    color: "#ff5500",
+    marginBottom: "0.75rem",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
   },
   statusRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '0.25rem 0',
-    borderBottom: '1px solid #eee',
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "0.25rem 0",
+    borderBottom: "1px solid #eee",
   },
   statusLabel: {
-    color: '#666',
-    fontSize: '0.875rem',
+    color: "#666",
+    fontSize: "0.875rem",
   },
   statusValue: {
-    fontFamily: 'monospace',
-    fontSize: '0.875rem',
-    color: '#333',
-    maxWidth: '60%',
-    textAlign: 'right' as const,
-    wordBreak: 'break-all' as const,
+    fontFamily: "monospace",
+    fontSize: "0.875rem",
+    color: "#333",
+    maxWidth: "60%",
+    textAlign: "right" as const,
+    wordBreak: "break-all" as const,
   },
   errorText: {
-    color: '#dc3545',
+    color: "#dc3545",
   },
   buttonGroup: {
-    display: 'flex',
-    gap: '0.75rem',
-    marginTop: '1rem',
+    display: "flex",
+    gap: "0.75rem",
+    marginTop: "1rem",
   },
   button: {
     flex: 1,
-    padding: '0.75rem 1rem',
-    fontSize: '1rem',
-    fontWeight: '600',
-    color: 'white',
-    background: '#ff5500',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
+    padding: "0.75rem 1rem",
+    fontSize: "1rem",
+    fontWeight: "600",
+    color: "white",
+    background: "#ff5500",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
   },
   buttonSecondary: {
     flex: 1,
-    padding: '0.75rem 1rem',
-    fontSize: '1rem',
-    fontWeight: '600',
-    color: '#ff5500',
-    background: 'white',
-    border: '2px solid #ff5500',
-    borderRadius: '8px',
-    cursor: 'pointer',
+    padding: "0.75rem 1rem",
+    fontSize: "1rem",
+    fontWeight: "600",
+    color: "#ff5500",
+    background: "white",
+    border: "2px solid #ff5500",
+    borderRadius: "8px",
+    cursor: "pointer",
   },
   debug: {
-    marginTop: '1.5rem',
-    padding: '0.5rem',
-    background: '#f1f1f1',
-    borderRadius: '4px',
+    marginTop: "1.5rem",
+    padding: "0.5rem",
+    background: "#f1f1f1",
+    borderRadius: "4px",
   },
   debugSummary: {
-    cursor: 'pointer',
-    color: '#666',
-    fontSize: '0.75rem',
+    cursor: "pointer",
+    color: "#666",
+    fontSize: "0.75rem",
   },
   debugContent: {
-    marginTop: '0.5rem',
-    fontSize: '0.7rem',
-    overflow: 'auto',
-    maxHeight: '200px',
+    marginTop: "0.5rem",
+    fontSize: "0.7rem",
+    overflow: "auto",
+    maxHeight: "200px",
   },
 };
 

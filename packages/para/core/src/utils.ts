@@ -1,7 +1,8 @@
-import ParaWeb, { Wallet } from '@getpara/web-sdk';
-import type { NoteType, TransactionSummary } from '@miden-sdk/miden-sdk';
-import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { TxSummaryJson } from './types';
+import ParaWeb, { Wallet } from "@getpara/web-sdk";
+import type { NoteType, TransactionSummary } from "@miden-sdk/miden-sdk";
+import { hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import { TxSummaryJson } from "./types";
+/** @public */
 export { hexToBytes };
 
 /**
@@ -10,7 +11,7 @@ export { hexToBytes };
  */
 export const fromHexSig = (hexString: string) => {
   if (hexString.length % 2 !== 0) {
-    throw new Error('Invalid string len');
+    throw new Error("Invalid string len");
   }
   const sigBytes = hexToBytes(hexString);
   const serialized = new Uint8Array(sigBytes.length + 2);
@@ -32,35 +33,43 @@ export const accountSeedFromStr = (str?: string) => {
 };
 
 /**
- * Converts an uncompressed EVM public key into a Miden commitment (Poseidon2 hash of the tagged X coord).
+ * Converts an uncompressed EVM public key into a Miden commitment.
  * Assumes input format `0x04${x}${y}` where x and y are 64-char hex strings.
+ *
+ * The protocol commits to the affine point as Poseidon2 over 16 field elements:
+ * the x coordinate then the y coordinate, each as eight 32-bit limbs in
+ * little-endian limb order. 0.15 hashed a different preimage — nine felts
+ * packed from the 33-byte compressed SEC1 encoding — so a commitment computed
+ * by an older release will not match one computed here.
  */
 export const evmPkToCommitment = async (uncompressedPublicKey: string) => {
-  const { Felt, Poseidon2, FeltArray } = await import('@miden-sdk/miden-sdk');
+  const { Felt, Poseidon2, FeltArray } = await import("@miden-sdk/miden-sdk");
   const withoutPrefix = uncompressedPublicKey.slice(4);
   const x = withoutPrefix.slice(0, 64);
-  const y = withoutPrefix.slice(64); // hex encoded string
+  const y = withoutPrefix.slice(64);
 
-  // check if y is odd or even for tag
-  const tag = parseInt(y.slice(-1), 16) % 2 === 0 ? 2 : 3;
-  // create the serialized bytes array
-  const bytes = new Uint8Array(33);
-  bytes[0] = tag;
-  bytes.set(hexToBytes(x), 1);
-
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // convert bytes to a felt array
-  // 4 bytes per felt therefore a 9 felt array
-  // each fe
-  const felts = Array.from(
-    { length: 8 },
-    (_, i) => new Felt(BigInt(view.getUint32(i * 4, true)))
+  const felts = [...coordToLimbs(x), ...coordToLimbs(y)].map(
+    (limb) => new Felt(BigInt(limb))
   );
-  // push the last 33rd byte
-  felts.push(new Felt(BigInt(bytes[32])));
 
   return Poseidon2.hashElements(new FeltArray(felts));
+};
+
+/**
+ * Splits a 32-byte big-endian coordinate into eight 32-bit limbs, least
+ * significant limb first — the representation the protocol hashes.
+ */
+const coordToLimbs = (hex: string): number[] => {
+  const bytes = hexToBytes(hex);
+  if (bytes.length !== 32) {
+    throw new Error(`Expected a 32-byte coordinate, got ${bytes.length}`);
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const limbs: number[] = [];
+  for (let i = 7; i >= 0; i--) {
+    limbs.push(view.getUint32(i * 4, false));
+  }
+  return limbs;
 };
 
 /**
@@ -73,21 +82,21 @@ export const getUncompressedPublicKeyFromWallet = async (
   let publicKey = wallet.publicKey;
   if (!publicKey) {
     const { token } = await para.issueJwt();
-    const payload = JSON.parse(window.atob(token.split('.')[1]));
+    const payload = JSON.parse(window.atob(token.split(".")[1]));
     if (!payload.data) {
-      throw new Error('Got invalid jwt token');
+      throw new Error("Got invalid jwt token");
     }
     const wallets = payload.data.connectedWallets;
     const w = wallets.find((w) => w.id === wallet.id);
     if (!w) {
-      throw new Error('Wallet Not Found in jwt data');
+      throw new Error("Wallet Not Found in jwt data");
     }
     publicKey = w.publicKey;
   }
   return publicKey;
 };
 
-export const txSummaryToJosn = (
+export const txSummaryToJson = (
   txSummary: TransactionSummary
 ): TxSummaryJson => {
   const inputNotes = txSummary
@@ -135,10 +144,10 @@ function noteTypeToString(noteType: NoteType) {
   // protocol 0.15 NoteType encoding: Private = 0, Public = 1.
   switch (noteType) {
     case 1:
-      return 'public';
+      return "public";
     case 0:
-      return 'private';
+      return "private";
     default:
-      return 'UNKNOWN';
+      return "UNKNOWN";
   }
 }

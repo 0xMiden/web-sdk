@@ -1,20 +1,20 @@
-import type { InputNoteState, Note, NoteType } from '@miden-sdk/miden-sdk';
+import type { InputNoteState, Note, NoteType } from "@miden-sdk/miden-sdk";
 
 export enum WalletAdapterNetwork {
-  Devnet = 'devnet',
-  Testnet = 'testnet',
-  Localnet = 'localnet',
+  Devnet = "devnet",
+  Testnet = "testnet",
+  Localnet = "localnet",
 }
 
 export type SupportedTransactionVersions = ReadonlySet<any> | null;
 
 export type TransactionOrVersionedTransaction<
-  S extends SupportedTransactionVersions
+  S extends SupportedTransactionVersions,
 > = S extends null ? any : any | any;
 
 export enum PrivateDataPermission {
-  UponRequest = 'UPON_REQUEST', // The App must ask for permission to access private data every time
-  Auto = 'AUTO', // The App can access private data without confirmation
+  UponRequest = "UPON_REQUEST", // The App must ask for permission to access private data every time
+  Auto = "AUTO", // The App can access private data without confirmation
 }
 
 export enum AllowedPrivateData {
@@ -25,7 +25,7 @@ export enum AllowedPrivateData {
   All = (1 << 16) - 1, // 65535 (allows for new permissions without requiring a migration)
 }
 
-export type SignKind = 'word' | 'signingInputs';
+export type SignKind = "word" | "signingInputs";
 
 export interface Asset {
   faucetId: string;
@@ -36,12 +36,12 @@ export interface GuardianInfo {
   isGuardianAccount: boolean;
   guardianEndpoint: string | null;
   guardianProvider:
-    | 'open-zeppelin'
-    | 'gateway'
-    | 'lambda-class'
-    | 'custom'
+    | "open-zeppelin"
+    | "gateway"
+    | "lambda-class"
+    | "custom"
     | null;
-  guardianSyncStatus: 'in-sync' | 'out-of-sync' | null;
+  guardianSyncStatus: "in-sync" | "out-of-sync" | null;
 }
 
 export type InputNoteDetails = {
@@ -81,10 +81,10 @@ export type WalletTransactionOutput =
   | IFailedTransactionOutput;
 
 export type CreateAccountType =
-  | 'RegularAccountImmutableCode'
-  | 'RegularAccountUpdatableCode';
+  | "RegularAccountImmutableCode"
+  | "RegularAccountUpdatableCode";
 
-export type CreateAccountStorageMode = 'private' | 'public';
+export type CreateAccountStorageMode = "private" | "public";
 
 export interface CreateAccountParams {
   accountType?: CreateAccountType;

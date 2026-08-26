@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-wallet-adapter",
-  "version": "0.15.3",
+  "version": "0.16.0-rc.4",
   "description": "Modular TypeScript wallet adapters and React components for Miden applications.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,10 +13,10 @@
     "doc": "echo \"(no docs)\""
   },
   "dependencies": {
-    "@miden-sdk/miden-wallet-adapter-base": "workspace:^",
-    "@miden-sdk/miden-wallet-adapter-miden": "workspace:^",
-    "@miden-sdk/miden-wallet-adapter-react": "workspace:^",
-    "@miden-sdk/miden-wallet-adapter-reactui": "workspace:^"
+    "@miden-sdk/miden-wallet-adapter-base": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-miden": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-react": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-reactui": "workspace:*"
   },
   "devDependencies": {
     "@types/react-dom": "^19.0.4",
@@ -42,10 +42,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xMiden/wallet-adapter.git",
-    "directory": "packages/all"
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/adapter/all"
   },
   "bugs": {
-    "url": "https://github.com/0xMiden/wallet-adapter/issues"
-  }
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
 }

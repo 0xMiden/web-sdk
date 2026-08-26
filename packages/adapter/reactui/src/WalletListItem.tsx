@@ -1,9 +1,10 @@
-import type { FC, MouseEventHandler } from 'react';
-import { WalletReadyState } from '@miden-sdk/miden-wallet-adapter-base';
-import { Wallet } from '@miden-sdk/miden-wallet-adapter-react';
-import { Button } from './Button';
-import { WalletIcon } from './WalletIcon';
+import type { FC, MouseEventHandler } from "react";
+import { WalletReadyState } from "@miden-sdk/miden-wallet-adapter-base";
+import { Wallet } from "@miden-sdk/miden-wallet-adapter-react";
+import { Button } from "./Button";
+import { WalletIcon } from "./WalletIcon";
 
+/** @public */
 export interface WalletListItemProps {
   handleClick: MouseEventHandler<HTMLButtonElement>;
   tabIndex?: number;

@@ -1,4 +1,4 @@
-import '@getpara/react-sdk-lite/styles.css';
+import "@getpara/react-sdk-lite/styles.css";
 import {
   useState,
   useEffect,
@@ -8,8 +8,8 @@ import {
   useContext,
   type Context,
   type ReactNode,
-} from 'react';
-import { ParaWeb, Environment, type Wallet } from '@getpara/web-sdk';
+} from "react";
+import { ParaWeb, Environment, type Wallet } from "@getpara/web-sdk";
 import {
   ParaProvider,
   useClient,
@@ -17,13 +17,13 @@ import {
   useModal,
   useLogout,
   type ParaProviderProps,
-} from '@getpara/react-sdk-lite';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+} from "@getpara/react-sdk-lite";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   SignerContext as SignerContextUnsafe,
   type SignerContextValue,
   type SignerAccountConfig,
-} from '@miden-sdk/react';
+} from "@miden-sdk/react";
 
 // Re-cast SignerContext to the host app's React typings. @miden-sdk/react may
 // ship with a different @types/react version than the consumer (common with
@@ -36,14 +36,14 @@ const SignerContext =
 import {
   signCb as createSignCb,
   type CustomSignConfirmStep,
-} from '@miden-sdk/miden-para';
+} from "@miden-sdk/para";
 import {
   evmPkToCommitment,
   getUncompressedPublicKeyFromWallet,
-} from '@miden-sdk/miden-para';
+} from "@miden-sdk/para";
 
 // Re-export Para hooks for convenience
-export { useModal, useLogout } from '@getpara/react-sdk-lite';
+export { useModal, useLogout } from "@getpara/react-sdk-lite";
 
 const defaultQueryClient = new QueryClient();
 
@@ -51,13 +51,14 @@ const defaultQueryClient = new QueryClient();
 // ================================================================================================
 
 /** Environment string values accepted by ParaSignerProvider */
+/** @public */
 export type ParaEnvironment =
-  | 'BETA'
-  | 'PROD'
-  | 'SANDBOX'
-  | 'DEV'
-  | 'DEVELOPMENT'
-  | 'PRODUCTION';
+  | "BETA"
+  | "PROD"
+  | "SANDBOX"
+  | "DEV"
+  | "DEVELOPMENT"
+  | "PRODUCTION";
 
 /**
  * Convert environment string to Environment enum value.
@@ -66,10 +67,10 @@ export type ParaEnvironment =
 function getEnvironmentValue(env: ParaEnvironment): Environment {
   // Handle aliases
   const normalizedEnv =
-    env === 'DEVELOPMENT' ? 'BETA' : env === 'PRODUCTION' ? 'PROD' : env;
+    env === "DEVELOPMENT" ? "BETA" : env === "PRODUCTION" ? "PROD" : env;
 
   // Try accessing the enum - Environment may be undefined in some test environments
-  if (Environment && typeof Environment === 'object') {
+  if (Environment && typeof Environment === "object") {
     const value = Environment[normalizedEnv as keyof typeof Environment];
     if (value !== undefined) return value;
   }
@@ -100,10 +101,10 @@ export interface ParaSignerProviderProps {
    * Use this for customizing OAuth methods, external wallets, etc.
    */
   paraProviderConfig?: Partial<
-    Omit<ParaProviderProps<any, any>, 'children' | 'paraClientConfig'>
+    Omit<ParaProviderProps<any, any>, "children" | "paraClientConfig">
   >;
   /** Optional custom account components to include in the account (e.g. from a compiled .masp package) */
-  customComponents?: SignerAccountConfig['customComponents'];
+  customComponents?: SignerAccountConfig["customComponents"];
   /** Optional account ID to import instead of creating a new account */
   importAccountId?: string;
 }
@@ -137,7 +138,7 @@ export function ParaSignerProvider({
   children,
   apiKey,
   environment,
-  appName = 'Miden App',
+  appName = "Miden App",
   showSigningModal = true,
   customSignConfirmStep,
   queryClient,
@@ -179,7 +180,11 @@ function ParaSignerProviderInner({
   importAccountId,
 }: Pick<
   ParaSignerProviderProps,
-  'children' | 'showSigningModal' | 'customSignConfirmStep' | 'customComponents' | 'importAccountId'
+  | "children"
+  | "showSigningModal"
+  | "customSignConfirmStep"
+  | "customComponents"
+  | "importAccountId"
 >) {
   // Access Para modal from ParaProvider.
   // Store in refs to avoid re-render loops (these hooks return new objects each render).
@@ -219,8 +224,9 @@ function ParaSignerProviderInner({
   // Use Para SDK's reactive useAccount() hook to detect login state.
   // This subscribes to the internal state machine instead of polling isFullyLoggedIn().
   const { isConnected: paraIsConnected, embedded } = useParaAccount();
-  const evmWallets = embedded?.wallets?.filter((w) => w.type === 'EVM') ?? [];
-  const wallet = evmWallets.length > 0 ? (evmWallets[0] as unknown as Wallet) : null;
+  const evmWallets = embedded?.wallets?.filter((w) => w.type === "EVM") ?? [];
+  const wallet =
+    evmWallets.length > 0 ? (evmWallets[0] as unknown as Wallet) : null;
   const isConnected = paraIsConnected && wallet !== null;
 
   // Close the modal when login is detected
@@ -253,11 +259,11 @@ function ParaSignerProviderInner({
   // without creating any client, keeping the WASM module free for buildContext.
   const disconnectedCtx = useRef<SignerContextValue>({
     signCb: async () => {
-      throw new Error('Para wallet not connected');
+      throw new Error("Para wallet not connected");
     },
     accountConfig: null as any,
-    storeName: '',
-    name: 'Para',
+    storeName: "",
+    name: "Para",
     isConnected: false,
     connect,
     disconnect,
@@ -279,7 +285,7 @@ function ParaSignerProviderInner({
         // Connected - build full context with signing capability
         const p = paraRef.current;
         const publicKey = await getUncompressedPublicKeyFromWallet(p, wallet);
-        if (!publicKey) throw new Error('Failed to get public key from wallet');
+        if (!publicKey) throw new Error("Failed to get public key from wallet");
         const commitment = await evmPkToCommitment(publicKey);
 
         // Serialize the commitment Word to Uint8Array for SignerAccountConfig
@@ -293,7 +299,7 @@ function ParaSignerProviderInner({
         );
 
         if (!cancelled) {
-          const { AccountStorageMode } = await import('@miden-sdk/miden-sdk');
+          const { AccountStorageMode } = await import("@miden-sdk/miden-sdk");
 
           setSignerContext({
             signCb: signCallback,
@@ -304,14 +310,14 @@ function ParaSignerProviderInner({
               ...(importAccountId ? { importAccountId } : {}),
             },
             storeName: `para_${wallet.id}`,
-            name: 'Para',
+            name: "Para",
             isConnected: true,
             connect,
             disconnect,
           });
         }
       } catch (error) {
-        console.error('Failed to build Para signer context:', error);
+        console.error("Failed to build Para signer context:", error);
         if (!cancelled) {
           setSignerContext(disconnectedCtx.current);
         }
@@ -346,7 +352,7 @@ export function useParaSigner(): ParaSignerExtras & { isConnected: boolean } {
   const extras = useContext(ParaSignerExtrasContext);
   const signer = useContext(SignerContext);
   if (!extras) {
-    throw new Error('useParaSigner must be used within ParaSignerProvider');
+    throw new Error("useParaSigner must be used within ParaSignerProvider");
   }
   return { ...extras, isConnected: signer?.isConnected ?? false };
 }

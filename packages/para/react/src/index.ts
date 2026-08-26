@@ -1,4 +1,4 @@
-export { useParaMiden } from './useParaMiden';
+export { useParaMiden } from "./useParaMiden";
 export {
   ParaSignerProvider,
   useParaSigner,
@@ -6,4 +6,4 @@ export {
   useLogout,
   type ParaSignerProviderProps,
   type ParaSignerExtras,
-} from './ParaSignerProvider';
+} from "./ParaSignerProvider";

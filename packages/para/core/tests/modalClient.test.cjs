@@ -1,18 +1,18 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const Module = require('module');
-const ts = require('typescript');
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const Module = require("module");
+const ts = require("typescript");
 
 class MockElement {
   constructor(tagName) {
     this.tagName = tagName.toLowerCase();
     this.children = [];
     this.parent = null;
-    this.id = '';
+    this.id = "";
     this.style = {};
-    this.textContent = '';
+    this.textContent = "";
     this.onclick = undefined;
   }
 
@@ -41,7 +41,7 @@ class MockElement {
   }
 
   click() {
-    if (typeof this.onclick === 'function') {
+    if (typeof this.onclick === "function") {
       this.onclick({ target: this });
     }
   }
@@ -49,7 +49,7 @@ class MockElement {
 
 class MockDocument {
   constructor() {
-    this.body = new MockElement('body');
+    this.body = new MockElement("body");
   }
 
   createElement(tagName) {
@@ -62,9 +62,9 @@ class MockDocument {
 }
 
 const loadModalClient = () => {
-  console.log('Loading modalClient.ts...');
-  const filePath = path.resolve(__dirname, '../src/modalClient.ts');
-  const source = fs.readFileSync(filePath, 'utf8');
+  console.log("Loading modalClient.ts...");
+  const filePath = path.resolve(__dirname, "../src/modalClient.ts");
+  const source = fs.readFileSync(filePath, "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
@@ -102,7 +102,7 @@ const collectByTag = (node, tagName) => {
   return matches;
 };
 
-test('opens signing modal with visible buttons', async () => {
+test("opens signing modal with visible buttons", async () => {
   const document = setUpDocument();
   const { signingModal } = loadModalClient();
 
@@ -111,14 +111,14 @@ test('opens signing modal with visible buttons', async () => {
     outputNotes: [],
   });
 
-  const overlay = document.getElementById('para-signing-modal');
-  assert.ok(overlay, 'modal overlay should be appended to the document');
+  const overlay = document.getElementById("para-signing-modal");
+  assert.ok(overlay, "modal overlay should be appended to the document");
   assert.strictEqual(overlay.parent, document.body);
 
-  const buttons = collectByTag(overlay, 'button');
+  const buttons = collectByTag(overlay, "button");
   assert.deepEqual(
     buttons.map((button) => button.textContent),
-    ['No', 'Yes']
+    ["No", "Yes"]
   );
 
   buttons[0].click();
@@ -126,7 +126,7 @@ test('opens signing modal with visible buttons', async () => {
   tearDownDocument();
 });
 
-test('clicking Yes resolves the modal promise with true', async () => {
+test("clicking Yes resolves the modal promise with true", async () => {
   const document = setUpDocument();
   const { signingModal } = loadModalClient();
 
@@ -135,21 +135,21 @@ test('clicking Yes resolves the modal promise with true', async () => {
     outputNotes: [],
   });
 
-  const overlay = document.getElementById('para-signing-modal');
-  const yesButton = collectByTag(overlay, 'button').find(
-    (button) => button.textContent === 'Yes'
+  const overlay = document.getElementById("para-signing-modal");
+  const yesButton = collectByTag(overlay, "button").find(
+    (button) => button.textContent === "Yes"
   );
-  assert.ok(yesButton, 'Yes button should be rendered');
+  assert.ok(yesButton, "Yes button should be rendered");
 
   yesButton.click();
 
   const result = await modalPromise;
   assert.strictEqual(result, true);
-  assert.strictEqual(document.getElementById('para-signing-modal'), undefined);
+  assert.strictEqual(document.getElementById("para-signing-modal"), undefined);
   tearDownDocument();
 });
 
-test('clicking No resolves the modal promise with false', async () => {
+test("clicking No resolves the modal promise with false", async () => {
   const document = setUpDocument();
   const { signingModal } = loadModalClient();
 
@@ -158,54 +158,54 @@ test('clicking No resolves the modal promise with false', async () => {
     outputNotes: [],
   });
 
-  const overlay = document.getElementById('para-signing-modal');
-  const noButton = collectByTag(overlay, 'button').find(
-    (button) => button.textContent === 'No'
+  const overlay = document.getElementById("para-signing-modal");
+  const noButton = collectByTag(overlay, "button").find(
+    (button) => button.textContent === "No"
   );
-  assert.ok(noButton, 'No button should be rendered');
+  assert.ok(noButton, "No button should be rendered");
 
   noButton.click();
 
   const result = await modalPromise;
   assert.strictEqual(result, false);
-  assert.strictEqual(document.getElementById('para-signing-modal'), undefined);
+  assert.strictEqual(document.getElementById("para-signing-modal"), undefined);
   tearDownDocument();
 });
 
-test('account selection modal returns chosen index and cleans up overlay', async () => {
+test("account selection modal returns chosen index and cleans up overlay", async () => {
   const document = setUpDocument();
   const { accountSelectionModal } = loadModalClient();
 
-  const accounts = ['0xabc', '0xdef'];
+  const accounts = ["0xabc", "0xdef"];
   const modalPromise = accountSelectionModal(accounts);
 
-  const overlay = document.getElementById('para-signing-modal');
-  assert.ok(overlay, 'modal overlay should exist');
+  const overlay = document.getElementById("para-signing-modal");
+  assert.ok(overlay, "modal overlay should exist");
 
-  const buttons = collectByTag(overlay, 'button');
-  const okButton = buttons.find((button) => button.textContent === 'Ok');
-  assert.ok(okButton, 'Ok button should be rendered');
+  const buttons = collectByTag(overlay, "button");
+  const okButton = buttons.find((button) => button.textContent === "Ok");
+  assert.ok(okButton, "Ok button should be rendered");
 
   const secondAccountButton = buttons.find(
     (button) => button.textContent === accounts[1]
   );
-  assert.ok(secondAccountButton, 'Second account button should be rendered');
+  assert.ok(secondAccountButton, "Second account button should be rendered");
 
   secondAccountButton.click();
   okButton.click();
 
   const selectedIndex = await modalPromise;
   assert.strictEqual(selectedIndex, 1);
-  assert.strictEqual(document.getElementById('para-signing-modal'), undefined);
+  assert.strictEqual(document.getElementById("para-signing-modal"), undefined);
   tearDownDocument();
 });
 
-test('single account resolves immediately without rendering', async () => {
+test("single account resolves immediately without rendering", async () => {
   const document = setUpDocument();
   const { accountSelectionModal } = loadModalClient();
 
-  const selectedIndexPromise = accountSelectionModal(['0xsolo']);
-  const overlay = document.getElementById('para-signing-modal');
+  const selectedIndexPromise = accountSelectionModal(["0xsolo"]);
+  const overlay = document.getElementById("para-signing-modal");
 
   assert.strictEqual(overlay, undefined);
   const selectedIndex = await selectedIndexPromise;
@@ -214,22 +214,22 @@ test('single account resolves immediately without rendering', async () => {
   tearDownDocument();
 });
 
-test('account selection modal with no accounts disables Ok and defaults to index 0', async () => {
+test("account selection modal with no accounts disables Ok and defaults to index 0", async () => {
   const document = setUpDocument();
   const { accountSelectionModal } = loadModalClient();
 
   const modalPromise = accountSelectionModal([]);
-  const overlay = document.getElementById('para-signing-modal');
-  assert.ok(overlay, 'modal overlay should exist');
+  const overlay = document.getElementById("para-signing-modal");
+  assert.ok(overlay, "modal overlay should exist");
 
-  const okButton = collectByTag(overlay, 'button').find(
-    (button) => button.textContent === 'Ok'
+  const okButton = collectByTag(overlay, "button").find(
+    (button) => button.textContent === "Ok"
   );
-  assert.ok(okButton, 'Ok button should be rendered');
+  assert.ok(okButton, "Ok button should be rendered");
   assert.strictEqual(
     okButton.disabled,
     true,
-    'Ok should be disabled with no accounts'
+    "Ok should be disabled with no accounts"
   );
 
   // enable to complete the promise so the test can finish
@@ -238,6 +238,6 @@ test('account selection modal with no accounts disables Ok and defaults to index
 
   const selectedIndex = await modalPromise;
   assert.strictEqual(selectedIndex, 0);
-  assert.strictEqual(document.getElementById('para-signing-modal'), undefined);
+  assert.strictEqual(document.getElementById("para-signing-modal"), undefined);
   tearDownDocument();
 });

@@ -10,9 +10,8 @@ export async function createFaucetMintAndConsume(
     React.SetStateAction<MintAndConsumeProgress | null>
   >
 ) {
-  const { MidenClient: MidenClientClass } = await import(
-    "@miden-sdk/miden-sdk"
-  );
+  const { MidenClient: MidenClientClass } =
+    await import("@miden-sdk/miden-sdk");
   setProgress({ stage: MintAndConsumeStage.CreatingFaucet });
   const faucetClient = await MidenClientClass.create({ autoSync: true });
   const faucet = await faucetClient.accounts.create({

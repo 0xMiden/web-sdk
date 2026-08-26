@@ -1,6 +1,6 @@
-import type React from 'react';
-import type { MidenClient } from '@miden-sdk/miden-sdk';
-import { type MintAndConsumeProgress, MintAndConsumeStage } from './types';
+import type React from "react";
+import type { MidenClient } from "@miden-sdk/miden-sdk";
+import { type MintAndConsumeProgress, MintAndConsumeStage } from "./types";
 
 export async function createFaucetMintAndConsume(
   client: MidenClient,
@@ -9,12 +9,12 @@ export async function createFaucetMintAndConsume(
     React.SetStateAction<MintAndConsumeProgress | null>
   >
 ) {
-  const { MidenClient } = await import('@miden-sdk/miden-sdk');
+  const { MidenClient } = await import("@miden-sdk/miden-sdk");
   setProgress({ stage: MintAndConsumeStage.CreatingFaucet });
   const faucetClient = await MidenClient.create({ autoSync: true });
   const faucet = await faucetClient.accounts.create({
-    type: 'FungibleFaucet',
-    symbol: 'MID',
+    type: "FungibleFaucet",
+    symbol: "MID",
     decimals: 8,
     maxSupply: 1_000_000_0000_00n,
   });
@@ -31,16 +31,16 @@ export async function createFaucetMintAndConsume(
     account: faucet,
     to: accountId,
     amount: 1000n * BigInt(1e8),
-    type: 'public',
+    type: "public",
   });
-  console.log('Mint Tx Hash:', mintResult.txId.toHex());
+  console.log("Mint Tx Hash:", mintResult.txId.toHex());
   setProgress((state) => ({
     ...state,
     stage: MintAndConsumeStage.MintedTokens,
     mintTxHash: mintResult.txId.toHex(),
   }));
   await new Promise((resolve) => setTimeout(resolve, 10000));
-  console.log('Proceeding to consume tokens...');
+  console.log("Proceeding to consume tokens...");
   setProgress((state) => ({
     ...state,
     stage: MintAndConsumeStage.ConsumingTokens,

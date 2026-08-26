@@ -5,7 +5,7 @@ import type { MidenClient } from "@miden-sdk/miden-sdk";
 import type { Wallet } from "@turnkey/core";
 import type { ClientContextType } from "@turnkey/react-wallet-kit";
 import { useTurnkey } from "@turnkey/react-wallet-kit";
-import { createMidenTurnkeyClient } from "@miden-sdk/miden-turnkey";
+import { createMidenTurnkeyClient } from "@miden-sdk/turnkey";
 
 export interface UseTurnkeyMidenOpts {
   accountSeed?: string;
@@ -97,7 +97,17 @@ export function useTurnkeyMiden(
       setClient(null);
       setAccountId(null);
     };
-  }, [embeddedWallets, httpClient, session, nodeUrl, storageMode, opts.accountSeed, opts.noteTransportUrl, opts.endpoint, opts.organizationId]);
+  }, [
+    embeddedWallets,
+    httpClient,
+    session,
+    nodeUrl,
+    storageMode,
+    opts.accountSeed,
+    opts.noteTransportUrl,
+    opts.endpoint,
+    opts.organizationId,
+  ]);
 
   return {
     client,

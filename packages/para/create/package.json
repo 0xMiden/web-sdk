@@ -1,6 +1,6 @@
 {
-  "name": "@miden-sdk/create-miden-para-react",
-  "version": "0.15.1",
+  "name": "@miden-sdk/create-para-react",
+  "version": "0.16.0-rc.4",
   "description": "Create a Vite react-ts app preconfigured with Miden + Para's Vite setup",
   "type": "module",
   "bin": "./bin/create-miden-para-react.mjs",
@@ -17,11 +17,11 @@
   "author": "Miden Labs",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xMiden/para-sdk.git",
-    "directory": "packages/create-miden-para-react"
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/para/create"
   },
   "bugs": {
-    "url": "https://github.com/0xMiden/para-sdk/issues"
+    "url": "https://github.com/0xMiden/web-sdk/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -34,7 +34,5 @@
     "miden",
     "para"
   ],
-  "scripts": {
-    "publish": "npm publish"
-  }
+  "homepage": "https://github.com/0xMiden/web-sdk"
 }

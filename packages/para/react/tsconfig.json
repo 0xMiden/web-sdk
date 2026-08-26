@@ -5,7 +5,7 @@
     "moduleResolution": "Node",
     "baseUrl": ".",
     "paths": {
-      "@miden-sdk/miden-para": ["../../src/index.ts"],
+      "@miden-sdk/para": ["../core/src/index.ts"],
       "@getpara/web-sdk": [
         "./node_modules/@getpara/web-sdk",
         "../../node_modules/@getpara/web-sdk"

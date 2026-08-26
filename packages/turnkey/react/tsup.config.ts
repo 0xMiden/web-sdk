@@ -14,7 +14,7 @@ export default defineConfig({
   external: [
     "react",
     "@miden-sdk/miden-sdk",
-    "@miden-sdk/miden-turnkey",
+    "@miden-sdk/turnkey",
     "@miden-sdk/react",
     "@turnkey/core",
     "@turnkey/react-wallet-kit",

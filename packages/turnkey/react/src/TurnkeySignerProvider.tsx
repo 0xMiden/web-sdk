@@ -19,7 +19,7 @@ import {
   type SignerContextValue,
   type SignerAccountConfig,
 } from "@miden-sdk/react";
-import { evmPkToCommitment, fromTurnkeySig } from "@miden-sdk/miden-turnkey";
+import { evmPkToCommitment, fromTurnkeySig } from "@miden-sdk/turnkey";
 
 // TURNKEY SIGNER PROVIDER
 // ================================================================================================
@@ -46,7 +46,7 @@ export interface TurnkeySignerExtras {
 }
 
 const TurnkeySignerExtrasContext = createContext<TurnkeySignerExtras | null>(
-  null,
+  null
 );
 
 /**
@@ -55,7 +55,7 @@ const TurnkeySignerExtrasContext = createContext<TurnkeySignerExtras | null>(
 async function signWithTurnkey(
   messageHex: string,
   client: TurnkeyBrowserClient,
-  account: WalletAccount,
+  account: WalletAccount
 ): Promise<{ r: string; s: string; v: string }> {
   const result = await client.signRawPayload({
     signWith: account.address,
@@ -96,7 +96,7 @@ export function TurnkeySignerProvider({
 
   const turnkey = useMemo(
     () => new Turnkey(resolvedConfig),
-    [resolvedConfig.apiBaseUrl, resolvedConfig.defaultOrganizationId],
+    [resolvedConfig.apiBaseUrl, resolvedConfig.defaultOrganizationId]
   );
 
   const [client, setClient] = useState<TurnkeyBrowserClient | null>(null);
@@ -153,7 +153,7 @@ export function TurnkeySignerProvider({
 
   // Build signer context
   const [signerContext, setSignerContext] = useState<SignerContextValue | null>(
-    null,
+    null
   );
 
   useEffect(() => {
@@ -245,7 +245,7 @@ export function TurnkeySignerProvider({
       account,
       setAccount: setConnectedAccount,
     }),
-    [client, account, setConnectedAccount],
+    [client, account, setConnectedAccount]
   );
 
   return (
@@ -281,7 +281,7 @@ export function useTurnkeySigner(): TurnkeySignerExtras & {
   const signer = useContext(SignerContext);
   if (!extras) {
     throw new Error(
-      "useTurnkeySigner must be used within TurnkeySignerProvider",
+      "useTurnkeySigner must be used within TurnkeySignerProvider"
     );
   }
   return { ...extras, isConnected: signer?.isConnected ?? false };

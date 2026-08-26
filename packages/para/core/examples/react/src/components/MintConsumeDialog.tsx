@@ -1,13 +1,13 @@
-import { Loader2, CheckCircle2 } from 'lucide-react';
+import { Loader2, CheckCircle2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from './ui/dialog';
-import { Button } from './ui/button';
-import { type MintAndConsumeProgress, MintAndConsumeStage } from '../lib/types';
+} from "./ui/dialog";
+import { Button } from "./ui/button";
+import { type MintAndConsumeProgress, MintAndConsumeStage } from "../lib/types";
 
 interface MintConsumeDialogProps {
   isOpen: boolean;
@@ -25,19 +25,19 @@ export function MintConsumeDialog({
   const getStageMessage = (stage: MintAndConsumeStage) => {
     switch (stage) {
       case MintAndConsumeStage.CreatingFaucet:
-        return 'Creating faucet...';
+        return "Creating faucet...";
       case MintAndConsumeStage.CreatedFaucet:
-        return 'Faucet created successfully!';
+        return "Faucet created successfully!";
       case MintAndConsumeStage.MintingTokens:
-        return 'Minting tokens...';
+        return "Minting tokens...";
       case MintAndConsumeStage.MintedTokens:
-        return 'Tokens minted successfully!';
+        return "Tokens minted successfully!";
       case MintAndConsumeStage.ConsumingTokens:
-        return 'Consuming tokens...';
+        return "Consuming tokens...";
       case MintAndConsumeStage.ConsumedTokens:
-        return 'Tokens consumed successfully!';
+        return "Tokens consumed successfully!";
       default:
-        return 'Processing...';
+        return "Processing...";
     }
   };
 
@@ -106,7 +106,7 @@ export function MintConsumeDialog({
                     Faucet ID
                   </p>
                   <p className="text-xs text-gray-700 font-mono break-all bg-white p-2 border border-gray-200">
-                    {progress.faucetId || 'Pending...'}
+                    {progress.faucetId || "Pending..."}
                   </p>
                 </div>
 

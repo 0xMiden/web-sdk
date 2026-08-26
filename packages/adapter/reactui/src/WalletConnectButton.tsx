@@ -1,10 +1,14 @@
-import type { FC, MouseEventHandler } from 'react';
-import { useCallback, useMemo } from 'react';
-import { useWallet } from '@miden-sdk/miden-wallet-adapter-react';
-import type { ButtonProps } from './Button';
-import { Button } from './Button';
-import { WalletIcon } from './WalletIcon';
-import { AllowedPrivateData, PrivateDataPermission, WalletAdapterNetwork } from '@miden-sdk/miden-wallet-adapter-base';
+import type { FC, MouseEventHandler } from "react";
+import { useCallback, useMemo } from "react";
+import { useWallet } from "@miden-sdk/miden-wallet-adapter-react";
+import type { ButtonProps } from "./Button";
+import { Button } from "./Button";
+import { WalletIcon } from "./WalletIcon";
+import {
+  AllowedPrivateData,
+  PrivateDataPermission,
+  WalletAdapterNetwork,
+} from "@miden-sdk/miden-wallet-adapter-base";
 
 export const WalletConnectButton: FC<ButtonProps> = ({
   children,
@@ -33,10 +37,10 @@ export const WalletConnectButton: FC<ButtonProps> = ({
 
   const content = useMemo(() => {
     if (children) return children;
-    if (connecting) return 'Connecting ...';
-    if (connected) return 'Connected';
-    if (wallet) return 'Connect';
-    return 'Connect Wallet';
+    if (connecting) return "Connecting ...";
+    if (connected) return "Connected";
+    if (wallet) return "Connect";
+    return "Connect Wallet";
   }, [children, connecting, connected, wallet]);
 
   return (

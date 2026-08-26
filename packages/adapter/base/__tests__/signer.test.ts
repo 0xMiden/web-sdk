@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import type { GuardianInfo } from '../types';
+import { describe, it, expect } from "vitest";
+import type { GuardianInfo } from "../types";
 
-describe('GuardianInfo', () => {
-  it('has the agreed shape', () => {
+describe("GuardianInfo", () => {
+  it("has the agreed shape", () => {
     const g: GuardianInfo = {
       isGuardianAccount: false,
       guardianEndpoint: null,
@@ -11,10 +11,10 @@ describe('GuardianInfo', () => {
     };
 
     expect(Object.keys(g).sort()).toEqual([
-      'guardianEndpoint',
-      'guardianProvider',
-      'guardianSyncStatus',
-      'isGuardianAccount',
+      "guardianEndpoint",
+      "guardianProvider",
+      "guardianSyncStatus",
+      "isGuardianAccount",
     ]);
   });
 });

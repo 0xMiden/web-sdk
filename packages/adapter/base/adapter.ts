@@ -1,11 +1,11 @@
-import EventEmitter from 'eventemitter3';
-import type { WalletError } from './errors';
+import EventEmitter from "eventemitter3";
+import type { WalletError } from "./errors";
 import type {
   AllowedPrivateData,
   PrivateDataPermission,
   SupportedTransactionVersions,
   WalletAdapterNetwork,
-} from './types';
+} from "./types";
 
 export { EventEmitter };
 
@@ -19,7 +19,7 @@ export interface WalletAdapterEvents {
 // WalletName is a nominal type that wallet adapters should use, e.g. `'MyCryptoWallet' as WalletName<'MyCryptoWallet'>`
 // https://medium.com/@KevinBGreene/surviving-the-typescript-ecosystem-branding-and-type-tagging-6cf6e516523d
 export type WalletName<T extends string = string> = T & {
-  __brand__: 'WalletName';
+  __brand__: "WalletName";
 };
 
 export interface WalletAdapterProps<Name extends string = string> {
@@ -59,18 +59,18 @@ export enum WalletReadyState {
    * that they've injected into the global context. If such an API is present,
    * we consider the wallet to have been installed.
    */
-  Installed = 'Installed',
-  NotDetected = 'NotDetected',
+  Installed = "Installed",
+  NotDetected = "NotDetected",
   /**
    * Loadable wallets are always available to you. Since you can load them at
    * any time, it's meaningless to say that they have been detected.
    */
-  Loadable = 'Loadable',
+  Loadable = "Loadable",
   /**
    * If a wallet is not supported on a given platform (eg. server-rendering, or
    * mobile) then it will stay in the `Unsupported` state.
    */
-  Unsupported = 'Unsupported',
+  Unsupported = "Unsupported",
 }
 
 export abstract class BaseWalletAdapter<Name extends string = string>
@@ -100,7 +100,7 @@ export abstract class BaseWalletAdapter<Name extends string = string>
 
 export function scopePollingDetectionStrategy(detect: () => boolean): void {
   // Early return when server-side rendering
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (typeof window === "undefined" || typeof document === "undefined") return;
 
   const disposers: (() => void)[] = [];
 
@@ -122,23 +122,23 @@ export function scopePollingDetectionStrategy(detect: () => boolean): void {
   // Strategy #2: Detect as soon as the DOM becomes 'ready'/'interactive'.
   if (
     // Implies that `DOMContentLoaded` has not yet fired.
-    document.readyState === 'loading'
+    document.readyState === "loading"
   ) {
-    document.addEventListener('DOMContentLoaded', detectAndDispose, {
+    document.addEventListener("DOMContentLoaded", detectAndDispose, {
       once: true,
     });
     disposers.push(() =>
-      document.removeEventListener('DOMContentLoaded', detectAndDispose)
+      document.removeEventListener("DOMContentLoaded", detectAndDispose)
     );
   }
 
   // Strategy #3: Detect after the `window` has fully loaded.
   if (
     // If the `complete` state has been reached, we're too late.
-    document.readyState !== 'complete'
+    document.readyState !== "complete"
   ) {
-    window.addEventListener('load', detectAndDispose, { once: true });
-    disposers.push(() => window.removeEventListener('load', detectAndDispose));
+    window.addEventListener("load", detectAndDispose, { once: true });
+    disposers.push(() => window.removeEventListener("load", detectAndDispose));
   }
 
   // Strategy #4: Detect synchronously, now.

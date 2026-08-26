@@ -11,8 +11,8 @@
   "dependencies": {
     "@miden-sdk/miden-sdk": "^0.15.1",
     "@miden-sdk/react": "^0.15.1",
-    "@miden-sdk/miden-turnkey": "file:../..",
-    "@miden-sdk/miden-turnkey-react": "file:../../packages/use-miden-turnkey-react",
+    "@miden-sdk/turnkey": "file:../../../core",
+    "@miden-sdk/turnkey-react": "file:../../../react",
     "@turnkey/sdk-browser": "*",
     "@turnkey/core": "*",
     "react": "^19.2.0",

@@ -4,7 +4,7 @@
  * Once they are available in the published package, this file can be removed
  * and imports updated to use '@miden-sdk/react' directly.
  */
-import { createContext } from 'react';
+import { createContext } from "react";
 
 export type SignCallback = (
   pubKey: Uint8Array,
@@ -12,10 +12,10 @@ export type SignCallback = (
 ) => Promise<Uint8Array>;
 
 export type SignerAccountType =
-  | 'RegularAccountImmutableCode'
-  | 'RegularAccountUpdatableCode'
-  | 'FungibleFaucet'
-  | 'NonFungibleFaucet';
+  | "RegularAccountImmutableCode"
+  | "RegularAccountUpdatableCode"
+  | "FungibleFaucet"
+  | "NonFungibleFaucet";
 
 export interface SignerAccountConfig {
   publicKeyCommitment: Uint8Array;
