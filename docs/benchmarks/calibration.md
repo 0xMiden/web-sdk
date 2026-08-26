@@ -54,10 +54,13 @@ rate than a 0.3% one. Treat the threshold as "rare", not as a calibrated rate.
 **Normality.** It assumes the deltas are roughly normal, which the grind lottery
 below argues against in the tails.
 
-**One benchmark.** It is the rate for a single benchmark. This suite has exactly
-one today, but N independent benchmarks each tested at 3σ give a familywise
-false-positive rate near `N × 0.3%`, so adding benchmarks means either widening
-the threshold or accepting more noise in the verdict.
+**One benchmark, and one run.** It is the rate for a single verdict. Use the
+~0.7% from the t caveat above as the per-verdict multiplier, not the 0.3% the
+normal tail suggests — and note that with a single benchmark in the suite the
+family that dominates today is not benchmarks but *runs*: the bench fires on
+every push to a PR, so ten benchmarked pushes give roughly a 6% chance of at
+least one spurious "significant" label somewhere in the PR's life. Adding
+benchmarks multiplies that again.
 
 The renderer does not rest the verdict on the threshold alone, for exactly these
 reasons. A movement is reported as significant only when it clears the floor
@@ -68,6 +71,27 @@ about the shape of the distribution (2/2⁶ ≈ 3% at the default six repetition
 A movement that clears the floor while its repetitions disagree is reported as
 **unresolved** rather than as a result — which is the honest label for an
 aggregate whose spread is wider than the effect.
+
+**What the second leg costs.** Requiring unanimity is not free, and the price is
+paid in false negatives. If a single repetition's delta clears zero with
+probability `p`, unanimity across `reps` repetitions has probability `p^reps`, so
+the conjunction's detection rate *falls* as repetitions are added for any fixed
+effect size. Two consequences worth internalising before tuning anything:
+
+- **±5.4% is not the detection point.** It is where the *magnitude* leg starts to
+  pass. The conjunction's 50%-detection point sits at roughly the floor itself,
+  and 80% detection needs about 1.5× the floor (≈8%). A genuine 8% regression is
+  called `slower` about three quarters of the time at the default 6 × 3; the rest
+  of the time it comes out **unresolved**, not silent.
+- **More repetitions do not narrow this.** Raising `--reps` sharpens the
+  aggregate and simultaneously makes unanimity harder, which converts real
+  regressions into ❔. The lever that actually helps is `--proves`: more proves
+  per repetition lowers the variance of that repetition's minimum, which makes
+  each individual sign more reliable. The unresolved note in the comment says so.
+
+When calibrating, record the standard deviation of the **per-repetition** deltas
+as well as the aggregate. The aggregate alone cannot predict the conjunction's
+behaviour, and it is the conjunction that decides what gets published.
 
 ## Why the estimator is what it is
 
@@ -119,6 +143,25 @@ Three further corrections, also measured:
   discarded, so what balances over the **retained** proves is
   `reps × (proves − 1)` — and only when that product is even. Keep it even
   (the default 6 × 3 is); the script warns when it is not.
+
+  That balance is **aggregate only**, which now matters more than it did, because
+  a per-repetition statistic gates the verdict. The retained count per repetition
+  is `proves − 1`, and each repetition is internally balanced only when that is
+  **even**:
+
+  | `--proves` | retained/rep | base-ran-second per rep | balanced within a rep |
+  | --- | --- | --- | --- |
+  | 3 | 2 | 1, 1, 1, 1, 1, 1 | yes |
+  | 4 (default) | 3 | 2, 1, 2, 1, 2, 1 | **no** |
+  | 5 | 4 | 2, 2, 2, 2, 2, 2 | yes |
+
+  So the default retains an odd 3 and every repetition is internally imbalanced
+  by one prove, cancelling only in the mean across repetitions. That leaves an
+  alternating positional bias inside the per-repetition deltas the sign test
+  reads — small next to the deltas' own spread, but it is not something the
+  aggregate balance removes. Prefer an odd `--proves` (even retained) at the next
+  recalibration. Changing it now would invalidate the recorded floor, which was
+  measured at 6 × 3 retained.
 
   The warning attaches no figure to the residual bias on purpose. The +1.19%
   penalty is *per prove*, while the reported statistic is a mean of per-repetition

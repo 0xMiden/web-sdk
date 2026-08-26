@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * render-comment.mjs — renders the WASM proving benchmark report for a PR comment
+ * render-bench-comment.mjs — renders the WASM proving benchmark report for a PR comment
  * and for the GitHub Actions job summary.
  *
  * TRUST MODEL
@@ -436,6 +436,32 @@ function normalizeResults(input) {
   });
   const threads = requireInt(results.threads, "threads", { min: 1, max: 1024 });
 
+  // The methodology section states the discard policy as fact — "one extra
+  // repetition and the first prove of every page run first and are discarded" —
+  // about a producer a fork controls. The artifact already carries the executed
+  // counts, so the claim can be checked instead of asserted. An artifact whose
+  // executed counts do not sit exactly one above the retained ones did not run
+  // the protocol the comment is about to describe.
+  const repsExecuted = requireInt(results.repsExecuted, "repsExecuted", {
+    min: 2,
+    max: 1001,
+  });
+  const provesExecutedPerRep = requireInt(
+    results.provesExecutedPerRep,
+    "provesExecutedPerRep",
+    { min: 2, max: 1001 }
+  );
+  if (repsExecuted !== reps + 1) {
+    fail(
+      `repsExecuted must be one more than the ${reps} retained ${plural(reps, "rep")} (the discarded warm-up), got ${repsExecuted}`
+    );
+  }
+  if (provesExecutedPerRep !== provesPerRep + 1) {
+    fail(
+      `provesExecutedPerRep must be one more than the ${provesPerRep} retained ${plural(provesPerRep, "prove")} (the discarded first prove), got ${provesExecutedPerRep}`
+    );
+  }
+
   if (!Array.isArray(results.benchmarks)) {
     fail(
       `benchmarks must be an array, got ${describeValue(results.benchmarks)}`
@@ -502,21 +528,44 @@ const SLUG_RE = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 const RUN_URL_RE =
   /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+$/;
 
+/**
+ * Unlike the results, `ctx.json` is TRUSTED: the reporter builds it with `jq`
+ * from fields GitHub populated for the run, and the artifact's own copy is
+ * deliberately never extracted. So a rejection here is not a fork sending
+ * garbage — it is the reporter's own context step having produced something
+ * wrong, which is a first-party bug and must not be reported as an artifact
+ * refusal. `failInternal` keeps those on the exit-3 path.
+ */
+function failInternal(message) {
+  throw new TypeError(`rendering context: ${message}`);
+}
+
 function normalizeContext(input) {
-  const ctx = requireObject(input, "ctx");
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    failInternal(`ctx must be an object, got ${describeValue(input)}`);
+  }
+  const ctx = input;
   const owner = String(ctx.owner ?? "");
   const repo = String(ctx.repo ?? "");
   if (!SLUG_RE.test(owner))
-    fail(`ctx.owner is not a valid repo owner: ${describeValue(ctx.owner)}`);
+    failInternal(
+      `ctx.owner is not a valid repo owner: ${describeValue(ctx.owner)}`
+    );
   if (!SLUG_RE.test(repo))
-    fail(`ctx.repo is not a valid repo name: ${describeValue(ctx.repo)}`);
+    failInternal(
+      `ctx.repo is not a valid repo name: ${describeValue(ctx.repo)}`
+    );
 
   const headSha = String(ctx.headSha ?? "");
   const baseSha = String(ctx.baseSha ?? "");
   if (!SHA_RE.test(headSha))
-    fail(`ctx.headSha is not a commit sha: ${describeValue(ctx.headSha)}`);
+    failInternal(
+      `ctx.headSha is not a commit sha: ${describeValue(ctx.headSha)}`
+    );
   if (!SHA_RE.test(baseSha))
-    fail(`ctx.baseSha is not a commit sha: ${describeValue(ctx.baseSha)}`);
+    failInternal(
+      `ctx.baseSha is not a commit sha: ${describeValue(ctx.baseSha)}`
+    );
 
   const runUrl = String(ctx.runUrl ?? "");
   return {
@@ -602,7 +651,17 @@ const EMOJI_UNRESOLVED = "❔";
  * 2/2^6 ≈ 3% tail, without assuming normality.
  *
  * A repetition with an exactly zero difference neither agrees nor contradicts,
- * so it is not counted against consistency.
+ * so it is not counted against consistency — but it cannot be allowed to
+ * MANUFACTURE consistency either. On its own, "nothing contradicts" is satisfied
+ * by five repetitions at exactly zero and one large one, which is the single
+ * dominating repetition this function exists to catch, arriving through the
+ * exemption instead of through a sign flip. So a majority of the repetitions
+ * must positively agree as well.
+ *
+ * What this does NOT test is dispersion. Five repetitions at +0.5% and one at
+ * +30% all share a sign and pass, and the aggregate they produce is driven by
+ * the one. The sign test bounds the false-positive rate without assuming
+ * normality; it is not a claim that the effect is evenly distributed.
  */
 function pairedAgreement(base, head) {
   const reps = Math.min(base.samples.length, head.samples.length);
@@ -617,7 +676,11 @@ function pairedAgreement(base, head) {
   const contradicting = deltas.filter(
     (d) => d !== 0 && Math.sign(d) !== direction
   ).length;
-  return { consistent: contradicting === 0, agree, reps };
+  return {
+    consistent: contradicting === 0 && agree * 2 > reps,
+    agree,
+    reps,
+  };
 }
 
 function computeRows(results) {
@@ -655,7 +718,13 @@ function computeRows(results) {
     //
     // `magnitude > 0` so a threshold of zero does not classify an exactly
     // unchanged benchmark as a movement — and then as an improvement.
-    const clearsFloor = magnitude > 0 && magnitude >= THRESHOLD_PCT;
+    //
+    // Compared at the DISPLAYED precision. On the unrounded value a magnitude of
+    // 5.396% renders as "+5.40%" and is then called noise against a floor the
+    // same line prints as "±5.40%", which reads as a bug at exactly the boundary
+    // a reader stops to check.
+    const shown = Number(magnitude.toFixed(2));
+    const clearsFloor = shown > 0 && shown >= Number(THRESHOLD_PCT.toFixed(2));
     const beyond = clearsFloor && agreement.consistent;
     const unresolved = clearsFloor && !agreement.consistent;
     const isWorse = LOWER_IS_BETTER ? deltaValue > 0 : deltaValue < 0;
@@ -925,29 +994,38 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     // Same blank-line trap as above.
     "",
     `- Each benchmark keeps **${results.reps} ${plural(results.reps, "rep")} × ${results.provesPerRep} warm ${plural(results.provesPerRep, "prove")}** on \`${results.runner}\` (${results.threads} ${plural(results.threads, "thread")}, \`${results.profile}\` / \`${results.variant}\`). One extra repetition and the first prove of every page run first and are discarded.`,
-    `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its clean compute cost. Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima cancels that lottery.`,
+    // With one retained prove per repetition there is no minimum to take, so
+    // the interference-filtering half of the rationale describes something that
+    // did not happen: the figure is a plain mean of single contaminated draws.
+    results.provesPerRep >= 2
+      ? `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its clean compute cost. Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima shrinks that lottery — it averages the grind down rather than cancelling it, because each side draws its own.`
+      : `- The reported figure is the **mean of the single retained prove per repetition**. With only one prove kept per repetition there is no minimum to take, so nothing filters interference out of each sample — every draw carries whatever the machine was doing at the time. Treat this run as thinner than the estimator this suite is built around.`,
     // The 1.79% figure was measured at 6 reps × 3 warm proves. It is a property
     // of the estimator AT THAT SAMPLE SIZE, and `reps` / `provesPerRep` are
     // artifact-authored — so a thinner run must not inherit the claim.
-    results.reps >= CALIBRATED_REPS &&
-    results.provesPerRep >= CALIBRATED_PROVES_PER_REP
+    // Equality, not `>=`. The spread narrows as 1/sqrt(reps), so a 24-rep run
+    // does not merely satisfy the claim, it invalidates the arithmetic behind
+    // it: the true spread is nearer 0.90% and the fixed 5.40% cutoff is no
+    // longer the 3σ the provisional note calls it.
+    results.reps === CALIBRATED_REPS &&
+    results.provesPerRep === CALIBRATED_PROVES_PER_REP
       ? `- Measured over six calibration runs of identical binaries, this estimator holds a standard deviation of 1.79%, against 2.96% for a global minimum and 5.39% for a plain median.`
       : // Saying the spread is unknown and then gating on ±5.4% — which IS that
         // spread, tripled — reads as a contradiction unless the comment says
         // which of the two it is doing. It keeps applying the cutoff, because a
         // fixed magnitude gate is still better than calling every movement
         // significant; it just cannot claim a confidence level behind it.
-        `- This run used fewer samples than the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. The ±${formatPct(THRESHOLD_PCT)} cutoff below is still applied, as a fixed magnitude gate rather than as a confidence level.`,
+        `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. The ±${formatPct(THRESHOLD_PCT)} cutoff below is still applied, as a fixed magnitude gate rather than as a confidence level.`,
     ...(compared
       ? [
           `- A movement is only called significant when it clears the noise floor **and** every repetition's paired difference agrees on its direction. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result.`,
           `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
-          `- A wide gap between the reported figure and the max means the runner was busy. It does not invalidate the comparison (both sides ran interleaved on the same machine) but it is worth a second look.`,
+          `- A wide gap between the reported figure and the max has two causes and the samples below do not separate them: interference within a repetition, and the proof-of-work grind differing between repetitions. Neither invalidates the comparison — both sides ran interleaved on the same machine — but a gap much wider than usual is worth a second look.`,
           `- Base and head are built and measured in the same job on the same runner, so runner-to-runner drift cancels out.`,
           `- Δ % = (head − base) / base on that figure. Lower is better for every benchmark in this suite.`,
         ]
       : [
-          `- A wide gap between the reported figure and the max means the runner was busy. With no base side there is nothing to compare against, so treat these timings as a record of the run rather than as a result.`,
+          `- A wide gap between the reported figure and the max reflects both interference within a repetition and the grind differing between repetitions. With no base side there is nothing to compare against, so treat these timings as a record of the run rather than as a result.`,
         ]),
     `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
     THRESHOLD_PROVISIONAL
@@ -988,7 +1066,13 @@ function buildUnresolvedNote(rows) {
     `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but the`,
     `> per-repetition pairs do not agree on its direction — ${codeSpan(leader.name)} agrees in only`,
     `> ${leader.agreement.agree} of ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}. That is a spread too wide to call, not a result. Re-run, or`,
-    `> raise \`--reps\` to narrow it.`,
+    // NOT "raise --reps". The unanimity requirement is Φ(δ/s) raised to the
+    // power of `reps`, so more repetitions make this very verdict MORE likely
+    // for any fixed effect — the advice would have driven a real regression
+    // toward a permanent ❔. `--proves` is the lever that helps: more proves per
+    // repetition lowers the variance of that repetition's minimum, which shrinks
+    // s and widens the agreement.
+    `> raise \`--proves\` to sharpen each repetition's measurement.`,
   ].join("\n");
 }
 
@@ -1183,25 +1267,34 @@ export async function main(argv = process.argv.slice(2)) {
     return 2;
   }
 
+  // Read in two steps, because the two files have different owners and a
+  // failure on each means something different. results.json is fork-authored, so
+  // malformed bytes there are the ordinary hostile case. ctx.json is written by
+  // the reporter's own `jq` from trusted event fields, so ANY failure on it —
+  // malformed, missing, unreadable — is first-party and belongs on exit 3.
   let results;
-  let ctx;
   try {
     results = JSON.parse(await readFile(resultsPath, "utf8"));
-    ctx = JSON.parse(await readFile(ctxPath, "utf8"));
   } catch (error) {
     // `logLine`, not the raw message: V8's parse error quotes the offending
     // bytes verbatim, and those bytes are fork-controlled. Unsanitized, a
     // crafted results.json starts a log line in this write-token job with a
     // real `::error::` / `::add-mask::` workflow command.
-    //
-    // A SyntaxError here is the fork's doing; anything else (ENOENT on ctx.json,
-    // EACCES, a full disk) is ours, and EXIT_INTERNAL_ERROR is what makes the
-    // difference visible instead of blaming the PR author for our own breakage.
     const ours = !(error instanceof SyntaxError);
     process.stderr.write(
-      `failed to read inputs: ${logLine(error.message)}${ours ? " (not an artifact problem)" : ""}\n`
+      `failed to read the benchmark results: ${logLine(error.message)}${ours ? " (not an artifact problem)" : ""}\n`
     );
     return ours ? EXIT_INTERNAL_ERROR : EXIT_REJECTED;
+  }
+
+  let ctx;
+  try {
+    ctx = JSON.parse(await readFile(ctxPath, "utf8"));
+  } catch (error) {
+    process.stderr.write(
+      `failed to read the rendering context, which this side builds itself — not an artifact problem: ${logLine(error.message)}\n`
+    );
+    return EXIT_INTERNAL_ERROR;
   }
 
   try {
@@ -1218,9 +1311,19 @@ export async function main(argv = process.argv.slice(2)) {
       process.stderr.write(`refusing to render: ${logLine(error.message)}\n`);
       return EXIT_REJECTED;
     }
+    // Message and frames separately, each sanitized. Through one `logLine` the
+    // whole stack shared a 200-char budget, so a long message consumed it and
+    // left no source location at all — on the one path where the stack IS the
+    // diagnostic. The frames are first-party paths, so a wider cap is safe;
+    // sanitizing each still denies a fork-derived message the start of a line.
     process.stderr.write(
-      `renderer bug — this is not the artifact's fault: ${logLine(error?.stack ?? String(error))}\n`
+      `renderer bug — this is not the artifact's fault: ${logLine(error?.message ?? String(error))}\n`
     );
+    for (const frame of String(error?.stack ?? "")
+      .split("\n")
+      .slice(1, 9)) {
+      process.stderr.write(`  ${logLine(frame.trim())}\n`);
+    }
     return EXIT_INTERNAL_ERROR;
   }
   return 0;

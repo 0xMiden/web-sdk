@@ -180,11 +180,82 @@ check "the oversized file is removed" "no" \
   "$([ -f "$dest5/results.json" ] && echo yes || echo no)"
 check "a member under the cap survives" "yes" \
   "$([ -f "$dest5/pr.json" ] && echo yes || echo no)"
-# The cap has to bound what is WRITTEN, not just what is kept. `head -c` stops
-# the stream at the limit, so the peak on disk is the cap plus one byte — not the
-# 500 MB the archive would have inflated to.
-check "nothing near the inflated size ever hit the disk" "yes" \
-  "$([ "$(du -sk "$dest5" | cut -f1)" -lt 8192 ] && echo yes || echo no)"
+# The cap has to bound what is WRITTEN, not just what is kept — and measuring
+# that after the run cannot show it, because the script deletes the over-cap file
+# itself. Measured here DURING the run, by a poller that records the largest size
+# results.json ever reached. Without the `head -c` stream cap this observes a
+# multi-hundred-MB peak; with it, the cap plus a byte.
+dest5b="$work/d5b"
+mkdir -p "$dest5b"
+peak_file="$work/peak"
+echo 0 > "$peak_file"
+(
+  peak=0
+  # Outlives the subject only briefly: the loop exits as soon as the marker
+  # appears, and the `wait` below joins it before the check runs.
+  while [ ! -f "$work/extract-done" ]; do
+    if [ -f "$dest5b/results.json" ]; then
+      size=$(wc -c < "$dest5b/results.json" 2>/dev/null | tr -d '[:space:]')
+      [ -n "$size" ] && [ "$size" -gt "$peak" ] && peak=$size
+    fi
+    echo "$peak" > "$peak_file"
+  done
+  echo "$peak" > "$peak_file"
+) &
+poller=$!
+"$subject" "$zip5" "$dest5b" 4194304 >/dev/null 2>&1 || true
+touch "$work/extract-done"
+wait "$poller"
+observed_peak=$(cat "$peak_file")
+check "the stream cap bounds bytes written, not just bytes kept" "yes" \
+  "$([ "$observed_peak" -le 8388608 ] && echo yes || echo no)"
+
+# --- write failures and unreadable archives --------------------------------
+
+# `head` owns the only write, so its exit status decides whether what landed on
+# disk is the whole member. A prefix of a large JSON document can still parse as
+# valid JSON — fewer benchmarks, or fewer samples — and would be published as a
+# real result. Stubbed via PATH rather than by filling the disk.
+stub_dir="$work/stub"
+mkdir -p "$stub_dir"
+cat > "$stub_dir/head" <<'STUB'
+#!/bin/sh
+cat > /dev/null
+exit 1
+STUB
+chmod +x "$stub_dir/head"
+dest10="$work/d10"
+out10=$(PATH="$stub_dir:$PATH" "$subject" "$zip1" "$dest10" 2>"$work/e10")
+check "a failed member write yields nothing usable" "" "$out10"
+check "the write failure is announced" "yes" \
+  "$(grep -q "Failed while writing" "$work/e10" && echo yes || echo no)"
+check "no partial file survives a failed write" "no" \
+  "$([ -f "$dest10/results.json" ] && echo yes || echo no)"
+
+# A corrupt archive is not a missing one: the missing case exits 1, but bytes
+# that are not a zip at all have to come out as "nothing to post" and exit 0,
+# because a fork can upload whatever it likes.
+printf 'this is not a zip file at all' > "$work/garbage.zip"
+dest11="$work/d11"
+out11=$("$subject" "$work/garbage.zip" "$dest11" 2>"$work/e11")
+check "a corrupt archive yields nothing usable" "" "$out11"
+check "a corrupt archive still exits 0" "0" "$?"
+check "the unreadable archive is announced" "yes" \
+  "$(grep -q "Could not read" "$work/e11" && echo yes || echo no)"
+
+# An entry that exists but is empty is not a member. Distinct from the over-cap
+# branch, which a zero cap would hit instead.
+python3 - "$work/empty.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("results.json", "")
+    z.writestr("pr.json", '{"number":7}')
+PY
+dest12="$work/d12"
+out12=$("$subject" "$work/empty.zip" "$dest12" 2>/dev/null)
+check "an empty member yields nothing usable" "" "$out12"
+check "an empty member is removed" "no" \
+  "$([ -f "$dest12/results.json" ] && echo yes || echo no)"
 
 # --- usage -----------------------------------------------------------------
 

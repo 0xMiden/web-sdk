@@ -61,7 +61,8 @@ const USAGE = [
   "       [--calibrate]",
   "",
   "  --calibrate  Point --base at the same dist as --head to measure the noise",
-  "               floor. Suppresses the identical-dist guard and labels the run.",
+  "               floor. Requires --base, and marks the run as calibration so the",
+  "               comment renderer labels the result as a noise measurement.",
 ].join("\n");
 
 const args = process.argv.slice(2);
@@ -625,7 +626,7 @@ try {
 // thing that varies and it only ever ADDS time: the rep's MINIMUM is the clean
 // compute cost for that rep. Across reps the faucet differs (it is not seedable
 // here), which changes the note commitment, the Fiat-Shamir transcript and
-// hence the proof-of-work grind length — a heavy-tailed lottery that a global
+// hence the proof-of-work grind length — a skewed lottery that a global
 // minimum would just pick the luckiest draw from. Averaging the per-rep minima
 // keeps the interference filtering and averages the grind away.
 //
@@ -652,7 +653,7 @@ const summarize = (groups) => {
   if (!flat.length) return null;
   const perRepMin = usable.map(minOf);
   return {
-    // `statistic` names the figure so this script's own output and the comment
+    // `statistic` names the figure so this script's own stdout and a human reading results.json
     // can never describe it differently.
     statistic: "mean-of-per-rep-minima",
     value: mean(perRepMin),

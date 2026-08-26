@@ -50,10 +50,11 @@ concurrency:
   # delete one PR's report to deliver the other's. Serializing costs a wait;
   # cancelling costs a comment that never appears.
   #
-  # This does not resurrect the stale-comment race it was added for: two quick
-  # pushes to one PR cancel each other in bench.yml, which is keyed on the PR
-  # number, so the superseded run never uploads an artifact and no second
-  # reporter is ever triggered for it.
+  # A superseded bench run still reaches this workflow — bench.yml uploads with
+  # `if: always()` and this trigger has no conclusion filter, so a cancelled run
+  # arrives here like any other. What keeps its stale numbers off the PR is
+  # `Verify PR identity`, which declines a report whose head sha is no longer the
+  # PR's. Serialization only decides the order they try in.
   cancel-in-progress: false
 
 jobs:
@@ -163,11 +164,13 @@ jobs:
       # touches the filesystem itself, so this side chooses every destination
       # path. An entry name cannot steer a write, and a member stored as a
       # symlink cannot be restored as one, because nothing here asks unzip to
-      # create anything. `-j` was the previous mechanism and was not enough — it
-      # strips directory components but still lets unzip do the writing, symlinks
-      # included. Earlier versions tried to DETECT a traversal instead, and both
-      # were defeated for the same reason: a file that escaped the directory is
-      # by definition not in the directory being inspected.
+      # create anything.
+      #
+      # Two weaker forms of this are not enough, so do not simplify to either.
+      # Stripping directory components (`unzip -j`) still lets unzip choose what
+      # to create, symlinks included. Inspecting the destination afterwards
+      # cannot work at all: a file that escaped it is by definition not in the
+      # directory being inspected.
       - name: Extract the report
         id: report
         if: steps.fetch.outputs.fetched == 'true'
@@ -181,7 +184,7 @@ jobs:
             echo "usable=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Stop if no report
+      - name: Note that there is no report
         if: steps.report.outputs.usable != 'true'
         shell: bash
         env:
@@ -312,9 +315,8 @@ jobs:
           RUN_ID: ${{ steps.run.outputs.id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
           REPORT_DIR: ${{ runner.temp }}/bench-report
-          # Written to scratch space, not the workspace: the checkout stays
-          # exactly as actions/checkout left it, which is what makes the
-          # tree-modified check above meaningful.
+          # Written to scratch space, not the workspace, so the checkout this
+          # trusted job executes from stays exactly as actions/checkout left it.
           BODY_PATH: ${{ runner.temp }}/body.md
         run: |
           set -euo pipefail
@@ -329,6 +331,7 @@ jobs:
           base_sha=$(jq -r '.baseSha // ""' "$REPORT_DIR/pr.json" || true)
           if [[ ! "$base_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
             echo "::notice title=Proving Benchmark::Artifact baseSha is not a commit sha; nothing to post."
+            echo "reason=The benchmark report did not name the commit it measured against, so there was nothing to compare." >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # calibration is false by definition here: this job only ever posts on
@@ -365,6 +368,7 @@ jobs:
           fi
           if [ "$render_rc" -ne 0 ]; then
             echo "::notice title=Proving Benchmark::Report could not be rendered (exit ${render_rc}); nothing to post."
+            echo "reason=The benchmark report was rejected by the comment renderer, so nothing was posted." >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Rendered $(wc -c < "$BODY_PATH") bytes"
@@ -377,6 +381,7 @@ jobs:
       # that at the last step would put the informational bot back in the
       # business of turning the default branch red.
       - name: Post sticky comment
+        id: comment
         if: steps.render.outputs.ok == 'true'
         continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
@@ -482,7 +487,9 @@ jobs:
       # of it, which is why this can run on paths where the artifact was refused
       # as hostile.
       - name: Report that nothing was posted
-        if: always() && steps.render.outputs.ok != 'true' && steps.run.outputs.id != ''
+        if: >-
+          always() && steps.run.outputs.id != '' &&
+          (steps.render.outputs.ok != 'true' || steps.comment.outcome == 'failure')
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -492,6 +499,10 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPORT_USABLE: ${{ steps.report.outputs.usable }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RENDER_REASON: ${{ steps.render.outputs.reason }}
+          # A posted comment that failed to post is the one case where the render
+          # succeeded, so it needs its own signal rather than the ladder's.
+          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
           script: |
             const head_sha = process.env.HEAD_SHA;
@@ -500,12 +511,23 @@ jobs:
               return;
             }
 
+            // Prefer the reason the failing step recorded over inferring one from
+            // step outputs. Inference cannot tell the renderer's refusal apart
+            // from the earlier baseSha bail, and naming the wrong cause is worse
+            // than naming a vague one.
+            // A comment that failed to post is not a refusal — the report was
+            // rendered and is in the log — so it gets its own sentence rather
+            // than one of the refusal reasons below.
             const reason =
-              process.env.REPORT_USABLE !== 'true'
+              (process.env.COMMENT_OUTCOME === 'failure'
+                ? 'The benchmark report rendered but could not be posted as a comment — the pull request may have been closed or locked while the benchmark was running. The rendered report is in the reporter log.'
+                : '') ||
+              process.env.RENDER_REASON ||
+              (process.env.REPORT_USABLE !== 'true'
                 ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
                 : !process.env.PR_NUMBER
                   ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
-                  : 'The report was rejected by the comment renderer, so nothing was posted.';
+                  : 'The benchmark report was not published; the reporter log has the specific reason.');
 
             const name = 'Proving Benchmark';
             const summary = [

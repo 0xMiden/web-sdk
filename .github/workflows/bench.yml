@@ -205,10 +205,11 @@ jobs:
       # caching the measurement.
       #
       # Scope, so nobody expects more than this delivers: a cache written by a
-      # `pull_request` run is scoped to that PR's merge ref, and this workflow
-      # runs on no other event, so nothing here ever writes a cache another PR
-      # can read. The hit rate this buys is WITHIN one PR — the common case of
-      # pushing repeatedly to a PR whose merge-base has not moved. The first run
+      # `pull_request` run is scoped to that PR's merge ref, and the only other
+      # event here (`workflow_dispatch`) skips the base build entirely, so
+      # nothing ever writes a cache another PR can read. The hit rate this buys
+      # is WITHIN one PR — the common case of pushing repeatedly to a PR whose
+      # merge-base has not moved. The first run
       # of every PR builds both sides. Sharing across PRs would mean building the
       # base dist on pushes to the default branch, which is a cost decision, not
       # an oversight.
@@ -306,7 +307,6 @@ jobs:
       # introduces the bench has no base script at all, and thereafter a script
       # edit would silently compare two different measurement definitions.
       - name: Run benchmark
-        id: bench
         shell: bash
         env:
           # Recorded in results.json so the comment can name where the numbers

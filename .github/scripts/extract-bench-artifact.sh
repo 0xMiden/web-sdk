@@ -139,6 +139,11 @@ for member in "${members[@]}"; do
   # `head` closed the stream at the cap — handled by the size check below.
   # Anything else is a broken or hostile archive.
   if [ "$unzip_rc" -eq 11 ]; then
+    # Named, because the caller only ever reports "no usable report" and the two
+    # members fail for different reasons: a missing results.json is a bench job
+    # that died before measuring, while a missing pr.json is one that died before
+    # it even resolved the PR.
+    echo "::notice title=Proving Benchmark::The artifact carries no ${member}." >&2
     rm -f "$out"
     continue
   fi

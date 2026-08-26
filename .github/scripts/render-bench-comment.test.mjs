@@ -50,11 +50,16 @@ const side = (value) => {
     const scaled = value + Math.abs(value) * k;
     return Number.isFinite(scaled) ? scaled : value;
   };
+  // Derived from the constants rather than written out, so raising REPS or
+  // PROVES_PER_REP cannot leave the fixture describing a shape the renderer
+  // rejects. The rep's first prove is `value`, which makes it the minimum
+  // whatever the offsets are.
   return {
-    samples: [
-      [value, slower(0.4), slower(0.2)],
-      [slower(0.3), value, slower(0.5)],
-    ],
+    samples: Array.from({ length: REPS }, (_unused, rep) =>
+      Array.from({ length: PROVES_PER_REP }, (_ignored, prove) =>
+        prove === 0 ? value : slower(0.2 * (prove + rep))
+      )
+    ),
   };
 };
 
@@ -67,6 +72,11 @@ const results = (overrides = {}) => ({
   threads: 8,
   reps: REPS,
   provesPerRep: PROVES_PER_REP,
+  // One discarded warm-up rep and one discarded first prove per page: the
+  // renderer checks these against the retained counts rather than trusting the
+  // methodology text it prints about them.
+  repsExecuted: REPS + 1,
+  provesExecutedPerRep: PROVES_PER_REP + 1,
   benchmarks: [
     {
       name: "prove / consume / ecdsa-k256-keccak",
@@ -194,11 +204,16 @@ test("refuses samples that disagree with the declared retained counts", () => {
       [1000, 1000],
     ],
   };
-  const flat = { samples: [1000, 1000, 1000, 1000, 1000, 1000] };
-  for (const [label, bad] of [
-    ["group count", wrongGroups],
-    ["group width", wrongWidth],
-    ["flat array", flat],
+  // Length REPS, so it reaches the per-group check rather than being caught by
+  // the group-COUNT guard first — that is the difference between testing "a flat
+  // array is refused" and testing the group count twice.
+  const flat = { samples: Array.from({ length: REPS }, () => 1000) };
+  // Pinned per case, since a bare /samples/ passes on any of the three messages
+  // and so cannot show that each guard is the one that fired.
+  for (const [label, bad, pattern] of [
+    ["group count", wrongGroups, /must hold 2 per-rep groups/],
+    ["group width", wrongWidth, /must hold 3 samples/],
+    ["flat array", flat, /must be an array of numbers/],
   ]) {
     assert.throws(
       () =>
@@ -206,8 +221,8 @@ test("refuses samples that disagree with the declared retained counts", () => {
           results({ benchmark: { base: bad, head: side(1000) } }),
           ctx()
         ),
-      /samples/,
-      `${label} was accepted`
+      pattern,
+      `${label} was accepted or refused by the wrong guard`
     );
   }
 });
@@ -230,10 +245,10 @@ test("refuses an unbounded sample payload rather than exhausting memory", () => 
           top: {
             reps,
             provesPerRep,
-            benchmarks: [
-              { name: "wide", unit: "ms", base: wide(), head: wide() },
-            ],
+            repsExecuted: reps + 1,
+            provesExecutedPerRep: provesPerRep + 1,
           },
+          benchmark: { base: wide(), head: wide() },
         }),
         ctx()
       ),
@@ -277,7 +292,12 @@ test("refuses a recomputed mean that overflows even though every sample is finit
       renderComment(
         results({
           benchmark: { base: null, head: { samples: [[1e308], [1e308]] } },
-          top: { reps: 2, provesPerRep: 1 },
+          top: {
+            reps: 2,
+            provesPerRep: 1,
+            repsExecuted: 3,
+            provesExecutedPerRep: 2,
+          },
         }),
         ctx()
       ),
@@ -286,24 +306,55 @@ test("refuses a recomputed mean that overflows even though every sample is finit
 });
 
 test("no head-only report can render an infinity", () => {
-  // The guard above is the mechanism; this is the property it exists for.
-  for (const sample of [1e308, Number.MAX_VALUE, 1e307]) {
+  // The guard above is the mechanism; this is the property it exists for. Split
+  // by expected outcome: a `catch { continue }` over a mixed list counted a
+  // throw as a pass, so only one of the three fixtures ever reached the
+  // assertion. 1e308 and MAX_VALUE overflow while recomputing the mean and are
+  // refused; 1e307 survives and must render finite.
+  for (const sample of [1e308, Number.MAX_VALUE]) {
+    assert.throws(
+      () =>
+        renderComment(
+          results({
+            benchmark: {
+              base: null,
+              head: { samples: [[sample], [sample], [sample]] },
+            },
+            top: {
+              reps: 3,
+              provesPerRep: 1,
+              repsExecuted: 4,
+              provesExecutedPerRep: 2,
+            },
+          }),
+          ctx()
+        ),
+      /must be a finite number/,
+      `${sample} was not refused`
+    );
+  }
+  for (const sample of [1e307]) {
     let body = "";
-    try {
-      body = renderComment(
-        results({
-          benchmark: {
-            base: null,
-            head: { samples: [[sample], [sample], [sample]] },
-          },
-          top: { reps: 3, provesPerRep: 1 },
-        }),
-        ctx()
-      );
-    } catch {
-      continue;
-    }
-    assert.doesNotMatch(body, /∞|Infinity|NaN/);
+    body = renderComment(
+      results({
+        benchmark: {
+          base: null,
+          head: { samples: [[sample], [sample], [sample]] },
+        },
+        top: {
+          reps: 3,
+          provesPerRep: 1,
+          repsExecuted: 4,
+          provesExecutedPerRep: 2,
+        },
+      }),
+      ctx()
+    );
+    assert.doesNotMatch(
+      body,
+      /∞|Infinity|NaN/,
+      `${sample} rendered non-finite`
+    );
   }
 });
 
@@ -316,7 +367,12 @@ test("refuses negative sample timings", () => {
       renderComment(
         results({
           benchmark: { base: null, head: { samples: [[-1], [-1]] } },
-          top: { reps: 2, provesPerRep: 1 },
+          top: {
+            reps: 2,
+            provesPerRep: 1,
+            repsExecuted: 3,
+            provesExecutedPerRep: 2,
+          },
         }),
         ctx()
       ),
@@ -336,7 +392,12 @@ test("a negative baseline cannot invert the sign of the verdict", () => {
             base: { samples: [[-10], [-10]] },
             head: { samples: [[-11], [-11]] },
           },
-          top: { reps: 2, provesPerRep: 1 },
+          top: {
+            reps: 2,
+            provesPerRep: 1,
+            repsExecuted: 3,
+            provesExecutedPerRep: 2,
+          },
         }),
         ctx()
       ),
@@ -354,7 +415,12 @@ test("refuses to call a movement significant when the repetitions disagree", () 
   // the repetitions do not support.
   const body = renderComment(
     results({
-      top: { reps: 3, provesPerRep: 1 },
+      top: {
+        reps: 3,
+        provesPerRep: 1,
+        repsExecuted: 4,
+        provesExecutedPerRep: 2,
+      },
       benchmark: {
         base: { samples: [[100], [100], [100]] },
         head: { samples: [[150], [150], [62]] },
@@ -375,7 +441,12 @@ test("calls a consistent movement significant", () => {
   // agrees on the direction, so there is a result to report.
   const body = renderComment(
     results({
-      top: { reps: 3, provesPerRep: 1 },
+      top: {
+        reps: 3,
+        provesPerRep: 1,
+        repsExecuted: 4,
+        provesExecutedPerRep: 2,
+      },
       benchmark: {
         base: { samples: [[100], [100], [100]] },
         head: { samples: [[120], [121], [119]] },
@@ -397,7 +468,12 @@ test("does not inherit the calibrated spread for a thinner run", () => {
   // standard deviation measured over eighteen.
   const thin = renderComment(
     results({
-      top: { reps: 1, provesPerRep: 1 },
+      top: {
+        reps: 1,
+        provesPerRep: 1,
+        repsExecuted: 2,
+        provesExecutedPerRep: 2,
+      },
       benchmark: {
         base: { samples: [[1000]] },
         head: { samples: [[1010]] },
@@ -406,11 +482,16 @@ test("does not inherit the calibrated spread for a thinner run", () => {
     ctx()
   );
   assert.doesNotMatch(thin, /holds a standard deviation of 1\.79%/);
-  assert.match(thin, /fewer samples than the 6 × 3/);
+  assert.match(thin, /does not use the 6 × 3/);
 
   const full = renderComment(
     results({
-      top: { reps: 6, provesPerRep: 3 },
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+      },
       benchmark: {
         base: { samples: Array.from({ length: 6 }, () => [1000, 1200, 1400]) },
         head: { samples: Array.from({ length: 6 }, () => [1010, 1200, 1400]) },
@@ -419,6 +500,27 @@ test("does not inherit the calibrated spread for a thinner run", () => {
     ctx()
   );
   assert.match(full, /holds a standard deviation of 1\.79%/);
+
+  // More repetitions do not merely satisfy the claim, they invalidate the
+  // arithmetic behind it: the spread narrows as 1/sqrt(reps), so at 24 reps the
+  // real figure is nearer 0.90% and the fixed 5.40% cutoff stops being 3σ.
+  const wide = renderComment(
+    results({
+      top: {
+        reps: 24,
+        provesPerRep: 3,
+        repsExecuted: 25,
+        provesExecutedPerRep: 4,
+      },
+      benchmark: {
+        base: { samples: Array.from({ length: 24 }, () => [1000, 1200, 1400]) },
+        head: { samples: Array.from({ length: 24 }, () => [1010, 1200, 1400]) },
+      },
+    }),
+    ctx()
+  );
+  assert.doesNotMatch(wide, /holds a standard deviation of 1\.79%/);
+  assert.match(wide, /does not use the 6 × 3/);
 });
 
 test("refuses artifact-authored counts no real run could produce", () => {
@@ -745,7 +847,7 @@ test("refuses a delta that overflows to a non-finite number", () => {
   );
 });
 
-test("refuses a name whose coercion throws", () => {
+test("falls back to a positional name when coercion throws", () => {
   // `String({toString: 1})` throws a bare TypeError, which used to escape the
   // `fail()` contract with an error naming no field.
   const body = renderComment(
@@ -906,7 +1008,7 @@ test("truncation never leaves an unbalanced <details> or a broken row", () => {
   // table row or inside the methodology <details> — and an unclosed <details>
   // collapses the whole remainder of the comment on GitHub.
   for (const count of [200, 600, 2000]) {
-    for (const scale of [1, 1e12, 1e100]) {
+    for (const scale of [1, 1e12, 1e100, 1e250, 1e300]) {
       const body = renderComment(
         results({ top: { benchmarks: manyBenchmarks(count, scale) } }),
         ctx()
@@ -939,8 +1041,68 @@ test("truncation never leaves an unbalanced <details> or a broken row", () => {
         /never blocks merge/,
         `${count}/${scale}: lost the footer`
       );
+      // And every degradation must SAY it degraded. Silently shipping a shorter
+      // comment is the one outcome worse than a truncated one.
+      if (body.length > MAX_BODY_CHARS - 200) {
+        assert.match(
+          body,
+          /✂️/,
+          `${count}/${scale}: truncated without saying so`
+        );
+      }
     }
   }
+});
+
+test("the degradation ladder reaches every rung it defines", () => {
+  // Attempt 3 and the last-resort block drop were both unreachable from the
+  // fixtures above, so a regression that broke either — including replacing the
+  // block drop with the mid-string slice it exists to avoid — kept the suite
+  // green. These fixtures pin each rung by the notice only it emits.
+  // Rung 2: samples dropped, table kept. Benchmark COUNT alone never gets here —
+  // the moved-rows table and the samples block are each capped, so the body
+  // plateaus near 24 kB however many benchmarks arrive. It takes many samples
+  // per benchmark, which is the retained-count dimension.
+  const wide = (value) => ({
+    samples: Array.from({ length: 40 }, () => [value, value, value, value]),
+  });
+  const dropsSamples = renderComment(
+    results({
+      top: {
+        reps: 40,
+        provesPerRep: 4,
+        repsExecuted: 41,
+        provesExecutedPerRep: 5,
+        benchmarks: Array.from({ length: 60 }, (_unused, i) =>
+          bench(`bench-${i}`, wide(1000 + i), wide(1200 + i))
+        ),
+      },
+    }),
+    ctx()
+  );
+  assert.match(dropsSamples, /Per-rep raw samples were dropped/);
+  assert.doesNotMatch(dropsSamples, /full benchmark table were dropped/);
+
+  // Rung 3: samples AND the full table dropped. Needs values wide enough that
+  // each row is enormous, not merely numerous rows.
+  const dropsTable = renderComment(
+    results({ top: { benchmarks: manyBenchmarks(2000, 1e300) } }),
+    ctx()
+  );
+  assert.match(dropsTable, /full benchmark table were dropped/);
+  assert.ok(dropsTable.isWellFormed());
+  assert.equal(
+    (dropsTable.match(/<details>/g) ?? []).length,
+    (dropsTable.match(/<\/details>/g) ?? []).length
+  );
+
+  // The final block-dropping cut is not reachable through the artifact: rung 3
+  // fits inside the budget for every input tried, up to 4000 benchmarks at 1e300
+  // (~48 kB against a 60 kB cap). It stays as a structural guarantee for the
+  // assemble() output growing, and is asserted here only to the extent that
+  // nothing above it ever needs it.
+  assert.ok(dropsTable.length <= MAX_BODY_CHARS);
+  assert.doesNotMatch(dropsTable, /Output truncated at the size limit/);
 });
 
 test("the summary variant keeps content the comment has to drop", () => {
@@ -954,6 +1116,8 @@ test("the summary variant keeps content the comment has to drop", () => {
     top: {
       reps: 40,
       provesPerRep: 4,
+      repsExecuted: 41,
+      provesExecutedPerRep: 5,
       benchmarks: Array.from({ length: 60 }, (_, i) =>
         bench(`bench-${i}`, wide(1000 + i), wide(1200 + i))
       ),
@@ -1015,5 +1179,243 @@ test("the CLI never emits a workflow command from untrusted bytes", async (t) =>
     text.split("\n").filter(Boolean).length,
     1,
     "message spans lines"
+  );
+});
+
+test("the CLI's exit codes distinguish a refused artifact from a renderer bug", async (t) => {
+  // bench-comment.yml branches on these: 0 posts, 1 stays quiet because the
+  // fork's payload was refused, 3 turns the reporter red because the fault is
+  // first-party. Swapping 1 and 3 either reddens the default branch on every
+  // fork PR, or silently blames PR authors for our own breakage — and until this
+  // test existed, either inversion kept the suite green.
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const dir = await mkdtemp(join(tmpdir(), "bench-render-exit-"));
+  const write = async (name, body) => {
+    const target = join(dir, name);
+    await writeFile(
+      target,
+      typeof body === "string" ? body : JSON.stringify(body)
+    );
+    return target;
+  };
+
+  const goodCtx = await write("ctx.json", ctx());
+  const goodResults = await write("results.json", results());
+  const refusedResults = await write(
+    "refused.json",
+    results({ top: { reps: 0 } })
+  );
+  const malformedResults = await write("malformed.json", "{not json");
+  const malformedCtx = await write("bad-ctx.json", "{not json");
+  const invalidCtx = await write("invalid-ctx.json", {
+    ...ctx(),
+    headSha: "nope",
+  });
+
+  const out = [];
+  const originalOut = process.stdout.write;
+  const originalErr = process.stderr.write;
+  process.stdout.write = (chunk) => {
+    out.push(String(chunk));
+    return true;
+  };
+  process.stderr.write = () => true;
+  t.after(() => {
+    process.stdout.write = originalOut;
+    process.stderr.write = originalErr;
+  });
+
+  assert.equal(await main([goodResults, goodCtx]), 0, "valid input renders");
+  assert.match(
+    out.join(""),
+    /No significant change|slower|faster/,
+    "no body on stdout"
+  );
+
+  assert.equal(await main([refusedResults, goodCtx]), 1, "refused artifact");
+  assert.equal(
+    await main([malformedResults, goodCtx]),
+    1,
+    "malformed artifact"
+  );
+
+  // ctx.json is written by the reporter's own jq from trusted event fields, so
+  // every failure on it is ours, whatever its shape.
+  assert.equal(
+    await main([goodResults, join(dir, "absent.json")]),
+    3,
+    "missing ctx"
+  );
+  assert.equal(await main([goodResults, malformedCtx]), 3, "malformed ctx");
+  assert.equal(await main([goodResults, invalidCtx]), 3, "invalid ctx");
+});
+
+test("every fork-controlled string is sanitized, not just the benchmark name", () => {
+  // `name` had seven tests; `unit`, `runner`, `profile` and `variant` come from
+  // the same artifact and had none. `unit` is the one that never passes through
+  // codeSpan, so markup in it reaches the table cell directly.
+  const hostile =
+    "`x`</summary></details>\n\n### Injected @everyone |extra| [l](https://evil.test)";
+  const body = renderComment(
+    results({
+      top: { runner: hostile, profile: hostile, variant: hostile },
+      benchmark: { unit: hostile },
+    }),
+    ctx()
+  );
+
+  // The payload survives as inert TEXT inside a code span, which is fine — what
+  // must not happen is it becoming structure. So: no line may START a heading
+  // except the one legitimate verdict heading, no backtick may escape the span
+  // the value is interpolated into, and no mention may survive.
+  const headings = body
+    .split("\n")
+    .filter((line) => /^#{1,6}\s/.test(line)).length;
+  assert.equal(headings, 1, "a fork-authored value opened a heading");
+  assert.doesNotMatch(body, /@everyone/, "mention survived");
+  assert.equal(
+    (body.match(/<\/summary>/g) ?? []).length,
+    (body.match(/<summary>/g) ?? []).length,
+    "summary tags unbalanced"
+  );
+  assert.equal(
+    (body.match(/<\/details>/g) ?? []).length,
+    (body.match(/<details>/g) ?? []).length,
+    "details tags unbalanced"
+  );
+
+  // The comment carries two tables of different widths, so uniformity across all
+  // rows is the wrong invariant. The right one is that a hostile value changes
+  // NOTHING about the shape: same rows, same widths as a benign render.
+  const shape = (text) =>
+    text
+      .split("\n")
+      .filter((line) => line.startsWith("|"))
+      .map((row) => row.split("|").length)
+      .join(",");
+  assert.equal(
+    shape(body),
+    shape(renderComment(results(), ctx())),
+    "a fork-authored value changed the table shape"
+  );
+});
+
+test("caps a name that exceeds the limit without splitting a surrogate pair", () => {
+  // The previous fixture was exactly MAX_NAME_CHARS code points, so it returned
+  // at the early exit and never reached the slice. With the cap actually
+  // exercised, a UTF-16 slice would leave a lone surrogate in a comment the
+  // trusted job posts.
+  const body = renderComment(
+    results({ benchmark: { name: `${"a".repeat(78)}😀😀😀` } }),
+    ctx()
+  );
+  assert.ok(body.isWellFormed(), "lone surrogate in the body");
+  assert.match(body, /…/, "nothing was truncated");
+});
+
+test("the run URL becomes a link when it is one we recognize", () => {
+  // Only the rejecting half of RUN_URL_RE was covered, so hardcoding runUrl to
+  // "" — dropping the link from every real comment — kept the suite green.
+  const body = renderComment(results(), ctx());
+  assert.match(
+    body,
+    /\[bench run 32568739941\]\(https:\/\/github\.com\/0xMiden\/web-sdk\/actions\/runs\/32568739941\)/
+  );
+});
+
+test("zero-difference repetitions cannot manufacture a consistent verdict", () => {
+  // Exempting exact zeroes from contradicting is right — they carry no direction
+  // — but on its own it let five zero deltas plus one large one pass as
+  // "consistent", which is the single dominating repetition the guard exists to
+  // catch, arriving through the exemption instead of a sign flip.
+  const flat = Array.from({ length: 5 }, () => [1000]);
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 1,
+        repsExecuted: 7,
+        provesExecutedPerRep: 2,
+      },
+      benchmark: {
+        base: { samples: [...flat, [1000]] },
+        head: { samples: [...flat, [400]] },
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /❔/, "not reported as unresolved");
+  assert.doesNotMatch(body, /faster: /, "a dominated aggregate was headlined");
+});
+
+test("refuses shapes that are not a benchmark report at all", () => {
+  for (const [input, pattern] of [
+    [null, /root must be an object/],
+    [[], /root must be an object/],
+    ["nope", /root must be an object/],
+  ]) {
+    assert.throws(() => renderComment(input, ctx()), pattern);
+  }
+  assert.throws(
+    () => renderComment(results({ top: { benchmarks: "nope" } }), ctx()),
+    /benchmarks must be an array/
+  );
+  assert.throws(
+    () => renderComment(results({ top: { benchmarks: [42] } }), ctx()),
+    /benchmarks\[0\] must be an object/
+  );
+});
+
+test("refuses an artifact whose executed counts contradict the discard policy", () => {
+  // The methodology text states the discard policy as fact about a producer a
+  // fork controls. The executed counts are in the artifact, so it can be checked.
+  assert.throws(
+    () => renderComment(results({ top: { repsExecuted: REPS } }), ctx()),
+    /repsExecuted must be one more than/
+  );
+  assert.throws(
+    () =>
+      renderComment(
+        results({ top: { provesExecutedPerRep: PROVES_PER_REP + 4 } }),
+        ctx()
+      ),
+    /provesExecutedPerRep must be one more than/
+  );
+});
+
+// --- pipeline wiring -------------------------------------------------------
+
+test("the reporter's trigger still names the workflow that produces the artifact", async () => {
+  // `workflow_run.workflows` matches bench.yml by its `name:` field, not by its
+  // filename, so renaming that workflow disables the entire reporter with no
+  // error anywhere — no failed run, no annotation, just silence on every PR.
+  // The coupling is a comment in both files; this is the part that can fail.
+  const { readFile } = await import("node:fs/promises");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+
+  const workflows = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "workflows"
+  );
+  const bench = await readFile(join(workflows, "bench.yml"), "utf8");
+  const reporter = await readFile(join(workflows, "bench-comment.yml"), "utf8");
+
+  const producerName = bench.match(/^name:\s*(.+)$/m)?.[1].trim();
+  assert.ok(producerName, "bench.yml has no name:");
+
+  const triggerNames = reporter.match(/^\s*workflows:\s*\[(.+)\]$/m)?.[1];
+  assert.ok(triggerNames, "bench-comment.yml has no workflow_run.workflows");
+  const wanted = triggerNames
+    .split(",")
+    .map((entry) => entry.trim().replace(/^["']|["']$/g, ""));
+
+  assert.ok(
+    wanted.includes(producerName),
+    `bench-comment.yml triggers on [${wanted.join(", ")}] but bench.yml is named "${producerName}"`
   );
 });
