@@ -25,6 +25,30 @@ coverage/
 # Packages
 **/packages/**
 !packages/
+# Imported adapter + signer families. These nest one level deeper than the
+# other packages, so the allow-list works per FAMILY. The bare `!packages/<x>/`
+# line is load-bearing: git cannot re-include paths under a directory it never
+# descended into, so with only the `/**` line `git add -A` stages nothing.
+# Re-ignores use `**/` (not `*/`) to reach the second level, e.g.
+# packages/para/core/examples/react/dist/.
+!packages/adapter/
+!packages/adapter/**
+packages/adapter/**/dist/
+packages/adapter/**/build/
+packages/adapter/**/coverage/
+packages/adapter/**/node_modules/
+!packages/para/
+!packages/para/**
+packages/para/**/dist/
+packages/para/**/build/
+packages/para/**/coverage/
+packages/para/**/node_modules/
+!packages/turnkey/
+!packages/turnkey/**
+packages/turnkey/**/dist/
+packages/turnkey/**/build/
+packages/turnkey/**/coverage/
+packages/turnkey/**/node_modules/
 !packages/react-sdk/
 !packages/react-sdk/**
 packages/react-sdk/dist/

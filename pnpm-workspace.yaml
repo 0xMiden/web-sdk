@@ -3,15 +3,29 @@
 # the local copy at install time.
 #
 # `packages/react-sdk/examples/wallet` is intentionally NOT a
-# workspace member — it has file: deps that point OUTSIDE this repo
-# (sibling miden-para, miden-turnkey, miden-wallet-adapter), and
-# treating it as a workspace would entangle those external paths
-# with the SDK's install graph. The example has its own pnpm-lock
-# and runs `pnpm install` independently when exercised.
+# workspace member: it is an application, not a published package.
+# (It previously carried a comment about file: deps on sibling repos;
+# those deps never existed in the tracked tree. The signer packages it
+# imports now live here, so it can resolve them via workspace:*.)
+#
+# Every member is listed explicitly. A bare `packages/*` glob would
+# sweep in the three packages/node-sdk-* platform shells, which carry a
+# package.json but must not be workspace members.
 packages:
   - 'packages/react-sdk'
   - 'packages/telemetry-otel'
   - 'packages/telemetry-sentry'
   - 'packages/vite-plugin'
+  - 'packages/adapter/base'
+  - 'packages/adapter/react'
+  - 'packages/adapter/miden'
+  - 'packages/adapter/reactui'
+  - 'packages/adapter/all'
+  - 'packages/para/core'
+  - 'packages/para/react'
+  - 'packages/para/create'
+  - 'packages/turnkey/core'
+  - 'packages/turnkey/react'
+  - 'packages/turnkey/create'
   - 'crates/web-client'
   - 'crates/idxdb-store/src'
