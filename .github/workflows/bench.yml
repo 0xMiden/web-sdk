@@ -62,7 +62,7 @@ on:
     branches: [main, next]
   # Calibration: bench the merge-base against ITSELF. The true delta is zero,
   # so whatever the run reports is this runner's measurement noise. Run it a
-  # dozen times and set `THRESHOLD_PCT` in .github/scripts/render-bench-comment.mjs
+  # dozen times and set `thresholdPct` in .github/scripts/bench-profile.mjs
   # to 3 sigma of the reported deltas — see docs/benchmarks/calibration.md.
   workflow_dispatch:
     inputs:
@@ -143,13 +143,14 @@ jobs:
     #
     # The noise floor in render-bench-comment.mjs was measured on a laptop, not on
     # this runner class, so until it is remeasured the renderer reports movements
-    # as observations and withholds every ruling — see THRESHOLD_PROVISIONAL
+    # as observations and withholds every ruling — see `thresholdProvisional`
     # there. Calibrating on this runner (workflow_dispatch, calibrate: true) is
     # therefore the first thing to do after this lands.
     #
     # Measure the floor with `workflow_dispatch` (`calibrate: true`) and the
-    # procedure in docs/benchmarks/calibration.md, then set THRESHOLD_PCT from
-    # this runner and flip THRESHOLD_PROVISIONAL to false.
+    # procedure in docs/benchmarks/calibration.md, then set `thresholdPct` from
+    # this runner and flip `thresholdProvisional` to false, both in
+    # .github/scripts/bench-profile.mjs.
     #
     # Runs on every non-draft pull request. That is a deliberate product call:
     # the bench runs in parallel with Test and Lint, so it never extends the
