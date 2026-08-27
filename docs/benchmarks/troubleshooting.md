@@ -34,7 +34,8 @@ You pushed while a bench was in flight. The numbers were measured on the old
 commit, so they were not posted. Normally the push that moved the head starts a
 replacement bench and its report arrives a couple of hours later — but **not if
 that push only touched paths in `bench.yml`'s `paths-ignore`** (docs, markdown,
-the JS packages). A docs-only follow-up push starts no bench and cancels nothing,
+the JS packages, the reporter). A docs-only follow-up push starts no bench and
+cancels nothing,
 so no report is coming. Re-run the *Proving Benchmark* workflow on the pull
 request to get one.
 
@@ -72,9 +73,17 @@ which is why it says so.
 
 ## The bench did not run
 
+- **The pull request is a draft.** Drafts are skipped: that is where pushes are
+  most frequent and a proving number least useful. Marking it ready for review
+  starts the run that was skipped.
 - The pull request changed only paths in `paths-ignore` — by design, and the
   denylist is deliberately conservative. If a change there could plausibly
-  move a proving number, the list is wrong; fix the list.
+  move a proving number, the list is wrong; fix the list. Currently ignored:
+  markdown and `docs/**`, the JS packages, `.github/scripts/**` and
+  `.github/workflows/bench-comment.yml`. The last two are ignored because a
+  change to the reporter cannot move a proving number *and* cannot be exercised
+  by this pull request's own bench run — `workflow_run` always executes the
+  default branch's copy.
 - Only the title or body was edited. `bench.yml` takes the `edited` event for
   retargeting and skips the rest, so the job is skipped and the reporter stays
   quiet. Intentional: without that guard every title edit published a "no usable

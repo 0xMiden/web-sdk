@@ -50,6 +50,9 @@ on:
       # tests are a merge gate in test.yml, so nothing is lost by skipping a
       # multi-hour build for them.
       - ".github/scripts/**"
+      # The reporter, for the same two reasons. `bench.yml` is deliberately NOT
+      # here: it owns the build and is part of the dist-cache key.
+      - ".github/workflows/bench-comment.yml"
   # Calibration: bench the merge-base against ITSELF. The true delta is zero,
   # so whatever the run reports is this runner's measurement noise. Run it a
   # dozen times and set `THRESHOLD_PCT` in .github/scripts/render-bench-comment.mjs

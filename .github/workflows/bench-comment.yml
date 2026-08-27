@@ -243,6 +243,13 @@ jobs:
       - name: Extract the report
         id: report
         if: steps.fetch.outputs.fetched == 'true'
+        # Same reasoning as the fetch step above. The extractor exits 0 for every
+        # hostile or unusable archive — that is its contract — and reserves a
+        # non-zero exit for bad usage, which here means the zip the previous step
+        # just wrote is gone. That is a runner fault rather than anything the pull
+        # request did, and the fallback check run already reports "no usable
+        # report" for it, so it should not redden the default branch either.
+        continue-on-error: true
         shell: bash
         env:
           ZIP_PATH: ${{ runner.temp }}/bench-report.zip
@@ -307,6 +314,24 @@ jobs:
               core.setOutput('skip_reason', prSkipReason);
             };
 
+            // The artifact's SHAPE is wrong, as opposed to its claim being
+            // unverifiable. Same reasoning as `refuseAsOutage`: without a reason
+            // the fallback infers "the pull request the report claimed could not
+            // be confirmed", which accuses the author of forging an identity when
+            // what actually happened is that their bench job wrote a pr.json this
+            // reporter cannot parse. Usually a producer bug or a truncated upload,
+            // and the author is the only one who can act on it.
+            const refuseAsMalformed = (message) => {
+              refuse(message);
+              core.setOutput(
+                'skip_reason',
+                'The benchmark run uploaded a report whose PR identity file could ' +
+                  'not be read, so nothing was posted. This is a fault in the ' +
+                  'benchmark run rather than a problem with the pull request — the ' +
+                  'reporter log names the specific field.'
+              );
+            };
+
             // Same mechanism, different meaning, and worth its own name: these
             // are refusals where the identity check did its job and the cause is
             // ordinary. Nothing was forged and nothing is broken — the pull
@@ -324,7 +349,7 @@ jobs:
                 fs.readFileSync(path.join(process.env.REPORT_DIR, 'pr.json'), 'utf8'),
               );
             } catch (error) {
-              refuse(`pr.json missing or malformed: ${error.message}`);
+              refuseAsMalformed(`pr.json missing or malformed: ${error.message}`);
               return;
             }
 
@@ -334,7 +359,7 @@ jobs:
             // artifact into a red workflow on the default branch, triggerable by
             // any fork. Shape-check before touching a property.
             if (claimed === null || typeof claimed !== 'object' || Array.isArray(claimed)) {
-              refuse(`pr.json is not a JSON object (got ${Array.isArray(claimed) ? 'array' : typeof claimed})`);
+              refuseAsMalformed(`pr.json is not a JSON object (got ${Array.isArray(claimed) ? 'array' : typeof claimed})`);
               return;
             }
 
@@ -346,17 +371,17 @@ jobs:
             // reddened the trusted workflow on demand from any fork. The renderer
             // guards the same trap on its side.
             if (typeof claimed.number !== 'number' && typeof claimed.number !== 'string') {
-              refuse(`pr.json number must be a number or a string, got ${Array.isArray(claimed.number) ? 'array' : typeof claimed.number}`);
+              refuseAsMalformed(`pr.json number must be a number or a string, got ${Array.isArray(claimed.number) ? 'array' : typeof claimed.number}`);
               return;
             }
             if (claimed.baseSha !== undefined && claimed.baseSha !== null && typeof claimed.baseSha !== 'string') {
-              refuse(`pr.json baseSha must be a string, got ${Array.isArray(claimed.baseSha) ? 'array' : typeof claimed.baseSha}`);
+              refuseAsMalformed(`pr.json baseSha must be a string, got ${Array.isArray(claimed.baseSha) ? 'array' : typeof claimed.baseSha}`);
               return;
             }
 
             const number = Number(claimed.number);
             if (!Number.isInteger(number) || number <= 0 || number > 1e7) {
-              refuse(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
+              refuseAsMalformed(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
               return;
             }
 
@@ -390,6 +415,12 @@ jobs:
             }
             if (run.name !== 'Proving Benchmark') {
               refuse(`Run ${run.id} is "${run.name}", not a Proving Benchmark run.`);
+              core.setOutput(
+                'skip_reason',
+                'The run this reporter was pointed at is not a Proving Benchmark ' +
+                  'run, so nothing was posted. On a manual dispatch this is usually ' +
+                  'the wrong run id.'
+              );
               return;
             }
 
@@ -496,7 +527,7 @@ jobs:
             // but it does confine the value to real history behind the base ref.
             const claimedBase = String(claimed.baseSha ?? '');
             if (!/^[0-9a-f]{7,40}$/.test(claimedBase)) {
-              refuse(`Artifact baseSha is not a lowercase commit sha: ${JSON.stringify(claimed.baseSha)}`);
+              refuseAsMalformed(`Artifact baseSha is not a lowercase commit sha: ${JSON.stringify(claimed.baseSha)}`);
               return;
             }
             try {
@@ -684,7 +715,8 @@ jobs:
             core.setOutput('stale', 'false');
 
       # `continue-on-error`: the PR was open when `Verify PR identity` sampled
-      # it, and the bench job it reports on ran for up to 90 minutes. In that
+      # it, and the bench job it reports on can run for up to the job cap of 180
+      # minutes. In that
       # window the PR can be locked or closed, which makes createComment 403.
       # Every rejection upstream of here was made non-fatal on purpose; losing
       # that at the last step would put the informational bot back in the
