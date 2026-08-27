@@ -199,6 +199,19 @@ manifests.sort((a, b) =>
   relFromRoot(a.dirPath).localeCompare(relFromRoot(b.dirPath))
 );
 
+// Every package published from this workspace. A consumer that pins a sibling
+// — `@miden-sdk/para-react` pinning `@miden-sdk/para`, say — has to track the
+// same version line as the core does, and checking only the `@miden-sdk/miden-sdk`
+// pin let those go stale silently: at 0.16.0-rc.5 three packages still pinned
+// siblings at `^0.16.0-rc.4` and this check passed. `^0.16.0-rc.4` does resolve
+// rc.5 under semver so nothing broke, but drift that resolves by luck is exactly
+// what this check exists to catch.
+const firstParty = new Set([CORE]);
+for (const { manifestPath } of manifests) {
+  const pkg = readJson(manifestPath);
+  if (pkg.name && !pkg.private) firstParty.add(pkg.name);
+}
+
 for (const { dirPath, manifestPath } of manifests) {
   const pkg = readJson(manifestPath);
   const buildsAgainstCore =
@@ -206,17 +219,23 @@ for (const { dirPath, manifestPath } of manifests) {
     pkg.peerDependencies?.[CORE] ||
     pkg.dependencies?.[CORE];
   if (!buildsAgainstCore) continue;
+  // A published pin lives in `peerDependencies` (the consumer installs the
+  // core) or `dependencies`. `devDependencies` is the build-time
+  // `workspace:*` link and is never the pin, so a package carrying only
+  // that one is reported as missing its pin rather than passing.
+  const field = pkg.dependencies?.[CORE] ? "dependencies" : "peerDependencies";
+  // The core is always required. Siblings are checked only where the consumer
+  // actually pins one, so this never invents a pin a package does not declare.
+  const siblings = Object.keys(pkg[field] || {}).filter(
+    (name) => name !== CORE && firstParty.has(name)
+  );
   consumers.push({
     dir: relFromRoot(dirPath),
     label: pkg.name || relFromRoot(dirPath),
     manifestPath,
     pkg,
-    // A published pin lives in `peerDependencies` (the consumer installs the
-    // core) or `dependencies`. `devDependencies` is the build-time
-    // `workspace:*` link and is never the pin, so a package carrying only
-    // that one is reported as missing its pin rather than passing.
-    field: pkg.dependencies?.[CORE] ? "dependencies" : "peerDependencies",
-    pins: [CORE],
+    field,
+    pins: [CORE, ...siblings.sort()],
     checkVersion: true,
   });
 }
