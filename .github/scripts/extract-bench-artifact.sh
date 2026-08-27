@@ -107,7 +107,7 @@ for member in "${members[@]}"; do
   # A zip may carry the same name twice, and `-p` would concatenate both to
   # stdout — a way to hide a second payload behind a benign-looking first one.
   # One entry per member or none.
-  matches=$(unzip -Z1 "$zip_path" "$member" 2>/dev/null | grep -c . || true)
+  matches=$(unzip -Z1 "$zip_path" "$member" 2>/dev/null </dev/null | grep -c . || true)
   if [ "$matches" -gt 1 ]; then
     echo "::notice title=Proving Benchmark::The artifact carries ${matches} entries named ${member}; refusing to render." >&2
     continue
@@ -116,8 +116,14 @@ for member in "${members[@]}"; do
   # `head -c` is given one byte more than the cap so an over-cap member is
   # detectable by size afterwards rather than being silently truncated into
   # something that might still parse.
+  #
+  # stdin from /dev/null on both invocations: `unzip` PROMPTS for a password on
+  # an encrypted member, and the archive is fork-controlled. Whether that prompt
+  # blocks depends on what the runner left on this job's stdin, which is not
+  # this script's to assume — with /dev/null it reads EOF and exits 82 instead of
+  # holding the trusted reporter open until the job times out.
   set +e
-  unzip -p "$zip_path" "$member" 2>/dev/null | head -c "$((max_bytes + 1))" > "$out"
+  unzip -p "$zip_path" "$member" 2>/dev/null </dev/null | head -c "$((max_bytes + 1))" > "$out"
   codes=("${PIPESTATUS[@]}")
   set -e
   unzip_rc=${codes[0]}

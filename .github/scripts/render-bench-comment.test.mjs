@@ -2654,6 +2654,51 @@ test("a deadline overrun is not reported as the budget running out", () => {
   assert.match(ranOut, /never attempted/);
   assert.match(ranOut, /budget is too tight/);
   assert.doesNotMatch(ranOut, /deadline/);
+
+  // The third kind is neither: the clock was fine and no work overran, so both
+  // of the above notes' advice would misdirect. It carries no deadline figure,
+  // which is also why it must not be routed through the deadline branch — that
+  // branch reads `stoppedEarlyDeadlineMs`, which is absent here.
+  const wedged = renderComment(
+    results(stopped({ stoppedEarlyKind: "teardown" })),
+    ctx()
+  );
+  assert.match(wedged, /a page context would not close/);
+  assert.match(wedged, /measured against a page that was still live/);
+  assert.match(wedged, /Nothing here is fixed by a larger budget/);
+  assert.doesNotMatch(wedged, /deadline/);
+  assert.doesNotMatch(wedged, /budget is too tight/);
+  assert.doesNotMatch(wedged, /never attempted/);
+});
+
+// The producer stops a run when a context will not close mid-run, because every
+// later repetition would be measured against a live page. It used to THROW there,
+// which skipped `emitResults()` and discarded a run that had completed six of
+// seven repetitions — the same data loss the budget and deadline paths were
+// already fixed for. The renderer has to accept the kind for that fix to land.
+test("a teardown stop keeps its measurements and withholds the verdict", () => {
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        repsExecuted: 7,
+        repsRequested: 10,
+        stoppedEarly: "a page context failed to close after rep 5",
+        stoppedEarlyKind: "teardown",
+      },
+      // A movement well past the floor, to prove the verdict is withheld rather
+      // than merely absent for want of a difference.
+      benchmark: { base: side(1000), head: side(1200) },
+    }),
+    ctx()
+  );
+  // The measurements survive.
+  assert.match(body, /1,200\.0/);
+  assert.match(body, /\+20\.00%/);
+  // The ruling does not.
+  assert.match(body, /unresolved: this run stopped early/);
+  assert.match(body, /not a budget problem; settle what kept it alive/);
+  assert.doesNotMatch(body, /### 🔺/);
 });
 
 // Both of these are wall-clock durations derived from `performance.now()`, which

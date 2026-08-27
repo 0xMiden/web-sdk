@@ -202,7 +202,10 @@ if command -v zip >/dev/null 2>&1 && [ -n "$timeout_cmd" ]; then
   printf '{"number":7}' > "$encsrc/pr.json"
   ( cd "$encsrc" && zip -q -P hunter2 "$zipe" results.json pr.json )
   deste="$work/de"
-  oute=$("$timeout_cmd" 20 "$subject" "$zipe" "$deste" 2>/dev/null </dev/null)
+  # Deliberately NOT `</dev/null` here: the script closes its own stdin, and
+  # having the harness do it instead would let that redirect be removed without
+  # this test noticing.
+  oute=$("$timeout_cmd" 20 "$subject" "$zipe" "$deste" 2>/dev/null)
   rce=$?
   check "an encrypted archive does not hang on a password prompt" "no" \
     "$([ "$rce" = 124 ] && echo yes || echo no)"

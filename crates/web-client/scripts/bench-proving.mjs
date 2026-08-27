@@ -76,6 +76,25 @@ import {
   proveOrder,
 } from "./bench-order.mjs";
 
+/**
+ * A page context that would not close mid-run.
+ *
+ * Its own class because it is a THIRD reason to stop short, and the two existing
+ * ones do not describe it: the clock did not run out, and no in-page work
+ * overran. The next repetition would have been measured alongside a page that is
+ * still live, which is a reason to stop but not a reason to throw away the
+ * repetitions already finished — those were measured before anything failed to
+ * close. Carrying it as an early stop writes them out under a withheld verdict;
+ * throwing, as this path used to, discarded a complete run over a browser that
+ * was about to be killed anyway.
+ */
+class TeardownStopError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TeardownStopError";
+  }
+}
+
 const USAGE = [
   "  node scripts/bench-proving.mjs --head <dist-mt-dir> [--base <dist-mt-dir>]",
   "       [--threads N] [--reps N] [--proves M] [--out results.json]",
@@ -731,11 +750,59 @@ const withCloseDeadline = (label, closing) => {
   ]);
 };
 
+/**
+ * Page errors, counted in full but retained in bounded number.
+ *
+ * Nothing downstream reads past the first entry — every message quotes `first`
+ * and the count — but the array they used to be pushed into had no bound, and
+ * the events feeding it are page-driven. A build whose `pageerror` fires once per
+ * frame pushes tens of thousands of Errors, each retaining a stack, during a
+ * single 20-minute prove; the driver only checks the log between proves, so
+ * there is no throw to stop it. Left unbounded that turns a diagnosable "the page
+ * raised an error" failure into an opaque OOM with no artifact.
+ *
+ * `length` is the TRUE count, not the retained one, so the existing call sites
+ * keep reporting how many errors there were rather than how many were kept.
+ */
+class PageErrorLog {
+  static RETAIN = 20;
+
+  #retained = [];
+  #count = 0;
+
+  /**
+   * `line` is logged, not just stored, and the logging is capped with the
+   * retention for the same reason: these call sites used to `console.error`
+   * unconditionally, so the frame-rate case flooded the job log with the same
+   * message and buried the setup and timing output a reader needs. One line says
+   * the flood happened; the count in the driver's throw says how big it got.
+   */
+  push(error, line) {
+    this.#count += 1;
+    if (this.#retained.length < PageErrorLog.RETAIN) {
+      this.#retained.push(error);
+      console.error(line);
+    } else if (this.#count === PageErrorLog.RETAIN + 1) {
+      console.error(
+        `[pageerror] suppressing further page errors after ${PageErrorLog.RETAIN}; the count in the failure below is complete`
+      );
+    }
+  }
+
+  get length() {
+    return this.#count;
+  }
+
+  get first() {
+    return this.#retained[0];
+  }
+}
+
 // Opens a page, runs setup on it, and returns handles the driver can drive
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
   const context = await browser.newContext();
-  const pageErrors = [];
+  const pageErrors = new PageErrorLog();
   // Set synchronously before any close is requested, so the worker-close
   // handler below can tell a teardown from a mid-run death. Playwright's own
   // `page.isClosed()` cannot: it flips after the workers have already gone.
@@ -745,8 +812,7 @@ const openSide = async (browser, url, label, repIndex) => {
     // An uncaught page error means this iteration's timings are unexplained,
     // so fail rather than fold suspect numbers into the results.
     page.on("pageerror", (error) => {
-      console.error(`[pageerror] ${label} rep ${repIndex}: ${error}`);
-      pageErrors.push(error);
+      pageErrors.push(error, `[pageerror] ${label} rep ${repIndex}: ${error}`);
     });
     // `pageerror` fires for the main frame only, and proving runs on a rayon
     // pool of web workers. A worker dying mid-run left no trace here while the
@@ -763,8 +829,7 @@ const openSide = async (browser, url, label, repIndex) => {
         const error = new Error(
           `a web worker exited while ${label} rep ${repIndex} was still running, so the rayon pool may have shrunk mid-measurement`
         );
-        console.error(`[worker] ${error.message}`);
-        pageErrors.push(error);
+        pageErrors.push(error, `[worker] ${error.message}`);
       });
     });
     await page.goto(url);
@@ -790,7 +855,7 @@ const openSide = async (browser, url, label, repIndex) => {
     if (Number.isFinite(setupMs) && setupMs > 0) setupDurations.push(setupMs);
     if (pageErrors.length) {
       throw new Error(
-        `${label} rep ${repIndex} raised ${pageErrors.length} page error(s) during setup; first: ${pageErrors[0]}`
+        `${label} rep ${repIndex} raised ${pageErrors.length} page error(s) during setup; first: ${pageErrors.first}`
       );
     }
     // Snapshot after setup, when the rayon pool is fully spun up: `settle()`
@@ -852,31 +917,38 @@ const openSide = async (browser, url, label, repIndex) => {
           // two call sites let them propagate; this one has to say so explicitly
           // because its catch is broad.
           //
-          // A DEADLINE overrun is buried deliberately, and this is the one place
-          // that is right. Everywhere else an overrun is ambiguous — stuck, or
-          // merely slower than the clock allowed — which is why the run keeps its
-          // measurements rather than guessing. Not here: the barrier's ceiling is
-          // below BUDGET_FLOOR_MS, so it is granted whole or refused outright and
-          // never gets a shortened deadline (asserted in bench-budget.test.mjs).
-          // A 30-second empty round trip on an idle page that does not come back
-          // is a fault, so it joins the page errors and discards the repetition.
+          // A DEADLINE overrun propagates like every other one. A 30-second empty
+          // round trip on an idle page that does not come back IS a fault — the
+          // barrier's ceiling is below BUDGET_FLOOR_MS, so it is granted whole or
+          // refused outright and never gets a shortened deadline (asserted in
+          // bench-budget.test.mjs) — but burying it in `pageErrors` made the
+          // driver rethrow a plain Error, which skipped `emitResults()` and threw
+          // away every COMPLETE repetition measured before it. The comment here
+          // claimed it "discards the repetition"; it discarded the run.
+          //
+          // Propagating instead lands it on the earlyStop path: the tainted
+          // repetition is still dropped (this throw precedes the push into
+          // `samples`), the completed ones are written, and the renderer withholds
+          // the verdict from any run that stopped early. That is the same
+          // keep-what-was-measured rule bench-budget.mjs states for every other
+          // timeout.
           if (
             error instanceof BudgetExhaustedError ||
+            error instanceof DeadlineExceededError ||
             error instanceof TypeError ||
             error instanceof RangeError
           ) {
             throw error;
           }
-          pageErrors.push(error);
+          pageErrors.push(error, `[settle] ${label} rep ${repIndex}: ${error}`);
           return pageErrors;
         }
         const workersNow = page.workers().length;
         if (workersNow < workersAfterSetup) {
-          pageErrors.push(
-            new Error(
-              `${label} rep ${repIndex} ended with ${workersNow} web workers but had ${workersAfterSetup} after setup, so the rayon pool shrank during the measurement`
-            )
+          const shrank = new Error(
+            `${label} rep ${repIndex} ended with ${workersNow} web workers but had ${workersAfterSetup} after setup, so the rayon pool shrank during the measurement`
           );
+          pageErrors.push(shrank, `[worker] ${shrank.message}`);
         }
         return pageErrors;
       },
@@ -892,7 +964,7 @@ const openSide = async (browser, url, label, repIndex) => {
         );
         if (pageErrors.length) {
           throw new Error(
-            `${label} rep ${repIndex} raised a page error while proving; first: ${pageErrors[0]}`
+            `${label} rep ${repIndex} raised a page error while proving; first: ${pageErrors.first}`
           );
         }
         return ms;
@@ -1098,7 +1170,7 @@ try {
               // something the proves had nothing to do with.
               `${side.pageErrors.length} page error(s) during its proves or the ` +
               `settle barrier; first: ` +
-              `${side.pageErrors[0]}`
+              `${side.pageErrors.first}`
           );
         }
       }
@@ -1162,11 +1234,20 @@ try {
     // browser that was about to be killed anyway. That case falls through to the
     // outer teardown, which keeps the results and exits nonzero.
     if (rep < totalReps - 1 && teardownFailures.length) {
-      throw new Error(
+      // An early stop rather than a throw. Stopping is right — the next repetition
+      // would be measured against a live page — but the repetitions already in
+      // `samples` were each measured before anything failed to close, and throwing
+      // here sent them to `benchError`, which is rethrown upstream of
+      // `emitResults()`. A run that had completed six of seven repetitions wrote no
+      // artifact at all and the reporter posted "no usable report", which is the
+      // same data loss the budget and deadline paths above were fixed for.
+      earlyStop = new TeardownStopError(
         `a page context failed to close after ${isWarmup ? "the warmup" : `rep ${rep}`}, ` +
           `so the repetitions after it would be measured against a live page: ` +
           `${teardownFailures.join("; ")}`
       );
+      console.error(`\n[teardown] ${earlyStop.message}`);
+      break;
     }
   }
 } catch (error) {
@@ -1226,7 +1307,9 @@ const repsMeasured = earlyStop
   : repsCompleted;
 if (repsMeasured < repsCompleted) {
   console.error(
-    `[budget] dropping repetition ${repsCompleted} of the ${repsCompleted} measured: ` +
+    // Tagged by what it is rather than by the budget, because all three early
+    // stops reach this drop and only one of them is the clock.
+    `[balance] dropping repetition ${repsCompleted} of the ${repsCompleted} measured: ` +
       `an odd number of retained repetitions leaves the setup order unbalanced, ` +
       `which biases the comparison in a way more repetitions cannot fix`
   );
@@ -1370,7 +1453,11 @@ const results = {
         // pick one cause for both, and it picked "the budget ran out" — telling
         // the author of a deadlocked prover to raise their timeout.
         stoppedEarlyKind:
-          earlyStop instanceof BudgetExhaustedError ? "budget" : "deadline",
+          earlyStop instanceof BudgetExhaustedError
+            ? "budget"
+            : earlyStop instanceof TeardownStopError
+              ? "teardown"
+              : "deadline",
         // Only an overrun has one, and it is half of what settles the question.
         // The other half is setupMsMedian below.
         ...(earlyStop instanceof DeadlineExceededError
@@ -1526,5 +1613,21 @@ if (abandonedCloses > 0) {
       stream.write("", () => resolve());
     });
   await Promise.all([flush(process.stdout), flush(process.stderr)]);
+  // SIGKILL before the exit, because `process.exit` ends THIS process and does
+  // nothing about the browser it launched. A wedged `browser.close()` is exactly
+  // the case where Chromium is still alive, and Playwright only reaps it on a
+  // clean close — so exiting here without this leaves it running. On a
+  // self-hosted runner that orphan outlives the job and lands in the next run's
+  // numbers as the interference this whole script exists to exclude, which is the
+  // same failure the abandon-and-exit path above is trying to avoid.
+  //
+  // Guarded and swallowed: `process()` is null for a remote browser, and the pid
+  // may already be gone, neither of which should replace the exit code that says
+  // why the run is leaving.
+  try {
+    browser?.process()?.kill("SIGKILL");
+  } catch {
+    // Already dead, or never ours to kill. Nothing to add.
+  }
   process.exit(process.exitCode || 1);
 }

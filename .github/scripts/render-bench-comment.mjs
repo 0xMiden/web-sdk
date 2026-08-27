@@ -90,8 +90,13 @@ const ACCEPTED_SCHEMA_VERSIONS = new Set([3]);
  * provably could not fund the next step. "deadline" is not: work that started did
  * not finish, and whether it was stuck or merely slower than the clock allowed is
  * not decidable from inside the run. The comment says so rather than picking one.
+ *
+ * "teardown" is neither — the clock was fine and no work overran, but a page
+ * context would not close, so every later repetition would have been measured
+ * against a live page. It carries no deadline figure, and its advice is the
+ * opposite of the budget's: nothing here is tuned by raising a timeout.
  */
-const STOPPED_EARLY_KINDS = new Set(["budget", "deadline"]);
+const STOPPED_EARLY_KINDS = new Set(["budget", "deadline", "teardown"]);
 
 /**
  * Total sample values accepted across all benchmarks.
@@ -291,11 +296,18 @@ function codeSpan(text) {
 function logLine(text) {
   return (
     sanitizeText(text, 200, "(no detail)")
-      // Every `#` that leads a run of `#` ending in `[`, which covers `###[`
-      // and `##[[` as well as `##[`. The replacement contributes no `#`, and
-      // every surviving `#` is by construction not followed by `#*[`, so the
-      // sequence cannot re-form out of the substitution.
-      .replace(/#(?=#*\[)/gu, "\uFF03")
+      // Every run of `#` immediately before a `[`, which covers `###[` and
+      // `##[[` as well as `##[`. The replacement contributes no `#`, and every
+      // surviving `#` is by construction not followed by `#*[`, so the sequence
+      // cannot re-form out of the substitution.
+      //
+      // The run is CONSUMED rather than looked ahead over. The lookahead form
+      // (`/#(?=#*\[)/`) matches the same strings but backtracks across the whole
+      // remaining run at every start position — 85 seconds on 500k `#` with no
+      // `[` — and the only thing keeping that out of reach was the 200-character
+      // truncation happening first, which is too subtle a thing to depend on in
+      // a job holding a write token.
+      .replace(/#+(?=\[)/gu, (run) => "\uFF03".repeat(run.length))
       // Only meaningful at the start of a line, and every write site prefixes
       // this with its own text — except the stack-frame loop, whose two-space
       // indent the runner trims away. Cheaper to make the invariant true here
@@ -385,12 +397,17 @@ function requireMillis(
   { min = 0, max = Number.MAX_SAFE_INTEGER }
 ) {
   requireFinite(value, path);
-  if (value < min || value > max) {
+  // Rounded BEFORE the range check, because the rounded value is what every
+  // consumer downstream sees. Checking first let `max + 0.4` pass and then
+  // return `max + 1` — a value outside the advertised range, delivered by the
+  // validator whose job is to keep it inside.
+  const rounded = Math.round(value);
+  if (rounded < min || rounded > max) {
     fail(
-      `${path} must be a number in [${min}, ${max}], got ${describeValue(value)}`
+      `${path} must round to a number in [${min}, ${max}], got ${describeValue(value)}`
     );
   }
-  return Math.round(value);
+  return rounded;
 }
 
 function requireInt(
@@ -1350,6 +1367,14 @@ function buildVerdict(rows) {
     .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
   const unresolved = rows.filter((r) => r.unresolved);
   const worst = comparable[0];
+  // Everything that cleared the floor, in any of the three states a row can be
+  // in once it has: ruled, contradicted, or unresolved. The "(+N more)" counts
+  // below are taken from this rather than from whichever list owns the heading —
+  // counting only that list dropped rows in the other two, and the point of the
+  // suffix is that nothing past the floor is invisible from the heading.
+  const clearedFloor = moved.length + contradicted.length + unresolved.length;
+  const more = (owned) =>
+    clearedFloor - owned > 0 ? ` (+${clearedFloor - owned} more)` : "";
 
   // Ahead of the noise and unresolved branches, BEHIND the regression branch: a
   // run whose two estimators disagree about the DIRECTION is a state where
@@ -1361,11 +1386,7 @@ function buildVerdict(rows) {
   const regressions = moved.filter((r) => r.isWorse);
   if (contradicted.length > 0 && regressions.length === 0) {
     const leader = contradicted[0];
-    // Counts everything that cleared the floor, not just the contradicted rows:
-    // an improvement that ruled cleanly is still a movement the reader should
-    // know is there.
-    const others = contradicted.length - 1 + moved.length;
-    const rest = others > 0 ? ` (+${others} more)` : "";
+    const rest = more(1);
     return (
       `### ${EMOJI_UNRESOLVED} Unresolved: the two estimators disagree on ${codeSpan(leader.name)}${rest} — ` +
       `${formatSignedPct(leader.deltaPct)} on the reported figure, ` +
@@ -1378,8 +1399,7 @@ function buildVerdict(rows) {
     // that "no significant change" would bury it, and calling it a regression
     // would assert something the samples do not support.
     const leader = unresolved[0];
-    const rest =
-      unresolved.length > 1 ? ` (+${unresolved.length - 1} more)` : "";
+    const rest = more(1);
     // Two ways to land here, and they call for different reading. Disagreement
     // means the samples contradict each other; too short means they were never
     // asked to. Printing "its repetitions disagree" for a one-repetition run
@@ -1449,10 +1469,7 @@ function buildVerdict(rows) {
   const leader = regressions[0] ?? moved[0];
   const direction = leader.isWorse ? "slower" : "faster";
   const emoji = regressions.length > 0 ? "⚠️" : "🚀";
-  // Contradicted rows are excluded from `moved`, so they have to be counted
-  // here or a benchmark that cleared the floor disappears from the heading.
-  const others = moved.length - 1 + contradicted.length;
-  const rest = others > 0 ? ` (+${others} more)` : "";
+  const rest = more(1);
   // While the floor is provisional this heading states an OBSERVATION, not a
   // ruling, and the difference is not cosmetic. `⚠️ +10.00% slower` reads as
   // "this pull request regressed proving", which is a claim of significance —
@@ -1553,7 +1570,13 @@ function buildStoppedEarlyNote(results) {
   const shared = [
     `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for.`,
     `> Everything below is computed over the ${reps} it finished, and no faster/slower verdict is issued`,
-    "> from it: a run whose length was decided by the clock is a selected sample, and the noise floor was",
+    // "by how the machine behaved" rather than "by the clock": three kinds reach
+    // this note and only the budget one is the clock. The selection argument is
+    // the same for all three — the run's length was decided mid-run by something
+    // correlated with the thing being measured — so the prose states the shared
+    // reason and each branch below names its own cause.
+    "> from it: a run whose length was decided mid-run by how the machine behaved, rather than in advance,",
+    "> is a selected sample, and the noise floor was",
     "> calibrated on complete runs. The measurements are still worth reading — they are real — but treat",
     "> them as an indication rather than a result.",
   ];
@@ -1572,6 +1595,23 @@ function buildStoppedEarlyNote(results) {
           ` setup order unbalanced — the budget stopped the run before another could be funded.`,
       "> If this recurs the budget is too tight rather than the run too slow: raise the",
       "> benchmark step's `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
+    ].join("\n");
+  }
+
+  // The teardown case has no deadline to report and no budget to raise: the run
+  // stopped because a page would not go away, which is a property of the browser
+  // rather than of the clock. Both other branches' advice would misdirect.
+  if (stoppedEarlyKind === "teardown") {
+    return [
+      ...shared,
+      "> It stopped because a page context would not close, so every later repetition would have been",
+      "> measured against a page that was still live. The repetitions below finished before that" +
+        (balanceDropped > 0
+          ? `, and one more was discarded to keep the setup order balanced.`
+          : `.`),
+      "> Nothing here is fixed by a larger budget. See the run log for the close failure itself — a page",
+      "> that will not close is usually a worker still running, which is worth understanding before",
+      "> trusting timings measured next to it.",
     ].join("\n");
   }
 
@@ -1776,8 +1816,29 @@ function buildAllBenchmarksSection(rows, unit) {
   return parts.join("\n");
 }
 
+/**
+ * Sample VALUES the raw block will format before giving up on itself.
+ *
+ * The block was row-capped but not rep-capped, and the degradation ladder builds
+ * it in full before measuring the body — so the largest artifact the validators
+ * accept cost 87 MB of peak RSS to assemble a block the very next line discards
+ * for exceeding the 60,000-character cap. This bounds the assembly instead of
+ * bounding only the result.
+ *
+ * Deliberately well ABOVE MAX_BODY_CHARS in formatted size — twenty thousand
+ * values is ~240 KB of text against a 60,000-character body cap — because the
+ * degradation ladder still has to engage and drop the block. A cap tight enough
+ * to keep the block under the body cap would make the ladder's samples rung
+ * unreachable, trading a bounded reactive path for an untested one. This bounds
+ * the WORK, not the outcome: ~555× a real run's 36 values, and a tenth of the
+ * assembly cost of the largest artifact the validators accept.
+ */
+const MAX_SAMPLE_LINES_VALUES = 20000;
+
 function buildSamplesBlock(rows, unit) {
   const lines = [];
+  let valueBudget = MAX_SAMPLE_LINES_VALUES;
+  let omittedReps = 0;
   for (const row of rows.slice(0, MAX_ROWS)) {
     const rowUnit = unit || row.unit;
     // Indented, like every other line in this block. The name is the one fork-
@@ -1799,6 +1860,11 @@ function buildSamplesBlock(rows, unit) {
         continue;
       }
       data.samples.forEach((group, i) => {
+        if (valueBudget < group.length) {
+          omittedReps += 1;
+          return;
+        }
+        valueBudget -= group.length;
         const values = group.map((v) => formatValue(v)).join(", ");
         lines.push(`  ${label} rep ${String(i + 1).padStart(2)}: ${values}`);
       });
@@ -1808,6 +1874,13 @@ function buildSamplesBlock(rows, unit) {
       );
     }
     lines.push("");
+  }
+  // Announced, never silent — the same rule the row caps follow. A reader who
+  // cannot see every repetition needs to know that, and where the rest are.
+  if (omittedReps > 0) {
+    lines.push(
+      `  ${omittedReps} further repetition ${omittedReps === 1 ? "line is" : "lines are"} omitted; the full samples are in the results.json artifact on the run.`
+    );
   }
   // Safe to fence: every line here is either a validated finite number or an
   // already-sanitized name (backticks are stripped, so no fence can be closed).
@@ -2024,8 +2097,10 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       // a number that was never the problem — see buildStoppedEarlyNote.
       kind === "deadline"
         ? `> The note above has the deadline this run overran; settle what caused it before re-running.`
-        : `> Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower` +
-          ` \`--proves\`, and the re-run will rule.`,
+        : kind === "teardown"
+          ? `> A page that would not close is not a budget problem; settle what kept it alive before re-running.`
+          : `> Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower` +
+            ` \`--proves\`, and the re-run will rule.`,
     ].join("\n");
   }
   if (leader.agreement.blocked === "calibration") {
@@ -2033,11 +2108,22 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
     // calibration note directly above this already does, and repeating it here
     // buries the one thing this note adds — that a movement of this size IS the
     // measurement, and what to do with it.
+    //
+    // Calibration outranks `stoppedEarly` as a block, so a truncated
+    // calibration run lands here rather than in the branch above — and "record
+    // the figure" is the one piece of advice that must not survive that, since
+    // a truncated run's length was chosen by how slow the machine was and the
+    // floor is calibrated on complete runs. Telling the operator to record it
+    // would feed a selected sample into the number every later verdict rests on.
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} moved past the floor on a calibration run.** That is`,
       `> the measurement, not a finding: both sides are the same build, so this is what this runner's`,
-      `> noise looks like at this repetition count. Record the figure and re-run — the spread across`,
-      `> runs is what sets the floor, and a single run cannot.`,
+      `> noise looks like at this repetition count.`,
+      stoppedEarly
+        ? `> Do NOT record this figure — the run stopped early, so its length was chosen by how slow the` +
+          ` machine was, which is the thing being measured. Re-run to completion and record that instead.`
+        : `> Record the figure and re-run — the spread across runs is what sets the floor, and a single run` +
+          ` cannot.`,
     ].join("\n");
   }
   if (leader.agreement.blocked === "tooFewProves") {
