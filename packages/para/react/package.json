@@ -3,7 +3,7 @@
   "version": "0.16.0-rc.5",
   "description": "React hook that wires Para accounts into a Miden client",
   "license": "MIT",
-  "author": "Miden Labs",
+  "author": "Miden Contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",

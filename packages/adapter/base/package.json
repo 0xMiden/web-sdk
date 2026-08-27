@@ -15,7 +15,7 @@
     "url": "git+https://github.com/0xMiden/web-sdk.git",
     "directory": "packages/adapter/base"
   },
-  "author": "Demox Labs",
+  "author": "Miden Contributors",
   "license": "MIT",
   "dependencies": {
     "eventemitter3": "^5.0.1"
