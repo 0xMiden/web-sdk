@@ -1,0 +1,877 @@
+# Untrusted half of the proving-benchmark bot.
+#
+# This workflow builds and runs code the PR author controls, so it holds NO
+# credentials: `permissions: contents: read`, and on a fork PR GitHub issues a
+# read-only GITHUB_TOKEN with no secrets regardless of what we ask for. It
+# therefore cannot post the comment itself — it emits structured JSON as an
+# artifact, and `bench-comment.yml` (which never checks out PR code) renders
+# and posts it.
+#
+# !! bench-comment.yml matches this workflow by the `name:` field below, NOT by
+# !! filename. Renaming it silently disables the PR comment.
+name: Proving Benchmark
+
+on:
+  pull_request:
+    # `edited` is here for ONE reason: retargeting. The default types are
+    # `opened`, `synchronize` and `reopened`, none of which fire when a PR's base
+    # branch changes — and this repo moves PRs between `main` and `next` routinely.
+    # Without it the bench keeps whatever it measured against the old base, and
+    # the reporter then refuses that artifact as unreachable from the new one, so
+    # a retargeted PR silently lost its benchmark. The job-level `if` below drops
+    # the title and body edits that share this event, so the multi-hour run still
+    # only starts when the base actually moved.
+    # `ready_for_review` pairs with the draft filter on the job: a draft PR does
+    # not spend a multi-hour 8-core run on every push, and marking it ready
+    # triggers the run that was skipped.
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+    # A multi-hour job on an 8-core runner that builds WASM twice is not worth
+    # spending on a PR that cannot move a proving number. `paths-ignore` only
+    # skips when EVERY changed file matches, so a PR touching docs and code
+    # still runs.
+    # Deliberately a denylist and not an allowlist. An allowlist that misses a
+    # path ships an unmeasured regression, which is the failure this bot exists
+    # to prevent; a denylist that misses a path only wastes a run. So only
+    # directories that provably cannot reach the WASM proving path are listed —
+    # the published JS packages all depend on `@miden-sdk/miden-sdk`, never the
+    # other way round, so nothing in them participates in building its dist.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - "packages/react-sdk/**"
+      - "packages/vite-plugin/**"
+      - "packages/node-sdk-*/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      # The reporter and the artifact extractor. Neither can move a proving
+      # number, and — the deciding reason — a change to the renderer CANNOT be
+      # exercised by this PR's bench run anyway: `workflow_run` always executes
+      # the default branch's copy, so the PR's own renderer never runs. Their
+      # tests are a merge gate in test.yml, so nothing is lost by skipping a
+      # multi-hour build for them.
+      - ".github/scripts/**"
+      # The reporter, for the same two reasons. `bench.yml` is deliberately NOT
+      # here: it owns the build and is part of the dist-cache key.
+      - ".github/workflows/bench-comment.yml"
+  # Warms the base-dist cache so pull-request runs skip the ~27-minute base
+  # build. Both long-lived branches, not just the default one: Actions cache
+  # reads reach a run's own ref, its PR base branch, and the default branch —
+  # so a cache written on `main` is invisible to a `next`-targeted PR whose
+  # base sha only ever exists on `next`.
+  push:
+    branches: [main, next]
+  # Calibration: bench the merge-base against ITSELF. The true delta is zero,
+  # so whatever the run reports is this runner's measurement noise. Run it a
+  # dozen times and set `THRESHOLD_PCT` in .github/scripts/render-bench-comment.mjs
+  # to 3 sigma of the reported deltas — see docs/benchmarks/calibration.md.
+  workflow_dispatch:
+    inputs:
+      calibrate:
+        description: "Bench a build against itself to measure the noise floor"
+        type: boolean
+        default: true
+      reps:
+        # MUST match the PR default below. A floor measured at one rep count
+        # does not transfer to another: the spread of a mean of per-rep minima
+        # scales with 1/sqrt(reps), so calibrating at 8 and applying it to 5
+        # would leave the threshold ~26% too tight.
+        description: "Interleaved repetitions — must be EVEN (keep in sync with the PR default)"
+        type: string
+        default: "6"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed on the PR NUMBER, not on the head branch. One fork branch can back two
+  # open PRs with different bases, and keying on the branch made them cancel each
+  # other's benchmark — so whichever PR was pushed to second was the only one
+  # that ever got a result.
+  #
+  # On workflow_dispatch there is no PR and no head_ref, so every dispatch from
+  # one branch would collapse onto the same key — and with cancel-in-progress
+  # each calibration dispatch would kill the previous one, which is exactly what
+  # the calibration procedure must not do. Keyed on the run id for those.
+  #
+  # The trailing clause keys every run that the job below will SKIP into a group
+  # of its own. Concurrency is resolved before the job `if` is evaluated, so a
+  # run that is about to skip still cancels the group it lands in: editing a PR
+  # title killed a bench that was hours into a three-hour run and then skipped
+  # itself, leaving the PR with no measurement and no replacement run coming.
+  # Pushing to a PR that had been converted to draft did the same.
+  #
+  # The predicate is the negation of the job `if` and has to stay in step with
+  # it. It ends in `|| ''` because an Actions ternary written `cond && 'x' || 'y'`
+  # collapses to 'y' whenever 'x' is falsy — an empty string included — so the
+  # suffix, not the empty case, has to be the truthy branch.
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}${{ (github.event_name == 'push' || github.event.pull_request.draft || (github.event.action == 'edited' && github.event.changes.base == null)) && format(' · skipped {0}', github.run_id) || '' }}"
+  cancel-in-progress: true
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+  RUST_CACHE_KEY: rust-cache-2026.02.18
+  # sccache's server exits after 600s idle by default. wasm-opt runs for
+  # minutes with no rustc traffic, so the server was dying mid-job and
+  # `--show-stats` silently auto-started a fresh one — reporting
+  # "Compile requests 0" for a job that had just compiled 669 crates. The
+  # counters were the only thing broken, but they are the only evidence
+  # anyone has, and a false zero sends the next reader chasing a cache bug.
+  SCCACHE_IDLE_TIMEOUT: "0"
+  # Pinned, never navigator.hardwareConcurrency: the thread count is the single
+  # biggest lever on an MT proving number, and a runner that silently hands out
+  # a different core count would look like a code regression.
+  BENCH_THREADS: "8"
+  # Interleaved base/head repetitions, and proves per repetition. The first
+  # prove of each page is discarded as cold, so BENCH_PROVES=4 yields 3 warm
+  # samples per side per rep. Keep the count of retained proves per run —
+  # reps × (proves-1) — EVEN, or the ABBA order flip cannot split them evenly
+  # between the two sides and one side pays the second-position penalty once
+  # more than the other. The producer refuses an odd `reps` outright, and the
+  # step below checks it before the builds so a bad dispatch fails in seconds.
+  BENCH_REPS: ${{ inputs.reps || '6' }}
+  BENCH_PROVES: "4"
+
+jobs:
+  bench:
+    name: Prove (MT, ECDSA-k256-keccak)
+    runs-on: warp-ubuntu-latest-x64-8x
+    # The `edited` event above fires on title and body edits too, and neither can
+    # change a proving number. Only a base change is worth a multi-hour run.
+    # A draft is excluded because it is the state where pushes are most frequent
+    # and a proving number is least useful. `!draft` is safe on workflow_dispatch
+    # too, where `pull_request` is absent and the expression reads as null.
+    #
+    # The noise floor in render-bench-comment.mjs was measured on a laptop, not on
+    # this runner class, so until it is remeasured the renderer reports movements
+    # as observations and withholds every ruling — see THRESHOLD_PROVISIONAL
+    # there. Calibrating on this runner (workflow_dispatch, calibrate: true) is
+    # therefore the first thing to do after this lands.
+    #
+    # Measure the floor with `workflow_dispatch` (`calibrate: true`) and the
+    # procedure in docs/benchmarks/calibration.md, then set THRESHOLD_PCT from
+    # this runner and flip THRESHOLD_PROVISIONAL to false.
+    #
+    # Runs on every non-draft pull request. That is a deliberate product call:
+    # the bench runs in parallel with Test and Lint, so it never extends the
+    # critical path, and a benchmark nobody has to remember to opt into is the
+    # only kind that catches the regression nobody expected.
+    #
+    # It is not free — a cold-base push is roughly three core-hours on the 8x
+    # runner — so if that cost stops being worth paying, gate it here rather
+    # than anywhere else. The `edited` clause is the cheap half of that: a
+    # title or description edit re-fires `pull_request` and would otherwise
+    # rebuild both sides for a change that cannot move a proof.
+    if: >-
+      github.event_name != 'push' &&
+      !github.event.pull_request.draft &&
+      (github.event.action != 'edited' ||
+       github.event.changes.base != null)
+    # Budget accounting. EVERY step that can take real time must be capped and
+    # listed here, and the column must sum to less than the job cap — including the
+    # steps between the base build and the head build, which are easy to omit and
+    # cost fifteen minutes between them.
+    #
+    #   preamble    25  checkout at fetch-depth 0, rustup + two wasm targets,
+    #                   apt binaryen, rust-cache restore, pnpm install,
+    #                   make test-bench-scripts, dist-cache restore
+    #   base        30  capped
+    #   reclaim      5  capped — rm -rf of a worktree holding tens of GB
+    #   cache save   5  capped — ~100 MB upload
+    #   inject       5  capped — cargo update behind a network git fetch
+    #   head        30  capped
+    #   chromium    10  capped
+    #   bench        45  capped — see the bench sizing below
+    #   postamble    5  artifact upload, summary render
+    #                   ── 160, inside 180 with 20 to spare
+    #
+    # The caps are worst cases, not typical ones: a warm base-dist cache skips the
+    # base build, the reclaim and the save entirely, which is the common path. But
+    # the worst case has to FIT WITH SLACK, because the failure mode when it does
+    # not is the expensive one — the job is killed inside `Run benchmark`, the
+    # driver writes results.json only after its own teardown, and 100+ minutes of
+    # compute produce an artifact with no measurements while the reporter posts
+    # "no usable report". Slack rather than an exact fit, because the preamble
+    # figure is an estimate and the runner's own startup is not in it.
+    #
+    # SIZING THE BENCH STEP. The dominant cost is setup, which is untimed by the
+    # estimator and paid for BOTH sides inside every repetition — so a default
+    # `--reps 6` run pays 2 × (6 + 1) = 14 setups, not 7. Halving that count is the
+    # mistake to avoid: at 14 setups of ~90s the setup cost alone is 21 minutes, so
+    # a step sized for 7 truncates the run to 4 retained repetitions, below the 6
+    # the renderer needs to rule — and every report comes back "unresolved".
+    #
+    #   14 setups × 90s ≈ 21.0 min      <- estimate, NOT a measurement
+    #   56 proves × 2s ≈ 1.9 min
+    #   14 settle barriers × 1s ≈ 0.2 min
+    #   launch/teardown ≈ 0.3 min
+    #                   ── ~23.4 min, and 45 leaves room for setups to run well
+    #                      past the estimate before a verdict becomes unreachable
+    #                      — docs/benchmarks/budget-reachability.mjs has the curve
+    #
+    # The 90s is an estimate and the only honest thing to say about it is that
+    # nobody has measured it on this runner class. The producer now prints a
+    # `[budget]` line with the real mean, slowest and total setup cost on every
+    # run, and writes the same figures into results.json. Read it after the first
+    # CI run and resize both numbers here from it. Until then this budget is a
+    # guess with deliberate slack, not a fit.
+    timeout-minutes: 180
+    env:
+      # See test.yml's build-web-client-dist-folder for the full rationale:
+      # sccache-action sets SCCACHE_PATH but not RUSTC_WRAPPER, and we only
+      # export the wrapper after probing that the GHA cache backend is healthy.
+      SCCACHE_GHA_ENABLED: "true"
+      # The `Run benchmark` step's cap, and the budget the producer clamps its own
+      # in-page deadlines against. One number so the two cannot drift; see the
+      # step for why drift here is silent and regressive.
+      BENCH_STEP_BUDGET_MINUTES: "45"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so `HEAD^1` below resolves, and so the base commit is
+          # present for the base-side worktree.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # On `pull_request`, checkout lands on refs/pull/N/merge (detached). Its
+      # FIRST PARENT is exactly the base-branch commit the merge was computed
+      # against — more precise than event.pull_request.base.sha, which can name
+      # a commit the merge was never actually tested against.
+      # Before the two 30-minute dist builds, deliberately. The producer refuses an
+      # odd `--reps` at parse time, but that check lives in the `Run benchmark`
+      # step — so dispatching `--reps 7` used to burn about an hour of runner time
+      # to earn a two-second usage error. Same rule, stated once here so the
+      # dispatch fails immediately.
+      - name: Validate the repetition count
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$BENCH_REPS" =~ ^[0-9]+$ ]] || [ "$BENCH_REPS" -lt 2 ]; then
+            echo "::error title=Proving Benchmark::reps must be a positive integer, got '$BENCH_REPS'."
+            exit 1
+          fi
+          if [ $((BENCH_REPS % 2)) -ne 0 ]; then
+            echo "::error title=Proving Benchmark::reps must be even, got $BENCH_REPS. The setup order alternates by repetition, so an odd count sets up base first once more often than head and biases every repetition. Use $((BENCH_REPS - 1)) or $((BENCH_REPS + 1))."
+            exit 1
+          fi
+
+      - name: Resolve base and head SHAs
+        id: shas
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_sha=$(git rev-parse HEAD^1)
+          else
+            # Calibration compares a build against itself, so "base" is just
+            # HEAD; HEAD^1 would silently bench two different commits.
+            base_sha=$(git rev-parse HEAD)
+          fi
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "Base: $base_sha"
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
+
+      - name: Install Rust (needed for WASM build)
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          # The MT variant keeps the project-pinned nightly from
+          # rust-toolchain.toml; stable wasm32 std is installed anyway so a
+          # base commit that still built ST from stable resolves.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
+
+      # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
+      # mozilla-actions/sccache-action used by default. The new GHA cache
+      # service requires ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN, which are
+      # set in the runner's process env but NOT exported to subsequent steps
+      # unless we forward them. See https://github.com/mozilla/sccache/blob/main/docs/GHA.md
+      - name: Configure sccache cache backend (v2)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+        id: sccache-install
+
+      - name: Probe sccache and enable wrapper if healthy
+        if: steps.sccache-install.outcome == 'success' && env.SCCACHE_PATH != ''
+        shell: bash
+        run: |
+          probe_out=$("$SCCACHE_PATH" --start-server 2>&1) && rc=0 || rc=$?
+          echo "$probe_out"
+          if [ "$rc" -eq 0 ]; then
+            echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
+            echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
+          else
+            echo "sccache --start-server failed (rc=$rc); running without wrapper"
+          fi
+
+      # The full `release` profile runs wasm-opt; release-fast skips it.
+      # The single biggest cost in this job, and it was hiding.
+      #
+      # The rollup plugin spawns bare `wasm-opt`, and pnpm puts
+      # crates/web-client/node_modules/.bin at the FRONT of PATH — so the build
+      # was getting the `binaryen` npm package's shim, which is an Emscripten
+      # single-file node build with no thread support, not the apt binary this
+      # step used to install. Measured on the real 20.4 MB module at the
+      # production flag set: native 34s at 406% CPU, npm shim 6m58s at 100% —
+      # 12.3x slower, byte-identical output. In CI that was 17m09 of a 22m22
+      # build.
+      #
+      # `install-binaryen.sh` exports WASM_OPT_BIN, which the plugin prefers
+      # over PATH lookup, so the shim can no longer win. It is used by
+      # publish-web-sdk.yml too: if these two ever disagree, this benchmark
+      # stops measuring the bytes users ship.
+      - name: Install binaryen (wasm-opt)
+        run: ./scripts/install-binaryen.sh
+
+      - name: Add Rust Cache
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
+        with:
+          shared-key: rust-wasm-release
+          prefix-key: ${{ env.RUST_CACHE_KEY }}
+          # Read-only from PRs: this job must never poison the cache that
+          # verify-release-build shares. Saving happens on push to main/next.
+          save-if: "false"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      # Cheap and fails fast: a broken renderer would otherwise only surface
+      # after ~20 minutes of building, and then only as a missing comment.
+      #
+      # Through the Makefile rather than repeating its two commands here, so the
+      # target a contributor runs locally and the one CI runs cannot drift apart.
+      - name: Test the comment renderer and the artifact extraction
+        run: make test-bench-scripts
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      # The base dist is deterministic bytes, so restoring it from another
+      # machine costs nothing in measurement noise — both sides are still
+      # benched interleaved on THIS machine. Caching the artifact is not
+      # caching the measurement.
+      #
+      # Scope, so nobody expects more than this delivers: a cache written by a
+      # `pull_request` run is scoped to that PR's merge ref, and the only other
+      # event here (`workflow_dispatch`) skips the base build entirely, so
+      # nothing ever writes a cache another PR can read. The hit rate this buys
+      # is WITHIN one PR — the common case of pushing repeatedly to a PR whose
+      # merge-base has not moved. The first run
+      # of every PR builds both sides. Sharing across PRs would mean building the
+      # base dist on pushes to the default branch, which is a cost decision, not
+      # an oversight.
+      #
+      # One hole in that hit rate, worth knowing rather than discovering: the save
+      # step runs after the base build, and this job is `cancel-in-progress`. A
+      # push arriving while the base build is still running cancels the run before
+      # it saves, so a rapid burst of pushes can rebuild the base every time and
+      # never populate the cache. It self-corrects as soon as one run gets far
+      # enough to save, and the alternative — a separate job owning the base dist
+      # — costs more than the degenerate case does.
+      #
+      # Keyed on more than the commit. The dist is a function of the base source
+      # AND of how this workflow builds it: the runner class, the toolchain that
+      # `rustup update` happened to resolve, and the build commands in this file.
+      # Keyed on base_sha alone, a cache entry saved before a build-flag change
+      # is restored after it, and the comparison silently benches head against a
+      # stale base. `hashFiles` on this workflow covers the runner label and the
+      # commands; RUST_CACHE_KEY is the manual salt for a toolchain bump.
+      - name: Build the base dist cache key
+        id: dist-key
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.shas.outputs.base_sha }}
+          WORKFLOW_HASH: ${{ hashFiles('.github/workflows/bench.yml') }}
+          SALT: ${{ env.RUST_CACHE_KEY }}
+        run: |
+          set -euo pipefail
+          # `tr -d` first: `tr -c` would turn the trailing newline into another
+          # separator, leaving a stray `-` in the middle of the key.
+          rustc_version=$(rustc --version | tr -d '\n' | tr -c '[:alnum:].' '-')
+          # wasm-opt runs over the dist and its version changes the bytes, but it
+          # is installed separately from the pinned Rust toolchain, so
+          # `rustc --version` does not move when it does. Without this a base
+          # dist built by an older wasm-opt is benched against a head dist built
+          # by a newer one, and the difference is attributed to the PR.
+          #
+          # Read $WASM_OPT_BIN, not bare `wasm-opt`. They were different
+          # binaries: the build resolves through pnpm's node_modules/.bin (the
+          # binaryen npm shim) while a plain shell here hits PATH. Keying off
+          # the wrong one meant bumping the npm binaryen dep did NOT invalidate
+          # the key, so a base optimized by one binaryen was benched against a
+          # head optimized by another. `:?` rather than a fallback: a missing
+          # WASM_OPT_BIN means the install step did not run, and a key built
+          # from a guess is worse than a failed job.
+          wasm_opt_version=$("${WASM_OPT_BIN:?WASM_OPT_BIN unset — did install-binaryen.sh run?}" --version | tr -d '\n' | tr -c '[:alnum:].' '-')
+          echo "key=${RUNNER_OS}-bench-dist-mt-release-${SALT}-${rustc_version}-${wasm_opt_version}-${WORKFLOW_HASH:0:16}-${BASE_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cache - base MT dist
+        id: base-dist-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/dist-base
+          key: ${{ steps.dist-key.outputs.key }}
+
+      # Built in a detached worktree so the head checkout stays pristine — in
+      # particular so `inject-linked-client-pr` (which mutates Cargo.toml and
+      # Cargo.lock) only ever touches the head side.
+      - name: Build base MT dist (full release profile)
+        id: base-build
+        if: github.event_name == 'pull_request' && steps.base-dist-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        # Bounded so an overrun degrades to a head-only run instead of consuming
+        # the job. `continue-on-error` only covers a base build that FAILS; one
+        # that merely runs long would take the head build and the benchmark down
+        # with it and produce no report at all. This build gets its own cold
+        # target dir inside the worktree, which the rust-cache restore does not
+        # reach, so a slow cold `-Z build-std` release build is the normal case
+        # rather than the exceptional one.
+        #
+        # The caps have to COMPOSE inside the job budget — see the accounting at
+        # `timeout-minutes` on the job. Giving this half the budget would mean a
+        # base build that used its whole window had already made the head build —
+        # identical work, and the one with no fallback — unable to finish.
+        timeout-minutes: 30
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.shas.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base-src" "$BASE_SHA"
+          cd "$RUNNER_TEMP/base-src"
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @miden-sdk/miden-sdk run build-rust-client-js
+          # build-types and post-build.js only produce/rewrite .d.ts files, so
+          # they are not needed for a dist we only load at runtime. Skipping
+          # build-st halves the work: the bench is MT-only.
+          pnpm --filter @miden-sdk/miden-sdk run build-mt
+          # `mv src dst` puts src INSIDE dst when dst is an existing directory,
+          # so a partial tree left behind by a failed cache restore would swallow
+          # the fresh dist as dist-base/mt/… while its own stale eager.js kept
+          # satisfying the gate further down. The base page then 404s on a
+          # missing chunk and the whole run is lost — the exact total loss that
+          # the gate was changed to a file test to avoid. Clear it first.
+          rm -rf "$RUNNER_TEMP/dist-base"
+          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-base"
+
+      # A second full checkout with its own node_modules and release `target/` is
+      # tens of GB, and the head build, the Chromium download and the benchmark
+      # all still have to fit. Reclaimed unconditionally: the base build is
+      # continue-on-error, and the failure path is the one that most needs the
+      # space back, since it falls through to a head-only run.
+      - name: Reclaim the base worktree
+        timeout-minutes: 5
+        if: always() && steps.base-dist-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ -d "$RUNNER_TEMP/base-src" ]; then
+            git worktree remove --force "$RUNNER_TEMP/base-src" || rm -rf "$RUNNER_TEMP/base-src"
+            git worktree prune
+          fi
+          df -h /
+
+      - name: Save cache - base MT dist
+        if: steps.base-dist-cache.outputs.cache-hit != 'true' && steps.base-build.outcome == 'success'
+        timeout-minutes: 5
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/dist-base
+          key: ${{ steps.dist-key.outputs.key }}
+
+      # Runs on the head checkout only, and never posts: build.yml's build-wasm
+      # job owns the single sticky comment for the linked-client patch.
+      - name: Inject linked miden-client PR
+        timeout-minutes: 5
+        uses: ./.github/actions/inject-linked-client-pr
+
+      # No fallback exists for this one — a missing head dist means no benchmark
+      # at all — so the cap is here to make the failure legible and leave the
+      # summary step time to run, not to degrade to something lesser.
+      - name: Build head MT dist (full release profile)
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @miden-sdk/miden-sdk run build-rust-client-js
+          pnpm --filter @miden-sdk/miden-sdk run build-mt
+          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-head"
+
+      # Capped because it sits between the head build and the benchmark, so a
+      # slow or hanging browser download ate the benchmark's window directly and
+      # the job died with nothing measured.
+      - name: Install Chromium for Playwright
+        timeout-minutes: 10
+        run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+
+      # The bench script ALWAYS comes from HEAD and is pointed at two dist
+      # dirs. Checking out the base copy of the script would mean the PR that
+      # introduces the bench has no base script at all, and thereafter a script
+      # edit would silently compare two different measurement definitions.
+      # The producer bounds each in-page call itself, so this is the backstop for
+      # a hang OUTSIDE those deadlines — a wedged browser launch, a static server
+      # that never binds. Sized to leave the summary and upload steps room, and
+      # kept in sync with BENCH_BUDGET_MINUTES below, which the producer uses to
+      # clamp its own deadlines so the in-page diagnostic wins the race.
+      - name: Run benchmark
+        # Both the runner's cap and the producer's clamp come from one number.
+        # They were two literals nine lines apart with nothing checking them, and
+        # drift in one direction is silent AND regressive: lowering the cap
+        # without the env makes the producer's deadlines exceed the runner's kill
+        # again, restoring the "killed with no diagnostic" this clamp exists to
+        # prevent, while nothing fails and a reviewer sees only a cap change.
+        timeout-minutes: ${{ fromJSON(env.BENCH_STEP_BUDGET_MINUTES) }}
+        shell: bash
+        env:
+          # The producer clamps each of its in-page deadlines to what is left of
+          # this, so a hang late in the run still prints a diagnostic naming what
+          # wedged. Its own deadlines (10 min setup, 5 min prove) would otherwise
+          # fire past the cap for anything that wedges after minute ten.
+          BENCH_BUDGET_MINUTES: ${{ env.BENCH_STEP_BUDGET_MINUTES }}
+          # Recorded in results.json so the comment can name where the numbers
+          # came from — a threshold calibrated on one runner class is
+          # meaningless on another. Keep in sync with `runs-on` above.
+          BENCH_RUNNER: warp-ubuntu-latest-x64-8x
+          CALIBRATE: ${{ github.event_name == 'workflow_dispatch' && inputs.calibrate || false }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/report"
+          extra=()
+          if [ "$CALIBRATE" = "true" ]; then
+            # Two copies of ONE build. Copy rather than reuse the same path so
+            # the run exercises the real two-server code path.
+            cp -R "$RUNNER_TEMP/dist-head" "$RUNNER_TEMP/dist-calib"
+            extra=(--base "$RUNNER_TEMP/dist-calib" --calibrate)
+          # -f on the entry point, not -d on the directory: the producer stats
+          # `<dir>/eager.js` and treats its absence as a USAGE error, exiting 2
+          # with no results at all. An interrupted `mv` therefore turned a
+          # graceful head-only degradation into total loss. Probe the same file
+          # the script probes.
+          # Both the entry point AND the wasm payload, because a truncated
+          # cache restore can leave one without the other and `eager.js` alone
+          # only proves the tree is non-empty, never that it is complete. A base
+          # page that loads and then 404s on the wasm loses the whole run;
+          # missing the check here degrades it to head-only instead.
+          elif [ -f "$RUNNER_TEMP/dist-base/eager.js" ] &&
+               [ -f "$RUNNER_TEMP/dist-base/assets/miden_client_web.wasm" ] &&
+               [ -f "$RUNNER_TEMP/dist-base/workers/assets/miden_client_web.wasm" ]; then
+            extra=(--base "$RUNNER_TEMP/dist-base")
+          elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # A head-only run on a PR makes NO comparison, which is the one
+            # outcome a reader might mistake for "no regression". Says so as a
+            # warning annotation so it is visible on the run, not only in the log.
+            echo "::warning title=Proving Benchmark::The base dist could not be built, so this run measures head only and makes no comparison. A proving regression would not be visible in it."
+          else
+            # On workflow_dispatch the base build is gated off and never ran, so
+            # nothing failed here.
+            echo "Base dist not built for this event; reporting head-only."
+          fi
+          node crates/web-client/scripts/bench-proving.mjs \
+            "${extra[@]}" \
+            --head "$RUNNER_TEMP/dist-head" \
+            --threads "$BENCH_THREADS" \
+            --reps "$BENCH_REPS" \
+            --proves "$BENCH_PROVES" \
+            --budget-minutes "$BENCH_BUDGET_MINUTES" \
+            --out "$RUNNER_TEMP/report/results.json"
+
+      # The PR identity this run believes it belongs to. The reporter re-derives
+      # all of it from workflow_run fields and the pulls API, and refuses on
+      # mismatch — this file is a hint, never an authority.
+      - name: Record PR context
+        if: always()
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ steps.shas.outputs.base_sha }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          CALIBRATE: ${{ github.event_name == 'workflow_dispatch' && inputs.calibrate || false }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/report"
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            head_sha="$PR_HEAD_SHA"
+            base_ref="$PR_BASE_REF"
+            jq -n \
+              --argjson number "$PR_NUMBER" \
+              --arg head_sha "$head_sha" \
+              --arg base_sha "$BASE_SHA" \
+              --arg base_ref "$base_ref" \
+              '{number: $number, headSha: $head_sha, baseSha: $base_sha, baseRef: $base_ref}' \
+              > "$RUNNER_TEMP/report/pr.json"
+          else
+            # A workflow_dispatch calibration run has no PR. Deliberately no
+            # pr.json: with nothing to verify, the reporter declines to comment,
+            # which is what a calibration run should do.
+            head_sha="$GITHUB_SHA"
+            base_ref="${GITHUB_REF_NAME:-calibration}"
+          fi
+
+          # Rendering context for the job summary below. The reporter rebuilds
+          # its own from trusted values rather than reading this one.
+          #
+          # No prNumber: nothing in the renderer reads it, and a calibration run
+          # has no number to put here. `calibration` is here rather than in
+          # results.json because it is a fact about the triggering event, and the
+          # renderer must not take it from a file the PR author can write.
+          jq -n \
+            --arg owner "$OWNER" \
+            --arg repo "$REPO_NAME" \
+            --arg headSha "$head_sha" \
+            --arg baseSha "$BASE_SHA" \
+            --arg baseRef "$base_ref" \
+            --arg runId "$RUN_ID" \
+            --arg runUrl "$RUN_URL" \
+            --argjson calibration "${CALIBRATE:-false}" \
+            '{owner: $owner, repo: $repo, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl, calibration: $calibration}' \
+            > "$RUNNER_TEMP/report/ctx.json"
+
+      # Free, permissionless, and works on forks even if the reporter breaks.
+      # This is the fallback surface, so write it unconditionally.
+      #
+      # The markdown here is rendered from PR-controlled data by the PR's own
+      # copy of the renderer, and a fork's `pull_request` run is recorded in THIS
+      # repo's Actions log, not the fork's — so a maintainer reading it sees
+      # attacker-authored text presented as this job's official summary. It is
+      # not an escalation (the job holds no token and the file is not scanned for
+      # workflow commands), but do not mistake it for trusted output. The PR
+      # comment, which is rendered on the privileged side, is the surface that
+      # gets the hardened renderer.
+      # BEFORE the job summary, deliberately. The summary step runs this PR's own
+      # copy of the renderer over this PR's own results.json — fork-authored code
+      # on fork-authored data — and a job timeout does not run the remaining
+      # steps, `always()` included. With the upload downstream of that, a hang or
+      # a slow render at minute 149 threw away a benchmark that had already
+      # succeeded, and the reporter posted "no usable report" for a run whose
+      # numbers existed the whole time. The artifact is the only thing here that
+      # another workflow depends on, so it goes first.
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proving-bench-report
+          path: ${{ runner.temp }}/report/
+          retention-days: 5
+          if-no-files-found: warn
+          # v4 artifacts are immutable and scoped to the RUN, not the attempt.
+          # Without this, "Re-run failed jobs" keeps attempt 1's artifact, the
+          # re-upload 409s at the end of another full build, and the
+          # reporter — which lists artifacts per run, not per attempt — publishes
+          # attempt 1's numbers under a link to attempt 2.
+          overwrite: true
+
+      - name: Job summary
+        if: always()
+        # Capped because this renders fork-authored data with fork-authored code,
+        # and the step is pure convenience — the artifact is already uploaded and
+        # the PR comment comes from the trusted workflow. Two minutes is far more
+        # than a render of a 60 kB report needs.
+        timeout-minutes: 2
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Rendered to a file first, then appended. Redirecting the renderer
+          # straight at $GITHUB_STEP_SUMMARY appends whatever it managed to write
+          # before failing, and a half-written <details> swallows the rest of the
+          # summary. A refusal here also must not fail the job: reaching this step
+          # means the builds and the benchmark already succeeded, and losing that
+          # to a rendering problem would cost another ~20 minutes to retry.
+          rendered=""
+          if [ -f "$RUNNER_TEMP/report/results.json" ]; then
+            # --summary: a step summary allows ~1 MiB, so it does not need the
+            # comment's 60 kB degradation ladder.
+            if node .github/scripts/render-bench-comment.mjs --summary \
+              "$RUNNER_TEMP/report/results.json" \
+              "$RUNNER_TEMP/report/ctx.json" \
+              > "$RUNNER_TEMP/summary.md"; then
+              rendered=yes
+            else
+              echo "::warning title=Proving Benchmark::Could not render the job summary; results.json is still attached to the run."
+            fi
+          fi
+          if [ -n "$rendered" ]; then
+            cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Proving Benchmark produced no readable results"
+              echo ""
+              echo "See the [run log]($RUN_URL)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  # ---------------------------------------------------------------------------
+  # Base-dist warmer.
+  #
+  # A pull-request bench builds the BASE revision's dist so it has something to
+  # compare against — ~27 minutes. That build is deterministic and depends only
+  # on the base commit, so it does not have to happen inside the PR run at all:
+  # this job builds it when the commit lands and stores it under exactly the key
+  # the PR run will look for.
+  #
+  # It runs on `main` AND `next` because Actions cache reads reach only a run's
+  # own ref, its PR base branch, and the default branch. `main` being default
+  # does not help a `next`-targeted PR: the key ends in the base sha, and a
+  # `next` base sha exists only on `next`.
+  #
+  # Deliberately no `paths-ignore`: a docs-only merge still mints a base sha
+  # that some PR will be compared against, and an un-warmed sha costs the full
+  # base build. The restore below makes that case cheap rather than skipping it.
+  warm-base-dist:
+    name: Warm base dist cache
+    if: github.event_name == 'push'
+    runs-on: warp-ubuntu-latest-x64-8x
+    timeout-minutes: 60
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Cleanup large tools for build space
+        uses: ./.github/actions/cleanup-runner
+
+      - name: Install Rust (needed for WASM build)
+        run: |
+          rustup update --no-self-update
+          rustup target add wasm32-unknown-unknown
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
+
+      - name: Configure sccache cache backend (v2)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        continue-on-error: true
+        id: sccache-install
+
+      - name: Probe sccache and enable wrapper if healthy
+        if: steps.sccache-install.outcome == 'success' && env.SCCACHE_PATH != ''
+        shell: bash
+        run: |
+          probe_out=$("$SCCACHE_PATH" --start-server 2>&1) && rc=0 || rc=$?
+          echo "$probe_out"
+          if [ "$rc" -eq 0 ]; then
+            echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
+            echo "sccache enabled as RUSTC_WRAPPER ($SCCACHE_PATH)"
+          else
+            echo "sccache --start-server failed (rc=$rc); running without wrapper"
+          fi
+
+      # Must precede the key step, which reads $WASM_OPT_BIN.
+      - name: Install binaryen (wasm-opt)
+        run: ./scripts/install-binaryen.sh
+
+      - name: Add Rust Cache
+        uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
+        with:
+          shared-key: rust-wasm-release
+          prefix-key: ${{ env.RUST_CACHE_KEY }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      # Byte-for-byte the same computation as the pull-request job's key step.
+      # If these two ever diverge the warmer writes an entry nothing reads, and
+      # the only symptom is that PRs stay slow — so keep them edited together.
+      - name: Build the base dist cache key
+        id: dist-key
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.sha }}
+          WORKFLOW_HASH: ${{ hashFiles('.github/workflows/bench.yml') }}
+          SALT: ${{ env.RUST_CACHE_KEY }}
+        run: |
+          set -euo pipefail
+          rustc_version=$(rustc --version | tr -d '\n' | tr -c '[:alnum:].' '-')
+          wasm_opt_version=$("${WASM_OPT_BIN:?WASM_OPT_BIN unset — did install-binaryen.sh run?}" --version | tr -d '\n' | tr -c '[:alnum:].' '-')
+          echo "key=${RUNNER_OS}-bench-dist-mt-release-${SALT}-${rustc_version}-${wasm_opt_version}-${WORKFLOW_HASH:0:16}-${BASE_SHA}" >> "$GITHUB_OUTPUT"
+
+      # Restoring our own key does two jobs: it skips a redundant rebuild when a
+      # PR run already warmed this sha, and it refreshes last_accessed_at, which
+      # defeats the 7-day idle eviction on a branch that can go a week between
+      # merges.
+      - name: Restore cache - base MT dist
+        id: base-dist-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/dist-base
+          key: ${{ steps.dist-key.outputs.key }}
+
+      # The same two commands the PR job runs, not `pnpm run build`: that also
+      # runs build-types and post-build.js, which emit .d.ts files the PR-side
+      # fallback never produces. A warmed dist that differs in shape from a
+      # locally-built one is a difference the benchmark would attribute to code.
+      - name: Build base MT dist (full release profile)
+        if: steps.base-dist-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @miden-sdk/miden-sdk run build-rust-client-js
+          pnpm --filter @miden-sdk/miden-sdk run build-mt
+          rm -rf "$RUNNER_TEMP/dist-base"
+          mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-base"
+
+      # The literal `${{ runner.temp }}/dist-base`, spelled exactly as the PR
+      # job spells it. @actions/cache hashes the raw path string into the
+      # entry's version, so any other spelling of the same directory is a
+      # permanent, silent miss.
+      - name: Save cache - base MT dist
+        if: steps.base-dist-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/dist-base
+          key: ${{ steps.dist-key.outputs.key }}
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true

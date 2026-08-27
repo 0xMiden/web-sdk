@@ -1,0 +1,71 @@
+{
+  "comment": "Publish manifest for the packages adopted from the wallet-adapter, para and turnkey repos. `level` is the topological publish order derived from first-party sibling dependencies: everything at level N is published before level N+1, so a dependent never lands before the package it pins. Regenerate with scripts/build-publish-manifest.mjs.",
+  "packages": [
+    {
+      "name": "@miden-sdk/create-para-react",
+      "path": "packages/para/create",
+      "level": 0,
+      "build": false
+    },
+    {
+      "name": "@miden-sdk/create-turnkey-react",
+      "path": "packages/turnkey/create",
+      "level": 0,
+      "build": false
+    },
+    {
+      "name": "@miden-sdk/miden-wallet-adapter-base",
+      "path": "packages/adapter/base",
+      "level": 0,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/para",
+      "path": "packages/para/core",
+      "level": 0,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/turnkey",
+      "path": "packages/turnkey/core",
+      "level": 0,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/miden-wallet-adapter-miden",
+      "path": "packages/adapter/miden",
+      "level": 1,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/para-react",
+      "path": "packages/para/react",
+      "level": 1,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/turnkey-react",
+      "path": "packages/turnkey/react",
+      "level": 1,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/miden-wallet-adapter-react",
+      "path": "packages/adapter/react",
+      "level": 2,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/miden-wallet-adapter-reactui",
+      "path": "packages/adapter/reactui",
+      "level": 3,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/miden-wallet-adapter",
+      "path": "packages/adapter/all",
+      "level": 4,
+      "build": true
+    }
+  ]
+}

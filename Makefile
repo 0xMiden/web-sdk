@@ -84,6 +84,22 @@ test-vite-plugin: ## Run vite-plugin unit tests with coverage
 test-web-client-unit: ## Run web-client unit tests with coverage
 	pnpm --filter @miden-sdk/miden-sdk run test:coverage
 
+# --------------------------------------------------------------------------
+# test: the command CONTRIBUTING.md has always pointed at. Pure TypeScript —
+# the root vitest projects either mock the WASM client (react-sdk) or exercise
+# only plain JS (`crates/web-client/js/__tests__`), so this needs no Rust
+# toolchain and no built `dist/`. Use `make test-coverage` for the gates CI
+# enforces, and `make hydrate-web-client` first if you need `typecheck`/`build`,
+# which do read a built dist.
+# --------------------------------------------------------------------------
+.PHONY: test
+test: ## Run the TypeScript unit suites (no Rust toolchain required)
+	pnpm test
+
+.PHONY: hydrate-web-client
+hydrate-web-client: ## Populate crates/web-client/dist from the published npm tarball (no Rust build)
+	node scripts/hydrate-web-client.mjs
+
 .PHONY: test-coverage
 test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-unit ## Run all coverage gates
 
@@ -115,6 +131,76 @@ integration-test-web-client-webkit: ## Run web client tests (webkit)
 integration-test-remote-prover-web-client: ## Run integration tests for the web client with remote prover
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover --project=chromium
+
+# --- Benchmarking --------------------------------------------------------------------------------
+
+.PHONY: bench-proving
+BENCH_ARGS ?=
+bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt dirs
+	# Not part of any CI gate that can block a merge: the `bench.yml` workflow
+	# runs this on every non-draft PR and reports the result as an informational
+	# comment. The noise floor is still provisional — see
+	# docs/benchmarks/calibration.md.
+	#
+	# Compares two builds on one machine, interleaved. Point --base and --head
+	# at saved copies of `crates/web-client/dist/mt` built from the two revisions
+	# you want to compare (build with the FULL release profile — MIDEN_FAST_BUILD
+	# drops LTO and wasm-opt, so its numbers describe a binary nobody ships).
+	#
+	# Relative paths resolve against crates/web-client, which is where
+	# `pnpm --filter ... exec` runs:
+	#
+	#   make bench-proving BENCH_ARGS="--base /tmp/dist-base --head dist/mt"
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs $(BENCH_ARGS)
+
+.PHONY: lint-bench-workflows
+lint-bench-workflows: ## actionlint the two benchmark workflows
+	# Scoped to these two files, not the whole directory, because the other six
+	# workflows carry 17 pre-existing actionlint findings and clearing those is a
+	# separate change. These two are clean and worth keeping that way: the
+	# benchmark bot's correctness lives largely in workflow expressions, where a
+	# typo in an `if:` silently disables a job rather than failing loudly.
+	#
+	# Wired into CI as a merge gate — see the `lint-bench-workflows` job in
+	# test.yml, which pins the same version by sha256 because actionlint is absent
+	# from taiki-e/install-action's tool list (the mechanism this repo uses for
+	# every other CI binary). Keep ACTIONLINT_VERSION here in step with that job,
+	# or a rule added upstream will fail CI while passing locally.
+	actionlint .github/workflows/bench.yml .github/workflows/bench-comment.yml
+
+.PHONY: test-bench-scripts
+test-bench-scripts: ## Unit-test the benchmark renderer, interleave and artifact extraction
+	# Lives outside the vitest projects on purpose: those carry a 95% coverage
+	# threshold scoped to shipped package sources, and CI plumbing has no
+	# business inside that gate.
+	# Explicit path, not a glob — `node --test` only globs from Node 21 and CI
+	# pins Node 20.
+	node --test .github/scripts/render-bench-comment.test.mjs
+	# The interleave the producer measures under. Split out of bench-proving.mjs
+	# because the driver decided the order in one place while the "imbalanced
+	# configuration" warning asserted a parity formula in another, and the two
+	# disagreed silently: the calibrated default ran a fixed positional
+	# asymmetry while the warning reported it as balanced.
+	node --test crates/web-client/scripts/bench-order.test.mjs
+	# The step-budget deadline rule. Split out and swept with a synthetic clock
+	# because three consecutive review rounds found a defect in this arithmetic,
+	# each previous fix having been checked by reasoning about one configuration
+	# while the adjacent one stayed broken.
+	node --test crates/web-client/scripts/bench-budget.test.mjs
+	# The extraction step is the only part of the reporter that handles a
+	# fork-controlled archive, so it lives in a script that can be tested rather
+	# than inline in the workflow where nothing could reach it.
+	bash .github/scripts/extract-bench-artifact.test.sh
+
+.PHONY: bench-proving-calibrate
+bench-proving-calibrate: ## Measure the benchmark's own noise floor (see docs/benchmarks/calibration.md)
+	# Benches one dist against a copy of itself: the true delta is zero, so
+	# whatever this reports is measurement noise. Repeat 20-30x on the target
+	# runner and set the threshold at 3 sigma.
+	rm -rf /tmp/miden-dist-calib
+	cp -R crates/web-client/dist/mt /tmp/miden-dist-calib
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs \
+		--base /tmp/miden-dist-calib --head dist/mt --calibrate $(BENCH_ARGS)
 
 # --- Building ------------------------------------------------------------------------------------
 

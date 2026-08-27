@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.15.10 (TBA)
+
+### Enhancements
+* [FEATURE][adapter] `@miden-sdk/miden-wallet-adapter-miden` now exports a conformance suite — `MIDEN_WALLET_METHODS`, `getSurfaceCases`, `getBehaviorCases`, `runConformance` — that a wallet imports and runs against its own providers. The method list is type-locked to the `MidenWallet` interface in both directions, so adding a method without adding a case, or naming a method the interface does not declare, fails to compile. `getSurfaceCases` needs no connection or state, so it is safe to run against runtime-only injected providers; `getBehaviorCases` needs a live one.
+* [FEATURE][repo] `publish-web-sdk.yml` now ships the adopted wallet-adapter, Para and Turnkey packages. They are gated from `scripts/publish-manifest.json` rather than a bespoke script per package, and published in dependency-level order so a dependent never lands before the package it pins. The generalised gate gains a registry probe in `pr` mode, which the per-package scripts lack — without it a partially-failed `next`-channel release could not be retried, because every already-published package would be re-reported as publishable and die on a version conflict, stranding everything after the failure point.
+* [FEATURE][repo] The wallet-adapter, Para and Turnkey packages now live in this repository, under `packages/adapter/`, `packages/para/` and `packages/turnkey/`. They already tracked this repo's release line and publish under the `@miden-sdk` scope; moving them here lets them resolve the client and React SDK through the workspace instead of the registry, and puts them on the same OIDC trusted-publishing path as everything else — all eleven previously shipped from a laptop with no provenance attestation. Full git history is preserved.
+* [BREAKING][para][turnkey] The six signer packages are renamed to drop the redundant `miden-` prefix, matching `@miden-sdk/react` and `@miden-sdk/vite-plugin`: `@miden-sdk/miden-para` → `@miden-sdk/para`, `@miden-sdk/use-miden-para-react` → `@miden-sdk/para-react`, `@miden-sdk/create-miden-para-react` → `@miden-sdk/create-para-react`, `@miden-sdk/miden-turnkey` → `@miden-sdk/turnkey`, `@miden-sdk/miden-turnkey-react` → `@miden-sdk/turnkey-react`, `@miden-sdk/create-miden-turnkey-react` → `@miden-sdk/create-turnkey-react`. All six now share the repo's version line; the old names are deprecated on npm and point at the new ones. The five `@miden-sdk/miden-wallet-adapter*` names are unchanged.
+
+* [FEATURE][web] Vendor-neutral observability. `ClientOptions.observer` registers a callback the client invokes once per operation with a `MidenObservation` — `op` (the underlying client method name), `outcome` (`"ok"` / `"error"`), and `durationMs`. The SDK never transports an observation: it hands the object to the callback and forgets it. `@miden-sdk/miden-sdk` gains no telemetry dependency (direct, peer, or optional) and the module that delivers observations imports nothing and has no egress primitive; both halves are asserted on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module and checks it reaches for no global, builds no code at runtime, constructs nothing, and calls nothing but the observer. The observer is invoked synchronously after the operation has already settled and inside a `try`/`catch`, so it can neither fail an operation nor change its timing, ordering, or result. `op` names the wrapped client method rather than the high-level call, so one `client.transactions.send(...)` reports four observations (`executeTransaction`, `proveTransaction`, `submitProvenTransaction`, `applyTransaction`). Registration is process-wide: constructing a second client with an `observer` replaces the first one's, and a mock client — which has no `observer` field of its own on `MockOptions` — still reports to an observer registered elsewhere in the process, except from the three sync methods it overrides.
+
+```ts
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: (o) => console.log(o.op, o.outcome, Math.round(o.durationMs)),
+});
+```
+
+* [FEATURE][web] `ClientOptions.observeSensitive` opts an observation into a high-fidelity `sensitive` channel carrying the verbatim `error.message` and stack — unclassified and unredacted — populated only when an operation fails. It defaults to off, and when off the `sensitive` key is **absent** from the observation object rather than `undefined` or `{}`, so `"sensitive" in observation` distinguishes "not enabled" from "enabled with nothing to report". Only the literal boolean `true` enables it, so a truthy `"true"` from an env var or a JSON round-trip reads as off; the resolved value is sealed onto the client with `Object.defineProperty` as non-writable and non-configurable, so no later assignment can turn disclosure on for a client built without it; and enabling it logs a one-time console warning. `MidenObservationSensitive.accountId` is declared but not currently populated — consumers should not depend on it being present.
+* [FEATURE][telemetry-sentry] New package `@miden-sdk/telemetry-sentry`. `createSentryObserver({ client, minDurationMs?, includeSensitive? })` returns an observer for `ClientOptions.observer` that reports operations to a Sentry client you own and configure. Sentry is not a dependency of the package, not even a peer — the binding is typed structurally against `captureMessage`, so the consumer keeps control of the version, the DSN, and `Sentry.init`. `minDurationMs` defaults to `Infinity`, i.e. failures only, so an omitted option cannot silently bill a Sentry quota for the SDK's whole successful call volume; failures are always forwarded. A throwing or unreachable Sentry client takes its own report with it and nothing else.
+
+```ts
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: createSentryObserver({ client: Sentry, minDurationMs: 5_000 }),
+});
+```
+
+* [FEATURE][telemetry-otel] New package `@miden-sdk/telemetry-otel`. `createOtelObserver({ tracer, includeSensitive? })` returns an observer that records each operation as a span named `miden.<op>` on a tracer you own. OpenTelemetry is not a dependency, not even a peer — the binding is typed structurally against `startSpan` and inlines the one constant it needs (`SpanStatusCode.ERROR` as `2`), which also avoids a second `@opentelemetry/api` in the tree quietly registering its own global provider. Spans are reconstructed rather than live, since the SDK reports an operation only once it has finished: the span is backdated to `endTime - durationMs` and ended explicitly at `endTime` (epoch milliseconds), keeping the span's own interval in agreement with its `miden.duration_ms` attribute. A duration that is not finite and non-negative is recorded as an instant with no duration attribute instead of a garbage timestamp.
+
+```ts
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: createOtelObserver({ tracer: trace.getTracer("my-app") }),
+});
+```
+
+* [FEATURE][telemetry-sentry,telemetry-otel] Both bindings require the sensitive channel to be opted into a second time via `includeSensitive: true`, and drop it by default even when the SDK supplies it — so enabling `observeSensitive` on the client does not by itself disclose anything through a binding. Both read the channel's fields by name rather than enumerating them, so a field a later SDK version adds cannot start flowing to a backend before someone decides it should. Neither binding throws from its observer; both throw a `TypeError` from the factory when the client or tracer is missing, because an observer cannot report its own misconfiguration and one built around a missing sink would discard every observation while looking exactly like a working one.
+
+### Changes
+
+* [CHANGE][ci] `scripts/check-react-sdk-sync.js` now verifies the `@miden-sdk/miden-sdk` pin of **every** package that builds against it, not just `@miden-sdk/react` and the wallet example. The packages are discovered from the workspace rather than listed in the script, so a new package is covered from the moment it exists rather than when someone remembers to add it — `@miden-sdk/telemetry-sentry` and `@miden-sdk/telemetry-otel` shipped pinned to the core with nothing verifying them. Discovery keys off the build-time `workspace:*` dev dependency rather than off the pin being checked, so deleting a peer range fails the check instead of removing the package from it. The check also covers the wallet example's other first-party dependencies, which caught `@miden-sdk/react` there sitting two minors stale at `^0.15.8`; it is now in step with the rest.
+
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements
