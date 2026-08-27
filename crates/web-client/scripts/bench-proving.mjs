@@ -883,10 +883,18 @@ const openSide = async (browser, url, label, repIndex) => {
     // throwing), and a context that will not close leaves a live page behind.
     // Swallowing it silently left a leaked browser process with no explanation
     // anywhere in the log.
-    await context.close().catch((closeError) => {
-      console.error(
-        `[teardown] ${label} context (during setup): ${closeError}`
-      );
+    //
+    // Deadlined, and this is the path where it matters most. A wedged context is
+    // most likely precisely here — the failure classes that break setup are the
+    // ones that also break teardown — and this close runs before ANY results
+    // exist, so a hang costs the whole step with no artifact at all, rather than
+    // costing a clean exit after the numbers are safe. Not printed here: the
+    // run is about to throw, and `reportTeardownFailures` lists every entry with
+    // the reason it matters, so logging here as well double-printed it.
+    await withCloseDeadline(
+      `${label} context (during setup)`,
+      context.close()
+    ).catch((closeError) => {
       teardownFailures.push(`${label} context (during setup): ${closeError}`);
     });
     throw error;

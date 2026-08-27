@@ -252,21 +252,9 @@ jobs:
           BENCH_RUN_ID: ${{ steps.run.outputs.id }}
           REPORT_DIR: ${{ runner.temp }}/bench-report
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx fails the
-          # step — and on the trusted side that reddens the default branch over an
-          # outage nobody in the PR caused.
-          #
-          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
-          # limit, which GitHub reports as 403 and which the action exempts by
-          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
-          # worse than leaving it: @octokit/plugin-retry backs off
-          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
-          # `Retry-After` entirely, while GitHub requires waiting at least the
-          # advertised interval for a secondary limit. So the retries would fire
-          # inside the required wait, likely escalate the block, and still
-          # exhaust; and every permanent permissions 403 would burn 14s first.
-          # The steps that must not fail over a rate limit instead catch and
-          # decline (see `refuseAsOutage` and the fallback check run).
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
           retries: 3
           script: |
             const fs = require('fs');
@@ -565,8 +553,9 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
-          # Same as the other API steps; see the fetch step for what this does
-          # and does not cover.
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
           retries: 3
           script: |
             let pr;
@@ -646,21 +635,9 @@ jobs:
           # overwrite THIS check run — and its report — to say so.
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx fails the
-          # step — and on the trusted side that reddens the default branch over an
-          # outage nobody in the PR caused.
-          #
-          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
-          # limit, which GitHub reports as 403 and which the action exempts by
-          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
-          # worse than leaving it: @octokit/plugin-retry backs off
-          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
-          # `Retry-After` entirely, while GitHub requires waiting at least the
-          # advertised interval for a secondary limit. So the retries would fire
-          # inside the required wait, likely escalate the block, and still
-          # exhaust; and every permanent permissions 403 would burn 14s first.
-          # The steps that must not fail over a rate limit instead catch and
-          # decline (see `refuseAsOutage` and the fallback check run).
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
           retries: 3
           script: |
             const fs = require('fs');
@@ -817,21 +794,9 @@ jobs:
           CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx fails the
-          # step — and on the trusted side that reddens the default branch over an
-          # outage nobody in the PR caused.
-          #
-          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
-          # limit, which GitHub reports as 403 and which the action exempts by
-          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
-          # worse than leaving it: @octokit/plugin-retry backs off
-          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
-          # `Retry-After` entirely, while GitHub requires waiting at least the
-          # advertised interval for a secondary limit. So the retries would fire
-          # inside the required wait, likely escalate the block, and still
-          # exhaust; and every permanent permissions 403 would burn 14s first.
-          # The steps that must not fail over a rate limit instead catch and
-          # decline (see `refuseAsOutage` and the fallback check run).
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
           retries: 3
           script: |
             const head_sha = process.env.HEAD_SHA;

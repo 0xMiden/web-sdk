@@ -362,6 +362,14 @@ catches nothing at all — but they bound what a green result means.
 
 ## Applying the result
 
+**This has an owner and a deadline, or it does not happen.** Until the runner is
+calibrated the comment carries a "provisional floor" banner on every report,
+which is the honest state but a weak signal — a real regression under the laptop
+floor goes unreported. Whoever lands the first green benchmark run on `main` owns
+collecting the 20–30 runs below and setting the threshold; leaving the
+laptop-derived number in place indefinitely is the failure mode to avoid, not a
+safe default.
+
 Set `THRESHOLD_PCT` in `.github/scripts/render-bench-comment.mjs` to the
 measured value and flip `THRESHOLD_PROVISIONAL` to `false`. Record the date, the
 runner label, the `reps` × `proves` configuration, the sample count and the
