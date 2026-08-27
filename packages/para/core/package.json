@@ -3,7 +3,7 @@
   "version": "0.16.0-rc.4",
   "description": "Miden x Para Integration",
   "license": "MIT",
-  "author": "Miden Labs",
+  "author": "Miden Contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",

@@ -9,7 +9,7 @@
     "url": "git+https://github.com/0xMiden/web-sdk.git",
     "directory": "packages/adapter/react"
   },
-  "author": "Demox Labs",
+  "author": "Miden Contributors",
   "license": "MIT",
   "type": "module",
   "scripts": {

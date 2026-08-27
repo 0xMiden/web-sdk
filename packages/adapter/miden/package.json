@@ -9,7 +9,7 @@
     "url": "git+https://github.com/0xMiden/web-sdk.git",
     "directory": "packages/adapter/miden"
   },
-  "author": "Demox Labs",
+  "author": "Miden Contributors",
   "license": "MIT",
   "dependencies": {
     "@miden-sdk/miden-wallet-adapter-base": "workspace:*"

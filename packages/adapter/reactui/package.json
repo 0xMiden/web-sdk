@@ -9,7 +9,7 @@
     "url": "git+https://github.com/0xMiden/web-sdk.git",
     "directory": "packages/adapter/reactui"
   },
-  "author": "Demox Labs",
+  "author": "Miden Contributors",
   "license": "MIT",
   "scripts": {
     "build": "tsc && yarn copy-files",
