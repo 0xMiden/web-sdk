@@ -784,9 +784,13 @@ function normalizeResults(input) {
 // costs itself a caveat it did not need.
 const MAX_TEARDOWN_FAILURES = 8;
 
+// Returns the capped list AND the true length. The banner reports the count,
+// and the count was being read off the capped list — so a run that failed to
+// tear down 23 times published "reported 8 teardown failures", understating the
+// one number this note says is the load-bearing one.
 function normalizeTeardownFailures(value) {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, MAX_TEARDOWN_FAILURES).map((entry, i) => {
+  if (!Array.isArray(value)) return { shown: [], total: 0 };
+  const shown = value.slice(0, MAX_TEARDOWN_FAILURES).map((entry, i) => {
     // Strings only. `String({})` is "[object Object]", which sanitizes cleanly
     // and would then be published as if it were a diagnostic; the placeholder at
     // least says what it is. The count is what matters either way.
@@ -795,6 +799,7 @@ function normalizeTeardownFailures(value) {
       ? sanitizeText(entry, 120, placeholder)
       : placeholder;
   });
+  return { shown, total: value.length };
 }
 
 // Lowercase-only, matching what both `git rev-parse` and the GitHub API return,
@@ -1268,54 +1273,68 @@ function computeRows(results, ctx) {
       b.base === null || agreement.blocked
         ? null
         : pairedMeanAgreement(b.base, b.head);
+    // Does the mean movement clear the floor at all? Magnitude only — no
+    // question of whether the headline also moved, and none of whether the
+    // repetitions corroborate it. Every mean channel below is this plus a
+    // condition, and separating the two is what stops a channel from being
+    // silently unreachable: `meanLarge` and `meanOnly` were both `!clearsFloor`
+    // by construction, so on a run whose headline DID clear the floor there was
+    // no channel left except `meanContradicts`, and that one had a gate of its
+    // own.
+    const meanBig =
+      meanPct !== null &&
+      deltaPct !== null &&
+      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
     // The mean cleared the floor while the headline did not, WITHOUT asking
     // whether the repetitions agree. `meanOnly` needs that agreement because it
     // makes a directional claim; this does not, and exists only so a large mean
     // movement on a blocked run cannot vanish. Dropping the cross-check there is
     // right — a blocked run does not get a second confident channel — but it left
     // a 44%-worse mean rendering as "No significant change" with no trace.
-    const meanLarge =
-      meanPct !== null &&
-      deltaPct !== null &&
-      !clearsFloor &&
-      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
+    const meanLarge = meanBig && !clearsFloor;
     const meanOnly =
-      meanPct !== null &&
-      deltaPct !== null &&
-      !clearsFloor &&
-      meanAgreement !== null &&
-      meanAgreement.consistent &&
-      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
-    // The mirror of `meanOnly`, for the case where the headline DID rule. Both
-    // channels can then name a direction, and nothing was checking that they
-    // named the same one: a change that made every prove but the fastest much
-    // slower headlined as an improvement, with the contradicting figure absent
-    // from the comment entirely — because `meanOnly` and `meanLarge` are both
-    // `!clearsFloor` by construction. A reader saw "🚀 6% faster" over a run
-    // whose mean prove time had risen by two thirds.
-    //
-    // Gated on the mean's own sign test, which `meanOnly` also requires. An
-    // uncorroborated mean movement must not be able to withdraw a
-    // repetition-consistent headline result; one that holds in a majority of
-    // repetitions and contradicts none of them is exactly the case where the
-    // honest answer is that the two estimators disagree.
+      meanLarge && meanAgreement !== null && meanAgreement.consistent;
+    // Whether the mean's own repetitions back it. Not a gate any more — it
+    // selects the WORDING. Used as a gate, one contradicting repetition out of
+    // six switched the whole cross-check off, and one contradicting repetition
+    // is the most ordinary thing a benchmark produces.
+    const meanCorroborated = Boolean(meanAgreement && meanAgreement.consistent);
     // A large mean movement on a run that is not entitled to rule on it, for
     // either reason: the run-level precondition blocked it, or it is below the
     // six-repetition floor where `pairedMeanAgreement` can only ever answer
     // `tooShort`. Reported so it is not lost; never as a direction.
+    //
+    // `meanBig` rather than `meanLarge`, so it also covers a blocked run whose
+    // HEADLINE cleared the floor. That combination had no channel at all:
+    // `meanLarge` excluded it for clearing the floor and `meanContradicts`
+    // excluded it because a blocked row is never `beyond`.
+    //
+    // The third case it now covers is a large mean movement on an UNBLOCKED run
+    // whose headline stayed under the floor and whose mean is not corroborated.
+    // That was the last silent combination: `meanOnly` refused it for want of
+    // corroboration, `meanContradicts` refused it because the headline never
+    // cleared the floor, and this refused it because nothing blocked the run — so
+    // a change lifting the mean 55% rendered as "No significant change" with the
+    // methodology pointing at a cross-check that produced nothing.
     const meanUnruled =
-      meanLarge &&
+      meanBig &&
       !meanOnly &&
-      Boolean(agreement.blocked || agreement.tooShort);
+      (!clearsFloor || Boolean(agreement.blocked || agreement.tooShort));
     const meanWorse =
       meanPct === null ? null : LOWER_IS_BETTER ? meanPct > 0 : meanPct < 0;
-    const meanContradicts =
-      beyond &&
-      meanPct !== null &&
-      meanAgreement !== null &&
-      meanAgreement.consistent &&
-      meanWorse !== isWorse &&
-      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
+    // The two estimators point opposite ways, both past the floor.
+    //
+    // NOT gated on the mean's sign test. It used to be, on the reasoning that an
+    // uncorroborated mean must not withdraw a repetition-consistent headline —
+    // but the alternative to withdrawing it turned out to be publishing it: a
+    // change that made two proves in three three times slower, with one noisy
+    // repetition breaking the mean's unanimity, headlined "🚀 -10.00% faster"
+    // over a mean that had risen 108%, and the contradicting figure appeared
+    // nowhere in the comment. Withholding a direction and printing both figures
+    // is the honest answer to two estimators that disagree; naming the direction
+    // of whichever one happens to be corroborated is not. `meanCorroborated`
+    // now chooses how firmly the note puts it instead.
+    const meanContradicts = beyond && meanBig && meanWorse !== isWorse;
     return {
       ...b,
       deltaValue,
@@ -1327,11 +1346,13 @@ function computeRows(results, ctx) {
       isWorse,
       meanPct,
       meanAgreement,
+      clearsFloor,
       meanOnly,
       meanLarge,
       meanUnruled,
       meanWorse,
       meanContradicts,
+      meanCorroborated,
       // ❔ wherever no direction is claimed for the row, which now includes the
       // unruled-mean case: a ➖ reading "within the noise floor" under a heading
       // that had just declined to rule on this benchmark's mean invited the
@@ -1570,8 +1591,9 @@ function buildVerdict(rows) {
  * numbers read as an ordinary clean measurement.
  */
 function buildTeardownNote(teardownFailures) {
-  if (teardownFailures.length === 0) return null;
-  const count = teardownFailures.length;
+  const { shown, total } = teardownFailures;
+  if (total === 0) return null;
+  const count = total;
   return [
     `> **Treat these numbers with suspicion.** The benchmark run reported ${count} teardown ${count === 1 ? "failure" : "failures"},`,
     "> meaning it could not release a page, a browser or a server. Resources left open during the run",
@@ -1585,7 +1607,12 @@ function buildTeardownNote(teardownFailures) {
     // the privileged comment as a live link, `![](…)` as a remote image, `#1` as
     // a real cross-reference that backlinks from the target issue, and a bare URL
     // as an autolink. The span makes all of it literal text.
-    ...teardownFailures.map((failure) => `> - ${codeSpan(failure)}`),
+    ...shown.map((failure) => `> - ${codeSpan(failure)}`),
+    // Deliberately not a `> - ` list item: every one of those is a
+    // fork-controlled string in a code span, and this is first-party prose.
+    ...(total > shown.length
+      ? [`> …and ${total - shown.length} more, not listed.`]
+      : []),
   ].join("\n");
 }
 
@@ -1688,15 +1715,22 @@ function buildStoppedEarlyNote(results) {
       : `> Setup on this machine took ${seconds(setupMsMedian)} at the median over ${setupCount} ${plural(setupCount, "sample")}.` +
         (setupCount < 3
           ? " That is too few to lean on."
-          : // Three readings, not two. A setup grant is clamped to whatever the
-            // budget has left, floored at a minute, so a median setup cost ABOVE
-            // the reported deadline is the expected shape of a late-run overrun
-            // rather than an exotic one — and neither "well under" nor "close to"
+          : // Three readings, not two. A median setup cost ABOVE the reported
+            // deadline is a real shape — a budget-derived grant shrinks as the
+            // budget runs down — and neither "well under" nor "close to"
             // describes it, which left the reader with a comparison that fit
             // nothing they were looking at.
+            //
+            // It reports the comparison and stops. The earlier wording concluded
+            // "the clock was short rather than the work stuck" and explained it by
+            // the grant being clamped to the budget's remainder — a guess, two
+            // lines under a promise not to guess, and not even an available one
+            // for every deadline this note renders: the settle barrier's 30s and
+            // the 60s Playwright timeout are fixed constants that no budget
+            // clamps, so on those the explanation was simply untrue.
             setupMsMedian >= stoppedEarlyDeadlineMs
-            ? ` That already exceeds the deadline, so the clock was short rather than the work stuck — the grant is` +
-              ` clamped to the budget's remainder, and by this point the remainder was smaller than a typical setup.`
+            ? ` That is longer than the deadline itself, so this step never had room for a typical setup —` +
+              ` which is a fact about the clock, and still says nothing about whether the work was stuck.`
             : ` Well under the deadline means it was stuck; close to it means it needed longer than the clock had.`);
   return [
     ...shared,
@@ -2120,10 +2154,17 @@ function buildMeanUnruledNote(rows) {
   // a short run carries no such note, so the reason has to be stated here.
   const why = leader.agreement.blocked
     ? `This run is not ruled on for the reason above, and that applies to this figure too: it is reported`
-    : `${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")} is too few to rule on either figure, so this one is reported`;
+    : leader.agreement.tooShort
+      ? `${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")} is too few to rule on either figure, so this one is reported`
+      : // Neither blocked nor short: the run could have ruled, and the mean is
+        // what cannot be. Its repetitions do not agree among themselves, so the
+        // figure is reported without any claim that it holds.
+        `The mean's own repetitions do not agree on this movement, so it is reported`;
   return [
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean of every prove.** ${codeSpan(leader.name)} is`,
-    `> ${formatSignedPct(leader.deltaPct)} on the reported figure — within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
+    // "within the floor" only when it is. A blocked run reaches this note with a
+    // headline that DID clear the floor, and the phrase was false there.
+    `> ${formatSignedPct(leader.deltaPct)} on the reported figure${leader.clearsFloor ? "" : " — within the floor"} — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
     `> ${why}`,
     `> so it is not lost, not as a finding. A movement that misses every repetition's fastest prove looks`,
     `> like this — a pause, a lock, a retry, a cold cache — and so does noise on a short run. Read the raw`,
@@ -2133,7 +2174,9 @@ function buildMeanUnruledNote(rows) {
 
 /**
  * The reported figure and the mean of all proves moved in OPPOSITE directions,
- * both past the floor, both corroborated across repetitions.
+ * both past the floor. The mean's own corroboration selects the wording rather
+ * than gating the note: an uncorroborated mean cannot be reported as a size, but
+ * it can and must stop the headline from naming a direction it contradicts.
  *
  * The heading withholds the direction for this case; this says why, because
  * "unresolved" over a table showing a clean improvement invites the reader to
@@ -2149,11 +2192,21 @@ function buildMeanContradictionNote(rows) {
   const leader = flagged[0];
   const fastest = leader.isWorse ? "slower" : "faster";
   const rest = leader.meanWorse ? "slower" : "faster";
+  // How firmly to put it. The corroborated case is the one the note was written
+  // for and keeps its wording; the uncorroborated one must not claim an
+  // agreement it does not have, but it still gets the note — the alternative,
+  // back when corroboration was a gate, was a heading naming the direction the
+  // other estimator contradicts and no mention of the contradiction anywhere.
+  const strength = leader.meanCorroborated
+    ? `> majority of repetitions and contradicted by none.`
+    : `> majority of repetitions on the reported figure. The mean's own repetitions do NOT agree among` +
+      `\n> themselves, so the size of that movement is uncertain — but its direction opposes the reported` +
+      `\n> figure, which is why no direction is claimed here.`;
   return [
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved both ways.** ${codeSpan(leader.name)} is`,
     `> ${formatSignedPct(leader.deltaPct)} on the mean of each repetition's *fastest* prove — ${fastest} — and`,
     `> ${formatSignedPct(leader.meanPct)} on the mean of *every* prove — ${rest} — with each direction holding in a`,
-    `> majority of repetitions and contradicted by none.`,
+    strength,
     `> Both figures are measured, so this is not a tie to be broken by picking one: the best case and the`,
     `> rest of the distribution moved apart. A faster fastest prove alongside a slower everything-else is`,
     `> what a new fast path with a costly fallback looks like, or a cache that now misses more often.`,

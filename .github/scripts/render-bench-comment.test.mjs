@@ -1833,7 +1833,12 @@ test("teardown failures are fork-controlled and treated as such", () => {
     results({ top: { teardownFailures: hostile } }),
     ctx()
   );
-  assert.match(body, /reported 8 teardown failures/); // capped
+  // The COUNT is the true one; only the LIST is capped. Reporting the capped
+  // length understated the single number this note calls load-bearing — 43
+  // teardown failures were published as 8.
+  assert.match(body, /reported 43 teardown failures/);
+  assert.match(body, /^> …and 35 more, not listed\./m);
+  assert.equal(body.match(/^> - `/gm).length, 8, "list itself stays capped");
   assert.doesNotMatch(body, /<img/);
   assert.doesNotMatch(body, /^::error::/m);
   for (const line of body.split("\n").filter((l) => l.startsWith("> - "))) {
@@ -2346,6 +2351,89 @@ const signTestRow = (headPerRep) =>
     },
   });
 
+// Head samples per repetition, base pinned flat, so the per-rep minimum and the
+// mean of all proves can be steered apart on purpose.
+const meanRow = (headReps, top = {}) =>
+  results({
+    top: {
+      reps: headReps.length,
+      provesPerRep: PROVES_PER_REP,
+      provesExecutedPerRep: PROVES_PER_REP + 1,
+      repsExecuted: headReps.length + 1,
+      repsRequested: headReps.length,
+      ...top,
+    },
+    benchmark: {
+      base: {
+        samples: headReps.map(() => Array(PROVES_PER_REP).fill(1000)),
+      },
+      head: { samples: headReps },
+    },
+  });
+
+test("a large mean movement is never silent, corroborated or not", () => {
+  // Every repetition but one makes two proves in three three times slower while
+  // the fastest prove gets 10% faster. The mean rises past 100%. The reported
+  // figure sees only the improvement.
+  //
+  // One repetition is deliberately left un-slowed. That is the whole point: it
+  // breaks the mean's unanimity, and corroboration used to be a GATE on the
+  // cross-check, so this single ordinary noisy repetition switched the check off
+  // and the comment headlined the improvement with the regression nowhere in it.
+  const opposed = [
+    [900, 1000, 1000],
+    ...Array(5).fill([900, 3000, 3000]),
+  ];
+  const out = renderComment(meanRow(opposed), ctx());
+  assert.doesNotMatch(out, RULED, "must not headline a direction it contradicts");
+  assert.match(out, /two estimators disagree/);
+  assert.match(out, /\+107\.78%/, "the contradicting figure must be printed");
+  // ... and it must say the corroboration is missing rather than assert it.
+  assert.match(out, /repetitions do NOT agree/);
+
+  // Corroborated: same shape, no dissenting repetition. Same withholding, but the
+  // note is allowed to be firm about it.
+  const clean = renderComment(meanRow(Array(6).fill([900, 3000, 3000])), ctx());
+  assert.doesNotMatch(clean, RULED);
+  assert.match(clean, /contradicted by none/);
+
+  // Headline UNDER the floor with a large uncorroborated mean. Blocked by nothing,
+  // so neither the unruled channel nor the contradiction channel used to reach it,
+  // and it rendered as a flat "no significant change".
+  const quiet = renderComment(
+    meanRow([[1000, 990, 990], ...Array(5).fill([1000, 2000, 2000])]),
+    ctx()
+  );
+  assert.doesNotMatch(quiet, /No significant change/);
+  assert.match(quiet, /\+55\.44%/);
+  assert.match(quiet, /own repetitions do not agree/);
+
+  // Blocked run whose headline DID clear the floor: the mean has to survive that
+  // combination too, and must not be described as "within the floor".
+  const blocked = renderComment(
+    meanRow(Array(6).fill([900, 3000, 3000]), {
+      repsRequested: 8,
+      stoppedEarly: "out of budget",
+      stoppedEarlyKind: "budget",
+    }),
+    ctx()
+  );
+  assert.match(blocked, /\+130\.00%/);
+  assert.doesNotMatch(blocked, /-10\.00% on the reported figure — within the floor/);
+
+  // Negative controls: the channel must stay quiet when the mean agrees with the
+  // headline, or nothing moved at all.
+  assert.match(renderComment(meanRow(Array(6).fill([900, 900, 900])), ctx()), RULED);
+  assert.doesNotMatch(
+    renderComment(meanRow(Array(6).fill([900, 900, 900])), ctx()),
+    /on the mean of all proves/
+  );
+  assert.match(
+    renderComment(meanRow(Array(6).fill([1000, 1000, 1000])), ctx()),
+    /No significant change/
+  );
+});
+
 test("the sign test rules only when all three of its clauses hold", () => {
   // Positive control first. Six repetitions all moving the same way is the
   // calibrated shape and must rule, or the negatives below pass for the wrong
@@ -2409,8 +2497,16 @@ test("a setup median past the deadline gets its own reading", () => {
     }),
     ctx()
   );
-  assert.match(body, /already exceeds the deadline, so the clock was short/);
+  assert.match(body, /longer than the deadline itself/);
   assert.doesNotMatch(body, /Well under the deadline means it was stuck/);
+  // It states the comparison and stops. It used to conclude the work was not
+  // stuck and explain that by the grant being clamped to the budget's remainder
+  // — a guess, made directly under a sentence promising not to guess, and false
+  // outright for the fixed-constant deadlines (the 30s settle barrier, the 60s
+  // Playwright timeout) that no budget clamps.
+  assert.doesNotMatch(body, /clock was short rather than the work stuck/);
+  assert.doesNotMatch(body, /clamped to the budget/);
+  assert.match(body, /says nothing about whether the work was stuck/);
 });
 
 // Every other field on the trusted context gets a shape check; `runId` was

@@ -300,9 +300,15 @@ jobs:
       # onto somebody else's PR.
       #
       # workflow_run.pull_requests is EMPTY for fork PRs, so it is never read.
+      # `continue-on-error`: every refusal inside the script is already non-fatal
+      # by design, but an UNEXPECTED throw — a shape the artifact parser did not
+      # anticipate, a null `pr.head` — escaped all of that, reddened the default
+      # branch, and left the fallback inferring a cause from an unset PR number,
+      # which reads as a forgery accusation aimed at an author who did nothing.
       - name: Verify PR identity
         id: pr
         if: steps.report.outputs.usable == 'true'
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
           BENCH_RUN_ID: ${{ steps.run.outputs.id }}
@@ -503,7 +509,7 @@ jobs:
               // same case, caught earlier.
               declineWithCause(
                 `PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`,
-                `The pull request moved to a newer commit (${short(pr.head.sha)}) ` +
+                `The pull request moved to a newer commit (${short(pr.head?.sha)}) ` +
                   `while the benchmark was running, so these numbers — measured on ` +
                   `${short(run.head_sha)} — were not posted. Push again, or re-run the ` +
                   `benchmark workflow, to get a report for the current head.`,
@@ -708,9 +714,15 @@ jobs:
       # Not a lock, and not claimed to be one: two reporters can both pass this
       # and race. It removes the case that actually happens (a push during a
       # render) rather than the theoretical one.
+      # `continue-on-error`: everything upstream was made non-fatal so an
+      # informational bot cannot redden the default branch, and this step was the
+      # last one that still could. Its failure mode was also the worst of the set
+      # — a rendered report already in hand, then a hard failure here skipping the
+      # write AND the fallback that explains the silence.
       - name: Re-check the PR head before writing
         id: recheck
         if: steps.render.outputs.ok == 'true'
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
@@ -745,10 +757,13 @@ jobs:
             // default branch.
             const short = (sha) =>
               typeof sha === 'string' && sha.length > 0 ? sha.slice(0, 7) : 'unknown';
-            if (pr.head.sha !== process.env.HEAD_SHA) {
+            // `pr.head?.sha`, because `pr.head` is null on a PR whose fork was
+            // deleted mid-flight. A raw `.sha` threw a TypeError out of a step
+            // that exists to decline gracefully.
+            if (pr.head?.sha !== process.env.HEAD_SHA) {
               core.notice(
-                `PR #${process.env.PR_NUMBER} moved to ${pr.head.sha} while this report was rendering; ` +
-                  `not posting numbers for ${process.env.HEAD_SHA}.`,
+                `PR #${process.env.PR_NUMBER} moved to ${short(pr.head?.sha)} while this report was rendering; ` +
+                  `not posting numbers for ${short(process.env.HEAD_SHA)}.`,
               );
               core.setOutput('stale', 'true');
               // A reason IS set here, and the earlier decision not to set one was
@@ -779,7 +794,11 @@ jobs:
       # business of turning the default branch red.
       - name: Post sticky comment
         id: comment
-        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale != 'true'
+        # `stale == 'false'`, not `!= 'true'`. With the re-check now
+        # continue-on-error, a hard failure there leaves the output unset, and the
+        # negative form reads an unset output as permission to post the very
+        # numbers the re-check failed to confirm.
+        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale == 'false'
         continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
         with:
@@ -794,7 +813,8 @@ jobs:
       # rather read it in the Checks tab.
       - name: Publish neutral check run
         id: checkrun
-        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale != 'true'
+        # `stale == 'false'` for the same reason as the comment step above.
+        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale == 'false'
         uses: actions/github-script@v7
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
@@ -957,6 +977,7 @@ jobs:
         if: >-
           always() && steps.run.outputs.id != '' &&
           (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != ''
+           || steps.recheck.outcome == 'failure'
            || steps.checkrun.outputs.published == 'false'
            || steps.checkrun.outcome == 'failure')
         continue-on-error: true
@@ -970,11 +991,15 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           RENDER_REASON: ${{ steps.render.outputs.reason }}
           RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
+          RECHECK_OUTCOME: ${{ steps.recheck.outcome }}
+          REPORT_OUTCOME: ${{ steps.report.outcome }}
           PR_SKIP_REASON: ${{ steps.pr.outputs.skip_reason }}
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
           FETCH_SKIP_REASON: ${{ steps.fetch.outputs.skip_reason }}
           CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
+          CHECKRUN_OUTCOME: ${{ steps.checkrun.outcome }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+          PR_OUTCOME: ${{ steps.pr.outcome }}
         with:
           # 5xx and 429 only, and deliberately not 403. See the `Fetch the
           # benchmark artifact` step for why reaching secondary rate limits this
@@ -1010,12 +1035,33 @@ jobs:
               // the fallback's own write succeed seconds later — so the pull
               // request showed the numbers in one surface and "nothing was
               // posted" in the other, each contradicting the other.
-              (process.env.CHECKRUN_PUBLISHED === 'false'
+              // `published === 'false'` OR a hard failure. The output is set from
+              // inside the step's own try, so a throw before it leaves `published`
+              // empty — and the empty string matched neither arm, dropping the run
+              // through to a catch-all that reported nothing was published while
+              // the sticky comment was sitting on the PR saying otherwise.
+              ((process.env.CHECKRUN_PUBLISHED === 'false' ||
+              process.env.CHECKRUN_OUTCOME === 'failure')
                 ? process.env.COMMENT_OUTCOME === 'success'
                   ? 'The report is in the pull request comment, but the check run could not be written. This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.'
                   : `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
                 : '') ||
               process.env.RECHECK_REASON ||
+              // A hard failure in the re-check sets no reason of its own — the
+              // throw skips past `core.setOutput`. Without this branch it fell all
+              // the way through to the catch-all, which tells the author to go read
+              // a log to find out why numbers that had already rendered were never
+              // posted.
+              (process.env.RECHECK_OUTCOME === 'failure'
+                ? 'The report rendered, but the reporter could not re-confirm the pull request was still at the benchmarked commit, so it declined to post. This is a fault on the reporting side, not in the pull request.'
+                : '') ||
+              // Ahead of every inference below, and specifically ahead of the
+              // PR_NUMBER one, which reads an unset number as an unverifiable
+              // claim and phrases it as a forgery. A crash in the identity step is
+              // a reporter bug and has to be named as one.
+              (process.env.PR_OUTCOME === 'failure'
+                ? 'The reporter crashed while confirming which pull request this benchmark belongs to, so nothing was posted. This is a fault on the reporting side, not in the pull request.'
+                : '') ||
               // Ahead of the PR_NUMBER inference below, which is a guess about
               // an unset output rather than a recorded cause.
               process.env.PR_SKIP_REASON ||
@@ -1028,7 +1074,14 @@ jobs:
                 // successful with `fetched` unset, which the inference below
                 // reads as a failed bench job.
                 : process.env.FETCH_SKIP_REASON ||
-                  (process.env.REPORT_USABLE !== 'true'
+                  // The extractor exits non-zero only for bad usage — the zip the
+                  // previous step wrote is missing, or unzip is absent from the
+                  // runner. Both are reporter faults, and folding them into the
+                  // line below told the author their bench job had failed when it
+                  // had produced a perfectly good artifact.
+                  (process.env.REPORT_OUTCOME === 'failure'
+                    ? 'The reporter could not unpack the benchmark artifact. This is a fault on the reporting side, not in the pull request.'
+                    : process.env.REPORT_USABLE !== 'true'
                     ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
                     : !process.env.PR_NUMBER
                       ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'

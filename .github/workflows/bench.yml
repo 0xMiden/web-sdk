@@ -87,7 +87,20 @@ concurrency:
   # one branch would collapse onto the same key — and with cancel-in-progress
   # each calibration dispatch would kill the previous one, which is exactly what
   # the calibration procedure must not do. Keyed on the run id for those.
-  group: "${{ github.workflow }} @ ${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}"
+  #
+  # The trailing clause keys every run that the job below will SKIP into a group
+  # of its own. Concurrency is resolved before the job `if` is evaluated, so a
+  # run that is about to skip still cancels the group it lands in: editing a PR
+  # title, or adding any label other than `bench`, killed a bench that was hours
+  # into a three-hour run and then skipped itself, leaving the PR with no
+  # measurement and no replacement run coming. Pushing to a PR that had been
+  # converted to draft, or had its `bench` label removed, did the same.
+  #
+  # The predicate is the negation of the job `if` and has to stay in step with
+  # it. It ends in `|| ''` because an Actions ternary written `cond && 'x' || 'y'`
+  # collapses to 'y' whenever 'x' is falsy — an empty string included — so the
+  # suffix, not the empty case, has to be the truthy branch.
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}${{ (github.event.pull_request.draft || (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'bench')) || (github.event.action == 'labeled' && github.event.label.name != 'bench') || (github.event.action == 'edited' && github.event.changes.base == null)) && format(' · skipped {0}', github.run_id) || '' }}"
   cancel-in-progress: true
 
 env:
