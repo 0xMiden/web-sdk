@@ -47,19 +47,25 @@ impl TransactionProver {
     ///
     /// `LocalTransactionProver::default()`, deliberately, and NOT
     /// `LocalTransactionProver::new(ProvingOptions::default())`. Those name two
-    /// different defaults: the second is the *prover crate's* (Blake3), while the
-    /// client builds its own prover from the first. They agreed on the 0.15 line
-    /// and stopped agreeing here — `miden-tx` 0.16 sets its default to Poseidon2
-    /// so transaction proofs are recursion-ready, because the recursive verifier
-    /// accepts only Poseidon2 STARKs.
+    /// different defaults: the second is the *prover crate's* (still Blake3 in
+    /// miden-prover 0.29.x), while the client builds its own prover from the
+    /// first. They agreed on the 0.15 line, where `LocalTransactionProver`
+    /// derived `Default`, and stopped agreeing here: miden-base `b5a5ea25f`
+    /// (PR #3152, first in miden-tx v0.16.0-alpha.1) gave it a hand-written
+    /// `Default` selecting Poseidon2, so that proving benchmarks would use the
+    /// protocol's native hash rather than Blake3.
     ///
     /// Until this delegated, the two disagreed silently and unobservably:
     /// `proveTransaction(result, newLocalProver())` produced a Blake3 proof while
     /// `proveTransaction(result, undefined)` produced a Poseidon2 one, and nothing
     /// in the JS surface exposes `HashFunction` for a caller to notice or override.
-    /// Blake3 proofs verify natively today, so nothing rejects them — they would
-    /// simply have become unbatchable once the batch kernel starts verifying
-    /// proofs in-VM, breaking on a network upgrade with no client change.
+    ///
+    /// Nothing rejects a Blake3 proof: the verifier reads the hash tag out of the
+    /// proof and dispatches, at the same 96-bit level with identical FRI
+    /// parameters. The forward risk is recursion — `miden-verifier`'s recursive
+    /// path accepts only Poseidon2 — but note that is a consequence, not the
+    /// reason the default moved, and the batch prover is itself still on
+    /// `ProvingOptions::default()`.
     ///
     /// Spelled this way there is only one source of truth, so the two cannot
     /// drift apart again whatever the client picks next.
