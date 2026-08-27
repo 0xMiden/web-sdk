@@ -141,10 +141,10 @@ jobs:
           fi
 
       - name: Install binaryen (wasm-opt)
-        # Still needed by the rollup plugin's discovery even when we skip
-        # the actual wasm-opt invocation.
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # Still needed by the rollup plugin's discovery even when we skip the
+        # actual wasm-opt invocation. Pinned rather than apt so every job in
+        # the repo agrees on the optimizer — see the note in bench.yml.
+        run: ./scripts/install-binaryen.sh
 
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
@@ -532,6 +532,55 @@ jobs:
         with:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
+
+  test-bench-scripts:
+    name: benchmark script unit tests
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    # No `if:` on `non_docs`. These tests cover the renderer that runs in the
+    # TRUSTED half of the benchmark pipeline, holding a write token over
+    # fork-controlled JSON, and they were previously reachable only from a step
+    # inside bench.yml — an informational job with its own `paths-ignore` that
+    # never blocks a merge. A break in the sanitizer or the verdict logic could
+    # merge freely. Cheap enough (node --test, no build) to run unconditionally.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run benchmark script unit tests
+        run: make test-bench-scripts
+
+  lint-bench-workflows:
+    name: benchmark workflow lint
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    # Also unconditional, and for the same reason as the job above: much of the
+    # benchmark bot's correctness lives in workflow expressions, where a typo in
+    # an `if:` disables a job silently rather than failing loudly, and one of
+    # those jobs holds a write token over fork-controlled input.
+    #
+    # actionlint is not in taiki-e/install-action's tool list, so it is pinned by
+    # version AND sha256 rather than installed through an action. Keep the version
+    # in step with the `lint-bench-workflows` target in the Makefile.
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          tar="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL --retry 3 -o "$tar" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tar}"
+          echo "${ACTIONLINT_SHA256}  ${tar}" | sha256sum -c -
+          tar -xzf "$tar" actionlint
+          install -m 0755 actionlint /usr/local/bin/actionlint
+          actionlint --version
+      - name: Lint the benchmark workflows
+        run: make lint-bench-workflows
 
   test-web-client-unit:
     name: web-client unit tests

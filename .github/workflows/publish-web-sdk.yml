@@ -233,9 +233,12 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain stable
 
       - name: Install binaryen (wasm-opt)
-        # The shared installer verifies the immutable digest recorded in the
-        # repository before extracting the native binary. WASM_OPT_BIN avoids
-        # resolving to the npm package's ~10x slower JS shim.
+        # The optimizer that produces the PUBLISHED bytes. The shared installer
+        # verifies the immutable digest recorded in the repository before
+        # extracting the native binary, so a release is reproducible, and
+        # WASM_OPT_BIN avoids resolving to the npm package's ~10x slower JS
+        # shim. Keep this in step with bench.yml: if the two disagree, the
+        # proving benchmark stops measuring the optimizer users actually ship.
         run: ./scripts/install-binaryen.sh
 
       # Single workspace install — used for web-client build (when needed),
