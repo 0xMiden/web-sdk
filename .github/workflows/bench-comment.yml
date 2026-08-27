@@ -152,8 +152,16 @@ jobs:
       #
       # Fetching the zip ourselves also lets the artifact be REFUSED BY SIZE
       # before a byte of it is written to disk, which downloading it cannot.
+      # `continue-on-error`: this is the one step whose failure had nothing to do
+      # with the pull request and still turned the DEFAULT BRANCH red. `retries`
+      # below covers 5xx and 429 but nothing else, so an exhausted retry, a 404
+      # on a deleted run, or a permissions 403 failed the job — an outage nobody
+      # in the PR caused, reported as a broken `main`. The fallback check run
+      # already carries a message for exactly this state (`FETCH_OUTCOME ==
+      # 'failure'`), which was unreachable while the step could abort the job.
       - name: Fetch the benchmark artifact
         id: fetch
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
           BENCH_RUN_ID: ${{ steps.run.outputs.id }}

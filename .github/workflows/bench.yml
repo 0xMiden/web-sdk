@@ -21,7 +21,10 @@ on:
     # a retargeted PR silently lost its benchmark. The job-level `if` below drops
     # the title and body edits that share this event, so the multi-hour run still
     # only starts when the base actually moved.
-    types: [opened, synchronize, reopened, edited]
+    # `ready_for_review` pairs with the draft filter on the job: a draft PR does
+    # not spend a multi-hour 8-core run on every push, and marking it ready
+    # triggers the run that was skipped.
+    types: [opened, synchronize, reopened, edited, ready_for_review]
     # A multi-hour job on an 8-core runner that builds WASM twice is not worth
     # spending on a PR that cannot move a proving number. `paths-ignore` only
     # skips when EVERY changed file matches, so a PR touching docs and code
@@ -40,6 +43,13 @@ on:
       - "packages/vite-plugin/**"
       - "packages/node-sdk-*/**"
       - ".github/ISSUE_TEMPLATE/**"
+      # The reporter and the artifact extractor. Neither can move a proving
+      # number, and — the deciding reason — a change to the renderer CANNOT be
+      # exercised by this PR's bench run anyway: `workflow_run` always executes
+      # the default branch's copy, so the PR's own renderer never runs. Their
+      # tests are a merge gate in test.yml, so nothing is lost by skipping a
+      # multi-hour build for them.
+      - ".github/scripts/**"
   # Calibration: bench the merge-base against ITSELF. The true delta is zero,
   # so whatever the run reports is this runner's measurement noise. Run it a
   # dozen times and set `THRESHOLD_PCT` in .github/scripts/render-bench-comment.mjs
@@ -98,9 +108,13 @@ jobs:
     runs-on: warp-ubuntu-latest-x64-8x
     # The `edited` event above fires on title and body edits too, and neither can
     # change a proving number. Only a base change is worth a multi-hour run.
+    # A draft is excluded because it is the state where pushes are most frequent
+    # and a proving number is least useful. `!draft` is safe on workflow_dispatch
+    # too, where `pull_request` is absent and the expression reads as null.
     if: >-
-      github.event.action != 'edited' ||
-      github.event.changes.base != null
+      !github.event.pull_request.draft &&
+      (github.event.action != 'edited' ||
+       github.event.changes.base != null)
     # Budget accounting. Every step that can take real time is capped and listed;
     # the previous two versions of this block each asserted a composition that did
     # not hold, the first by leaving ten minutes for a 25-minute preamble and the
