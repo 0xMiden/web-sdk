@@ -696,6 +696,10 @@ const deadlineFor = (ceiling) => {
 // to write results.json.
 const CLOSE_DEADLINE_MS = 30 * 1000;
 
+// Counts closes that blew their deadline, because abandoning one changes how
+// this process has to exit. See `flushAndExit` at the bottom of the file.
+let abandonedCloses = 0;
+
 const withCloseDeadline = (label, closing) => {
   if (!closing) return Promise.resolve();
   let timer;
@@ -706,18 +710,21 @@ const withCloseDeadline = (label, closing) => {
     Promise.resolve(closing).finally(() => clearTimeout(timer)),
     new Promise((_resolve, reject) => {
       timer = setTimeout(() => {
+        abandonedCloses += 1;
         reject(
           new Error(
             `${label} did not close within ${CLOSE_DEADLINE_MS / 1000}s; abandoning it so the results can still be written`
           )
         );
       }, CLOSE_DEADLINE_MS);
-      // Deliberately NOT unref'd. A wedged close leaves nothing else pending, so
-      // an unref'd timer lets node exit with code 13 ("unsettled top-level
-      // await") before the deadline can fire — which loses the results the
-      // deadline exists to save. Holding the loop open is the point; the
-      // `finally` above clears the timer on every close that does settle, so a
-      // clean run is not delayed by it.
+      // Deliberately NOT unref'd, for the case where the wedge is a listening
+      // socket and nothing else is keeping the loop alive: an unref'd timer
+      // would let node exit before the deadline fired and lose the results the
+      // deadline exists to save. A wedged BROWSER is the opposite — its transport
+      // stays ref'd and holds the process open on its own — so this timer's
+      // ref-ness decides the outcome in one of the two cases and not the other.
+      // The `finally` above clears it on every close that does settle, so a clean
+      // run is never delayed.
     }),
   ]);
 };
@@ -798,8 +805,14 @@ const openSide = async (browser, url, label, repIndex) => {
        * other in-page call, and a barrier that fails is itself a reason to
        * distrust the repetition.
        *
-       * The worker count is the belt to that suspenders: an event lost outright
-       * still leaves the pool visibly smaller than it was after setup.
+       * The worker count is NOT a second, independent detector, and it was
+       * described as one here. Playwright removes the worker from `page.workers()`
+       * and emits the `close` this file listens for in the same synchronous
+       * callback, so an event that never arrives takes the count with it — there
+       * is no failure mode where the count knows something the handler does not.
+       * It is kept as a cheap assertion that Playwright's own bookkeeping agrees
+       * with the handler, which would catch an upstream change to that coupling;
+       * the barrier above is the half that does the work.
        */
       settle: async () => {
         try {
@@ -1019,7 +1032,12 @@ try {
         if (side.pageErrors.length) {
           throw new Error(
             `${side.label} ${isWarmup ? "warmup" : `rep ${rep}`} raised ` +
-              `${side.pageErrors.length} page error(s) during its proves; first: ` +
+              // "or the settle barrier", because `settle()` records its own
+              // failures in this same array. A barrier that timed out reported as
+              // a page error "during its proves" sent the reader to the prover for
+              // something the proves had nothing to do with.
+              `${side.pageErrors.length} page error(s) during its proves or the ` +
+              `settle barrier; first: ` +
               `${side.pageErrors[0]}`
           );
         }
@@ -1249,3 +1267,31 @@ if (writtenTo) console.log(`\nwrote ${writtenTo}`);
 // the failure this whole script is built to avoid. Report the results, then say
 // plainly that the run is not clean.
 reportTeardownFailures({ resultsWritten: true });
+
+// And then LEAVE, if a close was abandoned.
+//
+// `reportTeardownFailures` sets `process.exitCode`, which asks node to exit with
+// that code once the loop drains — and the loop does not drain here. Abandoning a
+// wedged `browser.close()` leaves Playwright's transport ref'd, so the process
+// stays alive with the results already on disk and the summary already printed,
+// until the runner kills the step at its `timeout-minutes`. That surfaces as a
+// timeout rather than as a failed run, which is precisely the "killed with no
+// diagnostic" outcome the budget clamp exists to prevent, and it spends up to the
+// whole step cap doing nothing.
+//
+// `process.exit` is the only way past a ref'd handle, and it discards buffered
+// writes — stdout is a pipe under CI, where writes are asynchronous — so the
+// results line and the teardown summary have to be flushed first or the
+// diagnostic is lost to the very exit meant to preserve it.
+if (abandonedCloses > 0) {
+  const flush = (stream) =>
+    new Promise((resolve) => {
+      if (stream.writableLength === 0) return resolve();
+      stream.write("", () => resolve());
+    });
+  await Promise.all([flush(process.stdout), flush(process.stderr)]);
+  console.error(
+    `\n${abandonedCloses} resource${abandonedCloses === 1 ? "" : "s"} had to be abandoned, so this process is exiting rather than waiting for ${abandonedCloses === 1 ? "it" : "them"}. Something may still be running.`
+  );
+  process.exit(process.exitCode || 1);
+}
