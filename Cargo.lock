@@ -2385,7 +2385,8 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.16.0-rc.3"
-source = "git+https://github.com/0xMiden/rust-sdk.git?branch=tomasarrachea-node-rc.2#26e00325aae111003859dc89e9e9c4eb8bf4a112"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78d816a15bf81d52673b668be0e2d41c681cb861478c07480418f48705862c5d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2423,7 +2424,8 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.16.0-rc.3"
-source = "git+https://github.com/0xMiden/rust-sdk.git?branch=tomasarrachea-node-rc.2#26e00325aae111003859dc89e9e9c4eb8bf4a112"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8729075614f4d993e53bcd1fe74e712f3dd1b46644842261dbb2abb081a3f211"
 dependencies = [
  "anyhow",
  "async-trait",

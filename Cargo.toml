@@ -48,8 +48,8 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.16.0-rc.5" }
 # Cargo.lock intentionally follows the rust-sdk v0.16.0-rc.2 release graph. Broad
 # `cargo update` runs may select newer transitive versions; validate those against
 # this release before accepting lockfile changes.
-miden-client              = { branch = "tomasarrachea-node-rc.2", default-features = false, git = "https://github.com/0xMiden/rust-sdk.git" }
-miden-client-sqlite-store = { branch = "tomasarrachea-node-rc.2", default-features = false, git = "https://github.com/0xMiden/rust-sdk.git" }
+miden-client              = { default-features = false, version = "0.16.0-rc.3" }
+miden-client-sqlite-store = { default-features = false, version = "0.16.0-rc.3" }
 
 # External dependencies
 async-trait = { version = "0.1" }
