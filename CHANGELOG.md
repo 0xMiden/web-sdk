@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.16.0-rc.5 (TBD)
+## 0.16.0-rc.5 (2026-08-27)
 
 ### Changes
 
-* [CHANGE][web] Upgraded `miden-client` to 0.16.0-rc.3.
+* [CHANGE][web] Upgraded `miden-client` to 0.16.0-rc.3 ([#337](https://github.com/0xMiden/web-sdk/pull/337)).
 
 ### Fixes
 
