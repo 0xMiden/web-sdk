@@ -17,7 +17,7 @@ impl Felt {
     /// range (`Felt::new` is fallible on the 0.15 protocol surface).
     #[js_export(constructor)]
     pub fn new(value: JsU64) -> Result<Felt, JsErr> {
-        NativeFelt::new(js_u64_to_u64(value))
+        NativeFelt::new(js_u64_to_u64(value)?)
             .map(Felt)
             .map_err(|err| from_str_err(&format!("invalid Felt value: {err}")))
     }

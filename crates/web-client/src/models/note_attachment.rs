@@ -95,7 +95,8 @@ impl NoteAttachment {
     #[js_export(constructor)]
     pub fn new(values: Option<Vec<JsU64>>) -> Result<NoteAttachment, JsErr> {
         let scheme = NativeNoteAttachmentScheme::none();
-        let values: Vec<u64> = values.unwrap_or_default().into_iter().map(js_u64_to_u64).collect();
+        let values: Vec<u64> =
+            values.unwrap_or_default().into_iter().map(js_u64_to_u64).collect::<Result<_, _>>()?;
 
         if values.is_empty() {
             let zero = NativeFelt::new(0).expect("0 is a valid field element");

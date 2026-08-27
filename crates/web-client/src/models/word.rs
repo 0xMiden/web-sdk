@@ -27,7 +27,7 @@ impl Word {
         let fixed_array_u64: [u64; 4] = u64_vec
             .into_iter()
             .map(js_u64_to_u64)
-            .collect::<Vec<u64>>()
+            .collect::<Result<Vec<u64>, JsErr>>()?
             .try_into()
             .expect("length checked above");
         let native_felt_vec: [NativeFelt; 4] = fixed_array_u64

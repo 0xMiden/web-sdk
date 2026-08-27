@@ -114,22 +114,27 @@ pub type JsU64 = u64;
 pub type JsU64 = napi::bindgen_prelude::BigInt;
 
 /// Converts a [`JsU64`] to `u64`.
+///
+/// # Errors
+/// Returns a [`JsErr`] if `val` is negative or otherwise outside the representable `u64`
+/// range (`0..2^64`), instead of panicking. On Node.js, `napi::bindgen_prelude::BigInt` has no
+/// such constraint at the type level, so an out-of-range `BigInt` is valid input to reach here.
 #[inline]
-pub fn js_u64_to_u64(val: JsU64) -> u64 {
+pub fn js_u64_to_u64(val: JsU64) -> Result<u64, JsErr> {
     #[cfg(feature = "browser")]
     {
-        val
+        Ok(val)
     }
     #[cfg(feature = "nodejs")]
     {
         let (signed, value, lossless) = val.get_u64();
         if signed || !lossless {
-            panic!(
-                "BigInt value is outside the u64 range (0..2^64); \
-                 got signed={signed}, lossless={lossless}"
-            );
+            return Err(from_str_err(&format!(
+                "BigInt value is outside the u64 range (0..2^64); got signed={signed}, \
+                 lossless={lossless}"
+            )));
         }
-        value
+        Ok(value)
     }
 }
 
