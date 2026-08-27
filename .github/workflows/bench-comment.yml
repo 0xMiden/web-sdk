@@ -1,0 +1,246 @@
+# Trusted half of the proving-benchmark bot.
+#
+# A `workflow_run` workflow always executes the copy of this file on the
+# DEFAULT branch, in the default branch's context, with a read/write
+# GITHUB_TOKEN. A fork cannot influence it, because a fork's edits to
+# .github/workflows/* live only on the PR head — which this workflow never
+# reads. That is the whole point: `bench.yml` runs untrusted code with no
+# credentials and produces data; this job holds credentials and runs only
+# first-party code.
+#
+# Consequences worth remembering:
+#   - This workflow CANNOT be tested from the PR that introduces it. It only
+#     fires once it is on the default branch. Use the workflow_dispatch input
+#     below to smoke-test it against a completed bench run.
+#   - Its runs do not appear in the PR's Checks tab (they are attributed to the
+#     default branch). The sticky comment and the check run created here are
+#     the only PR-visible surfaces.
+#
+# !! `workflows:` below matches bench.yml by its `name:` field, not by
+# !! filename. Renaming that workflow silently disables this one.
+name: Proving Benchmark Comment
+
+on:
+  workflow_run:
+    workflows: ["Proving Benchmark"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Bench run id to re-render (smoke test)"
+        required: true
+        type: string
+
+permissions:
+  # Required to download an artifact belonging to a different workflow run.
+  actions: read
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  # Two quick pushes produce two reporters racing to update the same comment.
+  # Keyed on the head repo + branch rather than the workflow name so unrelated
+  # PRs never cancel each other.
+  group: >-
+    bench-comment-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Post benchmark comparison
+    # The bench workflow also runs on non-PR events in future; only act on PRs.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Deliberately a bare checkout: this resolves to the DEFAULT branch, the
+      # same first-party code this workflow already runs from. We never check
+      # out PR code here, and actions/checkout would refuse it anyway under
+      # workflow_run.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve bench run id
+        id: run
+        shell: bash
+        env:
+          DISPATCH_RUN_ID: ${{ inputs.run_id }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          run_id="${DISPATCH_RUN_ID:-$EVENT_RUN_ID}"
+          if [ -z "$run_id" ]; then
+            echo "::error title=Proving Benchmark::No bench run id to report on."
+            exit 1
+          fi
+          echo "id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download benchmark report
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: proving-bench-report
+          path: report
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      # A missing artifact means the bench job failed or was cancelled. That is
+      # not a reason to turn an informational bot red — say nothing and stop.
+      - name: Stop if no report
+        if: steps.download.outcome != 'success'
+        shell: bash
+        run: |
+          echo "::notice title=Proving Benchmark::No report artifact on run ${{ steps.run.outputs.id }}; nothing to post."
+
+      # Everything in the artifact was written by code the PR author controls.
+      # The claimed PR number is cross-checked against fields only GitHub
+      # populates (workflow_run.head_sha, head_repository.full_name); without
+      # that check a fork could forge a number and post under this bot's token
+      # onto somebody else's PR.
+      #
+      # workflow_run.pull_requests is EMPTY for fork PRs, so it is never read.
+      - name: Verify PR identity
+        id: pr
+        if: steps.download.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let claimed;
+            try {
+              claimed = JSON.parse(fs.readFileSync('report/pr.json', 'utf8'));
+            } catch (error) {
+              core.setFailed(`report/pr.json missing or malformed: ${error.message}`);
+              return;
+            }
+
+            const number = Number(claimed.number);
+            if (!Number.isInteger(number) || number <= 0 || number > 1e7) {
+              core.setFailed(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: number,
+            });
+
+            // On workflow_dispatch there is no triggering run to cross-check
+            // against, so the API lookup above is the only authority. On the
+            // real path, tie the artifact to the run that produced it.
+            const run = context.payload.workflow_run;
+            if (run) {
+              if (pr.head.sha !== run.head_sha) {
+                core.setFailed(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
+                return;
+              }
+              if (pr.head.repo?.full_name !== run.head_repository?.full_name) {
+                core.setFailed('PR head repo does not match the triggering run');
+                return;
+              }
+            }
+
+            if (pr.state !== 'open') {
+              core.notice(`PR #${number} is ${pr.state}; skipping comment.`);
+              return;
+            }
+
+            core.setOutput('number', String(number));
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_ref', pr.base.ref);
+
+      # Rendered HERE, in trusted code, from structured JSON. The untrusted job
+      # never supplies markdown: benchmark names are fork-controlled, and
+      # rendering fork-authored markdown under a write token would allow
+      # mention storms, hidden HTML, and fake authority ("security review
+      # passed"). The renderer sanitizes every interpolated string.
+      - name: Render comment body
+        id: render
+        if: steps.pr.outputs.number
+        shell: bash
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          RUN_ID: ${{ steps.run.outputs.id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
+        run: |
+          set -euo pipefail
+          # The rendering context is rebuilt from values GitHub gave THIS job,
+          # not read from the artifact — the artifact only supplies measurements.
+          # baseSha is the one field with no trusted source here (it is the
+          # merge-base the bench actually measured), so it is taken from the
+          # artifact and validated as a 40-hex sha before use.
+          base_sha=$(jq -r '.baseSha // ""' report/pr.json)
+          if ! printf '%s' "$base_sha" | grep -Eq '^[0-9a-f]{7,40}$'; then
+            echo "::error title=Proving Benchmark::Artifact baseSha is not a commit sha."
+            exit 1
+          fi
+          jq -n \
+            --arg owner "$OWNER" \
+            --arg repo "$REPO_NAME" \
+            --argjson prNumber "$PR_NUMBER" \
+            --arg headSha "$HEAD_SHA" \
+            --arg baseSha "$base_sha" \
+            --arg baseRef "$BASE_REF" \
+            --arg runId "$RUN_ID" \
+            --arg runUrl "$RUN_URL" \
+            '{owner: $owner, repo: $repo, prNumber: $prNumber, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl}' \
+            > ctx.json
+          node .github/scripts/render-bench-comment.mjs \
+            report/results.json \
+            ctx.json \
+            > body.md
+          echo "Rendered $(wc -c < body.md) bytes"
+
+      - name: Post sticky comment
+        if: steps.pr.outputs.number
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
+        with:
+          # Distinct from the `linked-client-pr` header used by
+          # inject-linked-client-pr, so the two bots never clobber each other.
+          header: proving-benchmark
+          number: ${{ steps.pr.outputs.number }}
+          path: body.md
+          # A bot that posts when nothing moved trains people to ignore it.
+          skip_unchanged: true
+
+      # `neutral` never blocks merge, which is the stated requirement. It also
+      # keeps the result out of the conversation timeline for people who would
+      # rather read it in the Checks tab.
+      - name: Publish neutral check run
+        if: steps.pr.outputs.number
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('body.md', 'utf8');
+            // check-run output.summary is capped at 65535 chars.
+            const summary = body.length > 65000
+              ? `${body.slice(0, 65000)}\n\n_Truncated; see the [full report](${process.env.RUN_URL})._`
+              : body;
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Proving Benchmark',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion: 'neutral',
+              details_url: process.env.RUN_URL,
+              output: { title: 'Proving benchmark (informational)', summary },
+            });

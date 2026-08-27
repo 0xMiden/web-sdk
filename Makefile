@@ -132,6 +132,41 @@ integration-test-remote-prover-web-client: ## Run integration tests for the web 
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover --project=chromium
 
+# --- Benchmarking --------------------------------------------------------------------------------
+
+.PHONY: bench-proving
+BENCH_ARGS ?=
+bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt dirs
+	# Not part of any CI gate that can block a merge: the `bench.yml` workflow
+	# runs this on every PR and reports the result as an informational comment.
+	#
+	# Compares two builds on one machine, interleaved. Point --base and --head
+	# at saved copies of `crates/web-client/dist/mt` built from the two revisions
+	# you want to compare (build with the FULL release profile — MIDEN_FAST_BUILD
+	# drops LTO and wasm-opt, so its numbers describe a binary nobody ships).
+	#
+	#   make bench-proving BENCH_ARGS="--base /tmp/dist-base --head crates/web-client/dist/mt"
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs $(BENCH_ARGS)
+
+.PHONY: test-bench-scripts
+test-bench-scripts: ## Unit-test the benchmark comment renderer
+	# Lives outside the vitest projects on purpose: those carry a 95% coverage
+	# threshold scoped to shipped package sources, and CI plumbing has no
+	# business inside that gate.
+	# Explicit path, not a glob — `node --test` only globs from Node 21 and CI
+	# pins Node 20.
+	node --test .github/scripts/render-bench-comment.test.mjs
+
+.PHONY: bench-proving-calibrate
+bench-proving-calibrate: ## Measure the benchmark's own noise floor (see docs/benchmarks/calibration.md)
+	# Benches one dist against a copy of itself: the true delta is zero, so
+	# whatever this reports is measurement noise. Repeat 20-30x on the target
+	# runner and set the threshold at 3 sigma.
+	rm -rf /tmp/miden-dist-calib
+	cp -R crates/web-client/dist/mt /tmp/miden-dist-calib
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs \
+		--base /tmp/miden-dist-calib --head dist/mt --calibrate $(BENCH_ARGS)
+
 # --- Building ------------------------------------------------------------------------------------
 
 .PHONY: build-wasm
