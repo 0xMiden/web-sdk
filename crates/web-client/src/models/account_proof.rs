@@ -6,7 +6,9 @@ use miden_client::Word as NativeWord;
 use miden_client::account::StorageSlotName;
 use miden_client::asset::{AccountStorageHeader, Asset as NativeAsset};
 use miden_client::block::BlockNumber;
-use miden_client::rpc::domain::account::{AccountProof as NativeAccountProof, StorageMapEntries};
+use miden_client::rpc::domain::account::{
+    AccountProof as NativeAccountProof, AccountStorageMapDetails, StorageMapEntries,
+};
 
 use super::account_code::AccountCode;
 use super::account_header::AccountHeader;
@@ -91,6 +93,12 @@ impl AccountProof {
     /// Returns `undefined` if the account is private, the slot was not requested in the
     /// storage requirements, or the slot is not a map.
     ///
+    /// When the node returned the map as a partial SMT covering only the requested keys,
+    /// the entries are those keys with their proven values. When the slot exceeded the
+    /// node's response limit, an empty list is returned — use
+    /// `hasStorageMapTooManyEntries` to distinguish that case and fetch the map via
+    /// `RpcClient.syncStorageMaps()`.
+    ///
     /// Each entry contains a `key` and `value` as `Word` objects.
     #[js_export(js_name = "getStorageMapEntries")]
     pub fn get_storage_map_entries(
@@ -112,10 +120,29 @@ impl AccountProof {
                     value: Word::from(e.value),
                 })
                 .collect(),
-            // EntriesWithProofs contains raw SMT proofs without enumerable key-value
-            // pairs. The proofs are used for verification only; entries cannot be
-            // reconstructed from them.
-            StorageMapEntries::EntriesWithProofs(_) => Vec::new(),
+            // Every key in `map_keys` is guaranteed to be tracked by `partial_smt`
+            // (validated when the RPC response is parsed), so the value reads cannot
+            // fail in practice.
+            StorageMapEntries::PartialMap { map_keys, partial_smt } => map_keys
+                .iter()
+                .map(|key| {
+                    partial_smt
+                        .get_value(&key.hash().as_word())
+                        .map(|value| StorageMapEntryJs {
+                            key: Word::from(NativeWord::from(*key)),
+                            value: Word::from(value),
+                        })
+                        .map_err(|err| {
+                            js_error_with_context(
+                                err,
+                                "partial storage map does not track a requested key",
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            // The node returned no entries because the slot exceeds the per-response
+            // limit; the map has to be fetched with `RpcClient.syncStorageMaps()`.
+            StorageMapEntries::LimitExceeded => Vec::new(),
         };
 
         Ok(Some(entries))
@@ -135,7 +162,10 @@ impl AccountProof {
         let slot_name = StorageSlotName::new(slot_name)
             .map_err(|err| js_error_with_context(err, "invalid slot name"))?;
 
-        Ok(self.inner.find_map_details(&slot_name).map(|d| d.too_many_entries))
+        Ok(self
+            .inner
+            .find_map_details(&slot_name)
+            .map(AccountStorageMapDetails::is_limit_exceeded))
     }
 
     /// Returns the fungible assets in the account's vault, if vault details were included
