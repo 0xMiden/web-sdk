@@ -364,7 +364,7 @@ catches nothing at all — but they bound what a green result means.
   rather than favouring either side — and it is part of why the floor is as wide
   as it is.
 
-### A run that runs out of clock keeps an even number of repetitions
+### A run that runs out of clock keeps an even number of repetitions, and no verdict
 
 The step has a wall-clock budget, and a run that reaches it stops rather than
 being killed. What it has already measured is written and reported — every
@@ -380,54 +380,79 @@ more repetitions do not average away, and the reason the order alternates in the
 first place. Keeping the odd tail would buy one more sample at the cost of tilting
 all of them.
 
-#### Stopping on the clock does not bias the comparison
+#### A stopped run reports its numbers and does not rule on them
 
-The obvious objection is that this is selection bias: the run stopped because it
-was slow, so the repetitions that survive are a sample chosen by its own runtime.
-That is informative censoring, and it would be fatal if the reported figure were
-a level. It is not — it is a **paired difference**, and both builds are measured
-inside every repetition, with the budget consumed by both together. Stopping on
-elapsed time therefore selects for slow *machine periods*, which is common mode:
-it scales both sides and cancels in the ratio. Selection on the sum of two
-exchangeable quantities does not bias their difference.
+The obvious objection is selection bias: the run stopped because it was slow, so
+the repetitions that survive are a sample chosen by their own runtime. The
+reassuring answer, which this document used to give, is that the reported figure
+is a **paired difference** rather than a level — both builds are measured inside
+every repetition, so a slow machine period scales both sides and cancels.
 
-`truncation-bias.mjs` in this directory simulates it at the calibrated
-configuration — common-mode per-repetition noise, the calibrated 2.2% per-side
-noise, the setup-order penalty — and reports each scenario twice: once for
-complete six-repetition runs, once for runs that stopped having retained exactly
-six. Each cell is the mean reported delta and the directional-verdict rate. The
-comparison is the point; an absolute rate means nothing on its own.
+That answer is true, and it is not enough. Selection acts on the run's total
+duration, roughly `head + base`, while the reported quantity is `head - base`,
+and the correlation between them is
 
-| Scenario | Complete | Stopped at 6 | Stopped share |
+```text
+Cov(head + base, head - base) = Var(head) - Var(base)
+```
+
+which is zero **exactly when the two sides have the same run-level variance**.
+The cancellation was never a property of pairing; it was a property of symmetry,
+and nothing had checked the symmetry.
+
+`truncation-selection.mjs` in this directory measures that identity, under a
+model harsher than this workload: thermal drift across the run, a 5% chance of any
+prove running 2.5x long, four proves per repetition with the first discarded, and
+setup charged to the clock. The only knob is where a 12% run-level factor lives.
+
+| Run-level factor | Stopped at 6 of 8 | Clean 6 of 6 | Shift |
 | --- | --- | --- | --- |
-| Null, budget 0.95x | +0.01% / 0.00% | +0.00% / 0.00% | 99.44% |
-| Null, budget 1.00x | +0.01% / 0.00% | +0.00% / 0.00% | 74.84% |
-| Null, 5% thermal drift | +0.08% / 0.00% | +0.07% / 0.00% | 92.24% |
-| Null, heavy-tailed proves | +0.12% / 3.96% | +0.01% / 0.82% | 41.11% |
-| True +8%, budget 0.95x | +8.01% / 99.33% | +8.01% / 99.32% | 100.00% |
-| True +8%, 5% drift | +8.08% / 99.44% | +8.08% / 99.48% | 54.12% |
+| neither (the null) | -0.20% | -0.00% | -0.19pp |
+| both sides | +1.28% | +1.47% | -0.19pp |
+| head only | -18.92% | -0.02% | -18.90pp |
+| base only | +24.09% | +1.42% | +22.66pp |
 
-The two middle columns agree in every row: a run stopped with six repetitions
-retained reports the same delta as an uninterrupted one to within 0.1%, and the
-same directional-verdict rate, under the null and under a real effect.
+The symmetric rows shift by a fifth of a point, and they do so even with drift and
+heavy tails — which is why making the noise nastier is not a way to break a paired
+design. Give one side a run-level factor and nothing to the other, and truncation
+shifts the estimate by many points, in whichever direction the asymmetry points,
+while a complete run of the same model does not move at all. The exact magnitude
+depends on how aggressively the clock cuts; the sign and the structure do not.
 
-Two rows are worth reading carefully. Thermal drift is the mechanism that
-*should* have broken the argument — a drifting runner makes truncation keep the
-early, faster repetitions — and it does not, because drift is common mode. And
-the heavy-tail row is the one place a false-positive rate rises, to 3.96% — note
-that it rises for the **complete** run, and the truncated one is lower. The tails
-cause it, not the truncation. That scenario is also far more extreme than this
-workload (15% of proves running 2.5x long), and is in the table as a stress case
-rather than as a rate to expect — the real calibrated figure is the 0.15% derived
-above.
+So: is the symmetry real? The two sides are the same benchmark on the same machine
+in the same browser, differing only in the WASM binary — which is a good argument
+that a run-level factor should hit them equally, and no measurement at all. A
+change to allocation or memory layout is a plausible way for one binary to be more
+sensitive to machine state than the other, and that is precisely the kind of change
+this bot exists to catch.
 
-What truncation genuinely costs is repetitions, and therefore power. That the
-verdict already handles, by refusing to resolve below `MIN_REPS_FOR_SIGN_TEST`.
-Note the scope of that safety net: it holds a truncated run to *unresolved* only
-because truncating the calibrated six-repetition request cannot leave more than
-four. A dispatch at a much higher `--reps` can truncate to a count that still
-clears the floor and does get a verdict — correctly, since the repetitions it
-kept are real — and the disclosure below is what tells the reader it happened.
+The renderer therefore **withholds the verdict on a truncated run** and reports
+its numbers as an indication. Nothing is hidden: the table, the samples and the
+disclosure all render, and the comment says why it is not ruling. This costs
+nothing in the common case, because a truncated run means the budget was already
+too tight — the remedy is to fix the budget and re-run, which the note says. It
+also retires a whole argument: no one has to be persuaded that an unmeasured
+symmetry assumption holds before trusting a published number.
+
+The same rule covers two more shapes the calibration does not reach, for the same
+reason each time — the fixed threshold is 3σ *of this estimator at this
+configuration*, and it does not transfer downward:
+
+- **An odd retained count.** The setup order alternates by repetition, so an odd
+  count sets one side up first once more than the other. The producer refuses an
+  odd `--reps` outright, but `reps` is artifact-authored, so the renderer declines
+  to rule rather than trusting the producer to have prevented it.
+- **Fewer than three retained proves per repetition.** The threshold is 3σ of a
+  mean of per-repetition *minima* taken over three proves. The minimum of fewer
+  is a noisier statistic, so against it the same cutoff is under 3σ. Repetitions
+  were already floored for this and proves were only footnoted, which was
+  inconsistent: both legs weaken identically, and a one-repetition-one-prove
+  artifact was the cheapest route to a confident verdict.
+
+All three blocks are one-directional. More repetitions, or more proves, make the
+estimator *tighter*, so the fixed threshold becomes more than 3σ rather than
+less — conservative, and therefore still sound. Only the downward direction is
+blocked.
 
 #### The report says so
 

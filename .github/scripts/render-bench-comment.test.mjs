@@ -431,13 +431,22 @@ test("refuses to call a movement significant when the repetitions disagree", () 
     results({
       top: {
         reps: 6,
-        provesPerRep: 1,
+        provesPerRep: 3,
         repsExecuted: 7,
-        provesExecutedPerRep: 2,
+        provesExecutedPerRep: 4,
       },
       benchmark: {
-        base: { samples: Array.from({ length: 6 }, () => [100]) },
-        head: { samples: [[150], [150], [150], [150], [150], [62]] },
+        base: { samples: Array.from({ length: 6 }, () => [100, 100, 100]) },
+        head: {
+          samples: [
+            [150, 150, 150],
+            [150, 150, 150],
+            [150, 150, 150],
+            [150, 150, 150],
+            [150, 150, 150],
+            [62, 62, 62],
+          ],
+        },
       },
     }),
     ctx()
@@ -460,13 +469,22 @@ test("calls a consistent movement significant", () => {
     results({
       top: {
         reps: 6,
-        provesPerRep: 1,
+        provesPerRep: 3,
         repsExecuted: 7,
-        provesExecutedPerRep: 2,
+        provesExecutedPerRep: 4,
       },
       benchmark: {
-        base: { samples: Array.from({ length: 6 }, () => [100]) },
-        head: { samples: [[120], [121], [119], [120], [120], [120]] },
+        base: { samples: Array.from({ length: 6 }, () => [100, 100, 100]) },
+        head: {
+          samples: [
+            [120, 120, 120],
+            [121, 121, 121],
+            [119, 119, 119],
+            [120, 120, 120],
+            [120, 120, 120],
+            [120, 120, 120],
+          ],
+        },
       },
     }),
     ctx()
@@ -1600,13 +1618,17 @@ test("will not call a movement significant on too few repetitions", () => {
       results({
         top: {
           reps,
-          provesPerRep: 1,
+          provesPerRep: 3,
           repsExecuted: reps + 1,
-          provesExecutedPerRep: 2,
+          provesExecutedPerRep: 4,
         },
         benchmark: {
-          base: { samples: Array.from({ length: reps }, () => [100]) },
-          head: { samples: Array.from({ length: reps }, () => [140]) },
+          base: {
+            samples: Array.from({ length: reps }, () => [100, 100, 100]),
+          },
+          head: {
+            samples: Array.from({ length: reps }, () => [140, 140, 140]),
+          },
         },
       }),
       ctx()
@@ -1628,13 +1650,22 @@ test("will not call a movement significant on too few repetitions", () => {
     results({
       top: {
         reps: 6,
-        provesPerRep: 1,
+        provesPerRep: 3,
         repsExecuted: 7,
-        provesExecutedPerRep: 2,
+        provesExecutedPerRep: 4,
       },
       benchmark: {
-        base: { samples: Array.from({ length: 6 }, () => [100]) },
-        head: { samples: [[140], [141], [139], [140], [142], [138]] },
+        base: { samples: Array.from({ length: 6 }, () => [100, 100, 100]) },
+        head: {
+          samples: [
+            [140, 140, 140],
+            [141, 141, 141],
+            [139, 139, 139],
+            [140, 140, 140],
+            [142, 142, 142],
+            [138, 138, 138],
+          ],
+        },
       },
     }),
     ctx()
@@ -2103,18 +2134,203 @@ test("a stopped run without a requested count is refused", () => {
 // already used the default repetition count, so "re-run with the default
 // `--reps`" told its author to do what they had already done — and more
 // repetitions would miss the budget by more, so the advice was also circular.
+// The calibrated 3 retained proves, so that a test about repetitions is not
+// silently answered by the prove floor instead.
 const shortRun = (reps, top = {}) => ({
   top: {
     reps,
-    provesPerRep: 1,
+    provesPerRep: 3,
     repsExecuted: reps + 1,
-    provesExecutedPerRep: 2,
+    provesExecutedPerRep: 4,
     ...top,
   },
   benchmark: {
-    base: { samples: Array.from({ length: reps }, () => [100]) },
-    head: { samples: Array.from({ length: reps }, () => [140]) },
+    base: { samples: Array.from({ length: reps }, () => [100, 100, 100]) },
+    head: { samples: Array.from({ length: reps }, () => [140, 140, 140]) },
   },
+});
+
+// A run whose length was decided by the clock is a selected sample: it ran until
+// the machine was too slow to continue, and how slow the machine was is the
+// quantity being measured. That selection cancels out of the PAIRED delta only
+// when both sides have equal run-level variance — the correlation between the
+// total duration and the difference is Var(head) - Var(base). Simulated over this
+// producer's interleave, symmetric run-level noise leaves the truncated estimate
+// unbiased to -0.08pp while a 12% factor on ONE side moves it 4.4pp, most of the
+// 5.40% floor. Nothing has measured that equality on this workload, so a
+// truncated run reports its numbers and withholds the ruling.
+test("a run that stopped on the clock never publishes a verdict, at any length", () => {
+  // Well ABOVE the repetition floor, which is the case the floor cannot catch:
+  // truncating the calibrated request of six cannot leave more than four, but a
+  // dispatch at a higher --reps truncates to a count that clears six easily.
+  for (const [retained, requested] of [
+    [6, 8],
+    [8, 12],
+    [12, 20],
+    [30, 40],
+  ]) {
+    const body = renderComment(
+      results(
+        shortRun(retained, {
+          repsRequested: requested,
+          repsExecuted: retained + 1,
+          stoppedEarly: "the 20-minute step budget is exhausted",
+        })
+      ),
+      ctx()
+    );
+    assert.match(
+      body,
+      /Unresolved/,
+      `retained ${retained} of ${requested} was ruled on`
+    );
+    assert.doesNotMatch(
+      body,
+      /### (⚠️|✅)/,
+      `retained ${retained} of ${requested} published a confident verdict`
+    );
+    assert.match(body, /stopped on the clock/);
+    // And it must say the numbers are still real, so the note does not read as
+    // "the run failed".
+    assert.match(body, /real measurements/);
+  }
+});
+
+// Same rule, second channel. The mean-of-all-proves cross-check is also a
+// directional claim, so a truncated run must not make it either — a comment whose
+// headline declined to rule while its note asserted a mean movement would be
+// contradicting itself.
+test("a stopped run does not publish the mean cross-check either", () => {
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+        repsRequested: 10,
+        stoppedEarly: "the 20-minute step budget is exhausted",
+      },
+      benchmark: {
+        // Below the floor on the headline (minima are equal) but far beyond it on
+        // the mean of all proves — the exact shape that triggers the mean-only
+        // note.
+        base: { samples: Array.from({ length: 6 }, () => [100, 100, 100]) },
+        head: { samples: Array.from({ length: 6 }, () => [100, 200, 200]) },
+      },
+    }),
+    ctx()
+  );
+  assert.doesNotMatch(body, /mean of all/i);
+  assert.doesNotMatch(body, /### (⚠️|✅)/);
+});
+
+// `reps` is artifact-authored, so the producer refusing an odd count does not stop
+// one arriving. An odd count sets one side up first once more than the other, a
+// fixed positional difference repetitions cannot average away, and it is above the
+// floor from seven up — so without this it bought a fully confident verdict.
+test("an odd repetition count never publishes a verdict", () => {
+  for (const reps of [7, 9, 15]) {
+    const body = renderComment(results(shortRun(reps)), ctx());
+    assert.match(body, /Unresolved/, `${reps} reps was ruled on`);
+    assert.doesNotMatch(
+      body,
+      /### (⚠️|✅)/,
+      `${reps} reps published a confident verdict`
+    );
+    assert.match(body, /odd repetition count/);
+  }
+});
+
+// The threshold is 3σ of an estimator measured over the fastest of three warm
+// proves. The minimum of fewer proves is noisier, so the same fixed floor is under
+// 3σ there — the identical argument that blocks a verdict below the repetition
+// floor, on the other axis. `provesPerRep` is artifact-authored, so before this a
+// one-rep-one-prove artifact was the cheapest route to a confident verdict.
+test("too few proves per repetition never publishes a verdict", () => {
+  for (const proves of [1, 2]) {
+    const body = renderComment(
+      results({
+        top: {
+          reps: 6,
+          provesPerRep: proves,
+          repsExecuted: 7,
+          provesExecutedPerRep: proves + 1,
+        },
+        benchmark: {
+          base: {
+            samples: Array.from({ length: 6 }, () =>
+              Array.from({ length: proves }, () => 100)
+            ),
+          },
+          head: {
+            samples: Array.from({ length: 6 }, () =>
+              Array.from({ length: proves }, () => 140)
+            ),
+          },
+        },
+      }),
+      ctx()
+    );
+    assert.match(body, /Unresolved/, `${proves} proves was ruled on`);
+    assert.doesNotMatch(
+      body,
+      /### (⚠️|✅)/,
+      `${proves} proves published a confident verdict`
+    );
+    assert.match(body, /too few proves per repetition/);
+  }
+});
+
+// Upward is safe and must stay allowed: more proves lower the variance of each
+// repetition's minimum, so the fixed floor becomes MORE than 3σ, not less.
+test("more proves than calibrated still publishes a verdict", () => {
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 7,
+        repsExecuted: 7,
+        provesExecutedPerRep: 8,
+      },
+      benchmark: {
+        base: {
+          samples: Array.from({ length: 6 }, () =>
+            Array.from({ length: 7 }, () => 100)
+          ),
+        },
+        head: {
+          samples: Array.from({ length: 6 }, () =>
+            Array.from({ length: 7 }, () => 140)
+          ),
+        },
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /### ⚠️ \+40\.00% slower/);
+  assert.doesNotMatch(body, /Unresolved/);
+});
+
+// The floor outranks the block: a one-repetition run is also an odd-repetition
+// run, and "one repetition is too few" is the reason its author can act on.
+test("a run below the floor is told it is short, not that it is odd", () => {
+  for (const reps of [1, 3, 5]) {
+    const body = renderComment(results(shortRun(reps)), ctx());
+    assert.match(body, /too few to tell a real movement from noise/);
+    assert.doesNotMatch(body, /odd repetition count/);
+  }
+});
+
+// The guard must not swallow the ordinary case, which is the whole point of the
+// bot: a complete, even, calibrated run still rules.
+test("a complete even run still publishes a verdict", () => {
+  for (const reps of [6, 8, 12]) {
+    const body = renderComment(results(shortRun(reps)), ctx());
+    assert.match(body, /### ⚠️ \+40\.00% slower/, `${reps} reps did not rule`);
+    assert.doesNotMatch(body, /Unresolved/);
+    assert.doesNotMatch(body, /stopped on the clock/);
+  }
 });
 
 test("a truncated unresolved run is told to raise the budget, not the reps", () => {

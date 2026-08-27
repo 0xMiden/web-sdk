@@ -408,11 +408,12 @@
     "packages/react-sdk/examples/**",
     "crates/idxdb-store/src/js/**",
     // Run by hand from docs/benchmarks/calibration.md to regenerate the tables
-    // it quotes — power rates for the first, truncation bias for the second —
+    // it quotes — power rates for the first, the truncation-selection table for
+    // the second —
     // and by a reviewer checking those tables still reproduce. Nothing imports
     // either, which is the point: they are standalone reproduction scripts, not
     // part of any build.
     "docs/benchmarks/verdict-power.mjs",
-    "docs/benchmarks/truncation-bias.mjs",
+    "docs/benchmarks/truncation-selection.mjs",
   ],
 }

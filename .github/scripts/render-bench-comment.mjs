@@ -53,22 +53,26 @@ const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
  * by the PR head's producer), so a version that does not move when the contract
  * moves lets a stale producer's numbers be relabelled by a newer renderer.
  *
- * NOT bumped for `repsRequested` / `stoppedEarly`, and not for `reps` becoming
- * the count actually MEASURED rather than the count requested — which looks like
- * a meaning change and is worth the note. The two coincide on every artifact the
- * previous producer could emit, because a run that stopped short used to write no
- * artifact at all; the new value is only ever different on a truncated run, which
- * the old renderer already handles correctly, since it validates `reps` against
- * the `samples` group count and holds anything under `MIN_REPS_FOR_SIGN_TEST` to
- * "unresolved". So there is no artifact a bump would protect, and the two new
- * fields are additive.
+ * NOT bumped for the truncation fields (`repsRequested`, `stoppedEarly`, `reps`
+ * becoming the count MEASURED, and `repsExecuted` gaining the `reps + 2` case
+ * where a repetition was dropped for parity) — and the reason is narrow enough
+ * to be worth stating exactly, because the obvious reason is wrong.
  *
- * One caveat on that reasoning, since it is easy to over-read: a truncated run is
- * held to "unresolved" only because truncating the CALIBRATED six-repetition
- * request cannot leave more than four. `reps` is a workflow_dispatch input, so a
- * dispatch at `--reps 20` truncated to 12 clears the floor and does get a
- * verdict. That is intended — twelve repetitions is twelve repetitions — and it
- * is disclosed by the stopped-early note rather than by the count alone.
+ * The wrong reason, which an earlier version of this comment gave: that the old
+ * and new values coincide on every artifact the previous producer could emit.
+ * They do not. A truncated run with a parity drop emits `repsExecuted = reps + 2`,
+ * which a renderer built before that change refuses outright — it required exactly
+ * `reps + 1`. Under a shipped renderer that would be silence on the PR.
+ *
+ * The actual reason: no renderer has ever shipped. This file and the producer
+ * arrive on the default branch in the same change, so the first artifact any
+ * deployed renderer sees is the first artifact the current producer writes. The
+ * intermediate commits on the branch that introduced this are not a compatibility
+ * surface — nothing ever ran them against anything.
+ *
+ * That reason expires the moment this merges. From then on the two halves DO run
+ * at different revisions routinely, and a change of this kind — new field, or an
+ * existing field's range or meaning widened — needs the bump procedure below.
  *
  * A SET, not a single number, and that is the whole point. The two halves live
  * in different trees — `crates/web-client/scripts/` and `.github/scripts/` — so
@@ -127,7 +131,12 @@ const LOWER_IS_BETTER = true;
  *
  * `reps` and `provesPerRep` come from the artifact, so a run that reports one
  * repetition of one prove must not inherit a standard deviation measured over
- * six of three. Below these counts the comment says the figure does not apply.
+ * six of three. Below EITHER count no verdict is published — see
+ * `verdictPreconditions` and `MIN_REPS_FOR_SIGN_TEST` — because the fixed
+ * threshold is 3σ of this estimator at these counts and is less than that for any
+ * shorter run, on either axis. Above them the comment notes that the measured
+ * spread does not apply while still gating on the threshold, which is the
+ * conservative direction.
  */
 const CALIBRATED_REPS = 6;
 const CALIBRATED_PROVES_PER_REP = 3;
@@ -853,7 +862,75 @@ function pairedMeanAgreement(base, head) {
   return { consistent: contradicting === 0 && agree * 2 > reps, agree, reps };
 }
 
+/**
+ * Whether this run's methodology supports a faster/slower verdict at all,
+ * independent of what its numbers say.
+ *
+ * The verdict rests on two calibrated properties, and both are properties of the
+ * RUN rather than of any one benchmark — so when either fails, every benchmark in
+ * the run is unresolved and the reason is the same for all of them.
+ *
+ * A run that stopped on the clock. Its length was chosen by how slow the machine
+ * was, and how slow the machine was is the quantity being measured, so the pairs
+ * that survive are a selected sample rather than the first N of an unselected
+ * one. Whether that selection biases the PAIRED delta turns entirely on the two
+ * sides having equal run-level variance: selection acts on the total duration,
+ * and its correlation with the difference is Var(head) - Var(base), which is zero
+ * only when those match. Simulated over the interleave this producer actually
+ * runs, symmetric run-level noise leaves the truncated estimate unbiased to
+ * -0.08pp, while giving ONE side a 12% run-level factor moves it by 4.4pp — most
+ * of a 5.40% threshold, and in whichever direction the asymmetry points. Nothing
+ * has measured whether the two binaries have equal run-level variance on this
+ * workload, and the calibration was taken from complete runs, so the honest
+ * position is that a truncated run reports its numbers without ruling on them.
+ * See docs/benchmarks/truncation-selection.mjs.
+ *
+ * A run with an odd repetition count. The setup order alternates by repetition,
+ * so an odd count opens one side first once more than the other — a fixed
+ * positional asymmetry, which repetitions cannot average out. The producer
+ * refuses an odd `--reps` outright and drops the odd tail of a truncated run for
+ * this reason, but `reps` is artifact-authored: an older producer, or a crafted
+ * artifact, can still present one, and it must not buy a confident verdict.
+ *
+ * Neither case suppresses the measurements. The numbers, the samples and the
+ * mean cross-check all still render; what is withheld is the claim that they
+ * establish a direction.
+ */
+function verdictPreconditions({ stoppedEarly, reps, provesPerRep }) {
+  if (stoppedEarly) {
+    return {
+      ok: false,
+      blocked: "stoppedEarly",
+    };
+  }
+  if (Number.isInteger(reps) && reps % 2 !== 0) {
+    return {
+      ok: false,
+      blocked: "oddReps",
+    };
+  }
+  // The same argument as the repetition floor, on the other axis. THRESHOLD_PCT
+  // is 3σ of an estimator measured over the minimum of THREE retained proves, and
+  // the minimum of fewer is a noisier statistic — so applying the fixed floor to a
+  // one-prove run compares a movement against a cutoff that is well under 3σ of
+  // that run's own spread. Repetitions were blocked below their calibrated count
+  // for exactly this and proves were only footnoted, which was inconsistent: both
+  // legs weaken the same way and `provesPerRep` is artifact-authored too, so a
+  // one-rep-one-prove artifact was the cheapest route to a confident verdict.
+  //
+  // Only downward. More proves lower the variance of each repetition's minimum,
+  // which makes the fixed floor MORE than 3σ — conservative, so it still holds.
+  if (
+    Number.isInteger(provesPerRep) &&
+    provesPerRep < CALIBRATED_PROVES_PER_REP
+  ) {
+    return { ok: false, blocked: "tooFewProves" };
+  }
+  return { ok: true };
+}
+
 function computeRows(results) {
+  const preconditions = verdictPreconditions(results);
   const rows = results.benchmarks.map((b) => {
     // `value` is the mean of per-rep minima — see the estimator comment in
     // bench-proving.mjs. Measured over six calibration runs of identical
@@ -875,10 +952,26 @@ function computeRows(results) {
     if (deltaPct !== null && !Number.isFinite(deltaPct))
       fail(`${b.name}: delta percentage is not finite`);
     const magnitude = deltaPct === null ? 0 : Math.abs(deltaPct);
-    const agreement =
+    // The run-level precondition outranks the per-benchmark test. It is applied
+    // by REPLACING the agreement rather than by filtering later, so that every
+    // consumer of `agreement` — the verdict heading, the table emoji, the
+    // unresolved note and the mean cross-check — sees one consistent answer.
+    // Deciding this in two places is how a heading and its own note came to
+    // contradict each other before.
+    const measured =
       b.base === null
         ? { consistent: false, agree: 0, reps: 0 }
         : pairedAgreement(b.base, b.head);
+    // The repetition floor OUTRANKS the run-level block, because a run below the
+    // floor is short first and whatever else second. A one-repetition run is also
+    // an odd-repetition run, and "one repetition is too few" is the reason its
+    // author can act on; "the setup order is unbalanced" is true and useless
+    // there. Above the floor the block is the only thing standing between a
+    // selected sample and a confident verdict, so it applies.
+    const agreement =
+      measured.tooShort || b.base === null || preconditions.ok
+        ? measured
+        : { ...measured, consistent: false, blocked: preconditions.blocked };
     // Two independent conditions, and both have to hold. The threshold is the
     // smallest movement worth reporting at all; the paired agreement is whether
     // the repetitions actually support a movement of that direction. A movement
@@ -913,8 +1006,16 @@ function computeRows(results) {
     // relevance gate — "large enough to bother reading about" — which is a
     // different claim from "3σ".
     const meanPct = meanDeltaPct(b.base, b.head);
+    // Gated by the same precondition as the headline. This is a second channel
+    // that can publish a directional claim, so exempting it would have let a
+    // truncated run say "the mean of all proves moved and its repetitions agree"
+    // in a comment whose headline had just declined to rule — the selection
+    // argument applies to a mean of all proves exactly as it does to a mean of
+    // minima.
     const meanAgreement =
-      b.base === null ? null : pairedMeanAgreement(b.base, b.head);
+      b.base === null || agreement.blocked
+        ? null
+        : pairedMeanAgreement(b.base, b.head);
     const meanOnly =
       meanPct !== null &&
       deltaPct !== null &&
@@ -1005,9 +1106,17 @@ function buildVerdict(rows) {
     // means the samples contradict each other; too short means they were never
     // asked to. Printing "its repetitions disagree" for a one-repetition run
     // describes a disagreement that cannot exist.
-    const why = leader.agreement.tooShort
-      ? `moved beyond the floor, but ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")} is too few to tell a real movement from noise`
-      : "moved beyond the floor but its repetitions disagree";
+    // Three ways to land here now, and they call for different reading.
+    // Disagreement means the samples contradict each other. Too short means they
+    // were never asked to. Blocked means they may well agree and the run is
+    // declining to rule anyway, because the calibration the ruling would rest on
+    // does not cover a run of this shape — saying "its repetitions disagree"
+    // there would be a claim about the data that the code never tested.
+    const why = leader.agreement.blocked
+      ? `moved beyond the floor, but this run cannot be ruled on — see below`
+      : leader.agreement.tooShort
+        ? `moved beyond the floor, but ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")} is too few to tell a real movement from noise`
+        : "moved beyond the floor but its repetitions disagree";
     return `### ${EMOJI_UNRESOLVED} Unresolved ${formatSignedPct(leader.deltaPct)}: ${codeSpan(leader.name)} ${why}${rest}`;
   }
 
@@ -1108,9 +1217,10 @@ function buildStoppedEarlyNote(results) {
   const dropped = repsRequested - reps;
   return [
     `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for,`,
-    `> ${dropped === 1 ? "having run out" : "because it ran out"} of its wall-clock budget. Everything below is computed over the ${reps} it finished.`,
-    "> The comparison stays sound — both builds are measured inside every repetition, so a slow machine",
-    "> affects them together — but fewer repetitions means less power to resolve a small difference.",
+    `> ${dropped === 1 ? "having run out" : "because it ran out"} of its wall-clock budget. Everything below is computed over the ${reps} it finished,`,
+    "> and no faster/slower verdict is issued from it: a run whose length was decided by the clock is a",
+    "> selected sample, and the noise floor was calibrated on complete runs. The measurements are still",
+    "> worth reading — they are real — but treat them as an indication rather than a result.",
     "> If this recurs, the budget is too tight rather than the run too slow: raise the benchmark step's",
     "> `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
   ].join("\n");
@@ -1350,7 +1460,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
         // which of the two it is doing. It keeps applying the cutoff, because a
         // fixed magnitude gate is still better than calling every movement
         // significant; it just cannot claim a confidence level behind it.
-        `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. The ±${formatPct(THRESHOLD_PCT)} cutoff below is still applied, as a fixed magnitude gate rather than as a confidence level.`,
+        `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. Above those counts the ±${formatPct(THRESHOLD_PCT)} cutoff is still applied and is conservative, since a longer run's estimator is tighter; below either of them no verdict is published at all.`,
     ...(compared
       ? [
           `- A movement is only called significant when it clears the noise floor **and** no repetition's paired difference contradicts the direction, with a majority of repetitions positively agreeing. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result. Runs shorter than ${MIN_REPS_FOR_SIGN_TEST} repetitions are never called significant — the floor is calibrated at that count and does not transfer below it.`,
@@ -1443,6 +1553,39 @@ function buildUnresolvedNote(rows, stoppedEarly = false) {
   const unresolved = rows.filter((r) => r.unresolved);
   if (unresolved.length === 0) return "";
   const leader = unresolved[0];
+  if (leader.agreement.blocked === "stoppedEarly") {
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: this run stopped on the clock.** The movements below`,
+      `> are real measurements and are worth reading, but this run does not rule on their direction.`,
+      `> A run that stops early has its length chosen by how slow the machine was, and how slow the`,
+      `> machine was is what the benchmark measures — so the repetitions that survived are a selected`,
+      `> sample. That selection cancels out of the paired comparison only if both builds have the same`,
+      `> run-to-run variance; if one is more variable, it shifts the result by roughly the width of the`,
+      `> noise floor, in whichever direction the difference points. Nothing has measured that on this`,
+      `> workload and the floor was calibrated on complete runs, so the verdict is withheld rather than`,
+      `> qualified. Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or`,
+      `> lower \`--proves\`, and the re-run will rule.`,
+    ].join("\n");
+  }
+  if (leader.agreement.blocked === "tooFewProves") {
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: too few proves per repetition.** The \u00b1${formatPct(THRESHOLD_PCT)}`,
+      `> floor is three standard deviations of an estimator measured over the fastest of ${CALIBRATED_PROVES_PER_REP} warm proves.`,
+      `> The minimum of fewer proves is a noisier number, so against it that floor is less than three`,
+      `> standard deviations and would call movements significant more often than the rate it advertises.`,
+      `> The movements below are reported without a ruling. Re-run with at least ${CALIBRATED_PROVES_PER_REP + 1} \`--proves\`.`,
+    ].join("\n");
+  }
+  if (leader.agreement.blocked === "oddReps") {
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: this run has an odd repetition count.** The setup`,
+      `> order alternates by repetition, so an odd number of them sets one build up first once more than`,
+      `> the other. That is a fixed positional difference rather than noise, and more repetitions do not`,
+      `> average it away — so the movements below are reported without a ruling on their direction.`,
+      `> Re-run with an even \`--reps\`; the producer refuses an odd one, so this artifact came from an`,
+      `> older build of it.`,
+    ].join("\n");
+  }
   if (leader.agreement.tooShort) {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but this run`,
