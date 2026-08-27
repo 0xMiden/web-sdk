@@ -24,7 +24,9 @@ on:
     # `ready_for_review` pairs with the draft filter on the job: a draft PR does
     # not spend a multi-hour 8-core run on every push, and marking it ready
     # triggers the run that was skipped.
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+    # `labeled` pairs with the opt-in gate on the job: applying `bench` starts the
+    # run on a PR that is already open.
+    types: [opened, synchronize, reopened, edited, ready_for_review, labeled]
     # A multi-hour job on an 8-core runner that builds WASM twice is not worth
     # spending on a PR that cannot move a proving number. `paths-ignore` only
     # skips when EVERY changed file matches, so a PR touching docs and code
@@ -114,8 +116,32 @@ jobs:
     # A draft is excluded because it is the state where pushes are most frequent
     # and a proving number is least useful. `!draft` is safe on workflow_dispatch
     # too, where `pull_request` is absent and the expression reads as null.
+    #
+    # OPT-IN WHILE THE THRESHOLD IS PROVISIONAL. The noise floor in
+    # render-bench-comment.mjs was measured on a laptop, not on this runner class,
+    # so until it is remeasured the renderer reports movements as observations and
+    # withholds every ruling — see THRESHOLD_PROVISIONAL there. Running three
+    # runner-hours per push to produce something that declines to conclude is not
+    # a trade worth making by default, so a PR run needs the `bench` label.
+    #
+    # Measure the floor first, with `workflow_dispatch` (`calibrate: true`) and the
+    # procedure in docs/benchmarks/calibration.md. Once THRESHOLD_PCT comes from
+    # this runner and THRESHOLD_PROVISIONAL is false, drop the label clause and the
+    # `labeled` trigger type above, and the bot runs on every qualifying push.
+    #
+    # `labeled` fires for any label, so it is narrowed to the one that matters —
+    # otherwise every unrelated label on an already-labelled PR starts a run.
+    #
+    # The label clause is scoped to `pull_request` because a dispatch has no PR:
+    # `github.event.pull_request.labels.*.name` filters null to an EMPTY ARRAY, so
+    # an unscoped `contains` reads false and would skip the calibration dispatch —
+    # the one run that has to work before any of this is worth enabling.
     if: >-
       !github.event.pull_request.draft &&
+      (github.event_name != 'pull_request' ||
+       contains(github.event.pull_request.labels.*.name, 'bench')) &&
+      (github.event.action != 'labeled' ||
+       github.event.label.name == 'bench') &&
       (github.event.action != 'edited' ||
        github.event.changes.base != null)
     # Budget accounting. EVERY step that can take real time must be capped and

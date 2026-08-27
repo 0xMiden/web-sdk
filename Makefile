@@ -159,10 +159,11 @@ lint-bench-workflows: ## actionlint the two benchmark workflows
 	# benchmark bot's correctness lives largely in workflow expressions, where a
 	# typo in an `if:` silently disables a job rather than failing loudly.
 	#
-	# NOT wired into CI. actionlint is absent from taiki-e/install-action's tool
-	# list, which is how this repo pins every other CI binary, so enforcing it
-	# would mean adding a third-party action or an unpinned download. Run it here
-	# before touching either workflow.
+	# Wired into CI as a merge gate — see the `lint-bench-workflows` job in
+	# test.yml, which pins the same version by sha256 because actionlint is absent
+	# from taiki-e/install-action's tool list (the mechanism this repo uses for
+	# every other CI binary). Keep ACTIONLINT_VERSION here in step with that job,
+	# or a rule added upstream will fail CI while passing locally.
 	actionlint .github/workflows/bench.yml .github/workflows/bench-comment.yml
 
 .PHONY: test-bench-scripts

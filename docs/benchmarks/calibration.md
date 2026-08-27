@@ -560,6 +560,11 @@ place.
 
 ## Applying the result
 
+Until this is done the bot is opt-in: a pull-request run needs the `bench` label,
+because three runner-hours for a report that declines to rule is not a trade worth
+making by default. Calibrating is what removes that gate — the `if:` block in
+`bench.yml` names the two clauses to delete once `THRESHOLD_PROVISIONAL` is false.
+
 **This has an owner and a deadline, or it does not happen.** Until the runner is
 calibrated the comment carries a "provisional floor" banner on every report,
 which is the honest state but a weak signal — a real regression under the laptop
