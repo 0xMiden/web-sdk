@@ -141,10 +141,10 @@ jobs:
           fi
 
       - name: Install binaryen (wasm-opt)
-        # Still needed by the rollup plugin's discovery even when we skip
-        # the actual wasm-opt invocation.
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # Still needed by the rollup plugin's discovery even when we skip the
+        # actual wasm-opt invocation. Pinned rather than apt so every job in
+        # the repo agrees on the optimizer — see the note in bench.yml.
+        run: ./scripts/install-binaryen.sh
 
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1

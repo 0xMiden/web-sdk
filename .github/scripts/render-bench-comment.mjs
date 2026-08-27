@@ -1422,7 +1422,29 @@ function uniformUnit(rows) {
 // Section builders
 // ---------------------------------------------------------------------------
 
+/** What this bot measures. Prefixed onto every verdict heading. */
+const SUBJECT = "WASM proving";
+
+/**
+ * The heading is the only line most readers see — in the PR timeline, in a
+ * notification email, in a list of comments. "No significant change" on its own
+ * does not say change in WHAT, so name the subject before the verdict.
+ *
+ * Applied here rather than inside each branch of buildVerdictBody: there are
+ * nine of them and a new one would silently ship without the subject.
+ */
 function buildVerdict(rows) {
+  const body = buildVerdictBody(rows);
+  // Headings are `### <emoji> <Sentence>`. Splice the subject in after the
+  // emoji, leaving the sentence itself untouched — it carries the verdict and
+  // several branches build it from measured values.
+  const m = /^### (\S+) (.*)$/s.exec(body);
+  if (!m) return body;
+  const [, emoji, rest] = m;
+  return `### ${emoji} ${SUBJECT} — ${rest}`;
+}
+
+function buildVerdictBody(rows) {
   if (rows.length === 0) {
     return "### ❔ No benchmarks reported — the bench job produced an empty result set";
   }
