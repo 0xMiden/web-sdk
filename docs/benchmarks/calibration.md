@@ -65,9 +65,9 @@ single benchmark in the suite the family that dominates today is not benchmarks
 but *runs*: the bench fires on every push to a PR, so the relevant question is
 how often a PR's whole life produces one spurious label. That number depends on
 which rate is multiplied, so take it from the conjunction rather than from the
-magnitude leg alone — see the table below, where ten pushes come to under 1%
-rather than the ~6% the magnitude leg on its own would suggest. Adding benchmarks
-multiplies it again.
+magnitude leg alone — see the table below, where ten pushes come to about 1.5%
+rather than the ~2.5% the magnitude leg on its own would suggest. Adding
+benchmarks multiplies it again.
 
 The renderer does not rest the verdict on the threshold alone, for exactly these
 reasons. A movement is reported as significant only when it clears the floor
@@ -102,45 +102,73 @@ effect size. Two consequences worth internalising before tuning anything:
 
 - **±5.4% is not the detection point.** It is where the *magnitude* leg starts to
   pass. Simulating the renderer's exact rule — per-repetition deltas normal about
-  the true effect, scaled so the aggregate carries the measured 1.79% — gives the
-  three-way split below at the default six repetitions. Read the `silent` column
-  first: it is the one that decides whether a regression reaches a human.
-  Reproduce the tables with `node docs/benchmarks/verdict-power.mjs`, which
-  mirrors the rule and is worth re-running whenever the rule changes.
+  the true effect, with the per-repetition spread fixed at the value implied by
+  the measured 1.79% aggregate at six repetitions — gives the three-way split
+  below at the default six repetitions. Read the `silent` column first: it is the
+  one that decides whether a regression reaches a human. Reproduce the tables
+  with `node docs/benchmarks/verdict-power.mjs`, which mirrors the rule, and is
+  worth re-running whenever the rule changes.
 
   | true effect | `slower` | `unresolved` | silent |
   |---:|---:|---:|---:|
-  | 0% | 0.08% | 0.21% | 99.71% |
-  | 3% | 5.8% | 4.0% | 90.2% |
-  | 5.4% (the floor) | 33.7% | 16.1% | 50.3% |
-  | 6.2% | 49.2% | 17.4% | 33.3% |
-  | 8% | 77.0% | 15.2% | 7.8% |
-  | 10% | 94.2% | 5.3% | 0.4% |
-  | 15% | 99.9% | 0.1% | 0.0% |
+  | 0% | 0.15% | 0.10% | 99.75% |
+  | 3% | 5.89% | 3.15% | 90.97% |
+  | 5.4% (the floor) | 36.27% | 13.93% | 49.80% |
+  | 6.2% | 50.88% | 16.55% | 32.57% |
+  | 8% | 78.58% | 14.19% | 7.23% |
+  | 10% | 93.22% | 6.27% | 0.51% |
+  | 15% | 99.82% | 0.18% | 0.00% |
 
   So the 50%-detection point is ≈**6.2%**, not the floor: a true regression of
   exactly 5.4% is missed half the time. And the complement of a detection is not
-  all unresolved — at 8% the split is 77 / 15 / 8, so roughly one such regression
-  in thirteen is silent rather than flagged. The first row is the verdict's
-  false-positive rate, 0.08% per benchmarked push, which is where the sub-1%
-  familywise figure over ten pushes comes from.
-- **More repetitions do not narrow this — they widen it.** Raising `--reps`
-  sharpens the aggregate and simultaneously makes unanimity harder, which
-  converts real regressions into ❔. The same simulation at a true 8% effect:
+  all unresolved — at 8% the split is 79 / 14 / 7, so roughly one such regression
+  in fourteen is silent rather than flagged. The first row is the verdict's
+  false-positive rate, **0.16%** per benchmarked push, giving **1.5%** familywise
+  over ten pushes.
+- **More repetitions trade `slower` for ❔, but they do buy fewer misses.** The
+  same simulation at a true 8% effect, varying only the repetition count:
 
   | reps | `slower` | `unresolved` | silent |
   |---:|---:|---:|---:|
-  | 4 | 89.6% | 2.7% | 7.7% |
-  | 6 | 77.0% | 15.2% | 7.8% |
-  | 12 | 25.5% | 67.0% | 7.5% |
-  | 24 | 1.0% | 91.8% | 7.2% |
+  | 4 | 80.97% | 7.26% | 11.77% |
+  | 6 | 78.44% | 14.28% | 7.27% |
+  | 12 | 65.85% | 32.18% | 1.96% |
+  | 24 | 43.49% | 56.33% | 0.19% |
 
-  At 24 repetitions a real 8% regression is called significant 1% of the time.
-  The lever that actually helps is `--proves`: more proves per repetition lowers
-  the variance of that repetition's minimum, which makes each individual sign
-  more reliable without adding signs that all have to agree. The unresolved note
-  in the comment says so. Anyone raising `--reps` past six to "be more careful"
-  is making the bot quieter, not stricter.
+  Two effects run in opposite directions. Raising `--reps` sharpens the aggregate,
+  so a real effect clears the fixed ±5.4% floor far more reliably — silence falls
+  from 7.3% to 0.2%. But the zero-contradiction leg gets harder at the same time,
+  because each added repetition is another sign that must not disagree, so
+  detections migrate from `slower` to ❔ rather than disappearing. A long run is
+  therefore *less* likely to miss a regression and *more* likely to hedge about
+  it. Which you prefer depends on whether a ❔ in the comment gets read.
+
+  The lever with no such trade-off is `--proves`: more proves per repetition
+  lowers the variance of that repetition's minimum, which makes each individual
+  sign more reliable without adding signs that all have to agree. The unresolved
+  note in the comment says so.
+- **Do not run at exactly four repetitions.** `MIN_REPS_FOR_SIGN_TEST` is 4, and
+  four is the worst configuration the rule admits. False-positive rate with no
+  real effect:
+
+  | reps | `slower` | `unresolved` | silent |
+  |---:|---:|---:|---:|
+  | 1 | 0.00% | 21.85% | 78.15% |
+  | 2 | 0.00% | 8.16% | 91.84% |
+  | 3 | 0.00% | 3.32% | 96.68% |
+  | 4 | **1.07%** | 0.30% | 98.64% |
+  | 6 | 0.16% | 0.11% | 99.73% |
+  | 12 | 0.00% | 0.00% | 100.00% |
+  | 24 | 0.00% | 0.00% | 100.00% |
+
+  Four repetitions is seven times as likely to invent a regression as six, from
+  two causes at once: the aggregate is noisier, so ±5.4% is only about 2.5σ of it
+  rather than 3σ; and unanimity across four signs is a weak filter — one run in
+  sixteen agrees by chance. Below four the floor suppresses the verdict entirely,
+  which is what `MIN_REPS_FOR_SIGN_TEST` is for, but it turns those runs into ❔
+  rather than silence: at one repetition 22% of unchanged PRs draw a question
+  mark. Six is the default for this reason, and lowering it is not a cheap way to
+  shorten the job.
 
 When calibrating, record the standard deviation of the **per-repetition** deltas
 as well as the aggregate. The aggregate alone cannot predict the conjunction's

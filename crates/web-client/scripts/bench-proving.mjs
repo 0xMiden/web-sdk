@@ -158,6 +158,24 @@ if (proves < 2) {
   );
 }
 
+// The per-flag ceilings above are not sufficient: the renderer's cap is on the
+// TOTAL number of retained sample values in the artifact, across both sides and
+// every benchmark. `--reps 1000 --proves 1000` clears both flag checks and then
+// emits ~2M values against a 200k cap, which is a full job for a report that is
+// refused. The retained count is reps × (proves-1) per side, two sides, times
+// the number of benchmarks emitted below (one today — grow this divisor when
+// that list grows, or the check silently stops being conservative).
+const MAX_SAMPLE_VALUES = 200000;
+const BENCHMARK_COUNT = 1;
+const plannedSamples = reps * (proves - 1) * 2 * BENCHMARK_COUNT;
+if (plannedSamples > MAX_SAMPLE_VALUES) {
+  usage(
+    `reps × (proves-1) × 2 sides = ${plannedSamples} retained samples exceeds the ` +
+      `${MAX_SAMPLE_VALUES} the comment renderer accepts, so the run would produce ` +
+      `no report. Lower --reps or --proves.`
+  );
+}
+
 // Not fatal — a deliberately short run is a legitimate thing to ask for — but
 // silence here would hand back a number carrying a known directional bias.
 // No figure is attached to the imbalance on purpose. The +1.19% second-position
@@ -542,6 +560,10 @@ const PROVE_DEADLINE_MS = 5 * 60 * 1000;
 const openSide = async (browser, url, label, repIndex) => {
   const context = await browser.newContext();
   const pageErrors = [];
+  // Set synchronously before any close is requested, so the worker-close
+  // handler below can tell a teardown from a mid-run death. Playwright's own
+  // `page.isClosed()` cannot: it flips after the workers have already gone.
+  let closing = false;
   try {
     const page = await context.newPage();
     // An uncaught page error means this iteration's timings are unexplained,
@@ -554,17 +576,19 @@ const openSide = async (browser, url, label, repIndex) => {
     // pool of web workers. A worker dying mid-run left no trace here while the
     // pool silently shrank, and a shrunken pool yields slower-but-plausible
     // timings that nothing downstream can distinguish from a real regression.
+    //
+    // Gated on our own `closing` latch and NOT on `page.isClosed()`: Playwright
+    // delivers every worker's `close` before the page's own `close` that sets
+    // that flag, so a healthy teardown reported one bogus worker death per
+    // worker per side per repetition — 112 of them on the CI configuration.
     page.on("worker", (worker) => {
       worker.on("close", () => {
-        // Workers are expected to go away when the context closes; only a close
-        // while the page is still live is a signal.
-        if (!page.isClosed()) {
-          const error = new Error(
-            `a web worker exited while ${label} rep ${repIndex} was still running, so the rayon pool may have shrunk mid-measurement`
-          );
-          console.error(`[worker] ${error.message}`);
-          pageErrors.push(error);
-        }
+        if (closing) return;
+        const error = new Error(
+          `a web worker exited while ${label} rep ${repIndex} was still running, so the rayon pool may have shrunk mid-measurement`
+        );
+        console.error(`[worker] ${error.message}`);
+        pageErrors.push(error);
       });
     });
     await page.goto(url);
@@ -602,13 +626,16 @@ const openSide = async (browser, url, label, repIndex) => {
       // pool — contending with every repetition that follows, which is the exact
       // interference the estimator assumes is absent. The caller checks the
       // record and stops rather than measuring against it.
-      close: () =>
-        context.close().catch((error) => {
+      close: () => {
+        closing = true;
+        return context.close().catch((error) => {
           console.error(`[teardown] ${label} context: ${error}`);
           teardownFailures.push(`${label} context: ${error}`);
-        }),
+        });
+      },
     };
   } catch (error) {
+    closing = true;
     // Recorded for the same reason the close() above records: setup can fail
     // with the context already wedged (goto timing out, the setup evaluate
     // throwing), and a context that will not close leaves a live page behind.

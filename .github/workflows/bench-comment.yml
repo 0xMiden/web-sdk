@@ -259,6 +259,22 @@ jobs:
               return;
             }
 
+            // Type-checked before coercion, not just shape-checked. `Number(x)`
+            // and `String(x)` run ToPrimitive, and JSON can carry an object with
+            // an own `toString` that is a string rather than a function — which
+            // makes the coercion throw "Cannot convert object to primitive
+            // value". These coercions are outside every try/catch here, so that
+            // reddened the trusted workflow on demand from any fork. The renderer
+            // guards the same trap on its side.
+            if (typeof claimed.number !== 'number' && typeof claimed.number !== 'string') {
+              refuse(`pr.json number must be a number or a string, got ${Array.isArray(claimed.number) ? 'array' : typeof claimed.number}`);
+              return;
+            }
+            if (claimed.baseSha !== undefined && claimed.baseSha !== null && typeof claimed.baseSha !== 'string') {
+              refuse(`pr.json baseSha must be a string, got ${Array.isArray(claimed.baseSha) ? 'array' : typeof claimed.baseSha}`);
+              return;
+            }
+
             const number = Number(claimed.number);
             if (!Number.isInteger(number) || number <= 0 || number > 1e7) {
               refuse(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
@@ -460,17 +476,32 @@ jobs:
         with:
           retries: 3
           script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: Number(process.env.PR_NUMBER),
-            });
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(process.env.PR_NUMBER),
+              }));
+            } catch (error) {
+              // An outage here must not redden the default branch, and must not
+              // post either — an unverified head is exactly what this step
+              // exists to catch. Declining is the safe direction, and the
+              // fallback check below reports that nothing was posted.
+              core.warning(`Could not re-read PR #${process.env.PR_NUMBER} before posting: ${error.message}`);
+              core.setOutput('stale', 'true');
+              core.setOutput('reason', 'The reporter could not confirm the pull request was still at the benchmarked commit, so it declined to post. This is a fault on the reporting side, not in the pull request.');
+              return;
+            }
             if (pr.head.sha !== process.env.HEAD_SHA) {
               core.notice(
                 `PR #${process.env.PR_NUMBER} moved to ${pr.head.sha} while this report was rendering; ` +
                   `not posting numbers for ${process.env.HEAD_SHA}.`,
               );
               core.setOutput('stale', 'true');
+              // No reason set: a newer reporter is on its way with the right
+              // numbers, and the fallback check would overwrite ITS report to
+              // announce that this one stood down.
               return;
             }
             core.setOutput('stale', 'false');
@@ -610,7 +641,16 @@ jobs:
       # of it, which is why this can run on paths where the artifact was refused
       # as hostile.
       - name: Report that nothing was posted
-        if: always() && steps.run.outputs.id != '' && steps.render.outputs.ok != 'true'
+        # Also fires when a report rendered fine but the pre-write head re-check
+        # could not confirm the PR — that step declines rather than posting, and
+        # without this clause a rendered-but-unposted report left no trace at all.
+        # It deliberately does NOT fire when the re-check found the head had
+        # simply MOVED: a newer reporter is already on its way with the right
+        # numbers, and this check shares its name, so announcing the stand-down
+        # would overwrite the report it stood down for. That case sets no reason.
+        if: >-
+          always() && steps.run.outputs.id != '' &&
+          (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != '')
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -621,6 +661,7 @@ jobs:
           REPORT_USABLE: ${{ steps.report.outputs.usable }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           RENDER_REASON: ${{ steps.render.outputs.reason }}
+          RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
         with:
           # github-script defaults retries to 0, so a single GitHub 5xx or a
@@ -639,6 +680,7 @@ jobs:
             // renderer bug, and naming the wrong cause is worse than naming a
             // vague one.
             const reason =
+              process.env.RECHECK_REASON ||
               process.env.RENDER_REASON ||
               (process.env.FETCH_OUTCOME === 'failure'
                 ? 'The reporter could not fetch the benchmark artifact from the GitHub API. This is a fault on the reporting side, not in the pull request.'

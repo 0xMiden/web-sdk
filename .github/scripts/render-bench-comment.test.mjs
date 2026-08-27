@@ -1515,8 +1515,32 @@ test("surfaces a slowdown that missed every repetition's fastest prove", () => {
 
   assert.match(body, /moved on the mean but not on the reported figure/);
   assert.match(body, /\+33\.33% on the mean of \*every\* prove/);
-  // Still not a verdict: the headline must stay honest about what it measured.
-  assert.match(body, /No significant change/);
+  // The heading has to agree with the note directly beneath it. It used to read
+  // "No significant change (largest ±0.00%)" above a note reporting +33.33% —
+  // self-contradictory, and the heading is the part most readers ever see. It is
+  // still not a verdict: unresolved, naming the statistic that moved.
+  const heading = body.split("\n")[0];
+  assert.doesNotMatch(heading, /No significant change/);
+  assert.match(heading, /^### ❔ Unresolved: nothing clears the/);
+  assert.match(heading, /mean of all proves is \+33\.33% slower/);
+
+  // And an improvement on the mean must not be announced as a slowdown.
+  const faster = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+      },
+      benchmark: {
+        base: { samples: Array.from({ length: 6 }, () => [1000, 1500, 1500]) },
+        head: { samples: Array.from({ length: 6 }, () => [1000, 1000, 1000]) },
+      },
+    }),
+    ctx()
+  );
+  assert.match(faster.split("\n")[0], /mean of all proves is -25\.00% faster/);
 });
 
 test("does not cry mean-only when the two statistics agree", () => {

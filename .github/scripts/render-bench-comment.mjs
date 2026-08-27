@@ -885,9 +885,15 @@ function buildVerdict(rows) {
     // whose figure is zero has measurements, they just cannot carry a
     // percentage. Claiming the first while the table below prints base values
     // reads as a bug in the bot.
-    return rows.every((r) => r.base === null)
-      ? "### ❔ Head-only run — no base measurements to compare against"
-      : "### ❔ No comparison possible — every benchmark's base figure is zero, so a percentage would be meaningless";
+    if (rows.every((r) => r.base === null)) {
+      return "### ❔ Head-only run — no base measurements to compare against";
+    }
+    if (rows.every((r) => r.base !== null)) {
+      return "### ❔ No comparison possible — every benchmark's base figure is zero, so a percentage would be meaningless";
+    }
+    // Mixed: some rows have no base side at all, the rest have one that is zero.
+    // Both of the sentences above are false for this report.
+    return "### ❔ No comparison possible — some benchmarks have no base measurement and the rest have a base figure of zero";
   }
 
   const thresholdText = `${THRESHOLD_PROVISIONAL ? "provisional " : ""}±${formatPct(THRESHOLD_PCT)}`;
@@ -913,6 +919,27 @@ function buildVerdict(rows) {
   }
 
   if (moved.length === 0) {
+    // The mean cross-check outranks a flat "no significant change". `worst` is
+    // the largest movement by the HEADLINE estimator, and every mean-only row is
+    // below the floor on that by construction — so the unqualified sentence
+    // rendered a heading of "no significant change (largest -0.4%)" directly
+    // above a note reporting a +8% mean slowdown, in the opposite direction and
+    // an order of magnitude larger. Whichever of the two a reader believed, the
+    // comment had already contradicted itself.
+    const meanFlagged = rows
+      .filter((r) => r.meanOnly)
+      .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
+    if (meanFlagged.length > 0) {
+      const leader = meanFlagged[0];
+      const rest =
+        meanFlagged.length > 1 ? ` (+${meanFlagged.length - 1} more)` : "";
+      const direction = (
+        LOWER_IS_BETTER ? leader.meanPct > 0 : leader.meanPct < 0
+      )
+        ? "slower"
+        : "faster";
+      return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor, but the mean of all proves is ${formatSignedPct(leader.meanPct)} ${direction} on ${codeSpan(leader.name)}${rest}`;
+    }
     // The heading has to be readable at a glance in a notification list, so it
     // carries the verdict and one number; the threshold lives in the table.
     return `### ➖ No significant change (largest ${codeSpan(worst.name)} ${formatSignedPct(worst.deltaPct)}, floor ${thresholdText})`;
@@ -1167,9 +1194,14 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
 }
 
 function buildLegend() {
+  // ❔ is reachable four ways — repetitions that disagree, too few repetitions to
+  // test, no base side, and a base figure of zero — so the gloss has to point at
+  // the note rather than name one of them. Naming only "the repetitions
+  // disagree" made the legend contradict the heading directly above it on three
+  // of the four.
   return (
     `<sub>${EMOJI_WORSE} slower beyond the noise floor · ${EMOJI_BETTER} faster beyond the noise floor · ` +
-    `${EMOJI_UNRESOLVED} beyond the floor but the repetitions disagree · ${EMOJI_NOISE} within the noise floor</sub>`
+    `${EMOJI_UNRESOLVED} no verdict — see the heading and notes above · ${EMOJI_NOISE} within the noise floor</sub>`
   );
 }
 
