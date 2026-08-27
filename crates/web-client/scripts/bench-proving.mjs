@@ -68,6 +68,7 @@ import {
   PROVE_CEILING_MS,
   SETTLE_CEILING_MS,
   SETUP_CEILING_MS,
+  withPlaywrightDeadline,
 } from "./bench-budget.mjs";
 import {
   balancedRetainedReps,
@@ -731,57 +732,6 @@ const CLOSE_DEADLINE_MS = 30 * 1000;
  */
 const PLAYWRIGHT_TIMEOUT_MS = 60 * 1000;
 
-/**
- * Bounds a Playwright call that `setDefaultTimeout` does not reach.
- *
- * Only `goto` honours the context timeouts — it is a page operation.
- * `browser.newContext()` and `context.newPage()` are protocol round trips that
- * ignore both settings, and `newContext` necessarily runs before there is a
- * context to configure. A browser wedged at either one therefore hung until the
- * runner killed the step: no early stop, no artifact, and every completed
- * repetition lost, which is the failure the early-stop machinery exists to
- * prevent.
- *
- * A late winner is closed rather than leaked — the call can still succeed after
- * the race is lost, handing back a context nobody holds a reference to.
- */
-const withPlaywrightDeadline = async (label, ms, start) => {
-  let timer;
-  let timedOut = false;
-  const pending = start();
-  // Attached before the race, so the late-winner path is armed even if the race
-  // throws synchronously, and so `pending` is never an unhandled rejection when
-  // the timer wins.
-  pending
-    .then((won) => {
-      if (timedOut && won && typeof won.close === "function") {
-        return won.close();
-      }
-      return undefined;
-    })
-    .catch(() => {});
-  try {
-    return await Promise.race([
-      pending,
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true;
-          reject(
-            new DeadlineExceededError(
-              `${label} did not return within ${ms / 1000}s`,
-              `${label} did not return within ${ms / 1000}s. The run keeps the ` +
-                `repetitions it already finished and stops here.`,
-              { deadlineMs: ms }
-            )
-          );
-        }, ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
 // Counts closes that blew their deadline, because abandoning one changes how
 // this process has to exit. See the `abandonedCloses > 0` block at the very
 // bottom of the file.
@@ -878,10 +828,19 @@ class PageErrorLog {
 // Opens a page, runs setup on it, and returns handles the driver can drive
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
+  // Through `deadlineFor`, like every other ceiling in this file, rather than
+  // straight off the constant. Two of these open per side per repetition, so a
+  // repetition that began with less than a minute of budget left could spend
+  // four unbudgeted ceilings — 4 × 60s against a 90s teardown margin — and the
+  // run reached `emitResults()` with the margin already gone. Routing them here
+  // clamps each grant to what is actually left and refuses the repetition
+  // outright when it is not, which stops the run WITH its completed
+  // repetitions instead of losing them to a killed step.
   const context = await withPlaywrightDeadline(
     `${label} rep ${repIndex}: newContext`,
-    PLAYWRIGHT_TIMEOUT_MS,
-    () => browser.newContext()
+    deadlineFor(PLAYWRIGHT_TIMEOUT_MS).ms,
+    () => browser.newContext(),
+    withCloseDeadline
   );
   // Both, because they are separate settings in Playwright and `goto` reads the
   // navigation one. Without these the three unwrapped calls run under a default
@@ -896,8 +855,9 @@ const openSide = async (browser, url, label, repIndex) => {
   try {
     const page = await withPlaywrightDeadline(
       `${label} rep ${repIndex}: newPage`,
-      PLAYWRIGHT_TIMEOUT_MS,
-      () => context.newPage()
+      deadlineFor(PLAYWRIGHT_TIMEOUT_MS).ms,
+      () => context.newPage(),
+      withCloseDeadline
     );
     // An uncaught page error means this iteration's timings are unexplained,
     // so fail rather than fold suspect numbers into the results.

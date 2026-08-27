@@ -25,6 +25,7 @@ import {
   PROVE_CEILING_MS,
   SETTLE_CEILING_MS,
   SETUP_CEILING_MS,
+  withPlaywrightDeadline,
 } from "./bench-budget.mjs";
 
 // Imported, not restated, for exactly the reason the comment below gives about
@@ -538,4 +539,69 @@ test("medianOf is a real median, not whatever sort() does by default", () => {
   assert.deepEqual(input, [300_000, 100_000, 200_000]);
   // No meaningful median of nothing, and callers check rather than get a sentinel.
   assert.ok(Number.isNaN(medianOf([])));
+});
+
+// `withPlaywrightDeadline` is the only bound on `browser.newContext()` and
+// `context.newPage()` — protocol round trips that `setDefaultTimeout` does not
+// reach. It lived inline in the producer, which needs a browser to run, so none
+// of it was exercised: a wedged browser is the case it exists for and the case
+// hardest to stage.
+test("a Playwright call that returns in time is not disturbed", async () => {
+  const value = { close: () => assert.fail("closed a winner") };
+  assert.equal(
+    await withPlaywrightDeadline("newContext", 10_000, async () => value),
+    value
+  );
+});
+
+test("a wedged Playwright call stops the run instead of hanging", async () => {
+  await assert.rejects(
+    withPlaywrightDeadline("newContext", 5, () => new Promise(() => {})),
+    (error) => {
+      assert.ok(error instanceof DeadlineExceededError);
+      // The producer reads `deadlineMs` straight into the artifact's
+      // `stoppedEarlyDeadlineMs`, which the renderer requires for a deadline
+      // stop and refuses the whole artifact without.
+      assert.equal(error.facts.deadlineMs, 5);
+      assert.match(error.message, /newContext did not return within/);
+      return true;
+    }
+  );
+});
+
+test("a late winner is closed, under the caller's own accounting", async () => {
+  let closed = null;
+  const won = { close: async () => "closed" };
+  const late = new Promise((resolve) => setTimeout(() => resolve(won), 20));
+  await assert.rejects(
+    withPlaywrightDeadline(
+      "newContext",
+      5,
+      () => late,
+      (label, closing) => {
+        closed = label;
+        return closing;
+      }
+    ),
+    DeadlineExceededError
+  );
+  await late;
+  // A macrotask, so the `.then` attached to the late winner has run.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Wrapped, not bare: an unbounded close on the browser that just proved it
+  // was wedged is a hang the producer cannot see, and the label is what its
+  // teardown list reports.
+  assert.equal(closed, "late newContext");
+});
+
+test("a malformed Playwright deadline is rejected rather than treated as zero", async () => {
+  // `setTimeout` coerces a non-number delay to zero instead of throwing, so
+  // without this the helper would refuse every call instantly and report each
+  // one as a wedged browser. `ms` now comes from `deadlineFor`, not a constant.
+  for (const bad of [undefined, NaN, 0, -1, "60000"]) {
+    await assert.rejects(
+      withPlaywrightDeadline("newContext", bad, async () => ({})),
+      TypeError
+    );
+  }
 });

@@ -2443,6 +2443,156 @@ const meanRow = (headReps, top = {}) =>
     },
   });
 
+// Head reps whose fastest prove drops 20% while the mean of every prove rises
+// 126% — the two estimators clearing the floor in opposite directions, which is
+// the only input that reaches `buildMeanContradictionNote`.
+const OPPOSED = Array(6).fill([800, 3000, 3000]);
+
+test("a contradicted run still says why it cannot rule, and never guesses", () => {
+  // Round 7 moved contradicted rows out of `buildUnresolvedNote` and
+  // `buildUnruledBelowFloorNote` without moving what those notes carried. Three
+  // outputs went missing for exactly the rows the new note took over, and each
+  // is the answer to a question the reader is left holding.
+
+  // A run that is not entitled to a verdict has to say so. Its repetitions here
+  // are unanimous, so the corroboration branches would describe it backwards:
+  // `beyond` is forced false by the precondition override and `meanAgreement` is
+  // never computed for a blocked row, which reads as "neither figure's
+  // repetitions agree" about a run whose repetitions were never asked.
+  const short = renderComment(meanRow(OPPOSED.slice(0, 4)), ctx());
+  assert.match(short, /because it has only 4 repetitions and a verdict needs/);
+  assert.doesNotMatch(short, /[Nn]either figure's repetitions/);
+
+  // The reason is the row's own, not a fixed string: a full-length run blocked
+  // for a different cause names that cause instead.
+  const early = renderComment(
+    meanRow(OPPOSED, {
+      repsRequested: OPPOSED.length + 2,
+      stoppedEarly: "out of budget",
+      stoppedEarlyKind: "budget",
+    }),
+    ctx()
+  );
+  assert.match(early, /because it stopped early, so its length was chosen/);
+
+  // And a run that IS entitled keeps the corroboration wording — the branch
+  // above must not swallow it.
+  const ruled = renderComment(meanRow(OPPOSED), ctx());
+  assert.doesNotMatch(ruled, /This run is not ruled on at all/);
+  assert.match(ruled, /repetitions/);
+
+  // The calibration procedure reads one instruction off every calibration run,
+  // and a run whose estimators oppose is the noise it exists to characterise —
+  // so it is the run that most needs telling, and the one that lost the telling.
+  const calibration = renderComment(
+    meanRow(OPPOSED),
+    ctx({ calibration: true })
+  );
+  assert.match(calibration, /Record both figures and re-run/);
+  assert.doesNotMatch(calibration, /Do NOT record/);
+
+  // Truncated flips it, for the same reason it flips in `buildUnresolvedNote`:
+  // a run whose length was chosen by how slow the machine was must not be fed
+  // back into the floor every later verdict rests on.
+  const truncatedCalibration = renderComment(
+    meanRow(OPPOSED, {
+      repsRequested: OPPOSED.length + 2,
+      stoppedEarly: "out of budget",
+      stoppedEarlyKind: "budget",
+    }),
+    ctx({ calibration: true })
+  );
+  assert.match(truncatedCalibration, /Do NOT record this figure/);
+  assert.doesNotMatch(truncatedCalibration, /Record both figures/);
+});
+
+test("a contradicted benchmark no longer silences the run's reason for others", () => {
+  // `buildUnruledBelowFloorNote` bails when any row is unresolved, on the
+  // premise that `buildUnresolvedNote` will carry the reason instead. Round 7
+  // stopped that being true for a contradicted row without updating the bail —
+  // so one benchmark whose estimators oppose suppressed the reason for every
+  // other benchmark in the run, which is a claim about rows it says nothing
+  // about. `b` is below the floor and needs the run's reason stated.
+  const flat = (v) => Array(PROVES_PER_REP).fill(v);
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: PROVES_PER_REP,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        repsExecuted: 7,
+        repsRequested: 8,
+        stoppedEarly: "out of budget",
+        stoppedEarlyKind: "budget",
+        benchmarks: [
+          bench(
+            "a",
+            { samples: Array(6).fill(flat(1000)) },
+            { samples: OPPOSED }
+          ),
+          bench(
+            "b",
+            { samples: Array(6).fill(flat(1000)) },
+            { samples: Array(6).fill(flat(1000)) }
+          ),
+        ],
+      },
+    }),
+    ctx()
+  );
+  assert.match(
+    body,
+    /Nothing moved past the floor, but this run does not rule that out/
+  );
+  assert.match(body, /because it stopped early/);
+});
+
+test("the heading's (+N more) spans both mean channels, not just its own", () => {
+  // `a` is corroborated on the mean, `b` is not — different channels, a note
+  // each. The heading names whichever channel it landed in and counted only
+  // that channel's rows, so a reader saw one benchmark named above two notes
+  // with nothing saying the second existed.
+  const flat = (v) => Array(PROVES_PER_REP).fill(v);
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: PROVES_PER_REP,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        repsExecuted: 7,
+        repsRequested: 6,
+        benchmarks: [
+          // Corroborated: every repetition moves the mean the same way.
+          bench(
+            "a",
+            { samples: Array(6).fill(flat(1000)) },
+            { samples: Array(6).fill([1000, 1400, 1400]) }
+          ),
+          // Uncorroborated: four repetitions up, two down, so the mean clears
+          // the floor while its own sign test does not.
+          bench(
+            "b",
+            {
+              samples: Array(4)
+                .fill(flat(1000))
+                .concat(Array(2).fill([1000, 1200, 1200])),
+            },
+            {
+              samples: Array(4)
+                .fill([1000, 2000, 2000])
+                .concat(Array(2).fill(flat(1000))),
+            }
+          ),
+        ],
+      },
+    }),
+    ctx()
+  );
+  const heading = body.split("\n")[0];
+  assert.match(heading, /`a`/);
+  assert.match(heading, /\(\+1 more\)/);
+});
+
 test("a large mean movement is never silent, corroborated or not", () => {
   // Every repetition but one makes two proves in three three times slower while
   // the fastest prove gets 10% faster. The mean rises past 100%. The reported
@@ -2452,12 +2602,13 @@ test("a large mean movement is never silent, corroborated or not", () => {
   // breaks the mean's unanimity, and corroboration used to be a GATE on the
   // cross-check, so this single ordinary noisy repetition switched the check off
   // and the comment headlined the improvement with the regression nowhere in it.
-  const opposed = [
-    [900, 1000, 1000],
-    ...Array(5).fill([900, 3000, 3000]),
-  ];
+  const opposed = [[900, 1000, 1000], ...Array(5).fill([900, 3000, 3000])];
   const out = renderComment(meanRow(opposed), ctx());
-  assert.doesNotMatch(out, RULED, "must not headline a direction it contradicts");
+  assert.doesNotMatch(
+    out,
+    RULED,
+    "must not headline a direction it contradicts"
+  );
   assert.match(out, /two estimators disagree/);
   assert.match(out, /\+107\.78%/, "the contradicting figure must be printed");
   // ... and it must say the corroboration is missing rather than assert it.
@@ -2491,11 +2642,17 @@ test("a large mean movement is never silent, corroborated or not", () => {
     ctx()
   );
   assert.match(blocked, /\+130\.00%/);
-  assert.doesNotMatch(blocked, /-10\.00% on the reported figure — within the floor/);
+  assert.doesNotMatch(
+    blocked,
+    /-10\.00% on the reported figure — within the floor/
+  );
 
   // Negative controls: the channel must stay quiet when the mean agrees with the
   // headline, or nothing moved at all.
-  assert.match(renderComment(meanRow(Array(6).fill([900, 900, 900])), ctx()), RULED);
+  assert.match(
+    renderComment(meanRow(Array(6).fill([900, 900, 900])), ctx()),
+    RULED
+  );
   assert.doesNotMatch(
     renderComment(meanRow(Array(6).fill([900, 900, 900])), ctx()),
     /on the mean of all proves/
@@ -2570,7 +2727,10 @@ test("the mean channels do not overlap and do not overclaim", () => {
   // The mean is the corroborated side here, and the note has to say which side
   // that is rather than assert a majority for both.
   assert.match(headlineSplit, /mean holds in a majority of repetitions/);
-  assert.match(headlineSplit, /reported figure's\n> own repetitions do NOT agree/);
+  assert.match(
+    headlineSplit,
+    /reported figure's\n> own repetitions do NOT agree/
+  );
 
   // When NEITHER side's repetitions agree, the note must claim a majority for
   // neither. The wording used to assert one unconditionally for the headline.
@@ -2765,7 +2925,10 @@ test("the mean cross-check's sign test holds all three of its clauses too", () =
   const RULES_ON_MEAN = /moved on the mean but not on the reported figure/;
 
   // Positive control: six repetitions, all moving the mean the same way.
-  assert.match(renderComment(meanRow(Array(6).fill(WORSE)), ctx()), RULES_ON_MEAN);
+  assert.match(
+    renderComment(meanRow(Array(6).fill(WORSE)), ctx()),
+    RULES_ON_MEAN
+  );
 
   // Effective sample size. Four move, two are exactly tied — nothing
   // contradicts and four of six is a majority, so without the floor clause the
@@ -2785,7 +2948,10 @@ test("the mean cross-check's sign test holds all three of its clauses too", () =
   // Majority. Six agree and nothing contradicts, but six of fourteen is not a
   // result.
   assert.doesNotMatch(
-    renderComment(meanRow([...Array(6).fill(WORSE), ...Array(8).fill(TIED)]), ctx()),
+    renderComment(
+      meanRow([...Array(6).fill(WORSE), ...Array(8).fill(TIED)]),
+      ctx()
+    ),
     RULES_ON_MEAN
   );
 

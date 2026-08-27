@@ -714,11 +714,13 @@ jobs:
       # Not a lock, and not claimed to be one: two reporters can both pass this
       # and race. It removes the case that actually happens (a push during a
       # render) rather than the theoretical one.
-      # `continue-on-error`: everything upstream was made non-fatal so an
-      # informational bot cannot redden the default branch, and this step was the
-      # last one that still could. Its failure mode was also the worst of the set
-      # — a rendered report already in hand, then a hard failure here skipping the
-      # write AND the fallback that explains the silence.
+      # `continue-on-error`: an informational bot must not redden the default
+      # branch over anything a fork or an outage can cause, so every step that
+      # can fail that way carries this. The one deliberate exception is `Render
+      # comment body`'s internal-error path, which exits 1 precisely because a
+      # first-party breakage SHOULD be loud. Its failure mode here is also the
+      # worst of the set — a rendered report already in hand, then a hard failure
+      # skipping the write AND the fallback that explains the silence.
       - name: Re-check the PR head before writing
         id: recheck
         if: steps.render.outputs.ok == 'true'
@@ -815,6 +817,13 @@ jobs:
         id: checkrun
         # `stale == 'false'` for the same reason as the comment step above.
         if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale == 'false'
+        # The script's own try/catch covers the writes and records `published`,
+        # but `readFileSync` above it is outside that catch — so a scratch-space
+        # read failure threw past it and reddened the default branch, which is
+        # exactly what the catch exists to prevent. The fallback keys on the
+        # absence of `published == 'true'`, so an unset output reports the same
+        # as an explicit `false`.
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
@@ -998,7 +1007,6 @@ jobs:
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
           FETCH_SKIP_REASON: ${{ steps.fetch.outputs.skip_reason }}
           CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
-          CHECKRUN_OUTCOME: ${{ steps.checkrun.outcome }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
           PR_OUTCOME: ${{ steps.pr.outcome }}
         with:
@@ -1036,13 +1044,21 @@ jobs:
               // the fallback's own write succeed seconds later — so the pull
               // request showed the numbers in one surface and "nothing was
               // posted" in the other, each contradicting the other.
-              // `published === 'false'` OR a hard failure. The output is set from
-              // inside the step's own try, so a throw before it leaves `published`
-              // empty — and the empty string matched neither arm, dropping the run
+              // Keyed on the ABSENT confirmation, not on a list of outcomes, for
+              // the same reason as the re-check branch below and matching the step
+              // condition that let this run at all. `published` is set from inside
+              // the step's own try, so a throw leaves it empty and a cancellation
+              // leaves it empty with an outcome in neither list — both dropped
               // through to a catch-all that reported nothing was published while
-              // the sticky comment was sitting on the PR saying otherwise.
-              ((process.env.CHECKRUN_PUBLISHED === 'false' ||
-              process.env.CHECKRUN_OUTCOME === 'failure')
+              // the sticky comment sat on the PR saying otherwise.
+              //
+              // Gated on the writers having been reached, because `published` is
+              // equally empty when the step was skipped for a failed render or an
+              // unconfirmed head — and this arm's wording ("the report rendered")
+              // would be a false claim about both.
+              (process.env.RENDER_OK === 'true' &&
+              process.env.RECHECK_STALE === 'false' &&
+              process.env.CHECKRUN_PUBLISHED !== 'true'
                 ? process.env.COMMENT_OUTCOME === 'success'
                   ? 'The report is in the pull request comment, but the check run could not be written. This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.'
                   : `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`

@@ -1077,8 +1077,8 @@ function pairedMeanAgreement(base, head) {
   const contradicting = deltas.filter(
     (d) => d !== 0 && Math.sign(d) !== direction
   ).length;
-  // Same two clauses as `pairedAgreement`, for the same reason — a cross-check
-  // held to a laxer standard than the headline is not a cross-check.
+  // The same three clauses as `pairedAgreement`, for the same reason — a
+  // cross-check held to a laxer standard than the headline is not a cross-check.
   return {
     consistent:
       contradicting === 0 &&
@@ -1304,13 +1304,13 @@ function computeRows(results, ctx) {
     // six-repetition floor where `pairedMeanAgreement` can only ever answer
     // `tooShort`. Reported so it is not lost; never as a direction.
     //
-    // `meanBig` rather than `meanLarge`, so it also covers a blocked run whose
-    // HEADLINE cleared the floor. That combination had no channel at all:
-    // `meanLarge` excluded it for clearing the floor and `meanContradicts`
-    // excluded it because a blocked row is never `beyond`.
-    //
     // `meanLarge`, so this is strictly the mean-only case — the headline stayed
-    // under the floor. Widening it to every large mean made it fire when the two
+    // under the floor. A blocked run whose HEADLINE cleared the floor is not
+    // dropped by that: it is `unresolved`, and `meanContradicts` keys on
+    // `clearsFloor` rather than `beyond` precisely so an opposing mean there
+    // still gets a channel.
+    //
+    // Widening this to every large mean made it fire when the two
     // estimators AGREED: a blocked run +10.00% on both rendered "+10.00% on the
     // reported figure — but +10.00% on the mean of all proves", presenting one
     // movement as two, under prose explaining that the movement had missed every
@@ -1355,9 +1355,7 @@ function computeRows(results, ctx) {
       isWorse,
       meanPct,
       meanAgreement,
-      clearsFloor,
       meanOnly,
-      meanLarge,
       meanUnruled,
       meanWorse,
       meanContradicts,
@@ -1500,13 +1498,20 @@ function buildVerdict(rows) {
     // above a note reporting a +8% mean slowdown, in the opposite direction and
     // an order of magnitude larger. Whichever of the two a reader believed, the
     // comment had already contradicted itself.
+    // Across BOTH mean channels, for the same reason `more` above spans all
+    // three floor states: the suffix promises that nothing carrying a note is
+    // invisible from the heading. Counting each channel only within itself let a
+    // run with one corroborated and one uncorroborated mean movement headline
+    // the first with no suffix, over two notes.
+    const meanNoted = rows.filter((r) => r.meanOnly || r.meanUnruled).length;
+    const meanMore = (owned) =>
+      meanNoted - owned > 0 ? ` (+${meanNoted - owned} more)` : "";
     const meanFlagged = rows
       .filter((r) => r.meanOnly)
       .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
     if (meanFlagged.length > 0) {
       const leader = meanFlagged[0];
-      const rest =
-        meanFlagged.length > 1 ? ` (+${meanFlagged.length - 1} more)` : "";
+      const rest = meanMore(1);
       const direction = (
         LOWER_IS_BETTER ? leader.meanPct > 0 : leader.meanPct < 0
       )
@@ -1525,8 +1530,7 @@ function buildVerdict(rows) {
       .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
     if (meanUnruled.length > 0) {
       const leader = meanUnruled[0];
-      const rest =
-        meanUnruled.length > 1 ? ` (+${meanUnruled.length - 1} more)` : "";
+      const rest = meanMore(1);
       // Which of the two reasons, because they are not the same claim and the
       // run-level one is false for the other. An unblocked, full-length run whose
       // mean simply is not corroborated headlined "this run cannot be ruled on"
@@ -2194,7 +2198,7 @@ function buildMeanUnruledNote(rows) {
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean of every prove.** ${codeSpan(leader.name)} is`,
     // "within the floor" only when it is. A blocked run reaches this note with a
     // headline that DID clear the floor, and the phrase was false there.
-    `> ${formatSignedPct(leader.deltaPct)} on the reported figure${leader.clearsFloor ? "" : " — within the floor"} — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
+    `> ${formatSignedPct(leader.deltaPct)} on the reported figure — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
     `> ${why}`,
     `> so it is not lost, not as a finding. A movement that misses every repetition's fastest prove looks`,
     `> like this — a pause, a lock, a retry, a cold cache — and so does noise on a short run. Read the raw`,
@@ -2214,7 +2218,7 @@ function buildMeanUnruledNote(rows) {
  * fastest prove of each repetition one way and the rest of the distribution the
  * other — and it is worth naming rather than averaging away.
  */
-function buildMeanContradictionNote(rows) {
+function buildMeanContradictionNote(rows, stoppedEarly = false) {
   const flagged = rows
     .filter((r) => r.meanContradicts)
     .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
@@ -2222,18 +2226,28 @@ function buildMeanContradictionNote(rows) {
   const leader = flagged[0];
   const fastest = leader.isWorse ? "slower" : "faster";
   const rest = leader.meanWorse ? "slower" : "faster";
-  // How firmly to put it. The corroborated case is the one the note was written
-  // for and keeps its wording; the uncorroborated one must not claim an
-  // agreement it does not have, but it still gets the note — the alternative,
+  // How firmly to put it, per figure rather than for the pair: each of the two
+  // may or may not have its own repetitions behind it, and the wording says
+  // which. An uncorroborated figure must not claim an agreement it does not
+  // have, but it still gets the note — the alternative,
   // back when corroboration was a gate, was a heading naming the direction the
   // other estimator contradicts and no mention of the contradiction anywhere.
+  // A blocked or short row reaches none of the corroboration branches below and
+  // must not be described by them. Both `beyond` and `meanCorroborated` are
+  // structurally false there — the precondition override forces the headline's
+  // sign test to fail, and `meanAgreement` is not even computed for a blocked
+  // row — so the "neither agrees" branch fired for runs whose repetitions were
+  // in fact unanimous, which is the overclaim this branch split exists to
+  // prevent, in the opposite direction.
+  const blocked = blockReason(leader);
   // Which of the two figures its own repetitions back. Both, one, or neither —
-  // the note reaches all four states now that a contradiction no longer requires
-  // the headline's sign test to have passed, and asserting a majority for a
-  // figure that does not have one would be the same overclaim this note exists
-  // to prevent.
-  const strength =
-    leader.beyond && leader.meanCorroborated
+  // the note reaches all these states now that a contradiction no longer
+  // requires the headline's sign test to have passed, and asserting a majority
+  // for a figure that does not have one would be the same overclaim.
+  const strength = blocked
+    ? `> This run is not ruled on at all, because ${blocked} — so neither figure's` +
+      `\n> repetitions were put to the test that would settle which direction holds.`
+    : leader.beyond && leader.meanCorroborated
       ? `> Each direction holds in a majority of repetitions and is contradicted by none.`
       : leader.beyond
         ? `> The reported figure holds in a majority of repetitions. The mean's own repetitions do NOT agree` +
@@ -2258,6 +2272,20 @@ function buildMeanContradictionNote(rows) {
     // ordering is deliberate — so the run-scoped wording flatly contradicted the
     // heading above it whenever both were present.
     `> No direction is claimed for this benchmark — read the raw samples below.`,
+    // The calibration procedure reads a figure off every run, and this note now
+    // owns rows that `buildUnresolvedNote` used to carry the instruction for. A
+    // calibration run whose two estimators oppose is exactly the noise being
+    // characterised, so it is the run most in need of being told what to do with
+    // its number — and it was the one losing the advice.
+    ...(leader.agreement.blocked === "calibration"
+      ? [
+          stoppedEarly
+            ? `> Do NOT record this figure — the run stopped early, so its length was chosen by how slow` +
+              ` the machine was, which is the thing being measured. Re-run to completion and record that.`
+            : `> Record both figures and re-run — the spread across runs is what sets the floor, and a` +
+              ` single run cannot.`,
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -2276,23 +2304,50 @@ function buildMeanContradictionNote(rows) {
  * only the fact that the run does not support the conclusion its absence of
  * movement would otherwise imply.
  */
+/**
+ * Why a row's run is not entitled to a verdict, in the reader's terms.
+ *
+ * Shared, because three notes need it and each one used to answer it for
+ * itself. `buildMeanContradictionNote` is the reason it had to be extracted: it
+ * took ownership of contradicted rows from `buildUnresolvedNote`, and neither of
+ * the two notes that carried the block reason covered a row it owns.
+ *
+ * Returns null for a row that could have ruled.
+ */
+function blockReason(row) {
+  if (row.agreement.tooShort) {
+    return `it has only ${row.agreement.reps} ${plural(row.agreement.reps, "repetition")} and a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST}`;
+  }
+  return (
+    {
+      stoppedEarly:
+        "it stopped early, so its length was chosen by how slow the machine was — which is the quantity being measured",
+      oddReps:
+        "it has an odd repetition count, which leaves the setup order lopsided by a fixed amount",
+      tooFewProves: `it retained fewer than ${CALIBRATED_PROVES_PER_REP} proves per repetition, which the floor was not calibrated for`,
+      calibration:
+        "it is a calibration run, where both sides are the same build",
+    }[row.agreement.blocked] ?? null
+  );
+}
+
 function buildUnruledBelowFloorNote(rows) {
-  if (rows.some((r) => r.unresolved)) return "";
+  // `!meanContradicts`, matching `buildUnresolvedNote` and `buildVerdict`. This
+  // guard means "the unresolved note will cover this row", and round 7 stopped
+  // that being true for a contradicted row without updating it here — so a
+  // blocked run whose estimators disagreed got neither note and its reason for
+  // not ruling went unstated. The contradiction note now carries that reason
+  // itself, so this stays out of its way.
+  if (rows.some((r) => r.unresolved && !r.meanContradicts)) return "";
+  // Any blocked row will do, contradicted or not: both halves of the reason are
+  // run-level, and `normalizeSamples` requires every benchmark to carry exactly
+  // `reps` groups, so `tooShort` and its count are the same for all of them.
   const blockedRow = rows.find(
     (r) => r.base !== null && (r.agreement.blocked || r.agreement.tooShort)
   );
   if (!blockedRow) return "";
-  const reason = blockedRow.agreement.tooShort
-    ? `it has only ${blockedRow.agreement.reps} ${plural(blockedRow.agreement.reps, "repetition")} and a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST}`
-    : {
-        stoppedEarly:
-          "it stopped early, so its length was chosen by how slow the machine was — which is the quantity being measured",
-        oddReps:
-          "it has an odd repetition count, which leaves the setup order lopsided by a fixed amount",
-        tooFewProves: `it retained fewer than ${CALIBRATED_PROVES_PER_REP} proves per repetition, which the floor was not calibrated for`,
-        calibration:
-          "it is a calibration run, where both sides are the same build",
-      }[blockedRow.agreement.blocked];
+  const reason = blockReason(blockedRow);
+  if (!reason) return "";
   return [
     `> **Nothing moved past the floor, but this run does not rule that out.** No verdict is issued`,
     `> because ${reason}.`,
@@ -2468,7 +2523,10 @@ function assemble(
   if (meanOnlyNote) blocks.push(meanOnlyNote);
   const meanUnruledNote = buildMeanUnruledNote(rows);
   if (meanUnruledNote) blocks.push(meanUnruledNote);
-  const meanContradictionNote = buildMeanContradictionNote(rows);
+  const meanContradictionNote = buildMeanContradictionNote(
+    rows,
+    results.stoppedEarly
+  );
   if (meanContradictionNote) blocks.push(meanContradictionNote);
   if (THRESHOLD_PROVISIONAL) blocks.push(buildProvisionalNote(results, ctx));
   for (const notice of notices) blocks.push(notice);

@@ -296,3 +296,80 @@ export async function evaluateWithDeadline(
     clearTimeout(timer);
   }
 }
+
+/**
+ * Bounds a Playwright call that `setDefaultTimeout` does not reach.
+ *
+ * Only `goto` honours the context timeouts — it is a page operation.
+ * `browser.newContext()` and `context.newPage()` are protocol round trips that
+ * ignore both settings, and `newContext` necessarily runs before there is a
+ * context to configure. A browser wedged at either one therefore hung until the
+ * runner killed the step: no early stop, no artifact, and every completed
+ * repetition lost, which is the failure the early-stop machinery exists to
+ * prevent.
+ *
+ * `closeLate` wraps the late winner's close, so the producer can put it under
+ * the same abandonment accounting as every other close it owns; the default is
+ * the bare close, for callers with no such accounting.
+ *
+ * A late winner is closed rather than leaked — the call can still succeed after
+ * the race is lost, handing back a context nobody holds a reference to.
+ */
+export async function withPlaywrightDeadline(
+  label,
+  ms,
+  start,
+  closeLate = (_label, closing) => closing
+) {
+  // Same guard, and for the same reason, as `evaluateWithDeadline`: `setTimeout`
+  // coerces a non-number delay to zero rather than throwing, so a malformed `ms`
+  // does not fail loudly — it refuses every call instantly and reports each one
+  // as a wedged browser. `ms` now arrives from `deadlineFor` rather than from a
+  // constant, so that is a live path rather than a typo.
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new TypeError(
+      `${label}: deadline must be a finite positive number of ms, got ${ms}. ` +
+        `deadlineFor must return {ms} on every path`
+    );
+  }
+  let timer;
+  let timedOut = false;
+  const pending = start();
+  // Attached before the race, so the late-winner path is armed even if the race
+  // throws synchronously, and so `pending` is never an unhandled rejection when
+  // the timer wins.
+  //
+  // Through the caller's wrapper, because the resource being closed belongs to
+  // the browser that just lost the race by wedging. An unbounded close here hung
+  // forever without being counted, so the producer reached its exit path
+  // believing every resource had been released and waited on a handle nothing
+  // would settle — precisely the hang its abandonment count exists to escape.
+  pending
+    .then((won) => {
+      if (timedOut && won && typeof won.close === "function") {
+        return closeLate(`late ${label}`, won.close());
+      }
+      return undefined;
+    })
+    .catch(() => {});
+  try {
+    return await Promise.race([
+      pending,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(
+            new DeadlineExceededError(
+              `${label} did not return within ${ms / 1000}s`,
+              `${label} did not return within ${ms / 1000}s. The run keeps the ` +
+                `repetitions it already finished and stops here.`,
+              { deadlineMs: ms }
+            )
+          );
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
