@@ -1801,14 +1801,16 @@ describe("TransactionsResource", () => {
       );
     });
 
-    it("submitBatch with waitForConfirmation polls sync height until block lands", async () => {
-      const heights = [99, 99, 100];
+    it("submitBatch with waitForConfirmation polls sync height until tip advances past submission", async () => {
+      // submitNewTransactionBatch returns tip-at-submission (100); the batch
+      // commits later, so we wait for height > 100.
+      const heights = [100, 100, 101];
       const { resource, inner } = makeResource({
         submitNewTransactionBatch: vi.fn().mockResolvedValue(100),
         getSyncHeight: vi
           .fn()
           .mockImplementation(() => Promise.resolve(heights.shift())),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+        syncState: vi.fn().mockResolvedValue(undefined),
       });
 
       const r1 = fakeRequest("a");
@@ -1820,33 +1822,34 @@ describe("TransactionsResource", () => {
       });
 
       expect(result).toEqual({ blockNumber: 100 });
+      expect(inner.syncState).toHaveBeenCalled();
       expect(inner.getSyncHeight).toHaveBeenCalled();
     });
 
     it("submitBatch waitForConfirmation tolerates transient sync failures", async () => {
-      // First syncState rejects, next call resolves; getSyncHeight returns the
-      // target on the first read so the poll loop exits cleanly.
+      // First syncState rejects, next call resolves; getSyncHeight returns a
+      // height past the submission tip so the poll loop exits cleanly.
       const sync = vi.fn();
       sync.mockRejectedValueOnce(new Error("transient"));
       sync.mockResolvedValue(undefined);
       const { resource, inner } = makeResource({
         submitNewTransactionBatch: vi.fn().mockResolvedValue(50),
-        getSyncHeight: vi.fn().mockResolvedValue(50),
-        syncStateWithTimeout: sync,
+        getSyncHeight: vi.fn().mockResolvedValue(51),
+        syncState: sync,
       });
       const r = fakeRequest();
       await resource.submitBatch("0xsender", [r], {
         waitForConfirmation: true,
         interval: 0,
       });
-      expect(inner.syncStateWithTimeout).toHaveBeenCalled();
+      expect(inner.syncState).toHaveBeenCalled();
     });
 
     it("submitBatch waitForConfirmation throws on timeout", async () => {
       const { resource } = makeResource({
         submitNewTransactionBatch: vi.fn().mockResolvedValue(1000),
         getSyncHeight: vi.fn().mockResolvedValue(0),
-        syncStateWithTimeout: vi.fn().mockResolvedValue(undefined),
+        syncState: vi.fn().mockResolvedValue(undefined),
       });
       const r = fakeRequest();
       await expect(

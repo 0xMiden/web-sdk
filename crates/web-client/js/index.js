@@ -702,14 +702,14 @@ class WebClient {
    * this is intentional, so a caller can drain and then proceed without
    * being blocked indefinitely by a concurrent workload.
    *
-   * Caveat for `syncState`: `syncStateWithTimeout` awaits
-   * `acquireSyncLock` (Web Locks) BEFORE wrapping its WASM call in
-   * `_serializeWasmCall`, so a sync that is queued on the sync lock but
-   * has not yet reached its WASM phase is not on the chain and will not
-   * be awaited. Every other serialized method (`executeTransaction`,
-   * `newWallet`, `submitNewTransaction`, `proveTransaction`,
-   * `applyTransaction`, and the proxy-fallback reads) routes through
-   * the chain synchronously on call and is always observed.
+   * Caveat for `syncState`: `syncState` awaits `acquireSyncLock` (Web
+   * Locks) BEFORE wrapping its WASM call in `_serializeWasmCall`, so a
+   * sync that is queued on the sync lock but has not yet reached its
+   * WASM phase is not on the chain and will not be awaited. Every other
+   * serialized method (`executeTransaction`, `newWallet`,
+   * `submitNewTransaction`, `proveTransaction`, `applyTransaction`, and
+   * the proxy-fallback reads) routes through the chain synchronously on
+   * call and is always observed.
    *
    * @returns {Promise<void>}
    */

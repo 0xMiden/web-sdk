@@ -563,11 +563,19 @@ export class TransactionsResource {
   }
 
   /**
-   * Polls until the local sync height reaches `blockNumber` or the timeout
-   * expires. The Rust V1 batch API returns only a block number — there are no
-   * per-tx ids to poll on, so we wait on the chain height instead.
+   * Polls until the local sync height advances past `blockNumber` or the
+   * timeout expires.
    *
-   * @param {number} blockNumber - The block height to wait for.
+   * `submitNewTransactionBatch` returns the node's chain tip **at
+   * submission**, not the commit block of the batch. The batch lands at some
+   * height strictly greater than that tip, so we wait for
+   * `getSyncHeight() > blockNumber` (not `>=`). Each poll drives a real
+   * `syncState()` — there is no `syncStateWithTimeout` on the client.
+   *
+   * This is still a weaker guarantee than per-tx confirmation: V1 exposes no
+   * batch/tx ids to poll, so a tip advance is the best signal available.
+   *
+   * @param {number} blockNumber - Chain tip returned at batch submission.
    * @param {object} [opts] - Polling options (timeout, interval).
    */
   async #waitForBlock(blockNumber, opts) {
@@ -578,16 +586,17 @@ export class TransactionsResource {
     while (true) {
       if (timeout > 0 && Date.now() - start >= timeout) {
         throw new Error(
-          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+          `Batch confirmation timed out after ${timeout}ms (waiting past block ${blockNumber})`
         );
       }
       try {
-        await this.#inner.syncStateWithTimeout(0);
+        await this.#inner.syncState();
       } catch {
         // sync may fail transiently; continue polling
       }
       const height = await this.#inner.getSyncHeight();
-      if (height >= blockNumber) return;
+      // Tip-at-submission is not the commit height; wait for a later block.
+      if (height > blockNumber) return;
       await new Promise((resolve) => setTimeout(resolve, interval));
     }
   }
