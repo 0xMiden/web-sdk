@@ -497,7 +497,7 @@ test("calls a consistent movement significant", () => {
     ctx()
   );
   const heading = body.split("\n")[0];
-  assert.match(heading, /⚠️ \+20\.00% slower/);
+  assert.match(heading, /⚠️ WASM proving — \+20\.00% slower/);
   // The legend always names the unresolved state; the NOTE only appears when
   // something is actually in it.
   assert.doesNotMatch(body, /benchmark unresolved/);
@@ -613,7 +613,7 @@ test("a provisional floor states an observation, never a verdict", () => {
   assert.match(heading, /not yet a verdict/);
   assert.match(heading, /uncalibrated/);
   // And it must not read as the calibrated form, which claims significance.
-  assert.doesNotMatch(heading, /^### .{0,4} \+20\.00% slower: /);
+  assert.doesNotMatch(heading, /^### \S+ WASM proving — \+20\.00% slower: /);
   // The movement itself is not suppressed — that is the whole point of not
   // treating this like a compromised estimate.
   assert.match(beyond, /\+20\.00%/);
@@ -647,7 +647,7 @@ test("ignores artifact fields that would author the verdict", () => {
   // this repo's write token.
   const regression = { benchmark: { base: side(1000), head: side(4000) } };
   const honest = renderComment(results(regression), ctx());
-  assert.match(honest, /### ⚠️ \+300\.00% slower/);
+  assert.match(honest, /### ⚠️ WASM proving — \+300\.00% slower/);
 
   const hostile = [
     { lowerIsBetter: false },
@@ -667,7 +667,7 @@ test("ignores artifact fields that would author the verdict", () => {
     const heading = body.split("\n")[0];
     assert.match(
       heading,
-      /### ⚠️ \+300\.00% slower/,
+      /### ⚠️ WASM proving — \+300\.00% slower/,
       `${key} changed the verdict`
     );
     assert.doesNotMatch(heading, /faster/, `${key} inverted the direction`);
@@ -1727,7 +1727,10 @@ test("surfaces a slowdown that missed every repetition's fastest prove", () => {
   // still not a verdict: unresolved, naming the statistic that moved.
   const heading = body.split("\n")[0];
   assert.doesNotMatch(heading, /No significant change/);
-  assert.match(heading, /^### ❔ Unresolved: nothing clears the/);
+  assert.match(
+    heading,
+    /^### ❔ WASM proving — Unresolved: nothing clears the/
+  );
   assert.match(heading, /mean of all proves is \+33\.33% slower/);
 
   // And an improvement on the mean must not be announced as a slowdown.
@@ -1846,7 +1849,7 @@ test("will not call a movement significant on too few repetitions", () => {
     }),
     ctx()
   );
-  assert.match(six.split("\n")[0], /⚠️ \+4[01]\.\d\d% slower/);
+  assert.match(six.split("\n")[0], /⚠️ WASM proving — \+4[01]\.\d\d% slower/);
 });
 
 test("a traversal run url degrades to text instead of linking elsewhere", () => {
@@ -3772,10 +3775,33 @@ test("a run below the floor is told it is short, not that it is odd", () => {
 
 // The guard must not swallow the ordinary case, which is the whole point of the
 // bot: a complete, even, calibrated run still rules.
+test("every verdict heading names what was measured", () => {
+  // The heading is the only line most readers see — in the PR timeline, in a
+  // notification email, in a list of comments. "No significant change" alone
+  // does not say change in WHAT. Asserted across the verdict branches rather
+  // than on one fixture, because the subject is spliced in one place and a new
+  // branch would otherwise ship without it.
+  const cases = {
+    "no movement": results(),
+    "clean regression": results({
+      benchmark: { base: side(1000), head: side(1400) },
+    }),
+    "head-only": results({ benchmark: { base: null } }),
+  };
+  for (const [label, fixture] of Object.entries(cases)) {
+    const heading = renderComment(fixture, ctx()).split("\n")[0];
+    assert.match(heading, /^### \S+ WASM proving — /, `${label}: ${heading}`);
+  }
+});
+
 test("a complete even run still publishes a verdict", () => {
   for (const reps of [6, 8, 12]) {
     const body = renderComment(results(shortRun(reps)), ctx());
-    assert.match(body, /### ⚠️ \+40\.00% slower/, `${reps} reps did not rule`);
+    assert.match(
+      body,
+      /### ⚠️ WASM proving — \+40\.00% slower/,
+      `${reps} reps did not rule`
+    );
     assert.doesNotMatch(body, /Unresolved/);
     assert.doesNotMatch(body, /stopped early/);
   }
