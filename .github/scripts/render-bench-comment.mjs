@@ -28,6 +28,18 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import process from "node:process";
 
+// The calibration profile lives in its own module because it is DATA — a
+// measurement of one runner on one workload — while everything here is the rule
+// that consumes it. Porting this bot between the repository's lines, or
+// re-calibrating one of them, is then an edit to that file and nothing else.
+//
+// Imported as the DEFAULT for the two public entry points only. Everything
+// internal takes the profile as an explicit parameter, so a call site that
+// forgets to pass it crashes in the tests instead of quietly reverting to these
+// numbers — and so both the provisional and the calibrated state are reachable
+// from the suite at the same time.
+import { DEFAULT_PROFILE } from "./bench-profile.mjs";
+
 /** Max benchmark rows rendered in a table. Beyond this the comment stops being readable. */
 const MAX_ROWS = 50;
 
@@ -109,94 +121,42 @@ const STOPPED_EARLY_KINDS = new Set(["budget", "deadline", "teardown"]);
 const MAX_SAMPLE_VALUES = 200000;
 
 /**
- * Noise floor, in percent: a movement smaller than this is reported as noise.
- *
- * This lives on the TRUSTED side and is deliberately NOT read from the
- * artifact. It decides the verdict, and the artifact is fork-controlled — a
- * `thresholdPct: 1e9` would silence any regression, and a
- * `thresholdProvisional: false` would make the comment assert that a
- * fork-invented number is this runner's calibrated variance.
- *
- * CALIBRATED on warp-ubuntu-latest-x64-8x, 2026-08-27: 30 runs of one build
- * against a copy of itself at reps=6, so every reported delta is pure noise.
- * mean +0.213% (SE 0.264% — no detectable residual bias), sd 1.447%,
- * 3σ = 4.34%, largest observed |delta| = 5.03%.
- *
- * 5.4%, NOT the 4.34% that 3σ prescribes. 3σ assumes the deltas are normal and
- * these are not: one of the thirty landed at +5.03%, past 3σ, on a run where
- * nothing changed. That is the grind lottery's tail — each side draws its own
- * proof-of-work grind, which is geometric, not Gaussian. A threshold at 4.34%
- * would have called that run a regression, so the floor is taken from the
- * empirical maximum with a small margin instead. Following the procedure into a
- * false positive we had already observed would be worse than deviating from it.
- *
- * Re-calibrate when the runner class, thread count, repetition count or the
- * workload changes; each invalidates this. See docs/benchmarks/calibration.md.
- */
-const THRESHOLD_PCT = 5.4;
-const THRESHOLD_PROVISIONAL = false;
-
-/**
- * What the calibration actually measured, kept beside the threshold so the
- * comment's prose cannot drift from the number it is describing. The previous
- * wording asserted the threshold "is three times the calibrated standard
- * deviation", which stopped being true the moment the floor was set above the
- * empirical maximum instead.
- */
-const CALIBRATION = {
-  runs: 30,
-  reps: 6,
-  runner: "warp-ubuntu-latest-x64-8x",
-  date: "2026-08-27",
-  sdPct: 1.45,
-  threeSigmaPct: 4.34,
-  maxObservedPct: 5.03,
-};
-
-/**
  * Every benchmark in this suite is a timing, so lower is always better.
  *
- * Also deliberately not read from the artifact: a `lowerIsBetter: false` turned
- * a 4× regression into "🚀 faster" in a comment posted under this repo's token.
+ * Deliberately not read from the artifact, for the same reason the profile is
+ * not: a `lowerIsBetter: false` turned a 4× regression into "🚀 faster" in a
+ * comment posted under this repo's token. It is not part of the profile either,
+ * because it is a property of the SUITE rather than of a runner's calibration —
+ * re-measuring the noise floor cannot change which direction is an improvement.
  */
 const LOWER_IS_BETTER = true;
 
 /**
- * The configuration the 1.79% estimator spread was measured at.
- *
- * `reps` and `provesPerRep` come from the artifact, so a run that reports one
- * repetition of one prove must not inherit a standard deviation measured over
- * six of three. Below EITHER count no verdict is published — see
- * `verdictPreconditions` and `MIN_REPS_FOR_SIGN_TEST` — because the fixed
- * threshold is 3σ of this estimator at these counts and is less than that for any
- * shorter run, on either axis. Above them the comment notes that the measured
- * spread does not apply while still gating on the threshold, which is the
- * conservative direction.
- */
-const CALIBRATED_REPS = 6;
-const CALIBRATED_PROVES_PER_REP = 3;
-
-/**
  * Fewest repetitions at which a verdict is published at all.
  *
- * Pinned to CALIBRATED_REPS, and that is the whole argument: THRESHOLD_PCT is 3σ
- * of this estimator measured AT that repetition count, and the spread of a mean
- * of per-repetition minima shrinks with 1/√reps, so the floor does not transfer
- * downward. Applied to a four-repetition run it is only about 2.5σ of that run's
- * own estimator — the magnitude leg silently weakens exactly where the sign leg
- * is weakest too, since unanimity across four signs happens by chance one run in
- * eight. Simulated with the floor lifted, four repetitions carry a joint
- * false-positive rate of 1.07% against the calibrated six's 0.15% — seven times
- * the noise for a shorter job. (Historical figures: with the floor in place a
- * four-repetition run produces no verdict at all, so the simulator now reports
- * 0.00% there.) Above the floor both legs move the safe way — the fixed threshold becomes
- * MORE than 3σ of a longer run's tighter estimator — so only the downward
- * direction needs blocking.
+ * Pinned to the profile's `calibratedReps`, and that is the whole argument:
+ * `thresholdPct` is 3σ of this estimator measured AT that repetition count, and
+ * the spread of a mean of per-repetition minima shrinks with 1/√reps, so the
+ * floor does not transfer downward. Applied to a four-repetition run it is only
+ * about 2.5σ of that run's own estimator — the magnitude leg silently weakens
+ * exactly where the sign leg is weakest too, since unanimity across four signs
+ * happens by chance one run in eight. Simulated with the floor lifted, four
+ * repetitions carry a joint false-positive rate of 1.07% against the calibrated
+ * six's 0.15% — seven times the noise for a shorter job. (Historical figures:
+ * with the floor in place a four-repetition run produces no verdict at all, so
+ * the simulator now reports 0.00% there.) Above the floor both legs move the safe
+ * way — the fixed threshold becomes MORE than 3σ of a longer run's tighter
+ * estimator — so only the downward direction needs blocking.
+ *
+ * A derivation rather than a profile field, deliberately: it is a RULE about how
+ * the floor transfers across repetition counts, and it holds whatever the
+ * calibration measured. A profile that could set it independently would let a
+ * port silently decouple the two.
  *
  * Shorter runs still render; they report the movement and say the run was too
  * short to judge it. See docs/benchmarks/calibration.md.
  */
-const MIN_REPS_FOR_SIGN_TEST = CALIBRATED_REPS;
+const minRepsForSignTest = (profile) => profile.calibratedReps;
 
 const NUM_FMT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 1,
@@ -347,9 +307,9 @@ function logLine(text) {
 /**
  * Units the trusted side is willing to print.
  *
- * An allowlist rather than a shape check, for the same reason THRESHOLD_PCT is not
- * read from the artifact: the unit is a CLAIM ABOUT THE NUMBERS, and a fork
- * controls it. A shape check passes `s`, so a run's millisecond samples can be
+ * An allowlist rather than a shape check, for the same reason the calibration
+ * profile is not read from the artifact: the unit is a CLAIM ABOUT THE NUMBERS,
+ * and a fork controls it. A shape check passes `s`, so a run's millisecond samples can be
  * labelled seconds — the figures stay internally consistent and every percentage
  * stays correct, which is what makes it effective. It also passes `%`, which turns
  * absolute timings into apparent ratios.
@@ -748,11 +708,21 @@ function normalizeResults(input) {
     );
   }
 
-  // `thresholdPct`, `thresholdProvisional`, `lowerIsBetter` and `calibration`
-  // are read from nowhere near here on purpose — see THRESHOLD_PCT above. They
-  // are constants on the producing side too, so nothing is lost by pinning
+  // `thresholdPct`, `thresholdProvisional`, `lowerIsBetter`, `calibration`,
+  // `calibratedReps`, `calibratedProvesPerRep` — and any object named `profile`
+  // — are read from nowhere near here on purpose. Every one of them decides the
+  // VERDICT, and this function's whole output is built by naming the fields it
+  // wants rather than by spreading the input, so a field that is not listed
+  // below cannot reach the renderer no matter what the artifact calls it. The
+  // trusted copies live in bench-profile.mjs and reach the renderer only as the
+  // default argument of `renderComment`/`renderSummary`.
+  //
+  // They are constants on the producing side too, so nothing is lost by pinning
   // them on the trusted side, and a fork loses the ability to author the
-  // verdict this bot posts.
+  // verdict this bot posts. (`results.profile` below is an unrelated field: the
+  // cargo profile the dist was built with, a fork-authored STRING that is
+  // sanitized, printed as a claim about the run, and never consulted for
+  // anything.)
   // Shared across every side of every benchmark: the cap that matters is the
   // total the renderer holds at once, not the per-benchmark count.
   const budget = { remaining: MAX_SAMPLE_VALUES };
@@ -861,6 +831,107 @@ function failInternal(message) {
   throw new TypeError(`rendering context: ${message}`);
 }
 
+/**
+ * Every field the calibration profile has to carry, and what it has to be.
+ *
+ * A LIST rather than a shape guessed at each use, so that adding a field to
+ * bench-profile.mjs and forgetting to require it here is the only way a profile
+ * can arrive incomplete — and so the requirement is stated in one place a porter
+ * can read.
+ *
+ * `calibration` is required in full even while `thresholdProvisional` is true,
+ * although nothing renders it then. Validating a record only in the state that
+ * reads it lets it rot unnoticed, and the flip to a calibrated floor is exactly
+ * when nobody wants to find out: the calibrated wording quotes every one of
+ * these fields by name.
+ */
+const PROFILE_FIELDS = [
+  [
+    "thresholdPct",
+    (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
+  ],
+  ["thresholdProvisional", (v) => typeof v === "boolean"],
+  ["calibratedReps", (v) => Number.isInteger(v) && v >= 1],
+  ["calibratedProvesPerRep", (v) => Number.isInteger(v) && v >= 1],
+];
+
+const CALIBRATION_FIELDS = [
+  ["runs", (v) => Number.isInteger(v) && v >= 1],
+  ["reps", (v) => Number.isInteger(v) && v >= 1],
+  ["runner", (v) => typeof v === "string" && v.length > 0],
+  ["date", (v) => typeof v === "string" && v.length > 0],
+  ["sdPct", (v) => typeof v === "number" && Number.isFinite(v)],
+  ["threeSigmaPct", (v) => typeof v === "number" && Number.isFinite(v)],
+  ["maxObservedPct", (v) => typeof v === "number" && Number.isFinite(v)],
+  ["hashFn", (v) => typeof v === "string" && v.length > 0],
+  ["queryPowBits", (v) => Number.isInteger(v) && v >= 0],
+];
+
+/**
+ * The estimator study, required in full for the same reason `calibration` is.
+ *
+ * Its three standard deviations render UNCONDITIONALLY on any run at the
+ * calibrated counts, unlike `calibration`, which only the calibrated wording
+ * quotes — so a profile missing one of these is a comment with `undefined` in
+ * the middle of a sentence about measurement, on the ordinary path.
+ */
+const ESTIMATOR_SPREAD_FIELDS = [
+  ["runs", (v) => Number.isInteger(v) && v >= 1],
+  ["sdPct", (v) => typeof v === "number" && Number.isFinite(v)],
+  ["globalMinSdPct", (v) => typeof v === "number" && Number.isFinite(v)],
+  ["medianSdPct", (v) => typeof v === "number" && Number.isFinite(v)],
+];
+
+/**
+ * The profile is TRUSTED-side configuration, exactly like `ctx` — so an
+ * incomplete one is a first-party bug and takes the exit-3 path, never the
+ * artifact-refusal path. It cannot arrive from the artifact at all: see
+ * `normalizeResults`, `main`, and bench-profile.mjs's trust-model note.
+ *
+ * It throws rather than filling the gap in. A profile with no `thresholdPct` is
+ * a half-finished port or a mistyped test fixture, and quietly substituting the
+ * default would publish a verdict against a floor nobody wrote down — which is
+ * the same failure as reading the floor from the artifact, arriving from the
+ * other direction. A missing field is loud on the first render.
+ */
+function requireProfile(profile) {
+  if (profile === null || typeof profile !== "object" || Array.isArray(profile))
+    failInternal(`profile must be an object, got ${describeValue(profile)}`);
+  for (const [field, ok] of PROFILE_FIELDS) {
+    if (!ok(profile[field]))
+      failInternal(
+        `profile.${field} is missing or invalid: ${describeValue(profile[field])} — ` +
+          `see DEFAULT_PROFILE in .github/scripts/bench-profile.mjs`
+      );
+  }
+  requireProfileRecord(profile, "calibration", CALIBRATION_FIELDS);
+  requireProfileRecord(profile, "estimatorSpread", ESTIMATOR_SPREAD_FIELDS);
+  return profile;
+}
+
+/**
+ * One nested record of the profile, checked against its field list.
+ *
+ * Shared rather than written out per record so that adding a third sub-record
+ * cannot arrive with a subtly different check — the second one was already a
+ * copy of the first, and a copy is where "required in full" quietly becomes
+ * "required in whichever fields someone remembered".
+ */
+function requireProfileRecord(profile, name, fields) {
+  const record = profile[name];
+  if (record === null || typeof record !== "object" || Array.isArray(record))
+    failInternal(
+      `profile.${name} must be an object, got ${describeValue(record)}`
+    );
+  for (const [field, ok] of fields) {
+    if (!ok(record[field]))
+      failInternal(
+        `profile.${name}.${field} is missing or invalid: ${describeValue(record[field])} — ` +
+          `see DEFAULT_PROFILE in .github/scripts/bench-profile.mjs`
+      );
+  }
+}
+
 function normalizeContext(input) {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     failInternal(`ctx must be an object, got ${describeValue(input)}`);
@@ -961,6 +1032,40 @@ function plural(n, singular, pluralForm = `${singular}s`) {
   return n === 1 ? singular : pluralForm;
 }
 
+const SMALL_NUMBER_WORDS = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+];
+
+/**
+ * A small count as an English word, for prose that reads badly with a digit.
+ *
+ * Exists so the methodology's "six calibration runs" can come from the profile
+ * instead of being a string literal beside a bullet already gated on profile
+ * fields. Spelling it out is the house style for a count inside a sentence, and
+ * substituting a digit to make the number data-driven would have been a
+ * rendering change smuggled in under a refactor.
+ *
+ * Falls back to digits above twelve, where the word stops being shorter than the
+ * numeral and starts needing a hyphen.
+ */
+function spellSmall(n) {
+  return Number.isInteger(n) && n >= 0 && n < SMALL_NUMBER_WORDS.length
+    ? SMALL_NUMBER_WORDS[n]
+    : String(n);
+}
+
 // ---------------------------------------------------------------------------
 // Analysis
 // ---------------------------------------------------------------------------
@@ -1001,8 +1106,8 @@ const EMOJI_UNRESOLVED = "❔";
  * enough to wave off, either: a benchmark fast enough to sit near the clock's
  * granularity produces them honestly, and `samples` is artifact-authored, so a
  * fork can produce them deliberately. The fix is to bound the EFFECTIVE sample
- * size rather than the raw one — `agree` must reach MIN_REPS_FOR_SIGN_TEST, not
- * merely a majority — which pins the rate at 2/2^MIN_REPS_FOR_SIGN_TEST for
+ * size rather than the raw one — `agree` must reach `minRepsForSignTest`, not
+ * merely a majority — which pins the rate at 2/2^minRepsForSignTest for
  * every repetition count and tie count. The majority clause stays because it is
  * the binding one on long runs, where six agreeing out of twenty is not a result.
  *
@@ -1011,7 +1116,7 @@ const EMOJI_UNRESOLVED = "❔";
  * the one. The sign test bounds the false-positive rate without assuming
  * normality; it is not a claim that the effect is evenly distributed.
  */
-function pairedAgreement(base, head) {
+function pairedAgreement(base, head, profile) {
   const reps = Math.min(base.samples.length, head.samples.length);
   if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
   // Below the calibrated repetition count neither leg holds up: a one-repetition
@@ -1023,7 +1128,7 @@ function pairedAgreement(base, head) {
   // that wants a verdict it has not earned would otherwise only have to send
   // fewer repetitions. Anything shorter is reported as unresolved with the
   // reason named, never as significant.
-  if (reps < MIN_REPS_FOR_SIGN_TEST) {
+  if (reps < minRepsForSignTest(profile)) {
     return { consistent: false, agree: 0, reps, tooShort: true };
   }
   const deltas = [];
@@ -1042,7 +1147,7 @@ function pairedAgreement(base, head) {
     consistent:
       contradicting === 0 &&
       agree * 2 > reps &&
-      agree >= MIN_REPS_FOR_SIGN_TEST,
+      agree >= minRepsForSignTest(profile),
     agree,
     reps,
   };
@@ -1062,8 +1167,9 @@ function pairedAgreement(base, head) {
  *
  * So this is computed alongside and reported when the two disagree. It is
  * deliberately NOT the verdict: its spread has never been measured, and the one
- * neighbouring figure that gets quoted for it — 5.39% — is the calibrated sd of
- * the MEDIAN, a different statistic. Promoting this cross-check on the strength
+ * neighbouring figure that gets quoted for it — `estimatorSpread.medianSdPct` in
+ * bench-profile.mjs — is the sd of the MEDIAN, a different statistic. Promoting
+ * this cross-check on the strength
  * of that number would be promoting it on a distribution nobody has measured, so
  * it stays a cross-check gated by its own sign test (`pairedMeanAgreement`).
  * Reporting the disagreement costs nothing and is the only signal that the
@@ -1089,10 +1195,10 @@ function meanDeltaPct(base, head) {
  * the sign test rather than a threshold is what bounds this note's false
  * positives.
  */
-function pairedMeanAgreement(base, head) {
+function pairedMeanAgreement(base, head, profile) {
   const reps = Math.min(base.samples.length, head.samples.length);
   if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
-  if (reps < MIN_REPS_FOR_SIGN_TEST) {
+  if (reps < minRepsForSignTest(profile)) {
     return { consistent: false, agree: 0, reps, tooShort: true };
   }
   const deltas = [];
@@ -1111,7 +1217,7 @@ function pairedMeanAgreement(base, head) {
     consistent:
       contradicting === 0 &&
       agree * 2 > reps &&
-      agree >= MIN_REPS_FOR_SIGN_TEST,
+      agree >= minRepsForSignTest(profile),
     agree,
     reps,
   };
@@ -1152,12 +1258,10 @@ function pairedMeanAgreement(base, head) {
  * mean cross-check all still render; what is withheld is the claim that they
  * establish a direction.
  */
-function verdictPreconditions({
-  stoppedEarly,
-  reps,
-  provesPerRep,
-  calibration,
-}) {
+function verdictPreconditions(
+  { stoppedEarly, reps, provesPerRep, calibration },
+  profile
+) {
   // First, because it outranks every other reason: on a calibration run base and
   // head are the SAME build, so the true difference is zero by construction and
   // any movement is this runner's noise. That is the entire point of the run —
@@ -1188,7 +1292,8 @@ function verdictPreconditions({
       blocked: "oddReps",
     };
   }
-  // The same argument as the repetition floor, on the other axis. THRESHOLD_PCT
+  // The same argument as the repetition floor, on the other axis. The profile's
+  // `thresholdPct`
   // is 3σ of an estimator measured over the minimum of THREE retained proves, and
   // the minimum of fewer is a noisier statistic — so applying the fixed floor to a
   // one-prove run compares a movement against a cutoff that is well under 3σ of
@@ -1216,12 +1321,12 @@ function verdictPreconditions({
   // and the run reports without ruling.
   if (
     Number.isInteger(provesPerRep) &&
-    provesPerRep !== CALIBRATED_PROVES_PER_REP
+    provesPerRep !== profile.calibratedProvesPerRep
   ) {
     return {
       ok: false,
       blocked:
-        provesPerRep < CALIBRATED_PROVES_PER_REP
+        provesPerRep < profile.calibratedProvesPerRep
           ? "tooFewProves"
           : "tooManyProves",
     };
@@ -1229,18 +1334,34 @@ function verdictPreconditions({
   return { ok: true };
 }
 
-function computeRows(results, ctx) {
+function computeRows(results, ctx, profile) {
   // `calibration` is the one precondition that lives on the CONTEXT rather than
   // the artifact, because whether a run benched a build against a copy of itself
   // is knowable only from what triggered it.
-  const preconditions = verdictPreconditions({
-    ...results,
-    calibration: ctx.calibration === true,
-  });
+  // Listed field by field rather than spread. `{ ...results }` copied every
+  // artifact-authored key into the argument, INCLUDING `results.profile` — the
+  // cargo profile string — one scope away from the parameter also named
+  // `profile`, which is the trusted calibration record. Nothing read it, because
+  // `verdictPreconditions` destructures four names and none of them is
+  // `profile`; the hazard is that adding `profile` to that destructure later
+  // would silently bind a fork-authored string in place of the record that
+  // decides the verdict, and the code would still run. Four keys, none of them
+  // `profile`, makes that unreachable instead of merely unused — and it puts
+  // the function's real inputs at the call site, where the spread hid them.
+  const preconditions = verdictPreconditions(
+    {
+      stoppedEarly: results.stoppedEarly,
+      reps: results.reps,
+      provesPerRep: results.provesPerRep,
+      calibration: ctx.calibration === true,
+    },
+    profile
+  );
   const rows = results.benchmarks.map((b) => {
     // `value` is the mean of per-rep minima — see the estimator comment in
-    // bench-proving.mjs. Measured over six calibration runs of identical
-    // binaries it holds sd 1.79% where a plain median holds 5.39%.
+    // bench-proving.mjs. What that estimator's spread was measured to be, and
+    // what the statistics it beat scattered by, are `estimatorSpread` in
+    // bench-profile.mjs; the methodology section renders them from there.
     //
     // `base` is null on a head-only run, which leaves nothing to compare.
     const deltaValue = b.base === null ? null : b.head.value - b.base.value;
@@ -1267,7 +1388,7 @@ function computeRows(results, ctx) {
     const measured =
       b.base === null
         ? { consistent: false, agree: 0, reps: 0 }
-        : pairedAgreement(b.base, b.head);
+        : pairedAgreement(b.base, b.head, profile);
     // The repetition floor OUTRANKS the run-level block, because a run below the
     // floor is short first and whatever else second. A one-repetition run is also
     // an odd-repetition run, and "one repetition is too few" is the reason its
@@ -1288,12 +1409,14 @@ function computeRows(results, ctx) {
     // `magnitude > 0` so a threshold of zero does not classify an exactly
     // unchanged benchmark as a movement — and then as an improvement.
     //
-    // Compared at the DISPLAYED precision. On the unrounded value a magnitude of
-    // 5.396% renders as "+5.40%" and is then called noise against a floor the
-    // same line prints as "±5.40%", which reads as a bug at exactly the boundary
-    // a reader stops to check.
+    // Compared at the DISPLAYED precision. On the unrounded value a magnitude a
+    // whisker under the floor — 5.396% against a floor of 5.4% — renders as
+    // "+5.40%" and is then called noise against a floor the same line also
+    // prints as "±5.40%", which reads as a bug at exactly the boundary a reader
+    // stops to check.
     const shown = Number(magnitude.toFixed(2));
-    const clearsFloor = shown > 0 && shown >= Number(THRESHOLD_PCT.toFixed(2));
+    const clearsFloor =
+      shown > 0 && shown >= Number(profile.thresholdPct.toFixed(2));
     const beyond = clearsFloor && agreement.consistent;
     const unresolved = clearsFloor && !agreement.consistent;
     const isWorse = LOWER_IS_BETTER ? deltaValue > 0 : deltaValue < 0;
@@ -1302,7 +1425,8 @@ function computeRows(results, ctx) {
     // which the headline estimator cannot see by construction.
     //
     // Gated on a sign test over the per-repetition MEAN deltas, not on the
-    // threshold alone. THRESHOLD_PCT is 3σ of the headline estimator (σ 1.79%);
+    // threshold alone. The profile's `thresholdPct` is 3σ of the headline
+    // estimator (`estimatorSpread.sdPct`);
     // the spread of a mean over all proves has never been measured on this
     // workload, so using that threshold as if it were 3σ of this statistic too
     // would be borrowing a number from the wrong distribution. The sign test
@@ -1321,7 +1445,7 @@ function computeRows(results, ctx) {
     const meanAgreement =
       b.base === null || agreement.blocked
         ? null
-        : pairedMeanAgreement(b.base, b.head);
+        : pairedMeanAgreement(b.base, b.head, profile);
     // Does the mean movement clear the floor at all? Magnitude only — no
     // question of whether the headline also moved, and none of whether the
     // repetitions corroborate it. Every mean channel below is this plus a
@@ -1333,7 +1457,8 @@ function computeRows(results, ctx) {
     const meanBig =
       meanPct !== null &&
       deltaPct !== null &&
-      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
+      Number(Math.abs(meanPct).toFixed(2)) >=
+        Number(profile.thresholdPct.toFixed(2));
     // The mean cleared the floor while the headline did not, WITHOUT asking
     // whether the repetitions agree. `meanOnly` needs that agreement because it
     // makes a directional claim; this does not, and exists only so a large mean
@@ -1461,8 +1586,8 @@ const SUBJECT = "WASM proving";
  * Applied here rather than inside each branch of buildVerdictBody: there are
  * nine of them and a new one would silently ship without the subject.
  */
-function buildVerdict(rows) {
-  const body = buildVerdictBody(rows);
+function buildVerdict(rows, profile) {
+  const body = buildVerdictBody(rows, profile);
   // Headings are `### <emoji> <Sentence>`. Splice the subject in after the
   // emoji, leaving the sentence itself untouched — it carries the verdict and
   // several branches build it from measured values.
@@ -1472,7 +1597,7 @@ function buildVerdict(rows) {
   return `### ${emoji} ${SUBJECT} — ${rest}`;
 }
 
-function buildVerdictBody(rows) {
+function buildVerdictBody(rows, profile) {
   if (rows.length === 0) {
     return "### ❔ No benchmarks reported — the bench job produced an empty result set";
   }
@@ -1495,7 +1620,7 @@ function buildVerdictBody(rows) {
     return "### ❔ No comparison possible — some benchmarks have no base measurement and the rest have a base figure of zero";
   }
 
-  const thresholdText = `${THRESHOLD_PROVISIONAL ? "provisional " : ""}±${formatPct(THRESHOLD_PCT)}`;
+  const thresholdText = `${profile.thresholdProvisional ? "provisional " : ""}±${formatPct(profile.thresholdPct)}`;
   // A row whose two estimators point opposite ways is not a result, whichever
   // of them cleared the floor first. Excluded from `moved` here rather than
   // filtered at each use, so the heading, the emoji and the notes all see the
@@ -1666,7 +1791,7 @@ function buildVerdictBody(rows) {
   // direction of a large, repetition-consistent movement on those grounds would
   // discard the signal the bot exists to surface, so the number and the paired
   // agreement stay and only the claim of significance is dropped.
-  if (THRESHOLD_PROVISIONAL) {
+  if (profile.thresholdProvisional) {
     return (
       `### ${emoji} ${formatSignedPct(leader.deltaPct)} ${direction} on this run: ` +
       `${codeSpan(leader.name)}${rest} — not yet a verdict, the floor here is uncalibrated`
@@ -1736,7 +1861,7 @@ function buildTeardownNote(teardownFailures) {
 // Worded here, from validated integers, never from the producer's `stoppedEarly`
 // string. A fork controls that string, and it does not get to write a sentence in
 // this comment.
-function buildStoppedEarlyNote(results) {
+function buildStoppedEarlyNote(results, profile) {
   if (!results.stoppedEarly) return null;
   const {
     reps,
@@ -1788,7 +1913,7 @@ function buildStoppedEarlyNote(results) {
           ` setup order unbalanced — the budget stopped the run before another could be funded.`,
       "> If this recurs the budget is too tight rather than the run too slow: raise the",
       "> benchmark step's `timeout-minutes` and `--budget-minutes` together. Not the repetition count:",
-      `> a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST} and that is already the default, so a shorter run does not rule.`,
+      `> a verdict needs at least ${minRepsForSignTest(profile)} and that is already the default, so a shorter run does not rule.`,
     ].join("\n");
   }
 
@@ -1918,9 +2043,9 @@ function buildCalibrationNote(ctx) {
   ].join("\n");
 }
 
-function buildProvisionalNote(results, ctx) {
+function buildProvisionalNote(results, ctx, profile) {
   return [
-    `> **The noise floor is provisional.** ±${formatPct(THRESHOLD_PCT)} is 3σ of this estimator measured on a`,
+    `> **The noise floor is provisional.** ±${formatPct(profile.thresholdPct)} is 3σ of this estimator measured on a`,
     `> developer laptop, not on \`${results.runner}\` — no calibration run has been recorded on this runner yet,`,
     // Deliberately silent on which way it will move. The laptop has interactive
     // background load the runner does not; the runner has virtualisation, cold
@@ -1991,13 +2116,13 @@ function buildTable(rows, unit) {
   return lines.join("\n");
 }
 
-function buildMovedSection(rows, unit) {
+function buildMovedSection(rows, unit, profile) {
   const moved = rows.filter((r) => r.beyond);
   if (moved.length === 0) return "";
 
   const shown = moved.slice(0, MAX_ROWS);
   const parts = [
-    THRESHOLD_PROVISIONAL
+    profile.thresholdProvisional
       ? "#### Moved beyond a provisional noise floor"
       : "#### Moved beyond the noise floor",
     "",
@@ -2115,7 +2240,14 @@ function buildSamplesBlock(rows, unit) {
   return ["```text", ...lines, "```"].join("\n");
 }
 
-function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
+function buildMethodologySection(
+  results,
+  ctx,
+  rows,
+  unit,
+  includeSamples,
+  profile
+) {
   // On a head-only run there is no base side, so every sentence about the two
   // being interleaved, alternated and built in one job describes something that
   // did not happen. Saying it anyway next to the "no base measurements" banner
@@ -2145,25 +2277,32 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     results.provesPerRep >= 2
       ? `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its best observed warm prove — a lower-tail statistic, not a measured "clean" cost, and so blind to a regression that leaves the best case alone (see the mean cross-check). Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima shrinks that lottery — it averages the grind down rather than cancelling it, because each side draws its own.`
       : `- The reported figure is the **mean of the single retained prove per repetition**. With only one prove kept per repetition there is no minimum to take, so nothing filters interference out of each sample — every draw carries whatever the machine was doing at the time. Treat this run as thinner than the estimator this suite is built around.`,
-    // The 1.79% figure was measured at 6 reps × 3 warm proves. It is a property
-    // of the estimator AT THAT SAMPLE SIZE, and `reps` / `provesPerRep` are
-    // artifact-authored — so a thinner run must not inherit the claim.
+    // The estimator's spread was measured at the calibrated reps × proves. It is
+    // a property of the estimator AT THAT SAMPLE SIZE, and `reps` /
+    // `provesPerRep` are artifact-authored — so a thinner run must not inherit
+    // the claim.
     // Equality, not `>=`. The spread narrows as 1/sqrt(reps), so a 24-rep run
     // does not merely satisfy the claim, it invalidates the arithmetic behind
-    // it: the true spread is nearer 0.90% and the fixed 5.40% cutoff is no
-    // longer the 3σ the provisional note calls it.
-    results.reps === CALIBRATED_REPS &&
-    results.provesPerRep === CALIBRATED_PROVES_PER_REP
-      ? `- Measured over six calibration runs of identical binaries, this estimator holds a standard deviation of 1.79%, against 2.96% for a global minimum and 5.39% for a plain median.`
-      : // Saying the spread is unknown and then gating on ±5.4% — which IS that
-        // spread, tripled — reads as a contradiction unless the comment says
-        // which of the two it is doing. It keeps applying the cutoff, because a
-        // fixed magnitude gate is still better than calling every movement
-        // significant; it just cannot claim a confidence level behind it.
-        `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. More REPETITIONS tighten the estimator, so the ±${formatPct(THRESHOLD_PCT)} cutoff stays conservative above ${CALIBRATED_REPS} and is still applied. More PROVES do not: the spread of a per-repetition minimum is not monotonic in how many draws it is taken over, so any prove count other than ${CALIBRATED_PROVES_PER_REP} is uncalibrated and no verdict is published from it.`,
+    // it: the true spread is nearer 0.90% and the fixed cutoff is no longer the
+    // 3σ the provisional note calls it.
+    //
+    // Every figure in both branches comes from the profile. They were string
+    // literals inside a bullet whose own gate was already profile-driven, so a
+    // re-calibrated profile printed this standard deviation beside
+    // `calibration.sdPct` as two different answers to the same question.
+    results.reps === profile.calibratedReps &&
+    results.provesPerRep === profile.calibratedProvesPerRep
+      ? `- Measured over ${spellSmall(profile.estimatorSpread.runs)} calibration runs of identical binaries, this estimator holds a standard deviation of ${formatPct(profile.estimatorSpread.sdPct)}, against ${formatPct(profile.estimatorSpread.globalMinSdPct)} for a global minimum and ${formatPct(profile.estimatorSpread.medianSdPct)} for a plain median.`
+      : // Saying the spread is unknown and then gating on the floor — which IS
+        // that spread, tripled — reads as a contradiction unless the comment
+        // says which of the two it is doing. It keeps applying the cutoff,
+        // because a fixed magnitude gate is still better than calling every
+        // movement significant; it just cannot claim a confidence level behind
+        // it.
+        `- This run does not use the ${profile.calibratedReps} × ${profile.calibratedProvesPerRep} the estimator's ${formatPct(profile.estimatorSpread.sdPct)} standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. More REPETITIONS tighten the estimator, so the ±${formatPct(profile.thresholdPct)} cutoff stays conservative above ${profile.calibratedReps} and is still applied. More PROVES do not: the spread of a per-repetition minimum is not monotonic in how many draws it is taken over, so any prove count other than ${profile.calibratedProvesPerRep} is uncalibrated and no verdict is published from it.`,
     ...(compared
       ? [
-          `- A movement is only called significant when it clears the noise floor **and** no repetition's paired difference contradicts the direction, with a majority of repetitions positively agreeing. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result. Runs shorter than ${MIN_REPS_FOR_SIGN_TEST} repetitions are never called significant — the floor is calibrated at that count and does not transfer below it.`,
+          `- A movement is only called significant when it clears the noise floor **and** no repetition's paired difference contradicts the direction, with a majority of repetitions positively agreeing. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result. Runs shorter than ${minRepsForSignTest(profile)} repetitions are never called significant — the floor is calibrated at that count and does not transfer below it.`,
           `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
           `- A wide gap between the reported figure and the max has two causes and the samples below do not separate them: interference within a repetition, and the proof-of-work grind differing between repetitions. Neither invalidates the comparison — both sides ran interleaved on the same machine — but a gap much wider than usual is worth a second look.`,
           `- Base and head are **measured** in the same job on the same runner, so runner-to-runner drift cancels out. The base dist may have been *built* by an earlier run of this workflow and restored from cache — the cache key covers the toolchain and the build commands, so the bytes match what this run would have produced.`,
@@ -2173,9 +2312,9 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
           `- A wide gap between the reported figure and the max reflects both interference within a repetition and the grind differing between repetitions. With no base side there is nothing to compare against, so treat these timings as a record of the run rather than as a result.`,
         ]),
     `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
-    THRESHOLD_PROVISIONAL
-      ? `- The ±${formatPct(THRESHOLD_PCT)} threshold is **provisional** — a placeholder, not a measured spread for this runner. [How to calibrate](${calibrationLink(ctx)}).`
-      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is calibrated on \`${CALIBRATION.runner}\` (${CALIBRATION.date}): ${CALIBRATION.runs} runs of one build against a copy of itself, at ${CALIBRATION.reps} repetitions, gave a standard deviation of ${formatPct(CALIBRATION.sdPct)} and a largest movement of ${formatPct(CALIBRATION.maxObservedPct)}. It sits above that observed maximum rather than at 3σ (${formatPct(CALIBRATION.threeSigmaPct)}), because one of those ${CALIBRATION.runs} no-change runs already exceeded 3σ — the grind differs per repetition and its tail is not normal. [How this is measured](${calibrationLink(ctx)}).`,
+    profile.thresholdProvisional
+      ? `- The ±${formatPct(profile.thresholdPct)} threshold is **provisional** — a placeholder, not a measured spread for this runner. [How to calibrate](${calibrationLink(ctx)}).`
+      : `- The ±${formatPct(profile.thresholdPct)} threshold is calibrated on \`${profile.calibration.runner}\` (${profile.calibration.date}): ${profile.calibration.runs} runs of one build against a copy of itself, at ${profile.calibration.reps} repetitions, gave a standard deviation of ${formatPct(profile.calibration.sdPct)} and a largest movement of ${formatPct(profile.calibration.maxObservedPct)}. It sits above that observed maximum rather than at 3σ (${formatPct(profile.calibration.threeSigmaPct)}), because one of those ${profile.calibration.runs} no-change runs already exceeded 3σ — the grind differs per repetition and its tail is not normal. [How this is measured](${calibrationLink(ctx)}).`,
     `- Full machine-readable results are attached to ${ctx.runUrl ? `[the run](${ctx.runUrl})` : "the workflow run"} as \`results.json\`.`,
   ];
 
@@ -2209,7 +2348,7 @@ function buildLegend() {
  * the same reason as the unresolved note: an explanation of a state the comment
  * is not in is noise.
  */
-function buildMeanOnlyNote(rows) {
+function buildMeanOnlyNote(rows, profile) {
   // Ordered by the size of the MEAN movement. `rows` is sorted by headline
   // magnitude, and every flagged row is below the floor on that, so taking
   // rows[0] would headline the flagged row with the least to say.
@@ -2239,7 +2378,7 @@ function buildMeanOnlyNote(rows) {
     `> ${leader.meanAgreement.agree} of ${leader.meanAgreement.reps} repetitions.`,
     ...explanation,
     `> The spread of a mean over all proves has never been calibrated on this workload, so this is not a`,
-    `> verdict: the ±${formatPct(THRESHOLD_PCT)} it had to clear is 3σ of the *reported* figure, applied here only as a`,
+    `> verdict: the ±${formatPct(profile.thresholdPct)} it had to clear is 3σ of the *reported* figure, applied here only as a`,
     `> "large enough to mention" filter, and the agreement across repetitions above is what makes it worth`,
     `> mentioning. Read the raw samples below before concluding nothing changed.`,
   ].join("\n");
@@ -2305,7 +2444,7 @@ function buildMeanUnruledNote(rows) {
  * fastest prove of each repetition one way and the rest of the distribution the
  * other — and it is worth naming rather than averaging away.
  */
-function buildMeanContradictionNote(rows, stoppedEarly = false) {
+function buildMeanContradictionNote(rows, stoppedEarly, profile) {
   const flagged = rows
     .filter((r) => r.meanContradicts)
     .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
@@ -2326,7 +2465,7 @@ function buildMeanContradictionNote(rows, stoppedEarly = false) {
   // row — so the "neither agrees" branch fired for runs whose repetitions were
   // in fact unanimous, which is the overclaim this branch split exists to
   // prevent, in the opposite direction.
-  const blocked = blockReason(leader);
+  const blocked = blockReason(leader, profile);
   // Which of the two figures its own repetitions back. Both, one, or neither —
   // the note reaches all these states now that a contradiction no longer
   // requires the headline's sign test to have passed, and asserting a majority
@@ -2401,9 +2540,9 @@ function buildMeanContradictionNote(rows, stoppedEarly = false) {
  *
  * Returns null for a row that could have ruled.
  */
-function blockReason(row) {
+function blockReason(row, profile) {
   if (row.agreement.tooShort) {
-    return `it has only ${row.agreement.reps} ${plural(row.agreement.reps, "repetition")} and a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST}`;
+    return `it has only ${row.agreement.reps} ${plural(row.agreement.reps, "repetition")} and a verdict needs at least ${minRepsForSignTest(profile)}`;
   }
   return (
     {
@@ -2411,15 +2550,15 @@ function blockReason(row) {
         "it stopped early, so its length was chosen by how slow the machine was — which is the quantity being measured",
       oddReps:
         "it has an odd repetition count, which leaves the setup order lopsided by a fixed amount",
-      tooFewProves: `it retained fewer than ${CALIBRATED_PROVES_PER_REP} proves per repetition, which the floor was not calibrated for`,
-      tooManyProves: `it retained more than ${CALIBRATED_PROVES_PER_REP} proves per repetition, and the floor was calibrated at ${CALIBRATED_PROVES_PER_REP} — more proves do not make it conservative, because the spread of a minimum is not monotonic in how many draws it is taken over`,
+      tooFewProves: `it retained fewer than ${profile.calibratedProvesPerRep} proves per repetition, which the floor was not calibrated for`,
+      tooManyProves: `it retained more than ${profile.calibratedProvesPerRep} proves per repetition, and the floor was calibrated at ${profile.calibratedProvesPerRep} — more proves do not make it conservative, because the spread of a minimum is not monotonic in how many draws it is taken over`,
       calibration:
         "it is a calibration run, where both sides are the same build",
     }[row.agreement.blocked] ?? null
   );
 }
 
-function buildUnruledBelowFloorNote(rows) {
+function buildUnruledBelowFloorNote(rows, profile) {
   // Keyed on the note's own premise — that nothing cleared the floor — and NOT
   // on which other note owns the row. `clearsFloor` partitions into `beyond` and
   // `unresolved`, so this is exactly "something moved past the floor".
@@ -2438,7 +2577,7 @@ function buildUnruledBelowFloorNote(rows) {
     (r) => r.base !== null && (r.agreement.blocked || r.agreement.tooShort)
   );
   if (!blockedRow) return "";
-  const reason = blockReason(blockedRow);
+  const reason = blockReason(blockedRow, profile);
   if (!reason) return "";
   // Scoped to the reported figure when a mean channel fired, and the closing
   // sentence dropped there. Unscoped, this note sat above a `meanUnruled` note
@@ -2458,7 +2597,7 @@ function buildUnruledBelowFloorNote(rows) {
   ].join("\n");
 }
 
-function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
+function buildUnresolvedNote(rows, stoppedEarly, kind, profile) {
   // Same exclusion as `buildVerdict`: a contradicted row is described by
   // `buildMeanContradictionNote`, and describing it here too gave one benchmark
   // two notes making different claims about it.
@@ -2474,7 +2613,7 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       `> sample. That selection cancels out of the paired comparison only if both builds have the same`,
       `> run-to-run spread; if one is more variable, it shifts the result in whichever direction the`,
       `> difference points, and simulated over this producer's interleave a 12% run-to-run factor on one`,
-      `> side moved the truncated estimate by three to four times the whole ±${formatPct(THRESHOLD_PCT)} floor. Nothing has measured that on this`,
+      `> side moved the truncated estimate by three to four times the whole ±${formatPct(profile.thresholdPct)} floor. Nothing has measured that on this`,
       `> workload and the floor was calibrated on complete runs, so the verdict is withheld rather than`,
       `> qualified.`,
       // Only the budget case has advice that is certainly right. An overrun might
@@ -2514,11 +2653,11 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
   }
   if (leader.agreement.blocked === "tooFewProves") {
     return [
-      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: too few proves per repetition.** The \u00b1${formatPct(THRESHOLD_PCT)}`,
-      `> floor is three standard deviations of an estimator measured over the fastest of ${CALIBRATED_PROVES_PER_REP} warm proves.`,
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: too few proves per repetition.** The \u00b1${formatPct(profile.thresholdPct)}`,
+      `> floor is three standard deviations of an estimator measured over the fastest of ${profile.calibratedProvesPerRep} warm proves.`,
       `> The minimum of fewer proves is a noisier number, so against it that floor is less than three`,
       `> standard deviations and would call movements significant more often than the rate it advertises.`,
-      `> The movements below are reported without a ruling. Re-run with \`--proves ${CALIBRATED_PROVES_PER_REP + 1}\` — exactly that, since a higher count is blocked too.`,
+      `> The movements below are reported without a ruling. Re-run with \`--proves ${profile.calibratedProvesPerRep + 1}\` — exactly that, since a higher count is blocked too.`,
     ].join("\n");
   }
   if (leader.agreement.blocked === "oddReps") {
@@ -2534,23 +2673,23 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
   if (leader.agreement.blocked === "tooManyProves") {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: more proves than the floor was calibrated for.** The`,
-      `> ±${formatPct(THRESHOLD_PCT)} floor is three standard deviations of an estimator measured over the fastest of`,
-      `> ${CALIBRATED_PROVES_PER_REP} warm proves. More proves do not make it conservative: the spread of a minimum is not`,
+      `> ±${formatPct(profile.thresholdPct)} floor is three standard deviations of an estimator measured over the fastest of`,
+      `> ${profile.calibratedProvesPerRep} warm proves. More proves do not make it conservative: the spread of a minimum is not`,
       `> monotonic in how many draws it is taken over, because the minimum lands in the fast mode of a`,
       `> loaded runner's bimodal timing with probability 1-(1-p)^n, and that sweeps through a half as n`,
       `> grows. Simulated under a null, the rate at which this pipeline calls noise a movement RISES with`,
       `> the prove count rather than falling.`,
-      `> The movements below are reported without a ruling. Re-run with \`--proves ${CALIBRATED_PROVES_PER_REP}\`, or`,
+      `> The movements below are reported without a ruling. Re-run with \`--proves ${profile.calibratedProvesPerRep}\`, or`,
       `> recalibrate the floor at the count you want to use.`,
     ].join("\n");
   }
   if (leader.agreement.tooShort) {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but this run`,
-      `> has only ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}, and a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST}`,
+      `> has only ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}, and a verdict needs at least ${minRepsForSignTest(profile)}`,
       `> — the count the noise floor was calibrated at. Below it both halves of the rule weaken at once: the`,
       `> direction test's false-positive rate is 1/2^(reps-1), which at one repetition is certainty, and the`,
-      `> fixed ±${formatPct(THRESHOLD_PCT)} floor is less than 3σ of a shorter run's own spread.`,
+      `> fixed ±${formatPct(profile.thresholdPct)} floor is less than 3σ of a shorter run's own spread.`,
       // The advice has to match WHY the run is short. A truncated run already
       // used the default repetition count and lost repetitions to the clock, so
       // telling its author to re-run with the default is both wrong and
@@ -2575,7 +2714,7 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
   // said about a blocked row: its sign test was never consulted, so "agrees in
   // only N of N" is both false and self-contradicting. Every block kind has a
   // branch above, and this catches the next one added before it can print that.
-  const blocked = blockReason(leader);
+  const blocked = blockReason(leader, profile);
   if (blocked) {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but no`,
@@ -2597,7 +2736,7 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
     // this ❔ to a `tooManyProves` ❔ whose note refutes the reasoning that sent
     // them there. Recalibration is the only lever left on that axis.
     `> re-run. If it recurs, the floor needs recalibrating at a higher prove count — raising \`--proves\``,
-    `> on its own is blocked above the calibrated ${CALIBRATED_PROVES_PER_REP}.`,
+    `> on its own is blocked above the calibrated ${profile.calibratedProvesPerRep}.`,
   ].join("\n");
 }
 
@@ -2622,28 +2761,30 @@ function assemble(
   ctx,
   rows,
   unit,
-  { includeSamples, includeAllTable, notices }
+  { includeSamples, includeAllTable, notices },
+  profile
 ) {
   const blocks = [];
-  blocks.push(buildVerdict(rows));
+  blocks.push(buildVerdict(rows, profile));
   // First after the verdict, before the calibration and comparison notes: if the
   // run leaked resources, that qualifies everything below it.
   const teardownNote = buildTeardownNote(results.teardownFailures);
   if (teardownNote) blocks.push(teardownNote);
   // Directly after: it qualifies the repetition count every note below quotes.
-  const stoppedEarlyNote = buildStoppedEarlyNote(results);
+  const stoppedEarlyNote = buildStoppedEarlyNote(results, profile);
   if (stoppedEarlyNote) blocks.push(stoppedEarlyNote);
   if (ctx.calibration) blocks.push(buildCalibrationNote(ctx));
   if (rows.length > 0 && rows.every((r) => r.base === null))
     blocks.push(buildHeadOnlyNote());
   const partialBaseNote = buildPartialBaseNote(rows);
   if (partialBaseNote) blocks.push(partialBaseNote);
-  const unruledBelowFloorNote = buildUnruledBelowFloorNote(rows);
+  const unruledBelowFloorNote = buildUnruledBelowFloorNote(rows, profile);
   if (unruledBelowFloorNote) blocks.push(unruledBelowFloorNote);
   const unresolvedNote = buildUnresolvedNote(
     rows,
     results.stoppedEarly,
-    results.stoppedEarlyKind
+    results.stoppedEarlyKind,
+    profile
   );
   if (unresolvedNote) blocks.push(unresolvedNote);
   // The three mean cross-checks, in the order their triggers exclude each
@@ -2651,20 +2792,22 @@ function assemble(
   // repetitions agreeing, `meanUnruled` the headline below the floor on a run
   // that cannot rule, `meanContradicts` the headline ABOVE the floor and
   // pointing the other way. A row satisfies at most one.
-  const meanOnlyNote = buildMeanOnlyNote(rows);
+  const meanOnlyNote = buildMeanOnlyNote(rows, profile);
   if (meanOnlyNote) blocks.push(meanOnlyNote);
   const meanUnruledNote = buildMeanUnruledNote(rows);
   if (meanUnruledNote) blocks.push(meanUnruledNote);
   const meanContradictionNote = buildMeanContradictionNote(
     rows,
-    results.stoppedEarly
+    results.stoppedEarly,
+    profile
   );
   if (meanContradictionNote) blocks.push(meanContradictionNote);
-  if (THRESHOLD_PROVISIONAL) blocks.push(buildProvisionalNote(results, ctx));
+  if (profile.thresholdProvisional)
+    blocks.push(buildProvisionalNote(results, ctx, profile));
   for (const notice of notices) blocks.push(notice);
   blocks.push(buildContextTable(results, ctx, rows));
 
-  const moved = buildMovedSection(rows, unit);
+  const moved = buildMovedSection(rows, unit, profile);
   if (moved) blocks.push(moved);
 
   // When the table is short enough to render inline AND every row already
@@ -2686,7 +2829,7 @@ function assemble(
   // thing. Announcing it here too printed two scissor lines about one cut.
 
   blocks.push(
-    buildMethodologySection(results, ctx, rows, unit, includeSamples)
+    buildMethodologySection(results, ctx, rows, unit, includeSamples, profile)
   );
   blocks.push(buildLegend());
   blocks.push(buildFooter(ctx));
@@ -2709,10 +2852,13 @@ const TRUNCATION_NOTICES = {
  * verdict, the context, and the rows that actually moved always survive.
  * Every step announces itself; rows are never dropped silently.
  */
-function render(input, context, maxChars) {
+function render(input, context, maxChars, profile) {
+  // Before the artifact, because an incomplete profile is OUR bug and its
+  // message must not be buried under a complaint about the fork's JSON.
+  requireProfile(profile);
   const results = normalizeResults(input);
   const ctx = normalizeContext(context);
-  const rows = computeRows(results, ctx);
+  const rows = computeRows(results, ctx, profile);
   const unit = uniformUnit(rows);
 
   const attempts = [
@@ -2731,7 +2877,7 @@ function render(input, context, maxChars) {
 
   let blocks = [];
   for (const attempt of attempts) {
-    blocks = assemble(results, ctx, rows, unit, attempt);
+    blocks = assemble(results, ctx, rows, unit, attempt, profile);
     const body = blocks.join(BLOCK_SEP);
     if (body.length <= maxChars) return body;
   }
@@ -2771,23 +2917,34 @@ function render(input, context, maxChars) {
  * owns comment identity via its `header:` input, and a second marker here
  * would just be dead weight in every comment.
  *
+ * The `profile` parameter exists so the TEST SUITE can render both the
+ * provisional and the calibrated wording in one run — the two used to be
+ * compile-time constants, which made whichever branch the constant did not
+ * select unreachable from any test, and made a port between this repository's
+ * lines a hand-swap of half a dozen assertions. It is NOT a way for a caller to
+ * choose the floor at runtime: nothing in the CLI accepts one (see `main`), and
+ * nothing in the artifact can supply one (see `normalizeResults`).
+ *
  * @param {unknown} results Parsed contents of the untrusted results artifact.
  * @param {unknown} ctx Trusted GitHub context: { owner, repo, headSha, baseSha, baseRef, runId, runUrl, calibration }.
+ * @param {object} [profile] Trusted calibration profile; defaults to the one in bench-profile.mjs.
  * @returns {string} Markdown body, at most 60000 chars.
- * @throws {TypeError} If the results or context are malformed.
+ * @throws {TypeError} If the results, context or profile are malformed.
  */
-export function renderComment(results, ctx) {
-  return render(results, ctx, MAX_BODY_CHARS);
+export function renderComment(results, ctx, profile = DEFAULT_PROFILE) {
+  return render(results, ctx, MAX_BODY_CHARS, profile);
 }
 
 /**
  * Render the job summary. Same content as the comment — the summary is the
  * fallback view when comment posting is unavailable (forks, permissions), so
  * divergence between the two would mean two different stories about one run.
- * Only the size budget differs.
+ * Only the size budget differs — including the profile, which is defaulted here
+ * exactly as in `renderComment`, so the two surfaces cannot end up judging one
+ * run against two different floors.
  */
-export function renderSummary(results, ctx) {
-  return render(results, ctx, MAX_SUMMARY_CHARS);
+export function renderSummary(results, ctx, profile = DEFAULT_PROFILE) {
+  return render(results, ctx, MAX_SUMMARY_CHARS, profile);
 }
 
 // ---------------------------------------------------------------------------
@@ -2815,7 +2972,20 @@ const USAGE =
 export const EXIT_REJECTED = 64;
 export const EXIT_INTERNAL_ERROR = 3;
 
-/** Usage: node render-bench-comment.mjs [--summary] <results.json> <ctx.json> */
+/**
+ * Usage: node render-bench-comment.mjs [--summary] <results.json> <ctx.json>
+ *
+ * TAKES NO PROFILE, AND MUST NOT GROW ONE. The calibration profile decides the
+ * verdict this job posts under a write token, so the only copy that may reach a
+ * real render is the module default in bench-profile.mjs — reviewed in the
+ * default branch's tree, where a fork cannot touch it. A `--profile` flag, a
+ * `BENCH_PROFILE` environment variable or a second JSON path would each hand
+ * that decision to whoever can influence the workflow invocation, which is the
+ * same hole as reading `thresholdPct` out of the artifact. The argument list is
+ * closed for exactly this reason: anything past the two paths is a usage error,
+ * not an option to be interpreted. `renderComment`/`renderSummary` are called
+ * below with two arguments, deliberately.
+ */
 export async function main(argv = process.argv.slice(2)) {
   // `--summary` selects the job-summary budget (~1 MiB) over the comment budget
   // (60 kB). Without it the step summary — the fallback surface on forks — was
