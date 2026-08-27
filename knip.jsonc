@@ -360,6 +360,11 @@
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
         "scripts/**/*.js",
+        // The proving benchmark and its interleave module. Invoked from the
+        // Makefile (`bench-proving`, `bench-proving-calibrate`) and from
+        // .github/workflows/bench.yml, and unit-tested by
+        // scripts/bench-order.test.mjs — none of which knip can follow.
+        "scripts/**/*.mjs",
       ],
       // The `./eager.js` and `./index.js` strings inside
       // `page.evaluate(...)` blocks are dynamic imports executed in the
@@ -399,5 +404,13 @@
       ],
     },
   },
-  "ignore": ["packages/react-sdk/examples/**", "crates/idxdb-store/src/js/**"],
+  "ignore": [
+    "packages/react-sdk/examples/**",
+    "crates/idxdb-store/src/js/**",
+    // Run by hand from docs/benchmarks/calibration.md to regenerate the power
+    // tables it quotes, and by a reviewer checking those tables still
+    // reproduce. Nothing imports it, which is the point — it is a standalone
+    // reproduction script, not part of any build.
+    "docs/benchmarks/verdict-power.mjs",
+  ],
 }

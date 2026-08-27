@@ -712,7 +712,8 @@ function pairedAgreement(base, head) {
   if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
   // Below the calibrated repetition count neither leg holds up: a one-repetition
   // run passes this test unconditionally (`contradicting === 0 && 2 > 1`), its
-  // one-sided false-positive rate is 1/2^(reps-1) — 100% at 1, 50% at 2, 25% at
+  // any-direction false-positive rate is 1/2^(reps-1), i.e. 2/2^reps for the two
+  // unanimous outcomes — 100% at 1, 50% at 2, 25% at
   // 3, 12.5% at 4 — and the fixed magnitude floor is below 3σ of a short run's
   // own estimator at the same time. Since `reps` is artifact-authored, a fork
   // that wants a verdict it has not earned would otherwise only have to send
@@ -849,8 +850,9 @@ function computeRows(results) {
     // the spread of a mean over all proves has never been measured on this
     // workload, so using that threshold as if it were 3σ of this statistic too
     // would be borrowing a number from the wrong distribution. The sign test
-    // does the work instead: it needs no σ, and at six repetitions its one-sided
-    // false-positive rate is 1/2^5 ≈ 3%. The magnitude floor stays on as a
+    // does the work instead: it needs no σ, and at six repetitions its
+    // any-direction false-positive rate is 1/2^5 ≈ 3% (1.6% per direction). The
+    // magnitude floor stays on as a
     // relevance gate — "large enough to bother reading about" — which is a
     // different claim from "3σ".
     const meanPct = meanDeltaPct(b.base, b.head);
@@ -1064,7 +1066,12 @@ function buildProvisionalNote(results, ctx) {
   return [
     `> **The noise floor is provisional.** ±${formatPct(THRESHOLD_PCT)} is 3σ of this estimator measured on a`,
     `> developer laptop, not on \`${results.runner}\` — no calibration run has been recorded on this runner yet,`,
-    `> and it is quieter, so the real floor is likely tighter. Treat movements near the threshold as unresolved.`,
+    // Deliberately silent on which way it will move. The laptop has interactive
+    // background load the runner does not; the runner has virtualisation, cold
+    // caches and neighbours the laptop does not. Telling the reader the real
+    // floor is "likely tighter" invited them to trust a movement just under the
+    // threshold, on a guess with no measurement behind it.
+    `> so the floor on this runner is unknown in both magnitude and direction. Treat movements near the threshold as unresolved.`,
     `> [How to calibrate the noise floor](${calibrationLink(ctx)})`,
   ].join("\n");
 }

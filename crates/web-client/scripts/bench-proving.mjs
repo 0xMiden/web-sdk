@@ -56,6 +56,8 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
 
+import { opensBaseFirst, orderBalance, proveOrder } from "./bench-order.mjs";
+
 const USAGE = [
   "  node scripts/bench-proving.mjs --head <dist-mt-dir> [--base <dist-mt-dir>]",
   "       [--threads N] [--reps N] [--proves M] [--out results.json]",
@@ -205,32 +207,45 @@ if (plannedSamples > MAX_SAMPLE_VALUES) {
 // ran first on both sides the penalty cancels outright, and if it ran second on
 // one side it lands in full. Scaling 1.19% by the retained prove count would be
 // precision this design cannot support.
-// Two independent balances, on two different parities, and the guard used to
-// check only the first. An even --reps satisfies both, which is why it is the
-// single thing to recommend.
-if ((reps * (proves - 1)) % 2 === 1) {
+// COUNTED from the same module the driver orders by, not restated as a parity
+// formula. The formula version asserted the design instead of the code, and when
+// the code stopped matching the design it went on reporting the calibrated
+// default as balanced.
+const balance = orderBalance({ reps, proves });
+
+if (!balance.provesBalanced) {
   console.warn(
-    `[warn] reps × (proves-1) = ${reps * (proves - 1)} is odd, so the retained ` +
-      `PROVES cannot be split evenly between base and head: head runs second ` +
-      `once more than base, because the discarded warm-up rep shifts the flip. ` +
-      `That leans toward reporting a regression, but see the setup warning ` +
-      `below — the two lean opposite ways and nothing here measures which wins. ` +
-      `Use an even --reps.`
+    `[warn] the retained PROVES do not split evenly between base and head: base ` +
+      `goes first in ${balance.proveBaseFirst} of ${balance.proveTotal}. One side ` +
+      `runs second once more than the other, and second position carries a ` +
+      `measured penalty. Use an even --reps, or an odd --proves.`
   );
 }
-if (reps % 2 === 1) {
-  // Separate from the check above, and reachable when that one is silent:
-  // --reps 5 --proves 3 gives an even product (10) and balanced prove order,
-  // while head's mint/proveBlock/syncState still runs on an idle machine one
-  // repetition more than base's. That is the fixed asymmetry the setup
-  // alternation was added to remove, and a fixed asymmetry is the one kind of
-  // error more repetitions cannot average out.
+if (!balance.setupBalanced) {
   console.warn(
-    `[warn] --reps ${reps} is odd, so the SETUP order cannot be split evenly ` +
-      `either: across the retained repetitions head is opened first once more ` +
-      `than base, so base's setup runs alongside a live page one time more. ` +
-      `Setup is not timed, but it decides what the machine looks like when the ` +
-      `timed proves start. Use an even --reps.`
+    `[warn] the SETUP order does not split evenly: base is opened first in ` +
+      `${balance.setupBaseFirst} of ${balance.setupTotal} retained repetitions, so ` +
+      `one side's mint/proveBlock/syncState runs alongside a live page one time ` +
+      `more than the other's. Setup is not timed, but it decides what the machine ` +
+      `looks like when the timed proves start. Use an even --reps.`
+  );
+}
+if (balance.provesBalanced && !balance.perRepBalanced) {
+  // Aggregate balance is not per-repetition balance, and a per-repetition
+  // statistic gates the verdict: the sign test reads each repetition's delta
+  // separately. With an odd retained count per repetition (the calibrated
+  // default retains 3) each repetition leans by one prove, in alternating
+  // directions. That costs power rather than manufacturing a verdict — a bias
+  // that flips sign every repetition makes unanimous agreement harder — so it is
+  // a note, not a warning about a wrong answer.
+  console.log(
+    `[note] each retained repetition leans by one prove (${balance.perRep
+      .map((r) => `${r.baseFirst}/${r.total}`)
+      .join(
+        " "
+      )} base-first), alternating direction, so it cancels across the ` +
+      `run but not within a repetition. An odd --proves retains an even count ` +
+      `per repetition and removes it.`
   );
 }
 
@@ -800,7 +815,7 @@ try {
       // Prove #0 of each page is discarded, which absorbs some of that, but a
       // fixed asymmetry is the one kind of error repetitions cannot average out
       // — the same reason the proves are alternated at all.
-      const openBaseFirst = rep % 2 === 0;
+      const openBaseFirst = opensBaseFirst(rep);
       const opens = [
         ...(baseServer
           ? [{ url: baseServer.url, label: "base", first: openBaseFirst }]
@@ -824,10 +839,26 @@ try {
 
       const perSide = new Map(sides.map((side) => [side.label, []]));
       for (let i = 0; i < proves; i++) {
-        // ABBA: even proves run in order, odd proves reversed. Combined with
-        // the rep-level flip below, each side spends half its proves first.
-        const flip = (i + rep) % 2 === 1;
-        const order = flip ? [...sides].reverse() : sides;
+        // ABBA: even proves run in the open order, odd proves reversed. Keyed on
+        // `i` ALONE, deliberately.
+        //
+        // This was `(i + rep) % 2`, which silently cancelled the whole design:
+        // `sides` is already ordered by `rep % 2` above, so adding `rep` to the
+        // prove-level parity made both alternations key on the same bit and the
+        // effective order collapsed to a function of `i` only. Base went first
+        // iff `i` was even, in EVERY repetition. At the calibrated default
+        // (--reps 6 --proves 4, retaining proves 1..3) that is base first in one
+        // retained prove of three, the same way every repetition — a fixed
+        // positional asymmetry, which is the one kind of error repetitions
+        // cannot average out, and precisely what the interleave exists to
+        // remove. At --proves 2 base never went first at all.
+        //
+        // Keyed on `i`, the two alternations are independent again: the open
+        // order flips per repetition, the prove order flips per prove, and the
+        // retained proves balance whenever `reps × (proves - 1)` is even — which
+        // is exactly the condition the guard near the top of this file warns
+        // about, and was already the intended contract.
+        const order = proveOrder(sides, i);
         for (const side of order) {
           perSide.get(side.label).push(await side.prove());
         }

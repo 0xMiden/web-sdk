@@ -4,19 +4,34 @@
 //
 // Models each repetition's paired delta as normal about the true effect, scaled
 // so the aggregate carries the measured 1.79% sd, then applies the renderer's
-// verdict rule verbatim: magnitude at displayed precision, no contradicting
-// sign, a positive majority, and the four-repetition floor. Kept in the repo
+// HEADLINE verdict rule: magnitude at displayed precision, no contradicting
+// sign, a positive majority, and the six-repetition floor. Kept in the repo
 // because the tables in calibration.md would otherwise be unreproducible claims
 // about a rule that lives in code and changes.
+//
+// SCOPE, because "the verdict rule" is not one rule. The renderer also runs a
+// mean cross-check (`meanOnly` / `pairedMeanAgreement`) over per-repetition
+// MEANS, which can turn a headline-silent run into ❔ Unresolved when the means
+// move while the minima do not. This model is fed per-repetition delta scalars
+// and has no per-prove distribution to take a mean of, so it cannot express that
+// leg at all: every row below is the behaviour of the headline
+// minimum-estimator verdict, and the `silent` column means "the headline said
+// nothing", not "the comment said nothing". Modelling the cross-check needs
+// joint per-prove samples and a measured spread for the mean, which does not
+// exist yet — see calibration.md on the mean's unmeasured σ.
 //
 // The generator is fixed-seed rather than Math.random so the doc's numbers
 // reproduce exactly. It is mulberry32, not the obvious two-line LCG: a modulus
 // of 2^31 with those constants has a measured period of 10,466 states, so a
 // 400k-trial run at six repetitions drew 4.8M numbers from ~5k distinct pairs
 // and every published rate was an artifact of that cycle rather than an
-// estimate. The `checkGenerator` assertion below now fails the script if the
-// generator's tail probability drifts from the analytic normal, so a bad
-// generator cannot quietly publish a table again.
+// estimate. The `checkGenerator` assertion below fails the script if the
+// generator drifts from the analytic normal in its tail at either end of the
+// reps range, if its draws are serially correlated, or if runs of same-signed
+// draws are not as frequent as independence requires. That last check matters
+// most: a far-tail check alone passes a stream with total serial dependence
+// (feed every draw twice and the marginal distribution is untouched), and the
+// sign-unanimity leg is what every `unresolved` figure below turns on.
 //
 // If the renderer's rule changes, change `verdict` below to match and re-run —
 // the tables in calibration.md are only as current as the last run.

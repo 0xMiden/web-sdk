@@ -28,10 +28,13 @@ make bench-proving-calibrate
 ## How to derive the threshold
 
 1. Run the calibration **20–30 times** on `warp-ubuntu-latest-x64-8x`, at the
-   **same `reps` and `proves` the PR runs use**. A developer laptop has
-   background load a CI runner does not and will overstate the floor; and a
-   floor measured at one repetition count does not transfer to another, because
-   the spread of a mean of per-repetition minima shrinks with `1/√reps`.
+   **same `reps` and `proves` the PR runs use**. A developer laptop and a shared
+   CI runner differ in ways that do not have a known sign: the laptop has
+   interactive background load the runner does not, and the runner has
+   virtualisation, cold caches and neighbours the laptop does not. Do not assume
+   the CI floor is tighter — measure it. A floor measured at one repetition count
+   also does not transfer to another, because the spread of a mean of
+   per-repetition minima shrinks with `1/√reps`.
 2. For each run take the reported Δ %.
 3. Set the threshold at **3σ** of those deltas, rounded up.
 
@@ -73,8 +76,9 @@ The renderer does not rest the verdict on the threshold alone, for exactly these
 reasons. A movement is reported as significant only when it clears the floor
 **and** no repetition's paired difference contradicts that direction while a
 majority positively agree (a repetition whose two sides come out exactly equal
-neither agrees nor contradicts, and a run of fewer than four repetitions cannot
-be called significant at all); base and
+neither agrees nor contradicts, and a run of fewer than six repetitions cannot
+be called significant at all — see "Below six repetitions there is no verdict at
+all"); base and
 head run interleaved within a repetition, so those differences are a genuine
 paired sample and the agreement requirement is a sign test that assumes nothing
 about the shape of the distribution. A movement that clears the floor while its
@@ -87,7 +91,8 @@ verdict's. The verdict is a conjunction, so its rate is the joint one, and it is
 far smaller: see the table below. The 3% figure is only the ceiling the sign leg
 contributes if the magnitude leg passed for free.
 
-**The rep-count floor.** The sign test's one-sided rate is `1/2^(reps-1)`: 100%
+**The rep-count floor.** The sign test's any-direction rate is `1/2^(reps-1)`
+(`2/2^reps` — all-positive or all-negative, each `1/2^reps`): 100%
 at one repetition, 50% at two, 25% at three. At one repetition it passes
 unconditionally, so the second leg would be pure decoration exactly where it is
 needed most — and `reps` is a field in the artifact, so a fork could pick it. The
@@ -101,11 +106,21 @@ the conjunction's detection rate *falls* as repetitions are added for any fixed
 effect size. Two consequences worth internalising before tuning anything:
 
 - **±5.4% is not the detection point.** It is where the *magnitude* leg starts to
-  pass. Simulating the renderer's exact rule gives the split below at the default
-  six repetitions. Read the `silent` column first: it is the one that decides
-  whether a regression reaches a human. Reproduce every table in this section
-  with `node docs/benchmarks/verdict-power.mjs`, which mirrors the rule and is
-  worth re-running whenever the rule changes.
+  pass. Simulating the renderer's headline rule gives the split below at the
+  default six repetitions. Read the `silent` column first: it is the one that
+  decides whether a regression reaches a human. Reproduce every table in this
+  section with `node docs/benchmarks/verdict-power.mjs`, which mirrors the rule
+  and is worth re-running whenever the rule changes.
+
+  **What `silent` means here.** These tables cover the headline verdict, which is
+  computed from the mean of per-repetition minima. The renderer *also* runs a
+  mean cross-check that can raise ❔ Unresolved when the per-repetition means move
+  while the minima do not, and the simulation cannot model it — it is fed
+  per-repetition delta scalars and has no per-prove distribution to take a mean
+  of. So `silent` means "the headline said nothing"; the comment may still carry
+  the cross-check's note. This makes the `silent` column an upper bound on true
+  silence, and by an amount nobody has measured, because the mean's own spread
+  has never been measured either.
 
   | true effect | `slower` | `faster` | `unresolved` | silent |
   |---:|---:|---:|---:|---:|
@@ -253,24 +268,39 @@ Three further corrections, also measured:
   `reps × (proves − 1)` — and only when that product is even. Keep it even
   (the default 6 × 3 is); the script warns when it is not.
 
-  That balance is **aggregate only**, which now matters more than it did, because
-  a per-repetition statistic gates the verdict. The retained count per repetition
-  is `proves − 1`, and each repetition is internally balanced only when that is
-  **even**:
+  **The recorded floor was measured before this balanced at all.** The prove-level
+  flip was keyed on `(i + rep) % 2` while the open order was already keyed on
+  `rep % 2`, so both alternations turned on the same bit and cancelled exactly:
+  the effective order was a function of the prove index alone, and base went
+  first in one retained prove of three in *every* repetition rather than
+  alternating. At `--proves 2` base never went first at all. That is a fixed
+  positional asymmetry, not a balanced interleave, and it is the one kind of
+  error repetitions cannot average out. It is fixed now — the flip keys on the
+  prove index only, which makes the two alternations independent again — but the
+  1.79% σ below was measured under the old behaviour, so **the recalibration is
+  not just a transfer to CI hardware, it is a remeasurement of a changed
+  quantity.**
+
+  With that fixed, aggregate balance holds whenever `reps × (proves − 1)` is
+  even, which is what the guard warns about. Balance is still **aggregate**,
+  which matters because a per-repetition statistic gates the verdict. The
+  retained count per repetition is `proves − 1`, and a repetition is internally
+  balanced only when that is **even**:
 
   | `--proves` | retained/rep | base-ran-second per rep | balanced within a rep |
   | --- | --- | --- | --- |
   | 3 | 2 | 1, 1, 1, 1, 1, 1 | yes |
-  | 4 (default) | 3 | 2, 1, 2, 1, 2, 1 | **no** |
+  | 4 (default) | 3 | 1, 2, 1, 2, 1, 2 | **no**, alternates |
   | 5 | 4 | 2, 2, 2, 2, 2, 2 | yes |
 
   So the default retains an odd 3 and every repetition is internally imbalanced
-  by one prove, cancelling only in the mean across repetitions. That leaves an
-  alternating positional bias inside the per-repetition deltas the sign test
-  reads — small next to the deltas' own spread, but it is not something the
-  aggregate balance removes. Prefer an odd `--proves` (even retained) at the next
-  recalibration. Changing it now would invalidate the recorded floor, which was
-  measured at 6 × 3 retained.
+  by one prove, in alternating directions, cancelling in the mean across
+  repetitions but not within any single one. That leaves an alternating
+  positional bias inside the per-repetition deltas the sign test reads. It works
+  against a verdict rather than toward one — a bias that flips sign every
+  repetition makes unanimous agreement harder, not easier — so it costs power and
+  does not manufacture false positives. Prefer an odd `--proves` (even retained)
+  at the next recalibration, which is due regardless.
 
   When the product *is* odd there are two imbalances, not one, and they oppose
   each other. Head runs second once more among the retained proves, which leans
