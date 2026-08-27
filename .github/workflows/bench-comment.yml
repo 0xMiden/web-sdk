@@ -31,6 +31,11 @@ on:
         required: true
         type: string
 
+# Every path that declines to post records a cause, which surfaces on a neutral
+# "Proving Benchmark" check run on the head commit. docs/benchmarks/troubleshooting.md
+# maps those messages to what to do about them; keep the two in step when adding a
+# new decline path.
+
 permissions:
   # Required to download an artifact belonging to a different workflow run.
   actions: read

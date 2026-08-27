@@ -1,5 +1,9 @@
 # Calibrating the proving benchmark's noise floor
 
+For operating the bot rather than calibrating it — a comment that never
+appeared, a report that was declined, a run that stopped early — see
+[troubleshooting.md](troubleshooting.md).
+
 The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.

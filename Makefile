@@ -151,6 +151,20 @@ bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt
 	#   make bench-proving BENCH_ARGS="--base /tmp/dist-base --head dist/mt"
 	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs $(BENCH_ARGS)
 
+.PHONY: lint-bench-workflows
+lint-bench-workflows: ## actionlint the two benchmark workflows
+	# Scoped to these two files, not the whole directory, because the other six
+	# workflows carry 17 pre-existing actionlint findings and clearing those is a
+	# separate change. These two are clean and worth keeping that way: the
+	# benchmark bot's correctness lives largely in workflow expressions, where a
+	# typo in an `if:` silently disables a job rather than failing loudly.
+	#
+	# NOT wired into CI. actionlint is absent from taiki-e/install-action's tool
+	# list, which is how this repo pins every other CI binary, so enforcing it
+	# would mean adding a third-party action or an unpinned download. Run it here
+	# before touching either workflow.
+	actionlint .github/workflows/bench.yml .github/workflows/bench-comment.yml
+
 .PHONY: test-bench-scripts
 test-bench-scripts: ## Unit-test the benchmark renderer, interleave and artifact extraction
 	# Lives outside the vitest projects on purpose: those carry a 95% coverage
