@@ -1737,7 +1737,8 @@ function buildStoppedEarlyNote(results) {
         : `> The repetition it dropped finished, and was then discarded because retaining it would have left the` +
           ` setup order unbalanced — the budget stopped the run before another could be funded.`,
       "> If this recurs the budget is too tight rather than the run too slow: raise the",
-      "> benchmark step's `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
+      "> benchmark step's `timeout-minutes` and `--budget-minutes` together. Not the repetition count:",
+      `> a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST} and that is already the default, so a shorter run does not rule.`,
     ].join("\n");
   }
 
@@ -2433,8 +2434,9 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
         ? `> The note above has the deadline this run overran; settle what caused it before re-running.`
         : kind === "teardown"
           ? `> A page that would not close is not a budget problem; settle what kept it alive before re-running.`
-          : `> Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower` +
-            ` \`--proves\`, and the re-run will rule.`,
+          : `> Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together and the` +
+            ` re-run will rule. Not \`--proves\` or \`--reps\`: both are gated at their calibrated` +
+            ` counts, so a run made smaller to fit the budget does not rule either.`,
     ].join("\n");
   }
   if (leader.agreement.blocked === "calibration") {
@@ -2466,7 +2468,7 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       `> floor is three standard deviations of an estimator measured over the fastest of ${CALIBRATED_PROVES_PER_REP} warm proves.`,
       `> The minimum of fewer proves is a noisier number, so against it that floor is less than three`,
       `> standard deviations and would call movements significant more often than the rate it advertises.`,
-      `> The movements below are reported without a ruling. Re-run with at least ${CALIBRATED_PROVES_PER_REP + 1} \`--proves\`.`,
+      `> The movements below are reported without a ruling. Re-run with \`--proves ${CALIBRATED_PROVES_PER_REP + 1}\` — exactly that, since a higher count is blocked too.`,
     ].join("\n");
   }
   if (leader.agreement.blocked === "oddReps") {
@@ -2513,7 +2515,7 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       !stoppedEarly
         ? `> Re-run with the default \`--reps\` to get a verdict.`
         : kind === "budget"
-          ? `> This run ran out of its time budget rather than being configured short: raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower \`--proves\`.`
+          ? `> This run ran out of its time budget rather than being configured short: raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together. Lowering \`--proves\` or \`--reps\` is not an alternative — both are gated at their calibrated counts, so a smaller run does not rule either.`
           : kind === "deadline"
             ? `> This run was truncated by the deadline overrun above rather than configured short. Settle what caused the overrun before re-running — a larger \`--reps\` would only overrun again.`
             : `> This run was truncated by the close failure above rather than configured short. Settle what kept the page alive before re-running; no repetition count fixes it.`,
@@ -2538,10 +2540,14 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
     // NOT "raise --reps". The unanimity requirement is Φ(δ/s) raised to the
     // power of `reps`, so more repetitions make this very verdict MORE likely
     // for any fixed effect — the advice would have driven a real regression
-    // toward a permanent ❔. `--proves` is the lever that helps: more proves per
-    // repetition lowers the variance of that repetition's minimum, which shrinks
-    // s and widens the agreement.
-    `> raise \`--proves\` to sharpen each repetition's measurement.`,
+    // toward a permanent ❔.
+    //
+    // And NOT "raise --proves" either, which is what this said until the prove
+    // count became two-directionally gated. That advice moved the reader from
+    // this ❔ to a `tooManyProves` ❔ whose note refutes the reasoning that sent
+    // them there. Recalibration is the only lever left on that axis.
+    `> re-run. If it recurs, the floor needs recalibrating at a higher prove count — raising \`--proves\``,
+    `> on its own is blocked above the calibrated ${CALIBRATED_PROVES_PER_REP}.`,
   ].join("\n");
 }
 

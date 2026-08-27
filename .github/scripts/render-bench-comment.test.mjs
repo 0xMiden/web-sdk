@@ -3626,6 +3626,75 @@ test("too few proves per repetition never publishes a verdict", () => {
 //
 // Repetitions are the axis where the monotonicity argument does hold; the
 // footnote now says which axis is which.
+// Every remedy in the comment is advice a reader will act on, and both sample-
+// count axes are now gated on both sides, so "shrink the run" and "raise
+// `--proves`" have become instructions to produce an artifact this renderer
+// refuses to rule on. Three notes carried that advice from when only the downward
+// direction was blocked, and one of them — the sign-test disagreement remedy —
+// sent the reader straight into a `tooManyProves` note that refutes the reasoning
+// that sent them there.
+//
+// The assertion is deliberately a blanket scan over every note the renderer can
+// emit rather than a per-note string match: the failure mode is a remedy nobody
+// re-read after the gate moved, and a per-note test only catches the notes
+// somebody thought to list.
+test("no remedy points the reader at a configuration that cannot rule", () => {
+  // A six-repetition run at an uncalibrated prove count, head plainly slower, so
+  // the only thing standing between it and a verdict is the prove gate.
+  const offCountRow = (proves) =>
+    renderComment(
+      results({
+        top: {
+          reps: 6,
+          provesPerRep: proves,
+          provesExecutedPerRep: proves + 1,
+          repsExecuted: 7,
+          repsRequested: 6,
+        },
+        benchmark: {
+          base: { samples: Array(6).fill(Array(proves).fill(1000)) },
+          head: { samples: Array(6).fill(Array(proves).fill(1400)) },
+        },
+      }),
+      ctx()
+    );
+
+  const bodies = [
+    // tooFewProves, tooManyProves, tooShort, budget-truncated, and a clean
+    // disagreement — every path that offers a remedy naming a sample count.
+    offCountRow(2),
+    offCountRow(7),
+    renderComment(meanRow(Array(4).fill([100, 100, 100])), ctx()),
+    renderComment(
+      meanRow(Array(6).fill([100, 100, 100]), {
+        repsRequested: 8,
+        stoppedEarly: true,
+        stoppedEarlyKind: "budget",
+      }),
+      ctx()
+    ),
+    renderComment(signTestRow([1400, 900, 1400, 900, 1400, 900]), ctx()),
+  ];
+
+  for (const body of bodies) {
+    assert.doesNotMatch(
+      body,
+      /raise `--proves`/,
+      "a remedy still tells the reader to raise --proves, which the prove gate blocks"
+    );
+    assert.doesNotMatch(
+      body,
+      /lower `--reps` \/ `--proves`|lower `--proves`|lower the repetition count/,
+      "a remedy still tells the reader to shrink the run, which both gates block"
+    );
+  }
+
+  // And the one remedy that does name a count names the only one that rules.
+  const tooFew = bodies[0];
+  assert.match(tooFew, /`--proves 4`/);
+  assert.match(tooFew, /a higher count is blocked too/);
+});
+
 test("more proves than calibrated reports without ruling", () => {
   const body = renderComment(
     results({

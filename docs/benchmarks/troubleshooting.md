@@ -62,9 +62,11 @@ about the clock.
 so the dropped ones were never attempted — except that a run also discards one
 repetition it *did* finish when keeping it would leave the ABBA setup order
 unbalanced, and the comment distinguishes the two. That is a sizing problem: raise
-`BENCH_STEP_BUDGET_MINUTES` and the job's `timeout-minutes` together, or lower
-`--reps` / `--proves`. Read the `[budget]` line in the bench job's log first — it
-prints the measured setup cost, which is what to size against.
+`BENCH_STEP_BUDGET_MINUTES` and the job's `timeout-minutes` together. Shrinking
+the run instead is not a fix: both `--reps` and `--proves` are gated at their
+calibrated counts, and below either one the report comes back without a verdict.
+Read the `[budget]` line in the bench job's log first — it prints the measured
+setup cost, which is what to size against.
 
 *Work ran past a deadline.* Something started and did not finish. Whether it was
 stuck or merely slower than the clock allowed is not decidable from the run, and
@@ -111,8 +113,10 @@ artifact rather than of the pull request. No artifact means the bench job did no
 reach its upload step — read that job. Expired means the report outlived the
 artifact retention window; re-run the benchmark for a fresh one. Over the limit
 means the producer wrote a bigger archive than the reporter will pull, which in
-practice means a sample count far above the default; lower `--reps` / `--proves`,
-and if the defaults produced it, that is a bug worth filing.
+practice means a sample count far above the default. Bring it back to the default
+`--reps 6 --proves 4` — which is also the only configuration the renderer will
+rule on — and if the defaults produced the oversized archive, that is a bug worth
+filing.
 
 **"… head repository does not match"** / **"… is not a Proving Benchmark run."**
 The reporter declined to attribute a report to a pull request whose identity it

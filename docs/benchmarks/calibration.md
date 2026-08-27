@@ -201,10 +201,14 @@ effect size. Two consequences worth internalising before tuning anything:
   hedge about it. Which you prefer depends on whether a ❔ in the comment gets
   read.
 
-  The lever with no such trade-off is `--proves`: more proves per repetition
-  lowers the variance of that repetition's minimum, which makes each individual
-  sign more reliable without adding signs that all have to agree. The unresolved
-  note in the comment says so.
+  `--proves` is **not** a free lever, though an earlier version of this page said
+  it was. Raising it does not sharpen each sign: the spread of a minimum is not
+  monotonic in the number of draws it is taken over (see [A stopped run reports its
+  numbers and does not rule on them](#a-stopped-run-reports-its-numbers-and-does-not-rule-on-them)),
+  and the renderer declines to rule on any
+  prove count other than the calibrated one. On this axis the only lever is to
+  recalibrate the floor at the count you want to use, and then move
+  `CALIBRATED_PROVES_PER_REP` and the CI default together.
 - **Below six repetitions there is no verdict at all,** which is why the 4-reps
   row above is 0%. `MIN_REPS_FOR_SIGN_TEST` is pinned to the calibrated
   repetition count, and the reason is that both legs of the rule weaken together
@@ -330,8 +334,17 @@ Three further corrections, also measured:
   positional bias inside the per-repetition deltas the sign test reads. It works
   against a verdict rather than toward one — a bias that flips sign every
   repetition makes unanimous agreement harder, not easier — so it costs power and
-  does not manufacture false positives. Prefer an odd `--proves` (even retained)
-  at the next recalibration, which is due regardless.
+  does not manufacture false positives.
+
+  Note the collision, because it is the reason the default is what it is: per-
+  repetition balance wants an **even** retained count, and the floor is calibrated
+  at **three**, which is odd. The two cannot both be satisfied, and calibration
+  wins — an uncalibrated floor means no verdict at all, while the imbalance only
+  costs power. So an odd `--proves` is not an improvement that can be adopted on
+  its own: it needs a recalibration at the new retained count, moving
+  `CALIBRATED_PROVES_PER_REP` and the producer default in the same change. Until
+  then the default `--proves 4` is the only configuration that both runs and
+  rules.
 
   An odd product is no longer reachable: `--reps` must be even, and an even
   `--reps` makes both the retained-prove split and the setup order balanced for
@@ -490,17 +503,33 @@ configuration*, and it does not transfer downward:
   count sets one side up first once more than the other. The producer refuses an
   odd `--reps` outright, but `reps` is artifact-authored, so the renderer declines
   to rule rather than trusting the producer to have prevented it.
-- **Fewer than three retained proves per repetition.** The threshold is 3σ of a
-  mean of per-repetition *minima* taken over three proves. The minimum of fewer
-  is a noisier statistic, so against it the same cutoff is under 3σ. Repetitions
-  were already floored for this and proves were only footnoted, which was
+- **Any retained prove count other than three.** The threshold is 3σ of a mean of
+  per-repetition *minima* taken over three proves. Below three the minimum is a
+  noisier statistic, so against it the same cutoff is under 3σ. Repetitions were
+  already floored for this and proves were only footnoted, which was
   inconsistent: both legs weaken identically, and a one-repetition-one-prove
   artifact was the cheapest route to a confident verdict.
 
-All three blocks are one-directional. More repetitions, or more proves, make the
-estimator *tighter*, so the fixed threshold becomes more than 3σ rather than
-less — conservative, and therefore still sound. Only the downward direction is
-blocked.
+The blocks are one-directional on the **repetition** axis only. More repetitions
+make the estimator tighter as 1/√n, so above six the fixed threshold is more than
+3σ — conservative, and therefore still sound.
+
+They are **two**-directional on the prove axis, which is the correction to an
+earlier version of this page. The argument that carried over from repetitions —
+more draws, tighter statistic — does not hold for a minimum. The variance of a
+minimum of *k* draws is not monotonic in *k* when the interference is bimodal,
+which is what a shared CI runner produces: the minimum lands in the fast mode
+with probability 1−(1−p)^k, and as *k* grows that probability sweeps through ½,
+where the statistic's spread *peaks* rather than shrinking. Simulated against the
+full pipeline under a null — both sides drawn from one distribution — the
+false-verdict rate rose with the prove count instead of falling, reaching several
+percent against an advertised 0.15%.
+
+`provesPerRep` is artifact-authored, so this was also the cheapest remaining route
+to a confident verdict: raise `--proves` and the floor kept being applied while it
+stopped meaning what it says. The floor was measured at one prove count, its
+applicability at any other is unverified, and so any other count is uncalibrated
+and reports without ruling.
 
 #### The report says so
 
@@ -518,10 +547,11 @@ did not have, or a repetition count it did not run, is refused rather than
 rendered. A run that keeps no balanced repetitions — nothing measured, or a single
 one — fails instead, because there is nothing left to report.
 
-If truncation starts happening routinely, the budget is wrong, not the run:
-raise the step's `timeout-minutes` and `--budget-minutes` together, or lower
-`--reps` / `--proves`. A report built on four repetitions is never as good as
-one built on six.
+If truncation starts happening routinely, the budget is wrong, not the run: raise
+the step's `timeout-minutes` and `--budget-minutes` together. Lowering `--reps` or
+`--proves` is not the alternative it looks like — a report built on four
+repetitions is never as good as one built on six, and both counts are gated at
+their calibrated values, so a smaller run does not rule at all.
 
 ## The step budget is sized against a number nobody has measured
 

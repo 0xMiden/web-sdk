@@ -218,7 +218,10 @@ if (reps % 2 !== 0) {
 // Extra proves are the cheap way to buy samples: setup (mint + block + sync)
 // dominates a rep's cost and is not measured, while each extra prove is one
 // more chance for `min` to catch an uncontended run.
-const proves = count("--proves", "4");
+// Mirrors CALIBRATED_PROVES_PER_REP + 1 in the renderer: that constant counts
+// retained proves, this flag counts issued ones, and the first is discarded.
+const CALIBRATED_PROVES = 4;
+const proves = count("--proves", String(CALIBRATED_PROVES));
 const outPath = flag("--out", null);
 
 const budgetMinutesRaw = flag("--budget-minutes", null);
@@ -275,6 +278,22 @@ if (budgetMinutesRaw !== null) {
 if (proves < 2) {
   usage(
     "--proves must be at least 2: the first prove of each page is discarded as cold."
+  );
+}
+
+// The renderer's floor was calibrated against a mean of per-repetition minima
+// over exactly three retained proves, and the spread of a minimum is not
+// monotonic in the number of draws it is taken over, so the floor cannot be
+// carried to a different count in either direction. The renderer gates on this
+// (`CALIBRATED_PROVES_PER_REP` in .github/scripts/render-bench-comment.mjs) and
+// reports without ruling when it does not match. Say so here rather than at the
+// end of a twenty-minute run.
+if (proves !== CALIBRATED_PROVES) {
+  console.log(
+    `[warn] --proves ${proves} retains ${proves - 1} per repetition, but the ` +
+      `regression floor is calibrated at ${CALIBRATED_PROVES - 1}. This run will ` +
+      `report its numbers and the renderer will decline to rule on them. Use ` +
+      `--proves ${CALIBRATED_PROVES} for a verdict.`
   );
 }
 
@@ -356,8 +375,10 @@ if (balance && balance.provesBalanced && !balance.perRepBalanced) {
       .join(
         " "
       )} base-first), alternating direction, so it cancels across the ` +
-      `run but not within a repetition. An odd --proves retains an even count ` +
-      `per repetition and removes it.`
+      `run but not within a repetition. An odd --proves would retain an even ` +
+      `count and remove it, but the floor is calibrated at ${CALIBRATED_PROVES} ` +
+      `proves and the renderer refuses to rule on any other count, so that trade ` +
+      `is only available together with a recalibration.`
   );
 }
 
