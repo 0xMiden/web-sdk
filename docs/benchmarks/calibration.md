@@ -8,9 +8,10 @@ The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.
 
-Until that measurement exists on `warp-ubuntu-latest-x64-8x`, the comment says
-so explicitly and treats the threshold as **provisional**. This page is how the
-placeholder gets replaced.
+**This has been done.** `THRESHOLD_PCT` is 5.4%, calibrated on
+`warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement* below. This
+page is how it was derived and how to redo it, which is required whenever the
+runner class, thread count, repetition count or workload changes.
 
 ## What a calibration run is
 
@@ -28,6 +29,38 @@ Locally:
 ```bash
 make bench-proving-calibrate
 ```
+
+## The measurement (2026-08-27)
+
+30 dispatch runs of one build against a copy of itself on
+`warp-ubuntu-latest-x64-8x` at `reps: 6`. True delta is zero by construction, so
+every number below is measurement noise.
+
+| | |
+|---|---|
+| runs | 30 |
+| mean | **+0.213%** (standard error 0.264%) |
+| standard deviation | **1.447%** |
+| 3σ | 4.34% |
+| largest observed movement | **+5.03%** |
+| `THRESHOLD_PCT` set to | **5.4%** |
+
+Two things to read out of this.
+
+**The mean is indistinguishable from zero.** +0.213% against a standard error of
+0.264% is well under one standard error, so there is no detectable residual bias
+between the two sides. That is what the per-prove ABBA order flip bought: before
+it, the side that ran second paid a consistent +1.19%.
+
+**The threshold is NOT 3σ, deliberately.** 3σ is 4.34%, but one of the thirty
+no-change runs came in at +5.03% — past 3σ on a run where nothing changed. 3σ is
+the right cutoff only for a normal distribution, and these deltas are not normal
+in the tail: each side draws its own proof-of-work grind, which is geometric.
+Setting the floor at 4.34% would have called that observed run a regression. So
+the floor is taken from the empirical maximum with a small margin instead.
+
+Following the procedure below into a false positive we had already watched
+happen would have been worse than deviating from it and saying why.
 
 ## How to derive the threshold
 
