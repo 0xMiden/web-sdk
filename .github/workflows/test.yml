@@ -24,7 +24,8 @@ env:
   # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
   # built against. A commit sha (not the branch name) keeps cache keys stable.
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
-  MIDEN_CLIENT_REF: 5ddc4a7f55cd9a809500f52d969c1353bf7b07e8
+  # v0.16.0-rc.3
+  MIDEN_CLIENT_REF: 4afc5b8519a4906f29fb45ae9f3d74b5d43f6640
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
