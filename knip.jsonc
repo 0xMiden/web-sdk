@@ -360,6 +360,11 @@
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
         "scripts/**/*.js",
+        // The proving benchmark and its interleave module. Invoked from the
+        // Makefile (`bench-proving`, `bench-proving-calibrate`) and from
+        // .github/workflows/bench.yml, and unit-tested by
+        // scripts/bench-order.test.mjs — none of which knip can follow.
+        "scripts/**/*.mjs",
       ],
       // The `./eager.js` and `./index.js` strings inside
       // `page.evaluate(...)` blocks are dynamic imports executed in the
@@ -373,6 +378,10 @@
         "./eager.js",
         "./index.js",
         "./crates/miden_client_web",
+        // bench-proving.mjs serves dist/mt at the root of its own throwaway
+        // HTTP server, so its `page.evaluate` import is root-absolute rather
+        // than relative. Same browser-resolution boundary as the entries above.
+        "/eager.js",
       ],
     },
     "crates/idxdb-store/src": {
@@ -395,5 +404,17 @@
       ],
     },
   },
-  "ignore": ["packages/react-sdk/examples/**", "crates/idxdb-store/src/js/**"],
+  "ignore": [
+    "packages/react-sdk/examples/**",
+    "crates/idxdb-store/src/js/**",
+    // Run by hand from docs/benchmarks/calibration.md to regenerate the tables
+    // it quotes — power rates for the first, the truncation-selection table for
+    // the second —
+    // and by a reviewer checking those tables still reproduce. Nothing imports
+    // either, which is the point: they are standalone reproduction scripts, not
+    // part of any build.
+    "docs/benchmarks/verdict-power.mjs",
+    "docs/benchmarks/truncation-selection.mjs",
+    "docs/benchmarks/budget-reachability.mjs",
+  ],
 }
