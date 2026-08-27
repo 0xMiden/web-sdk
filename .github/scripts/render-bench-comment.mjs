@@ -263,16 +263,45 @@ function codeSpan(text) {
 }
 
 /**
- * Reduce a message to a single log line.
+ * Reduce a message to a single log line and neutralize the runner's
+ * workflow-command introducers.
  *
- * Newlines are what make a workflow command load-bearing: `::error::` is only
- * honoured at the start of a line. V8's `JSON.parse` message quotes the
- * offending bytes verbatim, and on the reporting side those bytes came out of a
- * fork-controlled artifact — so every message this module writes to stderr goes
- * through here first, in the job that holds the write token.
+ * V8's `JSON.parse` message quotes the offending bytes verbatim, and on the
+ * reporting side those bytes came out of a fork-controlled artifact — so every
+ * message this module writes to stderr goes through here first, in the job that
+ * holds the write token.
+ *
+ * Collapsing to one line is not enough on its own, because only one of the
+ * runner's two command syntaxes cares about position. `::name::` has to start
+ * the line — and the runner trims leading whitespace before checking, so an
+ * indent is not a defence — but the legacy `##[name]` form is matched by
+ * substring search ANYWHERE in the line. `add-mask`, `error`, `warning`,
+ * `notice`, `debug`, `group`, `stop-commands` and the matcher commands are all
+ * registered unconditionally; only `set-env`, `set-output`, `save-state` and
+ * `add-path` sit behind the unsecure-commands gate. So a benchmark name of
+ * `##[stop-commands]<token>`, quoted mid-sentence into a refusal message,
+ * silences this job's own annotations for the rest of the step, and
+ * `##[error]…` forges one under the repository's name.
+ *
+ * `sanitizeText` is the wrong place to stop it: `#`, `[` and `]` are ordinary
+ * characters in a benchmark name, and the comment body renders them inside a
+ * code span where they carry no meaning. It is stderr specifically that gives
+ * them meaning, so the neutralization lives here.
  */
 function logLine(text) {
-  return sanitizeText(text, 200, "(no detail)");
+  return (
+    sanitizeText(text, 200, "(no detail)")
+      // Every `#` that leads a run of `#` ending in `[`, which covers `###[`
+      // and `##[[` as well as `##[`. The replacement contributes no `#`, and
+      // every surviving `#` is by construction not followed by `#*[`, so the
+      // sequence cannot re-form out of the substitution.
+      .replace(/#(?=#*\[)/gu, "\uFF03")
+      // Only meaningful at the start of a line, and every write site prefixes
+      // this with its own text — except the stack-frame loop, whose two-space
+      // indent the runner trims away. Cheaper to make the invariant true here
+      // than to depend on every caller keeping it.
+      .replace(/:(?=:)/gu, "\uFF1A")
+  );
 }
 
 /**
@@ -338,6 +367,30 @@ function requireFinite(value, path) {
     fail(`${path} must be a finite number, got ${describeValue(value)}`);
   }
   return value;
+}
+
+/**
+ * A wall-clock duration in milliseconds, rounded to whole milliseconds.
+ *
+ * Distinct from `requireInt` because these come from `performance.now()`, which
+ * is fractional, and a clamped deadline carries the fraction through into the
+ * artifact. Demanding an integer refused the whole artifact — no comment at all
+ * — over a value the comment then prints to the nearest second. The range is
+ * still enforced; only the integrality requirement is dropped, and the rounding
+ * happens here so every consumer downstream sees a whole number.
+ */
+function requireMillis(
+  value,
+  path,
+  { min = 0, max = Number.MAX_SAFE_INTEGER }
+) {
+  requireFinite(value, path);
+  if (value < min || value > max) {
+    fail(
+      `${path} must be a number in [${min}, ${max}], got ${describeValue(value)}`
+    );
+  }
+  return Math.round(value);
 }
 
 function requireInt(
@@ -563,7 +616,7 @@ function normalizeResults(input) {
       // The deadline the work ran under, and the machine's typical setup cost.
       // Together they are what a reader needs to tell a hang from a short clock,
       // which is the judgement this bot deliberately no longer makes itself.
-      stoppedEarlyDeadlineMs = requireInt(
+      stoppedEarlyDeadlineMs = requireMillis(
         results.stoppedEarlyDeadlineMs,
         "stoppedEarlyDeadlineMs",
         { min: 1, max: 24 * 60 * 60 * 1000 }
@@ -575,7 +628,7 @@ function normalizeResults(input) {
           min: 1,
           max: 10_000,
         });
-        setupMsMedian = requireInt(results.setupMsMedian, "setupMsMedian", {
+        setupMsMedian = requireMillis(results.setupMsMedian, "setupMsMedian", {
           min: 1,
           max: 24 * 60 * 60 * 1000,
         });
@@ -1115,6 +1168,36 @@ function computeRows(results) {
       meanAgreement !== null &&
       meanAgreement.consistent &&
       Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
+    // The mirror of `meanOnly`, for the case where the headline DID rule. Both
+    // channels can then name a direction, and nothing was checking that they
+    // named the same one: a change that made every prove but the fastest much
+    // slower headlined as an improvement, with the contradicting figure absent
+    // from the comment entirely — because `meanOnly` and `meanLarge` are both
+    // `!clearsFloor` by construction. A reader saw "🚀 6% faster" over a run
+    // whose mean prove time had risen by two thirds.
+    //
+    // Gated on the mean's own sign test, which `meanOnly` also requires. An
+    // uncorroborated mean movement must not be able to withdraw a
+    // repetition-consistent headline result; one that holds in a majority of
+    // repetitions and contradicts none of them is exactly the case where the
+    // honest answer is that the two estimators disagree.
+    // A large mean movement on a run that is not entitled to rule on it, for
+    // either reason: the run-level precondition blocked it, or it is below the
+    // six-repetition floor where `pairedMeanAgreement` can only ever answer
+    // `tooShort`. Reported so it is not lost; never as a direction.
+    const meanUnruled =
+      meanLarge &&
+      !meanOnly &&
+      Boolean(agreement.blocked || agreement.tooShort);
+    const meanWorse =
+      meanPct === null ? null : LOWER_IS_BETTER ? meanPct > 0 : meanPct < 0;
+    const meanContradicts =
+      beyond &&
+      meanPct !== null &&
+      meanAgreement !== null &&
+      meanAgreement.consistent &&
+      meanWorse !== isWorse &&
+      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
     return {
       ...b,
       deltaValue,
@@ -1128,13 +1211,25 @@ function computeRows(results) {
       meanAgreement,
       meanOnly,
       meanLarge,
-      emoji: beyond
-        ? isWorse
-          ? EMOJI_WORSE
-          : EMOJI_BETTER
-        : unresolved || deltaPct === null || meanOnly
-          ? EMOJI_UNRESOLVED
-          : EMOJI_NOISE,
+      meanUnruled,
+      meanWorse,
+      meanContradicts,
+      // ❔ wherever no direction is claimed for the row, which now includes the
+      // unruled-mean case: a ➖ reading "within the noise floor" under a heading
+      // that had just declined to rule on this benchmark's mean invited the
+      // reader to take the row as the answer.
+      emoji:
+        beyond && !meanContradicts
+          ? isWorse
+            ? EMOJI_WORSE
+            : EMOJI_BETTER
+          : unresolved ||
+              deltaPct === null ||
+              meanOnly ||
+              meanUnruled ||
+              meanContradicts
+            ? EMOJI_UNRESOLVED
+            : EMOJI_NOISE,
     };
   });
 
@@ -1184,9 +1279,31 @@ function buildVerdict(rows) {
   }
 
   const thresholdText = `${THRESHOLD_PROVISIONAL ? "provisional " : ""}±${formatPct(THRESHOLD_PCT)}`;
-  const moved = rows.filter((r) => r.beyond);
+  // A row whose two estimators point opposite ways is not a result, whichever
+  // of them cleared the floor first. Excluded from `moved` here rather than
+  // filtered at each use, so the heading, the emoji and the notes all see the
+  // same answer — the table's emoji already withholds the verdict for it.
+  const moved = rows.filter((r) => r.beyond && !r.meanContradicts);
+  const contradicted = rows
+    .filter((r) => r.meanContradicts)
+    .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
   const unresolved = rows.filter((r) => r.unresolved);
   const worst = comparable[0];
+
+  // Ahead of every other branch: a run where the reported figure and the mean
+  // of all proves disagree about the DIRECTION is the one state where naming a
+  // direction in the heading is affirmatively wrong, and the heading is the only
+  // part of this comment most readers ever see.
+  if (contradicted.length > 0) {
+    const leader = contradicted[0];
+    const rest =
+      contradicted.length > 1 ? ` (+${contradicted.length - 1} more)` : "";
+    return (
+      `### ${EMOJI_UNRESOLVED} Unresolved: the two estimators disagree on ${codeSpan(leader.name)}${rest} — ` +
+      `${formatSignedPct(leader.deltaPct)} on the reported figure, ` +
+      `${formatSignedPct(leader.meanPct)} on the mean of all proves, in opposite directions`
+    );
+  }
 
   if (moved.length === 0 && unresolved.length > 0) {
     // Clears the floor but the repetitions disagree about the direction. Calling
@@ -1235,11 +1352,14 @@ function buildVerdict(rows) {
         : "faster";
       return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor, but the mean of all proves is ${formatSignedPct(leader.meanPct)} ${direction} on ${codeSpan(leader.name)}${rest}`;
     }
-    // Same precedence for a blocked run, minus the agreement — which it is not
-    // entitled to — so the heading still cannot say "no significant change" over
-    // a mean that moved by an order of magnitude more than the floor.
+    // Same precedence for a run that cannot rule, minus the agreement — which it
+    // is not entitled to — so the heading still cannot say "no significant
+    // change" over a mean that moved by an order of magnitude more than the
+    // floor. Both reasons for not ruling, matching `buildMeanUnruledNote`: this
+    // filter and that one drifting apart is what left a four-repetition run
+    // headlined "No significant change" with the note absent underneath.
     const meanUnruled = rows
-      .filter((r) => r.agreement.blocked && r.meanLarge)
+      .filter((r) => r.meanUnruled)
       .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
     if (meanUnruled.length > 0) {
       const leader = meanUnruled[0];
@@ -1567,9 +1687,13 @@ function buildSamplesBlock(rows, unit) {
     // Indented, like every other line in this block. The name is the one fork-
     // controlled string here and it was the only one at column 0, so a name of
     // `::error::…` made the renderer write a line that looks exactly like a
-    // workflow command on stdout. The trusted workflow redirects stdout to a
-    // file, so the runner never honoured it — but that is the caller's habit
-    // protecting the callee, and it costs one space to not depend on it.
+    // workflow command on stdout.
+    //
+    // The indent alone does not stop it — the runner trims leading whitespace
+    // before testing for `::`, and finds the legacy `##[…]` form anywhere in
+    // the line. What stops it is that this block only ever reaches stdout,
+    // which both workflows redirect into a file. Every path that writes to
+    // stderr goes through `logLine`, which neutralizes both introducers.
     lines.push(`  ${row.name}`);
     for (const side of ["base", "head"]) {
       const data = row[side];
@@ -1717,23 +1841,66 @@ function buildMeanOnlyNote(rows) {
  * The mean moved on a run that is not allowed to rule on anything.
  *
  * Reports the figure and stops. The confident version of this note leans on the
- * repetitions agreeing, which a blocked run does not get to claim — but a mean an
+ * repetitions agreeing, which an unruled run does not get to claim — but a mean an
  * order of magnitude past the floor must not simply disappear, which is what
- * dropping the cross-check for blocked runs used to do.
+ * dropping the cross-check used to do.
+ *
+ * Covers both reasons a run is unruled. Gating this on `blocked` alone left the
+ * other one — a run below the six-repetition floor, where `pairedMeanAgreement`
+ * returns `tooShort` and so can never be `consistent` — with no channel at all:
+ * a four-repetition run whose mean prove time had risen by two thirds rendered
+ * as "No significant change", with the methodology section below it pointing the
+ * reader at a mean cross-check that was not there.
  */
 function buildMeanUnruledNote(rows) {
   const flagged = rows
-    .filter((r) => r.agreement.blocked && r.meanLarge)
+    .filter((r) => r.meanUnruled)
     .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
   if (flagged.length === 0) return "";
   const leader = flagged[0];
+  // Why the run cannot rule, in the reader's terms. "For the reason above" is
+  // true for a blocked run, which always carries a note saying what blocked it;
+  // a short run carries no such note, so the reason has to be stated here.
+  const why = leader.agreement.blocked
+    ? `This run is not ruled on for the reason above, and that applies to this figure too: it is reported`
+    : `${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")} is too few to rule on either figure, so this one is reported`;
   return [
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean of every prove.** ${codeSpan(leader.name)} is`,
     `> ${formatSignedPct(leader.deltaPct)} on the reported figure — within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
-    `> This run is not ruled on for the reason above, and that applies to this figure too: it is reported`,
+    `> ${why}`,
     `> so it is not lost, not as a finding. A movement that misses every repetition's fastest prove looks`,
     `> like this — a pause, a lock, a retry, a cold cache — and so does noise on a short run. Read the raw`,
     `> samples below, and re-run to settle it.`,
+  ].join("\n");
+}
+
+/**
+ * The reported figure and the mean of all proves moved in OPPOSITE directions,
+ * both past the floor, both corroborated across repetitions.
+ *
+ * The heading withholds the direction for this case; this says why, because
+ * "unresolved" over a table showing a clean improvement invites the reader to
+ * dismiss it. Only one shape of change produces this — one that moves the
+ * fastest prove of each repetition one way and the rest of the distribution the
+ * other — and it is worth naming rather than averaging away.
+ */
+function buildMeanContradictionNote(rows) {
+  const flagged = rows
+    .filter((r) => r.meanContradicts)
+    .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
+  if (flagged.length === 0) return "";
+  const leader = flagged[0];
+  const fastest = leader.isWorse ? "slower" : "faster";
+  const rest = leader.meanWorse ? "slower" : "faster";
+  return [
+    `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved both ways.** ${codeSpan(leader.name)} is`,
+    `> ${formatSignedPct(leader.deltaPct)} on the mean of each repetition's *fastest* prove — ${fastest} — and`,
+    `> ${formatSignedPct(leader.meanPct)} on the mean of *every* prove — ${rest} — with each direction holding in a`,
+    `> majority of repetitions and contradicted by none.`,
+    `> Both figures are measured, so this is not a tie to be broken by picking one: the best case and the`,
+    `> rest of the distribution moved apart. A faster fastest prove alongside a slower everything-else is`,
+    `> what a new fast path with a costly fallback looks like, or a cache that now misses more often.`,
+    `> No direction is claimed for this run — read the raw samples below.`,
   ].join("\n");
 }
 
@@ -1857,12 +2024,17 @@ function assemble(
     results.stoppedEarlyKind
   );
   if (unresolvedNote) blocks.push(unresolvedNote);
+  // The three mean cross-checks, in the order their triggers exclude each
+  // other: `meanOnly` needs the headline below the floor and the mean's
+  // repetitions agreeing, `meanUnruled` the headline below the floor on a run
+  // that cannot rule, `meanContradicts` the headline ABOVE the floor and
+  // pointing the other way. A row satisfies at most one.
   const meanOnlyNote = buildMeanOnlyNote(rows);
   if (meanOnlyNote) blocks.push(meanOnlyNote);
-  // Mutually exclusive with the note above: that one needs an unblocked run and
-  // this one a blocked one.
   const meanUnruledNote = buildMeanUnruledNote(rows);
   if (meanUnruledNote) blocks.push(meanUnruledNote);
+  const meanContradictionNote = buildMeanContradictionNote(rows);
+  if (meanContradictionNote) blocks.push(meanContradictionNote);
   if (THRESHOLD_PROVISIONAL) blocks.push(buildProvisionalNote(results, ctx));
   for (const notice of notices) blocks.push(notice);
   blocks.push(buildContextTable(results, ctx, rows));
@@ -2079,8 +2251,10 @@ export async function main(argv = process.argv.slice(2)) {
     // Message and frames separately, each sanitized. Through one `logLine` the
     // whole stack shared a 200-char budget, so a long message consumed it and
     // left no source location at all — on the one path where the stack IS the
-    // diagnostic. The frames are first-party paths, so a wider cap is safe;
-    // sanitizing each still denies a fork-derived message the start of a line.
+    // diagnostic. The frames are first-party paths, so a wider cap is safe, and
+    // `logLine` neutralizes the workflow-command introducers in each — the
+    // two-space indent below is for reading, not for defence, since the runner
+    // trims it before matching.
     process.stderr.write(
       `renderer bug — this is not the artifact's fault: ${logLine(error?.message ?? String(error))}\n`
     );

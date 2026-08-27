@@ -1292,6 +1292,59 @@ test("the CLI never emits a workflow command from untrusted bytes", async (t) =>
   );
 });
 
+test("the CLI neutralizes the legacy workflow-command form too", async (t) => {
+  // The test above pins the `::name::` form, which only counts at the start of a
+  // line — so keeping every message on one line, behind a fixed prefix, was
+  // taken to be enough. It is not: the runner also accepts the legacy `##[name]`
+  // form and finds it by substring search ANYWHERE in the line
+  // (`ActionCommand.TryParse` uses `IndexOf`). `add-mask`, `error`, `notice`,
+  // `debug`, `group` and `stop-commands` are all registered unconditionally —
+  // only `set-env`, `set-output`, `save-state` and `add-path` sit behind the
+  // unsecure-commands gate. So a benchmark name quoted into a refusal message
+  // could silence this job's annotations or forge one under the repository's
+  // name, from the job that holds the write token.
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const dir = await mkdtemp(join(tmpdir(), "bench-render-legacy-"));
+  const resultsPath = join(dir, "results.json");
+  const ctxPath = join(dir, "ctx.json");
+  // A refusal that quotes the offending value back: `reps` has to be a number,
+  // and `describeValue` puts the string in the message.
+  await writeFile(
+    resultsPath,
+    JSON.stringify(
+      results({
+        top: {
+          reps: "##[stop-commands]6f2d1c9a8b ##[error]forged ###[add-mask]s",
+        },
+      })
+    )
+  );
+  await writeFile(ctxPath, JSON.stringify(ctx()));
+
+  const written = [];
+  const original = process.stderr.write;
+  process.stderr.write = (chunk) => {
+    written.push(String(chunk));
+    return true;
+  };
+  t.after(() => {
+    process.stderr.write = original;
+  });
+
+  assert.equal(await main([resultsPath, ctxPath]), 64);
+  const text = written.join("");
+  // The diagnostic still names the field, so neutralizing has not turned the
+  // message into "(no detail)".
+  assert.match(text, /reps must be/);
+  assert.doesNotMatch(text, /##\[/, "legacy workflow command reached stderr");
+  for (const line of text.split("\n")) {
+    assert.doesNotMatch(line, /^::/, `workflow command emitted: ${line}`);
+  }
+});
+
 test("the CLI's exit codes distinguish a refused artifact from a renderer bug", async (t) => {
   // bench-comment.yml branches on these: 0 posts, 64 stays quiet because the
   // fork's payload was refused, anything else nonzero turns the reporter red
@@ -1974,6 +2027,99 @@ test("the mean cross-check holds itself to the same sign test", () => {
   assert.doesNotMatch(oneRepDominates, /moved on the mean but not/);
 });
 
+// A change that moves the fastest prove of each repetition one way and the rest
+// of the distribution the other satisfies BOTH estimators, in opposite
+// directions — and nothing was checking that they agreed. `meanOnly` and
+// `meanLarge` are `!clearsFloor` by construction, so once the headline ruled the
+// contradicting figure vanished from the comment entirely and the reader saw
+// "🚀 6.00% faster" over a run whose mean prove time had risen by two thirds.
+test("a mean that contradicts the headline withdraws the direction", () => {
+  const body = renderComment(
+    results({
+      benchmark: {
+        // Fastest prove 6% faster in every repetition, the other two 100%
+        // slower in every repetition: both directions hold in 6 of 6.
+        base: {
+          samples: Array.from({ length: REPS }, () => [1000, 1000, 1000]),
+        },
+        head: {
+          samples: Array.from({ length: REPS }, () => [940, 2000, 2000]),
+        },
+      },
+    }),
+    ctx()
+  );
+  const heading = body.split("\n")[0];
+  // The heading is the only part of this comment most readers see, so it is the
+  // part that must not name a direction.
+  assert.match(heading, /Unresolved: the two estimators disagree/);
+  assert.doesNotMatch(heading, /faster|slower/);
+  assert.doesNotMatch(heading, /🚀|⚠️/);
+  // Both figures present, so the reader can see what disagreed.
+  assert.match(body, /-6\.00%/);
+  assert.match(body, /\+64\.67%/);
+  assert.match(body, /moved both ways/);
+  // The row withholds its verdict too, rather than showing a clean improvement
+  // under a heading that declined to rule.
+  assert.match(body, /^\| ❔ \| `prove \/ consume \/ ecdsa-k256-keccak`/m);
+});
+
+// The mirror case: the two estimators agree on the direction, so the headline
+// keeps it. Without this the fix above could pass by never ruling at all.
+test("a mean that agrees with the headline leaves the direction alone", () => {
+  const body = renderComment(
+    results({
+      benchmark: {
+        base: {
+          samples: Array.from({ length: REPS }, () => [1000, 1000, 1000]),
+        },
+        head: {
+          samples: Array.from({ length: REPS }, () => [1100, 2000, 2000]),
+        },
+      },
+    }),
+    ctx()
+  );
+  assert.match(body.split("\n")[0], /\+10\.00% slower/);
+  assert.doesNotMatch(body, /moved both ways/);
+});
+
+// The mean cross-check was gated on `agreement.blocked`, which covers only one
+// of the two reasons a run cannot rule. Below six repetitions
+// `pairedMeanAgreement` answers `tooShort` and can never be `consistent`, so
+// `meanOnly` is unreachable and `meanLarge` was filtered out — leaving a run
+// whose mean prove time had risen by two thirds headlined "No significant
+// change", above a methodology section pointing at a cross-check that was not
+// in the comment.
+test("a short run still reports a mean that moved", () => {
+  const shortReps = 4;
+  const body = renderComment(
+    results({
+      top: {
+        reps: shortReps,
+        repsExecuted: shortReps + 1,
+        repsRequested: shortReps,
+      },
+      benchmark: {
+        base: {
+          samples: Array.from({ length: shortReps }, () => [1000, 1000, 1000]),
+        },
+        head: {
+          samples: Array.from({ length: shortReps }, () => [1000, 2000, 2000]),
+        },
+      },
+    }),
+    ctx()
+  );
+  assert.doesNotMatch(body, /No significant change/);
+  assert.match(body, /Unresolved/);
+  assert.match(body, /\+66\.67%/);
+  assert.match(body, /moved on the mean of every prove/);
+  // The reason has to be stated in the note: a short run carries no other note
+  // saying why it cannot rule, so "for the reason above" would point at nothing.
+  assert.match(body, /4 repetitions is too few to rule on either figure/);
+});
+
 // The renderer decides whether it was invoked as a script by comparing its own
 // module URL against argv[1]. Node derives the former from the resolved path and
 // leaves the latter as typed, so an unresolved comparison silently declined to
@@ -2329,6 +2475,34 @@ test("a deadline overrun is not reported as the budget running out", () => {
   assert.match(ranOut, /never attempted/);
   assert.match(ranOut, /budget is too tight/);
   assert.doesNotMatch(ranOut, /deadline/);
+});
+
+// Both of these are wall-clock durations derived from `performance.now()`, which
+// is fractional: a clamped deadline carries the fraction through, and a median
+// over an even number of setups is the average of the two middle ones. Requiring
+// an integer therefore refused the entire artifact — exit 64, no comment at all
+// — on every deadline overrun that had completed a setup, which is the one case
+// where the comment is carrying the diagnostic the reader needs.
+test("fractional millisecond durations are rendered, not refused", () => {
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+        repsRequested: 10,
+        stoppedEarly: "prove overran its deadline",
+        stoppedEarlyKind: "deadline",
+        stoppedEarlyDeadlineMs: 320_000.5678,
+        setupMsMedian: 90_900.4321,
+        setupCount: 8,
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /ran past its 320s deadline/);
+  assert.match(body, /took 91s at the median over 8 samples/);
 });
 
 test("too few setup samples to lean on is disclosed rather than implied", () => {
