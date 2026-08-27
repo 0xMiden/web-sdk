@@ -33,6 +33,11 @@
 // The one knob is where the run-level factor lives. Read the "both" row against
 // the "head-only" row: that difference is the whole argument.
 
+// The floor is read from the profile rather than copied. A literal here modelled
+// whatever the floor used to be, under a heading in calibration.md presenting
+// the result as the current rule.
+import { DEFAULT_PROFILE } from "../../.github/scripts/bench-profile.mjs";
+
 const TRIALS = 400_000;
 const SIGMA_RUN = 0.12; // run-level factor, one or both sides
 const SIGMA_PROVE = 0.025; // per-prove jitter
@@ -44,7 +49,7 @@ const POSITION_PENALTY = 0.02; // second-position cost, per prove
 const SETUP_COST = 180; // relative to a prove at 100
 const PROVE_COST = 100;
 const PROVES = 4; // executed; the first is discarded
-const THRESHOLD_PCT = 5.4;
+const THRESHOLD_PCT = DEFAULT_PROFILE.thresholdPct;
 
 const rng = (() => {
   let s = 0xdecafbad;

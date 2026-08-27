@@ -8,7 +8,8 @@ The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.
 
-**This line is calibrated.** `THRESHOLD_PCT` is **1.9%**, measured on
+**This line is calibrated.** `thresholdPct` in
+`.github/scripts/bench-profile.mjs` is **1.9%**, measured on
 `warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement on this line*
 below. Re-run this procedure whenever the runner class, thread count,
 repetition count or workload changes; each invalidates the number.
@@ -60,7 +61,7 @@ construction, so every number is measurement noise.
 | standard deviation | **0.618%** |
 | 3σ | 1.85% |
 | largest observed movement | **1.17%** |
-| `THRESHOLD_PCT` set to | **1.9%** |
+| `thresholdPct` set to | **1.9%** |
 
 **The mean is indistinguishable from zero**, so there is no residual bias
 between the two sides — the per-prove ABBA order flip is doing its job here as
@@ -88,7 +89,7 @@ construction, so every number below is measurement noise — of that workload.
 | standard deviation | **1.447%** |
 | 3σ | 4.34% |
 | largest observed movement | **+5.03%** |
-| `THRESHOLD_PCT` set to | **5.4%** |
+| `thresholdPct` set to | **5.4%** |
 
 Two things to read out of this.
 
@@ -286,9 +287,9 @@ effect size. Two consequences worth internalising before tuning anything:
   and the renderer declines to rule on any
   prove count other than the calibrated one. On this axis the only lever is to
   recalibrate the floor at the count you want to use, and then move
-  `CALIBRATED_PROVES_PER_REP` and the CI default together.
+  `calibratedProvesPerRep` and the CI default together.
 - **Below six repetitions there is no verdict at all,** which is why the 4-reps
-  row above is 0%. `MIN_REPS_FOR_SIGN_TEST` is pinned to the calibrated
+  row above is 0%. The sign-test repetition floor is pinned to the calibrated
   repetition count, and the reason is that both legs of the rule weaken together
   below it, not just the sign test:
 
@@ -336,7 +337,7 @@ six calibration runs of identical binaries, on a (busy) developer laptop:
 These three numbers, and the +1.19% positional penalty below, come from a
 one-off session on a laptop; the raw series is not in the repo, so unlike every
 other figure on this page they cannot be reproduced by running a script here.
-That is the whole reason `THRESHOLD_PROVISIONAL` is still `true` — the runbook at
+That is the whole reason `thresholdProvisional` matters — the runbook at
 the top of this page replaces them with measurements from the actual runner. Treat
 them as the reason the design is shaped this way, not as the calibration.
 
@@ -420,7 +421,7 @@ Three further corrections, also measured:
   wins — an uncalibrated floor means no verdict at all, while the imbalance only
   costs power. So an odd `--proves` is not an improvement that can be adopted on
   its own: it needs a recalibration at the new retained count, moving
-  `CALIBRATED_PROVES_PER_REP` and the producer default in the same change. Until
+  `calibratedProvesPerRep` and the producer default in the same change. Until
   then the default `--proves 4` is the only configuration that both runs and
   rules.
 
@@ -738,8 +739,9 @@ collecting the 20–30 runs below and setting the threshold; leaving the
 laptop-derived number in place indefinitely is the failure mode to avoid, not a
 safe default.
 
-Set `THRESHOLD_PCT` in `.github/scripts/render-bench-comment.mjs` to the
-measured value and flip `THRESHOLD_PROVISIONAL` to `false`. Record the date, the
+Set `thresholdPct` in `.github/scripts/bench-profile.mjs` to the measured
+value and flip `thresholdProvisional` to `false` — that file is the only one a
+re-calibration needs to touch. Record the date, the
 runner label, the `reps` × `proves` configuration, the sample count and the
 measured σ in the commit message so the next person can tell whether the number
 has gone stale.
@@ -768,7 +770,7 @@ moment it lands on the default branch, and has no effect at all while it sits in
 a PR. Two consequences worth knowing before you change either half:
 
 - **A PR targeting `next` is judged by `main`'s renderer.** Editing
-  `THRESHOLD_PCT` on `next` changes nothing until `next` reaches `main`. Verify
+  `thresholdPct` on `next` changes nothing until `next` reaches `main`. Verify
   a
   renderer change by dispatching the reporter, not by reading the diff on your
   branch.
