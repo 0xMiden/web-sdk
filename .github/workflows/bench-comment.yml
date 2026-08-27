@@ -1,0 +1,1249 @@
+# Trusted half of the proving-benchmark bot.
+#
+# A `workflow_run` workflow always executes the copy of this file on the
+# DEFAULT branch, in the default branch's context, with a read/write
+# GITHUB_TOKEN. A fork cannot influence it, because a fork's edits to
+# .github/workflows/* live only on the PR head — which this workflow never
+# reads. That is the whole point: `bench.yml` runs untrusted code with no
+# credentials and produces data; this job holds credentials and runs only
+# first-party code.
+#
+# Consequences worth remembering:
+#   - This workflow CANNOT be tested from the PR that introduces it. It only
+#     fires once it is on the default branch. Use the workflow_dispatch input
+#     below to smoke-test it against a completed bench run.
+#   - Its runs do not appear in the PR's Checks tab (they are attributed to the
+#     default branch). The sticky comment and the check run created here are
+#     the only PR-visible surfaces.
+#
+# !! `workflows:` below matches bench.yml by its `name:` field, not by
+# !! filename. Renaming that workflow silently disables this one.
+name: Proving Benchmark Comment
+
+on:
+  workflow_run:
+    workflows: ["Proving Benchmark"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Bench run id to re-render (smoke test)"
+        required: true
+        type: string
+
+# Every path that declines to post records a cause, which surfaces on a neutral
+# "Proving Benchmark" check run on the head commit. docs/benchmarks/troubleshooting.md
+# maps those messages to what to do about them; keep the two in step when adding a
+# new decline path.
+
+permissions:
+  # Required to download an artifact belonging to a different workflow run.
+  actions: read
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  # One group per head commit, so no reporter can ever displace another and no
+  # two can interleave on the same comment.
+  #
+  # Do not group by branch, whichever way `cancel-in-progress` is set: GitHub keeps
+  # at most one running and one PENDING run per group and cancels the pending one
+  # when a newer run queues, so `false` still drops the middle reporters of a
+  # burst, and `true` cancels across the two open PRs that can share one fork
+  # branch. Keying on the head sha avoids both.
+  #
+  # Keyed on the HEAD SHA rather than the bench run id, because the sha is what
+  # identifies the thing being mutated. Two reporters can exist for one sha
+  # without sharing a run id — `workflow_run: completed` fires once per ATTEMPT,
+  # so `Re-run all jobs` gives two, and `pull_request: reopened` starts a whole
+  # second bench run — and both then read-modify-write the same sticky comment
+  # and the same check run. The check-run writers reconcile on the check name,
+  # but `marocchino/sticky-pull-request-comment` searches for its header and
+  # CREATES when it finds none, so two that interleave before either has posted
+  # both create, and the PR keeps a duplicate benchmark comment permanently.
+  # Under this group they serialize and the second one updates the first's.
+  #
+  # A burst of pushes still does not lose reports, which is what ruled out
+  # keying by branch: each push is a different sha and therefore a different
+  # group. Only same-sha reporters queue, and GitHub's one-pending-per-group
+  # limit can drop a middle one of three — harmless, since all three report on
+  # the same commit and whichever survives publishes a valid report for it.
+  #
+  # `head_repository.full_name` is in the key so a fork cannot land in the base
+  # repo's group by pushing a commit with a colliding sha prefix; both fields
+  # come from the trusted `workflow_run` payload, not from the artifact.
+  #
+  # Ordering still is not what keeps stale numbers off the PR — a superseded
+  # bench run reaches this workflow too, since bench.yml uploads with
+  # `if: always()` and this trigger has no conclusion filter. That is
+  # `Verify PR identity` declining any report whose head sha is no longer the
+  # PR's, plus the pre-write re-check.
+  group: bench-comment-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_sha || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    name: Post benchmark comparison
+    # The bench workflow also runs on non-PR events in future; only act on PRs.
+    # `conclusion != 'skipped'` is load-bearing, not defensive. bench.yml skips its
+    # job on draft PRs, and on the title and body edits that share the `edited`
+    # event it needs for retargeting. A workflow whose only job is skipped COMPLETES
+    # and still fires `workflow_run` — unlike a `paths-ignore` match, which never
+    # creates a run at all. Without this, every PR title edit produced a reporter
+    # that found no artifact and published "the benchmark run produced no usable
+    # report". A failed or cancelled bench must still reach here, since reporting
+    # that is the point; only a skipped one has nothing to say.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion != 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Deliberately a bare checkout, which resolves to `github.ref`. On the
+      # `workflow_run` path that is the DEFAULT branch — the same first-party
+      # code this workflow already runs from — and PR code is unreachable: the
+      # ref belongs to this repo, not to the fork.
+      #
+      # On the `workflow_dispatch` path it is instead whichever branch the
+      # dispatcher chose, so this job can run a branch's renderer under a write
+      # token. That is the point of the dispatch input (this workflow cannot be
+      # tested from the PR that introduces it) and it is not a fork-reachable
+      # path: dispatching requires write access to this repository. Worth knowing
+      # rather than assuming the default branch on both paths.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve bench run id
+        id: run
+        shell: bash
+        env:
+          DISPATCH_RUN_ID: ${{ inputs.run_id }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          run_id="${DISPATCH_RUN_ID:-$EVENT_RUN_ID}"
+          # Digits only, and bounded. The dispatch input is a free-form string:
+          # unvalidated, a newline in it injects further step outputs through
+          # $GITHUB_OUTPUT, and the value goes on to be interpolated into a URL
+          # and an API call. `[[ =~ ]]` rather than grep because grep matches
+          # per line and would accept a multi-line value.
+          if [[ ! "$run_id" =~ ^[0-9]{1,20}$ ]]; then
+            echo "::error title=Proving Benchmark::Not a run id."
+            exit 1
+          fi
+          echo "id=$run_id" >> "$GITHUB_OUTPUT"
+
+      # `actions/download-artifact` is deliberately NOT used here. It bundles an
+      # unzip-stream whose path guard strips only a LEADING `../`, so an entry
+      # named `x/../../y` escapes the extraction directory wherever that
+      # directory is — including onto $GITHUB_EVENT_PATH and onto the staged
+      # code under work/_actions that the steps below execute with a write
+      # token. See the header of extract-bench-artifact.sh for the full account.
+      #
+      # Fetching the zip ourselves also lets the artifact be REFUSED BY SIZE
+      # before a byte of it is written to disk, which downloading it cannot.
+      # `continue-on-error`: this is the one step whose failure had nothing to do
+      # with the pull request and still turned the DEFAULT BRANCH red. `retries`
+      # below covers 5xx and 429 but nothing else, so an exhausted retry, a 404
+      # on a deleted run, or a permissions 403 failed the job — an outage nobody
+      # in the PR caused, reported as a broken `main`. The fallback check run
+      # already carries a message for exactly this state (`FETCH_OUTCOME ==
+      # 'failure'`), which was unreachable while the step could abort the job.
+      - name: Fetch the benchmark artifact
+        id: fetch
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          BENCH_RUN_ID: ${{ steps.run.outputs.id }}
+          ZIP_PATH: ${{ runner.temp }}/bench-report.zip
+          # Compressed. The real artifact is tens of KB; this is generous
+          # headroom that still refuses a zip bomb before it lands.
+          MAX_ZIP_BYTES: 2097152
+        with:
+          # github-script defaults retries to 0, so a single GitHub 5xx fails the
+          # step — and on the trusted side that reddens the default branch over an
+          # outage nobody in the PR caused.
+          #
+          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
+          # limit, which GitHub reports as 403 and which the action exempts by
+          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
+          # worse than leaving it: @octokit/plugin-retry backs off
+          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
+          # `Retry-After` entirely, while GitHub requires waiting at least the
+          # advertised interval for a secondary limit. So the retries would fire
+          # inside the required wait, likely escalate the block, and still
+          # exhaust; and every permanent permissions 403 would burn 14s first.
+          # The steps that must not fail over a rate limit instead catch and
+          # decline (see `refuseAsOutage` and the fallback check run).
+          retries: 3
+          script: |
+            const fs = require('fs');
+
+            const run_id = Number(process.env.BENCH_RUN_ID);
+            // Paginated AND name-filtered. bench.yml runs fork-authored code on
+            // the PR head, so the artifact list is attacker-populated: a run that
+            // uploads more than a hundred artifacts pushed proving-bench-report
+            // off the single page this read, after which the reporter announced
+            // "no usable report" for a run that had produced one. The `name`
+            // filter is a server-side match; paginate covers an octokit build
+            // that does not forward it.
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id,
+                name: 'proving-bench-report',
+                per_page: 100,
+              },
+            );
+            const artifact = artifacts.find(
+              (a) => a.name === 'proving-bench-report',
+            );
+            // Each decline records a REASON as an output, not just a log line.
+            // All three leave `fetched` unset while the step still succeeds, so
+            // the fallback comment used to infer a cause — and inferred the same
+            // one for all three: "the bench job failed, was cancelled, or
+            // uploaded nothing readable". For the oversize case, which is the one
+            // a PR author can actually trigger and act on since their own
+            // producer writes the artifact, every clause of that sentence is
+            // false. Every other decline path in this file sets its cause
+            // explicitly rather than letting a later step guess; these were the
+            // exceptions.
+            const decline = (reason) => {
+              core.notice(reason);
+              core.setOutput('skip_reason', reason);
+            };
+            if (!artifact) {
+              decline(`Run ${run_id} uploaded no \`proving-bench-report\` artifact, so there is nothing to report on.`);
+              return;
+            }
+            if (artifact.expired) {
+              decline(`The benchmark artifact on run ${run_id} has expired, so the report can no longer be retrieved. Re-run the benchmark to get a fresh one.`);
+              return;
+            }
+            const max = Number(process.env.MAX_ZIP_BYTES);
+            if (artifact.size_in_bytes > max) {
+              decline(`The benchmark artifact on run ${run_id} is ${artifact.size_in_bytes} compressed bytes, over the ${max}-byte limit the reporter will download, so it was not fetched.`);
+              return;
+            }
+
+            const zip = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact.id,
+              archive_format: 'zip',
+            });
+            fs.writeFileSync(process.env.ZIP_PATH, Buffer.from(zip.data));
+            core.setOutput('fetched', 'true');
+
+      # A missing artifact means the bench job failed or was cancelled. So does
+      # an artifact with no results.json: bench.yml uploads unconditionally, so
+      # a job that died before `Run benchmark` still produces one carrying only
+      # pr.json and ctx.json. Neither is a reason to turn an informational bot
+      # red — say nothing and stop.
+      #
+      # A HOSTILE archive is not a reason either. Confinement is structural: the
+      # extractor runs `unzip -p`, which writes the member to STDOUT and never
+      # touches the filesystem itself, so this side chooses every destination
+      # path. An entry name cannot steer a write, and a member stored as a
+      # symlink cannot be restored as one, because nothing here asks unzip to
+      # create anything.
+      #
+      # Two weaker forms of this are not enough, so do not simplify to either.
+      # Stripping directory components (`unzip -j`) still lets unzip choose what
+      # to create, symlinks included. Inspecting the destination afterwards
+      # cannot work at all: a file that escaped it is by definition not in the
+      # directory being inspected.
+      - name: Extract the report
+        id: report
+        if: steps.fetch.outputs.fetched == 'true'
+        # Same reasoning as the fetch step above. The extractor exits 0 for every
+        # hostile or unusable archive — that is its contract — and reserves a
+        # non-zero exit for bad usage, which here means the zip the previous step
+        # just wrote is gone. That is a runner fault rather than anything the pull
+        # request did, and the fallback check run already reports "no usable
+        # report" for it, so it should not redden the default branch either.
+        continue-on-error: true
+        shell: bash
+        env:
+          ZIP_PATH: ${{ runner.temp }}/bench-report.zip
+          REPORT_DIR: ${{ runner.temp }}/bench-report
+        run: |
+          set -euo pipefail
+          if [ "$(.github/scripts/extract-bench-artifact.sh "$ZIP_PATH" "$REPORT_DIR")" = "usable" ]; then
+            echo "usable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Note that there is no report
+        if: steps.report.outputs.usable != 'true'
+        shell: bash
+        env:
+          # Through env, never interpolated into the script body.
+          RUN_ID: ${{ steps.run.outputs.id }}
+        run: |
+          echo "::notice title=Proving Benchmark::No usable report on run ${RUN_ID}; nothing to post."
+
+      # Everything in the artifact was written by code the PR author controls.
+      # The claimed PR number is cross-checked against fields only GitHub
+      # populates (workflow_run.head_sha, head_repository.full_name); without
+      # that check a fork could forge a number and post under this bot's token
+      # onto somebody else's PR.
+      #
+      # workflow_run.pull_requests is EMPTY for fork PRs, so it is never read.
+      # `continue-on-error`: every refusal inside the script is already non-fatal
+      # by design, but an UNEXPECTED throw — a shape the artifact parser did not
+      # anticipate, a null `pr.head` — escaped all of that, reddened the default
+      # branch, and left the fallback inferring a cause from an unset PR number,
+      # which reads as a forgery accusation aimed at an author who did nothing.
+      - name: Verify PR identity
+        id: pr
+        if: steps.report.outputs.usable == 'true'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          BENCH_RUN_ID: ${{ steps.run.outputs.id }}
+          REPORT_DIR: ${{ runner.temp }}/bench-report
+        with:
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
+          retries: 3
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // Nothing below calls core.setFailed. Every rejection here is either
+            // a fork feeding the bot garbage or an ordinary push landing between
+            // the bench run and this one — bench.yml cancels in progress, so the
+            // race is the common case, not the exception. An informational bot
+            // that goes red on a race is a bot people mute. core.error still
+            // annotates the run, so a real forgery attempt is visible in the log
+            // without failing a default-branch workflow.
+            const refuse = (message) => {
+              core.error(`Proving Benchmark: ${message}`);
+            };
+
+            // For the refusals that are NOT identity failures. Reaching the
+            // fallback with no reason set makes it infer one from what is absent,
+            // and with `PR_NUMBER` unset it lands on "the pull request the report
+            // claimed could not be confirmed" — a forgery accusation. Every path
+            // that declines because GitHub itself was unreachable says so
+            // instead, in the PR, where the author is the one reading it.
+            const refuseAsOutage = (message, prSkipReason) => {
+              refuse(message);
+              core.setOutput('skip_reason', prSkipReason);
+            };
+
+            // The artifact's SHAPE is wrong, as opposed to its claim being
+            // unverifiable. Same reasoning as `refuseAsOutage`: without a reason
+            // the fallback infers "the pull request the report claimed could not
+            // be confirmed", which accuses the author of forging an identity when
+            // what actually happened is that their bench job wrote a pr.json this
+            // reporter cannot parse. Usually a producer bug or a truncated upload,
+            // and the author is the only one who can act on it.
+            const refuseAsMalformed = (message) => {
+              refuse(message);
+              core.setOutput(
+                'skip_reason',
+                'The benchmark run uploaded a report whose PR identity file could ' +
+                  'not be read, so nothing was posted. This is a fault in the ' +
+                  'benchmark run rather than a problem with the pull request — the ' +
+                  'reporter log names the specific field.'
+              );
+            };
+
+            // Same mechanism, different meaning, and worth its own name: these
+            // are refusals where the identity check did its job and the cause is
+            // ordinary. Nothing was forged and nothing is broken — the pull
+            // request simply moved while a run measuring it was still going. The
+            // reason lands on the informational check run, which is where the
+            // author looks when the comment they expected never arrived.
+            const declineWithCause = (message, prSkipReason) => {
+              core.notice(`Proving Benchmark: ${message}`);
+              core.setOutput('skip_reason', prSkipReason);
+            };
+
+            // Every sha this step prints goes through here. The declines below
+            // fire precisely when two shas differ, which is also the shape a
+            // nullish one takes — and a raw `.slice` on it would throw out of a
+            // step whose entire contract is to decline gracefully, turning an
+            // ordinary "the head moved" into a red job on the default branch.
+            const short = (sha) =>
+              typeof sha === 'string' && sha.length > 0 ? sha.slice(0, 7) : 'unknown';
+
+            let claimed;
+            try {
+              claimed = JSON.parse(
+                fs.readFileSync(path.join(process.env.REPORT_DIR, 'pr.json'), 'utf8'),
+              );
+            } catch (error) {
+              refuseAsMalformed(`pr.json missing or malformed: ${error.message}`);
+              return;
+            }
+
+            // JSON.parse accepts bare literals, so `null`, `7`, `"x"` and `[]`
+            // all parse. Reading `.number` off the first of those throws, and
+            // this access is outside the try above — which turned a two-byte
+            // artifact into a red workflow on the default branch, triggerable by
+            // any fork. Shape-check before touching a property.
+            if (claimed === null || typeof claimed !== 'object' || Array.isArray(claimed)) {
+              refuseAsMalformed(`pr.json is not a JSON object (got ${Array.isArray(claimed) ? 'array' : typeof claimed})`);
+              return;
+            }
+
+            // Type-checked before coercion, not just shape-checked. `Number(x)`
+            // and `String(x)` run ToPrimitive, and JSON can carry an object with
+            // an own `toString` that is a string rather than a function — which
+            // makes the coercion throw "Cannot convert object to primitive
+            // value". These coercions are outside every try/catch here, so that
+            // reddened the trusted workflow on demand from any fork. The renderer
+            // guards the same trap on its side.
+            if (typeof claimed.number !== 'number' && typeof claimed.number !== 'string') {
+              refuseAsMalformed(`pr.json number must be a number or a string, got ${Array.isArray(claimed.number) ? 'array' : typeof claimed.number}`);
+              return;
+            }
+            if (claimed.baseSha !== undefined && claimed.baseSha !== null && typeof claimed.baseSha !== 'string') {
+              refuseAsMalformed(`pr.json baseSha must be a string, got ${Array.isArray(claimed.baseSha) ? 'array' : typeof claimed.baseSha}`);
+              return;
+            }
+
+            const number = Number(claimed.number);
+            if (!Number.isInteger(number) || number <= 0 || number > 1e7) {
+              refuseAsMalformed(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
+              return;
+            }
+
+            // The triggering run is in the payload on the workflow_run path. On
+            // workflow_dispatch it is not, but it is still fetchable by id —
+            // fetch it, so both paths get the same cross-check. Skipping the
+            // check on dispatch let anyone who can dispatch this workflow point
+            // it at any run and post that artifact's chosen PR number.
+            let run = context.payload.workflow_run;
+            if (!run) {
+              // Guarded like the other two awaits in this step, which exists to
+              // decline rather than fail: an operator typo or a run past its
+              // retention 404s here, and unguarded that threw straight out of the
+              // script and reddened a default-branch run. Dispatch-only, so not
+              // fork-reachable — but the step's contract is "never fail the
+              // workflow" and one unguarded call is enough to break it.
+              try {
+                const { data } = await github.rest.actions.getWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: Number(process.env.BENCH_RUN_ID),
+                });
+                run = data;
+              } catch (error) {
+                refuseAsOutage(
+                  `Could not fetch bench run ${process.env.BENCH_RUN_ID}: ${error.message}`,
+                  'The reporter could not read the benchmark run it was pointed at, so the report was not posted. This is a fault on the reporting side, not in the pull request.',
+                );
+                return;
+              }
+            }
+            if (run.name !== 'Proving Benchmark') {
+              refuse(`Run ${run.id} is "${run.name}", not a Proving Benchmark run.`);
+              core.setOutput(
+                'skip_reason',
+                'The run this reporter was pointed at is not a Proving Benchmark ' +
+                  'run, so nothing was posted. On a manual dispatch this is usually ' +
+                  'the wrong run id.'
+              );
+              return;
+            }
+
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: number,
+              }));
+            } catch (error) {
+              // Could be either: a number that does not resolve is a forged or
+              // stale artifact, but a 5xx or a secondary rate limit on a number
+              // that is perfectly real gets here too, and this step cannot tell
+              // them apart. The PR-visible wording covers both without accusing
+              // the author of the one it cannot rule out; the log line above has
+              // the status for whoever is triaging.
+              refuseAsOutage(
+                `PR #${number} could not be read: ${error.message}`,
+                `The reporter could not read pull request #${number} from the GitHub API, so the report was not posted. This is a fault on the reporting side, or the pull request no longer exists.`,
+              );
+              return;
+            }
+
+            // Tie the artifact to the run that produced it, using only fields
+            // GitHub populates. Without this a fork could forge a number and
+            // post under this bot's token onto somebody else's PR.
+            //
+            // The residual is narrow and self-inflicted: one fork branch can back
+            // two open PRs (different bases), which share a head sha and head
+            // repo, so an artifact from one can be reported on the other. Both
+            // belong to the same author, so there is nothing to gain.
+            //
+            // `pr.head?.sha`, for the reason the pre-write recheck gives at its
+            // own comparison: `pr.head` is null on a PR whose fork has been
+            // deleted, and an unguarded read threw here. The throw was caught by
+            // `continue-on-error`, but it left no `skip_reason`, so the fallback
+            // inferred a cause from the unset PR number and published the
+            // forgery line at an author who had merely deleted their branch.
+            // Null is a mismatch, which is the right answer: there is no head to
+            // tie the artifact to.
+            if (pr.head?.sha !== run.head_sha) {
+              // The head moved between the bench starting and this reporter
+              // running, which is ordinary: the author pushed. Declining is still
+              // right — these numbers describe a commit that is no longer the head
+              // — but the CAUSE has to be recorded, because a bare refusal here
+              // left `skip_reason` unset and the fallback inferred one from the
+              // unset `PR_NUMBER`, landing on "the pull request the report claimed
+              // could not be confirmed". That accuses the author of forging a
+              // report when all they did was push a commit.
+              //
+              // Not silent, and not inferred: a docs-only follow-up push matches
+              // bench.yml's `paths-ignore` and starts NO replacement run, so
+              // without this the finished measurement disappeared and nothing
+              // anywhere said why. The pre-write recheck further down already
+              // learned this lesson for the head moving mid-render; this is the
+              // same case, caught earlier.
+              declineWithCause(
+                `PR #${number} head ${pr.head?.sha ?? 'none'} != run head ${run.head_sha}`,
+                `The pull request moved to a newer commit (${short(pr.head?.sha)}) ` +
+                  `while the benchmark was running, so these numbers — measured on ` +
+                  `${short(run.head_sha)} — were not posted. Push again, or re-run the ` +
+                  `benchmark workflow, to get a report for the current head.`,
+              );
+              return;
+            }
+            // Compared only when both sides are actually present. `undefined !==
+            // undefined` is false, so two nullish values used to read as a match
+            // and skip this gate entirely — the one gate that ties the claimed PR
+            // to the fork the run came from.
+            const claimedRepo = pr.head.repo?.full_name;
+            const runRepo = run.head_repository?.full_name;
+            if (!claimedRepo || !runRepo || claimedRepo !== runRepo) {
+              // Kept as a hard refusal — this is the gate a forged report would
+              // have to pass — but still given a cause, because the benign way to
+              // reach it is one fork branch backing two open pull requests, and
+              // the author of a legitimate PR should not read an accusation. The
+              // wording states what was checked rather than what was intended.
+              //
+              // Note what this gate does NOT decide: when one commit backs two of
+              // the SAME fork's open PRs on the SAME branch, both satisfy every
+              // trusted predicate here — including the branch check below — and
+              // the artifact picks which one is reported on. That is an author
+              // choosing between their own pull requests, not a report crossing
+              // to someone else's, so it is left as-is; the base-ref
+              // check below is what stops the numbers being read against a base
+              // they were not measured on.
+              refuse('PR head repo does not match the triggering run');
+              core.setOutput(
+                'skip_reason',
+                'The benchmark report named a pull request whose head repository does not ' +
+                  'match the run that produced it, so nothing was posted. This happens when ' +
+                  'one branch backs two open pull requests; re-run the benchmark from the ' +
+                  'pull request you want the report on.',
+              );
+              return;
+            }
+
+            // The last identity field GitHub populates for the run and this
+            // gate was not reading: the branch. Head sha and head repo alone
+            // leave one residual — one fork branch can back two open pull
+            // requests, and two branches in one fork can point at the same
+            // commit — so the artifact's chosen PR number decided which of them
+            // the report landed on. Comparing the ref removes the second case
+            // outright and narrows the first to two PRs on ONE branch, where
+            // GitHub itself offers no field to tell them apart.
+            //
+            // Skipped when the run does not carry a branch, rather than
+            // refusing: `head_branch` is null for some trigger shapes, and a
+            // missing field must not become a refusal on the ordinary path.
+            if (run.head_branch && pr.head?.ref !== run.head_branch) {
+              refuse('PR head branch does not match the triggering run');
+              core.setOutput(
+                'skip_reason',
+                'The benchmark report named a pull request whose head branch does not ' +
+                  'match the branch the run measured, so nothing was posted. Re-run the ' +
+                  'benchmark from the pull request you want the report on.',
+              );
+              return;
+            }
+
+            if (pr.state !== 'open') {
+              core.notice(`PR #${number} is ${pr.state}; skipping comment.`);
+              // Recorded, because returning silently made the fallback infer the
+              // cause from what was NOT set — and with the identity checks all
+              // passed it fell through to "the pull request the report claimed
+              // could not be confirmed", which reads as a forgery attempt. The
+              // identity verified fine; the pull request simply closed inside the
+              // bench window, which happens on any long-running run.
+              core.setOutput(
+                'skip_reason',
+                `The pull request was ${pr.state} before the benchmark report was ready, so no comment was posted.`,
+              );
+              return;
+            }
+
+            // The comment links this as "Base commit", so a fork choosing it
+            // freely can attribute its numbers to a commit that was never
+            // measured — or to one from an unrelated branch, which reads as this
+            // repo vouching for a comparison it never made. There IS a trusted
+            // check available: the sha has to exist in THIS repository and be
+            // reachable from the PR's base branch. That does not prove it is the
+            // exact merge-base (the base branch can move between the bench run
+            // and this one, so an equality check would produce false refusals),
+            // but it does confine the value to real history behind the base ref.
+            //
+            // Deliberately not tightened further to "at or after the merge-base",
+            // which would additionally exclude an arbitrarily OLD ancestor. It
+            // costs another API call and another decline path in the file where
+            // decline paths have been the recurring defect, and it buys little: a
+            // fork already authors every NUMBER in the comment, so misattributing
+            // the base adds no capability it does not already have. The comment
+            // carries "informational only and never blocks merge" for this reason.
+            // Revisit if the report ever gates anything.
+            const claimedBase = String(claimed.baseSha ?? '');
+            if (!/^[0-9a-f]{7,40}$/.test(claimedBase)) {
+              refuseAsMalformed(`Artifact baseSha is not a lowercase commit sha: ${JSON.stringify(claimed.baseSha)}`);
+              return;
+            }
+            try {
+              const { data: cmp } = await github.rest.repos.compareCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                base: claimedBase,
+                head: pr.base.ref,
+              });
+              // 'identical' when the base ref is still exactly there, 'ahead'
+              // when it has moved on since. 'behind' or 'diverged' means the
+              // claimed commit is not in the base branch's history at all.
+              if (cmp.status !== 'identical' && cmp.status !== 'ahead') {
+                // The ordinary way here is a RETARGET: the PR was moved from one
+                // base to another (this repo moves PRs between `main` and `next`)
+                // after the bench measured against the old one. The measurement
+                // is genuinely unusable, since it compared against a base that is
+                // not in this PR's history any more — but the author needs to be
+                // told that, not left with the fallback's inferred "could not be
+                // confirmed", which reads as a forged report.
+                declineWithCause(
+                  `Artifact baseSha ${claimedBase} is not reachable from ${pr.base.ref} (${cmp.status})`,
+                  `The benchmark measured against ${short(claimedBase)}, which is not in ` +
+                    `\`${pr.base.ref}\`'s history — most likely the pull request was retargeted ` +
+                    `after the run started. Push again, or re-run the benchmark workflow, to ` +
+                    `measure against the current base.`,
+                );
+                return;
+              }
+            } catch (error) {
+              // Same ambiguity as the `pulls.get` above: an unresolvable commit is
+              // a forged baseSha, but `compareCommits` also 5xxes on real ones.
+              refuseAsOutage(
+                `Artifact baseSha ${claimedBase} could not be resolved in this repository: ${error.message}`,
+                'The reporter could not verify the base commit the benchmark measured against, so the report was not posted.',
+              );
+              return;
+            }
+
+            core.setOutput('number', String(number));
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', claimedBase);
+
+      # Rendered HERE, in trusted code, from structured JSON. The untrusted job
+      # never supplies markdown: benchmark names are fork-controlled, and
+      # rendering fork-authored markdown under a write token would allow
+      # mention storms, hidden HTML, and fake authority ("security review
+      # passed"). The renderer sanitizes every interpolated string.
+      - name: Render comment body
+        id: render
+        if: steps.pr.outputs.number
+        shell: bash
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          RUN_ID: ${{ steps.run.outputs.id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
+          REPORT_DIR: ${{ runner.temp }}/bench-report
+          # Written to scratch space, not the workspace, so the checkout this
+          # trusted job executes from stays exactly as actions/checkout left it.
+          BODY_PATH: ${{ runner.temp }}/body.md
+        run: |
+          set -euo pipefail
+          # The rendering context is rebuilt entirely from values this job
+          # obtained itself — the artifact supplies measurements and nothing
+          # else. baseSha reaches here as a step output only after `Verify PR
+          # identity` has confirmed it is a real commit reachable from the PR's
+          # base branch, so this step has no artifact-derived string left to
+          # validate.
+          base_sha="$BASE_SHA"
+          # calibration is false by definition here: this job only ever posts on
+          # a pull_request-triggered bench run, and a calibration run has no PR.
+          jq -n \
+            --arg owner "$OWNER" \
+            --arg repo "$REPO_NAME" \
+            --arg headSha "$HEAD_SHA" \
+            --arg baseSha "$base_sha" \
+            --arg baseRef "$BASE_REF" \
+            --arg runId "$RUN_ID" \
+            --arg runUrl "$RUN_URL" \
+            '{owner: $owner, repo: $repo, headSha: $headSha, baseSha: $baseSha, baseRef: $baseRef, runId: $runId, runUrl: $runUrl, calibration: false}' \
+            > "$RUNNER_TEMP/ctx.json"
+          # A results.json the renderer rejects is a fork feeding the bot
+          # garbage. Report nothing rather than turning a default-branch
+          # workflow red over a payload the PR author chose.
+          #
+          # Exit 3 is the renderer saying the fault is ITS OWN — a bug in
+          # first-party code, or the environment it runs in — and that has to be
+          # loud. Collapsing both into one silent notice is how a renderer that
+          # crashes on every input disables benchmark reporting repo-wide while
+          # this workflow keeps reporting success.
+          set +e
+          node .github/scripts/render-bench-comment.mjs \
+            "$REPORT_DIR/results.json" \
+            "$RUNNER_TEMP/ctx.json" \
+            > "$BODY_PATH"
+          render_rc=$?
+          set -e
+          # 64 is the renderer's only "the artifact is bad" code. Everything else
+          # nonzero is ours — including node's own exit 1 from a module that fails
+          # to load, which never reaches the renderer's error handling at all.
+          # Branching the other way round (quiet on everything but 3) is what let
+          # a first-party breakage masquerade as a hostile fork.
+          if [ "$render_rc" -ne 0 ] && [ "$render_rc" -ne 64 ]; then
+            echo "::error title=Proving Benchmark::The comment renderer failed on its own code path (exit ${render_rc}), not on the artifact. This is a bug in .github/scripts/render-bench-comment.mjs or its environment."
+            echo "reason=The comment renderer failed on its own code path, not on the benchmark report. This is a fault on the reporting side, not in the pull request." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          if [ "$render_rc" -ne 0 ]; then
+            echo "::notice title=Proving Benchmark::Report could not be rendered (exit ${render_rc}); nothing to post."
+            echo "reason=The benchmark report was rejected by the comment renderer, so nothing was posted." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Rendered $(wc -c < "$BODY_PATH") bytes"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      # Identity was checked before rendering, and rendering is not instant. The
+      # reporter group is keyed per head sha, so reporters for DIFFERENT commits
+      # do not serialize against each other — which means a newer push's reporter
+      # can finish and post while this one is still rendering, and then this one
+      # overwrites the newer numbers, because both write the same sticky header.
+      # Re-sampling the head immediately before the write closes the window to the
+      # API round-trip.
+      #
+      # Not a lock, and not claimed to be one: two reporters can both pass this
+      # and race. It removes the case that actually happens (a push during a
+      # render) rather than the theoretical one.
+      # `continue-on-error`: an informational bot must not redden the default
+      # branch over anything a fork or an outage can cause, so every step that
+      # can fail that way carries this. The one deliberate exception is `Render
+      # comment body`'s internal-error path, which exits 1 precisely because a
+      # first-party breakage SHOULD be loud. Its failure mode here is also the
+      # worst of the set — a rendered report already in hand, then a hard failure
+      # skipping the write AND the fallback that explains the silence.
+      - name: Re-check the PR head before writing
+        id: recheck
+        if: steps.render.outputs.ok == 'true'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        with:
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
+          retries: 3
+          script: |
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(process.env.PR_NUMBER),
+              }));
+            } catch (error) {
+              // An outage here must not redden the default branch, and must not
+              // post either — an unverified head is exactly what this step
+              // exists to catch. Declining is the safe direction, and the
+              // fallback check below reports that nothing was posted.
+              core.warning(`Could not re-read PR #${process.env.PR_NUMBER} before posting: ${error.message}`);
+              core.setOutput('stale', 'true');
+              core.setOutput('reason', 'The reporter could not confirm the pull request was still at the benchmarked commit, so it declined to post. This is a fault on the reporting side, not in the pull request.');
+              return;
+            }
+            // Same guard as in `Verify PR identity`, and needed for the same
+            // reason: this branch is entered when two shas differ, which
+            // includes one of them being nullish, and a raw `.slice` would throw
+            // out of a step whose whole job is to decline without reddening the
+            // default branch.
+            const short = (sha) =>
+              typeof sha === 'string' && sha.length > 0 ? sha.slice(0, 7) : 'unknown';
+            // `pr.head?.sha`, because `pr.head` is null on a PR whose fork was
+            // deleted mid-flight. A raw `.sha` threw a TypeError out of a step
+            // that exists to decline gracefully.
+            if (pr.head?.sha !== process.env.HEAD_SHA) {
+              core.notice(
+                `PR #${process.env.PR_NUMBER} moved to ${short(pr.head?.sha)} while this report was rendering; ` +
+                  `not posting numbers for ${short(process.env.HEAD_SHA)}.`,
+              );
+              core.setOutput('stale', 'true');
+              // A reason IS set here, and the earlier decision not to set one was
+              // wrong twice over. It assumed the fallback check would overwrite
+              // the newer reporter's report because the two share a check name —
+              // but the fallback writes to workflow_run.head_sha, this run's OLD
+              // commit, while the newer reporter writes to the new one, so they
+              // land on different commits and cannot collide. It also assumed a
+              // newer reporter is always coming, which is false whenever the push
+              // that moved the head matched bench.yml's paths-ignore (a docs-only
+              // follow-up starts no bench run at all) or the newer bench run
+              // fails. In those cases a complete, already-rendered measurement
+              // vanished with nothing anywhere saying so.
+              core.setOutput(
+                'reason',
+                `The pull request moved to a newer commit (${short(pr.head?.sha)}) while this report was rendering, so these numbers — measured on ${short(process.env.HEAD_SHA)} — were not posted. If a benchmark ran for the newer commit its report will appear separately.`,
+              );
+              return;
+            }
+            core.setOutput('stale', 'false');
+
+      # `continue-on-error`: the PR was open when `Verify PR identity` sampled
+      # it, and the bench job it reports on can run for up to the job cap of 180
+      # minutes. In that
+      # window the PR can be locked or closed, which makes createComment 403.
+      # Every rejection upstream of here was made non-fatal on purpose; losing
+      # that at the last step would put the informational bot back in the
+      # business of turning the default branch red.
+      - name: Post sticky comment
+        id: comment
+        # `stale == 'false'`, not `!= 'true'`. With the re-check now
+        # continue-on-error, a hard failure there leaves the output unset, and the
+        # negative form reads an unset output as permission to post the very
+        # numbers the re-check failed to confirm.
+        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale == 'false'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
+        with:
+          # Distinct from the `linked-client-pr` header used by
+          # inject-linked-client-pr, so the two bots never clobber each other.
+          header: proving-benchmark
+          number: ${{ steps.pr.outputs.number }}
+          path: ${{ runner.temp }}/body.md
+
+      # `neutral` never blocks merge, which is the stated requirement. It also
+      # keeps the result out of the conversation timeline for people who would
+      # rather read it in the Checks tab.
+      - name: Publish neutral check run
+        id: checkrun
+        # `stale == 'false'` for the same reason as the comment step above.
+        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale == 'false'
+        # The script's own try/catch covers the writes and records `published`,
+        # but `readFileSync` above it is outside that catch — so a scratch-space
+        # read failure threw past it and reddened the default branch, which is
+        # exactly what the catch exists to prevent. The fallback keys on the
+        # absence of `published == 'true'`, so an unset output reports the same
+        # as an explicit `false`.
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
+          BODY_PATH: ${{ runner.temp }}/body.md
+          # This step is the reason a failed comment is not a lost report: the
+          # check run carries the same body. It reports that failure itself
+          # rather than leaving it to the fallback step, which would have to
+          # overwrite THIS check run — and its report — to say so.
+          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+        with:
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
+          retries: 3
+          script: |
+            const fs = require('fs');
+            // check-run output.summary is capped at 65535 chars; the renderer
+            // caps the comment body at 60000, so it always fits. No slicing
+            // here — a second, unannounced truncation would be the only place
+            // in this pipeline that drops content silently.
+            const report = fs.readFileSync(process.env.BODY_PATH, 'utf8');
+            const commentFailed = process.env.COMMENT_OUTCOME === 'failure';
+            const summary = commentFailed
+              ? [
+                  '> **This report could not be posted as a pull request comment.**',
+                  '> The pull request may have been closed or locked while the benchmark was running.',
+                  '> The full report follows.',
+                  '',
+                  report,
+                ].join('\n')
+              : report;
+            const head_sha = process.env.HEAD_SHA;
+            const name = 'Proving Benchmark';
+            const body = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name,
+              head_sha,
+              status: 'completed',
+              conclusion: 'neutral',
+              details_url: process.env.RUN_URL,
+              // Machine-readable "this check carries real measurements". The
+              // fallback below shares this check's NAME on purpose, so without a
+              // marker it could not tell a rendered report from its own notice —
+              // and a second attempt at the same commit that found no usable
+              // artifact would silently downgrade this one. Read, never written,
+              // by the fallback.
+              external_id: 'proving-benchmark:report',
+              output: {
+                title: commentFailed
+                  ? 'Proving benchmark (comment could not be posted)'
+                  : 'Proving benchmark (informational)',
+                summary,
+              },
+            };
+
+            // Update in place rather than stacking a second check run on the
+            // same commit. Re-rendering happens routinely — a dispatch smoke
+            // test, or a bench re-run for one head — and the Checks tab shows
+            // every created run, so `create` alone reads as N conflicting
+            // benchmark results for one commit.
+            //
+            // Read-modify-write, and not atomic: the concurrency group above
+            // serializes the workflow_run path, but a manual dispatch keys
+            // differently and can race it. The worst outcome is the duplicate
+            // check run this is trying to avoid, which is why it is not worth a
+            // lock, and the concurrency group above does not supply one either:
+            // it is keyed per head sha, which serializes same-sha reporters but
+            // says nothing about a manual dispatch or a reporter for a DIFFERENT
+            // sha writing a check run to this same commit. Reconciling on the
+            // check name is what keeps either from stacking two benchmark results
+            // on one commit.
+            //
+            // The whole block is best-effort. A head commit can be GC'd out from
+            // under us — the fork branch is deleted while the bench is still
+            // running — and `checks.create` then 422s on a sha that no longer
+            // resolves. The comment is the surface that matters; failing the
+            // reporter over the secondary one is not a trade worth making.
+            try {
+              const { data: existing } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: head_sha,
+                check_name: name,
+                per_page: 100,
+              });
+              const mine = existing.check_runs.find(
+                (run) => run.app?.slug === 'github-actions',
+              );
+              if (mine) {
+                // Explicit payload: PATCH check-runs does not take `head_sha`,
+                // and spreading the create body would send it.
+                await github.rest.checks.update({
+                  owner: body.owner,
+                  repo: body.repo,
+                  check_run_id: mine.id,
+                  name: body.name,
+                  status: body.status,
+                  conclusion: body.conclusion,
+                  details_url: body.details_url,
+                  // Carried on the update too: this path is how the fallback's
+                  // unmarked notice gets replaced by a real report, and without
+                  // the marker the next attempt could downgrade it again.
+                  external_id: body.external_id,
+                  output: body.output,
+                });
+              } else {
+                await github.rest.checks.create(body);
+              }
+              core.setOutput('published', 'true');
+            } catch (error) {
+              // Recorded as an output, not only as a warning. `Post sticky
+              // comment` is continue-on-error and this catch exists for the same
+              // reason — an outage must not redden the default branch. But when
+              // BOTH writes fail, which one secondary rate limit does to every
+              // call in this job, a fully rendered report used to disappear with
+              // the job green and the only trace a warning annotation on a
+              // default-branch run the pull request does not link to. The
+              // fallback step below keys on this output.
+              core.setOutput('published', 'false');
+              core.warning(`Could not publish the benchmark check run: ${error.message}`);
+            }
+
+      # Every refusal upstream of here is deliberately silent on the PR, and the
+      # sum of those silences is a bot that is indistinguishable from a broken
+      # one. A PR author who sees no benchmark comment cannot tell whether the
+      # bench job died, the artifact was rejected, the schema drifted, or the
+      # feature was turned off — and the workflow logs that hold the answer are
+      # on the default branch's run, which is not linked from their PR.
+      #
+      # So: one neutral check run saying nothing was posted and pointing at the
+      # log. Neutral, so it still never blocks a merge.
+      #
+      # Only first-party strings reach the summary. The artifact supplies no part
+      # of it, which is why this can run on paths where the artifact was refused
+      # as hostile.
+      - name: Report that nothing was posted
+        # Also fires when a report rendered fine but the pre-write head re-check
+        # could not confirm the PR — that step declines rather than posting, and
+        # without this clause a rendered-but-unposted report left no trace at all.
+        # That includes the case where the head simply MOVED. It used to be
+        # excluded, on the reasoning that a newer reporter was already on its way
+        # and this check shares its name so the stand-down would overwrite it.
+        # Both halves were wrong: the write below targets
+        # `github.event.workflow_run.head_sha`, this run's OLD commit, while a
+        # newer reporter targets the new one, so they cannot collide — and no
+        # newer reporter is guaranteed, because the push that moved the head may
+        # have matched this workflow's `paths-ignore` or its bench run may fail.
+        # Also fires when the check-run write itself failed, which is the only
+        # state a rendered report could otherwise vanish from silently.
+        #
+        # Both conditions are written as "did NOT affirmatively succeed" rather than
+        # as a list of the ways they can fail. Enumerating outcomes kept missing
+        # one: `published == 'false'` alone missed a hard failure that never
+        # reached `core.setOutput` (leaving the empty string), and adding
+        # `outcome == 'failure'` still missed `cancelled`, where a rendered report
+        # would have gone unposted and unexplained. The write steps gate on
+        # `stale == 'false'` for the same reason, so the two are exact
+        # complements: anything that stops them posting reaches this.
+        if: >-
+          always() && steps.run.outputs.id != '' &&
+          (steps.render.outputs.ok != 'true'
+           || steps.recheck.outputs.stale != 'false'
+           || steps.checkrun.outputs.published != 'true')
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          # workflow_run.head_sha, not the artifact's claim: this path is reached
+          # precisely when the artifact could not be trusted or parsed.
+          # workflow_run.head_sha first, then the identity step's. A manual
+          # dispatch has no workflow_run, so the annotation had nowhere to go and
+          # a dispatch that identified a PR and then failed to post left neither
+          # a report nor a notice — silent on the one path a maintainer runs
+          # deliberately to check this workflow works.
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || steps.pr.outputs.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT_USABLE: ${{ steps.report.outputs.usable }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RENDER_REASON: ${{ steps.render.outputs.reason }}
+          RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
+          RECHECK_STALE: ${{ steps.recheck.outputs.stale }}
+          RENDER_OK: ${{ steps.render.outputs.ok }}
+          REPORT_OUTCOME: ${{ steps.report.outcome }}
+          PR_SKIP_REASON: ${{ steps.pr.outputs.skip_reason }}
+          FETCH_OUTCOME: ${{ steps.fetch.outcome }}
+          FETCH_SKIP_REASON: ${{ steps.fetch.outputs.skip_reason }}
+          CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
+          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+          PR_OUTCOME: ${{ steps.pr.outcome }}
+        with:
+          # 5xx and 429 only, and deliberately not 403. See the `Fetch the
+          # benchmark artifact` step for why reaching secondary rate limits this
+          # way is worse than not reaching them.
+          retries: 3
+          script: |
+            const head_sha = process.env.HEAD_SHA;
+            if (!head_sha) {
+              // A warning, not info: manual dispatch is the only way to smoke-test
+              // this workflow, and `core.info` produces no annotation — so on the
+              // one path a maintainer exercises deliberately, a reporter that
+              // failed said nothing in the run's annotation list. Carries the
+              // reason for the same reason.
+              const why =
+                process.env.RENDER_REASON ||
+                process.env.RECHECK_REASON ||
+                'no reason recorded';
+              core.warning(
+                `No head sha from either the workflow_run event or the identity step, ` +
+                  `so there is no commit to annotate and nothing was posted. Reason: ${why}`,
+              );
+              return;
+            }
+
+            // Prefer the reason the failing step recorded over inferring one from
+            // step outputs. Inference cannot tell a renderer refusal apart from a
+            // renderer bug, and naming the wrong cause is worse than naming a
+            // vague one.
+            const reason =
+              // Branched on the comment's own outcome. A single hardcoded "neither
+              // could be written" was published verbatim on runs where the sticky
+              // comment HAD posted — the check-run write can fail transiently and
+              // the fallback's own write succeed seconds later — so the pull
+              // request showed the numbers in one surface and "nothing was
+              // posted" in the other, each contradicting the other.
+              // Keyed on the ABSENT confirmation, not on a list of outcomes, for
+              // the same reason as the re-check branch below and matching the step
+              // condition that let this run at all. `published` is set from inside
+              // the step's own try, so a throw leaves it empty and a cancellation
+              // leaves it empty with an outcome in neither list — both dropped
+              // through to a catch-all that reported nothing was published while
+              // the sticky comment sat on the PR saying otherwise.
+              //
+              // Gated on the writers having been reached, because `published` is
+              // equally empty when the step was skipped for a failed render or an
+              // unconfirmed head — and this arm's wording ("the report rendered")
+              // would be a false claim about both.
+              (process.env.RENDER_OK === 'true' &&
+              process.env.RECHECK_STALE === 'false' &&
+              process.env.CHECKRUN_PUBLISHED !== 'true'
+                ? process.env.COMMENT_OUTCOME === 'success'
+                  ? 'The report is in the pull request comment, but the check run could not be written. This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.'
+                  : `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
+                : '') ||
+              process.env.RECHECK_REASON ||
+              // The re-check neither confirmed nor declined: it threw, or the job
+              // was cancelled, so it set no reason of its own and the branch above
+              // has nothing to report. Keyed on the absent confirmation rather
+              // than on a list of outcomes, matching the step condition. Without
+              // it this fell through to the catch-all, which tells the author to
+              // go read a log to find out why numbers that had already rendered
+              // were never posted.
+              (process.env.RENDER_OK === 'true' &&
+              process.env.RECHECK_STALE !== 'false'
+                ? 'The report rendered, but the reporter could not re-confirm the pull request was still at the benchmarked commit, so it declined to post. This is a fault on the reporting side, not in the pull request.'
+                : '') ||
+              // Ahead of every inference below, and specifically ahead of the
+              // PR_NUMBER one, which reads an unset number as an unverifiable
+              // claim and phrases it as a forgery. A crash in the identity step is
+              // a reporter bug and has to be named as one.
+              // `!== 'success'` and no recorded decline, rather than
+              // `=== 'failure'`: `continue-on-error` converts a throw but not a
+              // cancellation, so a cancelled identity step left this arm silent
+              // and the run reached the PR_NUMBER inference below, which phrases
+              // an unset number as a forged claim. Accusing a fork of forgery
+              // because the reporter was cancelled is the worst line this chain
+              // can publish.
+              ((process.env.PR_OUTCOME !== 'success' &&
+              process.env.PR_OUTCOME !== 'skipped' &&
+              !process.env.PR_SKIP_REASON)
+                ? 'The reporter did not finish confirming which pull request this benchmark belongs to, so nothing was posted. This is a fault on the reporting side, not in the pull request.'
+                : '') ||
+              // Ahead of the PR_NUMBER inference below, which is a guess about
+              // an unset output rather than a recorded cause.
+              process.env.PR_SKIP_REASON ||
+              process.env.RENDER_REASON ||
+              ((process.env.FETCH_OUTCOME !== 'success' &&
+              process.env.FETCH_OUTCOME !== 'skipped' &&
+              !process.env.FETCH_SKIP_REASON)
+                ? 'The reporter could not fetch the benchmark artifact from the GitHub API. This is a fault on the reporting side, not in the pull request.'
+                // Ahead of the REPORT_USABLE inference for the same reason
+                // PR_SKIP_REASON sits ahead of PR_NUMBER: a recorded cause beats
+                // a guess. The three declines that set this all leave the step
+                // successful with `fetched` unset, which the inference below
+                // reads as a failed bench job.
+                : process.env.FETCH_SKIP_REASON ||
+                  // The extractor exits non-zero only for bad usage — the zip the
+                  // previous step wrote is missing, or unzip is absent from the
+                  // runner. Both are reporter faults, and folding them into the
+                  // line below told the author their bench job had failed when it
+                  // had produced a perfectly good artifact.
+                  ((process.env.REPORT_OUTCOME !== 'success' &&
+                  process.env.REPORT_OUTCOME !== 'skipped')
+                    ? 'The reporter could not unpack the benchmark artifact. This is a fault on the reporting side, not in the pull request.'
+                    : process.env.REPORT_USABLE !== 'true'
+                    ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
+                    : !process.env.PR_NUMBER
+                      ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
+                      : 'The benchmark report was not published; the reporter log has the specific reason.'));
+
+            const name = 'Proving Benchmark';
+            const summary = [
+              reason,
+              '',
+              `[Reporter log](${process.env.RUN_URL}) — the specific reason is a notice in the job log.`,
+              '',
+              'This check is informational and never blocks a merge.',
+            ].join('\n');
+            const body = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name,
+              head_sha,
+              status: 'completed',
+              conclusion: 'neutral',
+              details_url: process.env.RUN_URL,
+              output: {
+                // Derived, because the summary above already distinguishes the
+                // case where the sticky comment posted and only the check run
+                // failed. A fixed 'no comment posted' title contradicted that
+                // summary, and the title is the part that shows in the Checks
+                // list without opening it.
+                title:
+                  process.env.COMMENT_OUTCOME === 'success'
+                    ? 'Proving benchmark (check run could not be written)'
+                    : 'Proving benchmark: no comment posted',
+                summary,
+              },
+            };
+
+            // Same read-modify-write as the success path, for the same reason:
+            // a re-run must not stack a second check run on one commit. This
+            // deliberately shares the check NAME with the success path, so a
+            // later successful render replaces this notice instead of sitting
+            // next to it.
+            try {
+              const { data: existing } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: head_sha,
+                check_name: name,
+                per_page: 100,
+              });
+              const mine = existing.check_runs.find(
+                (run) => run.app?.slug === 'github-actions',
+              );
+              // Never downgrade a real report to this notice. Two reporters at
+              // one commit is ordinary: `Re-run all jobs` fires workflow_run
+              // again for the same run id, and `pull_request: reopened` produces
+              // a fresh bench run at an unchanged head. If that second attempt
+              // dies before measuring, `overwrite: true` on the artifact upload
+              // has already replaced the good artifact with an empty one — so
+              // this step would run, find the first attempt's rendered report,
+              // and replace it with "no comment posted" while the sticky comment
+              // still showed the numbers. The two surfaces then contradicted
+              // each other and the artifact behind the link was gone.
+              if (mine && mine.external_id === 'proving-benchmark:report') {
+                core.notice(
+                  `A rendered benchmark report is already published for ${head_sha}; ` +
+                    `leaving it in place. This attempt produced nothing to replace it with. ` +
+                    `Reason: ${reason}`,
+                );
+                return;
+              }
+              if (mine) {
+                await github.rest.checks.update({
+                  owner: body.owner,
+                  repo: body.repo,
+                  check_run_id: mine.id,
+                  name: body.name,
+                  status: body.status,
+                  conclusion: body.conclusion,
+                  details_url: body.details_url,
+                  // `external_id` is deliberately absent, here and in `body`. The
+                  // marker means "a real report is published at this sha", and the
+                  // guard above reads it to refuse to downgrade one. Stamping it
+                  // on this notice would make the next attempt mistake "nothing
+                  // was posted" for a report worth protecting, and no later run
+                  // could ever replace it.
+                  output: body.output,
+                });
+              } else {
+                await github.rest.checks.create(body);
+              }
+            } catch (error) {
+              // Nothing downstream of this step can report for it — it IS the
+              // downstream reporter. A warning on the run is the last surface
+              // left; failing the default-branch job over a GitHub outage would
+              // trade one invisible failure for a red branch.
+              core.warning(`Could not publish the fallback check run: ${error.message}`);
+            }

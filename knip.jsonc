@@ -266,7 +266,11 @@
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
         // Includes verify-release-mt.mjs, invoked directly by the release
-        // WASM job in .github/workflows/test.yml.
+        // WASM job in .github/workflows/test.yml; and the proving benchmark
+        // plus its interleave module, invoked from the Makefile
+        // (`bench-proving`, `bench-proving-calibrate`) and from
+        // .github/workflows/bench.yml, and unit-tested by
+        // scripts/bench-order.test.mjs — none of which knip can follow.
         "scripts/**/*.{js,mjs}",
       ],
       // The `/eager.js`, `./eager.js`, and `./index.js` strings inside
@@ -277,6 +281,9 @@
       // emitted into dist/ by the rollup rust plugin; the .d.ts files
       // in js/types/ reference it but it doesn't exist until after
       // build. Knip can't follow either of these dynamic targets.
+      // The root-absolute `/eager.js` has a second consumer: bench-proving.mjs
+      // serves dist/mt at the root of its own throwaway HTTP server, so its
+      // `page.evaluate` import is root-absolute rather than relative.
       "ignoreUnresolved": [
         "/eager.js",
         "./eager.js",
@@ -304,5 +311,17 @@
       ],
     },
   },
-  "ignore": ["packages/react-sdk/examples/**", "crates/idxdb-store/src/js/**"],
+  "ignore": [
+    "packages/react-sdk/examples/**",
+    "crates/idxdb-store/src/js/**",
+    // Run by hand from docs/benchmarks/calibration.md to regenerate the tables
+    // it quotes — power rates for the first, the truncation-selection table for
+    // the second —
+    // and by a reviewer checking those tables still reproduce. Nothing imports
+    // either, which is the point: they are standalone reproduction scripts, not
+    // part of any build.
+    "docs/benchmarks/verdict-power.mjs",
+    "docs/benchmarks/truncation-selection.mjs",
+    "docs/benchmarks/budget-reachability.mjs",
+  ],
 }
