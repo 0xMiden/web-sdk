@@ -39,7 +39,8 @@ permissions:
   checks: write
 
 concurrency:
-  # One group per triggering bench run, so no reporter can ever displace another.
+  # One group per head commit, so no reporter can ever displace another and no
+  # two can interleave on the same comment.
   #
   # Grouping by branch — the obvious choice, and what this used to do — loses
   # reports, whichever way `cancel-in-progress` is set. GitHub keeps at most one
@@ -47,7 +48,7 @@ concurrency:
   # newer run queues, so `cancel-in-progress: false` does not mean "everything
   # eventually runs": a burst of pushes leaves the middle reporters cancelled
   # without ever starting. And `true` cancels across the two open PRs that can
-  # share one fork branch. Keying on the run id sidesteps both.
+  # share one fork branch. Keying on the head sha sidesteps both.
   #
   # Keyed on the HEAD SHA rather than the bench run id, because the sha is what
   # identifies the thing being mutated. Two reporters can exist for one sha

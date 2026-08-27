@@ -176,7 +176,21 @@ const BUDGET_MARGIN_MS = 90 * 1000;
 // diagnostic rather than to squeeze in one more attempt that a tight deadline
 // would then misreport as a hang.
 const BUDGET_FLOOR_MS = 60 * 1000;
-const MIN_BUDGET_MS = BUDGET_MARGIN_MS + BUDGET_FLOOR_MS;
+// `.toFixed(0)` rounded the accepted minimum of 2.5 to "3" and told the user to
+// raise a budget they had never passed.
+const formatMinutes = (ms) => {
+  const minutes = ms / 60000;
+  return Number.isInteger(minutes) ? String(minutes) : minutes.toFixed(2);
+};
+
+// Working time on top of the two reserves. Without it the accepted minimum was
+// the mathematical boundary — margin plus floor — where the budget is satisfied
+// at t=0 and refused one millisecond later, so the smallest "valid" budget could
+// not launch a browser, let alone measure anything. Three minutes is enough for a
+// launch, a setup and a prove or two on the smallest useful configuration.
+const BUDGET_WORKING_MIN_MS = 3 * 60 * 1000;
+const MIN_BUDGET_MS =
+  BUDGET_MARGIN_MS + BUDGET_FLOOR_MS + BUDGET_WORKING_MIN_MS;
 let BUDGET_MS = null;
 if (budgetMinutesRaw !== null) {
   const value = Number(budgetMinutesRaw);
@@ -194,10 +208,12 @@ if (budgetMinutesRaw !== null) {
   }
   if (ms < MIN_BUDGET_MS) {
     usage(
-      `--budget-minutes must be at least ${(MIN_BUDGET_MS / 60000).toFixed(2)} (got ` +
-        `${budgetMinutesRaw}): the clamp reserves ${BUDGET_MARGIN_MS / 1000}s for the ` +
-        `diagnostic and teardown and never issues a deadline under ` +
-        `${BUDGET_FLOOR_MS / 1000}s, so a smaller budget cannot be honoured.`
+      `--budget-minutes must be at least ${formatMinutes(MIN_BUDGET_MS)} (got ` +
+        `${budgetMinutesRaw}): ${BUDGET_MARGIN_MS / 1000}s is reserved for the ` +
+        `diagnostic and teardown, up to ${BUDGET_FLOOR_MS / 1000}s is held back so the ` +
+        `next step is never started with too little left to finish, and ` +
+        `${BUDGET_WORKING_MIN_MS / 60000} minutes is the least that leaves room to ` +
+        `launch a browser and measure anything.`
     );
   }
   BUDGET_MS = ms;
@@ -657,9 +673,26 @@ const SETTLE_DEADLINE_MS = 30 * 1000;
 // with no cap at all.
 const startedAt = Date.now();
 
+// Distinguishable from a real failure, because the two deserve opposite
+// outcomes: a wedged prover should discard the run, while running out of clock
+// should keep whatever whole repetitions were already measured.
+class BudgetExhaustedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "BudgetExhaustedError";
+  }
+}
+
 const deadlineFor = (ceiling) => {
   if (BUDGET_MS === null) return ceiling;
   const left = BUDGET_MS - (Date.now() - startedAt) - BUDGET_MARGIN_MS;
+  // Scaled to the ceiling being asked for, not to a flat floor. A fixed 60s
+  // floor refused the 30s settle barrier while 149s of wall clock remained,
+  // because the floor was compared against a budget that had already had the 90s
+  // teardown reserve subtracted. Work that needs 30s should be declined when
+  // fewer than 30s remain, not when fewer than 60 do.
+  const need = Math.min(ceiling, BUDGET_FLOOR_MS);
+
   // Refuse rather than floor.
   //
   // This used to hand back `max(FLOOR, min(ceiling, left))`, which meant that
@@ -676,13 +709,14 @@ const deadlineFor = (ceiling) => {
   // and the error says so and names the budget. It costs the same run either way
   // — the runner was going to kill the step — but the diagnostic now points at
   // the budget instead of at the prover.
-  if (left < BUDGET_FLOOR_MS) {
-    throw new Error(
-      `the ${(BUDGET_MS / 60000).toFixed(0)}-minute step budget is exhausted ` +
+  if (left < need) {
+    throw new BudgetExhaustedError(
+      `the ${formatMinutes(BUDGET_MS)}-minute step budget is exhausted ` +
         `(${((Date.now() - startedAt) / 60000).toFixed(1)} min elapsed, ` +
-        `${(BUDGET_MARGIN_MS / 1000).toFixed(0)}s reserved for teardown), so there is not ` +
-        `enough left to attempt the next step; raise --budget-minutes and the ` +
-        `step's timeout-minutes together, or lower --reps / --proves`
+        `${(BUDGET_MARGIN_MS / 1000).toFixed(0)}s reserved for teardown, and the next ` +
+        `step wants up to ${(need / 1000).toFixed(0)}s), so the run is stopping here; ` +
+        `raise --budget-minutes and the step's timeout-minutes together, or lower ` +
+        `--reps / --proves`
     );
   }
   return Math.min(ceiling, left);
@@ -697,7 +731,8 @@ const deadlineFor = (ceiling) => {
 const CLOSE_DEADLINE_MS = 30 * 1000;
 
 // Counts closes that blew their deadline, because abandoning one changes how
-// this process has to exit. See `flushAndExit` at the bottom of the file.
+// this process has to exit. See the `abandonedCloses > 0` block at the very
+// bottom of the file.
 let abandonedCloses = 0;
 
 const withCloseDeadline = (label, closing) => {
@@ -821,6 +856,10 @@ const openSide = async (browser, url, label, repIndex) => {
             what: `${label} rep ${repIndex} settle`,
           });
         } catch (error) {
+          // A budget error is not a page error. Burying it here reported running
+          // out of clock as "the page raised an error", and — worse — lost the
+          // marker the driver uses to keep the repetitions already measured.
+          if (error instanceof BudgetExhaustedError) throw error;
           pageErrors.push(error);
           return pageErrors;
         }
@@ -908,6 +947,9 @@ let browser;
 // into an array nothing read: the summary sits after this block, and unwinding
 // skips it.
 let benchError = null;
+// Set when the run stops early because the step budget ran out, rather than
+// because anything failed. Keeps the completed repetitions.
+let budgetExhausted = null;
 
 /**
  * The single surface for teardown failures. Every recording site pushes and
@@ -1067,9 +1109,24 @@ try {
               : `  (warm: ${warm.map(fmt).join(" ")})`)
         );
       }
+    } catch (error) {
+      // Running out of clock is not a failed benchmark, and it used to be
+      // treated as one: the throw propagated to `benchError`, which is rethrown
+      // upstream of `emitResults()`, so a run that had completed six of seven
+      // repetitions wrote no artifact at all and the reporter posted "no usable
+      // report". Every repetition in `samples` is whole — a repetition is only
+      // pushed after both sides finish, so a mid-repetition stop leaves nothing
+      // partial behind — which makes them worth keeping and reporting on.
+      //
+      // Rethrown for anything else. A wedged prover or a dead worker SHOULD
+      // discard the run.
+      if (!(error instanceof BudgetExhaustedError)) throw error;
+      budgetExhausted = error;
+      console.error(`\n[budget] ${error.message}`);
     } finally {
       await Promise.allSettled(sides.map((side) => side.close()));
     }
+    if (budgetExhausted) break;
     // Between repetitions, not after all of them — hence the bound. The reason
     // to stop is that the NEXT repetition would be measured alongside whatever
     // failed to close; after the last one there is no next repetition, the
@@ -1124,6 +1181,16 @@ try {
   }
 }
 
+// A budget stop with nothing measured is a failure, not a short report. The
+// renderer requires `reps >= 1`, so emitting a zero-repetition artifact would
+// only produce a refusal on the reporting side with the real reason left in this
+// job's log. Say it here, where it is actionable.
+if (budgetExhausted && !benchError && samples.head.length === 0) {
+  benchError = new Error(
+    `${budgetExhausted.message} — no repetition completed, so there is nothing to report`
+  );
+}
+
 if (benchError) {
   reportTeardownFailures({ resultsWritten: false });
   throw benchError;
@@ -1161,6 +1228,11 @@ const maxOf = (xs) => xs.reduce((hi, x) => (x > hi ? x : hi), -Infinity);
 // disagrees with its own samples would let the artifact author the verdict.
 // Keep the two consistent anyway — they are read side by side during a
 // calibration run — but nothing downstream depends on it.
+// The number of whole repetitions actually measured. Both sides advance together
+// — a repetition is pushed only after every side finished — so either side's
+// group count is the answer, and head is always present.
+const repsMeasured = samples.head.length;
+
 const summarize = (groups) => {
   const usable = groups.filter((group) => group.length > 0);
   const flat = usable.flat();
@@ -1202,10 +1274,20 @@ const results = {
   // RETAINED counts, which is what the reported statistic was computed over.
   // The executed counts are alongside so the artifact still records the config:
   // a warm-up rep and the first prove of every page run and are thrown away.
-  reps,
+  //
+  // MEASURED, not requested. The renderer requires `samples` to hold exactly
+  // `reps` groups and refuses the artifact otherwise, so emitting the requested
+  // count after a run that stopped early on its budget would have produced an
+  // artifact the reporter throws away — defeating the point of keeping those
+  // repetitions. `repsRequested` records what was asked for, so the difference
+  // is visible rather than inferred.
+  reps: repsMeasured,
   provesPerRep: proves - 1,
-  repsExecuted: reps + 1,
+  repsRequested: reps,
+  repsExecuted: repsMeasured + 1,
   provesExecutedPerRep: proves,
+  // Present only when the run stopped short, so its absence means a full run.
+  ...(budgetExhausted ? { stoppedEarly: budgetExhausted.message } : {}),
   // No `thresholdPct` / `thresholdProvisional` / `lowerIsBetter` here: those
   // decide the verdict, and .github/scripts/render-bench-comment.mjs renders
   // this file on the side that holds a write token, from an artifact a fork
