@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0-rc.5 (TBD)
+
+### Fixes
+
+* [FIX][web] `TransactionProver.newLocalProver()` now produces Poseidon2 proofs, matching the client's own default prover. It had been pinned to the prover crate's default hash function, which is Blake3 — so on the 0.16 line `proveTransaction(result, TransactionProver.newLocalProver())` and `proveTransaction(result, undefined)` produced different kinds of proof from the same SDK, and nothing in the JS surface exposes `HashFunction` for a caller to notice or override. Both verify today, but only Poseidon2 proofs can be verified recursively, so a Blake3 proof would have become unbatchable once the batch kernel starts verifying proofs in-VM. Expect local proving to take longer: an arithmetization-friendly hash is slower to prove with, by roughly 1.6-2.2x on published Miden VM figures, and more so the fewer cores are available. The native mobile prover (`newCallbackProver`) had the same pin and is fixed with it.
+
 ## 0.16.0-rc.4 (2026-08-26)
 
 ### Fixes

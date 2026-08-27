@@ -7,7 +7,6 @@ use js_export_macro::js_export;
 use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
     LocalTransactionProver,
-    ProvingOptions,
     TransactionProver as TransactionProverTrait,
 };
 #[cfg(feature = "browser")]
@@ -45,9 +44,28 @@ impl TransactionProver {
     }
 
     /// Creates a prover that uses the local proving backend.
+    ///
+    /// `LocalTransactionProver::default()`, deliberately, and NOT
+    /// `LocalTransactionProver::new(ProvingOptions::default())`. Those name two
+    /// different defaults: the second is the *prover crate's* (Blake3), while the
+    /// client builds its own prover from the first. They agreed on the 0.15 line
+    /// and stopped agreeing here — `miden-tx` 0.16 sets its default to Poseidon2
+    /// so transaction proofs are recursion-ready, because the recursive verifier
+    /// accepts only Poseidon2 STARKs.
+    ///
+    /// Until this delegated, the two disagreed silently and unobservably:
+    /// `proveTransaction(result, newLocalProver())` produced a Blake3 proof while
+    /// `proveTransaction(result, undefined)` produced a Poseidon2 one, and nothing
+    /// in the JS surface exposes `HashFunction` for a caller to notice or override.
+    /// Blake3 proofs verify natively today, so nothing rejects them — they would
+    /// simply have become unbatchable once the batch kernel starts verifying
+    /// proofs in-VM, breaking on a network upgrade with no client change.
+    ///
+    /// Spelled this way there is only one source of truth, so the two cannot
+    /// drift apart again whatever the client picks next.
     #[js_export(js_name = "newLocalProver")]
     pub fn new_local_prover() -> TransactionProver {
-        let local_prover = LocalTransactionProver::new(ProvingOptions::default());
+        let local_prover = LocalTransactionProver::default();
         TransactionProver {
             prover: Arc::new(local_prover),
             endpoint: None,
