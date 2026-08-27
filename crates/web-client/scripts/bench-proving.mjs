@@ -61,6 +61,10 @@ import {
   createDeadlineFor,
   evaluateWithDeadline,
   formatMinutes,
+  PROVE_WORK,
+  SETTLE_WORK,
+  SETUP_WORK,
+  STARVATION_FACTOR,
 } from "./bench-budget.mjs";
 import {
   balancedRetainedReps,
@@ -659,43 +663,46 @@ const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
  * The race leaves the evaluate running — there is no way to cancel it — but the
  * context close in the caller's teardown takes the page down with it.
  */
-// `clamped` says the deadline came from the remaining step budget rather than from
-// `what`'s own ceiling, and it decides which of two very different things a timeout
-// means.
-//
-
-// Generous, because these bound a HANG, not a slow run: proving on a loaded
-// 8-core runner is single-digit seconds, and setup mints, proves a block and
-// syncs. Anything past these is not slow, it is stuck.
-const SETUP_DEADLINE_MS = 10 * 60 * 1000;
-const PROVE_DEADLINE_MS = 5 * 60 * 1000;
-// The settle barrier is an empty round trip on an idle page. Generous next to
-// what it does, tiny next to the other two, and it runs 2 × (reps + 1) times.
-const SETTLE_DEADLINE_MS = 30 * 1000;
-
-// What each step actually takes, as opposed to the ceilings above which bound a
-// hang. Deliberately separate numbers: the ratio between the two is what lets a
-// timeout be classified, and collapsing them was the defect that let a deadlocked
-// prover be reported as the budget running out.
-//
-// These are estimates from the calibration runs, and they only need to be right
-// to within the factor of slack in STARVATION_FACTOR — they decide how a timeout
-// is LABELLED, never how long anything is allowed. Erring high on setup and low
-// on prove is the safe direction: it makes the code readier to keep a run's
-// measurements and less ready to call a prover wedged.
-const SETUP_EXPECTED_MS = 90 * 1000;
-
-// Every setup's measured duration, for the budget report at the end. Not a
-// measurement of the SDK — setup is untimed by the estimator — but the number the
-// step budget has to be sized against.
+// Every setup's measured duration. Two uses, and the second is the important one:
+// it feeds the budget report at the end, and it is what `observedSetupExpectation`
+// reads so the timeout classification rests on this machine's real setup cost
+// instead of an estimate.
 const setupDurations = [];
-const PROVE_EXPECTED_MS = 5 * 1000;
-const SETTLE_EXPECTED_MS = 2 * 1000;
 
-// The constants above are useless on their own late in a run. The step that runs
-// this is capped (20 minutes in bench.yml), and a setup that wedges 12 minutes
-// in would trip a 10-minute deadline at minute 22 — after the runner has already
-// killed the job. That is exactly the outcome evaluateWithDeadline was added to
+/**
+ * What a setup on THIS runner should be expected to take.
+ *
+ * The classification in evaluateWithDeadline asks whether a grant was short
+ * against the work's real duration, and answering it from a hardcoded 90s was the
+ * same category error as the `clamped` version it replaced, one level out: the
+ * constant is an estimate nobody had measured, and wherever the real cost exceeds
+ * `90s × STARVATION_FACTOR` a grant between the two reports `starved: false`. A
+ * healthy run then has a legitimately slow setup called a hang, which discards
+ * every repetition already measured and posts a false accusation at the prover —
+ * across a plausible 60–600s range that is most of the range, and raising the
+ * budget relocates the band rather than closing it.
+ *
+ * So read the measurements instead. By the time the budget is tight enough for a
+ * grant to be clamped, most of the run's setups have already been timed, and the
+ * slowest of them is a far better answer than any constant. The estimate remains
+ * the floor, for the first setup of a run, when nothing has been measured yet —
+ * harmless, because early grants are the full ceiling anyway.
+ *
+ * Clamped to `ceiling / STARVATION_FACTOR` to keep grantDeadline's invariant
+ * satisfiable. A setup genuinely approaching its own ceiling means every clamped
+ * grant is barely more than the work needs, so treating those as budget stops and
+ * only a full-ceiling timeout as a hang is the correct reading of that regime.
+ */
+const observedSetupExpectation = () =>
+  Math.min(
+    Math.max(SETUP_WORK.expected, ...setupDurations),
+    SETUP_WORK.ceiling / STARVATION_FACTOR
+  );
+
+// The ceilings are useless on their own late in a run. The step that runs this is
+// capped (BENCH_STEP_BUDGET_MINUTES in bench.yml), and a setup that wedges with
+// less time left than its ten-minute ceiling would trip that deadline after the
+// runner had already killed the step. That is exactly the outcome evaluateWithDeadline was added to
 // prevent: dead with no diagnostic, having burned the rest of the budget.
 //
 // So each deadline is also clamped to what is left of the step's budget, minus a
@@ -805,7 +812,7 @@ const openSide = async (browser, url, label, repIndex) => {
       setupInPage,
       { threads },
       {
-        ...deadlineFor(SETUP_DEADLINE_MS, SETUP_EXPECTED_MS),
+        ...deadlineFor(SETUP_WORK.ceiling, observedSetupExpectation()),
         what: `${label} rep ${repIndex} setup`,
       }
     );
@@ -860,7 +867,7 @@ const openSide = async (browser, url, label, repIndex) => {
       settle: async () => {
         try {
           await evaluateWithDeadline(page, () => 0, undefined, {
-            ...deadlineFor(SETTLE_DEADLINE_MS, SETTLE_EXPECTED_MS),
+            ...deadlineFor(SETTLE_WORK.ceiling, SETTLE_WORK.expected),
             what: `${label} rep ${repIndex} settle`,
           });
         } catch (error) {
@@ -900,7 +907,7 @@ const openSide = async (browser, url, label, repIndex) => {
           proveOnceInPage,
           undefined,
           {
-            ...deadlineFor(PROVE_DEADLINE_MS, PROVE_EXPECTED_MS),
+            ...deadlineFor(PROVE_WORK.ceiling, PROVE_WORK.expected),
             what: `${label} rep ${repIndex} prove`,
           }
         );

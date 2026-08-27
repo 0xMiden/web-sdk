@@ -18,15 +18,21 @@ import {
   evaluateWithDeadline,
   formatMinutes,
   grantDeadline,
+  PROVE_WORK,
+  SETTLE_WORK,
+  SETUP_WORK,
   STARVATION_FACTOR,
 } from "./bench-budget.mjs";
 
 const FLOOR = 60 * 1000;
-// Realistic durations, well below their ceilings — see the constants in
-// bench-proving.mjs.
-const SETUP = { ceiling: 10 * 60 * 1000, expected: 90 * 1000 };
-const PROVE = { ceiling: 5 * 60 * 1000, expected: 5 * 1000 };
-const SETTLE = { ceiling: 30 * 1000, expected: 2 * 1000 };
+// The REAL profiles, imported rather than restated. They used to be declared here
+// as copies of constants in bench-proving.mjs, which meant a retune that broke the
+// scheme shipped with this suite green — the values under test and the values that
+// ship could drift silently, and that is the one class of defect these tests could
+// not see.
+const SETUP = SETUP_WORK;
+const PROVE = PROVE_WORK;
+const SETTLE = SETTLE_WORK;
 
 // The real ceilings, plus the degenerate ones around them.
 const CEILINGS = [
@@ -47,7 +53,7 @@ test("every grant is refused, full, or clamped-and-flagged — never a fourth th
         ceiling,
         remaining,
         floorMs: FLOOR,
-        expected: 1,
+        expected: ceiling / 4,
       });
 
       if (got.refused) {
@@ -92,7 +98,7 @@ test("a ceiling far above the remaining budget is flagged, not silently squeezed
       ceiling,
       remaining,
       floorMs: FLOOR,
-      expected: 1,
+      expected: ceiling / 4,
     });
     assert.equal(got.refused, false);
     assert.equal(got.ms, remaining);
@@ -111,7 +117,7 @@ test("a ceiling the budget can fully fund is not flagged", () => {
       ceiling,
       remaining,
       floorMs: FLOOR,
-      expected: 1,
+      expected: ceiling / 4,
     });
     assert.equal(got.refused, false);
     assert.equal(got.ms, ceiling);
@@ -233,6 +239,63 @@ test("an expected duration above the ceiling is a configuration error", () => {
       }),
     RangeError
   );
+});
+
+// Above ceiling / STARVATION_FACTOR the FULL CEILING is starved, so no timeout can
+// ever be called a hang — which resurrects the defect the flag exists to prevent.
+// Guarded rather than merely tested, because a test only covers the profiles
+// someone thought to add, and this is reachable by following the repo's own
+// instructions to resize `expected` from a real run's measurements.
+test("an expected duration past the slack ratio is refused, not silently accepted", () => {
+  // Just inside is fine; just past is not.
+  assert.doesNotThrow(() =>
+    grantDeadline({
+      ceiling: 600 * 1000,
+      expected: 300 * 1000,
+      remaining: 600 * 1000,
+      floorMs: FLOOR,
+    })
+  );
+  for (const expected of [300 * 1000 + 1, 320 * 1000, 599 * 1000]) {
+    assert.throws(
+      () =>
+        grantDeadline({
+          ceiling: 600 * 1000,
+          expected,
+          remaining: 600 * 1000,
+          floorMs: FLOOR,
+        }),
+      RangeError,
+      `expected=${expected} was accepted against a 600s ceiling`
+    );
+  }
+});
+
+// The profiles that actually ship have to satisfy the invariant, or the producer
+// throws on its first deadline request.
+test("every shipped work profile leaves room to detect a hang", () => {
+  for (const [name, work] of Object.entries({
+    SETUP_WORK,
+    PROVE_WORK,
+    SETTLE_WORK,
+  })) {
+    assert.ok(
+      work.expected * STARVATION_FACTOR <= work.ceiling,
+      `${name}: expected ${work.expected} x ${STARVATION_FACTOR} exceeds ceiling ${work.ceiling}`
+    );
+    // And the full ceiling must not be starved, which is the same statement from
+    // the caller's side.
+    const got = grantDeadline({
+      ...work,
+      remaining: 10 * 60 * 60 * 1000,
+      floorMs: FLOOR,
+    });
+    assert.equal(
+      got.starved,
+      false,
+      `${name}: full ceiling reported as starved`
+    );
+  }
 });
 
 test("refusal reports what the work needed, for the diagnostic", () => {

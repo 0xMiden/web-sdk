@@ -57,6 +57,31 @@ export const formatMinutes = (ms) => {
 export const STARVATION_FACTOR = 2;
 
 /**
+ * The work this budget funds, as {ceiling, expected} pairs.
+ *
+ * Here rather than in bench-proving.mjs because the RATIO between the two is the
+ * invariant `grantDeadline` enforces, and while the producer owned the constants
+ * its test declared its own copies of them — so a retune that broke the scheme
+ * could ship with the suite green. The producer is a top-level script and cannot
+ * export, so the values had to move to be testable at all.
+ *
+ * Ceilings are generous because they bound a HANG, not a slow run: proving on a
+ * loaded 8-core runner is single-digit seconds, and setup mints, proves a block
+ * and syncs. Anything past a ceiling is not slow, it is stuck.
+ *
+ * Expected durations are estimates. They decide how a timeout is LABELLED, never
+ * how long anything is allowed, and for setup the producer refines this from its
+ * own measurements as the run proceeds — see `observedSetupExpectation`.
+ */
+export const SETUP_WORK = { ceiling: 10 * 60 * 1000, expected: 90 * 1000 };
+export const PROVE_WORK = { ceiling: 5 * 60 * 1000, expected: 5 * 1000 };
+// An empty round trip on an idle page. Its ceiling sits below the usual 60s
+// budget floor, which is load-bearing: `grantDeadline` compares the floor against
+// the ceiling, so this call only ever refuses outright or gets its full grant, and
+// is therefore never clamped and never starved.
+export const SETTLE_WORK = { ceiling: 30 * 1000, expected: 2 * 1000 };
+
+/**
  * Decide what deadline `ceiling` may have, given `remaining` ms of usable budget.
  *
  * `floorMs` is the least a request may be granted: work is not started under a
@@ -99,10 +124,24 @@ export function grantDeadline({ ceiling, remaining, floorMs, expected }) {
         `floorMs=${floorMs} expected=${expected}`
     );
   }
-  if (expected > ceiling) {
+  // `expected > ceiling` is the obvious error; `expected * STARVATION_FACTOR >
+  // ceiling` is the one that actually breaks the scheme, and only this stronger
+  // form is worth checking. Above it the FULL CEILING is starved, so no timeout
+  // can ever be classified a hang — which resurrects the defect this function
+  // exists to prevent: a deadlocked prover reported as the budget running out,
+  // with its measurements kept and published.
+  //
+  // Reachable by following this repo's own instructions. bench.yml and
+  // calibration.md both say to read the producer's `[budget]` line and resize
+  // from it, and an `expected` raised past ceiling / STARVATION_FACTOR does
+  // exactly this. Enforced here rather than merely tested, because a test can
+  // only cover the profiles someone thought to add.
+  if (expected * STARVATION_FACTOR > ceiling) {
     throw new RangeError(
-      `expected (${expected}) exceeds ceiling (${ceiling}): a ceiling is meant to ` +
-        `bound a hang, so it must be well above the work's realistic duration`
+      `expected (${expected}) is more than 1/${STARVATION_FACTOR} of ceiling ` +
+        `(${ceiling}): above that the full ceiling counts as starved and nothing ` +
+        `can be classified as a hang. Raise the ceiling, or lower expected below ` +
+        `${ceiling / STARVATION_FACTOR}`
     );
   }
 

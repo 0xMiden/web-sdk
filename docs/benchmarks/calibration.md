@@ -292,7 +292,7 @@ Three further corrections, also measured:
   asserts on the balance checks, so a violation cannot reach a measurement.
 
   Aggregate balance holds whenever `reps × (proves − 1)` is even, which is what
-  the guard warns about. Balance is **aggregate**,
+  the guard asserts. Balance is **aggregate**,
   which matters because a per-repetition statistic gates the verdict. The
   retained count per repetition is `proves − 1`, and a repetition is internally
   balanced only when that is **even**:
@@ -541,7 +541,20 @@ So the producer now measures it. Every run prints a line like
 and writes `setupMsMean`, `setupMsMax` and `setupCount` into `results.json`. **Read
 that line after the first green CI run and resize `BENCH_STEP_BUDGET_MINUTES` and
 the job's `timeout-minutes` from it**, in the same pass as setting the threshold
-below. Sizing from a measurement costs nothing once the run exists; sizing from
+below.
+
+Those same measurements are also read back during the run. Classifying a timeout
+needs to know what a setup normally costs — a grant far above that means a timeout
+is a hang, a grant close to it means the clock simply ran out — and answering that
+from the 90s estimate was wrong in the expensive direction: wherever the real cost
+exceeds `90s × 2`, a healthy run with a legitimately slow setup had its timeout
+called a hang, which discards every repetition already measured. So the producer
+takes the slowest setup it has actually timed, falling back to the estimate only
+for the first setup of a run, when nothing has been measured yet. Resizing the
+budget does not affect this and does not need to: the classification follows the
+machine on its own.
+
+Sizing from a measurement costs nothing once the run exists; sizing from
 an estimate is how the 2× setup-count error survived unnoticed in the first
 place.
 

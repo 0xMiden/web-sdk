@@ -159,8 +159,9 @@ jobs:
     #   56 proves × 2s ≈ 1.9 min
     #   14 settle barriers × 1s ≈ 0.2 min
     #   launch/teardown ≈ 0.3 min
-    #                   ── ~23.4 min, and 45 leaves room for setups to be ~1.9x
-    #                      the estimate before a verdict becomes unreachable
+    #                   ── ~23.4 min, and 45 leaves room for setups to run well
+    #                      past the estimate before a verdict becomes unreachable
+    #                      — docs/benchmarks/budget-reachability.mjs has the curve
     #
     # The 90s is an estimate and the only honest thing to say about it is that
     # nobody has measured it on this runner class. The producer now prints a
@@ -196,6 +197,7 @@ jobs:
       # to earn a two-second usage error. Same rule, stated once here so the
       # dispatch fails immediately.
       - name: Validate the repetition count
+        shell: bash
         run: |
           set -euo pipefail
           if ! [[ "$BENCH_REPS" =~ ^[0-9]+$ ]] || [ "$BENCH_REPS" -lt 2 ]; then
