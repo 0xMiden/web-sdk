@@ -82,6 +82,24 @@ which is why it says so.
 - A newer push cancelled it. The concurrency group is per pull request with
   `cancel-in-progress`, so rapid pushes cancel the expensive job each time.
 
+## Nothing happens at all, on any pull request
+
+Check which branch `bench-comment.yml` is on. `workflow_run` only ever fires the
+**default branch's** copy of a workflow — `main` here — so until the reporter has
+landed on `main` there is nothing to trigger, no matter how many bench runs
+succeed. The symptom is silence rather than an error: the bench job goes green,
+uploads its artifact, and no comment appears and no reporter run is listed.
+
+This bites specifically when the change lands on `next` first, which is the normal
+route for this repo. `bench.yml` works from any branch, because it runs on
+`pull_request` in the pull request's own context. The reporter does not. So between
+merging to `next` and `next` reaching `main`, the bot measures and says nothing.
+
+There is no fix to apply on a pull request — it is a property of `workflow_run`.
+Either land the reporter on `main`, or read the numbers from the bench run's job
+summary, which is rendered in the bench job itself and does not depend on the
+reporter.
+
 ## Re-running by hand
 
 The reporter accepts a `workflow_dispatch` with a bench `run_id`, which re-renders

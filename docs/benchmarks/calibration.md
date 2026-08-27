@@ -272,7 +272,8 @@ Three further corrections, also measured:
   The flip balances over *all* proves, but the first prove of each page is
   discarded, so what balances over the **retained** proves is
   `reps × (proves − 1)` — and only when that product is even. Keep it even
-  (the default 6 × 3 is); the script warns when it is not.
+  (the default 6 × 3 is). The producer refuses an odd `--reps` at parse time and
+  asserts on the balance checks, so a violation cannot reach a measurement.
 
   Aggregate balance holds whenever `reps × (proves − 1)` is even, which is what
   the guard warns about. Balance is **aggregate**,
@@ -306,7 +307,8 @@ Three further corrections, also measured:
   interleave and the even-reps rule have diverged, which is a bug rather than a
   configuration.
 
-  The warning attaches no figure to the residual bias on purpose. The +1.19%
+  The per-repetition note attaches no figure to the residual bias on purpose.
+  The +1.19%
   penalty is *per prove*, while the reported statistic is a mean of per-repetition
   **minima**, and a minimum is not linear in a per-prove penalty: when a
   repetition's fastest prove ran first on both sides the penalty cancels outright,
@@ -337,7 +339,8 @@ catches nothing at all — but they bound what a green result means.
   two disagree, which is the only signal that this case was hit. The note is
   deliberately not a verdict: the spread of a mean over all proves has never
   been measured on this workload. It is *not* the 5.39% in the table above —
-  that figure belongs to the **median** over all samples, a different statistic —
+  that figure belongs to the **median** over all samples, a different
+  statistic —
   and it cannot be inferred from the other rows either. So the note's ±5.4% gate
   is a bare effect-size filter ("large enough to be worth reading about"), not a
   confidence level, and the sign test over per-repetition mean deltas is what
@@ -475,6 +478,34 @@ raise the step's `timeout-minutes` and `--budget-minutes` together, or lower
 `--reps` / `--proves`. A report built on four repetitions is never as good as
 one built on six.
 
+## The step budget is sized against a number nobody has measured
+
+Setup — mint, prove a block, sync — is untimed by the estimator and is by far the
+largest consumer of the benchmark step's wall clock. It is also paid **twice per
+repetition**, once for each side, so a default `--reps 6` run pays
+`2 × (6 + 1) = 14` setups rather than 7. An earlier version of the budget
+arithmetic in `bench.yml` counted 7 and sized the step at 20 minutes against an
+estimated 80s setup. At 14 setups that is 21 minutes of setup alone: the run would
+have retained 4 repetitions, below the 6 the renderer requires, and **every report
+would have come back unresolved**.
+
+The step is now 45 minutes, which holds a verdict reachable for setups up to about
+150s — roughly 1.7× the estimate. That is slack, not a fit, because the 80–90s
+figure was a guess.
+
+So the producer now measures it. Every run prints a line like
+
+```text
+[budget] 14 setups: mean 88.4s, slowest 96.1s, total 20.6 min of a 45-minute budget.
+```
+
+and writes `setupMsMean`, `setupMsMax` and `setupCount` into `results.json`. **Read
+that line after the first green CI run and resize `BENCH_STEP_BUDGET_MINUTES` and
+the job's `timeout-minutes` from it**, in the same pass as setting the threshold
+below. Sizing from a measurement costs nothing once the run exists; sizing from
+an estimate is how the 2× setup-count error survived unnoticed in the first
+place.
+
 ## Applying the result
 
 **This has an owner and a deadline, or it does not happen.** Until the runner is
@@ -515,7 +546,8 @@ moment it lands on the default branch, and has no effect at all while it sits in
 a PR. Two consequences worth knowing before you change either half:
 
 - **A PR targeting `next` is judged by `main`'s renderer.** Editing
-  `THRESHOLD_PCT` on `next` changes nothing until `next` reaches `main`. Verify a
+  `THRESHOLD_PCT` on `next` changes nothing until `next` reaches `main`. Verify
+  a
   renderer change by dispatching the reporter, not by reading the diff on your
   branch.
 - **Bumping `schemaVersion` has a required order.** The renderer accepts a *set*

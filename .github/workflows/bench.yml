@@ -55,7 +55,7 @@ on:
         # does not transfer to another: the spread of a mean of per-rep minima
         # scales with 1/sqrt(reps), so calibrating at 8 and applying it to 5
         # would leave the threshold ~26% too tight.
-        description: "Interleaved repetitions (keep in sync with the PR default)"
+        description: "Interleaved repetitions — must be EVEN (keep in sync with the PR default)"
         type: string
         default: "6"
 
@@ -87,7 +87,8 @@ env:
   # samples per side per rep. Keep the count of retained proves per run —
   # reps × (proves-1) — EVEN, or the ABBA order flip cannot split them evenly
   # between the two sides and one side pays the second-position penalty once
-  # more than the other. The script warns when this is violated.
+  # more than the other. The producer refuses an odd `reps` outright, and the
+  # step below checks it before the builds so a bad dispatch fails in seconds.
   BENCH_REPS: ${{ inputs.reps || '6' }}
   BENCH_PROVES: "4"
 
@@ -115,9 +116,9 @@ jobs:
     #   inject       5  capped — cargo update behind a network git fetch
     #   head        30  capped
     #   chromium    10  capped
-    #   bench        20  capped
-    #   postamble    5  summary render, artifact upload
-    #                   ── 135, inside 150 with 15 to spare
+    #   bench        45  capped — see the bench sizing below
+    #   postamble    5  artifact upload, summary render
+    #                   ── 160, inside 180 with 20 to spare
     #
     # The caps are worst cases, not typical ones: a warm base-dist cache skips the
     # base build, the reclaim and the save entirely, which is the common path. But
@@ -127,7 +128,30 @@ jobs:
     # compute produce an artifact with no measurements while the reporter posts
     # "no usable report". Slack rather than an exact fit, because the preamble
     # figure is an estimate and the runner's own startup is not in it.
-    timeout-minutes: 150
+    #
+    # SIZING THE BENCH STEP. The dominant cost is setup, which is untimed by the
+    # estimator and paid for BOTH sides inside every repetition — so a default
+    # `--reps 6` run pays 2 × (6 + 1) = 14 setups, not 7. An earlier version of
+    # this block counted 7 and sized the step at 20 minutes against an estimated
+    # 80s setup; at 14 setups that is 21 minutes of setup alone, so the run would
+    # have retained 4 repetitions, below the 6 the renderer needs for a verdict.
+    # Every run would have come back "unresolved" and the bot would have been
+    # noise.
+    #
+    #   14 setups × 90s ≈ 21.0 min      <- estimate, NOT a measurement
+    #   56 proves × 2s ≈ 1.9 min
+    #   14 settle barriers × 1s ≈ 0.2 min
+    #   launch/teardown ≈ 0.3 min
+    #                   ── ~23.4 min, and 45 leaves room for setups to be ~1.9x
+    #                      the estimate before a verdict becomes unreachable
+    #
+    # The 90s is an estimate and the only honest thing to say about it is that
+    # nobody has measured it on this runner class. The producer now prints a
+    # `[budget]` line with the real mean, slowest and total setup cost on every
+    # run, and writes the same figures into results.json. Read it after the first
+    # CI run and resize both numbers here from it. Until then this budget is a
+    # guess with deliberate slack, not a fit.
+    timeout-minutes: 180
     env:
       # See test.yml's build-web-client-dist-folder for the full rationale:
       # sccache-action sets SCCACHE_PATH but not RUSTC_WRAPPER, and we only
@@ -136,7 +160,7 @@ jobs:
       # The `Run benchmark` step's cap, and the budget the producer clamps its own
       # in-page deadlines against. One number so the two cannot drift; see the
       # step for why drift here is silent and regressive.
-      BENCH_STEP_BUDGET_MINUTES: "20"
+      BENCH_STEP_BUDGET_MINUTES: "45"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -149,6 +173,23 @@ jobs:
       # FIRST PARENT is exactly the base-branch commit the merge was computed
       # against — more precise than event.pull_request.base.sha, which can name
       # a commit the merge was never actually tested against.
+      # Before the two 30-minute dist builds, deliberately. The producer refuses an
+      # odd `--reps` at parse time, but that check lives in the `Run benchmark`
+      # step — so dispatching `--reps 7` used to burn about an hour of runner time
+      # to earn a two-second usage error. Same rule, stated once here so the
+      # dispatch fails immediately.
+      - name: Validate the repetition count
+        run: |
+          set -euo pipefail
+          if ! [[ "$BENCH_REPS" =~ ^[0-9]+$ ]] || [ "$BENCH_REPS" -lt 2 ]; then
+            echo "::error title=Proving Benchmark::reps must be a positive integer, got '$BENCH_REPS'."
+            exit 1
+          fi
+          if [ $((BENCH_REPS % 2)) -ne 0 ]; then
+            echo "::error title=Proving Benchmark::reps must be even, got $BENCH_REPS. The setup order alternates by repetition, so an odd count sets up base first once more often than head and biases every repetition. Use $((BENCH_REPS - 1)) or $((BENCH_REPS + 1))."
+            exit 1
+          fi
+
       - name: Resolve base and head SHAs
         id: shas
         shell: bash
@@ -533,8 +574,36 @@ jobs:
       # workflow commands), but do not mistake it for trusted output. The PR
       # comment, which is rendered on the privileged side, is the surface that
       # gets the hardened renderer.
+      # BEFORE the job summary, deliberately. The summary step runs this PR's own
+      # copy of the renderer over this PR's own results.json — fork-authored code
+      # on fork-authored data — and a job timeout does not run the remaining
+      # steps, `always()` included. With the upload downstream of that, a hang or
+      # a slow render at minute 149 threw away a benchmark that had already
+      # succeeded, and the reporter posted "no usable report" for a run whose
+      # numbers existed the whole time. The artifact is the only thing here that
+      # another workflow depends on, so it goes first.
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proving-bench-report
+          path: ${{ runner.temp }}/report/
+          retention-days: 5
+          if-no-files-found: warn
+          # v4 artifacts are immutable and scoped to the RUN, not the attempt.
+          # Without this, "Re-run failed jobs" keeps attempt 1's artifact, the
+          # re-upload 409s at the end of another full build, and the
+          # reporter — which lists artifacts per run, not per attempt — publishes
+          # attempt 1's numbers under a link to attempt 2.
+          overwrite: true
+
       - name: Job summary
         if: always()
+        # Capped because this renders fork-authored data with fork-authored code,
+        # and the step is pure convenience — the artifact is already uploaded and
+        # the PR comment comes from the trusted workflow. Two minutes is far more
+        # than a render of a 60 kB report needs.
+        timeout-minutes: 2
         shell: bash
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -568,21 +637,6 @@ jobs:
               echo "See the [run log]($RUN_URL)."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Upload benchmark report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: proving-bench-report
-          path: ${{ runner.temp }}/report/
-          retention-days: 5
-          if-no-files-found: warn
-          # v4 artifacts are immutable and scoped to the RUN, not the attempt.
-          # Without this, "Re-run failed jobs" keeps attempt 1's artifact, the
-          # re-upload 409s at the end of another full build, and the
-          # reporter — which lists artifacts per run, not per attempt — publishes
-          # attempt 1's numbers under a link to attempt 2.
-          overwrite: true
 
       - name: Show sccache stats
         if: always()

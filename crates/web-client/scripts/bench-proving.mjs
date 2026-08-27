@@ -58,8 +58,9 @@ import { chromium } from "@playwright/test";
 
 import {
   BudgetExhaustedError,
+  createDeadlineFor,
+  evaluateWithDeadline,
   formatMinutes,
-  grantDeadline,
 } from "./bench-budget.mjs";
 import {
   balancedRetainedReps,
@@ -164,7 +165,7 @@ const threads = count("--threads", "8");
 // Even by default, and bench.yml matches it on both triggers. The ABBA order
 // flip below balances over ALL proves, but prove #0 of each page is discarded,
 // and `proves - 1` is odd — so the retained proves only come out even-handed
-// across an even number of reps. See the warning after the driver loop.
+// across an even number of reps, which is why an odd count is refused below.
 const reps = count("--reps", "6");
 // Refused rather than warned about, because an odd count carries the exact defect
 // a truncated run gives up a repetition to avoid. The setup order alternates by
@@ -179,7 +180,11 @@ if (reps % 2 !== 0) {
   usage(
     `--reps must be even (got ${reps}): the setup order alternates by repetition, ` +
       `so an odd count sets up base first once more often than head and biases ` +
-      `every repetition in the run. Use ${reps - 1} or ${reps + 1}.`
+      // `reps - 1` is only a suggestion when it is still a legal count: at
+      // --reps 1 it is 0, which count() rejects as not a positive integer.
+      `every repetition in the run. Use ${
+        reps > 2 ? `${reps - 1} or ${reps + 1}` : `${reps + 1}`
+      }.`
   );
 }
 // Extra proves are the cheap way to buy samples: setup (mint + block + sync)
@@ -658,55 +663,6 @@ const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
 // `what`'s own ceiling, and it decides which of two very different things a timeout
 // means.
 //
-// Unclamped, the work had its full ceiling — ten minutes for a setup, five for a
-// prove, against real durations of roughly eighty seconds and under two — so a
-// timeout is a hang, and saying so is right: the run is broken and its numbers
-// should be discarded.
-//
-// Clamped, the deadline is an artifact of the clock running out. Work granted
-// sixty seconds against a ten-minute ceiling will usually blow, and calling that
-// "wedged" accuses the prover of a fault it does not have while sending the run
-// down the failure path — which threw upstream of the results write and destroyed
-// every repetition already measured. So a clamped timeout raises the budget error
-// instead, and the driver keeps what it measured.
-const evaluateWithDeadline = async (page, fn, arg, { ms, what, clamped }) => {
-  // Checked because the failure mode is silent and total. `setTimeout` coerces a
-  // non-number delay to zero, so a malformed `ms` does not throw — it times out
-  // every step instantly and reports each one as wedged. That is precisely what a
-  // `deadlineFor` returning a bare number produced when the call sites started
-  // spreading its result, since spreading a number contributes no properties.
-  if (!Number.isFinite(ms) || ms <= 0) {
-    throw new TypeError(
-      `${what}: deadline must be a finite positive number of ms, got ${ms}. ` +
-        `deadlineFor must return {ms, clamped} on every path`
-    );
-  }
-  let timer;
-  try {
-    return await Promise.race([
-      page.evaluate(fn, arg),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              clamped
-                ? new BudgetExhaustedError(
-                    `${what} did not finish within the ${ms} ms the step budget had left ` +
-                      `for it — not enough to attempt it, so the run is stopping here with ` +
-                      `the repetitions it has. This is the budget running out, not a hang`
-                  )
-                : new Error(
-                    `${what} did not finish within ${ms} ms — treating it as wedged rather than waiting out the job timeout`
-                  )
-            ),
-          ms
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-};
 
 // Generous, because these bound a HANG, not a slow run: proving on a loaded
 // 8-core runner is single-digit seconds, and setup mints, proves a block and
@@ -716,6 +672,25 @@ const PROVE_DEADLINE_MS = 5 * 60 * 1000;
 // The settle barrier is an empty round trip on an idle page. Generous next to
 // what it does, tiny next to the other two, and it runs 2 × (reps + 1) times.
 const SETTLE_DEADLINE_MS = 30 * 1000;
+
+// What each step actually takes, as opposed to the ceilings above which bound a
+// hang. Deliberately separate numbers: the ratio between the two is what lets a
+// timeout be classified, and collapsing them was the defect that let a deadlocked
+// prover be reported as the budget running out.
+//
+// These are estimates from the calibration runs, and they only need to be right
+// to within the factor of slack in STARVATION_FACTOR — they decide how a timeout
+// is LABELLED, never how long anything is allowed. Erring high on setup and low
+// on prove is the safe direction: it makes the code readier to keep a run's
+// measurements and less ready to call a prover wedged.
+const SETUP_EXPECTED_MS = 90 * 1000;
+
+// Every setup's measured duration, for the budget report at the end. Not a
+// measurement of the SDK — setup is untimed by the estimator — but the number the
+// step budget has to be sized against.
+const setupDurations = [];
+const PROVE_EXPECTED_MS = 5 * 1000;
+const SETTLE_EXPECTED_MS = 2 * 1000;
 
 // The constants above are useless on their own late in a run. The step that runs
 // this is capped (20 minutes in bench.yml), and a setup that wedges 12 minutes
@@ -730,43 +705,14 @@ const SETTLE_DEADLINE_MS = 30 * 1000;
 // with no cap at all.
 const startedAt = Date.now();
 
-const deadlineFor = (ceiling) => {
-  // The same SHAPE as the budgeted path, which matters more than it looks: the
-  // call sites spread this into the deadline options, and spreading a bare number
-  // contributes no properties at all — `ms` would arrive undefined and
-  // `setTimeout` would treat it as zero, timing out every step instantly.
-  if (BUDGET_MS === null)
-    return { refused: false, ms: ceiling, clamped: false };
-  const left = BUDGET_MS - (Date.now() - startedAt) - BUDGET_MARGIN_MS;
-  // Delegated to bench-budget.mjs, which owns the rule and is tested against it
-  // with a synthetic clock. Three rounds running, this arithmetic was rewritten
-  // inline and came out wrong in the configuration the author did not try; the
-  // module's sweep test covers every ceiling against every remaining budget.
-  const grant = grantDeadline({
-    ceiling,
-    remaining: left,
-    floorMs: BUDGET_FLOOR_MS,
-  });
-
-  if (grant.refused) {
-    throw new BudgetExhaustedError(
-      `the ${formatMinutes(BUDGET_MS)}-minute step budget is exhausted ` +
-        `(${((Date.now() - startedAt) / 60000).toFixed(1)} min elapsed, ` +
-        `${(BUDGET_MARGIN_MS / 1000).toFixed(0)}s reserved for teardown, and the next ` +
-        `step wants up to ${(grant.need / 1000).toFixed(0)}s), so the run is stopping here; ` +
-        `raise --budget-minutes and the step's timeout-minutes together, or lower ` +
-        `--reps / --proves`
-    );
-  }
-
-  // `clamped` is carried, not discarded, and it is the whole point. A deadline the
-  // BUDGET chose is not evidence about the process: work whose ceiling is ten
-  // minutes, granted sixty seconds, will usually blow — and reporting that as
-  // "treating it as wedged" both accuses the prover of a hang it did not have and
-  // sends the run down the failure path, discarding every repetition already
-  // measured. Only a timeout under the FULL ceiling is evidence of a wedge.
-  return grant;
-};
+// Bound to this run's budget. The rule itself lives in bench-budget.mjs so it can
+// be driven with a synthetic clock; this only supplies the numbers.
+const deadlineFor = createDeadlineFor({
+  budgetMs: BUDGET_MS,
+  marginMs: BUDGET_MARGIN_MS,
+  floorMs: BUDGET_FLOOR_MS,
+  startedAt,
+});
 
 // A close that will not finish must not cost the run its numbers.
 //
@@ -847,15 +793,24 @@ const openSide = async (browser, url, label, repIndex) => {
       });
     });
     await page.goto(url);
+    // Timed, and reported. Setup is not part of the measurement, but it is by far
+    // the largest consumer of the step's wall-clock budget — a repetition sets up
+    // BOTH sides, so a default run pays fourteen of them — and until this was
+    // logged the figure in the budget arithmetic was an estimate nobody had
+    // checked. Sizing --budget-minutes correctly needs the real number, and the
+    // run itself is the only thing that knows it.
+    const setupStartedAt = Date.now();
     const { rayonThreads } = await evaluateWithDeadline(
       page,
       setupInPage,
       { threads },
       {
-        ...deadlineFor(SETUP_DEADLINE_MS),
+        ...deadlineFor(SETUP_DEADLINE_MS, SETUP_EXPECTED_MS),
         what: `${label} rep ${repIndex} setup`,
       }
     );
+    const setupMs = Date.now() - setupStartedAt;
+    setupDurations.push(setupMs);
     if (pageErrors.length) {
       throw new Error(
         `${label} rep ${repIndex} raised ${pageErrors.length} page error(s) during setup; first: ${pageErrors[0]}`
@@ -886,6 +841,13 @@ const openSide = async (browser, url, label, repIndex) => {
        * other in-page call, and a barrier that fails is itself a reason to
        * distrust the repetition.
        *
+       * Its ceiling sits BELOW the budget floor — a 30s barrier against a 60s
+       * floor — so `grantDeadline` compares the floor against the ceiling and this
+       * call only ever refuses outright or receives its full 30 seconds. It is
+       * therefore never clamped and never starved, which is what makes the catch
+       * below correct in treating a timeout here as a fault rather than a
+       * shortfall.
+       *
        * The worker count is NOT a second, independent detector, and it was
        * described as one here. Playwright removes the worker from `page.workers()`
        * and emits the `close` this file listens for in the same synchronous
@@ -898,14 +860,27 @@ const openSide = async (browser, url, label, repIndex) => {
       settle: async () => {
         try {
           await evaluateWithDeadline(page, () => 0, undefined, {
-            ...deadlineFor(SETTLE_DEADLINE_MS),
+            ...deadlineFor(SETTLE_DEADLINE_MS, SETTLE_EXPECTED_MS),
             what: `${label} rep ${repIndex} settle`,
           });
         } catch (error) {
-          // A budget error is not a page error. Burying it here reported running
-          // out of clock as "the page raised an error", and — worse — lost the
+          // Two classes of error do not belong in `pageErrors`, which exists to
+          // record faults of the PAGE. Burying either one here misdirects whoever
+          // reads the log to the prover.
+          //
+          // A budget error means the clock ran out; burying it also lost the
           // marker the driver uses to keep the repetitions already measured.
-          if (error instanceof BudgetExhaustedError) throw error;
+          //
+          // A TypeError from this call is the deadline-shape guard firing, which
+          // is a bug in `deadlineFor`'s return value and not something the page
+          // did. The other two call sites let it propagate; this one has to say so
+          // explicitly because its catch is broad.
+          if (
+            error instanceof BudgetExhaustedError ||
+            error instanceof TypeError
+          ) {
+            throw error;
+          }
           pageErrors.push(error);
           return pageErrors;
         }
@@ -925,7 +900,7 @@ const openSide = async (browser, url, label, repIndex) => {
           proveOnceInPage,
           undefined,
           {
-            ...deadlineFor(PROVE_DEADLINE_MS),
+            ...deadlineFor(PROVE_DEADLINE_MS, PROVE_EXPECTED_MS),
             what: `${label} rep ${repIndex} prove`,
           }
         );
@@ -1373,6 +1348,18 @@ const results = {
   // controls this file, and the one thing it must not get is a sentence in the
   // comment. The message is here for whoever reads results.json or the job log.
   ...(budgetExhausted ? { stoppedEarly: budgetExhausted.message } : {}),
+  // Untimed by the estimator, but the figure the step budget is sized against.
+  // Emitted so the budget can be checked from a real run rather than from an
+  // estimate; the renderer ignores it.
+  ...(setupDurations.length > 0
+    ? {
+        setupMsMean: Math.round(
+          setupDurations.reduce((a, b) => a + b, 0) / setupDurations.length
+        ),
+        setupMsMax: Math.max(...setupDurations),
+        setupCount: setupDurations.length,
+      }
+    : {}),
   // No `thresholdPct` / `thresholdProvisional` / `lowerIsBetter` here: those
   // decide the verdict, and .github/scripts/render-bench-comment.mjs renders
   // this file on the side that holds a write token, from an artifact a fork
@@ -1415,6 +1402,28 @@ console.log(
 );
 if (results.stoppedEarly) {
   console.log(`stopped early: ${results.stoppedEarly}\n`);
+}
+
+// The budget report. Printed on every run, because the step budget is sized
+// against the setup cost and nothing had ever measured it — a repetition sets up
+// both sides, so the count is 2 × (reps + 1), which an earlier version of the
+// arithmetic in bench.yml halved. Read this line after the first CI run and size
+// --budget-minutes from it rather than from the estimate.
+if (setupDurations.length > 0) {
+  const totalSetup = setupDurations.reduce((a, b) => a + b, 0);
+  const slowest = Math.max(...setupDurations);
+  console.log(
+    `[budget] ${setupDurations.length} setups: ` +
+      `mean ${(totalSetup / setupDurations.length / 1000).toFixed(1)}s, ` +
+      `slowest ${(slowest / 1000).toFixed(1)}s, ` +
+      `total ${(totalSetup / 60000).toFixed(1)} min` +
+      (BUDGET_MS === null
+        ? ""
+        : ` of a ${formatMinutes(BUDGET_MS)}-minute budget`) +
+      `. Setup is untimed by the estimator and dominates the clock; if this total ` +
+      `crowds the budget, raise --budget-minutes and the step's timeout-minutes ` +
+      `together.\n`
+  );
 }
 for (const benchmark of results.benchmarks) {
   const baseValue = benchmark.base?.value ?? null;

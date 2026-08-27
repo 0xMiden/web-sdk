@@ -14,11 +14,19 @@ import { test } from "node:test";
 
 import {
   BudgetExhaustedError,
+  createDeadlineFor,
+  evaluateWithDeadline,
   formatMinutes,
   grantDeadline,
+  STARVATION_FACTOR,
 } from "./bench-budget.mjs";
 
 const FLOOR = 60 * 1000;
+// Realistic durations, well below their ceilings — see the constants in
+// bench-proving.mjs.
+const SETUP = { ceiling: 10 * 60 * 1000, expected: 90 * 1000 };
+const PROVE = { ceiling: 5 * 60 * 1000, expected: 5 * 1000 };
+const SETTLE = { ceiling: 30 * 1000, expected: 2 * 1000 };
 
 // The real ceilings, plus the degenerate ones around them.
 const CEILINGS = [
@@ -35,7 +43,12 @@ const CEILINGS = [
 test("every grant is refused, full, or clamped-and-flagged — never a fourth thing", () => {
   for (const ceiling of CEILINGS) {
     for (let remaining = 0; remaining <= ceiling + 2000; remaining += 250) {
-      const got = grantDeadline({ ceiling, remaining, floorMs: FLOOR });
+      const got = grantDeadline({
+        ceiling,
+        remaining,
+        floorMs: FLOOR,
+        expected: 1,
+      });
 
       if (got.refused) {
         // Only ever because there is less left than the smaller of the two.
@@ -75,7 +88,12 @@ test("every grant is refused, full, or clamped-and-flagged — never a fourth th
 test("a ceiling far above the remaining budget is flagged, not silently squeezed", () => {
   const ceiling = 10 * 60 * 1000;
   for (const remaining of [61 * 1000, 70 * 1000, 120 * 1000, 400 * 1000]) {
-    const got = grantDeadline({ ceiling, remaining, floorMs: FLOOR });
+    const got = grantDeadline({
+      ceiling,
+      remaining,
+      floorMs: FLOOR,
+      expected: 1,
+    });
     assert.equal(got.refused, false);
     assert.equal(got.ms, remaining);
     assert.equal(
@@ -89,7 +107,12 @@ test("a ceiling far above the remaining budget is flagged, not silently squeezed
 test("a ceiling the budget can fully fund is not flagged", () => {
   const ceiling = 30 * 1000;
   for (const remaining of [ceiling, ceiling + 1, 20 * 60 * 1000]) {
-    const got = grantDeadline({ ceiling, remaining, floorMs: FLOOR });
+    const got = grantDeadline({
+      ceiling,
+      remaining,
+      floorMs: FLOOR,
+      expected: 1,
+    });
     assert.equal(got.refused, false);
     assert.equal(got.ms, ceiling);
     assert.equal(got.clamped, false);
@@ -104,6 +127,7 @@ test("the refusal scales to the ceiling, so small work is not blocked by the flo
     ceiling: settle,
     remaining: 31 * 1000,
     floorMs: FLOOR,
+    expected: 2000,
   });
   assert.equal(got.refused, false);
   assert.equal(got.ms, settle);
@@ -115,8 +139,99 @@ test("the refusal scales to the ceiling, so small work is not blocked by the flo
       ceiling: 5 * 60 * 1000,
       remaining: 31 * 1000,
       floorMs: FLOOR,
+      expected: 5000,
     }).refused,
     true
+  );
+});
+
+// `starved` is what the caller actually needs to know, and it is a different
+// question from `clamped`. These are separated because conflating them was a live
+// defect in both directions: reading `clamped` as a shortfall reclassified a real
+// hang as the budget running out (and kept a run built around a deadlock), while
+// reading it as a full ceiling threw away complete measurements over a genuine
+// shortfall.
+test("starved is about the work's real duration, not about who chose the number", () => {
+  // A prove's ceiling is 300s for a 5s prove, and the floor guarantees at least
+  // 60s. So a prove can be clamped across almost the whole band while never once
+  // being short of time — every clamped prove grant is at least 12x what it needs.
+  for (const remaining of [60 * 1000, 120 * 1000, 299 * 1000]) {
+    const got = grantDeadline({ ...PROVE, remaining, floorMs: FLOOR });
+    assert.equal(got.clamped, true, `${remaining}ms was not clamped`);
+    assert.equal(
+      got.starved,
+      false,
+      `a ${got.ms}ms grant for a ${PROVE.expected}ms prove was called starved`
+    );
+  }
+});
+
+test("a grant genuinely short of the work's duration is starved", () => {
+  // A setup needs ~90s, so anything under 180s is not evidence about the process.
+  for (const remaining of [60 * 1000, 100 * 1000, 179 * 1000]) {
+    const got = grantDeadline({ ...SETUP, remaining, floorMs: FLOOR });
+    assert.equal(got.starved, true, `${got.ms}ms for a setup was not starved`);
+  }
+  // And above the slack factor it is not.
+  for (const remaining of [181 * 1000, 400 * 1000, 599 * 1000]) {
+    const got = grantDeadline({ ...SETUP, remaining, floorMs: FLOOR });
+    assert.equal(got.clamped, true, `${got.ms}ms was not clamped`);
+    assert.equal(got.starved, false, `${got.ms}ms for a setup was starved`);
+  }
+});
+
+test("starved is exactly the slack threshold, over the whole space", () => {
+  for (const work of [SETUP, PROVE, SETTLE]) {
+    for (
+      let remaining = 0;
+      remaining <= work.ceiling + 2000;
+      remaining += 250
+    ) {
+      const got = grantDeadline({ ...work, remaining, floorMs: FLOOR });
+      if (got.refused) continue;
+      // Asserted against the definition, independently of the expression.
+      assert.equal(
+        got.starved,
+        got.ms < work.expected * STARVATION_FACTOR,
+        `ceiling ${work.ceiling} expected ${work.expected} granted ${got.ms} ` +
+          `reported starved=${got.starved}`
+      );
+      // The two flags are independent: neither implies the other.
+      if (got.starved) {
+        assert.ok(
+          got.ms < work.expected * STARVATION_FACTOR,
+          "starved without being short"
+        );
+      }
+    }
+  }
+});
+
+// The full ceiling is never starved, for any of the real work. If it were, the
+// ceiling would be too tight to bound a hang and the whole scheme would be
+// unable to call anything a hang.
+test("a full ceiling is never starved", () => {
+  for (const work of [SETUP, PROVE, SETTLE]) {
+    const got = grantDeadline({
+      ...work,
+      remaining: 60 * 60 * 1000,
+      floorMs: FLOOR,
+    });
+    assert.equal(got.clamped, false);
+    assert.equal(got.starved, false);
+  }
+});
+
+test("an expected duration above the ceiling is a configuration error", () => {
+  assert.throws(
+    () =>
+      grantDeadline({
+        ceiling: 1000,
+        expected: 2000,
+        remaining: 5000,
+        floorMs: FLOOR,
+      }),
+    RangeError
   );
 });
 
@@ -125,6 +240,7 @@ test("refusal reports what the work needed, for the diagnostic", () => {
     ceiling: 10 * 60 * 1000,
     remaining: 0,
     floorMs: FLOOR,
+    expected: 90 * 1000,
   });
   assert.equal(got.refused, true);
   assert.equal(got.need, FLOOR);
@@ -133,14 +249,20 @@ test("refusal reports what the work needed, for the diagnostic", () => {
     ceiling: 10 * 1000,
     remaining: 0,
     floorMs: FLOOR,
+    expected: 5 * 1000,
   });
   assert.equal(small.need, 10 * 1000);
 });
 
 test("nonsensical inputs are refused rather than coerced", () => {
-  const base = { ceiling: 1000, remaining: 1000, floorMs: FLOOR };
+  const base = {
+    ceiling: 1000,
+    remaining: 1000,
+    floorMs: FLOOR,
+    expected: 500,
+  };
   for (const bad of [NaN, Infinity, -Infinity, "1000", null, undefined]) {
-    for (const key of ["ceiling", "remaining", "floorMs"]) {
+    for (const key of ["ceiling", "remaining", "floorMs", "expected"]) {
       assert.throws(
         () => grantDeadline({ ...base, [key]: bad }),
         TypeError,
@@ -153,7 +275,12 @@ test("nonsensical inputs are refused rather than coerced", () => {
 });
 
 test("a zero remaining budget refuses rather than granting nothing", () => {
-  const got = grantDeadline({ ceiling: 1000, remaining: 0, floorMs: FLOOR });
+  const got = grantDeadline({
+    ceiling: 1000,
+    remaining: 0,
+    floorMs: FLOOR,
+    expected: 500,
+  });
   assert.equal(got.refused, true);
 });
 
@@ -170,4 +297,202 @@ test("the budget error is identifiable across the module boundary", () => {
   assert.ok(error instanceof BudgetExhaustedError);
   assert.ok(error instanceof Error);
   assert.equal(error.name, "BudgetExhaustedError");
+});
+
+// ---------------------------------------------------------------------------
+// The WIRING. This is the part that mattered.
+//
+// Four consecutive review rounds found a defect in the deadline logic, and every
+// one of them was here rather than in the arithmetic: the pure function was
+// checked each time and the way its answer got USED was not. The specific four:
+//
+//   1. A flat floor aborted a 1.5s prove at a 10s deadline and called it wedged.
+//   2. The refusal was scaled to the ceiling but the grant was not, so work was
+//      silently squeezed and the timeout still called it wedged.
+//   3. `deadlineFor` returned a bare number on the unbudgeted path while the call
+//      sites spread it, so `ms` was undefined and every step timed out instantly.
+//   4. A timeout was classified by `clamped`, which says who chose the number
+//      rather than whether it was big enough — so a deadlocked prover under a
+//      294-second deadline was reported as the budget running out, and its run
+//      was kept.
+//
+// Each test below fails if its defect is reintroduced.
+// ---------------------------------------------------------------------------
+
+const CONFIG = {
+  budgetMs: 20 * 60 * 1000,
+  marginMs: 90 * 1000,
+  floorMs: FLOOR,
+  startedAt: 0,
+};
+
+/** A clock the test drives. */
+const at = (elapsedMs) => ({ ...CONFIG, now: () => elapsedMs });
+
+/** A page whose evaluate takes `durationMs`, or never resolves. */
+const fakePage = (durationMs) => ({
+  evaluate: () =>
+    durationMs === Infinity
+      ? new Promise(() => {})
+      : new Promise((resolve) => setTimeout(() => resolve("ok"), durationMs)),
+});
+
+/** Every deadlineFor path must produce something spreadable. Defect 3. */
+test("every deadlineFor path returns a spreadable grant, never a bare number", () => {
+  const cases = [
+    ["no budget (local run)", { ...CONFIG, budgetMs: null, now: () => 0 }],
+    ["budget with room", at(0)],
+    ["budget nearly gone", at(CONFIG.budgetMs - CONFIG.marginMs - 70 * 1000)],
+  ];
+  for (const [name, config] of cases) {
+    const deadlineFor = createDeadlineFor(config);
+    for (const [work, label] of [
+      [SETUP, "setup"],
+      [PROVE, "prove"],
+      [SETTLE, "settle"],
+    ]) {
+      const opts = { ...deadlineFor(work.ceiling, work.expected), what: label };
+      assert.ok(
+        Number.isFinite(opts.ms) && opts.ms > 0,
+        `${name}/${label}: ms is ${opts.ms} after spreading`
+      );
+      assert.equal(
+        typeof opts.starved,
+        "boolean",
+        `${name}/${label}: starved is ${opts.starved} after spreading`
+      );
+    }
+  }
+});
+
+/** A malformed deadline must throw loudly, not time out instantly. Defect 3. */
+test("a malformed deadline is rejected rather than treated as zero", async () => {
+  for (const ms of [undefined, NaN, 0, -1, "1000", null]) {
+    await assert.rejects(
+      () =>
+        evaluateWithDeadline(fakePage(1), () => 0, undefined, {
+          ms,
+          what: "setup",
+        }),
+      TypeError,
+      `accepted ms=${ms}`
+    );
+  }
+});
+
+/**
+ * A hang under a generous deadline is a hang, however the number was chosen.
+ * Defect 4 — this is the one that let a deadlocked prover be reported as a budget
+ * stop and its measurements kept.
+ */
+test("a hang under a generous deadline is a wedge, even when clamped", async () => {
+  // 200 seconds left. A prove needs 5, so this is clamped (the budget chose 200
+  // rather than the 300s ceiling) but 40x what the work needs.
+  const deadlineFor = createDeadlineFor(
+    at(CONFIG.budgetMs - CONFIG.marginMs - 200 * 1000)
+  );
+  const grant = deadlineFor(PROVE.ceiling, PROVE.expected);
+  assert.equal(grant.clamped, true, "expected this grant to be clamped");
+  assert.equal(
+    grant.starved,
+    false,
+    "a 200s grant for a 5s prove is not starved"
+  );
+
+  // Shrink the deadline for test speed while keeping the classification.
+  const error = await evaluateWithDeadline(
+    fakePage(Infinity),
+    () => 0,
+    undefined,
+    { ...grant, ms: 20, what: "head rep 3 prove" }
+  ).then(
+    () => null,
+    (e) => e
+  );
+  assert.ok(error, "a permanent hang resolved");
+  assert.ok(
+    !(error instanceof BudgetExhaustedError),
+    `a deadlocked prover was classified as a budget stop: ${error.message}`
+  );
+  assert.match(error.message, /wedged/);
+});
+
+/** A genuine shortfall stops the run cleanly. Defects 1 and 2. */
+test("a timeout under a starved deadline is a budget stop, not a wedge", async () => {
+  // 100 seconds left against a setup that needs 90 — under the slack factor, so
+  // the overrun says nothing about the process.
+  const deadlineFor = createDeadlineFor(
+    at(CONFIG.budgetMs - CONFIG.marginMs - 100 * 1000)
+  );
+  const grant = deadlineFor(SETUP.ceiling, SETUP.expected);
+  assert.equal(grant.starved, true, "a 100s grant for a 90s setup is starved");
+
+  const error = await evaluateWithDeadline(
+    fakePage(Infinity),
+    () => 0,
+    undefined,
+    { ...grant, ms: 20, what: "head rep 3 setup" }
+  ).then(
+    () => null,
+    (e) => e
+  );
+  assert.ok(
+    error instanceof BudgetExhaustedError,
+    `got ${error?.constructor.name}`
+  );
+  // And it must not claim to know which it was.
+  assert.doesNotMatch(error.message, /not a hang/);
+});
+
+/** A prove is never aborted below its own duration. Defect 1. */
+test("no grant is ever below the work's own duration for the real ceilings", () => {
+  for (const work of [SETUP, PROVE, SETTLE]) {
+    for (let leftS = 0; leftS <= 1200; leftS += 1) {
+      const deadlineFor = createDeadlineFor(
+        at(CONFIG.budgetMs - CONFIG.marginMs - leftS * 1000)
+      );
+      let grant;
+      try {
+        grant = deadlineFor(work.ceiling, work.expected);
+      } catch (error) {
+        assert.ok(error instanceof BudgetExhaustedError);
+        continue;
+      }
+      // Either the work got a usable deadline, or it was refused outright. What
+      // must never happen is being started under a deadline below the floor.
+      assert.ok(
+        grant.ms >= Math.min(work.ceiling, FLOOR),
+        `${work.ceiling}ms ceiling granted ${grant.ms}ms with ${leftS}s left`
+      );
+    }
+  }
+});
+
+/** Work that completes in time is unaffected by any of this. */
+test("work that finishes returns its value on every budget path", async () => {
+  for (const config of [{ ...CONFIG, budgetMs: null, now: () => 0 }, at(0)]) {
+    const deadlineFor = createDeadlineFor(config);
+    const value = await evaluateWithDeadline(fakePage(1), () => 0, undefined, {
+      ...deadlineFor(PROVE.ceiling, PROVE.expected),
+      what: "prove",
+    });
+    assert.equal(value, "ok");
+  }
+});
+
+/** The budget-exhaustion refusal names the budget the user passed. */
+test("the refusal names the real budget, not a rounded one", () => {
+  const deadlineFor = createDeadlineFor({
+    ...CONFIG,
+    budgetMs: 5.5 * 60 * 1000,
+    now: () => 5.5 * 60 * 1000,
+  });
+  assert.throws(
+    () => deadlineFor(SETUP.ceiling, SETUP.expected),
+    (error) => {
+      assert.ok(error instanceof BudgetExhaustedError);
+      assert.match(error.message, /5\.50-minute/);
+      return true;
+    }
+  );
 });
