@@ -69,7 +69,8 @@ below argues against in the tails.
 
 **One benchmark, and one run.** It is the rate for a single verdict, and with a
 single benchmark in the suite the family that dominates today is not benchmarks
-but *runs*: the bench fires on every push to a PR, so the relevant question is
+but *runs*: the bench fires on every push to a PR carrying the `bench` label — on
+every push once the label gate comes off — so the relevant question is
 how often a PR's whole life produces one spurious label. That number depends on
 which rate is multiplied, so take it from the conjunction rather than from the
 magnitude leg alone — see the table below, where ten independent pushes come to

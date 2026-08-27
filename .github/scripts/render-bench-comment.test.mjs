@@ -18,7 +18,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { main, renderComment, renderSummary } from "./render-bench-comment.mjs";
+import {
+  EXIT_INTERNAL_ERROR,
+  EXIT_REJECTED,
+  main,
+  renderComment,
+  renderSummary,
+} from "./render-bench-comment.mjs";
 
 /** Mirrors MAX_BODY_CHARS in the renderer — the invariant it actually enforces. */
 const MAX_BODY_CHARS = 60000;
@@ -760,6 +766,15 @@ test("neutralizes every GitHub autolink and shortcode in a name", () => {
     ":white_check_mark: approved",
     "&#96;code&#96; &#64;everyone &#124;col&#124;",
     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    // Backtick-bearing, and the reason the whole list needed one. The assertion
+    // below strips code spans and greps the remainder, so a payload that cannot
+    // LEAVE its span is checked against a string the strip already removed —
+    // every case above passes whether or not `sanitizeText` strips backticks.
+    // Dropping the backtick from that character class was survivable: the name
+    // closed its own span and put a live attacker-controlled link in the H3
+    // heading of a comment posted under the repository's token.
+    "a`[Security review passed](https://evil.example/x)`b",
+    "x`|y `#1` z",
   ];
   for (const name of payloads) {
     const body = renderComment(results({ benchmark: { name } }), ctx());
@@ -1283,7 +1298,10 @@ test("the CLI never emits a workflow command from untrusted bytes", async (t) =>
   assert.equal(await main([resultsPath, ctxPath]), 64);
   const text = written.join("");
   for (const line of text.split("\n")) {
-    assert.doesNotMatch(line, /^::/, `workflow command emitted: ${line}`);
+    // Anywhere in the line, not just at its start. The runner parses `::cmd::`
+    // wherever it appears, and every write site here happens to prefix its own
+    // text — so an anchored assertion passed with the neutralizer deleted.
+    assert.doesNotMatch(line, /::/, `workflow command emitted: ${line}`);
   }
   assert.equal(
     text.split("\n").filter(Boolean).length,
@@ -1341,7 +1359,10 @@ test("the CLI neutralizes the legacy workflow-command form too", async (t) => {
   assert.match(text, /reps must be/);
   assert.doesNotMatch(text, /##\[/, "legacy workflow command reached stderr");
   for (const line of text.split("\n")) {
-    assert.doesNotMatch(line, /^::/, `workflow command emitted: ${line}`);
+    // Anywhere in the line, not just at its start. The runner parses `::cmd::`
+    // wherever it appears, and every write site here happens to prefix its own
+    // text — so an anchored assertion passed with the neutralizer deleted.
+    assert.doesNotMatch(line, /::/, `workflow command emitted: ${line}`);
   }
 });
 
@@ -1409,15 +1430,66 @@ test("the CLI's exit codes distinguish a refused artifact from a renderer bug", 
     64,
     "malformed artifact"
   );
+  // A results.json the renderer cannot READ is our fault, not the fork's — an
+  // ENOENT or EACCES here is the outage `fail()`'s docstring describes, where
+  // reporting silently stopped for every PR while the workflow stayed green.
+  // Only the artifact's CONTENT can earn a 64.
+  assert.equal(
+    await main([join(dir, "absent-results.json"), goodCtx]),
+    3,
+    "unreadable results is a reporter fault, not a refusal"
+  );
+
   // The refusal code must stay clear of everything node assigns itself, or the
   // workflow's "not 64 means it was our bug" branch silently stops working.
+  // Compared against the exported constant: the two literals this loop used to
+  // compare could not disagree, so it passed under every possible source change.
   for (const nodeOwn of [1, 3, 4, 5, 6, 7, 8, 9, 12, 13]) {
     assert.notEqual(
-      64,
+      EXIT_REJECTED,
       nodeOwn,
       "the refusal code collides with a code node uses itself"
     );
   }
+  assert.equal(EXIT_REJECTED, 64);
+  assert.equal(EXIT_INTERNAL_ERROR, 3);
+
+  // `--summary` has to reach `renderSummary`, not just exist. The test that
+  // covers the two budgets calls `renderSummary` directly, so the flag's wiring
+  // — and the `argv.filter` that keeps it out of the positional arguments —
+  // were both unpinned.
+  const wide = (value) => ({
+    samples: Array.from({ length: 40 }, () => [value, value, value, value]),
+  });
+  const bigResults = await write(
+    "big.json",
+    results({
+      top: {
+        reps: 40,
+        provesPerRep: 4,
+        repsExecuted: 41,
+        provesExecutedPerRep: 5,
+        benchmarks: Array.from({ length: 60 }, (_unused, i) =>
+          bench(`bench-${i}`, wide(1000 + i), wide(1200 + i))
+        ),
+      },
+    })
+  );
+  out.length = 0;
+  assert.equal(await main(["--summary", bigResults, goodCtx]), 0);
+  const summaryOut = out.join("");
+  out.length = 0;
+  assert.equal(await main([bigResults, goodCtx]), 0);
+  const commentOut = out.join("");
+  // The comment has to drop the raw samples at this size; the summary's budget
+  // is ~1 MiB and keeps them. If `--summary` never reaches `renderSummary`, both
+  // come back identical and degraded.
+  assert.match(commentOut, /Per-rep raw samples were dropped/);
+  assert.doesNotMatch(summaryOut, /Per-rep raw samples were dropped/);
+  assert.ok(
+    summaryOut.length > commentOut.length,
+    "--summary produced the comment variant"
+  );
 
   // ctx.json is written by the reporter's own jq from trusted event fields, so
   // every failure on it is ours, whatever its shape.
@@ -2434,6 +2506,297 @@ test("a large mean movement is never silent, corroborated or not", () => {
   );
 });
 
+test("the mean channels do not overlap and do not overclaim", () => {
+  // Round 6 widened the mean cross-check so a large mean could not be silenced.
+  // It widened it too far: the three channels started overlapping, and two of
+  // them made claims the run did not support. Each case below is one of those.
+  // `baseRep` is a parameter because a repetition can only move its mean DOWN
+  // while moving its minimum UP if the base has slow proves to undercut — the
+  // minimum is over all three proves, so against a flat base every
+  // mean-improving repetition also improves the minimum.
+  const row = (headReps, top = {}, baseRep = [1000, 1000, 1000]) =>
+    results({
+      top: {
+        reps: headReps.length,
+        provesPerRep: PROVES_PER_REP,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        repsExecuted: headReps.length + 1,
+        repsRequested: headReps.length,
+        ...top,
+      },
+      benchmark: {
+        base: { samples: headReps.map(() => baseRep) },
+        head: { samples: headReps },
+      },
+    });
+
+  // A run that CAN rule, whose mean is large but uncorroborated, must not be
+  // described as a run that cannot be ruled on — nothing blocked it, and the
+  // note the heading's "see below" pointed at correctly declined to fire,
+  // leaving the assertion unexplained.
+  const uncorroborated = renderComment(
+    row([...Array(5).fill([1000, 1300, 1300]), [1000, 900, 900]]),
+    ctx()
+  );
+  assert.doesNotMatch(uncorroborated, /this run cannot be ruled on/);
+  assert.match(uncorroborated, /mean's own repetitions do not agree/);
+
+  // A blocked run whose two estimators AGREE has one movement, not two. Reported
+  // as a mean cross-check it read "+10.00% on the reported figure — but +10.00%
+  // on the mean of all proves", under prose explaining that the movement had
+  // missed every repetition's fastest prove when it had moved it by the same
+  // amount.
+  const agreeing = renderComment(
+    row(Array(6).fill([1100, 1100, 1100]), {
+      repsRequested: 8,
+      stoppedEarly: "out of budget",
+      stoppedEarlyKind: "budget",
+    }),
+    ctx()
+  );
+  assert.doesNotMatch(agreeing, /on the mean of all proves/);
+  assert.doesNotMatch(agreeing, /misses every repetition's fastest prove/);
+
+  // A corroborated mean pointing the other way must survive the headline's own
+  // repetitions disagreeing. Keyed on `beyond`, this row fell through every
+  // channel: the comment published the reported figure's minus sign and dropped
+  // the opposing figure from the heading, the notes and the table.
+  const headlineSplit = renderComment(
+    row([...Array(5).fill([800, 1600, 1600]), [1200, 1600, 1600]]),
+    ctx()
+  );
+  assert.match(headlineSplit, /two estimators disagree/);
+  assert.match(headlineSplit, /\+35\.56%/);
+  // The mean is the corroborated side here, and the note has to say which side
+  // that is rather than assert a majority for both.
+  assert.match(headlineSplit, /mean holds in a majority of repetitions/);
+  assert.match(headlineSplit, /reported figure's\n> own repetitions do NOT agree/);
+
+  // When NEITHER side's repetitions agree, the note must claim a majority for
+  // neither. The wording used to assert one unconditionally for the headline.
+  const bothSplit = renderComment(
+    row(
+      [...Array(5).fill([800, 3000, 3000]), [1200, 1200, 1200]],
+      {},
+      [1000, 2000, 2000]
+    ),
+    ctx()
+  );
+  assert.match(bothSplit, /two estimators disagree/);
+  assert.match(bothSplit, /Neither figure's repetitions agree/);
+  assert.doesNotMatch(bothSplit, /holds in a majority/);
+
+  // And a contradicted row is described once. Counting it as both contradicted
+  // and unresolved gave one benchmark two notes and inflated "(+N more)".
+  assert.equal(
+    headlineSplit.match(/^> \*\*\d+ benchmarks? /gm).length,
+    1,
+    "one row, one note"
+  );
+  assert.doesNotMatch(
+    headlineSplit.split("\n")[0],
+    /\(\+\d+ more\)/,
+    "one row counted twice in the heading"
+  );
+});
+
+test("refuses more sample groups than the declared repetitions", () => {
+  // The too-FEW direction was covered; too many was not, and `length !== reps`
+  // could be weakened to `length < reps`. Twenty groups under `reps: 6` keeps
+  // "6 reps × 3 warm proves" in the Method row and the methodology bullet while
+  // the estimator averages twenty minima and the sign test runs over twenty
+  // pairs — and multiplies the trusted renderer's peak memory by the same factor.
+  assert.throws(
+    () =>
+      renderComment(
+        results({
+          benchmark: {
+            head: {
+              samples: Array.from({ length: REPS + 14 }, () =>
+                Array(PROVES_PER_REP).fill(1010)
+              ),
+            },
+          },
+        }),
+        ctx()
+      ),
+    /samples/
+  );
+});
+
+test("refuses counts and durations that are not the integers the prose claims", () => {
+  const refuses = (top, why) =>
+    assert.throws(() => renderComment(results({ top }), ctx()), /./, why);
+
+  // `requireInt`'s integer clause was unpinned — only its bounds were. A
+  // fractional count reaches prose that states it as fact: "retained 6 of the
+  // 9.5 repetitions it was configured for", "8.5 threads".
+  refuses({ threads: 8.5 }, "fractional threads");
+  refuses(
+    {
+      reps: REPS,
+      repsRequested: 9.5,
+      stoppedEarly: "x",
+      stoppedEarlyKind: "budget",
+    },
+    "fractional repsRequested"
+  );
+  // ... and its lower bound, which the same test left open.
+  refuses({ threads: 0 }, "zero threads");
+  refuses({ threads: -5 }, "negative threads");
+
+  // `requireMillis` had no range coverage at all: with the check gone a fork
+  // publishes "ran past its 9000000000000s deadline" and a negative setup median.
+  const deadline = (over) => ({
+    reps: REPS,
+    repsRequested: REPS + 2,
+    stoppedEarly: "x",
+    stoppedEarlyKind: "deadline",
+    ...over,
+  });
+  refuses(deadline({ stoppedEarlyDeadlineMs: 9e12 }), "deadline past the cap");
+  refuses(deadline({ stoppedEarlyDeadlineMs: 0 }), "zero deadline");
+  refuses(
+    deadline({
+      stoppedEarlyDeadlineMs: 70_000,
+      setupCount: 5,
+      setupMsMedian: -5_000_000,
+    }),
+    "negative setup median"
+  );
+  refuses(
+    deadline({
+      stoppedEarlyDeadlineMs: 70_000,
+      setupCount: 5,
+      setupMsMedian: 9e12,
+    }),
+    "setup median past the cap"
+  );
+});
+
+test("the heading names the largest regression, not merely a regression", () => {
+  // The existing ordering test pins that a regression outranks a larger
+  // IMPROVEMENT. It does not pin the ordering among regressions, so reversing
+  // the row sort kept the suite green while hiding the worst one behind
+  // "(+1 more)" — which is what the sort exists to prevent.
+  const body = renderComment(
+    results({
+      top: {
+        benchmarks: [
+          bench("tiny", side(1000), side(1060)),
+          bench("huge", side(1000), side(1400)),
+        ],
+      },
+    }),
+    ctx()
+  );
+  assert.match(body.split("\n")[0], /`huge`/);
+  assert.doesNotMatch(body.split("\n")[0], /`tiny`/);
+});
+
+test("a truncated calibration run is told not to record its figure", () => {
+  // Calibration sets the noise floor every later verdict rests on. A truncated
+  // calibration run's length was chosen by how slow the machine was, so its
+  // figure is a selected sample and must not be fed back into that floor. The
+  // branch saying so had no test, and swapping the calibration and stoppedEarly
+  // preconditions — or collapsing the ternary — left the suite green.
+  // The advice lives in the note for a row that cleared the floor, so the
+  // fixture needs a movement — on a calibration run the true delta is zero, so
+  // a +10% reading here is exactly the noise the floor is being measured from.
+  const moved = { benchmark: { head: side(1100) } };
+  const truncated = renderComment(
+    results({
+      ...moved,
+      top: {
+        reps: REPS,
+        repsRequested: REPS + 2,
+        stoppedEarly: "out of budget",
+        stoppedEarlyKind: "budget",
+      },
+    }),
+    ctx({ calibration: true })
+  );
+  assert.match(truncated, /Do NOT record this figure/);
+  assert.doesNotMatch(truncated, /Record the figure and re-run/);
+
+  // The complete run is the control: it is the one that SHOULD be recorded.
+  const complete = renderComment(results(moved), ctx({ calibration: true }));
+  assert.match(complete, /Record the figure/);
+  assert.doesNotMatch(complete, /Do NOT record this figure/);
+});
+
+test("the mean cross-check's sign test holds all three of its clauses too", () => {
+  // `pairedMeanAgreement` says in its own comment that it is held to the same
+  // standard as the headline sign test, "not a laxer one". The test that claimed
+  // to cover it used a single dominating repetition, which gives `agree = 1` —
+  // a value that fails every clause independently, so no single-clause deletion
+  // could move its one assertion. Two of the three were unpinned.
+  //
+  // Head is under the floor on the reported figure (each rep's fastest prove is
+  // flat) so the MEAN channel is what rules, and `meanOnly` is what its verdict
+  // shows up as.
+  // Base's slow proves sit at 2000 so a head repetition can move its MEAN in
+  // either direction while its fastest prove stays pinned at 1000. Without that
+  // headroom a mean-improving repetition also lowers the repetition's minimum,
+  // which moves the reported figure and takes the row out of the mean-only
+  // channel this test is aiming at.
+  const SLOW = 2000;
+  const meanRow = (slowProvePerRep) =>
+    results({
+      top: {
+        reps: slowProvePerRep.length,
+        provesPerRep: PROVES_PER_REP,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        repsExecuted: slowProvePerRep.length + 1,
+        repsRequested: slowProvePerRep.length,
+      },
+      benchmark: {
+        base: {
+          samples: slowProvePerRep.map(() => [1000, SLOW, SLOW]),
+        },
+        head: {
+          samples: slowProvePerRep.map((v) => [1000, v, v]),
+        },
+      },
+    });
+  const WORSE = 3000;
+  const TIED = SLOW;
+  const BETTER = 1200;
+  const RULES_ON_MEAN = /moved on the mean but not on the reported figure/;
+
+  // Positive control: six repetitions, all moving the mean the same way.
+  assert.match(renderComment(meanRow(Array(6).fill(WORSE)), ctx()), RULES_ON_MEAN);
+
+  // Effective sample size. Four move, two are exactly tied — nothing
+  // contradicts and four of six is a majority, so without the floor clause the
+  // test would be four coins rather than six.
+  assert.doesNotMatch(
+    renderComment(meanRow([WORSE, WORSE, WORSE, WORSE, TIED, TIED]), ctx()),
+    RULES_ON_MEAN
+  );
+
+  // Contradiction. Six agree, which clears the floor clause on its own, but two
+  // point the other way.
+  assert.doesNotMatch(
+    renderComment(meanRow([...Array(6).fill(WORSE), BETTER, BETTER]), ctx()),
+    RULES_ON_MEAN
+  );
+
+  // Majority. Six agree and nothing contradicts, but six of fourteen is not a
+  // result.
+  assert.doesNotMatch(
+    renderComment(meanRow([...Array(6).fill(WORSE), ...Array(8).fill(TIED)]), ctx()),
+    RULES_ON_MEAN
+  );
+
+  // And the floor clause is not "reject anything with a tie": six agreeing out
+  // of eight reaches the calibrated count and rules.
+  assert.match(
+    renderComment(meanRow([...Array(6).fill(WORSE), TIED, TIED]), ctx()),
+    RULES_ON_MEAN
+  );
+});
+
 test("the sign test rules only when all three of its clauses hold", () => {
   // Positive control first. Six repetitions all moving the same way is the
   // calibrated shape and must rule, or the negatives below pass for the wrong
@@ -2922,7 +3285,10 @@ test("a teardown stop keeps its measurements and withholds the verdict", () => {
   // The ruling does not.
   assert.match(body, /unresolved: this run stopped early/);
   assert.match(body, /not a budget problem; settle what kept it alive/);
-  assert.doesNotMatch(body, /### 🔺/);
+  // `RULED`, not `### 🔺`. Headings use ⚠️ or 🚀 — 🔺 is a table-row marker and
+  // appears in no heading — so the anchored form could not fail, and a teardown
+  // stop that DID headline a verdict would have passed here.
+  assert.doesNotMatch(body, RULED);
 });
 
 // Both of these are wall-clock durations derived from `performance.now()`, which

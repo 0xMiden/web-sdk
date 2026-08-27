@@ -731,6 +731,57 @@ const CLOSE_DEADLINE_MS = 30 * 1000;
  */
 const PLAYWRIGHT_TIMEOUT_MS = 60 * 1000;
 
+/**
+ * Bounds a Playwright call that `setDefaultTimeout` does not reach.
+ *
+ * Only `goto` honours the context timeouts — it is a page operation.
+ * `browser.newContext()` and `context.newPage()` are protocol round trips that
+ * ignore both settings, and `newContext` necessarily runs before there is a
+ * context to configure. A browser wedged at either one therefore hung until the
+ * runner killed the step: no early stop, no artifact, and every completed
+ * repetition lost, which is the failure the early-stop machinery exists to
+ * prevent.
+ *
+ * A late winner is closed rather than leaked — the call can still succeed after
+ * the race is lost, handing back a context nobody holds a reference to.
+ */
+const withPlaywrightDeadline = async (label, ms, start) => {
+  let timer;
+  let timedOut = false;
+  const pending = start();
+  // Attached before the race, so the late-winner path is armed even if the race
+  // throws synchronously, and so `pending` is never an unhandled rejection when
+  // the timer wins.
+  pending
+    .then((won) => {
+      if (timedOut && won && typeof won.close === "function") {
+        return won.close();
+      }
+      return undefined;
+    })
+    .catch(() => {});
+  try {
+    return await Promise.race([
+      pending,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(
+            new DeadlineExceededError(
+              `${label} did not return within ${ms / 1000}s`,
+              `${label} did not return within ${ms / 1000}s. The run keeps the ` +
+                `repetitions it already finished and stops here.`,
+              { deadlineMs: ms }
+            )
+          );
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 // Counts closes that blew their deadline, because abandoning one changes how
 // this process has to exit. See the `abandonedCloses > 0` block at the very
 // bottom of the file.
@@ -827,7 +878,11 @@ class PageErrorLog {
 // Opens a page, runs setup on it, and returns handles the driver can drive
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
-  const context = await browser.newContext();
+  const context = await withPlaywrightDeadline(
+    `${label} rep ${repIndex}: newContext`,
+    PLAYWRIGHT_TIMEOUT_MS,
+    () => browser.newContext()
+  );
   // Both, because they are separate settings in Playwright and `goto` reads the
   // navigation one. Without these the three unwrapped calls run under a default
   // this file does not control and cannot report.
@@ -839,7 +894,11 @@ const openSide = async (browser, url, label, repIndex) => {
   // `page.isClosed()` cannot: it flips after the workers have already gone.
   let closing = false;
   try {
-    const page = await context.newPage();
+    const page = await withPlaywrightDeadline(
+      `${label} rep ${repIndex}: newPage`,
+      PLAYWRIGHT_TIMEOUT_MS,
+      () => context.newPage()
+    );
     // An uncaught page error means this iteration's timings are unexplained,
     // so fail rather than fold suspect numbers into the results.
     page.on("pageerror", (error) => {
@@ -1239,15 +1298,21 @@ try {
       // nothing measured around a hang is published as a result, and a reader with
       // the facts settles in seconds what the code could not.
       //
-      // Playwright's own TimeoutError counts as an overrun too. `newContext`,
-      // `newPage` and `goto` are the three calls in a repetition that are NOT
-      // wrapped by `evaluateWithDeadline` — they are Playwright's own API, under
-      // Playwright's own default timeout — so a page that will not navigate late
-      // in a run rejects with a plain Error subclass rather than with
+      // Playwright's own TimeoutError counts as an overrun too. `goto` is the
+      // remaining call in a repetition that is NOT wrapped by
+      // `evaluateWithDeadline` — it is Playwright's own API, under the context
+      // timeouts set in `openSide` — so a page that will not navigate late in a
+      // run rejects with a plain Error subclass rather than with
       // DeadlineExceededError, and took the discard-everything path below. That
       // is the same unfinished-work shape as every other overrun, and it threw
       // away completed repetitions for it. Matched by `name` because the class is
       // not exported from `@playwright/test` in a form worth importing here.
+      //
+      // `newContext` and `newPage` used to be in that list and are not any more:
+      // they are protocol round trips that ignore `setDefaultTimeout` entirely,
+      // so there was no TimeoutError to convert and a browser wedged at either
+      // one hung until the runner killed the step. `withPlaywrightDeadline` now
+      // bounds them and raises DeadlineExceededError directly.
       //
       // Converted rather than passed through, because `stoppedEarlyKind:
       // "deadline"` obliges the artifact to carry `stoppedEarlyDeadlineMs` and

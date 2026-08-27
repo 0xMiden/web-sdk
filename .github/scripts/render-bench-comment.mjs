@@ -1309,17 +1309,18 @@ function computeRows(results, ctx) {
     // `meanLarge` excluded it for clearing the floor and `meanContradicts`
     // excluded it because a blocked row is never `beyond`.
     //
-    // The third case it now covers is a large mean movement on an UNBLOCKED run
-    // whose headline stayed under the floor and whose mean is not corroborated.
-    // That was the last silent combination: `meanOnly` refused it for want of
-    // corroboration, `meanContradicts` refused it because the headline never
-    // cleared the floor, and this refused it because nothing blocked the run — so
-    // a change lifting the mean 55% rendered as "No significant change" with the
-    // methodology pointing at a cross-check that produced nothing.
-    const meanUnruled =
-      meanBig &&
-      !meanOnly &&
-      (!clearsFloor || Boolean(agreement.blocked || agreement.tooShort));
+    // `meanLarge`, so this is strictly the mean-only case — the headline stayed
+    // under the floor. Widening it to every large mean made it fire when the two
+    // estimators AGREED: a blocked run +10.00% on both rendered "+10.00% on the
+    // reported figure — but +10.00% on the mean of all proves", presenting one
+    // movement as two, under prose explaining that the movement had missed every
+    // repetition's fastest prove when it had in fact moved it by the same amount.
+    // A mean that agrees with the headline adds nothing the headline has not
+    // said; a mean that OPPOSES it is `meanContradicts` below.
+    //
+    // `!meanOnly` and nothing else, so it also covers the unblocked run whose
+    // mean is large but uncorroborated. That was the last silent combination.
+    const meanUnruled = meanLarge && !meanOnly;
     const meanWorse =
       meanPct === null ? null : LOWER_IS_BETTER ? meanPct > 0 : meanPct < 0;
     // The two estimators point opposite ways, both past the floor.
@@ -1334,7 +1335,15 @@ function computeRows(results, ctx) {
     // is the honest answer to two estimators that disagree; naming the direction
     // of whichever one happens to be corroborated is not. `meanCorroborated`
     // now chooses how firmly the note puts it instead.
-    const meanContradicts = beyond && meanBig && meanWorse !== isWorse;
+    //
+    // `clearsFloor`, not `beyond`. Keying on `beyond` required the HEADLINE's own
+    // repetitions to agree, and when they did not the row fell through every
+    // channel: `meanUnruled` skips it because the headline cleared the floor,
+    // `meanOnly` because it is not mean-only, and this because it is not
+    // `beyond`. A run reading -13.33% on the reported figure whose mean was
+    // +60.00% worse — corroborated by all six repetitions — published the minus
+    // sign and omitted the +60.00% from the heading, the notes and the table.
+    const meanContradicts = clearsFloor && meanBig && meanWorse !== isWorse;
     return {
       ...b,
       deltaValue,
@@ -1426,7 +1435,11 @@ function buildVerdict(rows) {
   const contradicted = rows
     .filter((r) => r.meanContradicts)
     .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
-  const unresolved = rows.filter((r) => r.unresolved);
+  // `!meanContradicts`, mirroring `moved` above. A row whose repetitions disagree
+  // AND whose mean points the other way satisfies both, and counting it in both
+  // inflated every "(+N more)" by one and gave one benchmark two headings' worth
+  // of notes.
+  const unresolved = rows.filter((r) => r.unresolved && !r.meanContradicts);
   const worst = comparable[0];
   // Everything that cleared the floor, in any of the three states a row can be
   // in once it has: ruled, contradicted, or unresolved. The "(+N more)" counts
@@ -1514,7 +1527,17 @@ function buildVerdict(rows) {
       const leader = meanUnruled[0];
       const rest =
         meanUnruled.length > 1 ? ` (+${meanUnruled.length - 1} more)` : "";
-      return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor on the reported figure, but the mean of all proves is ${formatSignedPct(leader.meanPct)} on ${codeSpan(leader.name)}${rest} — this run cannot be ruled on, see below`;
+      // Which of the two reasons, because they are not the same claim and the
+      // run-level one is false for the other. An unblocked, full-length run whose
+      // mean simply is not corroborated headlined "this run cannot be ruled on"
+      // over a note explaining that the run was fine and the MEAN was what could
+      // not be ruled on — and `buildUnruledBelowFloorNote`, which the "see below"
+      // pointed at, correctly declined to fire because no row was blocked.
+      const why =
+        leader.agreement.blocked || leader.agreement.tooShort
+          ? "this run cannot be ruled on, see below"
+          : "the mean's own repetitions do not agree on it, see below";
+      return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor on the reported figure, but the mean of all proves is ${formatSignedPct(leader.meanPct)} on ${codeSpan(leader.name)}${rest} — ${why}`;
     }
     // "No significant change" is a VERDICT, and a run that cannot rule is not
     // entitled to it in either direction. The precondition gates were built to
@@ -1618,19 +1641,22 @@ function buildTeardownNote(teardownFailures) {
 
 // A run that hit its wall-clock budget and reported what it had finished.
 //
-// Disclosed rather than suppressed. The estimate itself survives truncation: the
-// reported figure is a PAIRED difference and the budget is consumed by both sides
-// together, so stopping on elapsed time selects for slow machine periods, which
-// is common mode and cancels in the ratio. Simulated at the calibrated
-// configuration, a run stopped with six repetitions retained reports the same
-// mean delta as an uninterrupted one to within 0.1% under the null and under a
-// true 8% effect, with the same false-positive rate — including under thermal
-// drift and heavy-tailed prove times. See docs/benchmarks/calibration.md.
+// Disclosed AND unruled. `verdictPreconditions` blocks every stopped run
+// outright, and this note says why in the reader's terms: a run whose length was
+// decided mid-run by how the machine behaved is a selected sample, and the floor
+// the verdict would be measured against was calibrated on complete runs.
 //
-// What truncation does cost is repetitions, and therefore power, which the
-// verdict already accounts for by refusing to resolve below
-// MIN_REPS_FOR_SIGN_TEST. So the note exists to tell the reader the run did not
-// do what the methodology below describes — not to warn them off the number.
+// The measurements themselves are still worth reading, and the note says that
+// too. Truncation is gentler on a PAIRED difference than on either side alone —
+// the budget is consumed by both sides together, so stopping on elapsed time
+// selects for slow machine periods, which is common mode and largely cancels in
+// the ratio; simulated at the calibrated configuration a six-repetition
+// truncation tracks an uninterrupted run to within 0.1% under the null and under
+// a true 8% effect. But "largely" is not "exactly", the cancellation weakens as
+// the two sides' variances diverge, and the simulations are of a model rather
+// than of this runner. That is the gap between reporting a number and ruling on
+// it, and it is why the block is unconditional rather than a power adjustment.
+// See docs/benchmarks/calibration.md.
 //
 // Worded here, from validated integers, never from the producer's `stoppedEarly`
 // string. A fork controls that string, and it does not get to write a sentence in
@@ -1657,7 +1683,11 @@ function buildStoppedEarlyNote(results) {
   const neverAttempted = dropped - balanceDropped;
   const shared = [
     `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for.`,
-    `> Everything below is computed over the ${reps} it finished, and no faster/slower verdict is issued`,
+    // "retained", not "finished". A truncated run can finish a repetition and
+    // then discard it to keep the setup order balanced, and the note says so
+    // three lines further down — so "the N it finished" contradicted its own
+    // next paragraph whenever that happened.
+    `> Everything below is computed over the ${reps} it retained, and no faster/slower verdict is issued`,
     // "by how the machine behaved" rather than "by the clock": three kinds reach
     // this note and only the budget one is the clock. The selection argument is
     // the same for all three — the run's length was decided mid-run by something
@@ -2197,15 +2227,28 @@ function buildMeanContradictionNote(rows) {
   // agreement it does not have, but it still gets the note — the alternative,
   // back when corroboration was a gate, was a heading naming the direction the
   // other estimator contradicts and no mention of the contradiction anywhere.
-  const strength = leader.meanCorroborated
-    ? `> majority of repetitions and contradicted by none.`
-    : `> majority of repetitions on the reported figure. The mean's own repetitions do NOT agree among` +
-      `\n> themselves, so the size of that movement is uncertain — but its direction opposes the reported` +
-      `\n> figure, which is why no direction is claimed here.`;
+  // Which of the two figures its own repetitions back. Both, one, or neither —
+  // the note reaches all four states now that a contradiction no longer requires
+  // the headline's sign test to have passed, and asserting a majority for a
+  // figure that does not have one would be the same overclaim this note exists
+  // to prevent.
+  const strength =
+    leader.beyond && leader.meanCorroborated
+      ? `> Each direction holds in a majority of repetitions and is contradicted by none.`
+      : leader.beyond
+        ? `> The reported figure holds in a majority of repetitions. The mean's own repetitions do NOT agree` +
+          `\n> among themselves, so the size of that movement is uncertain — but its direction opposes the` +
+          `\n> reported figure, which is why no direction is claimed here.`
+        : leader.meanCorroborated
+          ? `> The mean holds in a majority of repetitions and is contradicted by none. The reported figure's` +
+            `\n> own repetitions do NOT agree among themselves, so the opposing movement is the better` +
+            `\n> corroborated of the two — which is not the same as being right.`
+          : `> Neither figure's repetitions agree among themselves. Both movements clear the floor and point` +
+            `\n> opposite ways, and nothing in this run settles which is real.`;
   return [
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved both ways.** ${codeSpan(leader.name)} is`,
     `> ${formatSignedPct(leader.deltaPct)} on the mean of each repetition's *fastest* prove — ${fastest} — and`,
-    `> ${formatSignedPct(leader.meanPct)} on the mean of *every* prove — ${rest} — with each direction holding in a`,
+    `> ${formatSignedPct(leader.meanPct)} on the mean of *every* prove — ${rest}.`,
     strength,
     `> Both figures are measured, so this is not a tie to be broken by picking one: the best case and the`,
     `> rest of the distribution moved apart. A faster fastest prove alongside a slower everything-else is`,
@@ -2259,7 +2302,10 @@ function buildUnruledBelowFloorNote(rows) {
 }
 
 function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
-  const unresolved = rows.filter((r) => r.unresolved);
+  // Same exclusion as `buildVerdict`: a contradicted row is described by
+  // `buildMeanContradictionNote`, and describing it here too gave one benchmark
+  // two notes making different claims about it.
+  const unresolved = rows.filter((r) => r.unresolved && !r.meanContradicts);
   if (unresolved.length === 0) return "";
   const leader = unresolved[0];
   if (leader.agreement.blocked === "stoppedEarly") {
@@ -2576,8 +2622,8 @@ const USAGE =
  * node assigns itself (1, 3–9, 12, 13), so the two cannot be confused, and the
  * workflow can treat "anything nonzero that is not 64" as ours and be loud.
  */
-const EXIT_REJECTED = 64;
-const EXIT_INTERNAL_ERROR = 3;
+export const EXIT_REJECTED = 64;
+export const EXIT_INTERNAL_ERROR = 3;
 
 /** Usage: node render-bench-comment.mjs [--summary] <results.json> <ctx.json> */
 export async function main(argv = process.argv.slice(2)) {

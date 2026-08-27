@@ -967,19 +967,19 @@ jobs:
         # Also fires when the check-run write itself failed, which is the only
         # state a rendered report could otherwise vanish from silently.
         #
-        # `outcome == 'failure'` alongside `published == 'false'` because those are
-        # different states. The output is set from inside that step's own try, so it
-        # only exists if the step got far enough to set it; the step can also fail
-        # HARD before then — its `readFileSync` sits outside the try — and in that
-        # case `published` is the empty string, which `== 'false'` does not match.
-        # Without the outcome clause that failure both reddens the default branch
-        # and skips the fallback, losing a report that had already rendered.
+        # Both conditions are written as "did NOT affirmatively succeed" rather than
+        # as a list of the ways they can fail. Enumerating outcomes kept missing
+        # one: `published == 'false'` alone missed a hard failure that never
+        # reached `core.setOutput` (leaving the empty string), and adding
+        # `outcome == 'failure'` still missed `cancelled`, where a rendered report
+        # would have gone unposted and unexplained. The write steps gate on
+        # `stale == 'false'` for the same reason, so the two are exact
+        # complements: anything that stops them posting reaches this.
         if: >-
           always() && steps.run.outputs.id != '' &&
-          (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != ''
-           || steps.recheck.outcome == 'failure'
-           || steps.checkrun.outputs.published == 'false'
-           || steps.checkrun.outcome == 'failure')
+          (steps.render.outputs.ok != 'true'
+           || steps.recheck.outputs.stale != 'false'
+           || steps.checkrun.outputs.published != 'true')
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -991,7 +991,8 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           RENDER_REASON: ${{ steps.render.outputs.reason }}
           RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
-          RECHECK_OUTCOME: ${{ steps.recheck.outcome }}
+          RECHECK_STALE: ${{ steps.recheck.outputs.stale }}
+          RENDER_OK: ${{ steps.render.outputs.ok }}
           REPORT_OUTCOME: ${{ steps.report.outcome }}
           PR_SKIP_REASON: ${{ steps.pr.outputs.skip_reason }}
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
@@ -1047,12 +1048,15 @@ jobs:
                   : `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
                 : '') ||
               process.env.RECHECK_REASON ||
-              // A hard failure in the re-check sets no reason of its own — the
-              // throw skips past `core.setOutput`. Without this branch it fell all
-              // the way through to the catch-all, which tells the author to go read
-              // a log to find out why numbers that had already rendered were never
-              // posted.
-              (process.env.RECHECK_OUTCOME === 'failure'
+              // The re-check neither confirmed nor declined: it threw, or the job
+              // was cancelled, so it set no reason of its own and the branch above
+              // has nothing to report. Keyed on the absent confirmation rather
+              // than on a list of outcomes, matching the step condition. Without
+              // it this fell through to the catch-all, which tells the author to
+              // go read a log to find out why numbers that had already rendered
+              // were never posted.
+              (process.env.RENDER_OK === 'true' &&
+              process.env.RECHECK_STALE !== 'false'
                 ? 'The report rendered, but the reporter could not re-confirm the pull request was still at the benchmarked commit, so it declined to post. This is a fault on the reporting side, not in the pull request.'
                 : '') ||
               // Ahead of every inference below, and specifically ahead of the

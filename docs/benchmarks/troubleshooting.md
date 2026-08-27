@@ -50,15 +50,18 @@ after the run started, so the comparison was against a base this pull request no
 longer has. A retarget now starts a fresh bench by itself; if you also edited the
 title or body in the same action, check that a new run appeared.
 
-**"This run stopped early."** The comment posted, but the run reported fewer
+**"This run stopped early."** The comment posted, but the run retained fewer
 repetitions than it was configured for, and no verdict is issued from it — a run
-whose length was decided by the clock is a selected sample, and the noise floor
-was calibrated on complete runs. The measurements are still real; read them as an
-indication. The note in the comment says which of two things happened, because
-they want opposite responses.
+whose length was decided mid-run by how the machine behaved is a selected sample,
+and the noise floor was calibrated on complete runs. The measurements are still
+real; read them as an indication. The note in the comment says which of three
+things happened, because they want different responses — and only the first is
+about the clock.
 
 *It ran out of budget.* The remaining budget could not fund another repetition,
-so the dropped ones were never attempted. That is a sizing problem: raise
+so the dropped ones were never attempted — except that a run also discards one
+repetition it *did* finish when keeping it would leave the ABBA setup order
+unbalanced, and the comment distinguishes the two. That is a sizing problem: raise
 `BENCH_STEP_BUDGET_MINUTES` and the job's `timeout-minutes` together, or lower
 `--reps` / `--proves`. Read the `[budget]` line in the bench job's log first — it
 prints the measured setup cost, which is what to size against.
