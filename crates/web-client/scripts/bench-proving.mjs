@@ -56,7 +56,12 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
 
-import { opensBaseFirst, orderBalance, proveOrder } from "./bench-order.mjs";
+import {
+  balancedRetainedReps,
+  opensBaseFirst,
+  orderBalance,
+  proveOrder,
+} from "./bench-order.mjs";
 
 const USAGE = [
   "  node scripts/bench-proving.mjs --head <dist-mt-dir> [--base <dist-mt-dir>]",
@@ -1181,13 +1186,39 @@ try {
   }
 }
 
+// The number of whole repetitions actually measured. Both sides advance together
+// — a repetition is pushed only after every side finished — so either side's
+// group count is the answer, and head is always present.
+//
+// Balanced down when the run stopped short, and that is not tidiness: an odd
+// number of retained repetitions leaves the setup order lopsided, which biases
+// every repetition rather than just costing one. `balancedRetainedReps` in
+// bench-order.mjs owns the rule, alongside the alternation it protects. A full run
+// is left exactly as measured — the requested count is even, so it never needs it.
+const repsMeasured = budgetExhausted
+  ? balancedRetainedReps(samples.head.length)
+  : samples.head.length;
+if (repsMeasured < samples.head.length) {
+  console.error(
+    `[budget] dropping repetition ${samples.head.length} of the ${samples.head.length} ` +
+      `measured: an odd number of retained repetitions leaves the setup order ` +
+      `unbalanced, which biases the comparison in a way more repetitions cannot fix`
+  );
+  for (const label of Object.keys(samples))
+    samples[label].length = repsMeasured;
+}
+
 // A budget stop with nothing measured is a failure, not a short report. The
 // renderer requires `reps >= 1`, so emitting a zero-repetition artifact would
 // only produce a refusal on the reporting side with the real reason left in this
 // job's log. Say it here, where it is actionable.
-if (budgetExhausted && !benchError && samples.head.length === 0) {
+if (budgetExhausted && !benchError && repsMeasured === 0) {
   benchError = new Error(
-    `${budgetExhausted.message} — no repetition completed, so there is nothing to report`
+    `${budgetExhausted.message} — ${
+      samples.head.length === 0
+        ? "no repetition completed"
+        : "only one repetition completed, and a single repetition leaves the setup order unbalanced"
+    }, so there is nothing to report`
   );
 }
 
@@ -1228,11 +1259,6 @@ const maxOf = (xs) => xs.reduce((hi, x) => (x > hi ? x : hi), -Infinity);
 // disagrees with its own samples would let the artifact author the verdict.
 // Keep the two consistent anyway — they are read side by side during a
 // calibration run — but nothing downstream depends on it.
-// The number of whole repetitions actually measured. Both sides advance together
-// — a repetition is pushed only after every side finished — so either side's
-// group count is the answer, and head is always present.
-const repsMeasured = samples.head.length;
-
 const summarize = (groups) => {
   const usable = groups.filter((group) => group.length > 0);
   const flat = usable.flat();

@@ -360,6 +360,35 @@ catches nothing at all — but they bound what a green result means.
   rather than favouring either side — and it is part of why the floor is as wide
   as it is.
 
+### A run that runs out of clock keeps an even number of repetitions
+
+The step has a wall-clock budget, and a run that reaches it stops rather than
+being killed. What it has already measured is written and reported — every
+repetition in the samples is whole, since one is only recorded after both sides
+finish, so there is nothing partial to discard.
+
+The retained count is then rounded **down to even**, which costs a repetition and
+is worth it. The setup order alternates by repetition, so an even count sets up
+base first exactly as often as head first; an odd count cannot. Stopping at three
+repetitions leaves one side having set up twice on an idle machine and the other
+once, and that is a *fixed* positional asymmetry — the single class of error that
+more repetitions do not average away, and the reason the order alternates in the
+first place. Keeping the odd tail would buy one more sample at the cost of tilting
+all of them.
+
+A short run therefore reports honestly rather than confidently: below
+`MIN_REPS_FOR_SIGN_TEST` repetitions the renderer will not issue a verdict at all,
+so a truncated run comes back as *unresolved* with its repetition count stated.
+The artifact carries `repsRequested` and `stoppedEarly` alongside the measured
+count, so the gap is visible rather than something to infer. A run that keeps no
+balanced repetitions — nothing measured, or a single one — fails instead, because
+there is nothing left to report.
+
+If truncation starts happening routinely, the budget is wrong, not the run:
+raise the step's `timeout-minutes` and `--budget-minutes` together, or lower
+`--reps` / `--proves`. A report built on four repetitions is never as good as
+one built on six.
+
 ## Applying the result
 
 **This has an owner and a deadline, or it does not happen.** Until the runner is

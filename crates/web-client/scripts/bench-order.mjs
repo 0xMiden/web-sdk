@@ -101,3 +101,26 @@ export function orderBalance({ reps, proves }) {
     perRep,
   };
 }
+
+/**
+ * The largest number of retained repetitions at or below `measured` that keeps the
+ * setup order balanced.
+ *
+ * `opensBaseFirst` alternates on repetition parity, so an even count runs base
+ * first exactly as often as head first and an odd count cannot: at three
+ * repetitions one side has set up on an idle machine twice and the other once.
+ * That is a FIXED positional asymmetry, the one class of error repetitions do not
+ * average out — the reason the order alternates at all — so a run that has to stop
+ * short gives up its odd tail rather than biasing every repetition it kept.
+ *
+ * Lives here because it is the same contract `opensBaseFirst` implements: change
+ * the alternation and this rule changes with it.
+ */
+export function balancedRetainedReps(measured) {
+  if (!Number.isInteger(measured) || measured < 0) {
+    throw new TypeError(
+      `measured repetitions must be a non-negative integer, got ${measured}`
+    );
+  }
+  return measured - (measured % 2);
+}

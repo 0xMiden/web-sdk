@@ -6,6 +6,7 @@ import {
   orderBalance,
   proveOrder,
   proveSlotFlipped,
+  balancedRetainedReps,
 } from "./bench-order.mjs";
 
 const CALIBRATED = { reps: 6, proves: 4 };
@@ -180,5 +181,55 @@ test("every retained prove slot is accounted for in the balance", () => {
       );
       assert.equal(setupTotal, reps, `reps=${reps}: retained setup count`);
     }
+  }
+});
+
+// A run that stops early keeps only an even number of repetitions, because the
+// setup order alternates on parity. These pin the rule to the alternation it
+// exists to protect: whatever `balancedRetainedReps` returns must produce an
+// equal split of `opensBaseFirst`.
+test("the retained count always leaves the setup order balanced", () => {
+  for (let measured = 0; measured <= 40; measured++) {
+    const retained = balancedRetainedReps(measured);
+    assert.ok(
+      retained <= measured,
+      `retained ${retained} exceeds the ${measured} measured`
+    );
+    assert.ok(
+      measured - retained <= 1,
+      `dropped ${measured - retained} repetitions, which is more than the odd tail`
+    );
+
+    // The property that matters, checked against the alternation itself rather
+    // than against a restatement of the parity rule.
+    let baseFirst = 0;
+    for (let rep = 1; rep <= retained; rep++) {
+      if (opensBaseFirst(rep)) baseFirst += 1;
+    }
+    assert.equal(
+      baseFirst,
+      retained - baseFirst,
+      `${retained} retained repetitions set up base first ${baseFirst} times and ` +
+        `head first ${retained - baseFirst} times`
+    );
+  }
+});
+
+test("an even measured count is kept whole", () => {
+  for (const n of [0, 2, 4, 6, 100]) assert.equal(balancedRetainedReps(n), n);
+});
+
+test("an odd measured count gives up exactly its last repetition", () => {
+  for (const n of [1, 3, 5, 7, 101])
+    assert.equal(balancedRetainedReps(n), n - 1);
+});
+
+test("a nonsensical measured count is refused rather than coerced", () => {
+  for (const bad of [-1, 1.5, NaN, Infinity, "6", null, undefined]) {
+    assert.throws(
+      () => balancedRetainedReps(bad),
+      TypeError,
+      `accepted ${bad}`
+    );
   }
 });
