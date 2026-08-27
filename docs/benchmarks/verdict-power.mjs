@@ -34,7 +34,8 @@ const CALIBRATED_REPS = 6;
 // precision at all, and produced a "24 repetitions" row claiming a true 8%
 // regression would be called significant 0.8% of the time.
 const SIGMA_REP = SIGMA_AGGREGATE * Math.sqrt(CALIBRATED_REPS);
-const MIN_REPS_FOR_SIGN_TEST = 4;
+// Pinned to the renderer's floor, which is pinned to CALIBRATED_REPS.
+const MIN_REPS_FOR_SIGN_TEST = CALIBRATED_REPS;
 const TRIALS = 400000;
 
 let state = 42;
@@ -53,28 +54,84 @@ const normal = () => {
 const mean = (values) => values.reduce((a, b) => a + b, 0) / values.length;
 
 /**
- * The one part of this model with a closed form: the aggregate is a mean of
- * normals, so P(|mean| >= THRESHOLD_PCT) under no effect is just the normal
- * tail. Every rate below is conditioned on that event, so if the generator
- * cannot reproduce it the tables are fiction — which is exactly what happened
- * with the LCG this replaced.
+ * Three checks, because one is not enough and the first version of this only had
+ * the first.
+ *
+ * A far-tail check alone passes a stream that is 100% serially dependent — feed
+ * it every draw twice and the marginal distribution is untouched — and such a
+ * stream would wreck the sign-unanimity leg that every `unresolved` figure below
+ * actually turns on. So the tail is checked at both the magnitudes the tables
+ * use, and serial independence is checked directly.
  */
 function checkGenerator() {
-  const analytic = 2 * (1 - normalCdf(THRESHOLD_PCT / SIGMA_AGGREGATE));
-  let hits = 0;
-  for (let i = 0; i < TRIALS; i += 1) {
-    if (Math.abs(SIGMA_AGGREGATE * normal()) >= THRESHOLD_PCT) hits += 1;
+  const failures = [];
+
+  // 1 & 2. Marginal tail at two repetition counts, chosen because they land in
+  // different regions of the distribution: at one repetition the ±5.4% floor is
+  // 1.23σ of the aggregate (the body, ~22%) and at six it is 3.02σ (the far
+  // tail, ~0.26%). A bad generator can pass one and fail the other. Not 24 —
+  // there the floor is over 6σ and both numbers round to zero, so the check
+  // would be vacuous.
+  const tails = [];
+  for (const reps of [1, CALIBRATED_REPS]) {
+    const sigma = SIGMA_REP / Math.sqrt(reps);
+    const analytic = 2 * (1 - normalCdf(THRESHOLD_PCT / sigma));
+    let hits = 0;
+    for (let i = 0; i < TRIALS; i += 1) {
+      if (Math.abs(sigma * normal()) >= THRESHOLD_PCT) hits += 1;
+    }
+    const observed = hits / TRIALS;
+    // se = sqrt(p(1-p)/TRIALS); allow 4 se, floored so the far tail's tiny se
+    // does not make the check hypersensitive to Monte-Carlo wobble.
+    const tolerance = Math.max(
+      4e-4,
+      4 * Math.sqrt((analytic * (1 - analytic)) / TRIALS)
+    );
+    tails.push({ reps, observed, analytic });
+    if (Math.abs(observed - analytic) > tolerance) {
+      failures.push(
+        `tail at reps=${reps}: P(|mean| >= ${THRESHOLD_PCT}%) came out ` +
+          `${(100 * observed).toFixed(4)}%, analytic ${(100 * analytic).toFixed(4)}%`
+      );
+    }
   }
-  const observed = hits / TRIALS;
-  // 400k trials at p ≈ 0.0026 gives se ≈ 8e-5, so 4 se ≈ 3.2e-4. A generator
-  // with a 10k-state cycle misses this by orders of magnitude.
-  if (Math.abs(observed - analytic) > 4e-4) {
-    throw new Error(
-      `generator failed its tail check: P(|mean| >= ${THRESHOLD_PCT}%) came out ` +
-        `${(100 * observed).toFixed(4)}%, analytic is ${(100 * analytic).toFixed(4)}%`
+
+  // 3. Serial independence, which is the property the unanimity leg rests on and
+  // the one a short-period or repeating stream destroys. Lag-1 correlation of
+  // the normals, plus the joint statement the tables are made of: the chance
+  // that `reps` consecutive draws all share a sign, against 2 * 0.5^reps.
+  const draws = Array.from({ length: TRIALS }, () => normal());
+  let sxy = 0;
+  for (let i = 1; i < draws.length; i += 1) sxy += draws[i - 1] * draws[i];
+  const lag1 = sxy / (draws.length - 1);
+  if (Math.abs(lag1) > 0.01) {
+    failures.push(`lag-1 correlation of the normals is ${lag1.toFixed(4)}`);
+  }
+
+  const reps = CALIBRATED_REPS;
+  let unanimous = 0;
+  const groups = Math.floor(draws.length / reps);
+  for (let g = 0; g < groups; g += 1) {
+    const slice = draws.slice(g * reps, g * reps + reps);
+    const sign = Math.sign(slice[0]);
+    if (slice.every((d) => Math.sign(d) === sign)) unanimous += 1;
+  }
+  const observedUnanimity = unanimous / groups;
+  const analyticUnanimity = 2 * 0.5 ** reps;
+  const unanimityTolerance =
+    4 * Math.sqrt((analyticUnanimity * (1 - analyticUnanimity)) / groups);
+  if (Math.abs(observedUnanimity - analyticUnanimity) > unanimityTolerance) {
+    failures.push(
+      `P(${reps} consecutive draws share a sign) came out ` +
+        `${(100 * observedUnanimity).toFixed(4)}%, analytic ` +
+        `${(100 * analyticUnanimity).toFixed(4)}%`
     );
   }
-  return { observed, analytic };
+
+  if (failures.length) {
+    throw new Error(`generator failed its checks:\n  - ${failures.join("\n  - ")}`);
+  }
+  return { tails, lag1, observedUnanimity, analyticUnanimity };
 }
 
 /** Abramowitz & Stegun 26.2.17, plenty for a four-digit comparison. */
@@ -103,21 +160,26 @@ function verdict(deltas) {
   const contradicting = deltas.filter(
     (d) => d !== 0 && Math.sign(d) !== direction
   ).length;
-  return contradicting === 0 && agree * 2 > reps ? "significant" : "unresolved";
+  if (!(contradicting === 0 && agree * 2 > reps)) return "unresolved";
+  // Split by sign. calibration.md labels this column `slower`, and counting both
+  // directions in it doubled the figure it published for the false-positive row:
+  // under no effect the rule is symmetric, so half of every "significant" is a
+  // spurious IMPROVEMENT, which is a different (and much less costly) failure
+  // than a spurious regression.
+  return aggregate > 0 ? "slower" : "faster";
 }
 
 function rates(reps, effectPct) {
-  // Fixed per-repetition spread; the aggregate tightens as √reps on its own.
+  // SIGMA_REP is fixed and the aggregate tightens as √reps on its own.
   // THRESHOLD_PCT deliberately does NOT tighten with it — the renderer applies
   // one calibrated floor whatever `--reps` says — so a longer run gets a floor
   // that is more than 3σ of its own estimator, which is conservative, not
   // sharper. That is a property of the rule worth seeing in the table.
-  const sigmaRep = SIGMA_REP;
-  const counts = { significant: 0, unresolved: 0, silent: 0 };
+  const counts = { slower: 0, faster: 0, unresolved: 0, silent: 0 };
   for (let i = 0; i < TRIALS; i += 1) {
     counts[
       verdict(
-        Array.from({ length: reps }, () => effectPct + sigmaRep * normal())
+        Array.from({ length: reps }, () => effectPct + SIGMA_REP * normal())
       )
     ] += 1;
   }
@@ -127,32 +189,60 @@ function rates(reps, effectPct) {
 }
 
 const row = (label, r) =>
-  `  ${String(label).padStart(16)}  significant ${r.significant.toFixed(2).padStart(6)}%` +
+  `  ${String(label).padStart(16)}  slower ${r.slower.toFixed(2).padStart(6)}%` +
+  `  faster ${r.faster.toFixed(2).padStart(6)}%` +
   `  unresolved ${r.unresolved.toFixed(2).padStart(6)}%  silent ${r.silent.toFixed(2).padStart(6)}%`;
 
 const check = checkGenerator();
 console.log(
-  `generator tail check: observed ${(100 * check.observed).toFixed(4)}% vs ` +
-    `analytic ${(100 * check.analytic).toFixed(4)}%\n`
+  "generator checks passed:\n" +
+    check.tails
+      .map(
+        (t) =>
+          `  tail at reps=${String(t.reps).padStart(2)}: observed ` +
+          `${(100 * t.observed).toFixed(4)}% vs analytic ${(100 * t.analytic).toFixed(4)}%`
+      )
+      .join("\n") +
+    `\n  lag-1 correlation: ${check.lag1.toFixed(5)}` +
+    `\n  ${CALIBRATED_REPS} consecutive draws share a sign: ` +
+    `${(100 * check.observedUnanimity).toFixed(4)}% vs analytic ` +
+    `${(100 * check.analyticUnanimity).toFixed(4)}%\n`
 );
+
+// Memoised on (reps, effect). Three of the tables below overlap — (6, 0%)
+// appears in two of them and in the familywise line, and (6, 8%) in two — and
+// calling `rates` per cell gave each occurrence its own Monte-Carlo draw. The
+// doc then published one modelled quantity as three different numbers (0.15%,
+// 0.16%, and a familywise figure that back-solved to 0.153%), which reads as an
+// arithmetic error in the analysis rather than as sampling noise.
+const cache = new Map();
+const ratesOnce = (reps, effectPct) => {
+  const key = `${reps}:${effectPct}`;
+  if (!cache.has(key)) cache.set(key, rates(reps, effectPct));
+  return cache.get(key);
+};
 
 console.log("Six repetitions, by true effect:");
 for (const effect of [0, 3, 5.4, 6.2, 8, 10, 15]) {
-  console.log(row(`${effect}%`, rates(6, effect)));
+  console.log(row(`${effect}%`, ratesOnce(CALIBRATED_REPS, effect)));
 }
 
 console.log("\nA true 8% effect, by repetition count:");
 for (const reps of [4, 6, 12, 24]) {
-  console.log(row(`${reps} reps`, rates(reps, 8)));
+  console.log(row(`${reps} reps`, ratesOnce(reps, 8)));
 }
 
 console.log("\nFalse positives (no real effect), by repetition count:");
 for (const reps of [1, 2, 3, 4, 6, 12, 24]) {
-  console.log(row(`${reps} reps`, rates(reps, 0)));
+  console.log(row(`${reps} reps`, ratesOnce(reps, 0)));
 }
 
-const perPush = rates(6, 0).significant / 100;
+const nullRates = ratesOnce(CALIBRATED_REPS, 0);
+const perPush = (nullRates.slower + nullRates.faster) / 100;
 console.log(
-  `\nFamilywise over ten benchmarked pushes at six reps: ` +
+  `\nAt six reps, no real effect: any spurious verdict ` +
+    `${(100 * perPush).toFixed(2)}% per push ` +
+    `(slower ${nullRates.slower.toFixed(2)}%, faster ${nullRates.faster.toFixed(2)}%).\n` +
+    `Familywise over ten benchmarked pushes: ` +
     `${(100 * (1 - (1 - perPush) ** 10)).toFixed(2)}%`
 );

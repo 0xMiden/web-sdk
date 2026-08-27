@@ -115,16 +115,24 @@ const CALIBRATED_REPS = 6;
 const CALIBRATED_PROVES_PER_REP = 3;
 
 /**
- * Fewest repetitions at which the paired sign test can discriminate at all.
+ * Fewest repetitions at which a verdict is published at all.
  *
- * Its one-sided false-positive rate is 1/2^(reps-1): 100% at one repetition,
- * 50% at two, 25% at three, 12.5% at four. Below four the second leg of the
- * verdict is theatre — at one repetition it passes unconditionally — so a
- * movement from a shorter run is reported as unresolved rather than called
- * significant. Four is where the leg starts carrying weight; the default run is
- * six (≈3%), and the floor was calibrated there.
+ * Pinned to CALIBRATED_REPS, and that is the whole argument: THRESHOLD_PCT is 3σ
+ * of this estimator measured AT that repetition count, and the spread of a mean
+ * of per-repetition minima shrinks with 1/√reps, so the floor does not transfer
+ * downward. Applied to a four-repetition run it is only about 2.5σ of that run's
+ * own estimator — the magnitude leg silently weakens exactly where the sign leg
+ * is weakest too, since unanimity across four signs happens by chance one run in
+ * eight. Simulation puts the joint false-positive rate at four repetitions at
+ * 1.07% against the calibrated six's 0.16%: seven times the noise for a shorter
+ * job. Above the floor both legs move the safe way — the fixed threshold becomes
+ * MORE than 3σ of a longer run's tighter estimator — so only the downward
+ * direction needs blocking.
+ *
+ * Shorter runs still render; they report the movement and say the run was too
+ * short to judge it. See docs/benchmarks/calibration.md.
  */
-const MIN_REPS_FOR_SIGN_TEST = 4;
+const MIN_REPS_FOR_SIGN_TEST = CALIBRATED_REPS;
 
 const NUM_FMT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 1,
@@ -520,8 +528,29 @@ function normalizeResults(input) {
     threads,
     reps,
     provesPerRep,
+    teardownFailures: normalizeTeardownFailures(results.teardownFailures),
     benchmarks,
   };
+}
+
+// A producer that could not release its pages, browser or servers. Fork-
+// controlled like everything else in the artifact, so the strings are sanitized
+// and capped and only the COUNT is load-bearing — the banner reads the same
+// whether the strings are real or invented, and an artifact that lies here only
+// costs itself a caveat it did not need.
+const MAX_TEARDOWN_FAILURES = 8;
+
+function normalizeTeardownFailures(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_TEARDOWN_FAILURES).map((entry, i) => {
+    // Strings only. `String({})` is "[object Object]", which sanitizes cleanly
+    // and would then be published as if it were a diagnostic; the placeholder at
+    // least says what it is. The count is what matters either way.
+    const placeholder = `teardown failure #${i + 1} (not a string)`;
+    return typeof entry === "string"
+      ? sanitizeText(entry, 120, placeholder)
+      : placeholder;
+  });
 }
 
 // Lowercase-only, matching what both `git rev-parse` and the GitHub API return,
@@ -678,12 +707,14 @@ const EMOJI_UNRESOLVED = "❔";
 function pairedAgreement(base, head) {
   const reps = Math.min(base.samples.length, head.samples.length);
   if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
-  // Below four repetitions the test cannot discriminate: a one-repetition run
-  // passes it unconditionally (`contradicting === 0 && 2 > 1`), and its
+  // Below the calibrated repetition count neither leg holds up: a one-repetition
+  // run passes this test unconditionally (`contradicting === 0 && 2 > 1`), its
   // one-sided false-positive rate is 1/2^(reps-1) — 100% at 1, 50% at 2, 25% at
-  // 3. Since `reps` is artifact-authored, a fork that wants a verdict it has not
-  // earned only has to send fewer repetitions. Anything shorter than this is
-  // reported as unresolved with the reason named, never as significant.
+  // 3, 12.5% at 4 — and the fixed magnitude floor is below 3σ of a short run's
+  // own estimator at the same time. Since `reps` is artifact-authored, a fork
+  // that wants a verdict it has not earned would otherwise only have to send
+  // fewer repetitions. Anything shorter is reported as unresolved with the
+  // reason named, never as significant.
   if (reps < MIN_REPS_FOR_SIGN_TEST) {
     return { consistent: false, agree: 0, reps, tooShort: true };
   }
@@ -845,7 +876,7 @@ function computeRows(results) {
         ? isWorse
           ? EMOJI_WORSE
           : EMOJI_BETTER
-        : unresolved || deltaPct === null
+        : unresolved || deltaPct === null || meanOnly
           ? EMOJI_UNRESOLVED
           : EMOJI_NOISE,
     };
@@ -962,10 +993,54 @@ function buildVerdict(rows) {
  * artifact can legitimately carry head measurements and no base. Saying that
  * out loud beats a table of "n/a" the reader has to interpret.
  */
+/**
+ * The producer left resources open. On a self-hosted runner that leaks into the
+ * NEXT run's numbers, and mid-run it means later repetitions were measured
+ * against a page that should have been gone — which is exactly the interference
+ * this benchmark exists to exclude. The bench job goes red for it, but the job
+ * and this comment are separate surfaces and nothing else connects them, so the
+ * numbers read as an ordinary clean measurement.
+ */
+function buildTeardownNote(teardownFailures) {
+  if (teardownFailures.length === 0) return null;
+  const count = teardownFailures.length;
+  return [
+    `> **Treat these numbers with suspicion.** The benchmark run reported ${count} teardown ${count === 1 ? "failure" : "failures"},`,
+    "> meaning it could not release a page, a browser or a server. Resources left open during the run",
+    "> are measured against, and resources left open after it affect the next run on the same machine.",
+    "> The benchmark job is failing for this — see its log.",
+    ...teardownFailures.map((failure) => `> - ${failure}`),
+  ].join("\n");
+}
+
 function buildHeadOnlyNote() {
   return [
     "> **No base measurements.** The base build did not produce a dist, so this run reports head",
     "> timings only and there is nothing to compare them against. See the run log for why.",
+  ].join("\n");
+}
+
+/**
+ * The mixed case: some benchmarks have a base side and some do not.
+ *
+ * `buildHeadOnlyNote` is gated on EVERY row lacking a base, so before this a
+ * mixed report rendered ❔ rows with nothing above them explaining why — and the
+ * legend's gloss points the reader at "the heading and notes above", which named
+ * a movement in a different benchmark. Rare (it needs a partially-populated
+ * artifact) but the reader has no way to interpret the row without it.
+ */
+function buildPartialBaseNote(rows) {
+  const missing = rows.filter((r) => r.base === null);
+  if (missing.length === 0 || missing.length === rows.length) return null;
+  const names = missing
+    .slice(0, 3)
+    .map((r) => codeSpan(r.name))
+    .join(", ");
+  const rest = missing.length > 3 ? `, +${missing.length - 3} more` : "";
+  return [
+    `> **${missing.length} of ${rows.length} benchmarks have no base measurement.** ${names}${rest} ran on head only,`,
+    "> so ❔ on those rows means there was nothing to compare against — not that the repetitions",
+    "> disagreed. The other rows are compared normally.",
   ].join("\n");
 }
 
@@ -1164,7 +1239,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
         `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. The ±${formatPct(THRESHOLD_PCT)} cutoff below is still applied, as a fixed magnitude gate rather than as a confidence level.`,
     ...(compared
       ? [
-          `- A movement is only called significant when it clears the noise floor **and** every repetition's paired difference agrees on its direction. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result.`,
+          `- A movement is only called significant when it clears the noise floor **and** no repetition's paired difference contradicts the direction, with a majority of repetitions positively agreeing. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result. Runs shorter than ${MIN_REPS_FOR_SIGN_TEST} repetitions are never called significant — the floor is calibrated at that count and does not transfer below it.`,
           `- Base and head are driven **one prove at a time, alternating**, with the order flipped every prove. Running each side's batch back to back let the second side pay a consistent penalty — measured at +1.19% before this was fixed, which is a bias no number of repetitions removes.`,
           `- A wide gap between the reported figure and the max has two causes and the samples below do not separate them: interference within a repetition, and the proof-of-work grind differing between repetitions. Neither invalidates the comparison — both sides ran interleaved on the same machine — but a gap much wider than usual is worth a second look.`,
           `- Base and head are **measured** in the same job on the same runner, so runner-to-runner drift cancels out. The base dist may have been *built* by an earlier run of this workflow and restored from cache — the cache key covers the toolchain and the build commands, so the bytes match what this run would have produced.`,
@@ -1240,8 +1315,9 @@ function buildMeanOnlyNote(rows) {
     `> ${leader.meanAgreement.agree} of ${leader.meanAgreement.reps} repetitions.`,
     ...explanation,
     `> The spread of a mean over all proves has never been calibrated on this workload, so this is not a`,
-    `> verdict and carries no threshold — but it is worth reading the raw samples below before concluding`,
-    `> nothing changed.`,
+    `> verdict: the ±${formatPct(THRESHOLD_PCT)} it had to clear is 3σ of the *reported* figure, applied here only as a`,
+    `> "large enough to mention" filter, and the agreement across repetitions above is what makes it worth`,
+    `> mentioning. Read the raw samples below before concluding nothing changed.`,
   ].join("\n");
 }
 
@@ -1256,8 +1332,10 @@ function buildUnresolvedNote(rows) {
   if (leader.agreement.tooShort) {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but this run`,
-      `> has only ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}, and the direction test needs at least ${MIN_REPS_FOR_SIGN_TEST}`,
-      `> to say anything: its false-positive rate is 1/2^(reps-1), which at one repetition is certainty.`,
+      `> has only ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}, and a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST}`,
+      `> — the count the noise floor was calibrated at. Below it both halves of the rule weaken at once: the`,
+      `> direction test's false-positive rate is 1/2^(reps-1), which at one repetition is certainty, and the`,
+      `> fixed ±${formatPct(THRESHOLD_PCT)} floor is less than 3σ of a shorter run's own spread.`,
       `> Re-run with the default \`--reps\` to get a verdict.`,
     ].join("\n");
   }
@@ -1300,9 +1378,15 @@ function assemble(
 ) {
   const blocks = [];
   blocks.push(buildVerdict(rows));
+  // First after the verdict, before the calibration and comparison notes: if the
+  // run leaked resources, that qualifies everything below it.
+  const teardownNote = buildTeardownNote(results.teardownFailures);
+  if (teardownNote) blocks.push(teardownNote);
   if (ctx.calibration) blocks.push(buildCalibrationNote(ctx));
   if (rows.length > 0 && rows.every((r) => r.base === null))
     blocks.push(buildHeadOnlyNote());
+  const partialBaseNote = buildPartialBaseNote(rows);
+  if (partialBaseNote) blocks.push(partialBaseNote);
   const unresolvedNote = buildUnresolvedNote(rows);
   if (unresolvedNote) blocks.push(unresolvedNote);
   const meanOnlyNote = buildMeanOnlyNote(rows);

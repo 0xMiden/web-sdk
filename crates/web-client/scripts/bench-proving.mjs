@@ -59,11 +59,16 @@ import { chromium } from "@playwright/test";
 const USAGE = [
   "  node scripts/bench-proving.mjs --head <dist-mt-dir> [--base <dist-mt-dir>]",
   "       [--threads N] [--reps N] [--proves M] [--out results.json]",
-  "       [--calibrate]",
+  "       [--calibrate] [--budget-minutes N]",
   "",
   "  --calibrate  Point --base at the same dist as --head to measure the noise",
   "               floor. Requires --base, and marks the run as calibration so the",
   "               comment renderer labels the result as a noise measurement.",
+  "",
+  "  --budget-minutes  How long the caller will let this run before killing it",
+  "               (CI passes the step's timeout-minutes). Each in-page deadline is",
+  "               clamped to what is left of it, so a hang late in the run still",
+  "               names what wedged instead of dying to the runner's own timeout.",
 ].join("\n");
 
 const args = process.argv.slice(2);
@@ -81,6 +86,7 @@ const KNOWN_FLAGS = new Set([
   "--proves",
   "--out",
   "--calibrate",
+  "--budget-minutes",
 ]);
 
 // A misspelled flag would otherwise be ignored and the run would quietly
@@ -152,6 +158,20 @@ const reps = count("--reps", "6");
 const proves = count("--proves", "4");
 const outPath = flag("--out", null);
 
+const budgetMinutesRaw = flag("--budget-minutes", null);
+// Not `count()`: that caps at MAX_COUNT to mirror the renderer's sample limits,
+// which has nothing to do with a wall-clock budget.
+if (budgetMinutesRaw !== null) {
+  const value = Number(budgetMinutesRaw);
+  if (!Number.isFinite(value) || value <= 0) {
+    usage(
+      `--budget-minutes must be a positive number, got "${budgetMinutesRaw}".`
+    );
+  }
+}
+const BUDGET_MS =
+  budgetMinutesRaw === null ? null : Number(budgetMinutesRaw) * 60 * 1000;
+
 if (proves < 2) {
   usage(
     "--proves must be at least 2: the first prove of each page is discarded as cold."
@@ -163,8 +183,9 @@ if (proves < 2) {
 // every benchmark. `--reps 1000 --proves 1000` clears both flag checks and then
 // emits ~2M values against a 200k cap, which is a full job for a report that is
 // refused. The retained count is reps × (proves-1) per side, two sides, times
-// the number of benchmarks emitted below (one today — grow this divisor when
-// that list grows, or the check silently stops being conservative).
+// the number of benchmarks emitted below. It is a MULTIPLIER, not a divisor:
+// keep it equal to the length of the `benchmarks:` array further down, or the
+// check silently stops being conservative.
 const MAX_SAMPLE_VALUES = 200000;
 const BENCHMARK_COUNT = 1;
 const plannedSamples = reps * (proves - 1) * 2 * BENCHMARK_COUNT;
@@ -184,15 +205,32 @@ if (plannedSamples > MAX_SAMPLE_VALUES) {
 // ran first on both sides the penalty cancels outright, and if it ran second on
 // one side it lands in full. Scaling 1.19% by the retained prove count would be
 // precision this design cannot support.
+// Two independent balances, on two different parities, and the guard used to
+// check only the first. An even --reps satisfies both, which is why it is the
+// single thing to recommend.
 if ((reps * (proves - 1)) % 2 === 1) {
   console.warn(
     `[warn] reps × (proves-1) = ${reps * (proves - 1)} is odd, so the retained ` +
-      `proves cannot be split evenly between base and head. HEAD is the side ` +
-      `that runs second once more than base — the leftover always falls there, ` +
-      `because the discarded warm-up rep shifts the flip — so the bias runs ` +
-      `AGAINST the pull request and this run is likelier to report a ` +
-      `regression than to hide one. The amount is not bounded by this ` +
-      `estimator. Use an even --reps, or an odd --proves.`
+      `PROVES cannot be split evenly between base and head: head runs second ` +
+      `once more than base, because the discarded warm-up rep shifts the flip. ` +
+      `That leans toward reporting a regression, but see the setup warning ` +
+      `below — the two lean opposite ways and nothing here measures which wins. ` +
+      `Use an even --reps.`
+  );
+}
+if (reps % 2 === 1) {
+  // Separate from the check above, and reachable when that one is silent:
+  // --reps 5 --proves 3 gives an even product (10) and balanced prove order,
+  // while head's mint/proveBlock/syncState still runs on an idle machine one
+  // repetition more than base's. That is the fixed asymmetry the setup
+  // alternation was added to remove, and a fixed asymmetry is the one kind of
+  // error more repetitions cannot average out.
+  console.warn(
+    `[warn] --reps ${reps} is odd, so the SETUP order cannot be split evenly ` +
+      `either: across the retained repetitions head is opened first once more ` +
+      `than base, so base's setup runs alongside a live page one time more. ` +
+      `Setup is not timed, but it decides what the machine looks like when the ` +
+      `timed proves start. Use an even --reps.`
   );
 }
 
@@ -555,6 +593,30 @@ const evaluateWithDeadline = async (page, fn, arg, { ms, what }) => {
 const SETUP_DEADLINE_MS = 10 * 60 * 1000;
 const PROVE_DEADLINE_MS = 5 * 60 * 1000;
 
+// The constants above are useless on their own late in a run. The step that runs
+// this is capped (20 minutes in bench.yml), and a setup that wedges 12 minutes
+// in would trip a 10-minute deadline at minute 22 — after the runner has already
+// killed the job. That is exactly the outcome evaluateWithDeadline was added to
+// prevent: dead with no diagnostic, having burned the rest of the budget.
+//
+// So each deadline is also clamped to what is left of the step's budget, minus a
+// margin for the diagnostic to print and the teardown to run. --budget-ms comes
+// from the workflow, which is the only place that knows the cap; without it the
+// clamp is skipped and the constants stand alone, which is right for a local run
+// with no cap at all.
+const BUDGET_MARGIN_MS = 90 * 1000;
+const startedAt = Date.now();
+
+const deadlineFor = (ceiling) => {
+  if (BUDGET_MS === null) return ceiling;
+  const left = BUDGET_MS - (Date.now() - startedAt) - BUDGET_MARGIN_MS;
+  // A floor of ten seconds rather than zero or a negative: past the budget the
+  // next call should fail fast with a named diagnostic, not be handed a deadline
+  // that has already expired (which would read as an instant, inexplicable
+  // timeout) and not be handed an unbounded one either.
+  return Math.max(10 * 1000, Math.min(ceiling, left));
+};
+
 // Opens a page, runs setup on it, and returns handles the driver can drive
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
@@ -596,7 +658,10 @@ const openSide = async (browser, url, label, repIndex) => {
       page,
       setupInPage,
       { threads },
-      { ms: SETUP_DEADLINE_MS, what: `${label} rep ${repIndex} setup` }
+      {
+        ms: deadlineFor(SETUP_DEADLINE_MS),
+        what: `${label} rep ${repIndex} setup`,
+      }
     );
     if (pageErrors.length) {
       throw new Error(
@@ -606,12 +671,21 @@ const openSide = async (browser, url, label, repIndex) => {
     return {
       label,
       rayonThreads,
+      // Read once more after the prove loop. Playwright delivers worker `close`
+      // over CDP asynchronously, so a worker that dies during a repetition's
+      // LAST prove can be recorded after that prove's own check has returned —
+      // and `close()` then latches `closing`, suppressing everything after. The
+      // samples for that repetition were kept and the run reported success.
+      pageErrors,
       prove: async () => {
         const ms = await evaluateWithDeadline(
           page,
           proveOnceInPage,
           undefined,
-          { ms: PROVE_DEADLINE_MS, what: `${label} rep ${repIndex} prove` }
+          {
+            ms: deadlineFor(PROVE_DEADLINE_MS),
+            what: `${label} rep ${repIndex} prove`,
+          }
         );
         if (pageErrors.length) {
           throw new Error(
@@ -629,7 +703,10 @@ const openSide = async (browser, url, label, repIndex) => {
       close: () => {
         closing = true;
         return context.close().catch((error) => {
-          console.error(`[teardown] ${label} context: ${error}`);
+          // Recorded, not printed, for the same reason the outer teardown does
+          // not print: the end-of-run summary lists every entry with the reason
+          // it matters, and logging here as well made a two-failure run read
+          // like a four-failure one.
           teardownFailures.push(`${label} context: ${error}`);
         });
       },
@@ -653,6 +730,32 @@ const openSide = async (browser, url, label, repIndex) => {
 
 const servers = [];
 let browser;
+// Set when the driver loop throws, so the teardown summary can run before the
+// error propagates. Without it, the failures the `finally` records were pushed
+// into an array nothing read: the summary sits after this block, and unwinding
+// skips it.
+let benchError = null;
+
+/**
+ * The single surface for teardown failures. Every recording site pushes and
+ * stays quiet so this can list them once, with the reason they matter.
+ *
+ * Called on both exits — the clean one and the unwinding one — because a browser
+ * or server that would not close is worse news than whatever error stopped the
+ * run: on a self-hosted runner it outlives the job and lands in the NEXT run's
+ * numbers as exactly the interference this script exists to exclude.
+ */
+const reportTeardownFailures = ({ resultsWritten }) => {
+  if (!teardownFailures.length) return;
+  console.error(
+    `\n${teardownFailures.length} teardown ${teardownFailures.length === 1 ? "failure" : "failures"} — ` +
+      (resultsWritten
+        ? `the results above were written, but resources were left open:\n`
+        : `the run did not finish, and resources were left open:\n`) +
+      teardownFailures.map((failure) => `  - ${failure}`).join("\n")
+  );
+  process.exitCode = 1;
+};
 // Every teardown that rejected. A benchmark whose resources would not release is
 // not a benchmark that succeeded: mid-run it means later repetitions were
 // measured against a page that should have been gone, and at the end it means
@@ -730,6 +833,19 @@ try {
         }
       }
 
+      // Before anything is retained: a worker death recorded late — after the
+      // last prove's own check — otherwise went into `pageErrors` and was never
+      // read, so a repetition measured on a shrunken rayon pool was kept.
+      for (const side of sides) {
+        if (side.pageErrors.length) {
+          throw new Error(
+            `${side.label} ${isWarmup ? "warmup" : `rep ${rep}`} raised ` +
+              `${side.pageErrors.length} page error(s) during its proves; first: ` +
+              `${side.pageErrors[0]}`
+          );
+        }
+      }
+
       for (const side of sides) {
         const all = perSide.get(side.label);
         // Discard prove #0 of every page too: it pays JIT, allocator growth
@@ -763,6 +879,11 @@ try {
       );
     }
   }
+} catch (error) {
+  // Captured rather than propagated from here: the `finally` below still has to
+  // run and record the browser and server closes, and only once it has is the
+  // teardown summary complete. Rethrown after that summary, at the bottom.
+  benchError = error;
 } finally {
   // Settle every teardown independently: a failing browser close must not skip
   // the server closes, and none of them may replace the benchmark's own error.
@@ -786,6 +907,11 @@ try {
       teardownFailures.push(String(outcome.reason));
     }
   }
+}
+
+if (benchError) {
+  reportTeardownFailures({ resultsWritten: false });
+  throw benchError;
 }
 
 // The headline statistic is a TWO-LEVEL estimator, and both levels earn their
@@ -847,7 +973,8 @@ const results = {
   // meaning of a field moves is decoration.
   // Contract for v2, enforced in .github/scripts/render-bench-comment.mjs:
   // `samples` is mandatory and holds exactly `reps` groups of `provesPerRep`
-  // finite numbers.
+  // finite numbers. `teardownFailures` below is additive and optional — the
+  // renderer treats a missing or malformed field as empty — so it needs no bump.
   schemaVersion: 2,
   status: BASE_DIR ? "ok" : "head-only",
   calibration: CALIBRATION,
@@ -869,6 +996,17 @@ const results = {
   // this file on the side that holds a write token, from an artifact a fork
   // controls. They are pinned there instead. Changing the noise floor means
   // editing THRESHOLD_PCT in that file — see docs/benchmarks/calibration.md.
+  // Carried into the artifact so the report can say so. `process.exitCode = 1`
+  // reddens the bench job, but `Record PR context` and `Upload benchmark report`
+  // are `if: always()` and the samples are complete — so without this the
+  // reporter posted an ordinary-looking comment and a `neutral` check run beside
+  // a red bench job, and nothing connected the two. A reader had no way to know
+  // the numbers came from a run that left a page or a browser alive.
+  //
+  // Filled in twice: once here for the mid-run failures, which are the ones that
+  // can contaminate the numbers above, and again after the final teardown for
+  // the end-of-run ones. See the rewrite below.
+  teardownFailures: [...teardownFailures],
   benchmarks: [
     {
       name: "prove / consume / ecdsa-k256-keccak",
@@ -899,14 +1037,20 @@ for (const benchmark of results.benchmarks) {
   );
 }
 
-if (outPath) {
+const emitResults = async () => {
+  if (!outPath) {
+    console.log(`\nJSON: ${JSON.stringify(results)}`);
+    return;
+  }
   const resolved = path.resolve(outPath);
   await mkdir(path.dirname(resolved), { recursive: true });
   await writeFile(resolved, `${JSON.stringify(results, null, 2)}\n`, "utf8");
-  console.log(`\nwrote ${resolved}`);
-} else {
-  console.log(`\nJSON: ${JSON.stringify(results)}`);
-}
+  return resolved;
+};
+
+const writtenTo = await emitResults();
+if (writtenTo) console.log(`\nwrote ${writtenTo}`);
+const teardownFailuresAtWrite = teardownFailures.length;
 
 // The measurements are complete and written, so they are worth keeping — but a
 // browser or server that would not close means this process is about to exit 0
@@ -914,11 +1058,16 @@ if (outPath) {
 // outlives the job and lands in the NEXT run's numbers as interference, which is
 // the failure this whole script is built to avoid. Report the results, then say
 // plainly that the run is not clean.
-if (teardownFailures.length) {
-  console.error(
-    `\n${teardownFailures.length} teardown ${teardownFailures.length === 1 ? "failure" : "failures"} — ` +
-      `the results above were written, but resources were left open:\n` +
-      teardownFailures.map((failure) => `  - ${failure}`).join("\n")
-  );
-  process.exitCode = 1;
+// The browser and the servers close AFTER the results are written, so failures
+// there are not in the file yet. Rewrite it rather than leave the artifact
+// claiming a clean run — the reporter reads only the file, never this log.
+if (teardownFailures.length > teardownFailuresAtWrite) {
+  results.teardownFailures = [...teardownFailures];
+  await emitResults().catch((error) => {
+    console.error(
+      `[teardown] could not record teardown failures in the results file: ${error}`
+    );
+  });
 }
+
+reportTeardownFailures({ resultsWritten: true });

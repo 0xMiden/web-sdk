@@ -264,10 +264,16 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("pr.json", '{"number":7}')
 PY
 dest12="$work/d12"
-out12=$("$subject" "$work/empty.zip" "$dest12" 2>/dev/null)
+out12=$("$subject" "$work/empty.zip" "$dest12" 2>"$work/e12")
 check "an empty member yields nothing usable" "" "$out12"
 check "an empty member is removed" "no" \
   "$([ -f "$dest12/results.json" ] && echo yes || echo no)"
+# Every other refusal above names itself in the log. This one used to delete the
+# file and say nothing, so the reporter log carried no reason for the run being
+# unusable.
+check "an empty member is announced" "yes" \
+  "$(grep -q "results.json is empty" "$work/e12" && echo yes || echo no)"
+check "the empty-member notice is not on stdout" "" "$out12"
 
 # --- usage -----------------------------------------------------------------
 

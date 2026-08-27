@@ -86,7 +86,26 @@ jobs:
   bench:
     name: Prove (MT, ECDSA-k256-keccak)
     runs-on: warp-ubuntu-latest-x64-8x
-    timeout-minutes: 90
+    # Budget accounting, because the per-step caps below have to fit inside it
+    # and a previous version of this file asserted a composition that did not:
+    #
+    #   preamble  ~25  checkout at fetch-depth 0, rustup + two wasm targets,
+    #                  apt binaryen, rust-cache restore, pnpm install,
+    #                  make test-bench-scripts, dist-cache restore
+    #   base       30  capped
+    #   head       30  capped
+    #   chromium   10  capped
+    #   bench      20  capped
+    #   postamble  ~5  worktree reclaim, cache save, summary, artifact upload
+    #                  ── 120
+    #
+    # The caps are worst cases, not typical ones: a warm base-dist cache skips
+    # the 30 entirely. But the worst case has to FIT, because the failure mode
+    # when it does not is the expensive one — the job is killed inside `Run
+    # benchmark`, and the driver writes results.json only at the very end, so
+    # 80 minutes of compute produce an artifact with no measurements and the
+    # reporter posts "no usable report".
+    timeout-minutes: 120
     env:
       # See test.yml's build-web-client-dist-folder for the full rationale:
       # sccache-action sets SCCACHE_PATH but not RUSTC_WRAPPER, and we only
@@ -271,10 +290,9 @@ jobs:
         # reach, so a slow cold `-Z build-std` release build is the normal case
         # rather than the exceptional one.
         #
-        # The caps have to COMPOSE inside the 90-minute job, which is why this is
-        # 30 and not half the budget: preamble + 30 (base) + 30 (head) + 20
-        # (bench) leaves headroom. Giving this half the job would mean a base
-        # build that used its whole window had already made the head build —
+        # The caps have to COMPOSE inside the job budget — see the accounting at
+        # `timeout-minutes` on the job. Giving this half the budget would mean a
+        # base build that used its whole window had already made the head build —
         # identical work, and the one with no fallback — unable to finish.
         timeout-minutes: 30
         shell: bash
@@ -290,6 +308,13 @@ jobs:
           # they are not needed for a dist we only load at runtime. Skipping
           # build-st halves the work: the bench is MT-only.
           pnpm --filter @miden-sdk/miden-sdk run build-mt
+          # `mv src dst` puts src INSIDE dst when dst is an existing directory,
+          # so a partial tree left behind by a failed cache restore would swallow
+          # the fresh dist as dist-base/mt/… while its own stale eager.js kept
+          # satisfying the gate further down. The base page then 404s on a
+          # missing chunk and the whole run is lost — the exact total loss that
+          # the gate was changed to a file test to avoid. Clear it first.
+          rm -rf "$RUNNER_TEMP/dist-base"
           mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-base"
 
       # A second full checkout with its own node_modules and release `target/` is
@@ -332,7 +357,11 @@ jobs:
           pnpm --filter @miden-sdk/miden-sdk run build-mt
           mv crates/web-client/dist/mt "$RUNNER_TEMP/dist-head"
 
+      # Capped because it sits between the head build and the benchmark, so a
+      # slow or hanging browser download ate the benchmark's window directly and
+      # the job died with nothing measured.
       - name: Install Chromium for Playwright
+        timeout-minutes: 10
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
 
       # The bench script ALWAYS comes from HEAD and is pointed at two dist
@@ -341,11 +370,20 @@ jobs:
       # edit would silently compare two different measurement definitions.
       # The producer bounds each in-page call itself, so this is the backstop for
       # a hang OUTSIDE those deadlines — a wedged browser launch, a static server
-      # that never binds. Sized to leave the summary and upload steps room.
+      # that never binds. Sized to leave the summary and upload steps room, and
+      # kept in sync with BENCH_BUDGET_MINUTES below, which the producer uses to
+      # clamp its own deadlines so the in-page diagnostic wins the race.
       - name: Run benchmark
         timeout-minutes: 20
         shell: bash
         env:
+          # Must match `timeout-minutes` above. The producer clamps each of its
+          # in-page deadlines to what is left of this, so a hang late in the run
+          # still prints a diagnostic naming what wedged instead of being killed
+          # silently by the runner. Its own deadlines (10 min setup, 5 min prove)
+          # would otherwise fire past the cap for anything that wedges after
+          # minute ten.
+          BENCH_BUDGET_MINUTES: 20
           # Recorded in results.json so the comment can name where the numbers
           # came from — a threshold calibrated on one runner class is
           # meaningless on another. Keep in sync with `runs-on` above.
@@ -365,7 +403,14 @@ jobs:
           # with no results at all. An interrupted `mv` therefore turned a
           # graceful head-only degradation into total loss. Probe the same file
           # the script probes.
-          elif [ -f "$RUNNER_TEMP/dist-base/eager.js" ]; then
+          # Both the entry point AND the wasm payload, because a truncated
+          # cache restore can leave one without the other and `eager.js` alone
+          # only proves the tree is non-empty, never that it is complete. A base
+          # page that loads and then 404s on the wasm loses the whole run;
+          # missing the check here degrades it to head-only instead.
+          elif [ -f "$RUNNER_TEMP/dist-base/eager.js" ] &&
+               [ -f "$RUNNER_TEMP/dist-base/assets/miden_client_web.wasm" ] &&
+               [ -f "$RUNNER_TEMP/dist-base/workers/assets/miden_client_web.wasm" ]; then
             extra=(--base "$RUNNER_TEMP/dist-base")
           elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             # A head-only run on a PR makes NO comparison, which is the one
@@ -383,6 +428,7 @@ jobs:
             --threads "$BENCH_THREADS" \
             --reps "$BENCH_REPS" \
             --proves "$BENCH_PROVES" \
+            --budget-minutes "$BENCH_BUDGET_MINUTES" \
             --out "$RUNNER_TEMP/report/results.json"
 
       # The PR identity this run believes it belongs to. The reporter re-derives

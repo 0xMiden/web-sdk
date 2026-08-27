@@ -415,20 +415,24 @@ test("a negative baseline cannot invert the sign of the verdict", () => {
 test("refuses to call a movement significant when the repetitions disagree", () => {
   // The threshold tests a ratio of two means and throws away the spread that
   // produced them, even though the samples are in the artifact. These head
-  // repetitions straddle the base badly — +50%, +50%, −38% — and average to a
-  // movement that clears the floor. Calling that a regression asserts something
-  // the repetitions do not support.
+  // repetitions straddle the base badly — five at +50%, one at −38% — and
+  // average to a movement that clears the floor. Calling that a regression
+  // asserts something the repetitions do not support.
+  //
+  // Six repetitions, not five: below the calibrated count the run is unresolved
+  // for a DIFFERENT reason, which would let this test pass without exercising
+  // the disagreement path at all.
   const body = renderComment(
     results({
       top: {
-        reps: 5,
+        reps: 6,
         provesPerRep: 1,
-        repsExecuted: 6,
+        repsExecuted: 7,
         provesExecutedPerRep: 2,
       },
       benchmark: {
-        base: { samples: [[100], [100], [100], [100], [100]] },
-        head: { samples: [[150], [150], [150], [150], [62]] },
+        base: { samples: Array.from({ length: 6 }, () => [100]) },
+        head: { samples: [[150], [150], [150], [150], [150], [62]] },
       },
     }),
     ctx()
@@ -436,8 +440,11 @@ test("refuses to call a movement significant when the repetitions disagree", () 
   const heading = body.split("\n")[0];
   assert.match(heading, /Unresolved/);
   assert.doesNotMatch(heading, /slower/);
+  // The reason has to be the disagreement, not the repetition count.
+  assert.match(heading, /repetitions disagree/);
+  assert.doesNotMatch(heading, /too few/);
   assert.match(body, /\*\*1 benchmark unresolved\.\*\*/);
-  assert.match(body, /agrees in only\n> 4 of 5 repetitions/);
+  assert.match(body, /agrees in only\n> 5 of 6 repetitions/);
   assert.match(benchmarkRows(body)[0], /❔/u);
 });
 
@@ -447,14 +454,14 @@ test("calls a consistent movement significant", () => {
   const body = renderComment(
     results({
       top: {
-        reps: 5,
+        reps: 6,
         provesPerRep: 1,
-        repsExecuted: 6,
+        repsExecuted: 7,
         provesExecutedPerRep: 2,
       },
       benchmark: {
-        base: { samples: [[100], [100], [100], [100], [100]] },
-        head: { samples: [[120], [121], [119], [120], [120]] },
+        base: { samples: Array.from({ length: 6 }, () => [100]) },
+        head: { samples: [[120], [121], [119], [120], [120], [120]] },
       },
     }),
     ctx()
@@ -840,7 +847,7 @@ test("refuses a delta that overflows to a non-finite number", () => {
   // The other half of this test used to pair side(-Number.MAX_VALUE) against
   // side(Number.MAX_VALUE). Both inputs are now refused before any delta is
   // computed — the negative one as not a duration, the positive one because
-  // summing two MAX_VALUEs overflows while recomputing the mean — so the pair no
+  // summing two MAX_VALUE entries overflows while recomputing the mean — so the pair no
   // longer reaches the delta at all. Each guard is covered on its own above.
   assert.throws(
     () =>
@@ -1576,7 +1583,13 @@ test("will not call a movement significant on too few repetitions", () => {
   // unconditionally. So a fork wanting a verdict it had not earned only had to
   // send fewer repetitions: one rep, one prove, any magnitude, and the comment
   // said "+40.00% slower" with a straight face.
-  for (const reps of [1, 2, 3]) {
+  //
+  // The floor is the CALIBRATED repetition count, not the point where the sign
+  // test alone starts to bite. ±5.40% is 3σ of the estimator measured at six
+  // repetitions and the estimator's spread shrinks with 1/√reps, so below six
+  // the magnitude leg quietly weakens at the same time as the sign leg: at four
+  // the joint false-positive rate is 1.07% against six's 0.16%.
+  for (const reps of [1, 2, 3, 4, 5]) {
     const body = renderComment(
       results({
         top: {
@@ -1602,25 +1615,130 @@ test("will not call a movement significant on too few repetitions", () => {
     assert.match(benchmarkRows(body)[0], /❔/u);
   }
 
-  // Four is where the test starts discriminating, so the same movement is a
-  // result there. Without this the assertions above would also pass if the
-  // renderer had simply stopped reporting movements altogether.
-  const four = renderComment(
+  // Six is where a verdict becomes publishable, so the same movement IS a result
+  // there. Without this the assertions above would also pass if the renderer had
+  // simply stopped reporting movements altogether.
+  const six = renderComment(
     results({
       top: {
-        reps: 4,
+        reps: 6,
         provesPerRep: 1,
-        repsExecuted: 5,
+        repsExecuted: 7,
         provesExecutedPerRep: 2,
       },
       benchmark: {
-        base: { samples: [[100], [100], [100], [100]] },
-        head: { samples: [[140], [141], [139], [140]] },
+        base: { samples: Array.from({ length: 6 }, () => [100]) },
+        head: { samples: [[140], [141], [139], [140], [142], [138]] },
       },
     }),
     ctx()
   );
-  assert.match(four.split("\n")[0], /⚠️ \+40\.00% slower/);
+  assert.match(six.split("\n")[0], /⚠️ \+4[01]\.\d\d% slower/);
+});
+
+test("a run that leaked resources says so above its numbers", () => {
+  const body = renderComment(
+    results({ top: { teardownFailures: ["base context: Error: boom"] } }),
+    ctx()
+  );
+  assert.match(body, /Treat these numbers with suspicion/);
+  assert.match(body, /reported 1 teardown failure/);
+  assert.match(body, /base context: Error: boom/);
+  // Above the comparison notes, so it qualifies what follows.
+  assert.ok(
+    body.indexOf("Treat these numbers with suspicion") <
+      body.indexOf("Methodology")
+  );
+});
+
+test("teardown failures are fork-controlled and treated as such", () => {
+  const hostile = [
+    "`rm -rf /` <img src=x onerror=alert(1)>",
+    "x".repeat(500),
+    "::error::spoofed",
+    ...Array.from({ length: 40 }, (_unused, i) => `filler ${i}`),
+  ];
+  const body = renderComment(
+    results({ top: { teardownFailures: hostile } }),
+    ctx()
+  );
+  assert.match(body, /reported 8 teardown failures/); // capped
+  assert.doesNotMatch(body, /<img/);
+  assert.doesNotMatch(body, /`rm -rf/);
+  assert.doesNotMatch(body, /^::error::/m);
+  for (const line of body.split("\n").filter((l) => l.startsWith("> - "))) {
+    assert.ok(line.length <= 4 + 120, `entry not capped: ${line.length}`);
+  }
+});
+
+test("a garbage teardownFailures field is ignored, not fatal", () => {
+  for (const value of [null, "boom", 7, {}, [{}, [], null]]) {
+    const body = renderComment(
+      results({ top: { teardownFailures: value } }),
+      ctx()
+    );
+    if (Array.isArray(value) && value.length > 0) {
+      // Non-strings become placeholders rather than being dropped: the COUNT is
+      // the load-bearing part and dropping entries would understate it.
+      assert.match(body, /reported 3 teardown failures/);
+      assert.match(body, /teardown failure #1 \(not a string\)/);
+      assert.doesNotMatch(body, /\[object Object\]/);
+    } else {
+      assert.doesNotMatch(body, /Treat these numbers with suspicion/);
+    }
+  }
+});
+
+test("a mixed null-base and zero-base report says so", () => {
+  // Three ways to have no comparable row, and they were sharing two sentences.
+  // "No base measurements" is false when some rows HAVE a base, and "every
+  // benchmark's base figure is zero" is false when some rows have no base side
+  // at all. The old regex for the zero-base heading also matched the mixed
+  // string, so the branch could have fallen through undetected.
+  const body = renderComment(
+    results({
+      top: {
+        benchmarks: [
+          bench("no-base", null, side(10)),
+          bench("zero-base", side(0), side(10)),
+        ],
+      },
+    }),
+    ctx()
+  );
+  const heading = body.split("\n")[0];
+  assert.match(
+    heading,
+    /some benchmarks have no base measurement and the rest have a base figure of zero/
+  );
+  // And the mixed row still gets a note explaining what its ❔ means, which the
+  // head-only note cannot supply because it is gated on EVERY row lacking a base.
+  assert.match(body, /1 of 2 benchmarks have no base measurement/);
+  assert.match(body, /nothing to compare against — not that the repetitions/);
+});
+
+test("a mean-only row carries the emoji its heading claims", () => {
+  // The heading for a mean-only movement says ❔, and the legend glosses ❔. If
+  // the row itself renders ➖ ("within the noise floor") the reader is sent to
+  // find a ❔ that appears nowhere in the report.
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+      },
+      benchmark: {
+        base: { samples: Array.from({ length: 6 }, () => [1000, 1000, 1000]) },
+        head: { samples: Array.from({ length: 6 }, () => [1000, 1500, 1500]) },
+      },
+    }),
+    ctx()
+  );
+  assert.match(body.split("\n")[0], /❔/u);
+  assert.match(benchmarkRows(body)[0], /❔/u);
+  assert.doesNotMatch(benchmarkRows(body)[0], /➖/u);
 });
 
 test("a zero base figure is not reported as a head-only run", () => {
@@ -1641,7 +1759,10 @@ test("a zero base figure is not reported as a head-only run", () => {
   );
 
   assert.doesNotMatch(body, /no base measurements to compare against/);
-  assert.match(body.split("\n")[0], /base figure is zero/);
+  // Anchored on the ALL-zero wording: /base figure is zero/ alone also matches
+  // the mixed heading ("…and the rest have a base figure of zero"), so this
+  // assertion would have passed even if the mixed case fell through to here.
+  assert.match(body.split("\n")[0], /every benchmark's base figure is zero/);
   // And it is not dressed up as an unchanged benchmark either: there is no
   // comparison here, which is ❔, not ➖.
   assert.match(benchmarkRows(body)[0], /❔/u);

@@ -101,74 +101,102 @@ the conjunction's detection rate *falls* as repetitions are added for any fixed
 effect size. Two consequences worth internalising before tuning anything:
 
 - **±5.4% is not the detection point.** It is where the *magnitude* leg starts to
-  pass. Simulating the renderer's exact rule — per-repetition deltas normal about
-  the true effect, with the per-repetition spread fixed at the value implied by
-  the measured 1.79% aggregate at six repetitions — gives the three-way split
-  below at the default six repetitions. Read the `silent` column first: it is the
-  one that decides whether a regression reaches a human. Reproduce the tables
-  with `node docs/benchmarks/verdict-power.mjs`, which mirrors the rule, and is
+  pass. Simulating the renderer's exact rule gives the split below at the default
+  six repetitions. Read the `silent` column first: it is the one that decides
+  whether a regression reaches a human. Reproduce every table in this section
+  with `node docs/benchmarks/verdict-power.mjs`, which mirrors the rule and is
   worth re-running whenever the rule changes.
 
-  | true effect | `slower` | `unresolved` | silent |
-  |---:|---:|---:|---:|
-  | 0% | 0.15% | 0.10% | 99.75% |
-  | 3% | 5.89% | 3.15% | 90.97% |
-  | 5.4% (the floor) | 36.27% | 13.93% | 49.80% |
-  | 6.2% | 50.88% | 16.55% | 32.57% |
-  | 8% | 78.58% | 14.19% | 7.23% |
-  | 10% | 93.22% | 6.27% | 0.51% |
-  | 15% | 99.82% | 0.18% | 0.00% |
+  | true effect | `slower` | `faster` | `unresolved` | silent |
+  |---:|---:|---:|---:|---:|
+  | 0% | 0.07% | 0.07% | 0.10% | 99.75% |
+  | 3% | 5.94% | 0.00% | 3.17% | 90.89% |
+  | 5.4% (the floor) | 36.10% | 0.00% | 13.98% | 49.92% |
+  | 6.2% | 50.96% | 0.00% | 16.48% | 32.56% |
+  | 8% | 78.53% | 0.00% | 14.21% | 7.26% |
+  | 10% | 93.21% | 0.00% | 6.26% | 0.52% |
+  | 15% | 99.82% | 0.00% | 0.18% | 0.00% |
 
   So the 50%-detection point is ≈**6.2%**, not the floor: a true regression of
   exactly 5.4% is missed half the time. And the complement of a detection is not
   all unresolved — at 8% the split is 79 / 14 / 7, so roughly one such regression
-  in fourteen is silent rather than flagged. The first row is the verdict's
-  false-positive rate, **0.16%** per benchmarked push, giving **1.5%** familywise
-  over ten pushes.
+  in fourteen is silent rather than flagged. The first row is the false-positive
+  rate, and it splits evenly by direction because the rule is symmetric under the
+  null: **0.07%** of unchanged pushes are called slower and as many are called
+  faster. Any spurious verdict is 0.15% per push, **1.5%** familywise over ten
+  pushes.
+
+  **The model, stated plainly, because the table is only as good as it.** Each
+  repetition's paired delta is drawn normal about the true effect, independent of
+  the others, with a per-repetition σ of 1.79 × √6 = 4.38% — that is, the
+  measured aggregate σ back-projected onto one repetition *on the assumption that
+  repetitions are independent and identically distributed*. That assumption is
+  not verified, and there is a specific reason to think it is optimistic: the
+  1.79% was measured **across six whole runs**, so it contains any run-level
+  component — runner state, cache warmth, another tenant on the host — and this
+  projection charges all of it to within-run per-repetition noise. A run-level
+  component does not shrink with `--reps`, so the 12- and 24-repetition rows and
+  the "silence falls from 7.3% to 0.2%" claim are optimistic by an unquantified
+  amount, and so is the "±5.4% is only 2.5σ at four repetitions" figure further
+  down. Correlated repetitions or a residual ABBA position effect would likewise
+  change the sign-unanimity power without changing the aggregate σ the projection
+  starts from. The normal shape is also an approximation — the grind is geometric
+  and interference is one-sided. Treat these figures as the behaviour of the
+  *rule* under a reasonable model, not as measurements. Recording per-repetition
+  deltas during calibration (below) is what would replace the projection with
+  data.
 - **More repetitions trade `slower` for ❔, but they do buy fewer misses.** The
   same simulation at a true 8% effect, varying only the repetition count:
 
   | reps | `slower` | `unresolved` | silent |
   |---:|---:|---:|---:|
-  | 4 | 80.97% | 7.26% | 11.77% |
-  | 6 | 78.44% | 14.28% | 7.27% |
-  | 12 | 65.85% | 32.18% | 1.96% |
-  | 24 | 43.49% | 56.33% | 0.19% |
+  | 4 | 0.00% | 88.25% | 11.75% |
+  | 6 | 78.53% | 14.21% | 7.26% |
+  | 12 | 65.66% | 32.34% | 2.00% |
+  | 24 | 43.62% | 56.22% | 0.17% |
 
-  Two effects run in opposite directions. Raising `--reps` sharpens the aggregate,
-  so a real effect clears the fixed ±5.4% floor far more reliably — silence falls
-  from 7.3% to 0.2%. But the zero-contradiction leg gets harder at the same time,
-  because each added repetition is another sign that must not disagree, so
-  detections migrate from `slower` to ❔ rather than disappearing. A long run is
-  therefore *less* likely to miss a regression and *more* likely to hedge about
-  it. Which you prefer depends on whether a ❔ in the comment gets read.
+  Above six, two effects run in opposite directions. Raising `--reps` sharpens
+  the aggregate, so a real effect clears the fixed ±5.4% floor far more reliably
+  — silence falls from 7.3% to 0.2%. But the zero-contradiction leg gets harder
+  at the same time, because each added repetition is another sign that must not
+  disagree, so detections migrate from `slower` to ❔ rather than disappearing. A
+  long run is therefore *less* likely to miss a regression and *more* likely to
+  hedge about it. Which you prefer depends on whether a ❔ in the comment gets
+  read.
 
   The lever with no such trade-off is `--proves`: more proves per repetition
   lowers the variance of that repetition's minimum, which makes each individual
   sign more reliable without adding signs that all have to agree. The unresolved
   note in the comment says so.
-- **Do not run at exactly four repetitions.** `MIN_REPS_FOR_SIGN_TEST` is 4, and
-  four is the worst configuration the rule admits. False-positive rate with no
-  real effect:
+- **Below six repetitions there is no verdict at all,** which is why the 4-reps
+  row above is 0%. `MIN_REPS_FOR_SIGN_TEST` is pinned to the calibrated
+  repetition count, and the reason is that both legs of the rule weaken together
+  below it, not just the sign test:
 
-  | reps | `slower` | `unresolved` | silent |
+  | reps | any verdict | `unresolved` | silent |
   |---:|---:|---:|---:|
-  | 1 | 0.00% | 21.85% | 78.15% |
-  | 2 | 0.00% | 8.16% | 91.84% |
-  | 3 | 0.00% | 3.32% | 96.68% |
-  | 4 | **1.07%** | 0.30% | 98.64% |
-  | 6 | 0.16% | 0.11% | 99.73% |
+  | 1 | 0.00% | 21.89% | 78.11% |
+  | 2 | 0.00% | 8.20% | 91.80% |
+  | 3 | 0.00% | 3.24% | 96.76% |
+  | 4 | 0.00% | 1.41% | 98.59% |
+  | 6 | 0.15% | 0.10% | 99.75% |
   | 12 | 0.00% | 0.00% | 100.00% |
   | 24 | 0.00% | 0.00% | 100.00% |
 
-  Four repetitions is seven times as likely to invent a regression as six, from
-  two causes at once: the aggregate is noisier, so ±5.4% is only about 2.5σ of it
-  rather than 3σ; and unanimity across four signs is a weak filter — one run in
-  sixteen agrees by chance. Below four the floor suppresses the verdict entirely,
-  which is what `MIN_REPS_FOR_SIGN_TEST` is for, but it turns those runs into ❔
-  rather than silence: at one repetition 22% of unchanged PRs draw a question
-  mark. Six is the default for this reason, and lowering it is not a cheap way to
-  shorten the job.
+  ±5.4% is 3σ of the estimator **measured at six repetitions**, and that
+  estimator's spread shrinks with 1/√reps, so the same fixed number is only about
+  2.5σ of a four-repetition run's own spread — while unanimity across four signs
+  happens by chance one run in eight. Before the floor was raised, four
+  repetitions produced a spurious verdict on 1.07% of unchanged pushes, seven
+  times the calibrated six's rate, in a *shorter* job. Above six the same rigidity
+  works in our favour: the fixed threshold is more than 3σ of a longer run's
+  tighter estimator, so only the downward direction needs blocking.
+
+  Short runs still render — they report the movement and say the run was too
+  short to judge it — so `--reps 2` remains useful for smoke-testing the
+  pipeline. It is just not a measurement. Note the ❔ column climbing as
+  repetitions fall: at one repetition 22% of *unchanged* pushes draw a question
+  mark, because the magnitude leg alone is doing all the work.
 
 When calibrating, record the standard deviation of the **per-repetition** deltas
 as well as the aggregate. The aggregate alone cannot predict the conjunction's
@@ -244,6 +272,17 @@ Three further corrections, also measured:
   recalibration. Changing it now would invalidate the recorded floor, which was
   measured at 6 × 3 retained.
 
+  When the product *is* odd there are two imbalances, not one, and they oppose
+  each other. Head runs second once more among the retained proves, which leans
+  toward reporting a regression; but an odd product implies an odd `--reps`, and
+  the setup order alternates on that same parity, so base is opened second once
+  more, which leans the other way. Counted over the retained reps and proves at
+  `--reps 3 --proves 4`: head second on 5 proves against base's 4, and base
+  opened second in 2 repetitions against head's 1. Nothing here measures how a
+  setup-order penalty compares to a prove-order one, so the net direction is
+  unknown — which is why the warning says to fix the parity rather than to
+  discount the result in a particular direction.
+
   The warning attaches no figure to the residual bias on purpose. The +1.19%
   penalty is *per prove*, while the reported statistic is a mean of per-repetition
   **minima**, and a minimum is not linear in a per-prove penalty: when a
@@ -273,8 +312,13 @@ catches nothing at all — but they bound what a green result means.
   that now misses on some fraction of calls. The renderer computes the same
   delta over *every* retained prove as a cross-check and prints a note when the
   two disagree, which is the only signal that this case was hit. The note is
-  deliberately not a verdict, because the mean carries 5.39% σ against the
-  estimator's 1.79%.
+  deliberately not a verdict: the spread of a mean over all proves has never
+  been measured on this workload. It is *not* the 5.39% in the table above —
+  that figure belongs to the **median** over all samples, a different statistic —
+  and it cannot be inferred from the other rows either. So the note's ±5.4% gate
+  is a bare effect-size filter ("large enough to be worth reading about"), not a
+  confidence level, and the sign test over per-repetition mean deltas is what
+  actually bounds how often the note fires on noise.
 - **A cold-start regression.** Prove #0 of every page is discarded, and the
   entire first repetition is a warm-up. A change that only makes the *first*
   prove slower — a bigger precompile table, more one-time allocation, extra

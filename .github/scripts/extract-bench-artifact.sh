@@ -161,8 +161,11 @@ for member in "${members[@]}"; do
   fi
   # An empty member is not a member. `-p` on an entry that exists but is empty
   # is indistinguishable here from one that produced nothing, and either way
-  # there is no JSON to parse.
+  # there is no JSON to parse. Announced like every other refusal above: the
+  # caller only ever reports "no usable report", so without this line the log
+  # named no reason at all for this one case.
   if [ "$size" -eq 0 ]; then
+    echo "::notice title=Proving Benchmark::${member} is empty in the artifact; nothing to render." >&2
     rm -f "$out"
   fi
 done

@@ -47,8 +47,15 @@ concurrency:
   # newer run queues, so `cancel-in-progress: false` does not mean "everything
   # eventually runs": a burst of pushes leaves the middle reporters cancelled
   # without ever starting. And `true` cancels across the two open PRs that can
-  # share one fork branch. Keying on the run id sidesteps both, because two
-  # reporters for the same bench run cannot exist.
+  # share one fork branch. Keying on the run id sidesteps both.
+  #
+  # It does NOT mean one reporter per bench run: `workflow_run: completed` fires
+  # once per ATTEMPT, so `Re-run all jobs` produces a second reporter under the
+  # same run id. Those two do serialize on this group, which is what makes the
+  # read-modify-write on the check run safe against itself. What nothing here
+  # serializes is two reporters for two DIFFERENT bench runs at the same head
+  # sha — `pull_request: reopened` produces exactly that — so both check-run
+  # writers reconcile on the check name rather than assuming they are alone.
   #
   # What that gives up is serialization of comment updates. It costs nothing
   # here: a superseded bench run still reaches this workflow (bench.yml uploads
@@ -499,9 +506,21 @@ jobs:
                   `not posting numbers for ${process.env.HEAD_SHA}.`,
               );
               core.setOutput('stale', 'true');
-              // No reason set: a newer reporter is on its way with the right
-              // numbers, and the fallback check would overwrite ITS report to
-              // announce that this one stood down.
+              // A reason IS set here, and the earlier decision not to set one was
+              // wrong twice over. It assumed the fallback check would overwrite
+              // the newer reporter's report because the two share a check name —
+              // but the fallback writes to workflow_run.head_sha, this run's OLD
+              // commit, while the newer reporter writes to the new one, so they
+              // land on different commits and cannot collide. It also assumed a
+              // newer reporter is always coming, which is false whenever the push
+              // that moved the head matched bench.yml's paths-ignore (a docs-only
+              // follow-up starts no bench run at all) or the newer bench run
+              // fails. In those cases a complete, already-rendered measurement
+              // vanished with nothing anywhere saying so.
+              core.setOutput(
+                'reason',
+                `The pull request moved to a newer commit (${pr.head.sha.slice(0, 7)}) while this report was rendering, so these numbers — measured on ${process.env.HEAD_SHA.slice(0, 7)} — were not posted. If a benchmark ran for the newer commit its report will appear separately.`,
+              );
               return;
             }
             core.setOutput('stale', 'false');
@@ -528,6 +547,7 @@ jobs:
       # keeps the result out of the conversation timeline for people who would
       # rather read it in the Checks tab.
       - name: Publish neutral check run
+        id: checkrun
         if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale != 'true'
         uses: actions/github-script@v7
         env:
@@ -571,6 +591,13 @@ jobs:
               status: 'completed',
               conclusion: 'neutral',
               details_url: process.env.RUN_URL,
+              // Machine-readable "this check carries real measurements". The
+              // fallback below shares this check's NAME on purpose, so without a
+              // marker it could not tell a rendered report from its own notice —
+              // and a second attempt at the same commit that found no usable
+              // artifact would silently downgrade this one. Read, never written,
+              // by the fallback.
+              external_id: 'proving-benchmark:report',
               output: {
                 title: commentFailed
                   ? 'Proving benchmark (comment could not be posted)'
@@ -589,7 +616,11 @@ jobs:
             // serializes the workflow_run path, but a manual dispatch keys
             // differently and can race it. The worst outcome is the duplicate
             // check run this is trying to avoid, which is why it is not worth a
-            // lock.
+            // lock, and the concurrency group above does not supply one either:
+            // it is keyed per bench run, so two bench runs at the same head sha
+            // (a close/reopen) land in different groups and both arrive here.
+            // Reconciling on the check name is what keeps that from stacking two
+            // benchmark results on one commit.
             //
             // The whole block is best-effort. A head commit can be GC'd out from
             // under us — the fork branch is deleted while the bench is still
@@ -618,12 +649,26 @@ jobs:
                   status: body.status,
                   conclusion: body.conclusion,
                   details_url: body.details_url,
+                  // Carried on the update too: this path is how the fallback's
+                  // unmarked notice gets replaced by a real report, and without
+                  // the marker the next attempt could downgrade it again.
+                  external_id: body.external_id,
                   output: body.output,
                 });
               } else {
                 await github.rest.checks.create(body);
               }
+              core.setOutput('published', 'true');
             } catch (error) {
+              // Recorded as an output, not only as a warning. `Post sticky
+              // comment` is continue-on-error and this catch exists for the same
+              // reason — an outage must not redden the default branch. But when
+              // BOTH writes fail, which one secondary rate limit does to every
+              // call in this job, a fully rendered report used to disappear with
+              // the job green and the only trace a warning annotation on a
+              // default-branch run the pull request does not link to. The
+              // fallback step below keys on this output.
+              core.setOutput('published', 'false');
               core.warning(`Could not publish the benchmark check run: ${error.message}`);
             }
 
@@ -650,7 +695,8 @@ jobs:
         # would overwrite the report it stood down for. That case sets no reason.
         if: >-
           always() && steps.run.outputs.id != '' &&
-          (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != '')
+          (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != ''
+           || steps.checkrun.outputs.published == 'false')
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -663,6 +709,8 @@ jobs:
           RENDER_REASON: ${{ steps.render.outputs.reason }}
           RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
+          CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
+          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
           # github-script defaults retries to 0, so a single GitHub 5xx or a
           # secondary rate limit fails the step — and on the trusted side that
@@ -671,7 +719,19 @@ jobs:
           script: |
             const head_sha = process.env.HEAD_SHA;
             if (!head_sha) {
-              core.info('No workflow_run head sha (manual dispatch); nothing to annotate.');
+              // A warning, not info: manual dispatch is the only way to smoke-test
+              // this workflow, and `core.info` produces no annotation — so on the
+              // one path a maintainer exercises deliberately, a reporter that
+              // failed said nothing in the run's annotation list. Carries the
+              // reason for the same reason.
+              const why =
+                process.env.RENDER_REASON ||
+                process.env.RECHECK_REASON ||
+                'no reason recorded';
+              core.warning(
+                `No workflow_run head sha (manual dispatch), so there is no commit to ` +
+                  `annotate and nothing was posted. Reason: ${why}`,
+              );
               return;
             }
 
@@ -680,6 +740,9 @@ jobs:
             // renderer bug, and naming the wrong cause is worse than naming a
             // vague one.
             const reason =
+              (process.env.CHECKRUN_PUBLISHED === 'false'
+                ? `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
+                : '') ||
               process.env.RECHECK_REASON ||
               process.env.RENDER_REASON ||
               (process.env.FETCH_OUTCOME === 'failure'
@@ -725,6 +788,24 @@ jobs:
               const mine = existing.check_runs.find(
                 (run) => run.app?.slug === 'github-actions',
               );
+              // Never downgrade a real report to this notice. Two reporters at
+              // one commit is ordinary: `Re-run all jobs` fires workflow_run
+              // again for the same run id, and `pull_request: reopened` produces
+              // a fresh bench run at an unchanged head. If that second attempt
+              // dies before measuring, `overwrite: true` on the artifact upload
+              // has already replaced the good artifact with an empty one — so
+              // this step would run, find the first attempt's rendered report,
+              // and replace it with "no comment posted" while the sticky comment
+              // still showed the numbers. The two surfaces then contradicted
+              // each other and the artifact behind the link was gone.
+              if (mine && mine.external_id === 'proving-benchmark:report') {
+                core.notice(
+                  `A rendered benchmark report is already published for ${head_sha}; ` +
+                    `leaving it in place. This attempt produced nothing to replace it with. ` +
+                    `Reason: ${reason}`,
+                );
+                return;
+              }
               if (mine) {
                 await github.rest.checks.update({
                   owner: body.owner,
@@ -734,11 +815,18 @@ jobs:
                   status: body.status,
                   conclusion: body.conclusion,
                   details_url: body.details_url,
+                  // Carried on the update too: this path is how the fallback's
+                  // unmarked notice gets replaced by a real report, and without
+                  // the marker the next attempt could downgrade it again.
                   output: body.output,
                 });
               } else {
                 await github.rest.checks.create(body);
               }
             } catch (error) {
-              core.warning(`Could not publish the benchmark check run: ${error.message}`);
+              // Nothing downstream of this step can report for it — it IS the
+              // downstream reporter. A warning on the run is the last surface
+              // left; failing the default-branch job over a GitHub outage would
+              // trade one invisible failure for a red branch.
+              core.warning(`Could not publish the fallback check run: ${error.message}`);
             }
