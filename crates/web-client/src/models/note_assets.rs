@@ -3,6 +3,7 @@ use miden_client::asset::Asset as NativeAsset;
 use miden_client::note::NoteAssets as NativeNoteAssets;
 
 use super::fungible_asset::FungibleAsset;
+use crate::platform::{JsErr, from_str_err};
 
 /// An asset container for a note.
 ///
@@ -19,18 +20,26 @@ pub struct NoteAssets(NativeNoteAssets);
 #[js_export]
 impl NoteAssets {
     /// Creates a new asset list for a note.
+    ///
+    /// @throws if `assets_array` has more than 256 assets, or contains a duplicate.
     #[js_export(constructor)]
-    pub fn new(assets_array: Option<Vec<FungibleAsset>>) -> NoteAssets {
+    pub fn new(assets_array: Option<Vec<FungibleAsset>>) -> Result<NoteAssets, JsErr> {
         let assets = assets_array.unwrap_or_default();
         let native_assets: Vec<NativeAsset> = assets.into_iter().map(Into::into).collect();
-        NoteAssets(NativeNoteAssets::new(native_assets).unwrap())
+        let native_note_assets = NativeNoteAssets::new(native_assets)
+            .map_err(|err| from_str_err(&format!("invalid note assets: {err}")))?;
+        Ok(NoteAssets(native_note_assets))
     }
 
     /// Adds a fungible asset to the collection.
-    pub fn push(&mut self, asset: &FungibleAsset) {
+    ///
+    /// @throws if the collection would exceed 256 assets, or already contains this asset.
+    pub fn push(&mut self, asset: &FungibleAsset) -> Result<(), JsErr> {
         let mut assets: Vec<miden_client::asset::Asset> = self.0.iter().copied().collect();
         assets.push(asset.into());
-        self.0 = NativeNoteAssets::new(assets).unwrap();
+        self.0 = NativeNoteAssets::new(assets)
+            .map_err(|err| from_str_err(&format!("invalid note assets: {err}")))?;
+        Ok(())
     }
 
     /// Returns all fungible assets contained in the note.
