@@ -2,6 +2,10 @@
 
 ## 0.16.0-rc.5 (TBD)
 
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.16.0-rc.3.
+
 ### Fixes
 
 * [FIX][web] `TransactionProver.newLocalProver()` now produces Poseidon2 proofs, matching the client's own default prover. It had been pinned to the prover crate's default hash function, which is Blake3 — so on the 0.16 line `proveTransaction(result, TransactionProver.newLocalProver())` and `proveTransaction(result, undefined)` produced different kinds of proof from the same SDK, and nothing in the JS surface exposes `HashFunction` for a caller to notice or override. Both are accepted — the verifier reads the hash tag out of the proof and dispatches, at the same security level — so this aligns the two rather than fixing a rejection. Expect local proving to take longer: Poseidon2 is the protocol's native hash and slower to prove with, by roughly 1.6-2.6x depending on core count (miden-base PR #3152 measured +157% on `single-p2id-note`). The native mobile prover (`newCallbackProver`) had the same pin and is fixed with it.
