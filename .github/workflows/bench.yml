@@ -13,6 +13,15 @@ name: Proving Benchmark
 
 on:
   pull_request:
+    # `edited` is here for ONE reason: retargeting. The default types are
+    # `opened`, `synchronize` and `reopened`, none of which fire when a PR's base
+    # branch changes — and this repo moves PRs between `main` and `next` routinely.
+    # Without it the bench keeps whatever it measured against the old base, and
+    # the reporter then refuses that artifact as unreachable from the new one, so
+    # a retargeted PR silently lost its benchmark. The job-level `if` below drops
+    # the title and body edits that share this event, so the multi-hour run still
+    # only starts when the base actually moved.
+    types: [opened, synchronize, reopened, edited]
     # A multi-hour job on an 8-core runner that builds WASM twice is not worth
     # spending on a PR that cannot move a proving number. `paths-ignore` only
     # skips when EVERY changed file matches, so a PR touching docs and code
@@ -86,6 +95,11 @@ jobs:
   bench:
     name: Prove (MT, ECDSA-k256-keccak)
     runs-on: warp-ubuntu-latest-x64-8x
+    # The `edited` event above fires on title and body edits too, and neither can
+    # change a proving number. Only a base change is worth a multi-hour run.
+    if: >-
+      github.event.action != 'edited' ||
+      github.event.changes.base != null
     # Budget accounting. Every step that can take real time is capped and listed;
     # the previous two versions of this block each asserted a composition that did
     # not hold, the first by leaving ten minutes for a 25-minute preamble and the

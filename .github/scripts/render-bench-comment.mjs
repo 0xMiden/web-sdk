@@ -1432,7 +1432,7 @@ function buildMeanOnlyNote(rows) {
  * Only rendered when something actually came out unresolved, so the common case
  * does not carry an explanation of a state it is not in.
  */
-function buildUnresolvedNote(rows) {
+function buildUnresolvedNote(rows, stoppedEarly = false) {
   const unresolved = rows.filter((r) => r.unresolved);
   if (unresolved.length === 0) return "";
   const leader = unresolved[0];
@@ -1443,7 +1443,13 @@ function buildUnresolvedNote(rows) {
       `> — the count the noise floor was calibrated at. Below it both halves of the rule weaken at once: the`,
       `> direction test's false-positive rate is 1/2^(reps-1), which at one repetition is certainty, and the`,
       `> fixed ±${formatPct(THRESHOLD_PCT)} floor is less than 3σ of a shorter run's own spread.`,
-      `> Re-run with the default \`--reps\` to get a verdict.`,
+      // The advice has to match WHY the run is short. A truncated run already
+      // used the default repetition count and lost repetitions to the clock, so
+      // telling its author to re-run with the default is both wrong and
+      // circular — more repetitions would miss the budget by more.
+      stoppedEarly
+        ? `> This run ran out of its time budget rather than being configured short: raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower \`--proves\`.`
+        : `> Re-run with the default \`--reps\` to get a verdict.`,
     ].join("\n");
   }
   return [
@@ -1497,7 +1503,7 @@ function assemble(
     blocks.push(buildHeadOnlyNote());
   const partialBaseNote = buildPartialBaseNote(rows);
   if (partialBaseNote) blocks.push(partialBaseNote);
-  const unresolvedNote = buildUnresolvedNote(rows);
+  const unresolvedNote = buildUnresolvedNote(rows, results.stoppedEarly);
   if (unresolvedNote) blocks.push(unresolvedNote);
   const meanOnlyNote = buildMeanOnlyNote(rows);
   if (meanOnlyNote) blocks.push(meanOnlyNote);

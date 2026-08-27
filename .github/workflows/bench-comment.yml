@@ -83,7 +83,18 @@ jobs:
   comment:
     name: Post benchmark comparison
     # The bench workflow also runs on non-PR events in future; only act on PRs.
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'
+    # `conclusion != 'skipped'` is load-bearing, not defensive. bench.yml skips
+    # its job on the title and body edits that share the `edited` event it needs
+    # for retargeting, and a workflow whose only job is skipped still COMPLETES
+    # and still fires `workflow_run` — unlike a `paths-ignore` match, which never
+    # creates a run at all. Without this, every PR title edit produced a reporter
+    # that found no artifact and published "the benchmark run produced no usable
+    # report". A failed or cancelled bench must still reach here, since reporting
+    # that is the point; only a skipped one has nothing to say.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion != 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -283,6 +294,17 @@ jobs:
               core.setOutput('skip_reason', prSkipReason);
             };
 
+            // Same mechanism, different meaning, and worth its own name: these
+            // are refusals where the identity check did its job and the cause is
+            // ordinary. Nothing was forged and nothing is broken — the pull
+            // request simply moved while a run measuring it was still going. The
+            // reason lands on the informational check run, which is where the
+            // author looks when the comment they expected never arrived.
+            const declineWithCause = (message, prSkipReason) => {
+              core.notice(`Proving Benchmark: ${message}`);
+              core.setOutput('skip_reason', prSkipReason);
+            };
+
             let claimed;
             try {
               claimed = JSON.parse(
@@ -388,7 +410,28 @@ jobs:
             // repo, so an artifact from one can be reported on the other. Both
             // belong to the same author, so there is nothing to gain.
             if (pr.head.sha !== run.head_sha) {
-              refuse(`PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`);
+              // The head moved between the bench starting and this reporter
+              // running, which is ordinary: the author pushed. Declining is still
+              // right — these numbers describe a commit that is no longer the head
+              // — but the CAUSE has to be recorded, because a bare refusal here
+              // left `skip_reason` unset and the fallback inferred one from the
+              // unset `PR_NUMBER`, landing on "the pull request the report claimed
+              // could not be confirmed". That accuses the author of forging a
+              // report when all they did was push a commit.
+              //
+              // Not silent, and not inferred: a docs-only follow-up push matches
+              // bench.yml's `paths-ignore` and starts NO replacement run, so
+              // without this the finished measurement disappeared and nothing
+              // anywhere said why. The pre-write recheck further down already
+              // learned this lesson for the head moving mid-render; this is the
+              // same case, caught earlier.
+              declineWithCause(
+                `PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`,
+                `The pull request moved to a newer commit (${pr.head.sha.slice(0, 7)}) ` +
+                  `while the benchmark was running, so these numbers — measured on ` +
+                  `${run.head_sha.slice(0, 7)} — were not posted. Push again, or re-run the ` +
+                  `benchmark workflow, to get a report for the current head.`,
+              );
               return;
             }
             // Compared only when both sides are actually present. `undefined !==
@@ -398,7 +441,19 @@ jobs:
             const claimedRepo = pr.head.repo?.full_name;
             const runRepo = run.head_repository?.full_name;
             if (!claimedRepo || !runRepo || claimedRepo !== runRepo) {
+              // Kept as a hard refusal — this is the gate a forged report would
+              // have to pass — but still given a cause, because the benign way to
+              // reach it is one fork branch backing two open pull requests, and
+              // the author of a legitimate PR should not read an accusation. The
+              // wording states what was checked rather than what was intended.
               refuse('PR head repo does not match the triggering run');
+              core.setOutput(
+                'skip_reason',
+                'The benchmark report named a pull request whose head repository does not ' +
+                  'match the run that produced it, so nothing was posted. This happens when ' +
+                  'one branch backs two open pull requests; re-run the benchmark from the ' +
+                  'pull request you want the report on.',
+              );
               return;
             }
 
@@ -442,7 +497,20 @@ jobs:
               // when it has moved on since. 'behind' or 'diverged' means the
               // claimed commit is not in the base branch's history at all.
               if (cmp.status !== 'identical' && cmp.status !== 'ahead') {
-                refuse(`Artifact baseSha ${claimedBase} is not reachable from ${pr.base.ref} (${cmp.status})`);
+                // The ordinary way here is a RETARGET: the PR was moved from one
+                // base to another (this repo moves PRs between `main` and `next`)
+                // after the bench measured against the old one. The measurement
+                // is genuinely unusable, since it compared against a base that is
+                // not in this PR's history any more — but the author needs to be
+                // told that, not left with the fallback's inferred "could not be
+                // confirmed", which reads as a forged report.
+                declineWithCause(
+                  `Artifact baseSha ${claimedBase} is not reachable from ${pr.base.ref} (${cmp.status})`,
+                  `The benchmark measured against ${claimedBase.slice(0, 7)}, which is not in ` +
+                    `\`${pr.base.ref}\`'s history — most likely the pull request was retargeted ` +
+                    `after the run started. Push again, or re-run the benchmark workflow, to ` +
+                    `measure against the current base.`,
+                );
                 return;
               }
             } catch (error) {
@@ -537,11 +605,12 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
       # Identity was checked before rendering, and rendering is not instant. The
-      # reporter group is keyed per triggering run so reporters do not serialize,
-      # which means a newer push's reporter can finish and post while this one is
-      # still rendering — and then this one overwrites the newer numbers, because
-      # both write the same sticky header. Re-sampling the head immediately before
-      # the write closes the window to the API round-trip.
+      # reporter group is keyed per head sha, so reporters for DIFFERENT commits
+      # do not serialize against each other — which means a newer push's reporter
+      # can finish and post while this one is still rendering, and then this one
+      # overwrites the newer numbers, because both write the same sticky header.
+      # Re-sampling the head immediately before the write closes the window to the
+      # API round-trip.
       #
       # Not a lock, and not claimed to be one: two reporters can both pass this
       # and race. It removes the case that actually happens (a push during a
@@ -693,10 +762,11 @@ jobs:
             // differently and can race it. The worst outcome is the duplicate
             // check run this is trying to avoid, which is why it is not worth a
             // lock, and the concurrency group above does not supply one either:
-            // it is keyed per bench run, so two bench runs at the same head sha
-            // (a close/reopen) land in different groups and both arrive here.
-            // Reconciling on the check name is what keeps that from stacking two
-            // benchmark results on one commit.
+            // it is keyed per head sha, which serializes same-sha reporters but
+            // says nothing about a manual dispatch or a reporter for a DIFFERENT
+            // sha writing a check run to this same commit. Reconciling on the
+            // check name is what keeps either from stacking two benchmark results
+            // on one commit.
             //
             // The whole block is best-effort. A head commit can be GC'd out from
             // under us — the fork branch is deleted while the bench is still

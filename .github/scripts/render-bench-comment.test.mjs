@@ -2098,3 +2098,44 @@ test("a stopped run without a requested count is refused", () => {
     /repsRequested/
   );
 });
+
+// The advice on a short run has to match why it was short. A truncated run
+// already used the default repetition count, so "re-run with the default
+// `--reps`" told its author to do what they had already done — and more
+// repetitions would miss the budget by more, so the advice was also circular.
+const shortRun = (reps, top = {}) => ({
+  top: {
+    reps,
+    provesPerRep: 1,
+    repsExecuted: reps + 1,
+    provesExecutedPerRep: 2,
+    ...top,
+  },
+  benchmark: {
+    base: { samples: Array.from({ length: reps }, () => [100]) },
+    head: { samples: Array.from({ length: reps }, () => [140]) },
+  },
+});
+
+test("a truncated unresolved run is told to raise the budget, not the reps", () => {
+  const body = renderComment(
+    results(
+      shortRun(4, {
+        repsRequested: 6,
+        repsExecuted: 6,
+        stoppedEarly: "the 20-minute step budget is exhausted",
+      })
+    ),
+    ctx()
+  );
+  assert.match(body, /Unresolved/);
+  assert.match(body, /ran out of its time budget/);
+  assert.doesNotMatch(body, /Re-run with the default/);
+});
+
+test("a configured-short run keeps the repetition advice", () => {
+  const body = renderComment(results(shortRun(4)), ctx());
+  assert.match(body, /Unresolved/);
+  assert.match(body, /Re-run with the default `--reps`/);
+  assert.doesNotMatch(body, /ran out of its time budget/);
+});

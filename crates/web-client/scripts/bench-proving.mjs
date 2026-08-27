@@ -1356,9 +1356,18 @@ const results = {
 console.log(`\nhead: ${HEAD_DIR}`);
 if (BASE_DIR)
   console.log(`base: ${BASE_DIR}${CALIBRATION ? "  (calibration run)" : ""}`);
+// `results.reps`, not the `--reps` flag. After a budget stop the two differ, and
+// printing the flag meant stdout said `reps=6` while the artifact and the PR
+// comment both said four — the log being the first thing anyone reads when the
+// comment looks wrong.
 console.log(
-  `threads=${results.threads} reps=${reps} proves/rep=${proves} warm samples/side=${samples.head.flat().length}\n`
+  `threads=${results.threads} reps=${results.reps}` +
+    (results.stoppedEarly ? ` (of ${results.repsRequested} requested)` : "") +
+    ` proves/rep=${proves} warm samples/side=${samples.head.flat().length}\n`
 );
+if (results.stoppedEarly) {
+  console.log(`stopped early: ${results.stoppedEarly}\n`);
+}
 for (const benchmark of results.benchmarks) {
   const baseValue = benchmark.base?.value ?? null;
   const headValue = benchmark.head?.value ?? null;
