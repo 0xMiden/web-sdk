@@ -38,6 +38,24 @@
 // does not have to guess.
 
 /**
+ * The median of some measured durations, rounded to whole ms.
+ *
+ * Robust where the mean and the max are not: one slow sample moves those and not
+ * this. Here rather than in the producer because the producer is a top-level
+ * script that nothing can import, and the rule this replaced spent seven review
+ * rounds broken partly because it lived there untested. `NaN` on empty input, so
+ * callers must check — there is no meaningful median of nothing, and a sentinel
+ * would end up rendered.
+ */
+export function medianOf(durations) {
+  const sorted = [...durations].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return Math.round(
+    sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+  );
+}
+
+/**
  * Raised BEFORE work starts, when the arithmetic shows the budget cannot fund it.
  *
  * Distinct from `DeadlineExceededError` because this one is certain: the numbers
@@ -61,9 +79,13 @@ export class BudgetExhaustedError extends Error {
  * settle in code.
  */
 export class DeadlineExceededError extends Error {
-  constructor(message, facts) {
+  constructor(headline, message, facts) {
     super(message);
     this.name = "DeadlineExceededError";
+    // What happened, with none of the reassurance the full message carries. The
+    // caller pastes that message into contexts where no repetition survived, and
+    // "keeps the repetitions it already has" contradicts itself there.
+    this.headline = headline;
     this.facts = facts;
   }
 }
@@ -146,6 +168,12 @@ export function grantDeadline({ ceiling, remaining, floorMs }) {
 /**
  * Bind `grantDeadline` to one run's budget, so the caller passes only a ceiling.
  *
+ * MONOTONIC clock by default, and the caller must not substitute a wall clock. An
+ * NTP step backwards inflates `remaining`, which grants a deadline past the step
+ * cap and lets the runner kill the step outright — no artifact, no diagnostic,
+ * which is the exact outcome the clamp exists to prevent. The injectable seam is
+ * for tests, which pass a counter.
+ *
  * A factory rather than a closure inside the producer, because the producer is
  * ~1400 lines that need a browser to run and this is where four consecutive
  * rounds of review found a defect. Every one of them was in the WIRING — the
@@ -167,7 +195,7 @@ export function createDeadlineFor({
   marginMs,
   floorMs,
   startedAt,
-  now = Date.now,
+  now = () => performance.now(),
 }) {
   return (ceiling) => {
     // The same SHAPE as the budgeted path, which matters more than it looks: the
@@ -242,15 +270,23 @@ export async function evaluateWithDeadline(
         timer = setTimeout(
           () =>
             reject(
-              new DeadlineExceededError(
-                `${what} did not finish within ${ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(0)}s`}` +
-                  `${clamped ? ", the time the step budget had left for it" : ", its full ceiling"}. ` +
-                  `The run stops here and keeps the repetitions it already has. ` +
-                  `Whether it was stuck or just needed longer than the clock had is ` +
-                  `not something this can tell you — the artifact records the ` +
-                  `deadline and the measured setup cost so you can.`,
-                { what, deadlineMs: ms, clamped: Boolean(clamped) }
-              )
+              (() => {
+                const headline =
+                  `${what} did not finish within ` +
+                  `${ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(0)}s`}` +
+                  (clamped
+                    ? ", the time the step budget had left for it"
+                    : ", its full ceiling");
+                return new DeadlineExceededError(
+                  headline,
+                  `${headline}. The run stops here and keeps the repetitions it ` +
+                    `already has. Whether it was stuck or just needed longer than ` +
+                    `the clock had is not something this can tell you — the ` +
+                    `artifact records the deadline and the measured setup cost ` +
+                    `so you can.`,
+                  { what, deadlineMs: ms, clamped: Boolean(clamped) }
+                );
+              })()
             ),
           ms
         );

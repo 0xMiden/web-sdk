@@ -14,12 +14,14 @@ import { test } from "node:test";
 
 import {
   BUDGET_FLOOR_MS,
+  BUDGET_MARGIN_MS,
   BudgetExhaustedError,
   createDeadlineFor,
   DeadlineExceededError,
   evaluateWithDeadline,
   formatMinutes,
   grantDeadline,
+  medianOf,
   PROVE_CEILING_MS,
   SETTLE_CEILING_MS,
   SETUP_CEILING_MS,
@@ -209,21 +211,24 @@ test("the budget error is identifiable across the module boundary", () => {
 // ---------------------------------------------------------------------------
 // The WIRING. This is the part that mattered.
 //
-// Four consecutive review rounds found a defect in the deadline logic, and every
-// one of them was here rather than in the arithmetic: the pure function was
-// checked each time and the way its answer got USED was not. The specific four:
+// Review found a defect in this logic in seven consecutive rounds, and every one
+// was in how the arithmetic's answer got USED rather than in the arithmetic: the
+// pure function was checked each time and the wiring was not. Four of the seven
+// remain possible against the current shape, and a test below fails for each:
 //
-//   1. A flat floor aborted a 1.5s prove at a 10s deadline and called it wedged.
+//   1. A flat floor aborted a 1.5s prove at a 10s deadline.
 //   2. The refusal was scaled to the ceiling but the grant was not, so work was
-//      silently squeezed and the timeout still called it wedged.
+//      silently squeezed and nothing recorded that it had been.
 //   3. `deadlineFor` returned a bare number on the unbudgeted path while the call
 //      sites spread it, so `ms` was undefined and every step timed out instantly.
-//   4. A timeout was classified by `clamped`, which says who chose the number
-//      rather than whether it was big enough — so a deadlocked prover under a
-//      294-second deadline was reported as the budget running out, and its run
-//      was kept.
+//   4. The margin was not subtracted, so the last grant could consume the whole
+//      step cap and leave no time to write the artifact.
 //
-// Each test below fails if its defect is reintroduced.
+// The other three were all the same defect in different clothing — a timeout
+// classified as either a hang or the clock running out, by `clamped`, then by a
+// fixed estimate, then by the maximum and the median of measured setups. That
+// classification is gone rather than fixed, because the question it answered is
+// not the question that decides. The last group of tests pins its absence.
 // ---------------------------------------------------------------------------
 
 const CONFIG = {
@@ -451,4 +456,81 @@ test("no grant carries a classification field any more", () => {
     "ms",
     "refused",
   ]);
+});
+
+test("the diagnostic sentence follows the flag it describes", () => {
+  // The one sentence a human gets about a deadline overrun. Swapping the two arms
+  // of the ternary inverts it — a full-ceiling overrun, which is the strongest
+  // evidence of a hang, then reads as the budget being short — and the suite used
+  // to pass, because it pinned the ABSENCE of the old wording and never tied
+  // either phrase to its flag.
+  const message = async (clamped) =>
+    (
+      await evaluateWithDeadline(
+        { evaluate: () => new Promise(() => {}) },
+        () => 0,
+        undefined,
+        { ms: 5, what: "setup", clamped }
+      ).catch((error) => error)
+    ).headline;
+
+  return Promise.all([message(false), message(true)]).then(
+    ([full, squeezed]) => {
+      assert.match(full, /its full ceiling/);
+      assert.doesNotMatch(full, /step budget had left/);
+      assert.match(squeezed, /the time the step budget had left for it/);
+      assert.doesNotMatch(squeezed, /full ceiling/);
+    }
+  );
+});
+
+test("the margin is subtracted, so the last grant cannot eat the whole cap", () => {
+  // bench.yml sets --budget-minutes to the step's own timeout-minutes, so this
+  // margin is the producer's ONLY reserve for writing results.json. Dropping the
+  // subtraction used to ship green because every fixture positioned its clock
+  // relative to `budgetMs - marginMs`, cancelling the term out.
+  const budgetMs = 45 * 60 * 1000;
+  const deadlineFor = createDeadlineFor({
+    budgetMs,
+    marginMs: BUDGET_MARGIN_MS,
+    floorMs: BUDGET_FLOOR_MS,
+    startedAt: 0,
+    // Absolute: 100s of the budget is left, of which the margin reserves 90.
+    now: () => budgetMs - 100_000,
+  });
+  assert.throws(
+    () => deadlineFor(SETUP_CEILING_MS),
+    BudgetExhaustedError,
+    "10s of usable budget funded a setup"
+  );
+  // And the margin is genuinely reserved rather than merely reducing the grant.
+  const generous = createDeadlineFor({
+    budgetMs,
+    marginMs: BUDGET_MARGIN_MS,
+    floorMs: BUDGET_FLOOR_MS,
+    startedAt: 0,
+    now: () => budgetMs - 200_000,
+  });
+  assert.equal(generous(SETUP_CEILING_MS).ms, 200_000 - BUDGET_MARGIN_MS);
+});
+
+test("medianOf is a real median, not whatever sort() does by default", () => {
+  // The statistic that replaced a rule which was broken in seven consecutive
+  // rounds, and which lived in the producer where nothing could test it. Omitting
+  // the numeric comparator is the classic JS median bug: lexicographic order puts
+  // the largest sample in the middle.
+  assert.equal(medianOf([90_000, 310_000, 150_000]), 150_000);
+  assert.equal(medianOf([100_000, 200_000]), 150_000);
+  assert.equal(medianOf([95_000, 99_000, 101_000, 350_000]), 100_000);
+  assert.equal(medianOf([90_000]), 90_000);
+  // Rounded, because it is rendered.
+  assert.equal(medianOf([1, 2]), 2);
+  // One outlier must not move it, which is the entire reason it is a median.
+  assert.equal(medianOf([90_000, 91_000, 92_000, 93_000, 900_000]), 92_000);
+  // The input is not reordered: callers also take a mean and a max off it.
+  const input = [300_000, 100_000, 200_000];
+  medianOf(input);
+  assert.deepEqual(input, [300_000, 100_000, 200_000]);
+  // No meaningful median of nothing, and callers check rather than get a sentinel.
+  assert.ok(Number.isNaN(medianOf([])));
 });

@@ -81,7 +81,17 @@ const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
  *   3. Once no open PR can still be carrying the old producer, drop the old
  *      version from this set and delete the compatibility branch.
  */
-const ACCEPTED_SCHEMA_VERSIONS = new Set([2]);
+const ACCEPTED_SCHEMA_VERSIONS = new Set([3]);
+
+/**
+ * The reasons a run can stop short, as a closed set.
+ *
+ * "budget" is certain: the arithmetic ran before the work did, so the clock
+ * provably could not fund the next step. "deadline" is not: work that started did
+ * not finish, and whether it was stuck or merely slower than the clock allowed is
+ * not decidable from inside the run. The comment says so rather than picking one.
+ */
+const STOPPED_EARLY_KINDS = new Set(["budget", "deadline"]);
 
 /**
  * Total sample values accepted across all benchmarks.
@@ -344,6 +354,24 @@ function requireInt(
   return value;
 }
 
+/**
+ * A string from a closed set, refusing anything else outright.
+ *
+ * Not sanitized-and-passed-through like the free text fields: this one selects
+ * which sentence the comment writes, so an unrecognized value must refuse the
+ * artifact rather than fall back. A fallback would mean a producer from a newer
+ * revision silently gets the wrong wording, which is the failure the schema
+ * version exists to make loud.
+ */
+function requireEnum(value, path, allowed) {
+  if (typeof value !== "string" || !allowed.has(value)) {
+    fail(
+      `${path} must be one of ${[...allowed].map((v) => `"${v}"`).join(", ")}, got ${describeValue(value)}`
+    );
+  }
+  return value;
+}
+
 function requireObject(value, path) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     fail(`${path} must be an object, got ${describeValue(value)}`);
@@ -516,6 +544,45 @@ function normalizeResults(input) {
   // from these validated integers.
   const stoppedEarly = Boolean(results.stoppedEarly);
 
+  // WHICH kind of stop, from a closed set, because the two want opposite advice
+  // and the renderer cannot work it out for itself. It used to assert "ran out of
+  // its wall-clock budget" for both, which tells the author of a deadlocked
+  // prover to raise their timeout — the producer stopped guessing the cause and
+  // this file was still asserting one.
+  let stoppedEarlyKind = null;
+  let stoppedEarlyDeadlineMs = null;
+  let setupMsMedian = null;
+  let setupCount = null;
+  if (stoppedEarly) {
+    stoppedEarlyKind = requireEnum(
+      results.stoppedEarlyKind,
+      "stoppedEarlyKind",
+      STOPPED_EARLY_KINDS
+    );
+    if (stoppedEarlyKind === "deadline") {
+      // The deadline the work ran under, and the machine's typical setup cost.
+      // Together they are what a reader needs to tell a hang from a short clock,
+      // which is the judgement this bot deliberately no longer makes itself.
+      stoppedEarlyDeadlineMs = requireInt(
+        results.stoppedEarlyDeadlineMs,
+        "stoppedEarlyDeadlineMs",
+        { min: 1, max: 24 * 60 * 60 * 1000 }
+      );
+      // Absent on a run that stopped before its first setup finished, which is
+      // the one case where there is nothing to compare against.
+      if (results.setupCount !== undefined) {
+        setupCount = requireInt(results.setupCount, "setupCount", {
+          min: 1,
+          max: 10_000,
+        });
+        setupMsMedian = requireInt(results.setupMsMedian, "setupMsMedian", {
+          min: 1,
+          max: 24 * 60 * 60 * 1000,
+        });
+      }
+    }
+  }
+
   // Only meaningful on a stopped run, and only if it exceeds what was retained —
   // otherwise nothing was lost and the claim contradicts itself.
   let repsRequested = null;
@@ -599,6 +666,10 @@ function normalizeResults(input) {
     reps,
     provesPerRep,
     stoppedEarly,
+    stoppedEarlyKind,
+    stoppedEarlyDeadlineMs,
+    setupMsMedian,
+    setupCount,
     repsRequested,
     teardownFailures: normalizeTeardownFailures(results.teardownFailures),
     benchmarks,
@@ -1026,6 +1097,17 @@ function computeRows(results) {
       b.base === null || agreement.blocked
         ? null
         : pairedMeanAgreement(b.base, b.head);
+    // The mean cleared the floor while the headline did not, WITHOUT asking
+    // whether the repetitions agree. `meanOnly` needs that agreement because it
+    // makes a directional claim; this does not, and exists only so a large mean
+    // movement on a blocked run cannot vanish. Dropping the cross-check there is
+    // right — a blocked run does not get a second confident channel — but it left
+    // a 44%-worse mean rendering as "No significant change" with no trace.
+    const meanLarge =
+      meanPct !== null &&
+      deltaPct !== null &&
+      !clearsFloor &&
+      Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
     const meanOnly =
       meanPct !== null &&
       deltaPct !== null &&
@@ -1045,6 +1127,7 @@ function computeRows(results) {
       meanPct,
       meanAgreement,
       meanOnly,
+      meanLarge,
       emoji: beyond
         ? isWorse
           ? EMOJI_WORSE
@@ -1152,6 +1235,18 @@ function buildVerdict(rows) {
         : "faster";
       return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor, but the mean of all proves is ${formatSignedPct(leader.meanPct)} ${direction} on ${codeSpan(leader.name)}${rest}`;
     }
+    // Same precedence for a blocked run, minus the agreement — which it is not
+    // entitled to — so the heading still cannot say "no significant change" over
+    // a mean that moved by an order of magnitude more than the floor.
+    const meanUnruled = rows
+      .filter((r) => r.agreement.blocked && r.meanLarge)
+      .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
+    if (meanUnruled.length > 0) {
+      const leader = meanUnruled[0];
+      const rest =
+        meanUnruled.length > 1 ? ` (+${meanUnruled.length - 1} more)` : "";
+      return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor on the reported figure, but the mean of all proves is ${formatSignedPct(leader.meanPct)} on ${codeSpan(leader.name)}${rest} — this run cannot be ruled on, see below`;
+    }
     // The heading has to be readable at a glance in a notification list, so it
     // carries the verdict and one number; the threshold lives in the table.
     return `### ➖ No significant change (largest ${codeSpan(worst.name)} ${formatSignedPct(worst.deltaPct)}, floor ${thresholdText})`;
@@ -1245,16 +1340,53 @@ function buildTeardownNote(teardownFailures) {
 // this comment.
 function buildStoppedEarlyNote(results) {
   if (!results.stoppedEarly) return null;
-  const { reps, repsRequested } = results;
+  const {
+    reps,
+    repsRequested,
+    stoppedEarlyKind,
+    stoppedEarlyDeadlineMs,
+    setupMsMedian,
+    setupCount,
+  } = results;
   const dropped = repsRequested - reps;
+  const shared = [
+    `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for.`,
+    `> Everything below is computed over the ${reps} it finished, and no faster/slower verdict is issued`,
+    "> from it: a run whose length was decided by the clock is a selected sample, and the noise floor was",
+    "> calibrated on complete runs. The measurements are still worth reading — they are real — but treat",
+    "> them as an indication rather than a result.",
+  ];
+
+  // The budget case is the certain one: the arithmetic ran before the work did,
+  // so the advice can be definite.
+  if (stoppedEarlyKind === "budget") {
+    return [
+      ...shared,
+      `> The ${dropped === 1 ? "repetition" : `${dropped} repetitions`} it dropped ${dropped === 1 ? "was" : "were"} never attempted — the step's remaining budget could not`,
+      "> fund another one. If this recurs the budget is too tight rather than the run too slow: raise the",
+      "> benchmark step's `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
+    ].join("\n");
+  }
+
+  // The overrun case is not, and this file does not pretend otherwise. Work that
+  // started did not finish; whether it was stuck or merely slower than the clock
+  // allowed is not decidable from the artifact, so the note states both and hands
+  // over the two numbers that separate them. Asserting the budget here is how a
+  // deadlocked prover came to be answered with "raise your timeout".
+  const seconds = (ms) => `${Math.round(ms / 1000)}s`;
+  const comparison =
+    setupCount === null
+      ? "> No setup completed before this, so there is no measured cost to compare the deadline against."
+      : `> Setup on this machine took ${seconds(setupMsMedian)} at the median over ${setupCount} ${plural(setupCount, "sample")}.` +
+        (setupCount < 3
+          ? " That is too few to lean on."
+          : ` Well under the deadline means it was stuck; close to it means it needed longer than the clock had.`);
   return [
-    `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for,`,
-    `> ${dropped === 1 ? "having run out" : "because it ran out"} of its wall-clock budget. Everything below is computed over the ${reps} it finished,`,
-    "> and no faster/slower verdict is issued from it: a run whose length was decided by the clock is a",
-    "> selected sample, and the noise floor was calibrated on complete runs. The measurements are still",
-    "> worth reading — they are real — but treat them as an indication rather than a result.",
-    "> If this recurs, the budget is too tight rather than the run too slow: raise the benchmark step's",
-    "> `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
+    ...shared,
+    `> It stopped because work ran past its ${seconds(stoppedEarlyDeadlineMs)} deadline. Whether that work was stuck or simply`,
+    "> needed longer than the clock allowed is not something the run can tell you, and this comment does",
+    "> not guess.",
+    comparison,
   ].join("\n");
 }
 
@@ -1582,16 +1714,40 @@ function buildMeanOnlyNote(rows) {
 }
 
 /**
+ * The mean moved on a run that is not allowed to rule on anything.
+ *
+ * Reports the figure and stops. The confident version of this note leans on the
+ * repetitions agreeing, which a blocked run does not get to claim — but a mean an
+ * order of magnitude past the floor must not simply disappear, which is what
+ * dropping the cross-check for blocked runs used to do.
+ */
+function buildMeanUnruledNote(rows) {
+  const flagged = rows
+    .filter((r) => r.agreement.blocked && r.meanLarge)
+    .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
+  if (flagged.length === 0) return "";
+  const leader = flagged[0];
+  return [
+    `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean of every prove.** ${codeSpan(leader.name)} is`,
+    `> ${formatSignedPct(leader.deltaPct)} on the reported figure — within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
+    `> This run is not ruled on for the reason above, and that applies to this figure too: it is reported`,
+    `> so it is not lost, not as a finding. A movement that misses every repetition's fastest prove looks`,
+    `> like this — a pause, a lock, a retry, a cold cache — and so does noise on a short run. Read the raw`,
+    `> samples below, and re-run to settle it.`,
+  ].join("\n");
+}
+
+/**
  * Only rendered when something actually came out unresolved, so the common case
  * does not carry an explanation of a state it is not in.
  */
-function buildUnresolvedNote(rows, stoppedEarly = false) {
+function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
   const unresolved = rows.filter((r) => r.unresolved);
   if (unresolved.length === 0) return "";
   const leader = unresolved[0];
   if (leader.agreement.blocked === "stoppedEarly") {
     return [
-      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: this run stopped on the clock.** The movements below`,
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: this run stopped early.** The movements below`,
       `> are real measurements and are worth reading, but this run does not rule on their direction.`,
       `> A run that stops early has its length chosen by how slow the machine was, and how slow the`,
       `> machine was is what the benchmark measures — so the repetitions that survived are a selected`,
@@ -1599,8 +1755,14 @@ function buildUnresolvedNote(rows, stoppedEarly = false) {
       `> run-to-run variance; if one is more variable, it shifts the result by roughly the width of the`,
       `> noise floor, in whichever direction the difference points. Nothing has measured that on this`,
       `> workload and the floor was calibrated on complete runs, so the verdict is withheld rather than`,
-      `> qualified. Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or`,
-      `> lower \`--proves\`, and the re-run will rule.`,
+      `> qualified.`,
+      // Only the budget case has advice that is certainly right. An overrun might
+      // be a hang, and telling its author to raise the budget sends them to tune
+      // a number that was never the problem — see buildStoppedEarlyNote.
+      kind === "deadline"
+        ? `> The note above has the deadline this run overran; settle what caused it before re-running.`
+        : `> Raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower` +
+          ` \`--proves\`, and the re-run will rule.`,
     ].join("\n");
   }
   if (leader.agreement.blocked === "tooFewProves") {
@@ -1689,10 +1851,18 @@ function assemble(
     blocks.push(buildHeadOnlyNote());
   const partialBaseNote = buildPartialBaseNote(rows);
   if (partialBaseNote) blocks.push(partialBaseNote);
-  const unresolvedNote = buildUnresolvedNote(rows, results.stoppedEarly);
+  const unresolvedNote = buildUnresolvedNote(
+    rows,
+    results.stoppedEarly,
+    results.stoppedEarlyKind
+  );
   if (unresolvedNote) blocks.push(unresolvedNote);
   const meanOnlyNote = buildMeanOnlyNote(rows);
   if (meanOnlyNote) blocks.push(meanOnlyNote);
+  // Mutually exclusive with the note above: that one needs an unblocked run and
+  // this one a blocked one.
+  const meanUnruledNote = buildMeanUnruledNote(rows);
+  if (meanUnruledNote) blocks.push(meanUnruledNote);
   if (THRESHOLD_PROVISIONAL) blocks.push(buildProvisionalNote(results, ctx));
   for (const notice of notices) blocks.push(notice);
   blocks.push(buildContextTable(results, ctx, rows));

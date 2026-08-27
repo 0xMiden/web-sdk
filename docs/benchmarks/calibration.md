@@ -559,16 +559,27 @@ predictor. The last attempt used the median of the run's own measurements, which
 is the right statistic and still reproduced the original fault at the second
 setup of a run, where one sample makes the median a maximum.
 
-So an overrun now stops the run, keeps what was measured, and records the deadline
-and what it was for. The verdict is withheld — any run that stopped early is
-already blocked from ruling, whatever the reason — so nothing measured around a
-hang is published as a result, which is the outcome the guessing existed to
-prevent. What is lost is being told automatically which of the two it was. What
-replaces it is a line in the artifact: the deadline the work ran under, and the
-median setup cost measured on that machine. A setup that overran a 320-second
-deadline on a runner whose median setup is 150 seconds was stuck; one that overran
-a 200-second deadline where the median is 190 ran out of clock. That is a
-five-second read, and it is right every time.
+So an overrun now stops the run, keeps what was measured, and records what
+happened: the deadline, whether it was the full ceiling or what the budget had
+left, and the setup cost measured on that machine. The verdict is withheld — any
+run that stopped early is already blocked from ruling, whatever the reason — so
+nothing measured around a hang is published as a result, which is the outcome the
+guessing existed to prevent.
+
+What is lost is being told automatically which of the two it was. What replaces it
+is the comment stating both possibilities and handing over the numbers: a setup
+that overran a 320-second deadline on a runner whose median setup is 91 seconds
+was almost certainly stuck; one that overran 200 seconds where the median is 190
+ran out of clock.
+
+That read is a judgement and not a rule, and it is worth being explicit about why
+it is not simply the deleted logic moved into a human's head. It needs enough
+setups to have a median worth trusting — the comment says so, and says nothing
+more than "too few to lean on" below three samples, which is exactly the state a
+second-setup overrun leaves behind. A reader can weigh that against the diff in
+front of them, the job log, and whether the head build touches the prover at all.
+The code could weigh none of those, which is why it kept getting the call wrong,
+and why it now declines to make it.
 
 Sizing from a measurement costs nothing once the run exists; sizing from
 an estimate is how the 2× setup-count error survived unnoticed in the first

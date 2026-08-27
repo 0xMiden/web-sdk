@@ -50,14 +50,27 @@ after the run started, so the comparison was against a base this pull request no
 longer has. A retarget now starts a fresh bench by itself; if you also edited the
 title or body in the same action, check that a new run appeared.
 
-**"This run stopped early."** The comment posted, but the run hit its
-wall-clock budget and reported fewer repetitions than it was configured for. The
-comparison is still sound — see
-[the truncation section](calibration.md#a-run-that-runs-out-of-clock-keeps-an-even-number-of-repetitions)
-— but with less power, and below six repetitions it will not issue a verdict at
-all. If this recurs, the budget is too tight rather than the run too slow: raise
+**"This run stopped early."** The comment posted, but the run reported fewer
+repetitions than it was configured for, and no verdict is issued from it — a run
+whose length was decided by the clock is a selected sample, and the noise floor
+was calibrated on complete runs. The measurements are still real; read them as an
+indication. The note in the comment says which of two things happened, because
+they want opposite responses.
+
+*It ran out of budget.* The remaining budget could not fund another repetition,
+so the dropped ones were never attempted. That is a sizing problem: raise
 `BENCH_STEP_BUDGET_MINUTES` and the job's `timeout-minutes` together, or lower
-`--proves`.
+`--reps` / `--proves`. Read the `[budget]` line in the bench job's log first — it
+prints the measured setup cost, which is what to size against.
+
+*Work ran past a deadline.* Something started and did not finish. Whether it was
+stuck or merely slower than the clock allowed is not decidable from the run, and
+the bot does not guess — see [the budget section][budget-section]. The comment
+gives you the deadline and the median setup cost measured on that runner: work
+that overran a deadline far above the median was stuck, and a rayon deadlock in
+the prover is the change class this benchmark exists to catch, so check the diff
+before resizing anything. Below three setup samples the comment says there is too
+little to lean on, and the job log is the next place to look.
 
 **"Treat these numbers with suspicion … teardown failures."** The run could not
 release a page, browser or server. Resources left open are measured against, so
@@ -140,3 +153,6 @@ make test-bench-scripts     # renderer, interleave and extractor unit tests
 The bot's correctness lives largely in workflow expressions, where a typo in an
 `if:` disables a job silently rather than failing loudly. Both commands are fast
 and neither needs a build.
+
+[budget-section]:
+  calibration.md#the-step-budget-is-sized-against-a-number-nobody-has-measured

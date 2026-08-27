@@ -76,7 +76,7 @@ const side = (value) => {
 };
 
 const results = (overrides = {}) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   status: "ok",
   runner: "warp-ubuntu-latest-x64-8x",
   variant: "mt",
@@ -269,20 +269,21 @@ test("refuses an unbounded sample payload rather than exhausting memory", () => 
 test("refuses an artifact built against an older schema", () => {
   // The reporter always runs the DEFAULT branch's renderer against an artifact
   // built by the PR head's producer, so the two are routinely at different
-  // revisions. v1 called `provesPerRep` the configured count and let the
-  // artifact supply the statistics.
+  // revisions. v2 had no `stoppedEarlyKind`, so its truncated artifacts could not
+  // say whether a run ran out of clock or overran a deadline — and the renderer
+  // asserted the former for both.
   assert.throws(
-    () => renderComment(results({ top: { schemaVersion: 1 } }), ctx()),
-    /schemaVersion 1 came from the bench script on the PR head/
+    () => renderComment(results({ top: { schemaVersion: 2 } }), ctx()),
+    /schemaVersion 2 came from the bench script on the PR head/
   );
 });
 
 test("the schema rejection names both sides of the pipeline, not just the numbers", () => {
   // Whoever reads this is looking at a default-branch workflow log for a PR they
-  // did not write. "must be 2, got 3" does not tell them which half to change.
+  // did not write. "must be 3, got 4" does not tell them which half to change.
   let message = "";
   try {
-    renderComment(results({ top: { schemaVersion: 3 } }), ctx());
+    renderComment(results({ top: { schemaVersion: 4 } }), ctx());
   } catch (error) {
     message = error.message;
   }
@@ -2036,6 +2037,7 @@ test("a run that stopped early says so, with both counts", () => {
         repsRequested: REPS + 2,
         repsExecuted: REPS + 2,
         stoppedEarly: "the 20-minute step budget is exhausted",
+        stoppedEarlyKind: "budget",
       },
     }),
     ctx()
@@ -2073,6 +2075,7 @@ test("the producer's stoppedEarly message cannot reach the comment", () => {
           repsRequested: REPS + 2,
           repsExecuted: REPS + 2,
           stoppedEarly: payload,
+          stoppedEarlyKind: "budget",
         },
       }),
       ctx()
@@ -2101,6 +2104,7 @@ test("a stopped run may report one extra executed repetition, but not two", () =
             repsRequested: REPS + 2,
             repsExecuted,
             stoppedEarly: "budget",
+            stoppedEarlyKind: "budget",
           },
         }),
         ctx()
@@ -2116,6 +2120,7 @@ test("a stopped run may report one extra executed repetition, but not two", () =
               repsRequested: REPS + 2,
               repsExecuted,
               stoppedEarly: "budget",
+              stoppedEarlyKind: "budget",
             },
           }),
           ctx()
@@ -2140,7 +2145,13 @@ test("a stopped run must have requested more than it retained", () => {
     assert.throws(
       () =>
         renderComment(
-          results({ top: { repsRequested, stoppedEarly: "budget" } }),
+          results({
+            top: {
+              repsRequested,
+              stoppedEarly: "budget",
+              stoppedEarlyKind: "budget",
+            },
+          }),
           ctx()
         ),
       /repsRequested must exceed/,
@@ -2151,7 +2162,13 @@ test("a stopped run must have requested more than it retained", () => {
 
 test("a stopped run without a requested count is refused", () => {
   assert.throws(
-    () => renderComment(results({ top: { stoppedEarly: "budget" } }), ctx()),
+    () =>
+      renderComment(
+        results({
+          top: { stoppedEarly: "budget", stoppedEarlyKind: "budget" },
+        }),
+        ctx()
+      ),
     /repsRequested/
   );
 });
@@ -2186,7 +2203,7 @@ const shortRun = (reps, top = {}) => ({
 // +22.66pp — several times the 5.40% floor, not a fraction of it. Nothing has
 // measured that equality on this workload, so a
 // truncated run reports its numbers and withholds the ruling.
-test("a run that stopped on the clock never publishes a verdict, at any length", () => {
+test("a run that stopped early never publishes a verdict, at any length", () => {
   // Well ABOVE the repetition floor, which is the case the floor cannot catch:
   // truncating the calibrated request of six cannot leave more than four, but a
   // dispatch at a higher --reps truncates to a count that clears six easily.
@@ -2202,6 +2219,7 @@ test("a run that stopped on the clock never publishes a verdict, at any length",
           repsRequested: requested,
           repsExecuted: retained + 1,
           stoppedEarly: "the 20-minute step budget is exhausted",
+          stoppedEarlyKind: "budget",
         })
       ),
       ctx()
@@ -2216,7 +2234,7 @@ test("a run that stopped on the clock never publishes a verdict, at any length",
       /### (⚠️|✅)/,
       `retained ${retained} of ${requested} published a confident verdict`
     );
-    assert.match(body, /stopped on the clock/);
+    assert.match(body, /stopped early/);
     // And it must say the numbers are still real, so the note does not read as
     // "the run failed".
     assert.match(body, /real measurements/);
@@ -2227,7 +2245,12 @@ test("a run that stopped on the clock never publishes a verdict, at any length",
 // directional claim, so a truncated run must not make it either — a comment whose
 // headline declined to rule while its note asserted a mean movement would be
 // contradicting itself.
-test("a stopped run does not publish the mean cross-check either", () => {
+// A blocked run does not get a second confident channel — but suppressing the
+// mean entirely meant a head 46% worse on the mean of every prove rendered as
+// "No significant change" with nothing else on the page, which is a stronger
+// claim than the one being withheld. So the figure is reported and the ruling is
+// not: no direction, no repetition-agreement count, no verdict emoji.
+test("a stopped run reports a moved mean without ruling on it", () => {
   const body = renderComment(
     results({
       top: {
@@ -2237,6 +2260,7 @@ test("a stopped run does not publish the mean cross-check either", () => {
         provesExecutedPerRep: 4,
         repsRequested: 10,
         stoppedEarly: "the 20-minute step budget is exhausted",
+        stoppedEarlyKind: "budget",
       },
       benchmark: {
         // Below the floor on the headline (minima are equal) but far beyond it on
@@ -2248,8 +2272,108 @@ test("a stopped run does not publish the mean cross-check either", () => {
     }),
     ctx()
   );
-  assert.doesNotMatch(body, /mean of all/i);
+  // The figure survives.
+  assert.match(body, /mean of all proves is \+66\.67%/);
+  assert.match(body, /not as a finding/);
+  // The claims do not.
   assert.doesNotMatch(body, /### (⚠️|✅)/);
+  assert.doesNotMatch(body, /in the same direction in \d+ of \d+/);
+  assert.doesNotMatch(body, /No significant change/);
+  // And it is still blocked from a verdict for the original reason.
+  assert.match(body, /cannot be ruled on/);
+});
+
+// The producer stopped guessing why a run ran past a deadline; for one commit this
+// file was still asserting one, telling every truncated run — a rayon deadlock in
+// the head build included — that it "ran out of its wall-clock budget" and to raise
+// `timeout-minutes`. The kind now comes from the artifact as a closed enum and the
+// wording follows it.
+test("a deadline overrun is not reported as the budget running out", () => {
+  const stopped = (extra) => ({
+    top: {
+      reps: 6,
+      provesPerRep: 3,
+      repsExecuted: 7,
+      provesExecutedPerRep: 4,
+      repsRequested: 10,
+      stoppedEarly: "whatever the producer wrote here",
+      ...extra,
+    },
+  });
+
+  const overran = renderComment(
+    results(
+      stopped({
+        stoppedEarlyKind: "deadline",
+        stoppedEarlyDeadlineMs: 320_000,
+        setupMsMedian: 90_900,
+        setupCount: 7,
+      })
+    ),
+    ctx()
+  );
+  // States both possibilities and hands over the two numbers that separate them.
+  assert.match(overran, /ran past its 320s deadline/);
+  assert.match(overran, /took 91s at the median over 7 samples/);
+  assert.match(overran, /stuck or simply/);
+  // And gives none of the advice that only fits the other cause.
+  assert.doesNotMatch(overran, /ran out of its wall-clock budget/);
+  assert.doesNotMatch(overran, /budget is too tight/);
+  assert.doesNotMatch(overran, /raise the benchmark step's/i);
+
+  // The budget case is the certain one, so it keeps the definite advice.
+  const ranOut = renderComment(
+    results(stopped({ stoppedEarlyKind: "budget" })),
+    ctx()
+  );
+  assert.match(ranOut, /never attempted/);
+  assert.match(ranOut, /budget is too tight/);
+  assert.doesNotMatch(ranOut, /deadline/);
+});
+
+test("too few setup samples to lean on is disclosed rather than implied", () => {
+  // The manual read the comment suggests — deadline well above the median means
+  // stuck — is the rule that failed seven rounds when the sample was one. So the
+  // comment says when there is not enough to lean on.
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: 3,
+        repsExecuted: 7,
+        provesExecutedPerRep: 4,
+        repsRequested: 10,
+        stoppedEarly: "x",
+        stoppedEarlyKind: "deadline",
+        stoppedEarlyDeadlineMs: 320_000,
+        setupMsMedian: 310_000,
+        setupCount: 1,
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /too few to lean on/);
+  assert.doesNotMatch(body, /means it was stuck/);
+});
+
+test("an unrecognized stop kind refuses the artifact rather than guessing", () => {
+  for (const kind of ["", "Budget", "hang", 0, null, {}, ["budget"]]) {
+    assert.throws(
+      () =>
+        renderComment(
+          results({
+            top: {
+              repsRequested: 10,
+              stoppedEarly: "x",
+              stoppedEarlyKind: kind,
+            },
+          }),
+          ctx()
+        ),
+      /stoppedEarlyKind must be one of/,
+      `kind ${JSON.stringify(kind)} was accepted`
+    );
+  }
 });
 
 // `reps` is artifact-authored, so the producer refusing an odd count does not stop
@@ -2356,7 +2480,7 @@ test("a complete even run still publishes a verdict", () => {
     const body = renderComment(results(shortRun(reps)), ctx());
     assert.match(body, /### ⚠️ \+40\.00% slower/, `${reps} reps did not rule`);
     assert.doesNotMatch(body, /Unresolved/);
-    assert.doesNotMatch(body, /stopped on the clock/);
+    assert.doesNotMatch(body, /stopped early/);
   }
 });
 
@@ -2367,6 +2491,7 @@ test("a truncated unresolved run is told to raise the budget, not the reps", () 
         repsRequested: 6,
         repsExecuted: 6,
         stoppedEarly: "the 20-minute step budget is exhausted",
+        stoppedEarlyKind: "budget",
       })
     ),
     ctx()

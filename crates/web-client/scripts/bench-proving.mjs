@@ -64,6 +64,7 @@ import {
   DeadlineExceededError,
   evaluateWithDeadline,
   formatMinutes,
+  medianOf,
   PROVE_CEILING_MS,
   SETTLE_CEILING_MS,
   SETUP_CEILING_MS,
@@ -88,8 +89,9 @@ const USAGE = [
   "",
   "  --budget-minutes  How long the caller will let this run before killing it",
   "               (CI passes the step's timeout-minutes). Each in-page deadline is",
-  "               clamped to what is left of it, so a hang late in the run still",
-  "               names what wedged instead of dying to the runner's own timeout.",
+  "               clamped to what is left of it, so work that overruns late in the",
+  "               run still names itself, and the repetitions already measured are",
+  "               kept, instead of the runner killing the step with nothing to show.",
 ].join("\n");
 
 const args = process.argv.slice(2);
@@ -652,29 +654,6 @@ const median = (xs) => {
 
 const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
 
-/**
- * `page.evaluate` under an explicit deadline.
- *
- * Playwright's `evaluate` takes no timeout and is not covered by
- * `setDefaultTimeout` — only navigation and locator calls are. So a prove that
- * wedges inside wasm hangs forever, and the only thing that eventually notices
- * is the job-level timeout, which kills the run without a diagnostic and after
- * burning the rest of the budget. A rayon deadlock in the prover is precisely
- * the change class this benchmark exists to catch, so the head build hanging is
- * an expected case rather than an exotic one.
- *
- * The race leaves the evaluate running — there is no way to cancel it — but the
- * context close in the caller's teardown takes the page down with it.
- */
-/** Robust where the mean and max are not: one slow setup does not move it. */
-const medianOf = (values) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return Math.round(
-    sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-  );
-};
-
 // Every setup's measured duration, for the budget report and for the artifact.
 // Setup is untimed by the estimator — it is not a measurement of the SDK — but it
 // is the dominant cost the step budget has to be sized against, and the number a
@@ -692,7 +671,10 @@ const setupDurations = [];
 // from the workflow, which is the only place that knows the cap; without it the
 // clamp is skipped and the constants stand alone, which is right for a local run
 // with no cap at all.
-const startedAt = Date.now();
+// Monotonic, and it must match the clock inside createDeadlineFor: the two are
+// subtracted from each other. A wall clock here lets an NTP step grant a deadline
+// past the step cap.
+const startedAt = performance.now();
 
 // Bound to this run's budget. The rule itself lives in bench-budget.mjs so it can
 // be driven with a synthetic clock; this only supplies the numbers.
@@ -799,10 +781,8 @@ const openSide = async (browser, url, label, repIndex) => {
       }
     );
     const setupMs = performance.now() - setupStartedAt;
-    // performance.now is monotonic, unlike Date.now, which an NTP step inside the
-    // ~90s setup window can move backwards. Filtered rather than asserted because
-    // this number only feeds a diagnostic — it must never be able to end a run
-    // that has measurements in hand.
+    // Filtered rather than asserted: this number only feeds a diagnostic, so it
+    // must never be able to end a run that has measurements in hand.
     if (Number.isFinite(setupMs) && setupMs > 0) setupDurations.push(setupMs);
     if (pageErrors.length) {
       throw new Error(
@@ -863,10 +843,19 @@ const openSide = async (browser, url, label, repIndex) => {
           // marker the driver uses to keep the repetitions already measured.
           //
           // A TypeError or RangeError from this call is one of the budget module's
-          // own validation guards firing — a malformed deadline, or a work profile
-          // that leaves no room to detect a hang. Both are producer bugs, not
-          // something the page did. The other two call sites let them propagate;
-          // this one has to say so explicitly because its catch is broad.
+          // own validation guards firing — a malformed deadline, or a nonsensical
+          // ceiling. Both are producer bugs, not something the page did. The other
+          // two call sites let them propagate; this one has to say so explicitly
+          // because its catch is broad.
+          //
+          // A DEADLINE overrun is buried deliberately, and this is the one place
+          // that is right. Everywhere else an overrun is ambiguous — stuck, or
+          // merely slower than the clock allowed — which is why the run keeps its
+          // measurements rather than guessing. Not here: the barrier's ceiling is
+          // below BUDGET_FLOOR_MS, so it is granted whole or refused outright and
+          // never gets a shortened deadline (asserted in bench-budget.test.mjs).
+          // A 30-second empty round trip on an idle page that does not come back
+          // is a fault, so it joins the page errors and discards the repetition.
           if (
             error instanceof BudgetExhaustedError ||
             error instanceof TypeError ||
@@ -963,7 +952,10 @@ let browser;
 let benchError = null;
 // Set when the run stops early because the step budget ran out, rather than
 // because anything failed. Keeps the completed repetitions.
-let budgetExhausted = null;
+// Either stop keeps the repetitions already measured. Named for what it is rather
+// than for one of its two causes: a budget refusal, which is certain because the
+// arithmetic ran before the work did, or a deadline overrun, which is not.
+let earlyStop = null;
 
 /**
  * The single surface for teardown failures. Every recording site pushes and
@@ -1148,12 +1140,17 @@ try {
       ) {
         throw error;
       }
-      budgetExhausted = error;
-      console.error(`\n[budget] ${error.message}`);
+      earlyStop = error;
+      // Labelled by class, because the runbook sends people to this log first and
+      // the two stops want opposite responses: a refusal means resize the budget,
+      // an overrun means work out which of the two it was.
+      console.error(
+        `\n[${error instanceof BudgetExhaustedError ? "budget" : "deadline"}] ${error.message}`
+      );
     } finally {
       await Promise.allSettled(sides.map((side) => side.close()));
     }
-    if (budgetExhausted) break;
+    if (earlyStop) break;
     // Between repetitions, not after all of them — hence the bound. The reason
     // to stop is that the NEXT repetition would be measured alongside whatever
     // failed to close; after the last one there is no next repetition, the
@@ -1220,7 +1217,7 @@ try {
 // Captured before the drop below, because this is what the process actually ran
 // and `repsExecuted` is supposed to say so.
 const repsCompleted = samples.head.length;
-const repsMeasured = budgetExhausted
+const repsMeasured = earlyStop
   ? balancedRetainedReps(repsCompleted)
   : repsCompleted;
 if (repsMeasured < repsCompleted) {
@@ -1244,9 +1241,9 @@ if (repsMeasured < repsCompleted) {
 // renderer requires `reps >= 1`, so emitting a zero-repetition artifact would
 // only produce a refusal on the reporting side with the real reason left in this
 // job's log. Say it here, where it is actionable.
-if (budgetExhausted && !benchError && repsMeasured === 0) {
+if (earlyStop && !benchError && repsMeasured === 0) {
   benchError = new Error(
-    `${budgetExhausted.message} — ${
+    `${earlyStop.headline ?? earlyStop.message} — ${
       repsCompleted === 0
         ? "no repetition completed"
         : "only one repetition completed, and a single repetition leaves the setup order unbalanced"
@@ -1320,7 +1317,7 @@ const results = {
   // `samples` is mandatory and holds exactly `reps` groups of `provesPerRep`
   // finite numbers. `teardownFailures` below is additive and optional — the
   // renderer treats a missing or malformed field as empty — so it needs no bump.
-  schemaVersion: 2,
+  schemaVersion: 3,
   status: BASE_DIR ? "ok" : "head-only",
   calibration: CALIBRATION,
   // Named so the comment can say where the numbers came from; a threshold
@@ -1353,7 +1350,22 @@ const results = {
   // pinned on the trusted side for the same reason the verdict is: a fork
   // controls this file, and the one thing it must not get is a sentence in the
   // comment. The message is here for whoever reads results.json or the job log.
-  ...(budgetExhausted ? { stoppedEarly: budgetExhausted.message } : {}),
+  ...(earlyStop
+    ? {
+        stoppedEarly: earlyStop.message,
+        // The KIND, separately and from a closed set, because the renderer needs
+        // it and must not parse the prose above. Without it the comment had to
+        // pick one cause for both, and it picked "the budget ran out" — telling
+        // the author of a deadlocked prover to raise their timeout.
+        stoppedEarlyKind:
+          earlyStop instanceof BudgetExhaustedError ? "budget" : "deadline",
+        // Only an overrun has one, and it is half of what settles the question.
+        // The other half is setupMsMedian below.
+        ...(earlyStop instanceof DeadlineExceededError
+          ? { stoppedEarlyDeadlineMs: earlyStop.facts.deadlineMs }
+          : {}),
+      }
+    : {}),
   // Untimed by the estimator, but the figure the step budget is sized against.
   // Emitted so the budget can be checked from a real run rather than from an
   // estimate; the renderer ignores it.
