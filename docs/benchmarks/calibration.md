@@ -8,22 +8,26 @@ The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.
 
-**This line is NOT calibrated.** `THRESHOLD_PCT` is 5.4%, but that number was
-measured on `main` — a different workload — so on this branch it is a
-placeholder and `THRESHOLD_PROVISIONAL` is `true`. Two parameters differ, and
-both feed the noise directly:
+**This line is calibrated.** `THRESHOLD_PCT` is **1.9%**, measured on
+`warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement on this line*
+below. Re-run this procedure whenever the runner class, thread count,
+repetition count or workload changes; each invalidates the number.
+
+Note it is **not** `main`'s 5.4%, and the two must not be swapped. The floors
+differ by 2.8x for two measurable reasons:
 
 | | `main` (0.15) | here (0.16) |
 |---|---|---|
-| `QUERY_POW_BITS` | 16 | **17** — double the expected grind |
-| prover hash | Blake3_256 | **Poseidon2**, since web-sdk#333 |
+| `QUERY_POW_BITS` | 16 | **17** |
+| prover hash | Blake3_256 | **Poseidon2** |
+| prove time | ~2.1 s | ~6.8 s |
+| measured σ | 1.447% | **0.618%** |
+| floor | 5.4% | **1.9%** |
 
-The grind is the dominant residual noise source for this estimator, so a
-different grind parameter is a different distribution rather than a scaled one.
-
-**Calibrating this line is the open task.** Run the procedure below on this
-branch and set `THRESHOLD_PCT` and the `CALIBRATION` block in
-`.github/scripts/render-bench-comment.mjs` from the result.
+The grind is the dominant residual noise source for this estimator, and a
+longer proof makes it a smaller fraction of the total — which is why this line
+is *quieter* despite the larger grind parameter, and why its floor is tighter
+rather than wider.
 
 ## What a calibration run is
 
@@ -41,6 +45,33 @@ Locally:
 ```bash
 make bench-proving-calibrate
 ```
+
+## The measurement on this line (2026-08-27)
+
+30 dispatch runs of one build against a copy of itself on
+`warp-ubuntu-latest-x64-8x` at `reps: 6`, proving with **Poseidon2** under
+`miden-air 0.29.4`, **`QUERY_POW_BITS = 17`**. True delta is zero by
+construction, so every number is measurement noise.
+
+| | |
+|---|---|
+| runs | 30 (all succeeded) |
+| mean | **-0.085%** (standard error 0.113% — 0.76 SE from zero) |
+| standard deviation | **0.618%** |
+| 3σ | 1.85% |
+| largest observed movement | **1.17%** |
+| `THRESHOLD_PCT` set to | **1.9%** |
+
+**The mean is indistinguishable from zero**, so there is no residual bias
+between the two sides — the per-prove ABBA order flip is doing its job here as
+it does on `main`.
+
+**The floor is 3σ, and here that is the procedure rather than a deviation from
+it.** On `main` one no-change run landed past 3σ, which is why that line takes
+its floor from the empirical maximum instead. Nothing like that happened here:
+the largest movement across thirty no-change runs (1.17%) sits below 3σ
+(1.85%), so there is no evidence of a heavier-than-normal tail, and 1.9% leaves
+0.7pp of margin over anything actually observed.
 
 ## The measurement on `main` (2026-08-27) — does not apply here
 

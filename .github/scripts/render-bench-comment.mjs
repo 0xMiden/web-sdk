@@ -117,33 +117,29 @@ const MAX_SAMPLE_VALUES = 200000;
  * `thresholdProvisional: false` would make the comment assert that a
  * fork-invented number is this runner's calibrated variance.
  *
- * CALIBRATED on warp-ubuntu-latest-x64-8x, 2026-08-27: 30 runs of one build
- * against a copy of itself at reps=6, so every reported delta is pure noise.
- * mean +0.213% (SE 0.264% — no detectable residual bias), sd 1.447%,
- * 3σ = 4.34%, largest observed |delta| = 5.03%.
+ * CALIBRATED ON THIS LINE: warp-ubuntu-latest-x64-8x, 2026-08-27, 30 runs of
+ * one build against a copy of itself at reps=6, so every reported delta is
+ * pure noise. mean -0.085% (SE 0.113% — 0.76 SE from zero, no detectable
+ * residual bias), sd 0.618%, 3σ = 1.85%, largest observed |delta| = 1.17%.
  *
- * 5.4%, NOT the 4.34% that 3σ prescribes. 3σ assumes the deltas are normal and
- * these are not: one of the thirty landed at +5.03%, past 3σ, on a run where
- * nothing changed. That is the grind lottery's tail — each side draws its own
- * proof-of-work grind, which is geometric, not Gaussian. A threshold at 4.34%
- * would have called that run a regression, so the floor is taken from the
- * empirical maximum with a small margin instead. Following the procedure into a
- * false positive we had already observed would be worse than deviating from it.
+ * 1.9% is 3σ rounded up, and here that is simply the procedure rather than a
+ * deviation from it: the largest movement across thirty no-change runs (1.17%)
+ * sits BELOW 3σ, so there is no evidence of the heavy tail that forced `main`
+ * to take its floor from the empirical maximum instead. The 0.68pp between
+ * 1.17% and 1.9% is the margin over anything actually observed.
+ *
+ * Do not carry this number to another line, and do not carry `main`'s here —
+ * they differ by 2.8x for two measurable reasons recorded in CALIBRATION
+ * below. This line proves with Poseidon2 at QUERY_POW_BITS = 17; `main` proves
+ * with Blake3 at 16. The grind is the dominant residual noise source, and a
+ * ~6.8s proof makes it a smaller fraction of the total than a ~2.1s one, which
+ * is why the floor here is tighter rather than wider.
  *
  * Re-calibrate when the runner class, thread count, repetition count or the
  * workload changes; each invalidates this. See docs/benchmarks/calibration.md.
  */
-const THRESHOLD_PCT = 5.4;
-// PROVISIONAL ON THIS LINE. The number below was measured on `main`
-// (miden-air 0.23.5) at QUERY_POW_BITS = 16, proving with Blake3. This branch
-// is the 0.16 line: miden-air 0.29.4 runs QUERY_POW_BITS = 17 — double the
-// expected grind work — and web-sdk#333 switches `newLocalProver()` to
-// Poseidon2. The grind is the dominant residual noise source for this
-// estimator, so neither change is a scaling of the old distribution and the
-// measured floor does not carry across. Re-run the calibration on this branch
-// (workflow_dispatch, calibrate: true) and set both this and CALIBRATION below
-// from it. See docs/benchmarks/calibration.md.
-const THRESHOLD_PROVISIONAL = true;
+const THRESHOLD_PCT = 1.9;
+const THRESHOLD_PROVISIONAL = false;
 
 /**
  * What the calibration actually measured, kept beside the threshold so the
@@ -157,15 +153,15 @@ const CALIBRATION = {
   reps: 6,
   runner: "warp-ubuntu-latest-x64-8x",
   date: "2026-08-27",
-  sdPct: 1.45,
-  threeSigmaPct: 4.34,
-  maxObservedPct: 5.03,
+  sdPct: 0.62,
+  threeSigmaPct: 1.85,
+  maxObservedPct: 1.17,
   // The two workload parameters the floor is most sensitive to, recorded so a
   // port to another line cannot silently inherit a floor measured elsewhere.
   // The dominant residual noise is the proof-of-work grind, so a different
   // QUERY_POW_BITS is a different noise distribution, not a scaled one.
-  hashFn: "Blake3_256",
-  queryPowBits: 16,
+  hashFn: "Poseidon2",
+  queryPowBits: 17,
 };
 
 /**
@@ -2130,6 +2126,35 @@ function buildSamplesBlock(rows, unit) {
   return ["```text", ...lines, "```"].join("\n");
 }
 
+/**
+ * How the floor was derived from the calibration, decided BY the numbers rather
+ * than written alongside them.
+ *
+ * The two lines of this repo reached their floors by different routes: `main`'s
+ * calibration produced a no-change run past 3σ, so its floor had to come from
+ * the empirical maximum instead; this line's largest movement sits below 3σ, so
+ * 3σ is simply the procedure. A sentence hardcoded for either one is false on
+ * the other, and was — the wording asserting "sits above that observed maximum
+ * rather than at 3σ" survived a port to a line where the maximum is below 3σ.
+ * Deriving it means a re-calibration cannot leave the prose contradicting the
+ * record printed in the same bullet.
+ */
+function derivationSentence() {
+  const { threeSigmaPct, maxObservedPct, runs } = CALIBRATION;
+  if (maxObservedPct > threeSigmaPct) {
+    return (
+      `It sits above that observed maximum rather than at 3σ (${formatPct(threeSigmaPct)}), ` +
+      `because one of those ${runs} no-change runs already exceeded 3σ — the grind differs per ` +
+      `repetition and its tail is not normal.`
+    );
+  }
+  return (
+    `It is 3σ (${formatPct(threeSigmaPct)}) rounded up, which here is the procedure rather than a ` +
+    `deviation from it: the largest movement across those ${runs} no-change runs stayed below 3σ, ` +
+    `so nothing observed argues the tail is heavier than normal.`
+  );
+}
+
 function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
   // On a head-only run there is no base side, so every sentence about the two
   // being interleaved, alternated and built in one job describes something that
@@ -2190,7 +2215,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
     THRESHOLD_PROVISIONAL
       ? `- The ±${formatPct(THRESHOLD_PCT)} threshold is **provisional** — a placeholder, not a measured spread for this runner. [How to calibrate](${calibrationLink(ctx)}).`
-      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is calibrated on \`${CALIBRATION.runner}\` (${CALIBRATION.date}): ${CALIBRATION.runs} runs of one build against a copy of itself, at ${CALIBRATION.reps} repetitions, gave a standard deviation of ${formatPct(CALIBRATION.sdPct)} and a largest movement of ${formatPct(CALIBRATION.maxObservedPct)}. It sits above that observed maximum rather than at 3σ (${formatPct(CALIBRATION.threeSigmaPct)}), because one of those ${CALIBRATION.runs} no-change runs already exceeded 3σ — the grind differs per repetition and its tail is not normal. [How this is measured](${calibrationLink(ctx)}).`,
+      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is calibrated on \`${CALIBRATION.runner}\` (${CALIBRATION.date}): ${CALIBRATION.runs} runs of one build against a copy of itself, at ${CALIBRATION.reps} repetitions, gave a standard deviation of ${formatPct(CALIBRATION.sdPct)} and a largest movement of ${formatPct(CALIBRATION.maxObservedPct)}. ${derivationSentence()} [How this is measured](${calibrationLink(ctx)}).`,
     `- Full machine-readable results are attached to ${ctx.runUrl ? `[the run](${ctx.runUrl})` : "the workflow run"} as \`results.json\`.`,
   ];
 

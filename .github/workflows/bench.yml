@@ -141,14 +141,13 @@ jobs:
     # and a proving number is least useful. `!draft` is safe on workflow_dispatch
     # too, where `pull_request` is absent and the expression reads as null.
     #
-    # The noise floor in render-bench-comment.mjs was measured on THIS runner
-    # class, but on `main`'s workload: Blake3 under miden-air 0.23.5 at
-    # QUERY_POW_BITS = 16. This line runs QUERY_POW_BITS = 17 and proves with
-    # Poseidon2, and the grind is where this estimator's residual noise lives —
-    # so the floor does not carry across and the renderer reports movements as
-    # observations, withholding every ruling. See THRESHOLD_PROVISIONAL there.
-    # Calibrating this line (workflow_dispatch, calibrate: true) is therefore
-    # the first thing to do after this lands.
+    # The noise floor in render-bench-comment.mjs is calibrated for THIS line:
+    # 30 runs on this runner class at reps=6, proving with Poseidon2 under
+    # miden-air 0.29.4 at QUERY_POW_BITS = 17, giving sd 0.618% and a floor of
+    # 1.9%. It is deliberately not `main`'s 5.4% — the grind parameter and the
+    # prover hash both differ, and a longer proof makes the grind a smaller
+    # fraction of it, so this line is quieter. Re-calibrate if the runner class,
+    # thread count, repetition count or workload changes.
     #
     # Measure the floor with `workflow_dispatch` (`calibrate: true`) and the
     # procedure in docs/benchmarks/calibration.md, then set THRESHOLD_PCT from
