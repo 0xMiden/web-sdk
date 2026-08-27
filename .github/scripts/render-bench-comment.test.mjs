@@ -12,6 +12,11 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { main, renderComment, renderSummary } from "./render-bench-comment.mjs";
 
@@ -1909,4 +1914,52 @@ test("the mean cross-check holds itself to the same sign test", () => {
   // The mean over all proves moved far past the floor, but only one repetition
   // moved at all, so there is nothing to report.
   assert.doesNotMatch(oneRepDominates, /moved on the mean but not/);
+});
+
+// The renderer decides whether it was invoked as a script by comparing its own
+// module URL against argv[1]. Node derives the former from the resolved path and
+// leaves the latter as typed, so an unresolved comparison silently declined to
+// run behind any symlink — exiting 0 having rendered nothing, which the reporting
+// workflow reads as success with nothing to say. A refusal must look like a
+// refusal.
+test("invoking the renderer through a symlink still runs it", () => {
+  const script = fileURLToPath(
+    new URL("./render-bench-comment.mjs", import.meta.url)
+  );
+  const dir = mkdtempSync(join(tmpdir(), "render-symlink-"));
+  const link = join(dir, "linked-renderer.mjs");
+  symlinkSync(script, link);
+
+  // No arguments, so the expected outcome is the usage error. What is being
+  // asserted is that SOMETHING happens: silence with exit 0 is the bug.
+  const viaLink = spawnSync(process.execPath, [link], { encoding: "utf8" });
+  assert.notEqual(
+    viaLink.status,
+    0,
+    "renderer invoked through a symlink exited 0 without doing anything"
+  );
+  assert.match(viaLink.stderr, /usage: node render-bench-comment\.mjs/);
+
+  // And the same invocation through the real path behaves identically, so the
+  // guard has not simply been made to always fire.
+  const direct = spawnSync(process.execPath, [script], { encoding: "utf8" });
+  assert.equal(direct.status, viaLink.status);
+  assert.equal(direct.stderr, viaLink.stderr);
+});
+
+// The other half of the guard: imported as a module, it must NOT run main().
+// This file imports the renderer at the top, so if the guard were unconditional
+// every test run would render and exit before reaching any assertion.
+test("importing the renderer does not execute it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "render-import-"));
+  const probe = join(dir, "probe.mjs");
+  writeFileSync(
+    probe,
+    `import ${JSON.stringify(fileURLToPath(new URL("./render-bench-comment.mjs", import.meta.url)))};\n` +
+      `console.log("imported cleanly");\n`
+  );
+  const r = spawnSync(process.execPath, [probe], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /imported cleanly/);
+  assert.doesNotMatch(r.stderr, /usage:/);
 });

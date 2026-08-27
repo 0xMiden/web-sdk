@@ -24,7 +24,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import process from "node:process";
 
 /** Max benchmark rows rendered in a table. Beyond this the comment stops being readable. */
@@ -51,6 +52,16 @@ const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
  * reporter always runs the default branch's renderer against an artifact built
  * by the PR head's producer), so a version that does not move when the contract
  * moves lets a stale producer's numbers be relabelled by a newer renderer.
+ *
+ * NOT bumped for `repsRequested` / `stoppedEarly`, and not for `reps` becoming
+ * the count actually MEASURED rather than the count requested — which looks like
+ * a meaning change and is worth the note. The two coincide on every artifact the
+ * previous producer could emit, because a run that stopped short used to write no
+ * artifact at all; the new value is only ever different on a truncated run, which
+ * the old renderer already handles correctly, since it validates `reps` against
+ * the `samples` group count and holds anything under `MIN_REPS_FOR_SIGN_TEST` to
+ * "unresolved". So there is no artifact a bump would protect, and the two new
+ * fields are additive.
  *
  * A SET, not a single number, and that is the whole point. The two halves live
  * in different trees — `crates/web-client/scripts/` and `.github/scripts/` — so
@@ -1651,9 +1662,26 @@ export async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+// Both sides resolved through realpath before comparing. Node derives
+// `import.meta.url` from the RESOLVED path while `process.argv[1]` keeps whatever
+// the caller typed, so any symlink along the way made these two differ and the
+// script did nothing at all — exiting 0 without rendering, which the workflow
+// reads as "ran fine, nothing to post" rather than as a failure. The CI path is
+// not symlinked, so this never fired there, but a silent success is the worst
+// possible shape for that mistake to take.
+const invokedPath = process.argv[1];
+let invokedAsScript = false;
+if (invokedPath) {
+  const thisFile = fileURLToPath(import.meta.url);
+  try {
+    invokedAsScript = realpathSync(invokedPath) === realpathSync(thisFile);
+  } catch {
+    // Unreadable or already-deleted path: fall back to the literal comparison
+    // rather than deciding not to run.
+    invokedAsScript = pathToFileURL(invokedPath).href === import.meta.url;
+  }
+}
+
+if (invokedAsScript) {
   process.exitCode = await main();
 }
