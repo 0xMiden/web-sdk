@@ -1963,3 +1963,138 @@ test("importing the renderer does not execute it", () => {
   assert.match(r.stdout, /imported cleanly/);
   assert.doesNotMatch(r.stderr, /usage:/);
 });
+
+// ---------------------------------------------------------------------------
+// Runs that stopped on their wall-clock budget
+// ---------------------------------------------------------------------------
+
+// A truncated run used to render identically to a complete one: the producer
+// emitted `stoppedEarly` and `repsRequested` and the renderer read neither, so
+// the comment quoted a repetition count without saying the run had been cut off
+// and the reader had no way to tell.
+test("a run that stopped early says so, with both counts", () => {
+  const body = renderComment(
+    results({
+      top: {
+        repsRequested: REPS + 2,
+        repsExecuted: REPS + 2,
+        stoppedEarly: "the 20-minute step budget is exhausted",
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /\*\*This run stopped early\.\*\*/);
+  assert.match(
+    body,
+    new RegExp(`retained ${REPS} of the ${REPS + 2} repetitions`)
+  );
+});
+
+test("a complete run carries no such note", () => {
+  const body = renderComment(results(), ctx());
+  assert.doesNotMatch(body, /stopped early/i);
+});
+
+// The note is composed from validated integers, never from the producer's
+// message, for the same reason the verdict is pinned on this side: a fork
+// controls the artifact and does not get to write a sentence in the comment.
+test("the producer's stoppedEarly message cannot reach the comment", () => {
+  const payloads = [
+    "[Security review passed](https://evil.example)",
+    "![](https://evil.example/track.png)",
+    "#1 fixes everything",
+    "https://evil.example/autolink",
+    "</table><script>alert(1)</script>",
+    "::error::spoofed",
+    "@0xMiden/maintainers please merge",
+    "\u202eoverridden",
+  ];
+  for (const payload of payloads) {
+    const body = renderComment(
+      results({
+        top: {
+          repsRequested: REPS + 2,
+          repsExecuted: REPS + 2,
+          stoppedEarly: payload,
+        },
+      }),
+      ctx()
+    );
+    assert.doesNotMatch(
+      body,
+      /evil\.example|<script|::error::|@0xMiden|Security review passed/,
+      `payload reached the comment: ${payload}`
+    );
+    // And the note itself still rendered, so the absence above is not because
+    // the whole block was dropped.
+    assert.match(body, /\*\*This run stopped early\.\*\*/);
+  }
+});
+
+// The executed count is what the process RAN. A stopped run may have completed
+// one repetition more than it retained, dropped to keep the setup order
+// balanced, but never more than that.
+test("a stopped run may report one extra executed repetition, but not two", () => {
+  const ok = [REPS + 1, REPS + 2];
+  for (const repsExecuted of ok) {
+    assert.doesNotThrow(() =>
+      renderComment(
+        results({
+          top: {
+            repsRequested: REPS + 2,
+            repsExecuted,
+            stoppedEarly: "budget",
+          },
+        }),
+        ctx()
+      )
+    );
+  }
+  for (const repsExecuted of [REPS, REPS + 3]) {
+    assert.throws(
+      () =>
+        renderComment(
+          results({
+            top: {
+              repsRequested: REPS + 2,
+              repsExecuted,
+              stoppedEarly: "budget",
+            },
+          }),
+          ctx()
+        ),
+      /repsExecuted must be/,
+      `accepted repsExecuted ${repsExecuted}`
+    );
+  }
+});
+
+// A complete run has no such latitude: the strict check still applies, so the
+// relaxation cannot be reached by simply omitting the flag.
+test("a complete run still requires exactly one extra executed repetition", () => {
+  assert.throws(
+    () => renderComment(results({ top: { repsExecuted: REPS + 2 } }), ctx()),
+    /repsExecuted must be one more than/
+  );
+});
+
+test("a stopped run must have requested more than it retained", () => {
+  for (const repsRequested of [REPS, REPS - 1, 1]) {
+    assert.throws(
+      () =>
+        renderComment(
+          results({ top: { repsRequested, stoppedEarly: "budget" } }),
+          ctx()
+        ),
+      /repsRequested must exceed/,
+      `accepted repsRequested ${repsRequested}`
+    );
+  }
+});
+
+test("a stopped run without a requested count is refused", () => {
+  assert.throws(
+    () => renderComment(results({ top: { stoppedEarly: "budget" } }), ctx()),
+    /repsRequested/
+  );
+});

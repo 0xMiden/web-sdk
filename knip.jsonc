@@ -407,10 +407,12 @@
   "ignore": [
     "packages/react-sdk/examples/**",
     "crates/idxdb-store/src/js/**",
-    // Run by hand from docs/benchmarks/calibration.md to regenerate the power
-    // tables it quotes, and by a reviewer checking those tables still
-    // reproduce. Nothing imports it, which is the point — it is a standalone
-    // reproduction script, not part of any build.
+    // Run by hand from docs/benchmarks/calibration.md to regenerate the tables
+    // it quotes — power rates for the first, truncation bias for the second —
+    // and by a reviewer checking those tables still reproduce. Nothing imports
+    // either, which is the point: they are standalone reproduction scripts, not
+    // part of any build.
     "docs/benchmarks/verdict-power.mjs",
+    "docs/benchmarks/truncation-bias.mjs",
   ],
 }

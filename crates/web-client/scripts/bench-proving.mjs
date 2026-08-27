@@ -1195,14 +1195,17 @@ try {
 // every repetition rather than just costing one. `balancedRetainedReps` in
 // bench-order.mjs owns the rule, alongside the alternation it protects. A full run
 // is left exactly as measured — the requested count is even, so it never needs it.
+// Captured before the drop below, because this is what the process actually ran
+// and `repsExecuted` is supposed to say so.
+const repsCompleted = samples.head.length;
 const repsMeasured = budgetExhausted
-  ? balancedRetainedReps(samples.head.length)
-  : samples.head.length;
-if (repsMeasured < samples.head.length) {
+  ? balancedRetainedReps(repsCompleted)
+  : repsCompleted;
+if (repsMeasured < repsCompleted) {
   console.error(
-    `[budget] dropping repetition ${samples.head.length} of the ${samples.head.length} ` +
-      `measured: an odd number of retained repetitions leaves the setup order ` +
-      `unbalanced, which biases the comparison in a way more repetitions cannot fix`
+    `[budget] dropping repetition ${repsCompleted} of the ${repsCompleted} measured: ` +
+      `an odd number of retained repetitions leaves the setup order unbalanced, ` +
+      `which biases the comparison in a way more repetitions cannot fix`
   );
   for (const label of Object.keys(samples))
     samples[label].length = repsMeasured;
@@ -1215,7 +1218,7 @@ if (repsMeasured < samples.head.length) {
 if (budgetExhausted && !benchError && repsMeasured === 0) {
   benchError = new Error(
     `${budgetExhausted.message} — ${
-      samples.head.length === 0
+      repsCompleted === 0
         ? "no repetition completed"
         : "only one repetition completed, and a single repetition leaves the setup order unbalanced"
     }, so there is nothing to report`
@@ -1310,9 +1313,17 @@ const results = {
   reps: repsMeasured,
   provesPerRep: proves - 1,
   repsRequested: reps,
-  repsExecuted: repsMeasured + 1,
+  // What the process RAN: the discarded warm-up plus every repetition that
+  // completed, including one dropped for parity. On a full run this is the
+  // retained count plus the warm-up, as it always was.
+  repsExecuted: repsCompleted + 1,
   provesExecutedPerRep: proves,
   // Present only when the run stopped short, so its absence means a full run.
+  //
+  // The renderer uses only its PRESENCE, never this text. Comment prose is
+  // pinned on the trusted side for the same reason the verdict is: a fork
+  // controls this file, and the one thing it must not get is a sentence in the
+  // comment. The message is here for whoever reads results.json or the job log.
   ...(budgetExhausted ? { stoppedEarly: budgetExhausted.message } : {}),
   // No `thresholdPct` / `thresholdProvisional` / `lowerIsBetter` here: those
   // decide the verdict, and .github/scripts/render-bench-comment.mjs renders

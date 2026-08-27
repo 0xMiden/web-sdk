@@ -484,9 +484,41 @@ function normalizeResults(input) {
     "provesExecutedPerRep",
     { min: 2, max: 1001 }
   );
-  if (repsExecuted !== reps + 1) {
+  // Presence only. `stoppedEarly` carries a message on the producing side, and
+  // that message is deliberately not read: a fork controls the producer, comment
+  // prose is pinned here, and a truncation notice a fork could word is a sentence
+  // in the comment it does not get to write. What is rendered below is composed
+  // from these validated integers.
+  const stoppedEarly = Boolean(results.stoppedEarly);
+
+  // Only meaningful on a stopped run, and only if it exceeds what was retained —
+  // otherwise nothing was lost and the claim contradicts itself.
+  let repsRequested = null;
+  if (stoppedEarly) {
+    repsRequested = requireInt(results.repsRequested, "repsRequested", {
+      min: 1,
+      max: 1000,
+    });
+    if (repsRequested <= reps) {
+      fail(
+        `repsRequested must exceed the ${reps} retained ${plural(reps, "rep")} on a run that stopped early, got ${repsRequested}`
+      );
+    }
+  }
+
+  // A full run executes exactly one repetition more than it retains: the
+  // discarded warm-up. A run that stopped early may have executed one MORE than
+  // that, the repetition dropped to keep the setup order balanced — but no more,
+  // because anything beyond that was never completed. Bounding it rather than
+  // dropping the check keeps the protocol claim verifiable on both paths.
+  const maxExecuted = stoppedEarly ? reps + 2 : reps + 1;
+  if (repsExecuted < reps + 1 || repsExecuted > maxExecuted) {
     fail(
-      `repsExecuted must be one more than the ${reps} retained ${plural(reps, "rep")} (the discarded warm-up), got ${repsExecuted}`
+      `repsExecuted must be ${
+        stoppedEarly
+          ? `${reps + 1} or ${maxExecuted} for a run that stopped early after retaining ${reps} ${plural(reps, "rep")} (the discarded warm-up, plus at most one repetition dropped for balance)`
+          : `one more than the ${reps} retained ${plural(reps, "rep")} (the discarded warm-up)`
+      }, got ${repsExecuted}`
     );
   }
   if (provesExecutedPerRep !== provesPerRep + 1) {
@@ -541,6 +573,8 @@ function normalizeResults(input) {
     threads,
     reps,
     provesPerRep,
+    stoppedEarly,
+    repsRequested,
     teardownFailures: normalizeTeardownFailures(results.teardownFailures),
     benchmarks,
   };
@@ -1042,6 +1076,39 @@ function buildTeardownNote(teardownFailures) {
   ].join("\n");
 }
 
+// A run that hit its wall-clock budget and reported what it had finished.
+//
+// Disclosed rather than suppressed. The estimate itself survives truncation: the
+// reported figure is a PAIRED difference and the budget is consumed by both sides
+// together, so stopping on elapsed time selects for slow machine periods, which
+// is common mode and cancels in the ratio. Simulated at the calibrated
+// configuration, a run stopped with six repetitions retained reports the same
+// mean delta as an uninterrupted one to within 0.1% under the null and under a
+// true 8% effect, with the same false-positive rate — including under thermal
+// drift and heavy-tailed prove times. See docs/benchmarks/calibration.md.
+//
+// What truncation does cost is repetitions, and therefore power, which the
+// verdict already accounts for by refusing to resolve below
+// MIN_REPS_FOR_SIGN_TEST. So the note exists to tell the reader the run did not
+// do what the methodology below describes — not to warn them off the number.
+//
+// Worded here, from validated integers, never from the producer's `stoppedEarly`
+// string. A fork controls that string, and it does not get to write a sentence in
+// this comment.
+function buildStoppedEarlyNote(results) {
+  if (!results.stoppedEarly) return null;
+  const { reps, repsRequested } = results;
+  const dropped = repsRequested - reps;
+  return [
+    `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for,`,
+    `> ${dropped === 1 ? "having run out" : "because it ran out"} of its wall-clock budget. Everything below is computed over the ${reps} it finished.`,
+    "> The comparison stays sound — both builds are measured inside every repetition, so a slow machine",
+    "> affects them together — but fewer repetitions means less power to resolve a small difference.",
+    "> If this recurs, the budget is too tight rather than the run too slow: raise the benchmark step's",
+    "> `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
+  ].join("\n");
+}
+
 function buildHeadOnlyNote() {
   return [
     "> **No base measurements.** The base build did not produce a dist, so this run reports head",
@@ -1422,6 +1489,9 @@ function assemble(
   // run leaked resources, that qualifies everything below it.
   const teardownNote = buildTeardownNote(results.teardownFailures);
   if (teardownNote) blocks.push(teardownNote);
+  // Directly after: it qualifies the repetition count every note below quotes.
+  const stoppedEarlyNote = buildStoppedEarlyNote(results);
+  if (stoppedEarlyNote) blocks.push(stoppedEarlyNote);
   if (ctx.calibration) blocks.push(buildCalibrationNote(ctx));
   if (rows.length > 0 && rows.every((r) => r.base === null))
     blocks.push(buildHeadOnlyNote());

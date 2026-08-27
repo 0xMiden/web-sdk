@@ -376,13 +376,65 @@ more repetitions do not average away, and the reason the order alternates in the
 first place. Keeping the odd tail would buy one more sample at the cost of tilting
 all of them.
 
-A short run therefore reports honestly rather than confidently: below
-`MIN_REPS_FOR_SIGN_TEST` repetitions the renderer will not issue a verdict at all,
-so a truncated run comes back as *unresolved* with its repetition count stated.
-The artifact carries `repsRequested` and `stoppedEarly` alongside the measured
-count, so the gap is visible rather than something to infer. A run that keeps no
-balanced repetitions — nothing measured, or a single one — fails instead, because
-there is nothing left to report.
+#### Stopping on the clock does not bias the comparison
+
+The obvious objection is that this is selection bias: the run stopped because it
+was slow, so the repetitions that survive are a sample chosen by its own runtime.
+That is informative censoring, and it would be fatal if the reported figure were
+a level. It is not — it is a **paired difference**, and both builds are measured
+inside every repetition, with the budget consumed by both together. Stopping on
+elapsed time therefore selects for slow *machine periods*, which is common mode:
+it scales both sides and cancels in the ratio. Selection on the sum of two
+exchangeable quantities does not bias their difference.
+
+`truncation-bias.mjs` in this directory simulates it at the calibrated
+configuration — common-mode per-repetition noise, the calibrated 2.2% per-side
+noise, the setup-order penalty — and reports each scenario twice: once for
+complete six-repetition runs, once for runs that stopped having retained exactly
+six. Each cell is the mean reported delta and the directional-verdict rate. The
+comparison is the point; an absolute rate means nothing on its own.
+
+| Scenario | Complete | Stopped at 6 | Stopped share |
+| --- | --- | --- | --- |
+| Null, budget 0.95x | +0.01% / 0.00% | +0.00% / 0.00% | 99.44% |
+| Null, budget 1.00x | +0.01% / 0.00% | +0.00% / 0.00% | 74.84% |
+| Null, 5% thermal drift | +0.08% / 0.00% | +0.07% / 0.00% | 92.24% |
+| Null, heavy-tailed proves | +0.12% / 3.96% | +0.01% / 0.82% | 41.11% |
+| True +8%, budget 0.95x | +8.01% / 99.33% | +8.01% / 99.32% | 100.00% |
+| True +8%, 5% drift | +8.08% / 99.44% | +8.08% / 99.48% | 54.12% |
+
+The two middle columns agree in every row: a run stopped with six repetitions
+retained reports the same delta as an uninterrupted one to within 0.1%, and the
+same directional-verdict rate, under the null and under a real effect.
+
+Two rows are worth reading carefully. Thermal drift is the mechanism that
+*should* have broken the argument — a drifting runner makes truncation keep the
+early, faster repetitions — and it does not, because drift is common mode. And
+the heavy-tail row is the one place a false-positive rate rises, to 3.96% — note
+that it rises for the **complete** run, and the truncated one is lower. The tails
+cause it, not the truncation. That scenario is also far more extreme than this
+workload (15% of proves running 2.5x long), and is in the table as a stress case
+rather than as a rate to expect — the real calibrated figure is the 0.15% derived
+above.
+
+What truncation genuinely costs is repetitions, and therefore power. That the
+verdict already handles, by refusing to resolve below `MIN_REPS_FOR_SIGN_TEST`.
+
+#### The report says so
+
+A truncated run is disclosed in the comment, above everything that quotes a
+repetition count, stating what it retained and what it was configured for. The
+note is composed on the trusted side from validated integers: the producer's
+`stoppedEarly` message is read for its PRESENCE only and never rendered,
+because a fork controls that string and comment prose is pinned on the
+reporting side for the same reason the verdict is.
+
+The artifact carries `repsRequested` and the true `repsExecuted` — the warm-up
+plus every repetition that completed, including one dropped for parity — and the
+renderer bounds them against each other, so an artifact claiming a truncation it
+did not have, or a repetition count it did not run, is refused rather than
+rendered. A run that keeps no balanced repetitions — nothing measured, or a single
+one — fails instead, because there is nothing left to report.
 
 If truncation starts happening routinely, the budget is wrong, not the run:
 raise the step's `timeout-minutes` and `--budget-minutes` together, or lower
