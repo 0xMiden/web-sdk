@@ -489,6 +489,14 @@ jobs:
               // reach it is one fork branch backing two open pull requests, and
               // the author of a legitimate PR should not read an accusation. The
               // wording states what was checked rather than what was intended.
+              //
+              // Note what this gate does NOT decide: when one commit backs two of
+              // the SAME fork's open PRs, both satisfy every trusted predicate
+              // here, and the artifact picks which one is reported on. That is a
+              // author choosing between their own pull requests, not a report
+              // crossing to someone else's, so it is left as-is; the base-ref
+              // check below is what stops the numbers being read against a base
+              // they were not measured on.
               refuse('PR head repo does not match the triggering run');
               core.setOutput(
                 'skip_reason',
@@ -524,6 +532,15 @@ jobs:
             // exact merge-base (the base branch can move between the bench run
             // and this one, so an equality check would produce false refusals),
             // but it does confine the value to real history behind the base ref.
+            //
+            // Deliberately not tightened further to "at or after the merge-base",
+            // which would additionally exclude an arbitrarily OLD ancestor. It
+            // costs another API call and another decline path in the file where
+            // decline paths have been the recurring defect, and it buys little: a
+            // fork already authors every NUMBER in the comment, so misattributing
+            // the base adds no capability it does not already have. The comment
+            // carries "informational only and never blocks merge" for this reason.
+            // Revisit if the report ever gates anything.
             const claimedBase = String(claimed.baseSha ?? '');
             if (!/^[0-9a-f]{7,40}$/.test(claimedBase)) {
               refuseAsMalformed(`Artifact baseSha is not a lowercase commit sha: ${JSON.stringify(claimed.baseSha)}`);

@@ -2382,3 +2382,85 @@ test("a configured-short run keeps the repetition advice", () => {
   assert.match(body, /Re-run with the default `--reps`/);
   assert.doesNotMatch(body, /ran out of its time budget/);
 });
+
+// ---------------------------------------------------------------------------
+// The floor comparison happens at the DISPLAYED precision, which is a deliberate
+// choice with a visible consequence either way, so it is pinned here.
+//
+// Comparing the unrounded magnitude instead would classify a 5.396% movement as
+// noise while the same line prints it as "+5.40%" against a floor printed as
+// "±5.40%" — a self-contradiction exactly at the boundary a reader stops to
+// check. Comparing at the shown precision instead calls that movement a
+// movement, which overstates it by 0.004pp.
+//
+// The shown precision wins because THRESHOLD_PCT is itself rounded: 3 x 1.79%
+// is 5.37%, rounded up to 5.4%. The threshold's own precision is ~0.03pp, so
+// exactness at 0.004pp is spurious rigour, while the contradiction is real and
+// costs the reader's trust in everything else the comment says.
+//
+// If a future change makes the floor a measured, unrounded number, revisit this:
+// the argument depends on the threshold being coarser than the comparison.
+// ---------------------------------------------------------------------------
+
+/** Head value whose delta against 1000 displays as `pct` to two decimals. */
+const headFor = (pct) => 1000 * (1 + pct / 100);
+
+test("a movement that displays as the floor is treated as reaching it", () => {
+  const body = renderComment(
+    results({ benchmark: { base: side(1000), head: side(headFor(5.396)) } }),
+    ctx()
+  );
+  assert.match(body, /\+5\.40%/);
+  assert.match(
+    body,
+    /Moved beyond a provisional noise floor/,
+    "5.396% displays as +5.40% against a ±5.40% floor; calling it noise would " +
+      "contradict the line printing it"
+  );
+});
+
+test("a movement that displays below the floor is noise", () => {
+  const body = renderComment(
+    results({ benchmark: { base: side(1000), head: side(headFor(5.394)) } }),
+    ctx()
+  );
+  assert.match(body, /\+5\.39%/);
+  assert.doesNotMatch(body, /Moved beyond a provisional noise floor/);
+});
+
+test("an exactly unchanged benchmark is never a movement", () => {
+  // `magnitude > 0` guards this: with a zero threshold an unchanged benchmark
+  // would otherwise clear the floor, and then be labelled an improvement.
+  const body = renderComment(
+    results({ benchmark: { base: side(1000), head: side(1000) } }),
+    ctx()
+  );
+  assert.doesNotMatch(body, /Moved beyond a provisional noise floor/);
+});
+
+test("the unit is a trusted-side claim, not a fork-authored one", () => {
+  // A shape check passes `s`, which relabels millisecond samples as seconds while
+  // leaving every figure and percentage internally consistent — so nothing in the
+  // comment contradicts it. `%` is worse: it presents absolute timings as ratios.
+  for (const unit of ["s", "%", "min", "hr", "x", "pct"]) {
+    const body = renderComment(
+      results({ benchmark: { unit, base: side(1000), head: side(1010) } }),
+      ctx()
+    );
+    assert.doesNotMatch(
+      body,
+      new RegExp(`\\(${unit}\\)`),
+      `the artifact's unit "${unit}" reached the comment`
+    );
+  }
+  // What the producer actually emits still renders.
+  assert.match(
+    renderComment(
+      results({
+        benchmark: { unit: "ms", base: side(1000), head: side(1010) },
+      }),
+      ctx()
+    ),
+    /\(ms\)/
+  );
+});

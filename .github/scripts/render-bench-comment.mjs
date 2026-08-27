@@ -265,10 +265,27 @@ function logLine(text) {
   return sanitizeText(text, 200, "(no detail)");
 }
 
-/** Units are short tokens; anything else is a sign the artifact is not what we expect. */
+/**
+ * Units the trusted side is willing to print.
+ *
+ * An allowlist rather than a shape check, for the same reason THRESHOLD_PCT is not
+ * read from the artifact: the unit is a CLAIM ABOUT THE NUMBERS, and a fork
+ * controls it. A shape check passes `s`, so a run's millisecond samples can be
+ * labelled seconds — the figures stay internally consistent and every percentage
+ * stays correct, which is what makes it effective. It also passes `%`, which turns
+ * absolute timings into apparent ratios.
+ *
+ * Exactly what the producer emits, and nothing speculative. A first draft of this
+ * list included `s` for a future timing benchmark, which reopened the hole it was
+ * written to close — `s` IS the ms-relabelled-as-seconds case. Add a unit when the
+ * producer starts writing it, in the same change.
+ */
+const ACCEPTED_UNITS = new Set(["ms"]);
+
+/** Anything not on the allowlist renders unitless rather than mislabelled. */
 function sanitizeUnit(value) {
   const cleaned = sanitizeText(value, 8, "");
-  return /^[A-Za-z%/]{1,8}$/.test(cleaned) ? cleaned : "";
+  return ACCEPTED_UNITS.has(cleaned) ? cleaned : "";
 }
 
 /** Used only in error messages, which also end up in logs a human reads. */
