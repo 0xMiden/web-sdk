@@ -118,11 +118,10 @@ jobs:
       !github.event.pull_request.draft &&
       (github.event.action != 'edited' ||
        github.event.changes.base != null)
-    # Budget accounting. Every step that can take real time is capped and listed;
-    # the previous two versions of this block each asserted a composition that did
-    # not hold, the first by leaving ten minutes for a 25-minute preamble and the
-    # second by summing to exactly the budget while omitting three steps that run
-    # between the base build and the head build.
+    # Budget accounting. EVERY step that can take real time must be capped and
+    # listed here, and the column must sum to less than the job cap — including the
+    # steps between the base build and the head build, which are easy to omit and
+    # cost fifteen minutes between them.
     #
     #   preamble    25  checkout at fetch-depth 0, rustup + two wasm targets,
     #                   apt binaryen, rust-cache restore, pnpm install,
@@ -148,12 +147,10 @@ jobs:
     #
     # SIZING THE BENCH STEP. The dominant cost is setup, which is untimed by the
     # estimator and paid for BOTH sides inside every repetition — so a default
-    # `--reps 6` run pays 2 × (6 + 1) = 14 setups, not 7. An earlier version of
-    # this block counted 7 and sized the step at 20 minutes against an estimated
-    # 80s setup; at 14 setups that is 21 minutes of setup alone, so the run would
-    # have retained 4 repetitions, below the 6 the renderer needs for a verdict.
-    # Every run would have come back "unresolved" and the bot would have been
-    # noise.
+    # `--reps 6` run pays 2 × (6 + 1) = 14 setups, not 7. Halving that count is the
+    # mistake to avoid: at 14 setups of ~90s the setup cost alone is 21 minutes, so
+    # a step sized for 7 truncates the run to 4 retained repetitions, below the 6
+    # the renderer needs to rule — and every report comes back "unresolved".
     #
     #   14 setups × 90s ≈ 21.0 min      <- estimate, NOT a measurement
     #   56 proves × 2s ≈ 1.9 min

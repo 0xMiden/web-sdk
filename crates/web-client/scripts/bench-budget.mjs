@@ -96,13 +96,12 @@ export const SETTLE_WORK = { ceiling: 30 * 1000, expected: 2 * 1000 };
  * work" (`starved`) are nearly unrelated: across the clamped band, 96% of setup
  * grants and 100% of prove grants are LARGER than the work needs.
  *
- * Conflating them is a live defect in both directions. Treating every clamped
- * grant as a shortfall means a genuinely deadlocked prover, timing out under a
- * 294-second deadline it needed 1.5 seconds for, gets reported as the budget
- * running out — and the run is kept, so measurements taken around a hang are
- * published instead of discarded. Treating every clamped grant as a full ceiling
- * means a real shortfall is called a hang and a complete set of measurements is
- * thrown away. `starved` is the discriminator that actually matches the question.
+ * Do not use `clamped` to decide what a timeout means, in either direction.
+ * Reading it as a shortfall reports a deadlocked prover as the budget running out
+ * and KEEPS the run, publishing measurements taken around a hang. Reading it as a
+ * full ceiling calls a real shortfall a hang and throws away a complete set of
+ * measurements. `starved` is the flag that answers the question actually being
+ * asked.
  *
  * @returns {{refused: true, need: number}
  *   | {refused: false, ms: number, clamped: boolean, starved: boolean}}

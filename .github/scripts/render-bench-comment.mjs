@@ -53,26 +53,18 @@ const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
  * by the PR head's producer), so a version that does not move when the contract
  * moves lets a stale producer's numbers be relabelled by a newer renderer.
  *
- * NOT bumped for the truncation fields (`repsRequested`, `stoppedEarly`, `reps`
- * becoming the count MEASURED, and `repsExecuted` gaining the `reps + 2` case
- * where a repetition was dropped for parity) — and the reason is narrow enough
- * to be worth stating exactly, because the obvious reason is wrong.
+ * Version 1 covers the truncation fields (`repsRequested`, `stoppedEarly`, `reps`
+ * as the count MEASURED, `repsExecuted` allowing `reps + 2` when a repetition was
+ * dropped for parity) because this renderer and the producer reach the default
+ * branch together: the first artifact a deployed renderer sees is the first one
+ * the current producer writes.
  *
- * The wrong reason, which an earlier version of this comment gave: that the old
- * and new values coincide on every artifact the previous producer could emit.
- * They do not. A truncated run with a parity drop emits `repsExecuted = reps + 2`,
- * which a renderer built before that change refuses outright — it required exactly
- * `reps + 1`. Under a shipped renderer that would be silence on the PR.
- *
- * The actual reason: no renderer has ever shipped. This file and the producer
- * arrive on the default branch in the same change, so the first artifact any
- * deployed renderer sees is the first artifact the current producer writes. The
- * intermediate commits on the branch that introduced this are not a compatibility
- * surface — nothing ever ran them against anything.
- *
- * That reason expires the moment this merges. From then on the two halves DO run
- * at different revisions routinely, and a change of this kind — new field, or an
- * existing field's range or meaning widened — needs the bump procedure below.
+ * THAT NO LONGER HOLDS ONCE THIS SHIPS. From then on the two halves run at
+ * different revisions routinely — the producer from a pull request, the renderer
+ * from the default branch — so any new field, or any widening of an existing
+ * field's range or meaning, needs the bump procedure below. Widening without a
+ * bump is silence on the PR, because a renderer that predates the change refuses
+ * the artifact outright rather than ignoring the part it does not know.
  *
  * A SET, not a single number, and that is the whole point. The two halves live
  * in different trees — `crates/web-client/scripts/` and `.github/scripts/` — so

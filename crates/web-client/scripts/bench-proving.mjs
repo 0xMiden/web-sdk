@@ -1411,11 +1411,10 @@ if (results.stoppedEarly) {
   console.log(`stopped early: ${results.stoppedEarly}\n`);
 }
 
-// The budget report. Printed on every run, because the step budget is sized
-// against the setup cost and nothing had ever measured it — a repetition sets up
-// both sides, so the count is 2 × (reps + 1), which an earlier version of the
-// arithmetic in bench.yml halved. Read this line after the first CI run and size
-// --budget-minutes from it rather than from the estimate.
+// The budget report. Printed on every run because the step budget is sized against
+// the setup cost, and a repetition sets up BOTH sides — so the count is
+// 2 × (reps + 1), which is the figure to check the accounting in bench.yml
+// against. Read this line and size --budget-minutes from it, not from an estimate.
 if (setupDurations.length > 0) {
   const totalSetup = setupDurations.reduce((a, b) => a + b, 0);
   const slowest = Math.max(...setupDurations);
