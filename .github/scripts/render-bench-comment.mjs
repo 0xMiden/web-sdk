@@ -63,6 +63,13 @@ const CALIBRATION_DOC_PATH = "docs/benchmarks/calibration.md";
  * "unresolved". So there is no artifact a bump would protect, and the two new
  * fields are additive.
  *
+ * One caveat on that reasoning, since it is easy to over-read: a truncated run is
+ * held to "unresolved" only because truncating the CALIBRATED six-repetition
+ * request cannot leave more than four. `reps` is a workflow_dispatch input, so a
+ * dispatch at `--reps 20` truncated to 12 clears the floor and does get a
+ * verdict. That is intended — twelve repetitions is twelve repetitions — and it
+ * is disclosed by the stopped-early note rather than by the count alone.
+ *
  * A SET, not a single number, and that is the whole point. The two halves live
  * in different trees — `crates/web-client/scripts/` and `.github/scripts/` — so
  * bumping them in one commit is not something the layout encourages, and with an
@@ -1748,8 +1755,13 @@ export async function main(argv = process.argv.slice(2)) {
 const invokedPath = process.argv[1];
 let invokedAsScript = false;
 if (invokedPath) {
-  const thisFile = fileURLToPath(import.meta.url);
   try {
+    // Inside the try, not above it. `fileURLToPath` throws
+    // ERR_INVALID_URL_SCHEME for any non-`file:` module URL, which is the one way
+    // this block could raise at module scope — the very thing the try exists to
+    // prevent. Not reachable while the module is only ever loaded from disk, but
+    // the guard should not be the thing that breaks an otherwise working import.
+    const thisFile = fileURLToPath(import.meta.url);
     invokedAsScript = realpathSync(invokedPath) === realpathSync(thisFile);
   } catch {
     // Unreadable or already-deleted path: fall back to the literal comparison

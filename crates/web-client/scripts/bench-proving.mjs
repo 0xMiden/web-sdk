@@ -57,6 +57,11 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 
 import {
+  BudgetExhaustedError,
+  formatMinutes,
+  grantDeadline,
+} from "./bench-budget.mjs";
+import {
   balancedRetainedReps,
   opensBaseFirst,
   orderBalance,
@@ -161,6 +166,22 @@ const threads = count("--threads", "8");
 // and `proves - 1` is odd — so the retained proves only come out even-handed
 // across an even number of reps. See the warning after the driver loop.
 const reps = count("--reps", "6");
+// Refused rather than warned about, because an odd count carries the exact defect
+// a truncated run gives up a repetition to avoid. The setup order alternates by
+// repetition, so an odd number runs base first once more than head — a fixed
+// positional asymmetry, the one class of error repetitions cannot average out.
+// A truncated run drops its tail for this; a clean `--reps 7` run used to keep it
+// and, being above the verdict's repetition floor, publish a confident number
+// carrying it, with nothing but a stderr line to say so. Same defect, so the same
+// answer, and refusing is better than silently measuring six when seven were
+// asked for.
+if (reps % 2 !== 0) {
+  usage(
+    `--reps must be even (got ${reps}): the setup order alternates by repetition, ` +
+      `so an odd count sets up base first once more often than head and biases ` +
+      `every repetition in the run. Use ${reps - 1} or ${reps + 1}.`
+  );
+}
 // Extra proves are the cheap way to buy samples: setup (mint + block + sync)
 // dominates a rep's cost and is not measured, while each extra prove is one
 // more chance for `min` to catch an uncontended run.
@@ -181,13 +202,6 @@ const BUDGET_MARGIN_MS = 90 * 1000;
 // diagnostic rather than to squeeze in one more attempt that a tight deadline
 // would then misreport as a hang.
 const BUDGET_FLOOR_MS = 60 * 1000;
-// `.toFixed(0)` rounded the accepted minimum of 2.5 to "3" and told the user to
-// raise a budget they had never passed.
-const formatMinutes = (ms) => {
-  const minutes = ms / 60000;
-  return Number.isInteger(minutes) ? String(minutes) : minutes.toFixed(2);
-};
-
 // Working time on top of the two reserves. Without it the accepted minimum was
 // the mathematical boundary — margin plus floor — where the budget is satisfied
 // at t=0 and refused one millisecond later, so the smallest "valid" budget could
@@ -215,8 +229,8 @@ if (budgetMinutesRaw !== null) {
     usage(
       `--budget-minutes must be at least ${formatMinutes(MIN_BUDGET_MS)} (got ` +
         `${budgetMinutesRaw}): ${BUDGET_MARGIN_MS / 1000}s is reserved for the ` +
-        `diagnostic and teardown, up to ${BUDGET_FLOOR_MS / 1000}s is held back so the ` +
-        `next step is never started with too little left to finish, and ` +
+        `diagnostic and teardown, up to ${BUDGET_FLOOR_MS / 1000}s is the least a step ` +
+        `is granted before the run stops instead, and ` +
         `${BUDGET_WORKING_MIN_MS / 60000} minutes is the least that leaves room to ` +
         `launch a browser and measure anything.`
     );
@@ -253,8 +267,6 @@ if (plannedSamples > MAX_SAMPLE_VALUES) {
   );
 }
 
-// Not fatal — a deliberately short run is a legitimate thing to ask for — but
-// silence here would hand back a number carrying a known directional bias.
 // No figure is attached to the imbalance on purpose. The +1.19% second-position
 // penalty is per prove, but the reported statistic is a mean of per-rep MINIMA,
 // and a minimum is not linear in a per-prove penalty: if a rep's fastest prove
@@ -267,21 +279,29 @@ if (plannedSamples > MAX_SAMPLE_VALUES) {
 // default as balanced.
 const balance = orderBalance({ reps, proves });
 
+// Assertions now, not warnings, and the change of severity is the point. Both of
+// these were reachable only through an odd `--reps`, which is refused at parse
+// time — so an imbalance here no longer means the operator asked for a lopsided
+// run. It means `bench-order.mjs` and that check disagree, which is a bug in this
+// file's own contract, and a bug that silently biases every number the run
+// produces is not something to print and continue past.
+//
+// Kept rather than deleted for exactly that reason: they are the only thing
+// checking that the even-`--reps` rule actually delivers the balance it claims.
 if (!balance.provesBalanced) {
-  console.warn(
-    `[warn] the retained PROVES do not split evenly between base and head: base ` +
-      `goes first in ${balance.proveBaseFirst} of ${balance.proveTotal}. One side ` +
-      `runs second once more than the other, and second position carries a ` +
-      `measured penalty. Use an even --reps, or an odd --proves.`
+  throw new Error(
+    `the retained PROVES do not split evenly between base and head: base goes ` +
+      `first in ${balance.proveBaseFirst} of ${balance.proveTotal}, with --reps ` +
+      `${reps} --proves ${proves}. --reps is even, so this should be impossible: ` +
+      `the interleave in bench-order.mjs and the even-reps rule have diverged`
   );
 }
 if (!balance.setupBalanced) {
-  console.warn(
-    `[warn] the SETUP order does not split evenly: base is opened first in ` +
-      `${balance.setupBaseFirst} of ${balance.setupTotal} retained repetitions, so ` +
-      `one side's mint/proveBlock/syncState runs alongside a live page one time ` +
-      `more than the other's. Setup is not timed, but it decides what the machine ` +
-      `looks like when the timed proves start. Use an even --reps.`
+  throw new Error(
+    `the SETUP order does not split evenly: base is opened first in ` +
+      `${balance.setupBaseFirst} of ${balance.setupTotal} retained repetitions, ` +
+      `with --reps ${reps}. --reps is even, so this should be impossible: the ` +
+      `alternation in bench-order.mjs and the even-reps rule have diverged`
   );
 }
 if (balance.provesBalanced && !balance.perRepBalanced) {
@@ -634,7 +654,33 @@ const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
  * The race leaves the evaluate running — there is no way to cancel it — but the
  * context close in the caller's teardown takes the page down with it.
  */
-const evaluateWithDeadline = async (page, fn, arg, { ms, what }) => {
+// `clamped` says the deadline came from the remaining step budget rather than from
+// `what`'s own ceiling, and it decides which of two very different things a timeout
+// means.
+//
+// Unclamped, the work had its full ceiling — ten minutes for a setup, five for a
+// prove, against real durations of roughly eighty seconds and under two — so a
+// timeout is a hang, and saying so is right: the run is broken and its numbers
+// should be discarded.
+//
+// Clamped, the deadline is an artifact of the clock running out. Work granted
+// sixty seconds against a ten-minute ceiling will usually blow, and calling that
+// "wedged" accuses the prover of a fault it does not have while sending the run
+// down the failure path — which threw upstream of the results write and destroyed
+// every repetition already measured. So a clamped timeout raises the budget error
+// instead, and the driver keeps what it measured.
+const evaluateWithDeadline = async (page, fn, arg, { ms, what, clamped }) => {
+  // Checked because the failure mode is silent and total. `setTimeout` coerces a
+  // non-number delay to zero, so a malformed `ms` does not throw — it times out
+  // every step instantly and reports each one as wedged. That is precisely what a
+  // `deadlineFor` returning a bare number produced when the call sites started
+  // spreading its result, since spreading a number contributes no properties.
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new TypeError(
+      `${what}: deadline must be a finite positive number of ms, got ${ms}. ` +
+        `deadlineFor must return {ms, clamped} on every path`
+    );
+  }
   let timer;
   try {
     return await Promise.race([
@@ -643,9 +689,15 @@ const evaluateWithDeadline = async (page, fn, arg, { ms, what }) => {
         timer = setTimeout(
           () =>
             reject(
-              new Error(
-                `${what} did not finish within ${ms} ms — treating it as wedged rather than waiting out the job timeout`
-              )
+              clamped
+                ? new BudgetExhaustedError(
+                    `${what} did not finish within the ${ms} ms the step budget had left ` +
+                      `for it — not enough to attempt it, so the run is stopping here with ` +
+                      `the repetitions it has. This is the budget running out, not a hang`
+                  )
+                : new Error(
+                    `${what} did not finish within ${ms} ms — treating it as wedged rather than waiting out the job timeout`
+                  )
             ),
           ms
         );
@@ -678,53 +730,42 @@ const SETTLE_DEADLINE_MS = 30 * 1000;
 // with no cap at all.
 const startedAt = Date.now();
 
-// Distinguishable from a real failure, because the two deserve opposite
-// outcomes: a wedged prover should discard the run, while running out of clock
-// should keep whatever whole repetitions were already measured.
-class BudgetExhaustedError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "BudgetExhaustedError";
-  }
-}
-
 const deadlineFor = (ceiling) => {
-  if (BUDGET_MS === null) return ceiling;
+  // The same SHAPE as the budgeted path, which matters more than it looks: the
+  // call sites spread this into the deadline options, and spreading a bare number
+  // contributes no properties at all — `ms` would arrive undefined and
+  // `setTimeout` would treat it as zero, timing out every step instantly.
+  if (BUDGET_MS === null)
+    return { refused: false, ms: ceiling, clamped: false };
   const left = BUDGET_MS - (Date.now() - startedAt) - BUDGET_MARGIN_MS;
-  // Scaled to the ceiling being asked for, not to a flat floor. A fixed 60s
-  // floor refused the 30s settle barrier while 149s of wall clock remained,
-  // because the floor was compared against a budget that had already had the 90s
-  // teardown reserve subtracted. Work that needs 30s should be declined when
-  // fewer than 30s remain, not when fewer than 60 do.
-  const need = Math.min(ceiling, BUDGET_FLOOR_MS);
+  // Delegated to bench-budget.mjs, which owns the rule and is tested against it
+  // with a synthetic clock. Three rounds running, this arithmetic was rewritten
+  // inline and came out wrong in the configuration the author did not try; the
+  // module's sweep test covers every ceiling against every remaining budget.
+  const grant = grantDeadline({
+    ceiling,
+    remaining: left,
+    floorMs: BUDGET_FLOOR_MS,
+  });
 
-  // Refuse rather than floor.
-  //
-  // This used to hand back `max(FLOOR, min(ceiling, left))`, which meant that
-  // once the budget was nearly gone every call got a deadline of exactly the
-  // floor. A normal prove here is single-digit seconds, so a floor at that
-  // magnitude aborted proves that would have finished well inside the runner's
-  // own cap — and reported it as `prove did not finish within 10000 ms —
-  // treating it as wedged`, which reads as a prover hang and sends the reader
-  // looking for a bug that does not exist. The run then threw, and the throw is
-  // upstream of the results write, so a full set of measurements was discarded
-  // on the strength of a deadline the budget had manufactured.
-  //
-  // Below the floor the honest statement is that there is no time left to try,
-  // and the error says so and names the budget. It costs the same run either way
-  // — the runner was going to kill the step — but the diagnostic now points at
-  // the budget instead of at the prover.
-  if (left < need) {
+  if (grant.refused) {
     throw new BudgetExhaustedError(
       `the ${formatMinutes(BUDGET_MS)}-minute step budget is exhausted ` +
         `(${((Date.now() - startedAt) / 60000).toFixed(1)} min elapsed, ` +
         `${(BUDGET_MARGIN_MS / 1000).toFixed(0)}s reserved for teardown, and the next ` +
-        `step wants up to ${(need / 1000).toFixed(0)}s), so the run is stopping here; ` +
+        `step wants up to ${(grant.need / 1000).toFixed(0)}s), so the run is stopping here; ` +
         `raise --budget-minutes and the step's timeout-minutes together, or lower ` +
         `--reps / --proves`
     );
   }
-  return Math.min(ceiling, left);
+
+  // `clamped` is carried, not discarded, and it is the whole point. A deadline the
+  // BUDGET chose is not evidence about the process: work whose ceiling is ten
+  // minutes, granted sixty seconds, will usually blow — and reporting that as
+  // "treating it as wedged" both accuses the prover of a hang it did not have and
+  // sends the run down the failure path, discarding every repetition already
+  // measured. Only a timeout under the FULL ceiling is evidence of a wedge.
+  return grant;
 };
 
 // A close that will not finish must not cost the run its numbers.
@@ -811,7 +852,7 @@ const openSide = async (browser, url, label, repIndex) => {
       setupInPage,
       { threads },
       {
-        ms: deadlineFor(SETUP_DEADLINE_MS),
+        ...deadlineFor(SETUP_DEADLINE_MS),
         what: `${label} rep ${repIndex} setup`,
       }
     );
@@ -857,7 +898,7 @@ const openSide = async (browser, url, label, repIndex) => {
       settle: async () => {
         try {
           await evaluateWithDeadline(page, () => 0, undefined, {
-            ms: deadlineFor(SETTLE_DEADLINE_MS),
+            ...deadlineFor(SETTLE_DEADLINE_MS),
             what: `${label} rep ${repIndex} settle`,
           });
         } catch (error) {
@@ -884,7 +925,7 @@ const openSide = async (browser, url, label, repIndex) => {
           proveOnceInPage,
           undefined,
           {
-            ms: deadlineFor(PROVE_DEADLINE_MS),
+            ...deadlineFor(PROVE_DEADLINE_MS),
             what: `${label} rep ${repIndex} prove`,
           }
         );
@@ -1207,8 +1248,15 @@ if (repsMeasured < repsCompleted) {
       `an odd number of retained repetitions leaves the setup order unbalanced, ` +
       `which biases the comparison in a way more repetitions cannot fix`
   );
-  for (const label of Object.keys(samples))
-    samples[label].length = repsMeasured;
+  for (const label of Object.keys(samples)) {
+    // Shortened, never extended. On a head-only run `samples.base` is empty, and
+    // `[].length = 4` grows it into four holes that serialize as
+    // `[null,null,null,null]`. Harmless today only because `summarize` filters
+    // empty groups out before reading them — an accident to not depend on.
+    if (samples[label].length > repsMeasured) {
+      samples[label].length = repsMeasured;
+    }
+  }
 }
 
 // A budget stop with nothing measured is a failure, not a short report. The

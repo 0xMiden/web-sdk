@@ -295,16 +295,16 @@ Three further corrections, also measured:
   does not manufacture false positives. Prefer an odd `--proves` (even retained)
   at the next recalibration, which is due regardless.
 
-  When the product *is* odd there are two imbalances, not one, and they oppose
-  each other. Head runs second once more among the retained proves, which leans
-  toward reporting a regression; but an odd product implies an odd `--reps`, and
-  the setup order alternates on that same parity, so base is opened second once
-  more, which leans the other way. Counted over the retained reps and proves at
-  `--reps 3 --proves 4`: head second on 5 proves against base's 4, and base
-  opened second in 2 repetitions against head's 1. Nothing here measures how a
-  setup-order penalty compares to a prove-order one, so the net direction is
-  unknown — which is why the warning says to fix the parity rather than to
-  discount the result in a particular direction.
+  An odd product is no longer reachable: `--reps` must be even, and an even
+  `--reps` makes both the retained-prove split and the setup order balanced for
+  any `--proves`. The producer refuses an odd count at parse time rather than
+  warning about it, because the imbalance it causes is the same fixed positional
+  asymmetry a truncated run gives up a repetition to avoid — and a clean
+  `--reps 7` run would otherwise have carried it into a *confident* verdict,
+  being above the repetition floor, with only a stderr line to say so. The two
+  balance checks in the producer are assertions now: reaching them means the
+  interleave and the even-reps rule have diverged, which is a bug rather than a
+  configuration.
 
   The warning attaches no figure to the residual bias on purpose. The +1.19%
   penalty is *per prove*, while the reported statistic is a mean of per-repetition
@@ -423,6 +423,11 @@ above.
 
 What truncation genuinely costs is repetitions, and therefore power. That the
 verdict already handles, by refusing to resolve below `MIN_REPS_FOR_SIGN_TEST`.
+Note the scope of that safety net: it holds a truncated run to *unresolved* only
+because truncating the calibrated six-repetition request cannot leave more than
+four. A dispatch at a much higher `--reps` can truncate to a count that still
+clears the floor and does get a verdict — correctly, since the repetitions it
+kept are real — and the disclosure below is what tells the reader it happened.
 
 #### The report says so
 

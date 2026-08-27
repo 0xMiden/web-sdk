@@ -179,6 +179,11 @@ test-bench-scripts: ## Unit-test the benchmark renderer, interleave and artifact
 	# disagreed silently: the calibrated default ran a fixed positional
 	# asymmetry while the warning reported it as balanced.
 	node --test crates/web-client/scripts/bench-order.test.mjs
+	# The step-budget deadline rule. Split out and swept with a synthetic clock
+	# because three consecutive review rounds found a defect in this arithmetic,
+	# each previous fix having been checked by reasoning about one configuration
+	# while the adjacent one stayed broken.
+	node --test crates/web-client/scripts/bench-budget.test.mjs
 	# The extraction step is the only part of the reporter that handles a
 	# fork-controlled archive, so it lives in a script that can be tested rather
 	# than inline in the workflow where nothing could reach it.
