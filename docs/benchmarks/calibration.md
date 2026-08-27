@@ -72,9 +72,9 @@ single benchmark in the suite the family that dominates today is not benchmarks
 but *runs*: the bench fires on every push to a PR, so the relevant question is
 how often a PR's whole life produces one spurious label. That number depends on
 which rate is multiplied, so take it from the conjunction rather than from the
-magnitude leg alone — see the table below, where ten pushes come to about 1.5%
-rather than the ~2.5% the magnitude leg on its own would suggest. Adding
-benchmarks multiplies it again.
+magnitude leg alone — see the table below, where ten independent pushes come to
+about 1.5% rather than the ~2.5% the magnitude leg on its own would suggest.
+Adding benchmarks multiplies it again.
 
 The renderer does not rest the verdict on the threshold alone, for exactly these
 reasons. A movement is reported as significant only when it clears the floor
@@ -144,8 +144,10 @@ effect size. Two consequences worth internalising before tuning anything:
   in fourteen is silent rather than flagged. The first row is the false-positive
   rate, and it splits evenly by direction because the rule is symmetric under the
   null: **0.07%** of unchanged pushes are called slower and as many are called
-  faster. Any spurious verdict is 0.15% per push, **1.5%** familywise over ten
-  pushes.
+  faster. Any spurious verdict is 0.15% per push, which compounds to **1.49%**
+  over ten pushes — under this model's assumption that pushes are independent.
+  Real pushes are not: they share runner state and build on each other's source,
+  so treat that as a modelled figure rather than a measured familywise rate.
 
   **The model, stated plainly, because the table is only as good as it.** Each
   repetition's paired delta is drawn normal about the true effect, independent of
@@ -237,8 +239,22 @@ six calibration runs of identical binaries, on a (busy) developer laptop:
 
 - **Minimum within a repetition.** Every prove in one repetition is
   bit-identical work — the same `TransactionResult`, proven again. So the only
-  thing that varies is interference, which only ever *adds* time. The
-  repetition's fastest prove is its clean compute cost.
+  thing that varies is interference, which only ever *adds* time, and the
+  repetition's fastest prove is its **best observed** warm prove.
+
+  Not "its clean compute cost", which is what this said and is a stronger claim
+  than the design earns. A minimum is a lower-tail order statistic: it equals the
+  uncontended cost only if all remaining variation really is non-negative
+  interference *and* one of the three proves happened to land in a near-zero-
+  interference moment. Neither is established, and the estimator's bias toward
+  the tail depends on how many proves are drawn — which is why the retained
+  prove count is fixed at the calibrated value rather than left free.
+
+  The consequence is a real blind spot, and it is worth stating next to the
+  claim: an estimator built on best-case latency does not see a regression that
+  leaves the best case alone. Two of three proves becoming 50% slower moves this
+  headline not at all. That is what the mean cross-check below is for, and it is
+  why a green headline is not a general assurance about proving performance.
 - **Mean across repetitions.** The faucet is not seedable here
   (`generate_faucet` uses `StdRng::from_os_rng`), so each repetition gets a
   different faucet id. That changes the note commitment and nullifier, hence the
@@ -489,9 +505,32 @@ estimated 80s setup. At 14 setups that is 21 minutes of setup alone: the run wou
 have retained 4 repetitions, below the 6 the renderer requires, and **every report
 would have come back unresolved**.
 
-The step is now 45 minutes, which holds a verdict reachable for setups up to about
-150s — roughly 1.7× the estimate. That is slack, not a fit, because the 80–90s
-figure was a guess.
+The step is now 45 minutes. **This is a hypothesis about the operating point, not
+a measured one**, and it is worth being precise about how it fails. Completion is
+a distribution, not a threshold: the run has to fit fourteen setups, so what
+matters is the mean setup cost *and* its spread. Simulating that, with CV the
+coefficient of variation of a single setup:
+
+| mean setup | CV = 0.10 | CV = 0.25 | CV = 0.50 |
+| ---------- | --------: | --------: | --------: |
+| 60s        |    100.0% |    100.0% |    100.0% |
+| 90s        |    100.0% |    100.0% |    100.0% |
+| 120s       |    100.0% |    100.0% |     99.1% |
+| 150s       |     99.9% |     89.9% |     75.5% |
+| 180s       |      0.0% |      7.3% |     24.7% |
+
+Reproduce with `node docs/benchmarks/budget-reachability.mjs`.
+
+Each cell is the probability that a default run completes, and therefore the
+probability that it can be ruled on at all — a truncated run withholds its verdict
+(see the section above). The behaviour is a cliff, not a slope: anywhere below
+about 120s the budget is comfortable at any plausible spread, and by 180s the bot
+is effectively silent. Between those the answer depends entirely on a number
+nobody has measured.
+
+So do not read the 45 minutes as "sized correctly". Read it as "sized so that the
+estimate has to be wrong by about 1.7× before the bot goes quiet", which buys room
+to find out but is not evidence of anything.
 
 So the producer now measures it. Every run prints a line like
 

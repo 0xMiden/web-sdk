@@ -878,8 +878,9 @@ function pairedMeanAgreement(base, head) {
  * and its correlation with the difference is Var(head) - Var(base), which is zero
  * only when those match. Simulated over the interleave this producer actually
  * runs, symmetric run-level noise leaves the truncated estimate unbiased to
- * -0.08pp, while giving ONE side a 12% run-level factor moves it by 4.4pp — most
- * of a 5.40% threshold, and in whichever direction the asymmetry points. Nothing
+ * -0.19pp, while giving ONE side a 12% run-level factor moves it by -18.90pp or
+ * +22.66pp depending on which side gets the factor — three to four times the
+ * whole 5.40% threshold, and in whichever direction the asymmetry points. Nothing
  * has measured whether the two binaries have equal run-level variance on this
  * workload, and the calibration was taken from complete runs, so the honest
  * position is that a truncated run reports its numbers without ruling on them.
@@ -1156,6 +1157,28 @@ function buildVerdict(rows) {
   const direction = leader.isWorse ? "slower" : "faster";
   const emoji = regressions.length > 0 ? "⚠️" : "🚀";
   const rest = moved.length > 1 ? ` (+${moved.length - 1} more)` : "";
+  // While the floor is provisional this heading states an OBSERVATION, not a
+  // ruling, and the difference is not cosmetic. `⚠️ +10.00% slower` reads as
+  // "this pull request regressed proving", which is a claim of significance —
+  // and the note below it says the floor here is unknown in both magnitude and
+  // direction, so the comment asserted and disclaimed the same thing.
+  //
+  // Not withheld, though, which is the other way to resolve the contradiction.
+  // The gates in verdictPreconditions all cover cases where the ESTIMATE is
+  // compromised — truncation selects the sample, an odd repetition count adds a
+  // fixed positional bias — and a movement measured under them is not worth
+  // reporting as a direction at all. A provisional floor is not that: the
+  // estimate is exactly as sound as it will ever be, and only the cutoff it was
+  // compared against is a guess carried over from a laptop. Refusing to name the
+  // direction of a large, repetition-consistent movement on those grounds would
+  // discard the signal the bot exists to surface, so the number and the paired
+  // agreement stay and only the claim of significance is dropped.
+  if (THRESHOLD_PROVISIONAL) {
+    return (
+      `### ${emoji} ${formatSignedPct(leader.deltaPct)} ${direction} on this run: ` +
+      `${codeSpan(leader.name)}${rest} — not yet a verdict, the floor here is uncalibrated`
+    );
+  }
   return `### ${emoji} ${formatSignedPct(leader.deltaPct)} ${direction}: ${codeSpan(leader.name)}${rest}`;
 }
 
@@ -1279,7 +1302,9 @@ function buildProvisionalNote(results, ctx) {
     // caches and neighbours the laptop does not. Telling the reader the real
     // floor is "likely tighter" invited them to trust a movement just under the
     // threshold, on a guess with no measurement behind it.
-    `> so the floor on this runner is unknown in both magnitude and direction. Treat movements near the threshold as unresolved.`,
+    `> so the floor on this runner is unknown in both magnitude and direction. Movements are therefore`,
+    `> reported as measurements rather than verdicts, however large: with the error in the floor unknown`,
+    `> in direction, no movement is provably clear of it. Calibrate the runner and they become rulings.`,
     `> [How to calibrate the noise floor](${calibrationLink(ctx)})`,
   ].join("\n");
 }
@@ -1347,7 +1372,9 @@ function buildMovedSection(rows, unit) {
 
   const shown = moved.slice(0, MAX_ROWS);
   const parts = [
-    "#### Moved beyond the noise floor",
+    THRESHOLD_PROVISIONAL
+      ? "#### Moved beyond a provisional noise floor"
+      : "#### Moved beyond the noise floor",
     "",
     buildTable(shown, unit),
   ];
@@ -1443,7 +1470,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     // the interference-filtering half of the rationale describes something that
     // did not happen: the figure is a plain mean of single contaminated draws.
     results.provesPerRep >= 2
-      ? `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its clean compute cost. Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima shrinks that lottery — it averages the grind down rather than cancelling it, because each side draws its own.`
+      ? `- The reported figure is the **mean of each repetition's fastest prove**. Within one repetition every prove is bit-identical work, so interference — which only ever adds time — is all that varies, and the repetition's fastest prove is its best observed warm prove — a lower-tail statistic, not a measured "clean" cost, and so blind to a regression that leaves the best case alone (see the mean cross-check). Across repetitions the faucet differs, which shifts the proof-of-work grind, so averaging the per-repetition minima shrinks that lottery — it averages the grind down rather than cancelling it, because each side draws its own.`
       : `- The reported figure is the **mean of the single retained prove per repetition**. With only one prove kept per repetition there is no minimum to take, so nothing filters interference out of each sample — every draw carries whatever the machine was doing at the time. Treat this run as thinner than the estimator this suite is built around.`,
     // The 1.79% figure was measured at 6 reps × 3 warm proves. It is a property
     // of the estimator AT THAT SAMPLE SIZE, and `reps` / `provesPerRep` are

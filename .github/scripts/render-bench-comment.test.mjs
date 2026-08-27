@@ -584,7 +584,33 @@ test("classifies movement against the threshold", () => {
     ctx()
   );
   assert.match(beyond, /\+20\.00% slower/);
-  assert.match(beyond, /Moved beyond the noise floor/);
+  assert.match(beyond, /Moved beyond a provisional noise floor/);
+});
+
+// The heading and the provisional note used to contradict each other: the
+// heading asserted `+20.00% slower`, which reads as a claim of significance,
+// directly above a note saying the floor here is unknown in both magnitude and
+// direction. Whichever the reader believed, the comment had already denied it.
+//
+// Resolved by weakening the heading rather than withholding the row. A
+// provisional floor leaves the ESTIMATE sound and only the cutoff uncertain,
+// unlike the cases in verdictPreconditions, so the direction is still worth
+// naming — it just must not be phrased as a verdict.
+test("a provisional floor states an observation, never a verdict", () => {
+  const beyond = renderComment(
+    results({ benchmark: { base: side(1000), head: side(1200) } }),
+    ctx()
+  );
+  const heading = beyond.split("\n")[0];
+  assert.match(heading, /on this run/);
+  assert.match(heading, /not yet a verdict/);
+  assert.match(heading, /uncalibrated/);
+  // And it must not read as the calibrated form, which claims significance.
+  assert.doesNotMatch(heading, /^### .{0,4} \+20\.00% slower: /);
+  // The movement itself is not suppressed — that is the whole point of not
+  // treating this like a compromised estimate.
+  assert.match(beyond, /\+20\.00%/);
+  assert.match(beyond, /Moved beyond a provisional noise floor/);
 });
 
 test("says out loud when the threshold is provisional", () => {
@@ -2156,8 +2182,9 @@ const shortRun = (reps, top = {}) => ({
 // when both sides have equal run-level variance — the correlation between the
 // total duration and the difference is Var(head) - Var(base). Simulated over this
 // producer's interleave, symmetric run-level noise leaves the truncated estimate
-// unbiased to -0.08pp while a 12% factor on ONE side moves it 4.4pp, most of the
-// 5.40% floor. Nothing has measured that equality on this workload, so a
+// unbiased to -0.19pp while a 12% factor on ONE side moves it -18.90pp or
+// +22.66pp — several times the 5.40% floor, not a fraction of it. Nothing has
+// measured that equality on this workload, so a
 // truncated run reports its numbers and withholds the ruling.
 test("a run that stopped on the clock never publishes a verdict, at any length", () => {
   // Well ABOVE the repetition floor, which is the case the floor cannot catch:

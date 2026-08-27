@@ -415,5 +415,6 @@
     // part of any build.
     "docs/benchmarks/verdict-power.mjs",
     "docs/benchmarks/truncation-selection.mjs",
+    "docs/benchmarks/budget-reachability.mjs",
   ],
 }
