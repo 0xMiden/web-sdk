@@ -591,7 +591,7 @@ test("classifies movement against the threshold", () => {
     ctx()
   );
   assert.match(beyond, /\+20\.00% slower/);
-  assert.match(beyond, /Moved beyond the noise floor/);
+  assert.match(beyond, /Moved beyond a provisional noise floor/);
 });
 
 // The heading and the provisional note used to contradict each other: the
@@ -603,34 +603,32 @@ test("classifies movement against the threshold", () => {
 // provisional floor leaves the ESTIMATE sound and only the cutoff uncertain,
 // unlike the cases in verdictPreconditions, so the direction is still worth
 // naming — it just must not be phrased as a verdict.
-// NOTE ON COVERAGE. THRESHOLD_PROVISIONAL is now false — the floor was measured
-// on warp-ubuntu-latest-x64-8x over 30 runs — so the provisional branches in the
-// renderer are no longer reachable from these tests. They are module-level
-// constants, not inputs, so a test cannot flip them; exercising both states
-// would mean threading `provisional` through the six sites that read it. The
-// branches are kept because re-calibration (new runner class, thread count,
-// repetition count or workload) turns them back on. If you flip the constant,
-// restore the assertions this test replaced.
-test("a calibrated floor states a verdict, not an observation", () => {
+// NOTE ON COVERAGE. THRESHOLD_PROVISIONAL is true on this line: the floor was
+// measured on `main` at QUERY_POW_BITS = 16 with Blake3, and this is the 0.16
+// line (QUERY_POW_BITS = 17, Poseidon2 once web-sdk#333 lands). The CALIBRATED
+// branches in the renderer are therefore not reachable from these tests. They
+// are module-level constants, not inputs, so a test cannot flip them. When this
+// branch is re-calibrated and the constant flips, swap these two tests for the
+// calibrated assertions on `main` — they are the mirror image.
+test("a provisional floor states an observation, never a verdict", () => {
   const beyond = renderComment(
     results({ benchmark: { base: side(1000), head: side(1200) } }),
     ctx()
   );
   const heading = beyond.split("\n")[0];
-  assert.match(heading, /^### \S+ WASM proving — \+20\.00% slower: /);
-  // The hedges belong to the provisional form and must not survive into a
-  // calibrated verdict, or the comment argues with its own heading.
-  assert.doesNotMatch(heading, /on this run/);
-  assert.doesNotMatch(heading, /not yet a verdict/);
-  assert.doesNotMatch(heading, /uncalibrated/);
-  assert.match(beyond, /Moved beyond the noise floor/);
+  assert.match(heading, /on this run/);
+  assert.match(heading, /not yet a verdict/);
+  assert.match(heading, /uncalibrated/);
+  // And it must not read as the calibrated form, which claims significance.
+  assert.doesNotMatch(heading, /^### \S+ WASM proving — \+20\.00% slower: /);
+  // The movement itself is not suppressed.
+  assert.match(beyond, /\+20\.00%/);
+  assert.match(beyond, /Moved beyond a provisional noise floor/);
 });
 
-test("a calibrated floor is stated plainly, without the provisional hedge", () => {
+test("says out loud when the threshold is provisional", () => {
   const body = renderComment(results(), ctx());
-  assert.match(body, /floor ±5\.40%/);
-  assert.doesNotMatch(body, /provisional/i);
-  // The runbook stays linked: the number is calibrated, not permanent.
+  assert.match(body, /provisional/i);
   assert.match(body, /docs\/benchmarks\/calibration\.md/);
 });
 
@@ -693,7 +691,7 @@ test("ignores artifact fields that would author the verdict", () => {
     // survive whatever the artifact claimed.
     assert.match(
       body,
-      /±5\.40% threshold is calibrated on `warp-ubuntu-latest-x64-8x`/,
+      /±5\.40% threshold is \*\*provisional\*\*/,
       `${key} replaced the trusted threshold`
     );
   }
@@ -3874,7 +3872,7 @@ test("a movement that displays as the floor is treated as reaching it", () => {
   assert.match(body, /\+5\.40%/);
   assert.match(
     body,
-    /Moved beyond the noise floor/,
+    /Moved beyond a provisional noise floor/,
     "5.396% displays as +5.40% against a ±5.40% floor; calling it noise would " +
       "contradict the line printing it"
   );
@@ -3886,7 +3884,7 @@ test("a movement that displays below the floor is noise", () => {
     ctx()
   );
   assert.match(body, /\+5\.39%/);
-  assert.doesNotMatch(body, /Moved beyond the noise floor/);
+  assert.doesNotMatch(body, /Moved beyond a provisional noise floor/);
 });
 
 test("an exactly unchanged benchmark is never a movement", () => {

@@ -134,7 +134,16 @@ const MAX_SAMPLE_VALUES = 200000;
  * workload changes; each invalidates this. See docs/benchmarks/calibration.md.
  */
 const THRESHOLD_PCT = 5.4;
-const THRESHOLD_PROVISIONAL = false;
+// PROVISIONAL ON THIS LINE. The number below was measured on `main`
+// (miden-air 0.23.5) at QUERY_POW_BITS = 16, proving with Blake3. This branch
+// is the 0.16 line: miden-air 0.29.4 runs QUERY_POW_BITS = 17 — double the
+// expected grind work — and web-sdk#333 switches `newLocalProver()` to
+// Poseidon2. The grind is the dominant residual noise source for this
+// estimator, so neither change is a scaling of the old distribution and the
+// measured floor does not carry across. Re-run the calibration on this branch
+// (workflow_dispatch, calibrate: true) and set both this and CALIBRATION below
+// from it. See docs/benchmarks/calibration.md.
+const THRESHOLD_PROVISIONAL = true;
 
 /**
  * What the calibration actually measured, kept beside the threshold so the
@@ -151,6 +160,12 @@ const CALIBRATION = {
   sdPct: 1.45,
   threeSigmaPct: 4.34,
   maxObservedPct: 5.03,
+  // The two workload parameters the floor is most sensitive to, recorded so a
+  // port to another line cannot silently inherit a floor measured elsewhere.
+  // The dominant residual noise is the proof-of-work grind, so a different
+  // QUERY_POW_BITS is a different noise distribution, not a scaled one.
+  hashFn: "Blake3_256",
+  queryPowBits: 16,
 };
 
 /**
