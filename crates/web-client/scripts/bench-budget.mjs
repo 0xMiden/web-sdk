@@ -18,22 +18,53 @@
 // That last shape is what the caller cannot survive. A deadline of 61s handed to
 // work whose ceiling is 600s will usually blow, and the timeout that follows is
 // indistinguishable — to the code and to the reader — from the process being
-// genuinely wedged. The previous version scaled its REFUSAL to the ceiling but
-// returned `min(ceiling, remaining)` regardless, so anything above the floor got
-// silently squeezed by up to 10x and a budget shortfall was reported as a hang,
-// discarding a run's measurements on the strength of a deadline the budget had
-// manufactured.
+// genuinely wedged. So the grant says whether the budget chose it.
+//
+// WHAT THIS DELIBERATELY DOES NOT DO is guess WHY a timeout happened. Six rounds
+// of review went into a flag that tried: it compared the grant against a predicted
+// duration and called the timeout either a hang (discard the run) or the clock
+// running out (keep it). Every version was wrong in one direction or the other,
+// because the question it answered — "is the grant below 2x what I predict?" —
+// is not the question that decides — "is the grant below what the work actually
+// needed?" — and the band between a prediction and an outcome cannot be closed by
+// choosing a better predictor. The last attempt used the median of measured
+// durations, which is the right statistic and still reproduces the original defect
+// at the second setup of a run, where one sample makes the median a maximum.
+//
+// A timeout now raises one error, the caller keeps what it measured, and the facts
+// go in the artifact. The renderer already withholds the verdict from any run that
+// stopped early, so nothing measured around a hang can be published AS A VERDICT —
+// which is the outcome the guessing existed to prevent, achieved by a check that
+// does not have to guess.
 
 /**
- * Raised when the budget cannot fund the work, and used by the driver to tell a
- * clock that ran out from a benchmark that broke — the two deserve opposite
- * outcomes, since running out of time should keep the repetitions already
- * measured while a wedged prover should discard them.
+ * Raised BEFORE work starts, when the arithmetic shows the budget cannot fund it.
+ *
+ * Distinct from `DeadlineExceededError` because this one is certain: the numbers
+ * were compared before anything ran, so "the clock ran out" is a fact rather than
+ * an inference. Nothing about the benchmark is implicated.
  */
 export class BudgetExhaustedError extends Error {
   constructor(message) {
     super(message);
     this.name = "BudgetExhaustedError";
+  }
+}
+
+/**
+ * Raised when work that started did not finish inside its deadline.
+ *
+ * Carries the facts and draws no conclusion, because none is available: the work
+ * may have been stuck, or the deadline may simply have been shorter than it needed.
+ * The caller keeps its measurements either way and the artifact records what
+ * happened, so a reader can settle in seconds what six rounds of review could not
+ * settle in code.
+ */
+export class DeadlineExceededError extends Error {
+  constructor(message, facts) {
+    super(message);
+    this.name = "DeadlineExceededError";
+    this.facts = facts;
   }
 }
 
@@ -47,115 +78,34 @@ export const formatMinutes = (ms) => {
 };
 
 /**
- * How much slack a grant needs over the work's TYPICAL duration before a timeout
- * under it counts as evidence about the process.
+ * The ceiling on each piece of work: what bounds a HANG, not what the work takes.
  *
- * At 2, work that normally takes 90s must have been given at least 180s before a
- * timeout is called a hang. Below that the deadline is close enough to the real
- * duration that ordinary variance explains the overrun, so it says nothing.
+ * Generous on purpose. Proving on a loaded 8-core runner is single-digit seconds,
+ * and setup mints, proves a block and syncs. Anything past a ceiling is not slow,
+ * it is stuck — but see the header: reaching one is not treated as proof of that.
  *
- * The slack is sized for a CENTRAL estimate, so `expected` must be one. Feeding it
- * an extremum double-counts the slack — see `expectedFrom`.
+ * Here rather than in bench-proving.mjs because the producer is a top-level script
+ * that cannot export, so while it owned these the test declared its own copies and
+ * a retune could ship with the suite green.
  */
-export const STARVATION_FACTOR = 2;
-
-/**
- * The work this budget funds, as {ceiling, expected} pairs.
- *
- * Here rather than in bench-proving.mjs because the RATIO between the two is the
- * invariant `grantDeadline` enforces, and while the producer owned the constants
- * its test declared its own copies of them — so a retune that broke the scheme
- * could ship with the suite green. The producer is a top-level script and cannot
- * export, so the values had to move to be testable at all.
- *
- * Ceilings are generous because they bound a HANG, not a slow run: proving on a
- * loaded 8-core runner is single-digit seconds, and setup mints, proves a block
- * and syncs. Anything past a ceiling is not slow, it is stuck.
- *
- * Expected durations are seeds, used until the run has measured the work itself.
- * They decide how a timeout is LABELLED, never how long anything is allowed. For
- * setup the producer refines the number from its own measurements as the run
- * proceeds — see `expectedFrom`.
- */
-export const SETUP_WORK = { ceiling: 10 * 60 * 1000, expected: 90 * 1000 };
-export const PROVE_WORK = { ceiling: 5 * 60 * 1000, expected: 5 * 1000 };
-// An empty round trip on an idle page. Its ceiling sits below the usual 60s
-// budget floor, which is load-bearing: `grantDeadline` compares the floor against
-// the ceiling, so this call only ever refuses outright or gets its full grant, and
-// is therefore never clamped and never starved.
-export const SETTLE_WORK = { ceiling: 30 * 1000, expected: 2 * 1000 };
+export const SETUP_CEILING_MS = 10 * 60 * 1000;
+export const PROVE_CEILING_MS = 5 * 60 * 1000;
+// An empty round trip on an idle page. Below BUDGET_FLOOR_MS, which is
+// load-bearing: `grantDeadline` compares the floor against the ceiling, so this
+// call is either refused outright or granted whole, and is therefore never
+// clamped. Asserted in the test.
+export const SETTLE_CEILING_MS = 30 * 1000;
 
 /**
  * The floor and margin the producer runs its budget with.
  *
- * Here rather than in the producer because `BUDGET_FLOOR_MS >= SETTLE_WORK.ceiling`
+ * Here rather than in the producer because `BUDGET_FLOOR_MS >= SETTLE_CEILING_MS`
  * is load-bearing — it is what makes a settle grant either refused outright or
- * whole, hence never clamped and never starved. Lower the floor below the settle
- * ceiling and a budget-shortened settle timeout becomes a plain `Error`, which the
- * producer records as a page fault and reports against the prover. A test asserts
- * the relation, which it could not do while these were producer-local copies.
+ * whole, hence never clamped. A test asserts the relation, which it could not do
+ * while these were producer-local copies.
  */
 export const BUDGET_FLOOR_MS = 60 * 1000;
 export const BUDGET_MARGIN_MS = 90 * 1000;
-
-/**
- * The duration a timeout should be judged against, given what the run has already
- * measured for this work.
- *
- * `work.expected` is a guess made before the runner was ever seen, and on an
- * uncalibrated machine it can be wrong in either direction. Wrong low, a genuinely
- * slow setup gets its timeout called a hang and a whole run of measurements is
- * discarded. So once the run has timed the work, prefer the measurements.
- *
- * MUST be a central estimate, not an extremum. `STARVATION_FACTOR`'s slack is
- * sized for what the work NORMALLY takes, so passing the slowest sample spends the
- * slack twice: one slow-but-completing setup would raise the threshold to twice
- * that outlier for every later grant, and a real deadlock underneath it would be
- * reported as the budget running out — with the run kept and published, and the
- * comment advising the reader to raise `timeout-minutes`. A median is immune to a
- * single bad sample, and measurably so: across a sweep of deadlock scenarios it
- * misreports 1.2% where the maximum misreports 43.2%.
- *
- * `work.expected` stays a FLOOR, so a fast machine cannot shrink the threshold to
- * the point where ordinary variance reads as a hang.
- *
- * Clamped to `ceiling / STARVATION_FACTOR`, which keeps `grantDeadline`'s
- * invariant satisfiable and is why that guard cannot fire from this path. The
- * clamp has a consequence worth knowing: once the measured median passes
- * `ceiling / STARVATION_FACTOR`, only a full-ceiling timeout can still be called a
- * hang. That is the correct reading of a machine whose setup approaches its own
- * ceiling, but it does mean hang detection narrows as the machine slows.
- *
- * @param {number[]} durations Measured durations, in ms. Empty before the first
- *   piece of work completes, which is why `work.expected` exists.
- * @param {{ceiling: number, expected: number}} work
- * @returns {number} ms
- */
-export function expectedFrom(durations, work) {
-  if (!Array.isArray(durations)) {
-    throw new TypeError(`durations must be an array, got ${durations}`);
-  }
-  for (const value of durations) {
-    if (!Number.isFinite(value) || value <= 0) {
-      throw new TypeError(
-        `every measured duration must be a finite positive number of ms, got ${value}`
-      );
-    }
-  }
-
-  const sorted = [...durations].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  const median = sorted.length
-    ? sorted.length % 2
-      ? sorted[mid]
-      : (sorted[mid - 1] + sorted[mid]) / 2
-    : 0;
-
-  return Math.min(
-    Math.max(work.expected, median),
-    work.ceiling / STARVATION_FACTOR
-  );
-}
 
 /**
  * Decide what deadline `ceiling` may have, given `remaining` ms of usable budget.
@@ -164,59 +114,25 @@ export function expectedFrom(durations, work) {
  * deadline so short that it is certain to blow. It is compared against the
  * ceiling too, so a 30s barrier is not refused by a 60s floor.
  *
- * `expected` is the work's REALISTIC duration, which is a different quantity from
- * its ceiling and the distinction is the whole point of this function's return
- * shape. A ceiling bounds a hang and is therefore enormous — ten minutes for a
- * setup that takes ninety seconds, five for a prove that takes two. So "the
- * budget chose this number" (`clamped`) and "this number was too small for the
- * work" (`starved`) are nearly unrelated: across the clamped band, 96% of setup
- * grants and 100% of prove grants are LARGER than the work needs.
- *
- * Do not use `clamped` to decide what a timeout means, in either direction.
- * Reading it as a shortfall reports a deadlocked prover as the budget running out
- * and KEEPS the run, publishing measurements taken around a hang. Reading it as a
- * full ceiling calls a real shortfall a hang and throws away a complete set of
- * measurements. `starved` is the flag that answers the question actually being
- * asked.
+ * `clamped` says the budget picked the number rather than the ceiling. It is
+ * bookkeeping, for the diagnostic — do NOT read it as "the work was given too
+ * little". A prove's ceiling is five minutes for work taking under two seconds, so
+ * every clamped prove grant is still at least twelve times what a prove needs.
+ * Treating it as a shortfall is how a deadlocked prover came to be reported as the
+ * budget running out.
  *
  * @returns {{refused: true, need: number}
- *   | {refused: false, ms: number, clamped: boolean, starved: boolean}}
+ *   | {refused: false, ms: number, clamped: boolean}}
  */
-export function grantDeadline({ ceiling, remaining, floorMs, expected }) {
-  for (const [name, value] of Object.entries({
-    ceiling,
-    remaining,
-    floorMs,
-    expected,
-  })) {
+export function grantDeadline({ ceiling, remaining, floorMs }) {
+  for (const [name, value] of Object.entries({ ceiling, remaining, floorMs })) {
     if (!Number.isFinite(value)) {
       throw new TypeError(`${name} must be a finite number, got ${value}`);
     }
   }
-  if (ceiling <= 0 || floorMs <= 0 || expected <= 0) {
+  if (ceiling <= 0 || floorMs <= 0) {
     throw new RangeError(
-      `ceiling, floorMs and expected must be positive, got ceiling=${ceiling} ` +
-        `floorMs=${floorMs} expected=${expected}`
-    );
-  }
-  // `expected > ceiling` is the obvious error; `expected * STARVATION_FACTOR >
-  // ceiling` is the one that actually breaks the scheme, and only this stronger
-  // form is worth checking. Above it the FULL CEILING is starved, so no timeout
-  // can ever be classified a hang — which resurrects the defect this function
-  // exists to prevent: a deadlocked prover reported as the budget running out,
-  // with its measurements kept and published.
-  //
-  // Reachable by following this repo's own instructions. bench.yml and
-  // calibration.md both say to read the producer's `[budget]` line and resize
-  // from it, and an `expected` raised past ceiling / STARVATION_FACTOR does
-  // exactly this. Enforced here rather than merely tested, because a test can
-  // only cover the profiles someone thought to add.
-  if (expected * STARVATION_FACTOR > ceiling) {
-    throw new RangeError(
-      `expected (${expected}) is more than 1/${STARVATION_FACTOR} of ceiling ` +
-        `(${ceiling}): above that the full ceiling counts as starved and nothing ` +
-        `can be classified as a hang. Raise the ceiling, or lower expected below ` +
-        `${ceiling / STARVATION_FACTOR}`
+      `ceiling and floorMs must be positive, got ceiling=${ceiling} floorMs=${floorMs}`
     );
   }
 
@@ -224,17 +140,11 @@ export function grantDeadline({ ceiling, remaining, floorMs, expected }) {
   if (remaining < need) return { refused: true, need };
 
   const ms = Math.min(ceiling, remaining);
-  return {
-    refused: false,
-    ms,
-    clamped: ms < ceiling,
-    starved: ms < expected * STARVATION_FACTOR,
-  };
+  return { refused: false, ms, clamped: ms < ceiling };
 }
 
 /**
- * Bind `grantDeadline` to one run's budget, so the caller passes only the
- * ceiling and the expected duration.
+ * Bind `grantDeadline` to one run's budget, so the caller passes only a ceiling.
  *
  * A factory rather than a closure inside the producer, because the producer is
  * ~1400 lines that need a browser to run and this is where four consecutive
@@ -259,20 +169,19 @@ export function createDeadlineFor({
   startedAt,
   now = Date.now,
 }) {
-  return (ceiling, expected) => {
+  return (ceiling) => {
     // The same SHAPE as the budgeted path, which matters more than it looks: the
     // call sites SPREAD this into the deadline options, and spreading a bare
     // number contributes no properties at all — `ms` would arrive undefined and
     // `setTimeout` would treat it as zero, timing out every step instantly while
     // reporting each one as wedged. That happened.
     if (budgetMs === null) {
-      return { refused: false, ms: ceiling, clamped: false, starved: false };
+      return { refused: false, ms: ceiling, clamped: false };
     }
 
     const elapsed = now() - startedAt;
     const grant = grantDeadline({
       ceiling,
-      expected,
       remaining: budgetMs - elapsed - marginMs,
       floorMs,
     });
@@ -293,31 +202,27 @@ export function createDeadlineFor({
 }
 
 /**
- * Run `page.evaluate(fn, arg)` under a deadline, classifying a timeout.
+ * Run `page.evaluate(fn, arg)` under a deadline.
  *
- * `starved` — NOT `clamped` — decides which error a timeout raises, and the
- * distinction is the whole reason both flags exist.
+ * Playwright's `evaluate` takes no timeout and is not covered by
+ * `setDefaultTimeout` — only navigation and locator calls are. So a prove that
+ * wedges inside wasm hangs forever, and the only thing that eventually notices is
+ * the job-level timeout, which kills the run without a diagnostic and after burning
+ * the rest of the budget. A rayon deadlock in the prover is precisely the change
+ * class this benchmark exists to catch, so the head build hanging is an expected
+ * case rather than an exotic one.
  *
- * Do not branch on `clamped` here. It says the budget picked the number rather
- * than the ceiling, which is a fact about bookkeeping and not about the process: a
- * prove's ceiling is five minutes for work taking under two seconds, so every
- * clamped prove grant is at least twelve times what the prove needs, and reading
- * one as a shortfall reports a deadlocked prover as the budget running out and
- * KEEPS the run.
+ * A timeout raises `DeadlineExceededError` and says what happened without saying
+ * why. See the header for why no version of "why" survived review.
  *
- * `starved` says the grant was short against what the work typically takes, which
- * is the question that decides what a timeout means:
- *
- *   - Not starved: the work had comfortably more time than it needs, so a timeout
- *     is a hang. The run is broken and its numbers should be discarded.
- *   - Starved: the deadline itself explains the overrun, so nothing has been
- *     learned about the process. The run stops cleanly and keeps what it measured.
+ * The race leaves the evaluate running — there is no way to cancel it — but the
+ * context close in the caller's teardown takes the page down with it.
  */
 export async function evaluateWithDeadline(
   page,
   fn,
   arg,
-  { ms, what, starved }
+  { ms, what, clamped }
 ) {
   // Checked because the failure mode is silent and total. `setTimeout` coerces a
   // non-number delay to zero, so a malformed `ms` does not throw — it times out
@@ -325,7 +230,7 @@ export async function evaluateWithDeadline(
   if (!Number.isFinite(ms) || ms <= 0) {
     throw new TypeError(
       `${what}: deadline must be a finite positive number of ms, got ${ms}. ` +
-        `deadlineFor must return {ms, starved} on every path`
+        `deadlineFor must return {ms} on every path`
     );
   }
 
@@ -337,20 +242,15 @@ export async function evaluateWithDeadline(
         timer = setTimeout(
           () =>
             reject(
-              starved
-                ? new BudgetExhaustedError(
-                    `${what} did not finish within the ${ms} ms the step budget ` +
-                      `had left for it. That is too close to what this step ` +
-                      `normally takes for the overrun to say anything about the ` +
-                      `run — it may have been stuck, or it may simply have needed ` +
-                      `longer than the clock had — so the run stops here and keeps ` +
-                      `the repetitions it already has, rather than discarding them ` +
-                      `on a deadline the budget chose`
-                  )
-                : new Error(
-                    `${what} did not finish within ${ms} ms — treating it as ` +
-                      `wedged rather than waiting out the job timeout`
-                  )
+              new DeadlineExceededError(
+                `${what} did not finish within ${ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(0)}s`}` +
+                  `${clamped ? ", the time the step budget had left for it" : ", its full ceiling"}. ` +
+                  `The run stops here and keeps the repetitions it already has. ` +
+                  `Whether it was stuck or just needed longer than the clock had is ` +
+                  `not something this can tell you — the artifact records the ` +
+                  `deadline and the measured setup cost so you can.`,
+                { what, deadlineMs: ms, clamped: Boolean(clamped) }
+              )
             ),
           ms
         );

@@ -61,12 +61,12 @@ import {
   BUDGET_MARGIN_MS,
   BudgetExhaustedError,
   createDeadlineFor,
+  DeadlineExceededError,
   evaluateWithDeadline,
-  expectedFrom,
   formatMinutes,
-  PROVE_WORK,
-  SETTLE_WORK,
-  SETUP_WORK,
+  PROVE_CEILING_MS,
+  SETTLE_CEILING_MS,
+  SETUP_CEILING_MS,
 } from "./bench-budget.mjs";
 import {
   balancedRetainedReps,
@@ -666,10 +666,19 @@ const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
  * The race leaves the evaluate running — there is no way to cancel it — but the
  * context close in the caller's teardown takes the page down with it.
  */
-// Every setup's measured duration. Two uses, and the second is the important one:
-// it feeds the budget report at the end, and it is what `expectedFrom` reads so
-// the timeout classification rests on this machine's real setup cost rather than
-// on an estimate made before the runner was ever seen.
+/** Robust where the mean and max are not: one slow setup does not move it. */
+const medianOf = (values) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return Math.round(
+    sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+  );
+};
+
+// Every setup's measured duration, for the budget report and for the artifact.
+// Setup is untimed by the estimator — it is not a measurement of the SDK — but it
+// is the dominant cost the step budget has to be sized against, and the number a
+// reader needs to interpret a deadline overrun.
 const setupDurations = [];
 
 // The ceilings are useless on their own late in a run. The step that runs this is
@@ -779,21 +788,22 @@ const openSide = async (browser, url, label, repIndex) => {
     // logged the figure in the budget arithmetic was an estimate nobody had
     // checked. Sizing --budget-minutes correctly needs the real number, and the
     // run itself is the only thing that knows it.
-    const setupStartedAt = Date.now();
+    const setupStartedAt = performance.now();
     const { rayonThreads } = await evaluateWithDeadline(
       page,
       setupInPage,
       { threads },
       {
-        ...deadlineFor(
-          SETUP_WORK.ceiling,
-          expectedFrom(setupDurations, SETUP_WORK)
-        ),
+        ...deadlineFor(SETUP_CEILING_MS),
         what: `${label} rep ${repIndex} setup`,
       }
     );
-    const setupMs = Date.now() - setupStartedAt;
-    setupDurations.push(setupMs);
+    const setupMs = performance.now() - setupStartedAt;
+    // performance.now is monotonic, unlike Date.now, which an NTP step inside the
+    // ~90s setup window can move backwards. Filtered rather than asserted because
+    // this number only feeds a diagnostic — it must never be able to end a run
+    // that has measurements in hand.
+    if (Number.isFinite(setupMs) && setupMs > 0) setupDurations.push(setupMs);
     if (pageErrors.length) {
       throw new Error(
         `${label} rep ${repIndex} raised ${pageErrors.length} page error(s) during setup; first: ${pageErrors[0]}`
@@ -826,10 +836,8 @@ const openSide = async (browser, url, label, repIndex) => {
        *
        * Its ceiling sits BELOW the budget floor — a 30s barrier against a 60s
        * floor — so `grantDeadline` compares the floor against the ceiling and this
-       * call only ever refuses outright or receives its full 30 seconds. It is
-       * therefore never clamped and never starved, which is what makes the catch
-       * below correct in treating a timeout here as a fault rather than a
-       * shortfall.
+       * call only ever refuses outright or receives its full 30 seconds, never a
+       * squeezed one.
        *
        * The worker count is NOT a second, independent detector, and it was
        * described as one here. Playwright removes the worker from `page.workers()`
@@ -843,7 +851,7 @@ const openSide = async (browser, url, label, repIndex) => {
       settle: async () => {
         try {
           await evaluateWithDeadline(page, () => 0, undefined, {
-            ...deadlineFor(SETTLE_WORK.ceiling, SETTLE_WORK.expected),
+            ...deadlineFor(SETTLE_CEILING_MS),
             what: `${label} rep ${repIndex} settle`,
           });
         } catch (error) {
@@ -885,7 +893,7 @@ const openSide = async (browser, url, label, repIndex) => {
           proveOnceInPage,
           undefined,
           {
-            ...deadlineFor(PROVE_WORK.ceiling, PROVE_WORK.expected),
+            ...deadlineFor(PROVE_CEILING_MS),
             what: `${label} rep ${repIndex} prove`,
           }
         );
@@ -1124,9 +1132,22 @@ try {
       // pushed after both sides finish, so a mid-repetition stop leaves nothing
       // partial behind — which makes them worth keeping and reporting on.
       //
-      // Rethrown for anything else. A wedged prover or a dead worker SHOULD
-      // discard the run.
-      if (!(error instanceof BudgetExhaustedError)) throw error;
+      // A deadline overrun stops the run the same way. It used to be classified
+      // — hang, discard everything; clock, keep it — and six rounds of review
+      // could not make that call correctly, because it is a guess about work that
+      // did not finish. Keeping the measurements is the safe half of the guess:
+      // the renderer withholds the verdict from any run that stopped early, so
+      // nothing measured around a hang is published as a result, and a reader with
+      // the facts settles in seconds what the code could not.
+      //
+      // Rethrown for anything else. A dead worker or a page error SHOULD discard
+      // the run — those are observed faults, not unfinished work.
+      if (
+        !(error instanceof BudgetExhaustedError) &&
+        !(error instanceof DeadlineExceededError)
+      ) {
+        throw error;
+      }
       budgetExhausted = error;
       console.error(`\n[budget] ${error.message}`);
     } finally {
@@ -1341,6 +1362,12 @@ const results = {
         setupMsMean: Math.round(
           setupDurations.reduce((a, b) => a + b, 0) / setupDurations.length
         ),
+        // The median alongside the mean and max because it is the robust one: a
+        // single slow setup moves the other two and not this. Read it against a
+        // deadline overrun's reported deadline to settle whether the work was
+        // stuck or the clock was short — the pair is what replaced the code that
+        // tried to answer that itself.
+        setupMsMedian: medianOf(setupDurations),
         setupMsMax: Math.max(...setupDurations),
         setupCount: setupDurations.length,
       }
@@ -1399,6 +1426,7 @@ if (setupDurations.length > 0) {
   console.log(
     `[budget] ${setupDurations.length} setups: ` +
       `mean ${(totalSetup / setupDurations.length / 1000).toFixed(1)}s, ` +
+      `median ${(medianOf(setupDurations) / 1000).toFixed(1)}s, ` +
       `slowest ${(slowest / 1000).toFixed(1)}s, ` +
       `total ${(totalSetup / 60000).toFixed(1)} min` +
       (BUDGET_MS === null

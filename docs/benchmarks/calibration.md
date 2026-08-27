@@ -535,40 +535,40 @@ to find out but is not evidence of anything.
 So the producer now measures it. Every run prints a line like
 
 ```text
-[budget] 14 setups: mean 88.4s, slowest 96.1s, total 20.6 min of a 45-minute budget.
+[budget] 14 setups: mean 88.4s, median 87.2s, slowest 96.1s, total 20.6 min of a 45-minute budget.
 ```
 
-and writes `setupMsMean`, `setupMsMax` and `setupCount` into `results.json`. **Read
-that line after the first green CI run and resize `BENCH_STEP_BUDGET_MINUTES` and
-the job's `timeout-minutes` from it**, in the same pass as setting the threshold
-below.
+and writes `setupMsMean`, `setupMsMedian`, `setupMsMax` and `setupCount` into
+`results.json`. **Read that line after the first green CI run and resize
+`BENCH_STEP_BUDGET_MINUTES` and the job's `timeout-minutes` from it**, in the
+same pass as setting the threshold below.
 
-Those same measurements are also read back during the run. Classifying a timeout
-needs to know what a setup normally costs — a grant far above that means a timeout
-is a hang, a grant close to it means the clock simply ran out — and answering that
-from the 90s estimate is wrong in the expensive direction: wherever the real cost
-exceeds `90s × 2`, a healthy run with a legitimately slow setup has its timeout
-called a hang, and every repetition already measured is discarded. So the producer
-uses the **median** of the setups it has actually timed, floored at the estimate,
-falling back to the estimate alone for the first setup of a run. The classification
-follows the machine, and resizing the budget neither affects that nor needs to.
+The median is there because it is the robust one — a single slow setup moves the
+mean and the max and not the median — and because it is what makes a deadline
+overrun readable.
 
-The median matters more than it sounds. The slack factor that turns an expected
-duration into a starvation threshold is sized for what the work *normally* takes,
-so handing it the slowest sample spends that slack twice: one slow-but-completing
-setup would set the threshold at twice that outlier for every later grant, and a
-real deadlock underneath it would be reported as the clock running out — keeping
-the run, publishing measurements taken around a hang, and advising the reader to
-raise a timeout that was never the problem. Across a sweep of deadlock scenarios
-the maximum misreports 43.2% of them and the median 1.2%.
+The bot does not try to work out WHY work ran past its deadline. It used to: a
+flag compared the deadline against a predicted duration and called the overrun
+either a hang, discarding every repetition measured, or the clock running out,
+keeping them. Six rounds of review went into that flag and every version was
+wrong in one direction or the other, because the question it could answer — is
+this deadline below twice what I predict? — is not the question that decides,
+which is whether the deadline was below what the work actually needed. The gap
+between a prediction and an outcome does not close by choosing a better
+predictor. The last attempt used the median of the run's own measurements, which
+is the right statistic and still reproduced the original fault at the second
+setup of a run, where one sample makes the median a maximum.
 
-One consequence to know about. The expectation is clamped at half the work's
-ceiling, so that a slow machine can never push the threshold past the point where
-a hang is detectable at all. Above a five-minute measured median, that clamp binds
-and only a timeout at the full ten-minute ceiling is still called a hang. That is
-the right reading of a machine whose setup approaches its own ceiling, but hang
-detection does narrow as the machine slows, and a runner that slow is a signal in
-its own right.
+So an overrun now stops the run, keeps what was measured, and records the deadline
+and what it was for. The verdict is withheld — any run that stopped early is
+already blocked from ruling, whatever the reason — so nothing measured around a
+hang is published as a result, which is the outcome the guessing existed to
+prevent. What is lost is being told automatically which of the two it was. What
+replaces it is a line in the artifact: the deadline the work ran under, and the
+median setup cost measured on that machine. A setup that overran a 320-second
+deadline on a runner whose median setup is 150 seconds was stuck; one that overran
+a 200-second deadline where the median is 190 ran out of clock. That is a
+five-second read, and it is right every time.
 
 Sizing from a measurement costs nothing once the run exists; sizing from
 an estimate is how the 2× setup-count error survived unnoticed in the first
