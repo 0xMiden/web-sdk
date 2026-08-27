@@ -117,13 +117,41 @@ const MAX_SAMPLE_VALUES = 200000;
  * `thresholdProvisional: false` would make the comment assert that a
  * fork-invented number is this runner's calibrated variance.
  *
- * 5.4% is 3σ of the estimator's measured spread: sd 1.79% over six calibration
- * runs of identical binaries, 3 × 1.79 = 5.37, rounded up. Still PROVISIONAL —
- * that sd was measured on a developer laptop, not on the CI runner. Replacing
- * it is the whole subject of docs/benchmarks/calibration.md.
+ * CALIBRATED on warp-ubuntu-latest-x64-8x, 2026-08-27: 30 runs of one build
+ * against a copy of itself at reps=6, so every reported delta is pure noise.
+ * mean +0.213% (SE 0.264% — no detectable residual bias), sd 1.447%,
+ * 3σ = 4.34%, largest observed |delta| = 5.03%.
+ *
+ * 5.4%, NOT the 4.34% that 3σ prescribes. 3σ assumes the deltas are normal and
+ * these are not: one of the thirty landed at +5.03%, past 3σ, on a run where
+ * nothing changed. That is the grind lottery's tail — each side draws its own
+ * proof-of-work grind, which is geometric, not Gaussian. A threshold at 4.34%
+ * would have called that run a regression, so the floor is taken from the
+ * empirical maximum with a small margin instead. Following the procedure into a
+ * false positive we had already observed would be worse than deviating from it.
+ *
+ * Re-calibrate when the runner class, thread count, repetition count or the
+ * workload changes; each invalidates this. See docs/benchmarks/calibration.md.
  */
 const THRESHOLD_PCT = 5.4;
-const THRESHOLD_PROVISIONAL = true;
+const THRESHOLD_PROVISIONAL = false;
+
+/**
+ * What the calibration actually measured, kept beside the threshold so the
+ * comment's prose cannot drift from the number it is describing. The previous
+ * wording asserted the threshold "is three times the calibrated standard
+ * deviation", which stopped being true the moment the floor was set above the
+ * empirical maximum instead.
+ */
+const CALIBRATION = {
+  runs: 30,
+  reps: 6,
+  runner: "warp-ubuntu-latest-x64-8x",
+  date: "2026-08-27",
+  sdPct: 1.45,
+  threeSigmaPct: 4.34,
+  maxObservedPct: 5.03,
+};
 
 /**
  * Every benchmark in this suite is a timing, so lower is always better.
@@ -2147,7 +2175,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
     THRESHOLD_PROVISIONAL
       ? `- The ±${formatPct(THRESHOLD_PCT)} threshold is **provisional** — a placeholder, not a measured spread for this runner. [How to calibrate](${calibrationLink(ctx)}).`
-      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is three times the calibrated run-to-run standard deviation for this runner.`,
+      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is calibrated on \`${CALIBRATION.runner}\` (${CALIBRATION.date}): ${CALIBRATION.runs} runs of one build against a copy of itself, at ${CALIBRATION.reps} repetitions, gave a standard deviation of ${formatPct(CALIBRATION.sdPct)} and a largest movement of ${formatPct(CALIBRATION.maxObservedPct)}. It sits above that observed maximum rather than at 3σ (${formatPct(CALIBRATION.threeSigmaPct)}), because one of those ${CALIBRATION.runs} no-change runs already exceeded 3σ — the grind differs per repetition and its tail is not normal. [How this is measured](${calibrationLink(ctx)}).`,
     `- Full machine-readable results are attached to ${ctx.runUrl ? `[the run](${ctx.runUrl})` : "the workflow run"} as \`results.json\`.`,
   ];
 
