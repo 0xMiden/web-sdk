@@ -2251,15 +2251,70 @@ test("setupCount is bounded by the repetitions that ran", () => {
         setupCount,
       },
     });
-  // 2 × 7 executed repetitions is the ceiling.
+  // The ceiling on a run that stopped early is 2 × (7 executed + 1 in flight).
+  // The in-flight allowance is load-bearing rather than slack: `repsExecuted`
+  // counts repetitions that COMPLETED, while a setup is recorded the moment it
+  // finishes, so the repetition that overran contributes up to two setups that
+  // no completed-repetition count can account for. A prove overrun writes
+  // exactly 2 × repsExecuted + 2, and bounding at 2 × repsExecuted refused the
+  // whole artifact — exit 64, no comment — on the one path this diagnostic
+  // exists to serve.
   assert.doesNotThrow(() =>
-    renderComment(withSetupCount(2 * (REPS + 1)), ctx())
+    renderComment(withSetupCount(2 * (REPS + 1) + 2), ctx())
   );
   assert.throws(
-    () => renderComment(withSetupCount(2 * (REPS + 1) + 1), ctx()),
-    /setupCount must be at most 14/
+    () => renderComment(withSetupCount(2 * (REPS + 1) + 3), ctx()),
+    /setupCount must be at most 16/
   );
   assert.throws(() => renderComment(withSetupCount(4000), ctx()), /setupCount/);
+});
+
+// The sign test's documented false-positive rate is 2/2^6, and it is a rate over
+// the deltas that actually carry a sign. Every tie removes a coin while leaving a
+// bare majority where it was, so at six repetitions two ties reduce the passing
+// outcome to "four non-tied deltas, all agreeing" — a 12.5% null rate behind a
+// comment claiming 3%. Ties arrive honestly from a benchmark near the clock's
+// granularity and deliberately from a crafted artifact, so the bar has to be the
+// effective sample size rather than the raw repetition count.
+test("ties cannot buy a verdict by shrinking the sign test", () => {
+  // Four repetitions moving +20%, two exactly tied. Nothing contradicts, and
+  // four of six is a majority — the old rule's two conditions were both met.
+  const tied = (reps) =>
+    results({
+      top: {
+        reps,
+        provesPerRep: 1,
+        provesExecutedPerRep: 2,
+        repsExecuted: reps + 1,
+      },
+      benchmark: {
+        base: { samples: Array.from({ length: reps }, () => [1000]) },
+        head: {
+          samples: Array.from({ length: reps }, (_, i) => [
+            i < 4 ? 1200 : 1000,
+          ]),
+        },
+      },
+    });
+  const body = renderComment(tied(6), ctx());
+  assert.match(body, /unresolved/);
+  assert.doesNotMatch(body, /### 🔺/);
+  // The movement itself is still reported — withholding the ruling is not
+  // suppressing the measurement.
+  assert.match(body, /\+13\.33%/);
+
+  // Six agreeing out of eight, two tied, still rules: the effective sample size
+  // reaches the calibrated count, so the documented rate holds.
+  const eight = results({
+    top: { reps: 8, provesPerRep: 1, provesExecutedPerRep: 2, repsExecuted: 9 },
+    benchmark: {
+      base: { samples: Array.from({ length: 8 }, () => [1000]) },
+      head: {
+        samples: Array.from({ length: 8 }, (_, i) => [i < 6 ? 1200 : 1000]),
+      },
+    },
+  });
+  assert.match(renderComment(eight, ctx()), /🔺/);
 });
 
 // A median setup cost ABOVE the reported deadline is the expected shape of a

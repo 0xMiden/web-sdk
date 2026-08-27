@@ -695,9 +695,22 @@ function normalizeResults(input) {
   // note presents as the evidence for whether the work was stuck. Bounding it
   // against a count that is already cross-checked makes the claim verifiable
   // instead of merely plausible.
-  if (setupCount !== null && setupCount > 2 * repsExecuted) {
+  //
+  // The extra repetition on a run that stopped short is the one that stopped it,
+  // and it is why this bound cannot be `2 * repsExecuted`. `repsExecuted` counts
+  // repetitions that COMPLETED (plus the warm-up), while a setup is recorded the
+  // moment it finishes — so the repetition that overran had already set up one or
+  // both sides before the deadline fired, and those setups are in the count. A
+  // prove overrun therefore writes `2 * repsExecuted + 2`, and bounding at
+  // `2 * repsExecuted` refused the whole artifact with exit 64 on the archetypal
+  // deadline stop: the one case where this diagnostic is the thing the reader
+  // came for. The ceiling still rules out the inflated claim it was added for.
+  // Unconditionally the in-flight form, because `setupCount` is only ever read on
+  // a deadline stop — there is no full-run case for the tighter bound to apply to.
+  const maxSetupCount = 2 * (repsExecuted + 1);
+  if (setupCount !== null && setupCount > maxSetupCount) {
     fail(
-      `setupCount must be at most ${2 * repsExecuted} for a run that executed ${repsExecuted} ${plural(repsExecuted, "rep")} (both sides set up once per rep), got ${setupCount}`
+      `setupCount must be at most ${maxSetupCount} for a run that executed ${repsExecuted} ${plural(repsExecuted, "rep")} and stopped early during another (both sides set up once per rep), got ${setupCount}`
     );
   }
 
@@ -947,6 +960,19 @@ const EMOJI_UNRESOLVED = "❔";
  * exemption instead of through a sign flip. So a majority of the repetitions
  * must positively agree as well.
  *
+ * A majority is not enough on its own, though, and this is where the 2/2^6 claim
+ * above is actually earned. Every tie removes a coin from the test while leaving
+ * the bar where it was: at six repetitions a bare majority is four, so two ties
+ * make the passing outcome "four non-tied deltas, all agreeing", whose null rate
+ * is 2/2^4 = 12.5% — four times what this comment claims. Ties are not exotic
+ * enough to wave off, either: a benchmark fast enough to sit near the clock's
+ * granularity produces them honestly, and `samples` is artifact-authored, so a
+ * fork can produce them deliberately. The fix is to bound the EFFECTIVE sample
+ * size rather than the raw one — `agree` must reach MIN_REPS_FOR_SIGN_TEST, not
+ * merely a majority — which pins the rate at 2/2^MIN_REPS_FOR_SIGN_TEST for
+ * every repetition count and tie count. The majority clause stays because it is
+ * the binding one on long runs, where six agreeing out of twenty is not a result.
+ *
  * What this does NOT test is dispersion. Five repetitions at +0.5% and one at
  * +30% all share a sign and pass, and the aggregate they produce is driven by
  * the one. The sign test bounds the false-positive rate without assuming
@@ -978,7 +1004,12 @@ function pairedAgreement(base, head) {
     (d) => d !== 0 && Math.sign(d) !== direction
   ).length;
   return {
-    consistent: contradicting === 0 && agree * 2 > reps,
+    // Both clauses, and neither implies the other: the majority binds on long
+    // runs, the effective-sample-size floor binds when ties shrink the test.
+    consistent:
+      contradicting === 0 &&
+      agree * 2 > reps &&
+      agree >= MIN_REPS_FOR_SIGN_TEST,
     agree,
     reps,
   };
@@ -1041,7 +1072,16 @@ function pairedMeanAgreement(base, head) {
   const contradicting = deltas.filter(
     (d) => d !== 0 && Math.sign(d) !== direction
   ).length;
-  return { consistent: contradicting === 0 && agree * 2 > reps, agree, reps };
+  // Same two clauses as `pairedAgreement`, for the same reason — a cross-check
+  // held to a laxer standard than the headline is not a cross-check.
+  return {
+    consistent:
+      contradicting === 0 &&
+      agree * 2 > reps &&
+      agree >= MIN_REPS_FOR_SIGN_TEST,
+    agree,
+    reps,
+  };
 }
 
 /**
@@ -1935,8 +1975,8 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
         ]),
     `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
     THRESHOLD_PROVISIONAL
-      ? `- The ±${formatPct(THRESHOLD_PCT)} threshold is **provisional** — a placeholder, not a measured variance for this runner. [How to calibrate](${calibrationLink(ctx)}).`
-      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is the calibrated run-to-run variance for this runner.`,
+      ? `- The ±${formatPct(THRESHOLD_PCT)} threshold is **provisional** — a placeholder, not a measured spread for this runner. [How to calibrate](${calibrationLink(ctx)}).`
+      : `- The ±${formatPct(THRESHOLD_PCT)} threshold is three times the calibrated run-to-run standard deviation for this runner.`,
     `- Full machine-readable results are attached to ${ctx.runUrl ? `[the run](${ctx.runUrl})` : "the workflow run"} as \`results.json\`.`,
   ];
 
@@ -2088,8 +2128,9 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       `> A run that stops early has its length chosen by how slow the machine was, and how slow the`,
       `> machine was is what the benchmark measures — so the repetitions that survived are a selected`,
       `> sample. That selection cancels out of the paired comparison only if both builds have the same`,
-      `> run-to-run variance; if one is more variable, it shifts the result by roughly the width of the`,
-      `> noise floor, in whichever direction the difference points. Nothing has measured that on this`,
+      `> run-to-run spread; if one is more variable, it shifts the result in whichever direction the`,
+      `> difference points, and simulated over this producer's interleave a 12% run-to-run factor on one`,
+      `> side moved the truncated estimate by three to four times the whole ±${formatPct(THRESHOLD_PCT)} floor. Nothing has measured that on this`,
       `> workload and the floor was calibrated on complete runs, so the verdict is withheld rather than`,
       `> qualified.`,
       // Only the budget case has advice that is certainly right. An overrun might
@@ -2156,9 +2197,20 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       // used the default repetition count and lost repetitions to the clock, so
       // telling its author to re-run with the default is both wrong and
       // circular — more repetitions would miss the budget by more.
-      stoppedEarly
-        ? `> This run ran out of its time budget rather than being configured short: raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower \`--proves\`.`
-        : `> Re-run with the default \`--reps\` to get a verdict.`,
+      //
+      // And it has to match WHICH stop truncated it. This branch asserted the
+      // budget for all three kinds, so a deadline overrun or a wedged context
+      // got "raise your timeout" two lines below the note that had just said the
+      // cause was undecidable or was a page that would not close — the same
+      // misdirection buildStoppedEarlyNote is split into three branches to
+      // avoid, reintroduced here because this branch never read the kind.
+      !stoppedEarly
+        ? `> Re-run with the default \`--reps\` to get a verdict.`
+        : kind === "budget"
+          ? `> This run ran out of its time budget rather than being configured short: raise the benchmark step's \`timeout-minutes\` and \`--budget-minutes\` together, or lower \`--proves\`.`
+          : kind === "deadline"
+            ? `> This run was truncated by the deadline overrun above rather than configured short. Settle what caused the overrun before re-running — a larger \`--reps\` would only overrun again.`
+            : `> This run was truncated by the close failure above rather than configured short. Settle what kept the page alive before re-running; no repetition count fixes it.`,
     ].join("\n");
   }
   return [

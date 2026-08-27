@@ -72,6 +72,13 @@ the prover is the change class this benchmark exists to catch, so check the diff
 before resizing anything. Below three setup samples the comment says there is too
 little to lean on, and the job log is the next place to look.
 
+*A page context would not close.* The clock was fine and nothing overran; a page
+refused to go away, so every later repetition would have been measured next to a
+live one and the run stopped instead. Nothing here is fixed by a larger budget.
+The `[teardown]` line in the bench job's log has the close failure itself — a page
+that will not close is usually a web worker still running, which is worth
+understanding before trusting timings measured beside it.
+
 **"Treat these numbers with suspicion … teardown failures."** The run could not
 release a page, browser or server. Resources left open are measured against, so
 the numbers are questionable and the bench job is red on purpose. Re-run.
@@ -83,6 +90,34 @@ message is the reporter saying it found nothing, not a diagnosis.
 **"This is a fault on the reporting side, not in the pull request."** A GitHub API
 failure or rate limit. Re-run the reporter, or wait. Never the author's problem,
 which is why it says so.
+
+**"… was rejected by the comment renderer."** The artifact parsed as JSON but
+failed one of the renderer's shape checks, so nothing was published rather than
+something unverified. The reporter log carries the specific field and bound as a
+`refusing to render:` line. Every such check is a producer/renderer contract, so
+this is a bug in one of the two halves and not something to re-run — the message
+names which field to look at.
+
+**"… failed on its own code path."** The renderer crashed rather than declining,
+which is always a bug in the reporter. The stack is in the reporter log. Re-running
+will reproduce it.
+
+**"… uploaded no `proving-bench-report` artifact"** / **"… has expired"** /
+**"… is over the … limit the reporter will download."** Three states of the
+artifact rather than of the pull request. No artifact means the bench job did not
+reach its upload step — read that job. Expired means the report outlived the
+artifact retention window; re-run the benchmark for a fresh one. Over the limit
+means the producer wrote a bigger archive than the reporter will pull, which in
+practice means a sample count far above the default; lower `--reps` / `--proves`,
+and if the defaults produced it, that is a bug worth filing.
+
+**"… head repository does not match"** / **"… is not a Proving Benchmark run."**
+The reporter declined to attribute a report to a pull request whose identity it
+could not confirm — the run came from a different repository than the pull
+request's head, or from a workflow that is not the benchmark. Both are the trust
+boundary doing its job. If you hit either on a legitimate run, it means the pull
+request's head moved repositories mid-run (a fork was deleted and recreated, say),
+and a fresh run on the current head is the fix.
 
 ## The bench did not run
 

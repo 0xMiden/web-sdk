@@ -209,17 +209,31 @@ jobs:
             const artifact = artifacts.find(
               (a) => a.name === 'proving-bench-report',
             );
+            // Each decline records a REASON as an output, not just a log line.
+            // All three leave `fetched` unset while the step still succeeds, so
+            // the fallback comment used to infer a cause — and inferred the same
+            // one for all three: "the bench job failed, was cancelled, or
+            // uploaded nothing readable". For the oversize case, which is the one
+            // a PR author can actually trigger and act on since their own
+            // producer writes the artifact, every clause of that sentence is
+            // false. Every other decline path in this file sets its cause
+            // explicitly rather than letting a later step guess; these were the
+            // exceptions.
+            const decline = (reason) => {
+              core.notice(reason);
+              core.setOutput('skip_reason', reason);
+            };
             if (!artifact) {
-              core.notice(`Run ${run_id} has no proving-bench-report artifact; nothing to post.`);
+              decline(`Run ${run_id} uploaded no \`proving-bench-report\` artifact, so there is nothing to report on.`);
               return;
             }
             if (artifact.expired) {
-              core.notice(`The artifact on run ${run_id} has expired; nothing to post.`);
+              decline(`The benchmark artifact on run ${run_id} has expired, so the report can no longer be retrieved. Re-run the benchmark to get a fresh one.`);
               return;
             }
             const max = Number(process.env.MAX_ZIP_BYTES);
             if (artifact.size_in_bytes > max) {
-              core.notice(`The artifact on run ${run_id} is ${artifact.size_in_bytes} compressed bytes (limit ${max}); nothing to post.`);
+              decline(`The benchmark artifact on run ${run_id} is ${artifact.size_in_bytes} compressed bytes, over the ${max}-byte limit the reporter will download, so it was not fetched.`);
               return;
             }
 
@@ -932,10 +946,19 @@ jobs:
         # have matched this workflow's `paths-ignore` or its bench run may fail.
         # Also fires when the check-run write itself failed, which is the only
         # state a rendered report could otherwise vanish from silently.
+        #
+        # `outcome == 'failure'` alongside `published == 'false'` because those are
+        # different states. The output is set from inside that step's own try, so it
+        # only exists if the step got far enough to set it; the step can also fail
+        # HARD before then — its `readFileSync` sits outside the try — and in that
+        # case `published` is the empty string, which `== 'false'` does not match.
+        # Without the outcome clause that failure both reddens the default branch
+        # and skips the fallback, losing a report that had already rendered.
         if: >-
           always() && steps.run.outputs.id != '' &&
           (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != ''
-           || steps.checkrun.outputs.published == 'false')
+           || steps.checkrun.outputs.published == 'false'
+           || steps.checkrun.outcome == 'failure')
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -949,6 +972,7 @@ jobs:
           RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
           PR_SKIP_REASON: ${{ steps.pr.outputs.skip_reason }}
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
+          FETCH_SKIP_REASON: ${{ steps.fetch.outputs.skip_reason }}
           CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
@@ -998,11 +1022,17 @@ jobs:
               process.env.RENDER_REASON ||
               (process.env.FETCH_OUTCOME === 'failure'
                 ? 'The reporter could not fetch the benchmark artifact from the GitHub API. This is a fault on the reporting side, not in the pull request.'
-                : process.env.REPORT_USABLE !== 'true'
-                  ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
-                  : !process.env.PR_NUMBER
-                    ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
-                    : 'The benchmark report was not published; the reporter log has the specific reason.');
+                // Ahead of the REPORT_USABLE inference for the same reason
+                // PR_SKIP_REASON sits ahead of PR_NUMBER: a recorded cause beats
+                // a guess. The three declines that set this all leave the step
+                // successful with `fetched` unset, which the inference below
+                // reads as a failed bench job.
+                : process.env.FETCH_SKIP_REASON ||
+                  (process.env.REPORT_USABLE !== 'true'
+                    ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
+                    : !process.env.PR_NUMBER
+                      ? 'The pull request the report claimed could not be confirmed against the fields GitHub populated for this run, so nothing was posted.'
+                      : 'The benchmark report was not published; the reporter log has the specific reason.'));
 
             const name = 'Proving Benchmark';
             const summary = [

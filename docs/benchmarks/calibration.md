@@ -79,15 +79,26 @@ Adding benchmarks multiplies it again.
 The renderer does not rest the verdict on the threshold alone, for exactly these
 reasons. A movement is reported as significant only when it clears the floor
 **and** no repetition's paired difference contradicts that direction while a
-majority positively agree (a repetition whose two sides come out exactly equal
-neither agrees nor contradicts, and a run of fewer than six repetitions cannot
-be called significant at all — see "Below six repetitions there is no verdict at
-all"); base and
+majority positively agree, *and* at least six repetitions positively agree (a
+repetition whose two sides come out exactly equal neither agrees nor
+contradicts, and a run of fewer than six repetitions cannot be called
+significant at all — see "Below six repetitions there is no verdict at all");
+base and
 head run interleaved within a repetition, so those differences are a genuine
 paired sample and the agreement requirement is a sign test that assumes nothing
 about the shape of the distribution. A movement that clears the floor while its
 repetitions disagree is reported as **unresolved** rather than as a result —
 which is the honest label for an aggregate whose spread is wider than the effect.
+
+The "at least six positively agree" clause is what makes 2/2⁶ true rather than
+aspirational. Ties are excluded from the test, so each one removes a coin from
+it; if the bar stayed at a bare majority, two ties at six repetitions would
+reduce the passing outcome to "four non-tied differences, all agreeing", whose
+rate is 2/2⁴ = 12.5%. Bounding the *effective* sample size instead — the count
+that positively agrees, not the count of repetitions — holds the rate at 2/2⁶ for
+every repetition count and every number of ties. Ties are not a hypothetical: a
+benchmark fast enough to sit near the clock's granularity produces them
+honestly, and `samples` is fork-authored, so a fork can produce them on purpose.
 
 2/2⁶ ≈ 3% is the sign test's *own* false-positive rate at six repetitions, and it
 is a common mistake — made in an earlier draft of this file — to quote it as the
