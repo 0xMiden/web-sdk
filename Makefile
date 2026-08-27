@@ -84,6 +84,21 @@ test-vite-plugin: ## Run vite-plugin unit tests with coverage
 test-web-client-unit: ## Run web-client unit tests with coverage
 	pnpm --filter @miden-sdk/miden-sdk run test:coverage
 
+# --------------------------------------------------------------------------
+# test: the command CONTRIBUTING.md has always pointed at. Pure TypeScript —
+# the root vitest projects either mock the WASM client or exercise only plain
+# JS, so this needs no Rust toolchain and no built `dist/`. Use
+# `make test-coverage` for the gates CI enforces, and `make hydrate-web-client`
+# first if you need `typecheck`/`build`, which do read a built dist.
+# --------------------------------------------------------------------------
+.PHONY: test
+test: ## Run the TypeScript unit suites (no Rust toolchain required)
+	pnpm test
+
+.PHONY: hydrate-web-client
+hydrate-web-client: ## Populate crates/web-client/dist from the published npm tarball (no Rust build)
+	node scripts/hydrate-web-client.mjs
+
 .PHONY: test-coverage
 test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-unit ## Run all coverage gates
 
