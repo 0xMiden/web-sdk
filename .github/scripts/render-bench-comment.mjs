@@ -2240,6 +2240,35 @@ function buildSamplesBlock(rows, unit) {
   return ["```text", ...lines, "```"].join("\n");
 }
 
+/**
+ * How the floor was derived from the calibration, decided BY the numbers rather
+ * than written alongside them.
+ *
+ * The two lines of this repo reached their floors by different routes: `main`'s
+ * calibration produced a no-change run past 3σ, so its floor had to come from
+ * the empirical maximum instead; the 0.16 line's largest movement sits below
+ * 3σ, so there 3σ is simply the procedure. A sentence hardcoded for either one
+ * is false on the other, and was — the wording asserting "sits above that
+ * observed maximum rather than at 3σ" survived a port to a line where the
+ * maximum is below 3σ. Deriving it means a re-calibration cannot leave the
+ * prose contradicting the record printed in the same bullet.
+ */
+function derivationSentence(profile) {
+  const { threeSigmaPct, maxObservedPct, runs } = profile.calibration;
+  if (maxObservedPct > threeSigmaPct) {
+    return (
+      `It sits above that observed maximum rather than at 3σ (${formatPct(threeSigmaPct)}), ` +
+      `because one of those ${runs} no-change runs already exceeded 3σ — the grind differs per ` +
+      `repetition and its tail is not normal.`
+    );
+  }
+  return (
+    `It is 3σ (${formatPct(threeSigmaPct)}) rounded up, which here is the procedure rather than a ` +
+    `deviation from it: the largest movement across those ${runs} no-change runs stayed below 3σ, ` +
+    `so nothing observed argues the tail is heavier than normal.`
+  );
+}
+
 function buildMethodologySection(
   results,
   ctx,
@@ -2314,7 +2343,7 @@ function buildMethodologySection(
     `- Every figure above is recomputed here from the per-rep samples in the artifact; the summary statistics the bench script reported alongside them are not used.`,
     profile.thresholdProvisional
       ? `- The ±${formatPct(profile.thresholdPct)} threshold is **provisional** — a placeholder, not a measured spread for this runner. [How to calibrate](${calibrationLink(ctx)}).`
-      : `- The ±${formatPct(profile.thresholdPct)} threshold is calibrated on \`${profile.calibration.runner}\` (${profile.calibration.date}): ${profile.calibration.runs} runs of one build against a copy of itself, at ${profile.calibration.reps} repetitions, gave a standard deviation of ${formatPct(profile.calibration.sdPct)} and a largest movement of ${formatPct(profile.calibration.maxObservedPct)}. It sits above that observed maximum rather than at 3σ (${formatPct(profile.calibration.threeSigmaPct)}), because one of those ${profile.calibration.runs} no-change runs already exceeded 3σ — the grind differs per repetition and its tail is not normal. [How this is measured](${calibrationLink(ctx)}).`,
+      : `- The ±${formatPct(profile.thresholdPct)} threshold is calibrated on \`${profile.calibration.runner}\` (${profile.calibration.date}): ${profile.calibration.runs} runs of one build against a copy of itself, at ${profile.calibration.reps} repetitions, gave a standard deviation of ${formatPct(profile.calibration.sdPct)} and a largest movement of ${formatPct(profile.calibration.maxObservedPct)}. ${derivationSentence(profile)} [How this is measured](${calibrationLink(ctx)}).`,
     `- Full machine-readable results are attached to ${ctx.runUrl ? `[the run](${ctx.runUrl})` : "the workflow run"} as \`results.json\`.`,
   ];
 
