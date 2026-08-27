@@ -557,17 +557,20 @@ function normalizeTeardownFailures(value) {
 // and matching the shell-side check in bench-comment.yml. An uppercase sha
 // would render a link nobody can match against a `git log`.
 const SHA_RE = /^[0-9a-f]{7,40}$/;
-// GitHub's own rule for both an owner and a repo name, minus the dot-segments:
-// a bare `..` passes a naive character-class check and then normalizes inside a
-// commit URL into a link to a different repo entirely. Same traversal
-// RUN_URL_RE was tightened against; both values are trusted here, but a
-// character class that permits `..` is not a property worth relying on.
-const SLUG_RE = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
-// The exact shape both workflows build, rather than a loose path match: the
-// looser form accepted `..`, which GitHub normalizes into a link to whatever
-// repo the traversal lands on.
-const RUN_URL_RE =
-  /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+$/;
+// GitHub's own rule for an owner or a repo name, minus the dot-segments: a bare
+// `.` or `..` passes a naive character-class check and then normalizes inside a
+// URL into a link to a different repo entirely. Both values are trusted here,
+// but a character class that permits `..` is not a property worth relying on.
+const SLUG_SRC = "(?!\\.\\.?(?:$|/))[A-Za-z0-9._-]+";
+const SLUG_RE = new RegExp(`^${SLUG_SRC}$`);
+// The exact shape both workflows build, rather than a loose path match. Built
+// from SLUG_SRC rather than a hand-written `[\w.-]+`, which is what the previous
+// version used: that accepted `https://github.com/../../actions/runs/12`, so the
+// comment claiming it was tightened against traversal described a guard the
+// regex did not implement. Sharing the source is what keeps the two honest.
+const RUN_URL_RE = new RegExp(
+  `^https://github\\.com/${SLUG_SRC}/${SLUG_SRC}/actions/runs/\\d+$`
+);
 
 /**
  * Unlike the results, `ctx.json` is TRUSTED: the reporter builds it with `jq`

@@ -1636,6 +1636,36 @@ test("will not call a movement significant on too few repetitions", () => {
   assert.match(six.split("\n")[0], /⚠️ \+4[01]\.\d\d% slower/);
 });
 
+test("a traversal run url degrades to text instead of linking elsewhere", () => {
+  // The guard's comment claimed it was tightened against `..` while the regex
+  // still accepted it, so a run url of https://github.com/../../actions/runs/N
+  // would have rendered as a link GitHub normalizes to a different repo. Both
+  // values are trusted, so this is defence in depth — but a guard that does not
+  // do what it says is worse than no guard.
+  for (const runUrl of [
+    "https://github.com/../../actions/runs/12",
+    "https://github.com/../web-sdk/actions/runs/12",
+    "https://github.com/0xMiden/../actions/runs/12",
+    "http://github.com/0xMiden/web-sdk/actions/runs/12",
+  ]) {
+    const body = renderComment(results(), ctx({ runUrl }));
+    assert.doesNotMatch(body, /\.\.\//, `linked a traversal: ${runUrl}`);
+    assert.doesNotMatch(
+      body,
+      new RegExp(`\\(${runUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`)
+    );
+  }
+  // The real shape still links.
+  const ok = renderComment(
+    results(),
+    ctx({ runUrl: "https://github.com/0xMiden/web-sdk/actions/runs/12" })
+  );
+  assert.match(
+    ok,
+    /https:\/\/github\.com\/0xMiden\/web-sdk\/actions\/runs\/12/
+  );
+});
+
 test("a run that leaked resources says so above its numbers", () => {
   const body = renderComment(
     results({ top: { teardownFailures: ["base context: Error: boom"] } }),

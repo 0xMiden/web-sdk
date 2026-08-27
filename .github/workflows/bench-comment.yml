@@ -295,12 +295,25 @@ jobs:
             // it at any run and post that artifact's chosen PR number.
             let run = context.payload.workflow_run;
             if (!run) {
-              const { data } = await github.rest.actions.getWorkflowRun({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: Number(process.env.BENCH_RUN_ID),
-              });
-              run = data;
+              // Guarded like the other two awaits in this step, which exists to
+              // decline rather than fail: an operator typo or a run past its
+              // retention 404s here, and unguarded that threw straight out of the
+              // script and reddened a default-branch run. Dispatch-only, so not
+              // fork-reachable — but the step's contract is "never fail the
+              // workflow" and one unguarded call is enough to break it.
+              try {
+                const { data } = await github.rest.actions.getWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: Number(process.env.BENCH_RUN_ID),
+                });
+                run = data;
+              } catch (error) {
+                refuse(
+                  `Could not fetch bench run ${process.env.BENCH_RUN_ID}: ${error.message}`,
+                );
+                return;
+              }
             }
             if (run.name !== 'Proving Benchmark') {
               refuse(`Run ${run.id} is "${run.name}", not a Proving Benchmark run.`);
@@ -346,6 +359,16 @@ jobs:
 
             if (pr.state !== 'open') {
               core.notice(`PR #${number} is ${pr.state}; skipping comment.`);
+              // Recorded, because returning silently made the fallback infer the
+              // cause from what was NOT set — and with the identity checks all
+              // passed it fell through to "the pull request the report claimed
+              // could not be confirmed", which reads as a forgery attempt. The
+              // identity verified fine; the pull request simply closed inside the
+              // bench window, which happens on any long-running run.
+              core.setOutput(
+                'skip_reason',
+                `The pull request was ${pr.state} before the benchmark report was ready, so no comment was posted.`,
+              );
               return;
             }
 
@@ -708,6 +731,7 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           RENDER_REASON: ${{ steps.render.outputs.reason }}
           RECHECK_REASON: ${{ steps.recheck.outputs.reason }}
+          PR_SKIP_REASON: ${{ steps.pr.outputs.skip_reason }}
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
           CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
@@ -744,6 +768,9 @@ jobs:
                 ? `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
                 : '') ||
               process.env.RECHECK_REASON ||
+              // Ahead of the PR_NUMBER inference below, which is a guess about
+              // an unset output rather than a recorded cause.
+              process.env.PR_SKIP_REASON ||
               process.env.RENDER_REASON ||
               (process.env.FETCH_OUTCOME === 'failure'
                 ? 'The reporter could not fetch the benchmark artifact from the GitHub API. This is a fault on the reporting side, not in the pull request.'
