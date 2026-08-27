@@ -1,5 +1,6 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
+import { serializeCallbackFailure } from "./callback-bridge.js";
 import { withSyncLock } from "./syncLock.js";
 import { MidenClient } from "./client.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
@@ -387,11 +388,13 @@ class WebClient {
    *   Consumers that hand a `CallbackProver` (e.g. native iOS/Android plug-in
    *   provers in Capacitor apps, or any other JS-side prover bridge) need
    *   `useWorker: false` so the prover handle reaches the WASM binding intact.
-   * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
+   * @param {{observer?: (observation: object) => void, observeSensitive?: boolean, callbackTimeoutMs?: number | null}} [observability]
    *   - Observability fields of `ClientOptions`. `observer` is registered as
    *   the process-wide observation sink; `observeSensitive` decides, for this
    *   client and for its whole lifetime, whether observations carry the
    *   high-fidelity `sensitive` channel. Both are construction-only.
+   *   `callbackTimeoutMs` configures the worker keystore-callback ceiling
+   *   (see `ClientOptions.callbackTimeoutMs`).
    */
   constructor(
     rpcUrl,
@@ -414,6 +417,7 @@ class WebClient {
     this.signCb = signCb;
     this.logLevel = logLevel;
     this.useWorker = useWorker !== false;
+    this.callbackTimeoutMs = observability?.callbackTimeoutMs;
 
     // Check if Web Workers are available AND the caller didn't opt out via
     // `useWorker: false`. The opt-out is load-bearing for `CallbackProver`
@@ -507,12 +511,18 @@ class WebClient {
             }
 
             this.worker.postMessage({
+              callbackOk: true,
               callbackResult: result,
               callbackRequestId: requestId,
             });
           } catch (error) {
+            // Explicit failure discriminator + structured payload. Inferring
+            // failure from a truthy `error.message` misclassified string
+            // throws, empty messages, and `{ code: 4001 }`-style wallet
+            // rejections as success (then failed later as a type error).
             this.worker.postMessage({
-              callbackError: error.message,
+              callbackOk: false,
+              callbackError: serializeCallbackFailure(error),
               callbackRequestId: requestId,
             });
           }
@@ -751,6 +761,7 @@ class WebClient {
         !!this.signCb,
         this.logLevel,
         numThreads,
+        this.callbackTimeoutMs,
       ],
     });
   }
