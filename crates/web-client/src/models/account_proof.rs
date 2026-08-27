@@ -7,7 +7,9 @@ use miden_client::account::StorageSlotName;
 use miden_client::asset::{AccountStorageHeader, Asset as NativeAsset};
 use miden_client::block::BlockNumber;
 use miden_client::rpc::domain::account::{
-    AccountProof as NativeAccountProof, AccountStorageMapDetails, StorageMapEntries,
+    AccountProof as NativeAccountProof,
+    AccountStorageMapDetails,
+    StorageMapEntries,
 };
 
 use super::account_code::AccountCode;
