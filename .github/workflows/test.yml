@@ -509,6 +509,25 @@ jobs:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
 
+  test-bench-scripts:
+    name: benchmark script unit tests
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    # No `if:` on `non_docs`. These tests cover the renderer that runs in the
+    # TRUSTED half of the benchmark pipeline, holding a write token over
+    # fork-controlled JSON, and they were previously reachable only from a step
+    # inside bench.yml — an informational job with its own `paths-ignore` that
+    # never blocks a merge. A break in the sanitizer or the verdict logic could
+    # merge freely. Cheap enough (node --test, no build) to run unconditionally.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run benchmark script unit tests
+        run: make test-bench-scripts
+
   test-web-client-unit:
     name: web-client unit tests
     runs-on: ubuntu-24.04

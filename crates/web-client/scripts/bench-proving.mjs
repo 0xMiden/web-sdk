@@ -64,8 +64,10 @@ const USAGE = [
   "       [--calibrate] [--budget-minutes N]",
   "",
   "  --calibrate  Point --base at the same dist as --head to measure the noise",
-  "               floor. Requires --base, and marks the run as calibration so the",
-  "               comment renderer labels the result as a noise measurement.",
+  "               floor. Requires --base. Labels stdout and results.json for a",
+  "               human reader; the PR comment's calibration banner comes from",
+  "               the workflow dispatch input, NOT from this flag, because the",
+  "               renderer will not take that banner from the artifact.",
   "",
   "  --budget-minutes  How long the caller will let this run before killing it",
   "               (CI passes the step's timeout-minutes). Each in-page deadline is",
@@ -686,6 +688,40 @@ const deadlineFor = (ceiling) => {
   return Math.min(ceiling, left);
 };
 
+// A close that will not finish must not cost the run its numbers.
+//
+// Short on purpose: this is not bounding work, it is bounding a hang. A browser
+// or a listening socket that has not closed in 30 seconds is not closing, and
+// every second spent waiting is taken from the same step budget that still has
+// to write results.json.
+const CLOSE_DEADLINE_MS = 30 * 1000;
+
+const withCloseDeadline = (label, closing) => {
+  if (!closing) return Promise.resolve();
+  let timer;
+  return Promise.race([
+    // The rejection carries the label because the caller records `outcome.reason`
+    // verbatim into the teardown list, and "timed out" with no subject would be
+    // the least useful line in the report.
+    Promise.resolve(closing).finally(() => clearTimeout(timer)),
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `${label} did not close within ${CLOSE_DEADLINE_MS / 1000}s; abandoning it so the results can still be written`
+          )
+        );
+      }, CLOSE_DEADLINE_MS);
+      // Deliberately NOT unref'd. A wedged close leaves nothing else pending, so
+      // an unref'd timer lets node exit with code 13 ("unsettled top-level
+      // await") before the deadline can fire — which loses the results the
+      // deadline exists to save. Holding the loop open is the point; the
+      // `finally` above clears the timer on every close that does settle, so a
+      // clean run is not delayed by it.
+    }),
+  ]);
+};
+
 // Opens a page, runs setup on it, and returns handles the driver can drive
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
@@ -810,13 +846,21 @@ const openSide = async (browser, url, label, repIndex) => {
       // record and stops rather than measuring against it.
       close: () => {
         closing = true;
-        return context.close().catch((error) => {
-          // Recorded, not printed, for the same reason the outer teardown does
-          // not print: the end-of-run summary lists every entry with the reason
-          // it matters, and logging here as well made a two-failure run read
-          // like a four-failure one.
-          teardownFailures.push(`${label} context: ${error}`);
-        });
+        // Deadlined for the same reason the browser and server closes are: this
+        // runs in the driver's per-repetition `finally`, upstream of the results
+        // write, and `Promise.allSettled` waits for SETTLEMENT. The `.catch` here
+        // only converts a rejection into a record — a `context.close()` that
+        // never settles at all held the whole run until the runner killed the
+        // step, discarding every repetition that had already succeeded.
+        return withCloseDeadline(`${label} context`, context.close()).catch(
+          (error) => {
+            // Recorded, not printed, for the same reason the outer teardown does
+            // not print: the end-of-run summary lists every entry with the
+            // reason it matters, and logging here as well made a two-failure run
+            // read like a four-failure one.
+            teardownFailures.push(`${label} context: ${error}`);
+          }
+        );
       },
     };
   } catch (error) {
@@ -834,40 +878,6 @@ const openSide = async (browser, url, label, repIndex) => {
     });
     throw error;
   }
-};
-
-// A close that will not finish must not cost the run its numbers.
-//
-// Short on purpose: this is not bounding work, it is bounding a hang. A browser
-// or a listening socket that has not closed in 30 seconds is not closing, and
-// every second spent waiting is taken from the same step budget that still has
-// to write results.json.
-const CLOSE_DEADLINE_MS = 30 * 1000;
-
-const withCloseDeadline = (label, closing) => {
-  if (!closing) return Promise.resolve();
-  let timer;
-  return Promise.race([
-    // The rejection carries the label because the caller records `outcome.reason`
-    // verbatim into the teardown list, and "timed out" with no subject would be
-    // the least useful line in the report.
-    Promise.resolve(closing).finally(() => clearTimeout(timer)),
-    new Promise((_resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(
-          new Error(
-            `${label} did not close within ${CLOSE_DEADLINE_MS / 1000}s; abandoning it so the results can still be written`
-          )
-        );
-      }, CLOSE_DEADLINE_MS);
-      // Deliberately NOT unref'd. A wedged close leaves nothing else pending, so
-      // an unref'd timer lets node exit with code 13 ("unsettled top-level
-      // await") before the deadline can fire — which loses the results the
-      // deadline exists to save. Holding the loop open is the point; the
-      // `finally` above clears the timer on every close that does settle, so a
-      // clean run is not delayed by it.
-    }),
-  ]);
 };
 
 const servers = [];

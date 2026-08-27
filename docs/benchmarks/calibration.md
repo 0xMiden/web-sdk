@@ -96,8 +96,10 @@ contributes if the magnitude leg passed for free.
 at one repetition, 50% at two, 25% at three. At one repetition it passes
 unconditionally, so the second leg would be pure decoration exactly where it is
 needed most — and `reps` is a field in the artifact, so a fork could pick it. The
-renderer therefore refuses to call anything significant below **four**
-repetitions and reports it as unresolved instead.
+renderer therefore refuses to call anything significant below **six**
+repetitions — the calibrated count — and reports it as unresolved instead; see
+"Below six repetitions there is no verdict at all" under
+[How to derive the threshold](#how-to-derive-the-threshold).
 
 **What the second leg costs.** Requiring unanimity is not free, and the price is
 paid in false negatives. If a single repetition's delta clears zero with

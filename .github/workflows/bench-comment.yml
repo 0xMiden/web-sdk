@@ -49,20 +49,33 @@ concurrency:
   # without ever starting. And `true` cancels across the two open PRs that can
   # share one fork branch. Keying on the run id sidesteps both.
   #
-  # It does NOT mean one reporter per bench run: `workflow_run: completed` fires
-  # once per ATTEMPT, so `Re-run all jobs` produces a second reporter under the
-  # same run id. Those two do serialize on this group, which is what makes the
-  # read-modify-write on the check run safe against itself. What nothing here
-  # serializes is two reporters for two DIFFERENT bench runs at the same head
-  # sha — `pull_request: reopened` produces exactly that — so both check-run
-  # writers reconcile on the check name rather than assuming they are alone.
+  # Keyed on the HEAD SHA rather than the bench run id, because the sha is what
+  # identifies the thing being mutated. Two reporters can exist for one sha
+  # without sharing a run id — `workflow_run: completed` fires once per ATTEMPT,
+  # so `Re-run all jobs` gives two, and `pull_request: reopened` starts a whole
+  # second bench run — and both then read-modify-write the same sticky comment
+  # and the same check run. The check-run writers reconcile on the check name,
+  # but `marocchino/sticky-pull-request-comment` searches for its header and
+  # CREATES when it finds none, so two that interleave before either has posted
+  # both create, and the PR keeps a duplicate benchmark comment permanently.
+  # Under this group they serialize and the second one updates the first's.
   #
-  # What that gives up is serialization of comment updates. It costs nothing
-  # here: a superseded bench run still reaches this workflow (bench.yml uploads
-  # with `if: always()` and this trigger has no conclusion filter), and what
-  # keeps its stale numbers off the PR is `Verify PR identity` declining any
-  # report whose head sha is no longer the PR's — not the order they ran in.
-  group: bench-comment-${{ github.event.workflow_run.id || github.run_id }}
+  # A burst of pushes still does not lose reports, which is what ruled out
+  # keying by branch: each push is a different sha and therefore a different
+  # group. Only same-sha reporters queue, and GitHub's one-pending-per-group
+  # limit can drop a middle one of three — harmless, since all three report on
+  # the same commit and whichever survives publishes a valid report for it.
+  #
+  # `head_repository.full_name` is in the key so a fork cannot land in the base
+  # repo's group by pushing a commit with a colliding sha prefix; both fields
+  # come from the trusted `workflow_run` payload, not from the artifact.
+  #
+  # Ordering still is not what keeps stale numbers off the PR — a superseded
+  # bench run reaches this workflow too, since bench.yml uploads with
+  # `if: always()` and this trigger has no conclusion filter. That is
+  # `Verify PR identity` declining any report whose head sha is no longer the
+  # PR's, plus the pre-write re-check.
+  group: bench-comment-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -132,19 +145,22 @@ jobs:
           # headroom that still refuses a zip bomb before it lands.
           MAX_ZIP_BYTES: 2097152
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx or a
-          # secondary rate limit fails the step — and on the trusted side that
-          # reddens the default branch over an outage nobody in the PR caused.
+          # github-script defaults retries to 0, so a single GitHub 5xx fails the
+          # step — and on the trusted side that reddens the default branch over an
+          # outage nobody in the PR caused.
           #
-          # `retry-exempt-status-codes` overrides the action's default of
-          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
-          # failure these retries exist for, since this workflow makes a burst of
-          # writes against one PR — are reported as 403, so the default exemption
-          # excluded exactly the case named above and retried only 5xx. 400, 401,
-          # 404 and 422 stay exempt: those are deterministic and retrying them
-          # only delays the failure.
+          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
+          # limit, which GitHub reports as 403 and which the action exempts by
+          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
+          # worse than leaving it: @octokit/plugin-retry backs off
+          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
+          # `Retry-After` entirely, while GitHub requires waiting at least the
+          # advertised interval for a secondary limit. So the retries would fire
+          # inside the required wait, likely escalate the block, and still
+          # exhaust; and every permanent permissions 403 would burn 14s first.
+          # The steps that must not fail over a rate limit instead catch and
+          # decline (see `refuseAsOutage` and the fallback check run).
           retries: 3
-          retry-exempt-status-codes: 400,401,404,422
           script: |
             const fs = require('fs');
 
@@ -236,19 +252,22 @@ jobs:
           BENCH_RUN_ID: ${{ steps.run.outputs.id }}
           REPORT_DIR: ${{ runner.temp }}/bench-report
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx or a
-          # secondary rate limit fails the step — and on the trusted side that
-          # reddens the default branch over an outage nobody in the PR caused.
+          # github-script defaults retries to 0, so a single GitHub 5xx fails the
+          # step — and on the trusted side that reddens the default branch over an
+          # outage nobody in the PR caused.
           #
-          # `retry-exempt-status-codes` overrides the action's default of
-          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
-          # failure these retries exist for, since this workflow makes a burst of
-          # writes against one PR — are reported as 403, so the default exemption
-          # excluded exactly the case named above and retried only 5xx. 400, 401,
-          # 404 and 422 stay exempt: those are deterministic and retrying them
-          # only delays the failure.
+          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
+          # limit, which GitHub reports as 403 and which the action exempts by
+          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
+          # worse than leaving it: @octokit/plugin-retry backs off
+          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
+          # `Retry-After` entirely, while GitHub requires waiting at least the
+          # advertised interval for a secondary limit. So the retries would fire
+          # inside the required wait, likely escalate the block, and still
+          # exhaust; and every permanent permissions 403 would burn 14s first.
+          # The steps that must not fail over a rate limit instead catch and
+          # decline (see `refuseAsOutage` and the fallback check run).
           retries: 3
-          retry-exempt-status-codes: 400,401,404,422
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -546,10 +565,9 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
-          # Same as the other API steps; see the fetch step for why 403 is not
-          # exempt.
+          # Same as the other API steps; see the fetch step for what this does
+          # and does not cover.
           retries: 3
-          retry-exempt-status-codes: 400,401,404,422
           script: |
             let pr;
             try {
@@ -628,19 +646,22 @@ jobs:
           # overwrite THIS check run — and its report — to say so.
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx or a
-          # secondary rate limit fails the step — and on the trusted side that
-          # reddens the default branch over an outage nobody in the PR caused.
+          # github-script defaults retries to 0, so a single GitHub 5xx fails the
+          # step — and on the trusted side that reddens the default branch over an
+          # outage nobody in the PR caused.
           #
-          # `retry-exempt-status-codes` overrides the action's default of
-          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
-          # failure these retries exist for, since this workflow makes a burst of
-          # writes against one PR — are reported as 403, so the default exemption
-          # excluded exactly the case named above and retried only 5xx. 400, 401,
-          # 404 and 422 stay exempt: those are deterministic and retrying them
-          # only delays the failure.
+          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
+          # limit, which GitHub reports as 403 and which the action exempts by
+          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
+          # worse than leaving it: @octokit/plugin-retry backs off
+          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
+          # `Retry-After` entirely, while GitHub requires waiting at least the
+          # advertised interval for a secondary limit. So the retries would fire
+          # inside the required wait, likely escalate the block, and still
+          # exhaust; and every permanent permissions 403 would burn 14s first.
+          # The steps that must not fail over a rate limit instead catch and
+          # decline (see `refuseAsOutage` and the fallback check run).
           retries: 3
-          retry-exempt-status-codes: 400,401,404,422
           script: |
             const fs = require('fs');
             // check-run output.summary is capped at 65535 chars; the renderer
@@ -796,19 +817,22 @@ jobs:
           CHECKRUN_PUBLISHED: ${{ steps.checkrun.outputs.published }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
         with:
-          # github-script defaults retries to 0, so a single GitHub 5xx or a
-          # secondary rate limit fails the step — and on the trusted side that
-          # reddens the default branch over an outage nobody in the PR caused.
+          # github-script defaults retries to 0, so a single GitHub 5xx fails the
+          # step — and on the trusted side that reddens the default branch over an
+          # outage nobody in the PR caused.
           #
-          # `retry-exempt-status-codes` overrides the action's default of
-          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
-          # failure these retries exist for, since this workflow makes a burst of
-          # writes against one PR — are reported as 403, so the default exemption
-          # excluded exactly the case named above and retried only 5xx. 400, 401,
-          # 404 and 422 stay exempt: those are deterministic and retrying them
-          # only delays the failure.
+          # This covers 5xx and 429 ONLY. It does NOT cover a secondary rate
+          # limit, which GitHub reports as 403 and which the action exempts by
+          # default. Dropping 403 from `retry-exempt-status-codes` to reach it is
+          # worse than leaving it: @octokit/plugin-retry backs off
+          # `Math.pow(retryCount + 1, 2)` seconds — a fixed 1, 4, 9 — and ignores
+          # `Retry-After` entirely, while GitHub requires waiting at least the
+          # advertised interval for a secondary limit. So the retries would fire
+          # inside the required wait, likely escalate the block, and still
+          # exhaust; and every permanent permissions 403 would burn 14s first.
+          # The steps that must not fail over a rate limit instead catch and
+          # decline (see `refuseAsOutage` and the fallback check run).
           retries: 3
-          retry-exempt-status-codes: 400,401,404,422
           script: |
             const head_sha = process.env.HEAD_SHA;
             if (!head_sha) {

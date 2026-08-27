@@ -123,9 +123,11 @@ const CALIBRATED_PROVES_PER_REP = 3;
  * downward. Applied to a four-repetition run it is only about 2.5σ of that run's
  * own estimator — the magnitude leg silently weakens exactly where the sign leg
  * is weakest too, since unanimity across four signs happens by chance one run in
- * eight. Simulation puts the joint false-positive rate at four repetitions at
- * 1.07% against the calibrated six's 0.15%: seven times the noise for a shorter
- * job. Above the floor both legs move the safe way — the fixed threshold becomes
+ * eight. Simulated with the floor lifted, four repetitions carry a joint
+ * false-positive rate of 1.07% against the calibrated six's 0.15% — seven times
+ * the noise for a shorter job. (Historical figures: with the floor in place a
+ * four-repetition run produces no verdict at all, so the simulator now reports
+ * 0.00% there.) Above the floor both legs move the safe way — the fixed threshold becomes
  * MORE than 3σ of a longer run's tighter estimator — so only the downward
  * direction needs blocking.
  *
@@ -752,10 +754,13 @@ function pairedAgreement(base, head) {
  * a cold cache, and users experience the mean, not the best case.
  *
  * So this is computed alongside and reported when the two disagree. It is
- * deliberately NOT the verdict: its variance is much higher (a plain mean over
- * these samples measured sd 5.39% against the estimator's 1.79%), so promoting
- * it would trade a blind spot for a noisy bot. Reporting the disagreement costs
- * nothing and is the only signal that the blind spot was hit.
+ * deliberately NOT the verdict: its spread has never been measured, and the one
+ * neighbouring figure that gets quoted for it — 5.39% — is the calibrated sd of
+ * the MEDIAN, a different statistic. Promoting this cross-check on the strength
+ * of that number would be promoting it on a distribution nobody has measured, so
+ * it stays a cross-check gated by its own sign test (`pairedMeanAgreement`).
+ * Reporting the disagreement costs nothing and is the only signal that the
+ * minimum estimator's blind spot was hit.
  */
 function meanDeltaPct(base, head) {
   if (base === null) return null;

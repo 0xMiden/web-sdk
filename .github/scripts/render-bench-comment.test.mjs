@@ -33,8 +33,8 @@ const ctx = (overrides = {}) => ({
  * Must match the fixture's `reps` / `provesPerRep`: the shape is enforced.
  *
  * Six is the calibrated default and also the smallest count that exercises the
- * real verdict path — below four repetitions the renderer declines to call any
- * movement significant, because the paired sign test cannot discriminate there.
+ * real verdict path — below six the renderer declines to call any movement
+ * significant, because both legs of the verdict weaken together there.
  * A fixture with fewer would silently test only the unresolved branch.
  */
 const REPS = 6;
@@ -1578,7 +1578,7 @@ test("does not cry mean-only when the two statistics agree", () => {
 });
 
 test("will not call a movement significant on too few repetitions", () => {
-  // `reps` is artifact-authored, and the paired sign test's one-sided
+  // `reps` is artifact-authored, and the paired sign test's any-direction
   // false-positive rate is 1/2^(reps-1) — at one repetition it passes
   // unconditionally. So a fork wanting a verdict it had not earned only had to
   // send fewer repetitions: one rep, one prove, any magnitude, and the comment
@@ -1588,7 +1588,8 @@ test("will not call a movement significant on too few repetitions", () => {
   // test alone starts to bite. ±5.40% is 3σ of the estimator measured at six
   // repetitions and the estimator's spread shrinks with 1/√reps, so below six
   // the magnitude leg quietly weakens at the same time as the sign leg: at four
-  // the joint false-positive rate is 1.07% against six's 0.15%.
+  // the joint false-positive rate would be 1.07% against six's 0.15%, measured
+  // with the floor lifted so four can produce a verdict at all.
   for (const reps of [1, 2, 3, 4, 5]) {
     const body = renderComment(
       results({
