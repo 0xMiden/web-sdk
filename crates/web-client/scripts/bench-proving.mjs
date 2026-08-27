@@ -169,7 +169,11 @@ const budgetMinutesRaw = flag("--budget-minutes", null);
 // it was issued, and `1e308` overflowed the minutes-to-ms multiply to Infinity,
 // which switched the clamp off entirely while looking like a valid number.
 const BUDGET_MARGIN_MS = 90 * 1000;
-const BUDGET_FLOOR_MS = 10 * 1000;
+// The smallest window worth starting anything in. Above a normal prove
+// (single-digit seconds) on purpose: the point is to abort with a budget
+// diagnostic rather than to squeeze in one more attempt that a tight deadline
+// would then misreport as a hang.
+const BUDGET_FLOOR_MS = 60 * 1000;
 const MIN_BUDGET_MS = BUDGET_MARGIN_MS + BUDGET_FLOOR_MS;
 let BUDGET_MS = null;
 if (budgetMinutesRaw !== null) {
@@ -654,12 +658,32 @@ const startedAt = Date.now();
 const deadlineFor = (ceiling) => {
   if (BUDGET_MS === null) return ceiling;
   const left = BUDGET_MS - (Date.now() - startedAt) - BUDGET_MARGIN_MS;
-  // A floor rather than zero or a negative: past the budget the next call should
-  // fail fast with a named diagnostic, not be handed a deadline that has already
-  // expired (which would read as an instant, inexplicable timeout) and not be
-  // handed an unbounded one either. Validation above guarantees the budget is
-  // large enough that the floor is reachable inside it.
-  return Math.max(BUDGET_FLOOR_MS, Math.min(ceiling, left));
+  // Refuse rather than floor.
+  //
+  // This used to hand back `max(FLOOR, min(ceiling, left))`, which meant that
+  // once the budget was nearly gone every call got a deadline of exactly the
+  // floor. A normal prove here is single-digit seconds, so a floor at that
+  // magnitude aborted proves that would have finished well inside the runner's
+  // own cap — and reported it as `prove did not finish within 10000 ms —
+  // treating it as wedged`, which reads as a prover hang and sends the reader
+  // looking for a bug that does not exist. The run then threw, and the throw is
+  // upstream of the results write, so a full set of measurements was discarded
+  // on the strength of a deadline the budget had manufactured.
+  //
+  // Below the floor the honest statement is that there is no time left to try,
+  // and the error says so and names the budget. It costs the same run either way
+  // — the runner was going to kill the step — but the diagnostic now points at
+  // the budget instead of at the prover.
+  if (left < BUDGET_FLOOR_MS) {
+    throw new Error(
+      `the ${(BUDGET_MS / 60000).toFixed(0)}-minute step budget is exhausted ` +
+        `(${((Date.now() - startedAt) / 60000).toFixed(1)} min elapsed, ` +
+        `${(BUDGET_MARGIN_MS / 1000).toFixed(0)}s reserved for teardown), so there is not ` +
+        `enough left to attempt the next step; raise --budget-minutes and the ` +
+        `step's timeout-minutes together, or lower --reps / --proves`
+    );
+  }
+  return Math.min(ceiling, left);
 };
 
 // Opens a page, runs setup on it, and returns handles the driver can drive
@@ -933,34 +957,41 @@ try {
       observedThreads = sides.find(
         (side) => side.label === "head"
       ).rayonThreads;
-      // The prove order below indexes `sides`, so it has to be a stable
-      // [base, head] regardless of which was opened first, or the ABBA flip
-      // below would alternate twice and cancel itself.
-      sides.sort((a, b) =>
-        a.label === "base" ? -1 : b.label === "base" ? 1 : 0
+      // Enforced, not just documented. Reintroducing a canonicalising sort here
+      // is a silent statistical regression — the numbers stay plausible, the
+      // printed balance note keeps claiming the interleave is balanced because it
+      // asks bench-order.mjs rather than the loop, and only a recalibration would
+      // ever show it. Cheap enough to check every repetition.
+      const expectedOpenOrder = opensBaseFirst(rep)
+        ? ["base", "head"]
+        : ["head", "base"];
+      const actualOpenOrder = sides.map((side) => side.label);
+      const expectedHere = expectedOpenOrder.filter((label) =>
+        actualOpenOrder.includes(label)
       );
+      if (actualOpenOrder.join(",") !== expectedHere.join(",")) {
+        throw new Error(
+          `internal: sides must stay in open order for the interleave to compose ` +
+            `(expected ${expectedHere.join(",")}, got ${actualOpenOrder.join(",")})`
+        );
+      }
 
+      // `sides` STAYS in open order. bench-order.mjs's `proveOrder` documents
+      // that as its input contract and `orderBalance` simulates it that way, so
+      // canonicalising to [base, head] here strips the repetition parity out of
+      // the composition and leaves the prove index as the only alternation — base
+      // first iff `i` is even, the same way in every repetition. That is the
+      // fixed positional asymmetry the interleave exists to remove, and it is the
+      // one kind of error repetitions cannot average out. Nothing below indexes
+      // `sides` positionally; every consumer goes through `side.label`.
       const perSide = new Map(sides.map((side) => [side.label, []]));
       for (let i = 0; i < proves; i++) {
         // ABBA: even proves run in the open order, odd proves reversed. Keyed on
-        // `i` ALONE, deliberately.
-        //
-        // This was `(i + rep) % 2`, which silently cancelled the whole design:
-        // `sides` is already ordered by `rep % 2` above, so adding `rep` to the
-        // prove-level parity made both alternations key on the same bit and the
-        // effective order collapsed to a function of `i` only. Base went first
-        // iff `i` was even, in EVERY repetition. At the calibrated default
-        // (--reps 6 --proves 4, retaining proves 1..3) that is base first in one
-        // retained prove of three, the same way every repetition — a fixed
-        // positional asymmetry, which is the one kind of error repetitions
-        // cannot average out, and precisely what the interleave exists to
-        // remove. At --proves 2 base never went first at all.
-        //
-        // Keyed on `i`, the two alternations are independent again: the open
-        // order flips per repetition, the prove order flips per prove, and the
-        // retained proves balance whenever `reps × (proves - 1)` is even — which
-        // is exactly the condition the guard near the top of this file warns
-        // about, and was already the intended contract.
+        // `i` alone because `sides` is already in open order, which alternates
+        // per repetition — the composition carries both bits, and adding `rep`
+        // here would turn one of them twice. bench-order.mjs owns the rule and
+        // bench-order.test.mjs pins it; the warning near the top of this file
+        // counts what this produces rather than restating a parity formula.
         const order = proveOrder(sides, i);
         for (const side of order) {
           perSide.get(side.label).push(await side.prove());

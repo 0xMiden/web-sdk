@@ -1588,7 +1588,7 @@ test("will not call a movement significant on too few repetitions", () => {
   // test alone starts to bite. ±5.40% is 3σ of the estimator measured at six
   // repetitions and the estimator's spread shrinks with 1/√reps, so below six
   // the magnitude leg quietly weakens at the same time as the sign leg: at four
-  // the joint false-positive rate is 1.07% against six's 0.16%.
+  // the joint false-positive rate is 1.07% against six's 0.15%.
   for (const reps of [1, 2, 3, 4, 5]) {
     const body = renderComment(
       results({

@@ -133,3 +133,52 @@ test("a per-repetition lean alternates direction rather than accumulating", () =
     "the leans must cancel across the run"
   );
 });
+
+test("the interleave composes both alternations, and the open order carries one of them", () => {
+  // This is the property that broke twice, in opposite directions, and neither
+  // time did anything fail. Base-first must alternate BETWEEN repetitions at the
+  // calibrated default; if it is the same in every repetition the interleave has
+  // collapsed to a function of the prove index and become a fixed positional
+  // asymmetry — measurable as a bias, invisible as a test failure.
+  const { perRep } = orderBalance({ reps: 6, proves: 4 });
+  const counts = perRep.map((r) => r.baseFirst);
+  assert.deepEqual(counts, [2, 1, 2, 1, 2, 1]);
+  assert.ok(
+    new Set(counts).size > 1,
+    "base-first is identical in every repetition: the interleave collapsed"
+  );
+
+  // And why `proveOrder`'s input contract is load-bearing rather than stylistic.
+  // Feeding it a canonicalised [base, head] — which the driver used to do —
+  // strips the repetition parity out and produces exactly that collapse.
+  const collapsed = [];
+  for (let rep = 1; rep <= 6; rep++) {
+    let baseFirst = 0;
+    for (let i = 1; i < 4; i++) {
+      if (proveOrder(["base", "head"], i)[0] === "base") baseFirst += 1;
+    }
+    collapsed.push(baseFirst);
+  }
+  assert.deepEqual(
+    collapsed,
+    [1, 1, 1, 1, 1, 1],
+    "canonicalising the input should collapse the interleave; if it no longer does, proveOrder's contract changed"
+  );
+});
+
+test("every retained prove slot is accounted for in the balance", () => {
+  // `orderBalance` is what the printed note reports, so a drift between it and
+  // the driver's own loop makes the note lie about the bias. Pin the totals it
+  // claims against the arithmetic the driver's discards imply.
+  for (const reps of [1, 2, 3, 6, 7]) {
+    for (const proves of [1, 2, 3, 4, 5]) {
+      const { proveTotal, setupTotal } = orderBalance({ reps, proves });
+      assert.equal(
+        proveTotal,
+        reps * (proves - 1),
+        `reps=${reps} proves=${proves}: retained prove count`
+      );
+      assert.equal(setupTotal, reps, `reps=${reps}: retained setup count`);
+    }
+  }
+});

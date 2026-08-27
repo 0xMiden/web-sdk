@@ -268,21 +268,8 @@ Three further corrections, also measured:
   `reps × (proves − 1)` — and only when that product is even. Keep it even
   (the default 6 × 3 is); the script warns when it is not.
 
-  **The recorded floor was measured before this balanced at all.** The prove-level
-  flip was keyed on `(i + rep) % 2` while the open order was already keyed on
-  `rep % 2`, so both alternations turned on the same bit and cancelled exactly:
-  the effective order was a function of the prove index alone, and base went
-  first in one retained prove of three in *every* repetition rather than
-  alternating. At `--proves 2` base never went first at all. That is a fixed
-  positional asymmetry, not a balanced interleave, and it is the one kind of
-  error repetitions cannot average out. It is fixed now — the flip keys on the
-  prove index only, which makes the two alternations independent again — but the
-  1.79% σ below was measured under the old behaviour, so **the recalibration is
-  not just a transfer to CI hardware, it is a remeasurement of a changed
-  quantity.**
-
-  With that fixed, aggregate balance holds whenever `reps × (proves − 1)` is
-  even, which is what the guard warns about. Balance is still **aggregate**,
+  Aggregate balance holds whenever `reps × (proves − 1)` is even, which is what
+  the guard warns about. Balance is **aggregate**,
   which matters because a per-repetition statistic gates the verdict. The
   retained count per repetition is `proves − 1`, and a repetition is internally
   balanced only when that is **even**:

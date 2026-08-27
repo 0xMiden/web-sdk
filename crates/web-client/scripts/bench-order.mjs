@@ -1,25 +1,29 @@
 /**
  * The benchmark's interleave, and the only place that decides it.
  *
- * Split out of bench-proving.mjs for one reason: the driver decided the order in
- * one place and the "your configuration is imbalanced" warning asserted a parity
- * formula in another, and the two silently disagreed for the entire life of the
- * benchmark. The prove-level flip was keyed on `(i + rep) % 2` while the open
- * order was already keyed on `rep % 2`, so both alternations turned on the same
- * bit and cancelled: base went first in one retained prove of three in EVERY
- * repetition at the calibrated default, and at `--proves 2` never at all. The
- * warning meanwhile reported the configuration as balanced, because its formula
- * described the design rather than the code.
+ * Split out of bench-proving.mjs because the order was decided in one place and
+ * ASSERTED in another: the driver ran the interleave, while the "your
+ * configuration is imbalanced" warning restated a parity rule that was supposed
+ * to describe it. Nothing tied the two together, so the warning could go on
+ * reporting a configuration as balanced after a change to the interleave made it
+ * anything but. The warning now COUNTS the order this module produces, and a
+ * future change to the interleave either moves both together or fails
+ * bench-order.test.mjs.
  *
- * So the warning now COUNTS the order this module produces instead of restating
- * a parity rule about it. A future change to the interleave moves both together
- * or fails the test in bench-order.test.mjs.
+ * The order itself is unchanged by the split, and `bench-order.test.mjs` pins
+ * that: an earlier revision computed it as a canonical [base, head] flipped on
+ * `(i + rep) % 2`, and this one composes the alternating open order with a flip
+ * on `i % 2`. Those are the same function — both alternations still turn on both
+ * bits — which is the property the tests check rather than the formula.
  *
  * Two independent alternations, and independence is the whole point:
  *   - Which side's page is OPENED (and therefore set up) first alternates per
  *     repetition. Setup mints, proves a block and syncs; it is not timed, but it
  *     decides what the machine looks like when the timed proves start.
  *   - Which side PROVES first within a prove slot alternates per prove index.
+ *     Keyed on the prove index alone BECAUSE the open order it is applied to
+ *     already carries the repetition parity; adding `rep` here as well would
+ *     turn the same bit twice and cancel it.
  */
 
 /** Base's page is opened and set up first on even repetitions. */
@@ -28,8 +32,9 @@ export const opensBaseFirst = (rep) => rep % 2 === 0;
 /**
  * Odd prove slots run in reverse of the open order.
  *
- * Keyed on the prove index ALONE. Adding `rep` here is what cancelled the
- * repetition-level alternation, because the open order already carries it.
+ * Keyed on the prove index ALONE: the `sides` this is applied to are in open
+ * order, which already alternates per repetition, so the composition of the two
+ * carries both bits. Adding `rep` here as well would turn the same bit twice.
  */
 export const proveSlotFlipped = (proveIndex) => proveIndex % 2 === 1;
 

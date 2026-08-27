@@ -124,7 +124,7 @@ const CALIBRATED_PROVES_PER_REP = 3;
  * own estimator — the magnitude leg silently weakens exactly where the sign leg
  * is weakest too, since unanimity across four signs happens by chance one run in
  * eight. Simulation puts the joint false-positive rate at four repetitions at
- * 1.07% against the calibrated six's 0.16%: seven times the noise for a shorter
+ * 1.07% against the calibrated six's 0.15%: seven times the noise for a shorter
  * job. Above the floor both legs move the safe way — the fixed threshold becomes
  * MORE than 3σ of a longer run's tighter estimator — so only the downward
  * direction needs blocking.
