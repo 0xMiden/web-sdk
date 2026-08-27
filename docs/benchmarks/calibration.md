@@ -8,10 +8,22 @@ The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.
 
-**This has been done.** `THRESHOLD_PCT` is 5.4%, calibrated on
-`warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement* below. This
-page is how it was derived and how to redo it, which is required whenever the
-runner class, thread count, repetition count or workload changes.
+**This line is NOT calibrated.** `THRESHOLD_PCT` is 5.4%, but that number was
+measured on `main` — a different workload — so on this branch it is a
+placeholder and `THRESHOLD_PROVISIONAL` is `true`. Two parameters differ, and
+both feed the noise directly:
+
+| | `main` (0.15) | here (0.16) |
+|---|---|---|
+| `QUERY_POW_BITS` | 16 | **17** — double the expected grind |
+| prover hash | Blake3_256 | **Poseidon2**, since web-sdk#333 |
+
+The grind is the dominant residual noise source for this estimator, so a
+different grind parameter is a different distribution rather than a scaled one.
+
+**Calibrating this line is the open task.** Run the procedure below on this
+branch and set `THRESHOLD_PCT` and the `CALIBRATION` block in
+`.github/scripts/render-bench-comment.mjs` from the result.
 
 ## What a calibration run is
 
@@ -30,11 +42,13 @@ Locally:
 make bench-proving-calibrate
 ```
 
-## The measurement (2026-08-27)
+## The measurement on `main` (2026-08-27) — does not apply here
 
-30 dispatch runs of one build against a copy of itself on
-`warp-ubuntu-latest-x64-8x` at `reps: 6`. True delta is zero by construction, so
-every number below is measurement noise.
+Recorded for method and for comparison — **not** as this branch's floor. It was
+taken on `main`: 30 dispatch runs of one build against a copy of itself on
+`warp-ubuntu-latest-x64-8x` at `reps: 6`, proving with **Blake3** under
+`miden-air 0.23.5`, **`QUERY_POW_BITS = 16`**. True delta is zero by
+construction, so every number below is measurement noise — of that workload.
 
 | | |
 |---|---|
