@@ -128,14 +128,11 @@ and a fresh run on the current head is the fix.
 
 ## The bench did not run
 
-- **The pull request has no `bench` label, and this is the usual answer.** While
-  the noise floor is provisional the bot runs opt-in only, because a run costs
-  about three runner-hours and the comment declines to rule until the floor has
-  been measured on this runner class. Add the `bench` label to start a run on an
-  open pull request. Removing the label does not stop a run already going.
-  This gate disappears once the runner is calibrated — see
-  [calibration.md](calibration.md), and the `if:` block in `bench.yml` names the
-  two things to delete.
+- **Every changed file is on the ignore list.** `bench.yml` skips a run when
+  every path in the diff is documentation, `packages/react-sdk`,
+  `packages/vite-plugin`, a `node-sdk-*` package, or the reporter itself —
+  none of which can reach the WASM proving path. A PR touching one of those
+  *and* any other file still runs.
 - **The pull request is a draft.** Drafts are skipped: that is where pushes are
   most frequent and a proving number least useful. Marking it ready for review
   starts the run that was skipped.

@@ -138,9 +138,9 @@ integration-test-remote-prover-web-client: ## Run integration tests for the web 
 BENCH_ARGS ?=
 bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt dirs
 	# Not part of any CI gate that can block a merge: the `bench.yml` workflow
-	# runs this and reports the result as an informational comment. It is opt-in
-	# per PR via the `bench` label while the noise floor is still provisional —
-	# see the gate in bench.yml and docs/benchmarks/calibration.md.
+	# runs this on every non-draft PR and reports the result as an informational
+	# comment. The noise floor is still provisional — see
+	# docs/benchmarks/calibration.md.
 	#
 	# Compares two builds on one machine, interleaved. Point --base and --head
 	# at saved copies of `crates/web-client/dist/mt` built from the two revisions

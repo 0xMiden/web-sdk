@@ -87,8 +87,7 @@ jobs:
     name: Post benchmark comparison
     # The bench workflow also runs on non-PR events in future; only act on PRs.
     # `conclusion != 'skipped'` is load-bearing, not defensive. bench.yml skips its
-    # job whenever a PR has no `bench` label — the common case while the threshold
-    # is provisional — and on the title and body edits that share the `edited`
+    # job on draft PRs, and on the title and body edits that share the `edited`
     # event it needs for retargeting. A workflow whose only job is skipped COMPLETES
     # and still fires `workflow_run` — unlike a `paths-ignore` match, which never
     # creates a run at all. Without this, every PR title edit produced a reporter

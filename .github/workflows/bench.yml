@@ -24,9 +24,7 @@ on:
     # `ready_for_review` pairs with the draft filter on the job: a draft PR does
     # not spend a multi-hour 8-core run on every push, and marking it ready
     # triggers the run that was skipped.
-    # `labeled` pairs with the opt-in gate on the job: applying `bench` starts the
-    # run on a PR that is already open.
-    types: [opened, synchronize, reopened, edited, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
     # A multi-hour job on an 8-core runner that builds WASM twice is not worth
     # spending on a PR that cannot move a proving number. `paths-ignore` only
     # skips when EVERY changed file matches, so a PR touching docs and code
@@ -91,16 +89,15 @@ concurrency:
   # The trailing clause keys every run that the job below will SKIP into a group
   # of its own. Concurrency is resolved before the job `if` is evaluated, so a
   # run that is about to skip still cancels the group it lands in: editing a PR
-  # title, or adding any label other than `bench`, killed a bench that was hours
-  # into a three-hour run and then skipped itself, leaving the PR with no
-  # measurement and no replacement run coming. Pushing to a PR that had been
-  # converted to draft, or had its `bench` label removed, did the same.
+  # title killed a bench that was hours into a three-hour run and then skipped
+  # itself, leaving the PR with no measurement and no replacement run coming.
+  # Pushing to a PR that had been converted to draft did the same.
   #
   # The predicate is the negation of the job `if` and has to stay in step with
   # it. It ends in `|| ''` because an Actions ternary written `cond && 'x' || 'y'`
   # collapses to 'y' whenever 'x' is falsy — an empty string included — so the
   # suffix, not the empty case, has to be the truthy branch.
-  group: "${{ github.workflow }} @ ${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}${{ (github.event.pull_request.draft || (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'bench')) || (github.event.action == 'labeled' && github.event.label.name != 'bench') || (github.event.action == 'edited' && github.event.changes.base == null)) && format(' · skipped {0}', github.run_id) || '' }}"
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}${{ (github.event.pull_request.draft || (github.event.action == 'edited' && github.event.changes.base == null)) && format(' · skipped {0}', github.run_id) || '' }}"
   cancel-in-progress: true
 
 env:
@@ -130,31 +127,28 @@ jobs:
     # and a proving number is least useful. `!draft` is safe on workflow_dispatch
     # too, where `pull_request` is absent and the expression reads as null.
     #
-    # OPT-IN WHILE THE THRESHOLD IS PROVISIONAL. The noise floor in
-    # render-bench-comment.mjs was measured on a laptop, not on this runner class,
-    # so until it is remeasured the renderer reports movements as observations and
-    # withholds every ruling — see THRESHOLD_PROVISIONAL there. Running three
-    # runner-hours per push to produce something that declines to conclude is not
-    # a trade worth making by default, so a PR run needs the `bench` label.
+    # The noise floor in render-bench-comment.mjs was measured on a laptop, not on
+    # this runner class, so until it is remeasured the renderer reports movements
+    # as observations and withholds every ruling — see THRESHOLD_PROVISIONAL
+    # there. Calibrating on this runner (workflow_dispatch, calibrate: true) is
+    # therefore the first thing to do after this lands.
     #
-    # Measure the floor first, with `workflow_dispatch` (`calibrate: true`) and the
-    # procedure in docs/benchmarks/calibration.md. Once THRESHOLD_PCT comes from
-    # this runner and THRESHOLD_PROVISIONAL is false, drop the label clause and the
-    # `labeled` trigger type above, and the bot runs on every qualifying push.
+    # Measure the floor with `workflow_dispatch` (`calibrate: true`) and the
+    # procedure in docs/benchmarks/calibration.md, then set THRESHOLD_PCT from
+    # this runner and flip THRESHOLD_PROVISIONAL to false.
     #
-    # `labeled` fires for any label, so it is narrowed to the one that matters —
-    # otherwise every unrelated label on an already-labelled PR starts a run.
+    # Runs on every non-draft pull request. That is a deliberate product call:
+    # the bench runs in parallel with Test and Lint, so it never extends the
+    # critical path, and a benchmark nobody has to remember to opt into is the
+    # only kind that catches the regression nobody expected.
     #
-    # The label clause is scoped to `pull_request` because a dispatch has no PR:
-    # `github.event.pull_request.labels.*.name` filters null to an EMPTY ARRAY, so
-    # an unscoped `contains` reads false and would skip the calibration dispatch —
-    # the one run that has to work before any of this is worth enabling.
+    # It is not free — a cold-base push is roughly three core-hours on the 8x
+    # runner — so if that cost stops being worth paying, gate it here rather
+    # than anywhere else. The `edited` clause is the cheap half of that: a
+    # title or description edit re-fires `pull_request` and would otherwise
+    # rebuild both sides for a change that cannot move a proof.
     if: >-
       !github.event.pull_request.draft &&
-      (github.event_name != 'pull_request' ||
-       contains(github.event.pull_request.labels.*.name, 'bench')) &&
-      (github.event.action != 'labeled' ||
-       github.event.label.name == 'bench') &&
       (github.event.action != 'edited' ||
        github.event.changes.base != null)
     # Budget accounting. EVERY step that can take real time must be capped and

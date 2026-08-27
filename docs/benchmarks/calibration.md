@@ -69,8 +69,8 @@ below argues against in the tails.
 
 **One benchmark, and one run.** It is the rate for a single verdict, and with a
 single benchmark in the suite the family that dominates today is not benchmarks
-but *runs*: the bench fires on every push to a PR carrying the `bench` label — on
-every push once the label gate comes off — so the relevant question is
+but *runs*: the bench fires on every push to a non-draft PR, so the relevant
+question is
 how often a PR's whole life produces one spurious label. That number depends on
 which rate is multiplied, so take it from the conjunction rather than from the
 magnitude leg alone — see the table below, where ten independent pushes come to
@@ -646,10 +646,11 @@ place.
 
 ## Applying the result
 
-Until this is done the bot is opt-in: a pull-request run needs the `bench` label,
-because three runner-hours for a report that declines to rule is not a trade worth
-making by default. Calibrating is what removes that gate — the `if:` block in
-`bench.yml` names the two clauses to delete once `THRESHOLD_PROVISIONAL` is false.
+Until this is done every report carries a "provisional floor" banner and the
+renderer withholds rulings, reporting movements as observations instead. The bot
+still runs on every non-draft pull request, so a run costs about three
+runner-hours whether or not the floor has been measured — which is the argument
+for calibrating early rather than the argument for gating.
 
 **This has an owner and a deadline, or it does not happen.** Until the runner is
 calibrated the comment carries a "provisional floor" banner on every report,
