@@ -47,12 +47,15 @@ export const formatMinutes = (ms) => {
 };
 
 /**
- * How much slack a grant needs over the work's realistic duration before a
- * timeout under it counts as evidence about the process.
+ * How much slack a grant needs over the work's TYPICAL duration before a timeout
+ * under it counts as evidence about the process.
  *
  * At 2, work that normally takes 90s must have been given at least 180s before a
  * timeout is called a hang. Below that the deadline is close enough to the real
  * duration that ordinary variance explains the overrun, so it says nothing.
+ *
+ * The slack is sized for a CENTRAL estimate, so `expected` must be one. Feeding it
+ * an extremum double-counts the slack — see `expectedFrom`.
  */
 export const STARVATION_FACTOR = 2;
 
@@ -69,9 +72,10 @@ export const STARVATION_FACTOR = 2;
  * loaded 8-core runner is single-digit seconds, and setup mints, proves a block
  * and syncs. Anything past a ceiling is not slow, it is stuck.
  *
- * Expected durations are estimates. They decide how a timeout is LABELLED, never
- * how long anything is allowed, and for setup the producer refines this from its
- * own measurements as the run proceeds — see `observedSetupExpectation`.
+ * Expected durations are seeds, used until the run has measured the work itself.
+ * They decide how a timeout is LABELLED, never how long anything is allowed. For
+ * setup the producer refines the number from its own measurements as the run
+ * proceeds — see `expectedFrom`.
  */
 export const SETUP_WORK = { ceiling: 10 * 60 * 1000, expected: 90 * 1000 };
 export const PROVE_WORK = { ceiling: 5 * 60 * 1000, expected: 5 * 1000 };
@@ -80,6 +84,78 @@ export const PROVE_WORK = { ceiling: 5 * 60 * 1000, expected: 5 * 1000 };
 // the ceiling, so this call only ever refuses outright or gets its full grant, and
 // is therefore never clamped and never starved.
 export const SETTLE_WORK = { ceiling: 30 * 1000, expected: 2 * 1000 };
+
+/**
+ * The floor and margin the producer runs its budget with.
+ *
+ * Here rather than in the producer because `BUDGET_FLOOR_MS >= SETTLE_WORK.ceiling`
+ * is load-bearing — it is what makes a settle grant either refused outright or
+ * whole, hence never clamped and never starved. Lower the floor below the settle
+ * ceiling and a budget-shortened settle timeout becomes a plain `Error`, which the
+ * producer records as a page fault and reports against the prover. A test asserts
+ * the relation, which it could not do while these were producer-local copies.
+ */
+export const BUDGET_FLOOR_MS = 60 * 1000;
+export const BUDGET_MARGIN_MS = 90 * 1000;
+
+/**
+ * The duration a timeout should be judged against, given what the run has already
+ * measured for this work.
+ *
+ * `work.expected` is a guess made before the runner was ever seen, and on an
+ * uncalibrated machine it can be wrong in either direction. Wrong low, a genuinely
+ * slow setup gets its timeout called a hang and a whole run of measurements is
+ * discarded. So once the run has timed the work, prefer the measurements.
+ *
+ * MUST be a central estimate, not an extremum. `STARVATION_FACTOR`'s slack is
+ * sized for what the work NORMALLY takes, so passing the slowest sample spends the
+ * slack twice: one slow-but-completing setup would raise the threshold to twice
+ * that outlier for every later grant, and a real deadlock underneath it would be
+ * reported as the budget running out — with the run kept and published, and the
+ * comment advising the reader to raise `timeout-minutes`. A median is immune to a
+ * single bad sample, and measurably so: across a sweep of deadlock scenarios it
+ * misreports 1.2% where the maximum misreports 43.2%.
+ *
+ * `work.expected` stays a FLOOR, so a fast machine cannot shrink the threshold to
+ * the point where ordinary variance reads as a hang.
+ *
+ * Clamped to `ceiling / STARVATION_FACTOR`, which keeps `grantDeadline`'s
+ * invariant satisfiable and is why that guard cannot fire from this path. The
+ * clamp has a consequence worth knowing: once the measured median passes
+ * `ceiling / STARVATION_FACTOR`, only a full-ceiling timeout can still be called a
+ * hang. That is the correct reading of a machine whose setup approaches its own
+ * ceiling, but it does mean hang detection narrows as the machine slows.
+ *
+ * @param {number[]} durations Measured durations, in ms. Empty before the first
+ *   piece of work completes, which is why `work.expected` exists.
+ * @param {{ceiling: number, expected: number}} work
+ * @returns {number} ms
+ */
+export function expectedFrom(durations, work) {
+  if (!Array.isArray(durations)) {
+    throw new TypeError(`durations must be an array, got ${durations}`);
+  }
+  for (const value of durations) {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new TypeError(
+        `every measured duration must be a finite positive number of ms, got ${value}`
+      );
+    }
+  }
+
+  const sorted = [...durations].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  const median = sorted.length
+    ? sorted.length % 2
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2
+    : 0;
+
+  return Math.min(
+    Math.max(work.expected, median),
+    work.ceiling / STARVATION_FACTOR
+  );
+}
 
 /**
  * Decide what deadline `ceiling` may have, given `remaining` ms of usable budget.
@@ -222,17 +298,14 @@ export function createDeadlineFor({
  * `starved` — NOT `clamped` — decides which error a timeout raises, and the
  * distinction is the whole reason both flags exist.
  *
- * `clamped` says the budget picked the number rather than the ceiling. That is a
- * fact about bookkeeping, not about the process, and branching on it here was
- * wrong in a way worth recording: a prove's ceiling is five minutes for work that
- * takes under two seconds, so EVERY clamped prove grant is at least twelve times
- * what the prove needs. So a genuinely deadlocked prover, timing out under a
- * 294-second deadline, was reported as the budget running out — told the reader in
- * as many words that it was "not a hang" — and the run was KEPT, publishing
- * measurements taken around a deadlock. That is the earlier defect with its sign
- * flipped: it stopped losing good numbers and started keeping bad ones.
+ * Do not branch on `clamped` here. It says the budget picked the number rather
+ * than the ceiling, which is a fact about bookkeeping and not about the process: a
+ * prove's ceiling is five minutes for work taking under two seconds, so every
+ * clamped prove grant is at least twelve times what the prove needs, and reading
+ * one as a shortfall reports a deadlocked prover as the budget running out and
+ * KEEPS the run.
  *
- * `starved` says the grant was short against the work's realistic duration, which
+ * `starved` says the grant was short against what the work typically takes, which
  * is the question that decides what a timeout means:
  *
  *   - Not starved: the work had comfortably more time than it needs, so a timeout

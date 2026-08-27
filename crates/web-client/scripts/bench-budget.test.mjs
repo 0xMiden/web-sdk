@@ -13,9 +13,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BUDGET_FLOOR_MS,
   BudgetExhaustedError,
   createDeadlineFor,
   evaluateWithDeadline,
+  expectedFrom,
   formatMinutes,
   grantDeadline,
   PROVE_WORK,
@@ -558,4 +560,169 @@ test("the refusal names the real budget, not a rounded one", () => {
       return true;
     }
   );
+});
+
+// ---------------------------------------------------------------------------
+// expectedFrom — the duration a timeout is judged against.
+//
+// This rule decides whether a timeout discards a run's measurements or keeps
+// them, and it previously lived in the producer, which is a top-level script
+// nothing can import. So it had no coverage at all: reverting it to the hardcoded
+// estimate, swapping its statistic, or deleting its clamp each left the suite
+// green. These tests exist so none of that is true again.
+// ---------------------------------------------------------------------------
+
+test("with nothing measured yet, the seed estimate is used", () => {
+  // The first setup of a run has no measurements to draw on. Must not degenerate
+  // to -Infinity (an empty `Math.max`) or 0 (an empty median), either of which
+  // makes every subsequent timeout a hang.
+  const got = expectedFrom([], SETUP_WORK);
+  assert.equal(got, SETUP_WORK.expected);
+  assert.ok(Number.isFinite(got) && got > 0);
+});
+
+test("measurements override the seed once the run has them", () => {
+  // A machine slower than the guess. The whole point of reading measurements: on
+  // the seed alone a legitimately slow setup has its timeout called a hang.
+  assert.equal(expectedFrom([200_000, 200_000, 200_000], SETUP_WORK), 200_000);
+});
+
+test("the seed is a floor, so a fast machine cannot shrink the threshold", () => {
+  // Otherwise ordinary variance on a quick runner starts reading as a hang.
+  assert.equal(
+    expectedFrom([1_000, 1_200, 900], SETUP_WORK),
+    SETUP_WORK.expected
+  );
+});
+
+// The defect this rule was rewritten for. `STARVATION_FACTOR`'s slack is sized for
+// a central estimate, so an extremum spends it twice: one slow-but-completing
+// sample would raise the threshold to twice that outlier for every later grant,
+// and a real deadlock underneath it gets reported as the budget running out — run
+// kept, measurements published, and the comment advising a bigger timeout.
+test("one slow sample does not move the threshold", () => {
+  const clean = Array(11).fill(150_000);
+  const withOutlier = [...clean];
+  withOutlier[2] = 310_000;
+  assert.equal(
+    expectedFrom(withOutlier, SETUP_WORK),
+    expectedFrom(clean, SETUP_WORK),
+    "a single outlier changed the expectation"
+  );
+});
+
+test("a deadlock stays a hang when a slow sample is present", () => {
+  // The consequence of the property above, stated at the level that matters.
+  const durations = Array(11).fill(150_000);
+  durations[2] = 310_000;
+  const got = grantDeadline({
+    ceiling: SETUP_WORK.ceiling,
+    expected: expectedFrom(durations, SETUP_WORK),
+    remaining: 560_000,
+    floorMs: BUDGET_FLOOR_MS,
+  });
+  assert.equal(
+    got.starved,
+    false,
+    "a 560s grant for 150s of work was called starved, so a deadlock under it " +
+      "would be reported as the budget running out and the run kept"
+  );
+});
+
+test("a majority of slow samples does move the threshold", () => {
+  // The flip side: this must track a genuinely slow machine, not just ignore
+  // outliers. Six of eleven at 250s is the machine, not a transient.
+  const durations = Array(11).fill(150_000);
+  for (let i = 0; i < 6; i++) durations[i] = 250_000;
+  assert.equal(expectedFrom(durations, SETUP_WORK), 250_000);
+});
+
+test("the expectation never leaves room for grantDeadline to refuse the profile", () => {
+  // The clamp is the only reason the `expected * STARVATION_FACTOR > ceiling`
+  // guard cannot fire from this path, and a RangeError mid-run costs a completed
+  // run its artifact. Swept well past the ceiling.
+  for (const slowest of [
+    1,
+    SETUP_WORK.expected,
+    299_000,
+    300_000,
+    301_000,
+    599_000,
+    SETUP_WORK.ceiling,
+    SETUP_WORK.ceiling * 10,
+    Number.MAX_SAFE_INTEGER,
+  ]) {
+    const expected = expectedFrom(Array(5).fill(slowest), SETUP_WORK);
+    assert.ok(
+      expected * STARVATION_FACTOR <= SETUP_WORK.ceiling,
+      `slowest=${slowest} produced expected=${expected}, which grantDeadline refuses`
+    );
+    assert.doesNotThrow(() =>
+      grantDeadline({
+        ceiling: SETUP_WORK.ceiling,
+        expected,
+        remaining: SETUP_WORK.ceiling,
+        floorMs: BUDGET_FLOOR_MS,
+      })
+    );
+  }
+});
+
+test("a full-ceiling grant is a hang no matter what was measured", () => {
+  // The backstop. However slow the machine looks, a timeout at the work's own
+  // ceiling must remain a hang, or nothing can ever be diagnosed as stuck.
+  for (const slowest of [1_000, 150_000, 300_000, 900_000]) {
+    const got = grantDeadline({
+      ceiling: SETUP_WORK.ceiling,
+      expected: expectedFrom(Array(9).fill(slowest), SETUP_WORK),
+      remaining: 10 * 60 * 60 * 1000,
+      floorMs: BUDGET_FLOOR_MS,
+    });
+    assert.equal(got.clamped, false);
+    assert.equal(
+      got.starved,
+      false,
+      `slowest=${slowest} made the full ceiling starved`
+    );
+  }
+});
+
+test("a corrupt measurement is refused rather than silently skewing the threshold", () => {
+  for (const bad of [NaN, Infinity, -1, 0, "90000", null, undefined]) {
+    assert.throws(
+      () => expectedFrom([90_000, bad], SETUP_WORK),
+      TypeError,
+      `accepted ${bad}`
+    );
+  }
+  assert.throws(() => expectedFrom(null, SETUP_WORK), TypeError);
+});
+
+test("the budget floor leaves the settle barrier whole", () => {
+  // bench-budget.mjs documents the settle profile as never clamped and never
+  // starved, and that rests entirely on the floor being at least its ceiling.
+  // Below it, a budget-shortened settle timeout becomes a plain Error, which the
+  // producer records as a page fault and reports against the prover.
+  assert.ok(
+    BUDGET_FLOOR_MS >= SETTLE_WORK.ceiling,
+    `floor ${BUDGET_FLOOR_MS} is below the settle ceiling ${SETTLE_WORK.ceiling}`
+  );
+  for (let remaining = 0; remaining <= 40_000; remaining += 250) {
+    const got = grantDeadline({
+      ...SETTLE_WORK,
+      remaining,
+      floorMs: BUDGET_FLOOR_MS,
+    });
+    if (got.refused) continue;
+    assert.equal(
+      got.clamped,
+      false,
+      `settle was clamped at remaining=${remaining}`
+    );
+    assert.equal(
+      got.starved,
+      false,
+      `settle was starved at remaining=${remaining}`
+    );
+  }
 });

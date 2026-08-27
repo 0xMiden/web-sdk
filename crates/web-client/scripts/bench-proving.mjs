@@ -57,14 +57,16 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 
 import {
+  BUDGET_FLOOR_MS,
+  BUDGET_MARGIN_MS,
   BudgetExhaustedError,
   createDeadlineFor,
   evaluateWithDeadline,
+  expectedFrom,
   formatMinutes,
   PROVE_WORK,
   SETTLE_WORK,
   SETUP_WORK,
-  STARVATION_FACTOR,
 } from "./bench-budget.mjs";
 import {
   balancedRetainedReps,
@@ -205,12 +207,13 @@ const budgetMinutesRaw = flag("--budget-minutes", null);
 // against a 10 s floor, so every deadline was already past the budget the moment
 // it was issued, and `1e308` overflowed the minutes-to-ms multiply to Infinity,
 // which switched the clamp off entirely while looking like a valid number.
-const BUDGET_MARGIN_MS = 90 * 1000;
-// The smallest window worth starting anything in. Above a normal prove
-// (single-digit seconds) on purpose: the point is to abort with a budget
-// diagnostic rather than to squeeze in one more attempt that a tight deadline
-// would then misreport as a hang.
-const BUDGET_FLOOR_MS = 60 * 1000;
+// BUDGET_MARGIN_MS and BUDGET_FLOOR_MS come from bench-budget.mjs. The floor is
+// above a normal prove (single-digit seconds) on purpose: the point is to abort
+// with a budget diagnostic rather than squeeze in one more attempt that a tight
+// deadline would then misreport as a hang. It also has to stay at or above the
+// settle ceiling, which is why it lives next to the work profiles and is asserted
+// there rather than here.
+//
 // Working time on top of the two reserves. Without it the accepted minimum was
 // the mathematical boundary — margin plus floor — where the budget is satisfied
 // at t=0 and refused one millisecond later, so the smallest "valid" budget could
@@ -664,40 +667,10 @@ const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
  * context close in the caller's teardown takes the page down with it.
  */
 // Every setup's measured duration. Two uses, and the second is the important one:
-// it feeds the budget report at the end, and it is what `observedSetupExpectation`
-// reads so the timeout classification rests on this machine's real setup cost
-// instead of an estimate.
+// it feeds the budget report at the end, and it is what `expectedFrom` reads so
+// the timeout classification rests on this machine's real setup cost rather than
+// on an estimate made before the runner was ever seen.
 const setupDurations = [];
-
-/**
- * What a setup on THIS runner should be expected to take.
- *
- * The classification in evaluateWithDeadline asks whether a grant was short
- * against the work's real duration, and answering it from a hardcoded 90s was the
- * same category error as the `clamped` version it replaced, one level out: the
- * constant is an estimate nobody had measured, and wherever the real cost exceeds
- * `90s × STARVATION_FACTOR` a grant between the two reports `starved: false`. A
- * healthy run then has a legitimately slow setup called a hang, which discards
- * every repetition already measured and posts a false accusation at the prover —
- * across a plausible 60–600s range that is most of the range, and raising the
- * budget relocates the band rather than closing it.
- *
- * So read the measurements instead. By the time the budget is tight enough for a
- * grant to be clamped, most of the run's setups have already been timed, and the
- * slowest of them is a far better answer than any constant. The estimate remains
- * the floor, for the first setup of a run, when nothing has been measured yet —
- * harmless, because early grants are the full ceiling anyway.
- *
- * Clamped to `ceiling / STARVATION_FACTOR` to keep grantDeadline's invariant
- * satisfiable. A setup genuinely approaching its own ceiling means every clamped
- * grant is barely more than the work needs, so treating those as budget stops and
- * only a full-ceiling timeout as a hang is the correct reading of that regime.
- */
-const observedSetupExpectation = () =>
-  Math.min(
-    Math.max(SETUP_WORK.expected, ...setupDurations),
-    SETUP_WORK.ceiling / STARVATION_FACTOR
-  );
 
 // The ceilings are useless on their own late in a run. The step that runs this is
 // capped (BENCH_STEP_BUDGET_MINUTES in bench.yml), and a setup that wedges with
@@ -812,7 +785,10 @@ const openSide = async (browser, url, label, repIndex) => {
       setupInPage,
       { threads },
       {
-        ...deadlineFor(SETUP_WORK.ceiling, observedSetupExpectation()),
+        ...deadlineFor(
+          SETUP_WORK.ceiling,
+          expectedFrom(setupDurations, SETUP_WORK)
+        ),
         what: `${label} rep ${repIndex} setup`,
       }
     );
@@ -878,13 +854,15 @@ const openSide = async (browser, url, label, repIndex) => {
           // A budget error means the clock ran out; burying it also lost the
           // marker the driver uses to keep the repetitions already measured.
           //
-          // A TypeError from this call is the deadline-shape guard firing, which
-          // is a bug in `deadlineFor`'s return value and not something the page
-          // did. The other two call sites let it propagate; this one has to say so
-          // explicitly because its catch is broad.
+          // A TypeError or RangeError from this call is one of the budget module's
+          // own validation guards firing — a malformed deadline, or a work profile
+          // that leaves no room to detect a hang. Both are producer bugs, not
+          // something the page did. The other two call sites let them propagate;
+          // this one has to say so explicitly because its catch is broad.
           if (
             error instanceof BudgetExhaustedError ||
-            error instanceof TypeError
+            error instanceof TypeError ||
+            error instanceof RangeError
           ) {
             throw error;
           }

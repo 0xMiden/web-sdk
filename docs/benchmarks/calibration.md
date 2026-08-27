@@ -546,13 +546,29 @@ below.
 Those same measurements are also read back during the run. Classifying a timeout
 needs to know what a setup normally costs — a grant far above that means a timeout
 is a hang, a grant close to it means the clock simply ran out — and answering that
-from the 90s estimate was wrong in the expensive direction: wherever the real cost
-exceeds `90s × 2`, a healthy run with a legitimately slow setup had its timeout
-called a hang, which discards every repetition already measured. So the producer
-takes the slowest setup it has actually timed, falling back to the estimate only
-for the first setup of a run, when nothing has been measured yet. Resizing the
-budget does not affect this and does not need to: the classification follows the
-machine on its own.
+from the 90s estimate is wrong in the expensive direction: wherever the real cost
+exceeds `90s × 2`, a healthy run with a legitimately slow setup has its timeout
+called a hang, and every repetition already measured is discarded. So the producer
+uses the **median** of the setups it has actually timed, floored at the estimate,
+falling back to the estimate alone for the first setup of a run. The classification
+follows the machine, and resizing the budget neither affects that nor needs to.
+
+The median matters more than it sounds. The slack factor that turns an expected
+duration into a starvation threshold is sized for what the work *normally* takes,
+so handing it the slowest sample spends that slack twice: one slow-but-completing
+setup would set the threshold at twice that outlier for every later grant, and a
+real deadlock underneath it would be reported as the clock running out — keeping
+the run, publishing measurements taken around a hang, and advising the reader to
+raise a timeout that was never the problem. Across a sweep of deadlock scenarios
+the maximum misreports 43.2% of them and the median 1.2%.
+
+One consequence to know about. The expectation is clamped at half the work's
+ceiling, so that a slow machine can never push the threshold past the point where
+a hang is detectable at all. Above a five-minute measured median, that clamp binds
+and only a timeout at the full ten-minute ceiling is still called a hang. That is
+the right reading of a machine whose setup approaches its own ceiling, but hang
+detection does narrow as the machine slows, and a runner that slow is a signal in
+its own right.
 
 Sizing from a measurement costs nothing once the run exists; sizing from
 an estimate is how the 2× setup-count error survived unnoticed in the first
