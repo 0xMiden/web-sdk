@@ -1169,13 +1169,34 @@ function verdictPreconditions({
   // legs weaken the same way and `provesPerRep` is artifact-authored too, so a
   // one-rep-one-prove artifact was the cheapest route to a confident verdict.
   //
-  // Only downward. More proves lower the variance of each repetition's minimum,
-  // which makes the fixed floor MORE than 3σ — conservative, so it still holds.
+  // BOTH directions, and the upward half is not symmetry for its own sake. The
+  // claim it replaces — that more proves lower the variance of each repetition's
+  // minimum, so the fixed floor stays conservative — holds for the repetition
+  // axis, where the mean of n minima tightens as 1/n. It does not hold on this
+  // axis. The variance of a minimum of k draws is not monotonic in k when the
+  // interference is bimodal, which is what a shared CI runner produces: the
+  // minimum is near the clean mode with probability 1-(1-p)^k, so as k grows that
+  // probability sweeps through ½ and the statistic's spread PEAKS there rather
+  // than shrinking. Simulated against the full pipeline under a null — both sides
+  // drawn from one distribution, 1% clean mode — the false-verdict rate rose with
+  // k rather than falling, reaching several percent against an advertised 0.15%.
+  //
+  // `provesPerRep` is artifact-authored, so this is also the cheapest route to a
+  // confident verdict: raise `--proves` and the floor stops meaning what it says
+  // while still being applied. The floor was measured at one prove count and its
+  // applicability at any other is unverified, so any other count is uncalibrated
+  // and the run reports without ruling.
   if (
     Number.isInteger(provesPerRep) &&
-    provesPerRep < CALIBRATED_PROVES_PER_REP
+    provesPerRep !== CALIBRATED_PROVES_PER_REP
   ) {
-    return { ok: false, blocked: "tooFewProves" };
+    return {
+      ok: false,
+      blocked:
+        provesPerRep < CALIBRATED_PROVES_PER_REP
+          ? "tooFewProves"
+          : "tooManyProves",
+    };
   }
   return { ok: true };
 }
@@ -1444,7 +1465,15 @@ function buildVerdict(rows) {
   // below are taken from this rather than from whichever list owns the heading —
   // counting only that list dropped rows in the other two, and the point of the
   // suffix is that nothing past the floor is invisible from the heading.
-  const clearedFloor = moved.length + contradicted.length + unresolved.length;
+  //
+  // The mean-only channels are in the count too, because the promise is about
+  // NOTES, not about the floor: a mean movement large enough to earn a note is
+  // exactly as invisible from a heading that omits it. Counting them only inside
+  // the branch that headlines them left a clean regression headlined alone above
+  // a second benchmark's mean note.
+  const meanNoted = rows.filter((r) => r.meanOnly || r.meanUnruled).length;
+  const clearedFloor =
+    moved.length + contradicted.length + unresolved.length + meanNoted;
   const more = (owned) =>
     clearedFloor - owned > 0 ? ` (+${clearedFloor - owned} more)` : "";
 
@@ -1498,20 +1527,12 @@ function buildVerdict(rows) {
     // above a note reporting a +8% mean slowdown, in the opposite direction and
     // an order of magnitude larger. Whichever of the two a reader believed, the
     // comment had already contradicted itself.
-    // Across BOTH mean channels, for the same reason `more` above spans all
-    // three floor states: the suffix promises that nothing carrying a note is
-    // invisible from the heading. Counting each channel only within itself let a
-    // run with one corroborated and one uncorroborated mean movement headline
-    // the first with no suffix, over two notes.
-    const meanNoted = rows.filter((r) => r.meanOnly || r.meanUnruled).length;
-    const meanMore = (owned) =>
-      meanNoted - owned > 0 ? ` (+${meanNoted - owned} more)` : "";
     const meanFlagged = rows
       .filter((r) => r.meanOnly)
       .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
     if (meanFlagged.length > 0) {
       const leader = meanFlagged[0];
-      const rest = meanMore(1);
+      const rest = more(1);
       const direction = (
         LOWER_IS_BETTER ? leader.meanPct > 0 : leader.meanPct < 0
       )
@@ -1530,7 +1551,7 @@ function buildVerdict(rows) {
       .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
     if (meanUnruled.length > 0) {
       const leader = meanUnruled[0];
-      const rest = meanMore(1);
+      const rest = more(1);
       // Which of the two reasons, because they are not the same claim and the
       // run-level one is false for the other. An unblocked, full-length run whose
       // mean simply is not corroborated headlined "this run cannot be ruled on"
@@ -2055,6 +2076,17 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
     // Same blank-line trap as above.
     "",
     `- The timed interval is the \`proveTransaction\` call on a client constructed without a web worker. Prover construction, transaction execution, the faucet draw and the production worker round-trip are outside it, so a change confined to any of those does not move this number.`,
+    // Stated once, because the run configuration in the Method row above and in
+    // the bullet below is read as this bot's own account of what it did, and it
+    // is not: the benchmark job runs from the pull request's own copy of the
+    // workflow, so the runner label, profile, variant, thread count and both
+    // sample counts all reach here from a fork-authored artifact. Nothing they
+    // say can promote a movement to a verdict — the threshold, the direction and
+    // every statistic are recomputed here from the raw samples, and the
+    // calibration gates compare these counts against constants pinned in this
+    // file rather than trusting them. They are still worth marking, because a
+    // reader takes an unqualified \`release\` or a named runner as verified.
+    `- The run configuration below — runner, profile, variant, thread count, repetition and prove counts — is **reported by the benchmark job**, which runs from this pull request's own code. It describes what that job says it did. Every figure and every verdict above is recomputed here from the raw samples.`,
     `- Each benchmark keeps **${results.reps} ${plural(results.reps, "rep")} × ${results.provesPerRep} warm ${plural(results.provesPerRep, "prove")}** on \`${results.runner}\` (${results.threads} ${plural(results.threads, "thread")}, \`${results.profile}\` / \`${results.variant}\`). One extra repetition and the first prove of every page run first and are discarded.`,
     // With one retained prove per repetition there is no minimum to take, so
     // the interference-filtering half of the rationale describes something that
@@ -2077,7 +2109,7 @@ function buildMethodologySection(results, ctx, rows, unit, includeSamples) {
         // which of the two it is doing. It keeps applying the cutoff, because a
         // fixed magnitude gate is still better than calling every movement
         // significant; it just cannot claim a confidence level behind it.
-        `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. Above those counts the ±${formatPct(THRESHOLD_PCT)} cutoff is still applied and is conservative, since a longer run's estimator is tighter; below either of them no verdict is published at all.`,
+        `- This run does not use the ${CALIBRATED_REPS} × ${CALIBRATED_PROVES_PER_REP} the estimator's 1.79% standard deviation was measured at, so that figure does not apply here and the spread of these numbers is unknown. More REPETITIONS tighten the estimator, so the ±${formatPct(THRESHOLD_PCT)} cutoff stays conservative above ${CALIBRATED_REPS} and is still applied. More PROVES do not: the spread of a per-repetition minimum is not monotonic in how many draws it is taken over, so any prove count other than ${CALIBRATED_PROVES_PER_REP} is uncalibrated and no verdict is published from it.`,
     ...(compared
       ? [
           `- A movement is only called significant when it clears the noise floor **and** no repetition's paired difference contradicts the direction, with a majority of repetitions positively agreeing. Base and head run interleaved within a repetition, so the pairs saw the same machine; a movement whose repetitions disagree is reported as unresolved rather than as a result. Runs shorter than ${MIN_REPS_FOR_SIGN_TEST} repetitions are never called significant — the floor is calibrated at that count and does not transfer below it.`,
@@ -2196,9 +2228,13 @@ function buildMeanUnruledNote(rows) {
         `The mean's own repetitions do not agree on this movement, so it is reported`;
   return [
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean of every prove.** ${codeSpan(leader.name)} is`,
-    // "within the floor" only when it is. A blocked run reaches this note with a
-    // headline that DID clear the floor, and the phrase was false there.
-    `> ${formatSignedPct(leader.deltaPct)} on the reported figure — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
+    // Unconditional, because `meanUnruled` implies `meanLarge` implies
+    // `!clearsFloor`: the headline is always within the floor on a row that
+    // reaches this note. Guarding it on `clearsFloor` read as if the other case
+    // existed, and deleting the guard took the phrase with it — leaving this
+    // note saying "±0.00% on the reported figure" where its sibling
+    // `buildMeanOnlyNote` says "within the floor" for the same situation.
+    `> ${formatSignedPct(leader.deltaPct)} on the reported figure — within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of all proves.`,
     `> ${why}`,
     `> so it is not lost, not as a finding. A movement that misses every repetition's fastest prove looks`,
     `> like this — a pause, a lock, a retry, a cold cache — and so does noise on a short run. Read the raw`,
@@ -2325,6 +2361,7 @@ function blockReason(row) {
       oddReps:
         "it has an odd repetition count, which leaves the setup order lopsided by a fixed amount",
       tooFewProves: `it retained fewer than ${CALIBRATED_PROVES_PER_REP} proves per repetition, which the floor was not calibrated for`,
+      tooManyProves: `it retained more than ${CALIBRATED_PROVES_PER_REP} proves per repetition, and the floor was calibrated at ${CALIBRATED_PROVES_PER_REP} — more proves do not make it conservative, because the spread of a minimum is not monotonic in how many draws it is taken over`,
       calibration:
         "it is a calibration run, where both sides are the same build",
     }[row.agreement.blocked] ?? null
@@ -2332,13 +2369,17 @@ function blockReason(row) {
 }
 
 function buildUnruledBelowFloorNote(rows) {
-  // `!meanContradicts`, matching `buildUnresolvedNote` and `buildVerdict`. This
-  // guard means "the unresolved note will cover this row", and round 7 stopped
-  // that being true for a contradicted row without updating it here — so a
-  // blocked run whose estimators disagreed got neither note and its reason for
-  // not ruling went unstated. The contradiction note now carries that reason
-  // itself, so this stays out of its way.
-  if (rows.some((r) => r.unresolved && !r.meanContradicts)) return "";
+  // Keyed on the note's own premise — that nothing cleared the floor — and NOT
+  // on which other note owns the row. `clearsFloor` partitions into `beyond` and
+  // `unresolved`, so this is exactly "something moved past the floor".
+  //
+  // Excluding contradicted rows here instead published "Nothing moved past the
+  // floor" directly beneath a heading reporting -13.00%, because a contradicted
+  // row on a blocked run is always `unresolved`. The reason this guard was
+  // reached for was a contradicted row losing the run's reason for not ruling —
+  // `buildMeanContradictionNote` states that itself now, run-scoped, so nothing
+  // needs this note to cover rows it says nothing about.
+  if (rows.some((r) => r.beyond || r.unresolved)) return "";
   // Any blocked row will do, contradicted or not: both halves of the reason are
   // run-level, and `normalizeSamples` requires every benchmark to carry exactly
   // `reps` groups, so `tooShort` and its count are the same for all of them.
@@ -2348,11 +2389,21 @@ function buildUnruledBelowFloorNote(rows) {
   if (!blockedRow) return "";
   const reason = blockReason(blockedRow);
   if (!reason) return "";
+  // Scoped to the reported figure when a mean channel fired, and the closing
+  // sentence dropped there. Unscoped, this note sat above a `meanUnruled` note
+  // reporting +44% and told the reader the run "did not detect a movement" —
+  // and the heading, which IS scoped, agreed with the other note rather than
+  // with this one.
+  const meanMoved = rows.some((r) => r.meanOnly || r.meanUnruled);
   return [
-    `> **Nothing moved past the floor, but this run does not rule that out.** No verdict is issued`,
+    `> **Nothing moved past the floor${meanMoved ? " on the reported figure" : ""}, but this run does not rule that out.** No verdict is issued`,
     `> because ${reason}.`,
-    `> Read the figures below as measurements. "Within the floor" here means this run did not detect a`,
-    `> movement, not that there is none to detect.`,
+    ...(meanMoved
+      ? [`> Read the figures below as measurements.`]
+      : [
+          `> Read the figures below as measurements. "Within the floor" here means this run did not detect a`,
+          `> movement, not that there is none to detect.`,
+        ]),
   ].join("\n");
 }
 
@@ -2428,6 +2479,19 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
       `> older build of it.`,
     ].join("\n");
   }
+  if (leader.agreement.blocked === "tooManyProves") {
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: more proves than the floor was calibrated for.** The`,
+      `> ±${formatPct(THRESHOLD_PCT)} floor is three standard deviations of an estimator measured over the fastest of`,
+      `> ${CALIBRATED_PROVES_PER_REP} warm proves. More proves do not make it conservative: the spread of a minimum is not`,
+      `> monotonic in how many draws it is taken over, because the minimum lands in the fast mode of a`,
+      `> loaded runner's bimodal timing with probability 1-(1-p)^n, and that sweeps through a half as n`,
+      `> grows. Simulated under a null, the rate at which this pipeline calls noise a movement RISES with`,
+      `> the prove count rather than falling.`,
+      `> The movements below are reported without a ruling. Re-run with \`--proves ${CALIBRATED_PROVES_PER_REP}\`, or`,
+      `> recalibrate the floor at the count you want to use.`,
+    ].join("\n");
+  }
   if (leader.agreement.tooShort) {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but this run`,
@@ -2453,6 +2517,18 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
           : kind === "deadline"
             ? `> This run was truncated by the deadline overrun above rather than configured short. Settle what caused the overrun before re-running — a larger \`--reps\` would only overrun again.`
             : `> This run was truncated by the close failure above rather than configured short. Settle what kept the page alive before re-running; no repetition count fixes it.`,
+    ].join("\n");
+  }
+  // Ahead of the disagreement text below, which is the one thing that must not be
+  // said about a blocked row: its sign test was never consulted, so "agrees in
+  // only N of N" is both false and self-contradicting. Every block kind has a
+  // branch above, and this catches the next one added before it can print that.
+  const blocked = blockReason(leader);
+  if (blocked) {
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but no`,
+      `> verdict is issued because ${blocked}.`,
+      `> The movements below are reported as measurements.`,
     ].join("\n");
   }
   return [

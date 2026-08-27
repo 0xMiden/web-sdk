@@ -732,6 +732,47 @@ const CLOSE_DEADLINE_MS = 30 * 1000;
  */
 const PLAYWRIGHT_TIMEOUT_MS = 60 * 1000;
 
+// The deadline the most recent Playwright call was actually granted. Only `goto`
+// raises Playwright's own `TimeoutError` — the other two are raced by
+// `withPlaywrightDeadline`, which reports its own figure — and the driver's
+// conversion needs the granted number rather than the ceiling.
+let lastPlaywrightDeadlineMs = PLAYWRIGHT_TIMEOUT_MS;
+
+// Closes started somewhere other than the stage that waits for them.
+//
+// Both entries here used to be awaited, or not waited for at all, at their start
+// site. Awaiting serialized them: the setup-failure close, the per-repetition
+// side closes and the browser/server closes are three stages of 30s each, which
+// is the whole 90s teardown margin, and results.json is written after all three.
+// Not waiting at all lost the accounting: a late close that blows its deadline
+// increments `abandonedCloses` whenever it happens, and the exit path reads that
+// counter once — so a wedged close landing afterwards was neither reported nor
+// escaped by the SIGKILL, and held the process open with all its work done.
+//
+// Registering here lets the start site return immediately while a later stage
+// still waits, so the stages overlap and the accounting is complete before the
+// artifact is built.
+const pendingCloses = [];
+const trackClose = (closing) => {
+  pendingCloses.push(closing);
+  return closing;
+};
+// Drained, not merely awaited: a close that settles here must not be waited on
+// twice by the next stage.
+const settlePendingCloses = () =>
+  Promise.allSettled(pendingCloses.splice(0, pendingCloses.length));
+
+// The `closeLate` seam `withPlaywrightDeadline` takes. A late winner is a context
+// handed back by a call that already lost its deadline — the browser that just
+// proved it was wedged — so its close is bounded like any other, recorded like
+// any other, and registered so a stage waits for it.
+const trackLateClose = (label, closing) =>
+  trackClose(
+    withCloseDeadline(label, closing).catch((error) => {
+      teardownFailures.push(`${label}: ${error}`);
+    })
+  );
+
 // Counts closes that blew their deadline, because abandoning one changes how
 // this process has to exit. See the `abandonedCloses > 0` block at the very
 // bottom of the file.
@@ -829,18 +870,24 @@ class PageErrorLog {
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
   // Through `deadlineFor`, like every other ceiling in this file, rather than
-  // straight off the constant. Two of these open per side per repetition, so a
-  // repetition that began with less than a minute of budget left could spend
-  // four unbudgeted ceilings — 4 × 60s against a 90s teardown margin — and the
-  // run reached `emitResults()` with the margin already gone. Routing them here
-  // clamps each grant to what is actually left and refuses the repetition
-  // outright when it is not, which stops the run WITH its completed
-  // repetitions instead of losing them to a killed step.
+  // straight off the constant. Three of these open per side per repetition, so a
+  // repetition that began with less than a minute of budget left could spend six
+  // unbudgeted ceilings against a 90s teardown margin, and the run reached
+  // `emitResults()` with the margin already gone.
+  //
+  // REFUSED rather than clamped, and that is worth stating because the grant
+  // shape allows both: PLAYWRIGHT_TIMEOUT_MS equals BUDGET_FLOOR_MS, so
+  // `grantDeadline` either hands back the whole ceiling or refuses outright —
+  // `clamped` is never set for these three. A refusal stops the run WITH its
+  // completed repetitions instead of losing them to a killed step. Raise
+  // PLAYWRIGHT_TIMEOUT_MS above the floor and clamping switches on, at which
+  // point these call sites have to start reading `clamped` the way
+  // `evaluateWithDeadline` does.
   const context = await withPlaywrightDeadline(
     `${label} rep ${repIndex}: newContext`,
     deadlineFor(PLAYWRIGHT_TIMEOUT_MS).ms,
     () => browser.newContext(),
-    withCloseDeadline
+    trackLateClose
   );
   // Both, because they are separate settings in Playwright and `goto` reads the
   // navigation one. Without these the three unwrapped calls run under a default
@@ -857,7 +904,7 @@ const openSide = async (browser, url, label, repIndex) => {
       `${label} rep ${repIndex}: newPage`,
       deadlineFor(PLAYWRIGHT_TIMEOUT_MS).ms,
       () => context.newPage(),
-      withCloseDeadline
+      trackLateClose
     );
     // An uncaught page error means this iteration's timings are unexplained,
     // so fail rather than fold suspect numbers into the results.
@@ -882,7 +929,14 @@ const openSide = async (browser, url, label, repIndex) => {
         pageErrors.push(error, `[worker] ${error.message}`);
       });
     });
-    await page.goto(url);
+    // Per call from the budget, not from the context default set above. `goto` is
+    // the third of the three calls PLAYWRIGHT_TIMEOUT_MS names and was the only
+    // one left on the raw constant, so 60s of unbudgeted wall clock could stack
+    // on top of the two granted ceilings that precede it and push the work past
+    // the point the teardown margin was reserved from. The context defaults stay
+    // as the floor for anything else that reads them.
+    lastPlaywrightDeadlineMs = deadlineFor(PLAYWRIGHT_TIMEOUT_MS).ms;
+    await page.goto(url, { timeout: lastPlaywrightDeadlineMs });
     // Timed, and reported. Setup is not part of the measurement, but it is by far
     // the largest consumer of the step's wall-clock budget — a repetition sets up
     // BOTH sides, so a default run pays fourteen of them — and until this was
@@ -927,11 +981,23 @@ const openSide = async (browser, url, label, repIndex) => {
        * `closing` and suppresses everything after it, so the tainted repetition
        * was retained and the run reported success.
        *
-       * The `evaluate` is the barrier: it is a round trip on the same connection
-       * the worker events arrive on, so anything the browser emitted before the
-       * reply has been dispatched by the time it resolves. Bounded like every
-       * other in-page call, and a barrier that fails is itself a reason to
-       * distrust the repetition.
+       * The `evaluate` narrows that window: it is a round trip on the same
+       * connection the worker events arrive on, so anything the browser had
+       * already emitted when it sent the reply has been dispatched by the time
+       * this resolves. Bounded like every other in-page call, and a barrier that
+       * fails is itself a reason to distrust the repetition.
+       *
+       * NOT a guarantee, and it must not be read as one. The ordering it relies
+       * on is over EMISSION, and a worker's teardown does not travel the same
+       * path into the browser process as an `evaluate` reply — a worker that
+       * traps rather than being terminated is not reported from the main thread
+       * at all. So a `close` emitted after the reply can still arrive after this
+       * returns, be suppressed by the `closing` latch, and leave a repetition
+       * measured on a shrunken pool in the results. Rare rather than impossible,
+       * which is the worst shape for a benchmark, because the contaminated
+       * repetition is indistinguishable from a regression. Making it airtight
+       * needs an IN-PAGE check, where the ordering is the page's own execution
+       * order: the SDK exposes `mtProbeAsync` for exactly that.
        *
        * Its ceiling sits BELOW the budget floor — a 30s barrier against a 60s
        * floor — so `grantDeadline` compares the floor against the ceiling and this
@@ -1059,12 +1125,19 @@ const openSide = async (browser, url, label, repIndex) => {
     // costing a clean exit after the numbers are safe. Not printed here: the
     // run is about to throw, and `reportTeardownFailures` lists every entry with
     // the reason it matters, so logging here as well double-printed it.
-    await withCloseDeadline(
-      `${label} context (during setup)`,
-      context.close()
-    ).catch((closeError) => {
-      teardownFailures.push(`${label} context (during setup): ${closeError}`);
-    });
+    //
+    // Registered rather than awaited. Awaiting made this the first of three
+    // serial 30s close stages, which together are the entire teardown margin;
+    // the repetition's own `finally` drains it alongside the side closes, so the
+    // two overlap and a wedged context costs 30s rather than 60s.
+    trackClose(
+      withCloseDeadline(
+        `${label} context (during setup)`,
+        context.close()
+      ).catch((closeError) => {
+        teardownFailures.push(`${label} context (during setup): ${closeError}`);
+      })
+    );
     throw error;
   }
 };
@@ -1279,10 +1352,15 @@ try {
       // the renderer refuses it outright when it is missing. Playwright's own
       // timeout is the deadline that fired, so it is the honest figure to report.
       if (error instanceof Error && error.name === "TimeoutError") {
+        // `lastPlaywrightDeadlineMs`, not the constant. `goto` now takes a
+        // budget-clamped timeout, so the constant is no longer necessarily the
+        // deadline that fired — and this figure becomes the artifact's
+        // `stoppedEarlyDeadlineMs`, which the renderer publishes as the deadline
+        // this run overran.
         error = new DeadlineExceededError(
           error.message,
-          `a Playwright call did not finish within its ${PLAYWRIGHT_TIMEOUT_MS / 1000}s timeout: ${error.message}`,
-          { deadlineMs: PLAYWRIGHT_TIMEOUT_MS }
+          `a Playwright call did not finish within its ${lastPlaywrightDeadlineMs / 1000}s timeout: ${error.message}`,
+          { deadlineMs: lastPlaywrightDeadlineMs }
         );
       }
       // Rethrown for anything else. A dead worker or a page error SHOULD discard
@@ -1301,7 +1379,10 @@ try {
         `\n[${error instanceof BudgetExhaustedError ? "budget" : "deadline"}] ${error.message}`
       );
     } finally {
-      await Promise.allSettled(sides.map((side) => side.close()));
+      await Promise.allSettled([
+        ...sides.map((side) => side.close()),
+        settlePendingCloses(),
+      ]);
     }
     if (earlyStop) break;
     // Between repetitions, not after all of them — hence the bound. The reason
@@ -1344,6 +1425,10 @@ try {
   // will not finish is recorded as a teardown failure like any other and the run
   // goes on to write its numbers.
   const teardown = await Promise.allSettled([
+    // Included so the accounting is complete before `results` is built: this is
+    // the last stage that runs before the artifact records `teardownFailures`
+    // and before the exit path reads `abandonedCloses`.
+    settlePendingCloses(),
     withCloseDeadline("browser", browser?.close()),
     ...servers.map(({ server }, i) =>
       withCloseDeadline(
@@ -1714,7 +1799,20 @@ const emitResults = async () => {
   return resolved;
 };
 
-const writtenTo = await emitResults();
+// Guarded, because `leaveIfResourcesAbandoned` below is the only thing that
+// escapes a wedged browser and a throw from here skipped it. This is the one
+// path where the failure and the missing kill are correlated: a full disk or a
+// read-only mount fails the write AND leaves the browser exactly as wedged as it
+// was, so the process exited with an orphaned Chromium holding a port. The
+// `benchError` path already ran the kill before rethrowing; the success path did
+// not.
+let writeError = null;
+let writtenTo = null;
+try {
+  writtenTo = await emitResults();
+} catch (error) {
+  writeError = error;
+}
 if (writtenTo) console.log(`\nwrote ${writtenTo}`);
 
 // The measurements are complete and written, so they are worth keeping — but a
@@ -1723,10 +1821,19 @@ if (writtenTo) console.log(`\nwrote ${writtenTo}`);
 // outlives the job and lands in the NEXT run's numbers as interference, which is
 // the failure this whole script is built to avoid. Report the results, then say
 // plainly that the run is not clean.
-reportTeardownFailures({ resultsWritten: true });
+// Also guarded: it is load-bearing for reaching the kill below, and it writes to
+// a stderr that can be EPIPE'd by the time it runs.
+try {
+  reportTeardownFailures({ resultsWritten: writeError === null });
+} catch (error) {
+  console.error(`\ncould not print the teardown summary: ${error.message}`);
+}
 
 // And then LEAVE, if a close was abandoned. `reportTeardownFailures` has set
 // `process.exitCode`, which asks node to exit once the loop drains — and with a
 // wedged close still ref'd the loop does not drain. The results are on disk and
 // the summary is printed, so there is nothing left to wait for.
-await leaveIfResourcesAbandoned();
+await leaveIfResourcesAbandoned(
+  writeError ? `\n${writeError.stack ?? writeError}` : undefined
+);
+if (writeError) throw writeError;

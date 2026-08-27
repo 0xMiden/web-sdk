@@ -336,8 +336,13 @@ export async function withPlaywrightDeadline(
   let timedOut = false;
   const pending = start();
   // Attached before the race, so the late-winner path is armed even if the race
-  // throws synchronously, and so `pending` is never an unhandled rejection when
-  // the timer wins.
+  // throws synchronously.
+  //
+  // The `.catch` is belt and braces, not the thing standing between a late
+  // rejection and a process death: `Promise.race` subscribes to EVERY element,
+  // so a loser that rejects later is already handled. It is kept because this
+  // chain is a second, independent subscription to `pending` — one the race
+  // knows nothing about — and that one does need its own handler.
   //
   // Through the caller's wrapper, because the resource being closed belongs to
   // the browser that just lost the race by wedging. An unbounded close here hung

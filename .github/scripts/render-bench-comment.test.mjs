@@ -2540,6 +2540,36 @@ test("a contradicted benchmark no longer silences the run's reason for others", 
     }),
     ctx()
   );
+  assert.doesNotMatch(body, /Nothing moved past the floor/);
+  assert.match(body, /because it stopped early/);
+});
+
+test("a run where nothing cleared the floor still gets the note", () => {
+  // The control for the guard above: with no movement past the floor the note's
+  // premise holds, and a blocked run needs it — otherwise "within the floor"
+  // reads as a finding of no change rather than a failure to detect one.
+  const flat = (v) => Array(PROVES_PER_REP).fill(v);
+  const body = renderComment(
+    results({
+      top: {
+        reps: 6,
+        provesPerRep: PROVES_PER_REP,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        repsExecuted: 7,
+        repsRequested: 8,
+        stoppedEarly: "out of budget",
+        stoppedEarlyKind: "budget",
+        benchmarks: [
+          bench(
+            "b",
+            { samples: Array(6).fill(flat(1000)) },
+            { samples: Array(6).fill(flat(1000)) }
+          ),
+        ],
+      },
+    }),
+    ctx()
+  );
   assert.match(
     body,
     /Nothing moved past the floor, but this run does not rule that out/
@@ -3587,9 +3617,16 @@ test("too few proves per repetition never publishes a verdict", () => {
   }
 });
 
-// Upward is safe and must stay allowed: more proves lower the variance of each
-// repetition's minimum, so the fixed floor becomes MORE than 3σ, not less.
-test("more proves than calibrated still publishes a verdict", () => {
+// Upward is NOT safe, which is the opposite of what this test asserted. The
+// variance of a minimum of k draws is not monotonic in k under bimodal
+// interference — the kind a shared CI runner produces — so more proves do not
+// make the fixed floor conservative, and `provesPerRep` is artifact-authored, so
+// raising `--proves` was a way to keep the floor applied while it stopped meaning
+// what it says. Simulated under a null, the false-verdict rate rose with k.
+//
+// Repetitions are the axis where the monotonicity argument does hold; the
+// footnote now says which axis is which.
+test("more proves than calibrated reports without ruling", () => {
   const body = renderComment(
     results({
       top: {
@@ -3613,7 +3650,44 @@ test("more proves than calibrated still publishes a verdict", () => {
     }),
     ctx()
   );
-  assert.match(body, /### ⚠️ \+40\.00% slower/);
+  assert.doesNotMatch(body, RULED);
+  assert.match(body, /Unresolved/);
+  assert.match(body, /more proves than the floor was calibrated for/);
+  // The movement is still reported — withheld verdict, not withheld measurement.
+  assert.match(body, /\+40\.00%/);
+});
+
+test("more repetitions than calibrated still publishes a verdict", () => {
+  // The control for the axis split above: the mean of n minima tightens as 1/n,
+  // so above the calibrated repetition count the floor genuinely is conservative
+  // and a verdict is right. Blocking both axes would have been the easy
+  // over-correction.
+  const reps = 10;
+  const body = renderComment(
+    results({
+      top: {
+        reps,
+        provesPerRep: PROVES_PER_REP,
+        repsExecuted: reps + 1,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        repsRequested: reps,
+      },
+      benchmark: {
+        base: {
+          samples: Array.from({ length: reps }, () =>
+            Array(PROVES_PER_REP).fill(100)
+          ),
+        },
+        head: {
+          samples: Array.from({ length: reps }, () =>
+            Array(PROVES_PER_REP).fill(140)
+          ),
+        },
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /\+40\.00% slower/);
   assert.doesNotMatch(body, /Unresolved/);
 });
 

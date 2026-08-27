@@ -491,7 +491,16 @@ jobs:
             // two open PRs (different bases), which share a head sha and head
             // repo, so an artifact from one can be reported on the other. Both
             // belong to the same author, so there is nothing to gain.
-            if (pr.head.sha !== run.head_sha) {
+            //
+            // `pr.head?.sha`, for the reason the pre-write recheck gives at its
+            // own comparison: `pr.head` is null on a PR whose fork has been
+            // deleted, and an unguarded read threw here. The throw was caught by
+            // `continue-on-error`, but it left no `skip_reason`, so the fallback
+            // inferred a cause from the unset PR number and published the
+            // forgery line at an author who had merely deleted their branch.
+            // Null is a mismatch, which is the right answer: there is no head to
+            // tie the artifact to.
+            if (pr.head?.sha !== run.head_sha) {
               // The head moved between the bench starting and this reporter
               // running, which is ordinary: the author pushed. Declining is still
               // right — these numbers describe a commit that is no longer the head
@@ -508,7 +517,7 @@ jobs:
               // learned this lesson for the head moving mid-render; this is the
               // same case, caught earlier.
               declineWithCause(
-                `PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`,
+                `PR #${number} head ${pr.head?.sha ?? 'none'} != run head ${run.head_sha}`,
                 `The pull request moved to a newer commit (${short(pr.head?.sha)}) ` +
                   `while the benchmark was running, so these numbers — measured on ` +
                   `${short(run.head_sha)} — were not posted. Push again, or re-run the ` +
@@ -530,10 +539,11 @@ jobs:
               // wording states what was checked rather than what was intended.
               //
               // Note what this gate does NOT decide: when one commit backs two of
-              // the SAME fork's open PRs, both satisfy every trusted predicate
-              // here, and the artifact picks which one is reported on. That is a
-              // author choosing between their own pull requests, not a report
-              // crossing to someone else's, so it is left as-is; the base-ref
+              // the SAME fork's open PRs on the SAME branch, both satisfy every
+              // trusted predicate here — including the branch check below — and
+              // the artifact picks which one is reported on. That is an author
+              // choosing between their own pull requests, not a report crossing
+              // to someone else's, so it is left as-is; the base-ref
               // check below is what stops the numbers being read against a base
               // they were not measured on.
               refuse('PR head repo does not match the triggering run');
@@ -543,6 +553,29 @@ jobs:
                   'match the run that produced it, so nothing was posted. This happens when ' +
                   'one branch backs two open pull requests; re-run the benchmark from the ' +
                   'pull request you want the report on.',
+              );
+              return;
+            }
+
+            // The last identity field GitHub populates for the run and this
+            // gate was not reading: the branch. Head sha and head repo alone
+            // leave one residual — one fork branch can back two open pull
+            // requests, and two branches in one fork can point at the same
+            // commit — so the artifact's chosen PR number decided which of them
+            // the report landed on. Comparing the ref removes the second case
+            // outright and narrows the first to two PRs on ONE branch, where
+            // GitHub itself offers no field to tell them apart.
+            //
+            // Skipped when the run does not carry a branch, rather than
+            // refusing: `head_branch` is null for some trigger shapes, and a
+            // missing field must not become a refusal on the ordinary path.
+            if (run.head_branch && pr.head?.ref !== run.head_branch) {
+              refuse('PR head branch does not match the triggering run');
+              core.setOutput(
+                'skip_reason',
+                'The benchmark report named a pull request whose head branch does not ' +
+                  'match the branch the run measured, so nothing was posted. Re-run the ' +
+                  'benchmark from the pull request you want the report on.',
               );
               return;
             }
@@ -781,7 +814,7 @@ jobs:
               // vanished with nothing anywhere saying so.
               core.setOutput(
                 'reason',
-                `The pull request moved to a newer commit (${short(pr.head.sha)}) while this report was rendering, so these numbers — measured on ${short(process.env.HEAD_SHA)} — were not posted. If a benchmark ran for the newer commit its report will appear separately.`,
+                `The pull request moved to a newer commit (${short(pr.head?.sha)}) while this report was rendering, so these numbers — measured on ${short(process.env.HEAD_SHA)} — were not posted. If a benchmark ran for the newer commit its report will appear separately.`,
               );
               return;
             }
@@ -994,7 +1027,12 @@ jobs:
         env:
           # workflow_run.head_sha, not the artifact's claim: this path is reached
           # precisely when the artifact could not be trusted or parsed.
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          # workflow_run.head_sha first, then the identity step's. A manual
+          # dispatch has no workflow_run, so the annotation had nowhere to go and
+          # a dispatch that identified a PR and then failed to post left neither
+          # a report nor a notice — silent on the one path a maintainer runs
+          # deliberately to check this workflow works.
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || steps.pr.outputs.head_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPORT_USABLE: ${{ steps.report.outputs.usable }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
@@ -1027,8 +1065,8 @@ jobs:
                 process.env.RECHECK_REASON ||
                 'no reason recorded';
               core.warning(
-                `No workflow_run head sha (manual dispatch), so there is no commit to ` +
-                  `annotate and nothing was posted. Reason: ${why}`,
+                `No head sha from either the workflow_run event or the identity step, ` +
+                  `so there is no commit to annotate and nothing was posted. Reason: ${why}`,
               );
               return;
             }
@@ -1079,14 +1117,25 @@ jobs:
               // PR_NUMBER one, which reads an unset number as an unverifiable
               // claim and phrases it as a forgery. A crash in the identity step is
               // a reporter bug and has to be named as one.
-              (process.env.PR_OUTCOME === 'failure'
-                ? 'The reporter crashed while confirming which pull request this benchmark belongs to, so nothing was posted. This is a fault on the reporting side, not in the pull request.'
+              // `!== 'success'` and no recorded decline, rather than
+              // `=== 'failure'`: `continue-on-error` converts a throw but not a
+              // cancellation, so a cancelled identity step left this arm silent
+              // and the run reached the PR_NUMBER inference below, which phrases
+              // an unset number as a forged claim. Accusing a fork of forgery
+              // because the reporter was cancelled is the worst line this chain
+              // can publish.
+              ((process.env.PR_OUTCOME !== 'success' &&
+              process.env.PR_OUTCOME !== 'skipped' &&
+              !process.env.PR_SKIP_REASON)
+                ? 'The reporter did not finish confirming which pull request this benchmark belongs to, so nothing was posted. This is a fault on the reporting side, not in the pull request.'
                 : '') ||
               // Ahead of the PR_NUMBER inference below, which is a guess about
               // an unset output rather than a recorded cause.
               process.env.PR_SKIP_REASON ||
               process.env.RENDER_REASON ||
-              (process.env.FETCH_OUTCOME === 'failure'
+              ((process.env.FETCH_OUTCOME !== 'success' &&
+              process.env.FETCH_OUTCOME !== 'skipped' &&
+              !process.env.FETCH_SKIP_REASON)
                 ? 'The reporter could not fetch the benchmark artifact from the GitHub API. This is a fault on the reporting side, not in the pull request.'
                 // Ahead of the REPORT_USABLE inference for the same reason
                 // PR_SKIP_REASON sits ahead of PR_NUMBER: a recorded cause beats
@@ -1099,7 +1148,8 @@ jobs:
                   // runner. Both are reporter faults, and folding them into the
                   // line below told the author their bench job had failed when it
                   // had produced a perfectly good artifact.
-                  (process.env.REPORT_OUTCOME === 'failure'
+                  ((process.env.REPORT_OUTCOME !== 'success' &&
+                  process.env.REPORT_OUTCOME !== 'skipped')
                     ? 'The reporter could not unpack the benchmark artifact. This is a fault on the reporting side, not in the pull request.'
                     : process.env.REPORT_USABLE !== 'true'
                     ? 'The benchmark run produced no usable report — the bench job failed, was cancelled, or uploaded nothing readable.'
@@ -1123,7 +1173,18 @@ jobs:
               status: 'completed',
               conclusion: 'neutral',
               details_url: process.env.RUN_URL,
-              output: { title: 'Proving benchmark: no comment posted', summary },
+              output: {
+                // Derived, because the summary above already distinguishes the
+                // case where the sticky comment posted and only the check run
+                // failed. A fixed 'no comment posted' title contradicted that
+                // summary, and the title is the part that shows in the Checks
+                // list without opening it.
+                title:
+                  process.env.COMMENT_OUTCOME === 'success'
+                    ? 'Proving benchmark (check run could not be written)'
+                    : 'Proving benchmark: no comment posted',
+                summary,
+              },
             };
 
             // Same read-modify-write as the success path, for the same reason:
