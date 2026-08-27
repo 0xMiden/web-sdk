@@ -1495,6 +1495,27 @@ function buildVerdict(rows) {
         meanUnruled.length > 1 ? ` (+${meanUnruled.length - 1} more)` : "";
       return `### ${EMOJI_UNRESOLVED} Unresolved: nothing clears the ${thresholdText} floor on the reported figure, but the mean of all proves is ${formatSignedPct(leader.meanPct)} on ${codeSpan(leader.name)}${rest} — this run cannot be ruled on, see below`;
     }
+    // "No significant change" is a VERDICT, and a run that cannot rule is not
+    // entitled to it in either direction. The precondition gates were built to
+    // stop a blocked run from headlining a movement, and they did — but the
+    // absence of a movement went out unqualified, so a run that measured two of
+    // eight repetitions, or ran an odd count, or was a calibration run, still
+    // headlined "No significant change" directly above a note saying no verdict
+    // is issued from it. A reader who merges on the strength of that heading has
+    // been told the opposite of what the run supports: on a truncated run the
+    // estimate is a selected sample, which makes "nothing moved" exactly as
+    // unsupported as "something moved".
+    //
+    // Every row carries the run-level block, so any row with a base answers this.
+    const blockedRow = rows.find(
+      (r) => r.base !== null && (r.agreement.blocked || r.agreement.tooShort)
+    );
+    if (blockedRow) {
+      return (
+        `### ${EMOJI_UNRESOLVED} No movement cleared the ${thresholdText} floor, but this run cannot be ruled on` +
+        ` (largest ${codeSpan(worst.name)} ${formatSignedPct(worst.deltaPct)}) — see below`
+      );
+    }
     // The heading has to be readable at a glance in a notification list, so it
     // carries the verdict and one number; the threshold lives in the table.
     return `### ➖ No significant change (largest ${codeSpan(worst.name)} ${formatSignedPct(worst.deltaPct)}, floor ${thresholdText})`;
@@ -1703,15 +1724,42 @@ function buildHeadOnlyNote() {
  * artifact) but the reader has no way to interpret the row without it.
  */
 function buildPartialBaseNote(rows) {
+  // A zero base figure belongs here too. It is not a missing side, but it has
+  // the same consequence — no percentage exists, so the row renders ❔ with `n/a`
+  // — and gating only on `base === null` left it as the one ❔ in the table that
+  // nothing above it accounted for, against a legend promising the heading or
+  // notes would. The two are separated in the prose below because their causes
+  // differ and only one of them is a build failure.
   const missing = rows.filter((r) => r.base === null);
-  if (missing.length === 0 || missing.length === rows.length) return null;
-  const names = missing
+  const zeroBase = rows.filter(
+    (r) => r.base !== null && r.deltaPct === null && r.base.value === 0
+  );
+  const incomparable = [...missing, ...zeroBase];
+  // The two HOMOGENEOUS cases each have a dedicated heading that states the cause
+  // in full, so a note repeating it adds nothing. Everything else lands here —
+  // including the mixed case, where the heading names both causes but not what
+  // the ❔ rows mean.
+  if (
+    incomparable.length === 0 ||
+    missing.length === rows.length ||
+    zeroBase.length === rows.length
+  ) {
+    return null;
+  }
+  const names = incomparable
     .slice(0, 3)
     .map((r) => codeSpan(r.name))
     .join(", ");
-  const rest = missing.length > 3 ? `, +${missing.length - 3} more` : "";
+  const rest =
+    incomparable.length > 3 ? `, +${incomparable.length - 3} more` : "";
   return [
-    `> **${missing.length} of ${rows.length} benchmarks have no base measurement.** ${names}${rest} ran on head only,`,
+    `> **${incomparable.length} of ${rows.length} benchmarks could not be compared.** ${names}${rest} ${
+      missing.length > 0 && zeroBase.length > 0
+        ? "either ran on head only or measured a base of zero"
+        : missing.length > 0
+          ? "ran on head only"
+          : "measured a base figure of zero, so no percentage exists"
+    },`,
     "> so ❔ on those rows means there was nothing to compare against — not that the repetitions",
     "> disagreed. The other rows are compared normally.",
   ].join("\n");
@@ -2109,7 +2157,11 @@ function buildMeanContradictionNote(rows) {
     `> Both figures are measured, so this is not a tie to be broken by picking one: the best case and the`,
     `> rest of the distribution moved apart. A faster fastest prove alongside a slower everything-else is`,
     `> what a new fast path with a costly fallback looks like, or a cache that now misses more often.`,
-    `> No direction is claimed for this run — read the raw samples below.`,
+    // "for this benchmark", not "for this run". A contradiction on one benchmark
+    // does not stop a clean regression on another from owning the heading — that
+    // ordering is deliberate — so the run-scoped wording flatly contradicted the
+    // heading above it whenever both were present.
+    `> No direction is claimed for this benchmark — read the raw samples below.`,
   ].join("\n");
 }
 
@@ -2117,6 +2169,42 @@ function buildMeanContradictionNote(rows) {
  * Only rendered when something actually came out unresolved, so the common case
  * does not carry an explanation of a state it is not in.
  */
+/**
+ * Why a run that moved nothing past the floor still cannot say "no change".
+ *
+ * `buildUnresolvedNote` below is keyed on rows that CLEARED the floor, so on a
+ * blocked run whose movements all came in under it there was nothing to explain
+ * the heading — four of the five blocking reasons rendered no note whatsoever.
+ * This is the short form: the reader does not need the full argument for why the
+ * estimate is compromised (that belongs with a movement worth arguing about),
+ * only the fact that the run does not support the conclusion its absence of
+ * movement would otherwise imply.
+ */
+function buildUnruledBelowFloorNote(rows) {
+  if (rows.some((r) => r.unresolved)) return "";
+  const blockedRow = rows.find(
+    (r) => r.base !== null && (r.agreement.blocked || r.agreement.tooShort)
+  );
+  if (!blockedRow) return "";
+  const reason = blockedRow.agreement.tooShort
+    ? `it has only ${blockedRow.agreement.reps} ${plural(blockedRow.agreement.reps, "repetition")} and a verdict needs at least ${MIN_REPS_FOR_SIGN_TEST}`
+    : {
+        stoppedEarly:
+          "it stopped early, so its length was chosen by how slow the machine was — which is the quantity being measured",
+        oddReps:
+          "it has an odd repetition count, which leaves the setup order lopsided by a fixed amount",
+        tooFewProves: `it retained fewer than ${CALIBRATED_PROVES_PER_REP} proves per repetition, which the floor was not calibrated for`,
+        calibration:
+          "it is a calibration run, where both sides are the same build",
+      }[blockedRow.agreement.blocked];
+  return [
+    `> **Nothing moved past the floor, but this run does not rule that out.** No verdict is issued`,
+    `> because ${reason}.`,
+    `> Read the figures below as measurements. "Within the floor" here means this run did not detect a`,
+    `> movement, not that there is none to detect.`,
+  ].join("\n");
+}
+
 function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
   const unresolved = rows.filter((r) => r.unresolved);
   if (unresolved.length === 0) return "";
@@ -2264,6 +2352,8 @@ function assemble(
     blocks.push(buildHeadOnlyNote());
   const partialBaseNote = buildPartialBaseNote(rows);
   if (partialBaseNote) blocks.push(partialBaseNote);
+  const unruledBelowFloorNote = buildUnruledBelowFloorNote(rows);
+  if (unruledBelowFloorNote) blocks.push(unruledBelowFloorNote);
   const unresolvedNote = buildUnresolvedNote(
     rows,
     results.stoppedEarly,

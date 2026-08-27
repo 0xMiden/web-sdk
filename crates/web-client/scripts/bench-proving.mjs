@@ -716,6 +716,21 @@ const deadlineFor = createDeadlineFor({
 // to write results.json.
 const CLOSE_DEADLINE_MS = 30 * 1000;
 
+/**
+ * The ceiling on Playwright's OWN calls — `newContext`, `newPage`, `goto`.
+ *
+ * Those three are the only per-repetition calls not wrapped by
+ * `evaluateWithDeadline`, because they are Playwright's API rather than work
+ * inside the page. Set explicitly rather than left to Playwright's 30s default
+ * so the figure the artifact reports for such an overrun is the one that actually
+ * applied; the driver converts a `TimeoutError` into a `DeadlineExceededError`
+ * carrying this number.
+ *
+ * Generous against a `goto` of a local static server, and well under
+ * SETUP_CEILING_MS so it cannot mask a setup that is merely slow.
+ */
+const PLAYWRIGHT_TIMEOUT_MS = 60 * 1000;
+
 // Counts closes that blew their deadline, because abandoning one changes how
 // this process has to exit. See the `abandonedCloses > 0` block at the very
 // bottom of the file.
@@ -724,11 +739,22 @@ let abandonedCloses = 0;
 const withCloseDeadline = (label, closing) => {
   if (!closing) return Promise.resolve();
   let timer;
+  // `Promise.race` attaches no handler to the LOSER, so when the deadline wins
+  // and the close later rejects — a dropped CDP connection, a server `close`
+  // callback handed an error — that rejection is unhandled. Node 20 defaults to
+  // `--unhandled-rejections=throw`, which would take the process down during
+  // `emitResults()`: after the samples exist and before the file is durable,
+  // which is the one window this whole teardown scheme exists to protect.
+  const settled = Promise.resolve(closing).finally(() => clearTimeout(timer));
+  settled.catch(() => {
+    // Swallowed only for the losing branch. The racing branch below still sees
+    // the rejection and records it as a teardown failure.
+  });
   return Promise.race([
     // The rejection carries the label because the caller records `outcome.reason`
     // verbatim into the teardown list, and "timed out" with no subject would be
     // the least useful line in the report.
-    Promise.resolve(closing).finally(() => clearTimeout(timer)),
+    settled,
     new Promise((_resolve, reject) => {
       timer = setTimeout(() => {
         abandonedCloses += 1;
@@ -802,6 +828,11 @@ class PageErrorLog {
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
   const context = await browser.newContext();
+  // Both, because they are separate settings in Playwright and `goto` reads the
+  // navigation one. Without these the three unwrapped calls run under a default
+  // this file does not control and cannot report.
+  context.setDefaultTimeout(PLAYWRIGHT_TIMEOUT_MS);
+  context.setDefaultNavigationTimeout(PLAYWRIGHT_TIMEOUT_MS);
   const pageErrors = new PageErrorLog();
   // Set synchronously before any close is requested, so the worker-close
   // handler below can tell a teardown from a mid-run death. Playwright's own
@@ -1208,6 +1239,27 @@ try {
       // nothing measured around a hang is published as a result, and a reader with
       // the facts settles in seconds what the code could not.
       //
+      // Playwright's own TimeoutError counts as an overrun too. `newContext`,
+      // `newPage` and `goto` are the three calls in a repetition that are NOT
+      // wrapped by `evaluateWithDeadline` — they are Playwright's own API, under
+      // Playwright's own default timeout — so a page that will not navigate late
+      // in a run rejects with a plain Error subclass rather than with
+      // DeadlineExceededError, and took the discard-everything path below. That
+      // is the same unfinished-work shape as every other overrun, and it threw
+      // away completed repetitions for it. Matched by `name` because the class is
+      // not exported from `@playwright/test` in a form worth importing here.
+      //
+      // Converted rather than passed through, because `stoppedEarlyKind:
+      // "deadline"` obliges the artifact to carry `stoppedEarlyDeadlineMs` and
+      // the renderer refuses it outright when it is missing. Playwright's own
+      // timeout is the deadline that fired, so it is the honest figure to report.
+      if (error instanceof Error && error.name === "TimeoutError") {
+        error = new DeadlineExceededError(
+          error.message,
+          `a Playwright call did not finish within its ${PLAYWRIGHT_TIMEOUT_MS / 1000}s timeout: ${error.message}`,
+          { deadlineMs: PLAYWRIGHT_TIMEOUT_MS }
+        );
+      }
       // Rethrown for anything else. A dead worker or a page error SHOULD discard
       // the run — those are observed faults, not unfinished work.
       if (
@@ -1338,8 +1390,72 @@ if (earlyStop && !benchError && repsMeasured === 0) {
   );
 }
 
+/**
+ * Leave now, killing the browser, when a close had to be abandoned.
+ *
+ * `process.exit` is the only way past a ref'd handle: abandoning a wedged
+ * `browser.close()` leaves Playwright's transport ref'd, so the process stays
+ * alive with its work already done until the runner kills the step at its
+ * `timeout-minutes`. That surfaces as a timeout rather than as a failed run —
+ * the "killed with no diagnostic" outcome the budget clamp exists to prevent —
+ * and it spends up to the whole step cap doing nothing.
+ *
+ * The SIGKILL is not optional. `process.exit` ends THIS process and does nothing
+ * about the browser it launched; Playwright only reaps Chromium on a clean close,
+ * which is exactly what did not happen here. On a self-hosted runner that orphan
+ * outlives the job and lands in the next run's numbers as the interference this
+ * whole script exists to exclude.
+ *
+ * Shared by both exit paths, because it was originally written into only one of
+ * them. The success path reaches it after writing results; the `benchError` path
+ * threw instead, and a wedged SETUP — which typically wedges the context close
+ * too — takes the benchError path, so the kill was missing from the case most
+ * likely to need it.
+ *
+ * Returns normally when nothing was abandoned, so callers keep their own
+ * behaviour (throw, or fall through to a clean exit).
+ */
+const leaveIfResourcesAbandoned = async (finalMessage) => {
+  if (abandonedCloses === 0) return;
+  // Queued BEFORE the flush, not after. Flushing first and then writing put the
+  // one message explaining the exit behind the flush that exists to preserve it:
+  // when stderr is backed up — the only case where the flush does any work —
+  // that write is still in the buffer when `process.exit` discards it.
+  if (finalMessage) console.error(finalMessage);
+  console.error(
+    `\n${abandonedCloses} resource${abandonedCloses === 1 ? "" : "s"} had to be abandoned, so this process is exiting rather than waiting for ${abandonedCloses === 1 ? "it" : "them"}. Something may still be running.`
+  );
+  const flush = (stream) =>
+    new Promise((resolve) => {
+      if (stream.writableLength === 0) return resolve();
+      stream.write("", () => resolve());
+    });
+  // Bounded. The flush waits on the GHA log pipe, and a back-pressured pipe is
+  // the same "wait out the step cap" outcome this function exists to avoid — so
+  // a lost diagnostic is preferred over a lost exit.
+  await Promise.race([
+    Promise.all([flush(process.stdout), flush(process.stderr)]),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]);
+  // Guarded and swallowed: `process()` is null for a remote browser, and the pid
+  // may already be gone, neither of which should replace the exit code that says
+  // why the run is leaving.
+  try {
+    browser?.process()?.kill("SIGKILL");
+  } catch {
+    // Already dead, or never ours to kill. Nothing to add.
+  }
+  process.exit(process.exitCode || 1);
+};
+
 if (benchError) {
   reportTeardownFailures({ resultsWritten: false });
+  // Before the throw, because a throw does not reach the exit path at the bottom
+  // of this file and a wedged setup is both the commonest way to get here and the
+  // likeliest to have left Chromium alive. The message goes out through the same
+  // flush rather than through node's uncaught-exception printer, which the exit
+  // pre-empts.
+  await leaveIfResourcesAbandoned(`\n${benchError.stack ?? benchError}`);
   throw benchError;
 }
 
@@ -1584,50 +1700,8 @@ if (writtenTo) console.log(`\nwrote ${writtenTo}`);
 // plainly that the run is not clean.
 reportTeardownFailures({ resultsWritten: true });
 
-// And then LEAVE, if a close was abandoned.
-//
-// `reportTeardownFailures` sets `process.exitCode`, which asks node to exit with
-// that code once the loop drains — and the loop does not drain here. Abandoning a
-// wedged `browser.close()` leaves Playwright's transport ref'd, so the process
-// stays alive with the results already on disk and the summary already printed,
-// until the runner kills the step at its `timeout-minutes`. That surfaces as a
-// timeout rather than as a failed run, which is precisely the "killed with no
-// diagnostic" outcome the budget clamp exists to prevent, and it spends up to the
-// whole step cap doing nothing.
-//
-// `process.exit` is the only way past a ref'd handle, and it discards buffered
-// writes — stdout is a pipe under CI, where writes are asynchronous — so the
-// results line and the teardown summary have to be flushed first or the
-// diagnostic is lost to the very exit meant to preserve it.
-if (abandonedCloses > 0) {
-  // Queued BEFORE the flush, not after. Flushing first and then writing put the
-  // one message explaining the exit behind the flush that exists to preserve it:
-  // when stderr is backed up — the only case where the flush does any work —
-  // that write is still in the buffer when `process.exit` discards it.
-  console.error(
-    `\n${abandonedCloses} resource${abandonedCloses === 1 ? "" : "s"} had to be abandoned, so this process is exiting rather than waiting for ${abandonedCloses === 1 ? "it" : "them"}. Something may still be running.`
-  );
-  const flush = (stream) =>
-    new Promise((resolve) => {
-      if (stream.writableLength === 0) return resolve();
-      stream.write("", () => resolve());
-    });
-  await Promise.all([flush(process.stdout), flush(process.stderr)]);
-  // SIGKILL before the exit, because `process.exit` ends THIS process and does
-  // nothing about the browser it launched. A wedged `browser.close()` is exactly
-  // the case where Chromium is still alive, and Playwright only reaps it on a
-  // clean close — so exiting here without this leaves it running. On a
-  // self-hosted runner that orphan outlives the job and lands in the next run's
-  // numbers as the interference this whole script exists to exclude, which is the
-  // same failure the abandon-and-exit path above is trying to avoid.
-  //
-  // Guarded and swallowed: `process()` is null for a remote browser, and the pid
-  // may already be gone, neither of which should replace the exit code that says
-  // why the run is leaving.
-  try {
-    browser?.process()?.kill("SIGKILL");
-  } catch {
-    // Already dead, or never ours to kill. Nothing to add.
-  }
-  process.exit(process.exitCode || 1);
-}
+// And then LEAVE, if a close was abandoned. `reportTeardownFailures` has set
+// `process.exitCode`, which asks node to exit once the loop drains — and with a
+// wedged close still ref'd the loop does not drain. The results are on disk and
+// the summary is printed, so there is nothing left to wait for.
+await leaveIfResourcesAbandoned();

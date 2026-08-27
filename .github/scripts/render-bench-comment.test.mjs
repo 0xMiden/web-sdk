@@ -1570,6 +1570,24 @@ test("refuses an artifact whose executed counts contradict the discard policy", 
       ),
     /provesExecutedPerRep must be one more than/
   );
+  // Both sides of the equality, and the EQUAL case is the one that matters: it
+  // is the fork asserting it kept the cold first prove, which is precisely the
+  // methodology claim this check exists to verify. Testing only "four too many"
+  // left `!==` weakenable to `>` with the suite green.
+  assert.throws(
+    () =>
+      renderComment(
+        results({ top: { provesExecutedPerRep: PROVES_PER_REP } }),
+        ctx()
+      ),
+    /provesExecutedPerRep must be one more than/
+  );
+  // Same on the repetition axis: `repsExecuted` equal to the retained count is
+  // the artifact claiming no warm-up was discarded.
+  assert.throws(
+    () => renderComment(results({ top: { repsExecuted: REPS - 1 } }), ctx()),
+    /repsExecuted must be/
+  );
 });
 
 // --- pipeline wiring -------------------------------------------------------
@@ -1919,10 +1937,36 @@ test("a mixed null-base and zero-base report says so", () => {
     heading,
     /some benchmarks have no base measurement and the rest have a base figure of zero/
   );
-  // And the mixed row still gets a note explaining what its ❔ means, which the
+  // And both rows still get a note explaining what their ❔ means, which the
   // head-only note cannot supply because it is gated on EVERY row lacking a base.
-  assert.match(body, /1 of 2 benchmarks have no base measurement/);
+  // The count covers both causes: a zero base figure is as incomparable as a
+  // missing side, and counting only the missing one left the zero-base row as the
+  // single ❔ in the table that nothing above it accounted for.
+  assert.match(body, /2 of 2 benchmarks could not be compared/);
+  assert.match(body, /either ran on head only or measured a base of zero/);
   assert.match(body, /nothing to compare against — not that the repetitions/);
+});
+
+// A zero base figure alongside a COMPARABLE row is the case the homogeneous
+// headings do not reach: the heading describes the comparable row's movement,
+// and the zero-base row renders ❔ with `n/a` under a legend promising the
+// heading or notes would explain it.
+test("a zero-base row beside a comparable one is explained", () => {
+  const body = renderComment(
+    results({
+      top: {
+        benchmarks: [
+          bench("normal", side(100), side(101)),
+          bench("zero", side(0), side(10)),
+        ],
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /1 of 2 benchmarks could not be compared/);
+  assert.match(body, /measured a base figure of zero, so no percentage exists/);
+  // The comparable row is still compared.
+  assert.match(body, /\+1\.00%/);
 });
 
 test("a mean-only row carries the emoji its heading claims", () => {
@@ -2269,52 +2313,81 @@ test("setupCount is bounded by the repetitions that ran", () => {
   assert.throws(() => renderComment(withSetupCount(4000), ctx()), /setupCount/);
 });
 
-// The sign test's documented false-positive rate is 2/2^6, and it is a rate over
-// the deltas that actually carry a sign. Every tie removes a coin while leaving a
-// bare majority where it was, so at six repetitions two ties reduce the passing
-// outcome to "four non-tied deltas, all agreeing" — a 12.5% null rate behind a
-// comment claiming 3%. Ties arrive honestly from a benchmark near the clock's
-// granularity and deliberately from a crafted artifact, so the bar has to be the
-// effective sample size rather than the raw repetition count.
-test("ties cannot buy a verdict by shrinking the sign test", () => {
-  // Four repetitions moving +20%, two exactly tied. Nothing contradicts, and
-  // four of six is a majority — the old rule's two conditions were both met.
-  const tied = (reps) =>
-    results({
-      top: {
-        reps,
-        provesPerRep: 1,
-        provesExecutedPerRep: 2,
-        repsExecuted: reps + 1,
-      },
-      benchmark: {
-        base: { samples: Array.from({ length: reps }, () => [1000]) },
-        head: {
-          samples: Array.from({ length: reps }, (_, i) => [
-            i < 4 ? 1200 : 1000,
-          ]),
-        },
-      },
-    });
-  const body = renderComment(tied(6), ctx());
-  assert.match(body, /unresolved/);
-  assert.doesNotMatch(body, /### 🔺/);
-  // The movement itself is still reported — withholding the ruling is not
-  // suppressing the measurement.
-  assert.match(body, /\+13\.33%/);
+// `pairedAgreement().consistent` is the gate that promotes a movement from
+// "unresolved" to a headline direction — the most consequential predicate in this
+// file. Its three clauses are independent, and each has to be pinned on its own:
+// deleting any one of them individually left the whole suite green.
+//
+// Two traps make that easy to get wrong, and the first version of this test fell
+// into both. A `provesPerRep` below CALIBRATED_PROVES_PER_REP trips the
+// `tooFewProves` precondition, which returns before the sign test is consulted, so
+// a fixture built at `provesPerRep: 1` asserts nothing about this code at all. And
+// `### 🔺` appears in no heading — headings use ⚠️ or 🚀, and 🔺 is a table-row
+// emoji — so asserting its absence is unfalsifiable. Assert the heading's own
+// alternatives instead.
+const RULED = /^### (\u26a0\ufe0f|\ud83d\ude80)/m;
 
-  // Six agreeing out of eight, two tied, still rules: the effective sample size
-  // reaches the calibrated count, so the documented rate holds.
-  const eight = results({
-    top: { reps: 8, provesPerRep: 1, provesExecutedPerRep: 2, repsExecuted: 9 },
+// One value per repetition, repeated across the proves, so each repetition's
+// minimum IS that value and the per-rep deltas are exactly what the case intends.
+const signTestRow = (headPerRep) =>
+  results({
+    top: {
+      reps: headPerRep.length,
+      provesPerRep: PROVES_PER_REP,
+      provesExecutedPerRep: PROVES_PER_REP + 1,
+      repsExecuted: headPerRep.length + 1,
+      repsRequested: headPerRep.length,
+    },
     benchmark: {
-      base: { samples: Array.from({ length: 8 }, () => [1000]) },
-      head: {
-        samples: Array.from({ length: 8 }, (_, i) => [i < 6 ? 1200 : 1000]),
+      base: {
+        samples: headPerRep.map(() => Array(PROVES_PER_REP).fill(1000)),
       },
+      head: { samples: headPerRep.map((v) => Array(PROVES_PER_REP).fill(v)) },
     },
   });
-  assert.match(renderComment(eight, ctx()), /🔺/);
+
+test("the sign test rules only when all three of its clauses hold", () => {
+  // Positive control first. Six repetitions all moving the same way is the
+  // calibrated shape and must rule, or the negatives below pass for the wrong
+  // reason.
+  assert.match(renderComment(signTestRow(Array(6).fill(1200)), ctx()), RULED);
+
+  // Effective sample size. Four moved, two exactly tied: nothing contradicts and
+  // four of six is a majority, so both original clauses were satisfied. The tie
+  // exemption had shrunk the test to four coins — a 2/2^4 = 12.5% null rate
+  // behind a comment claiming 2/2^6.
+  const ties = renderComment(
+    signTestRow([1200, 1200, 1200, 1200, 1000, 1000]),
+    ctx()
+  );
+  assert.doesNotMatch(ties, RULED);
+  assert.match(ties, /repetitions disagree/);
+  // Withholding the ruling is not suppressing the measurement.
+  assert.match(ties, /\+13\.33%/);
+
+  // Contradiction. Six agree, which is enough on its own, but two point the
+  // other way — the spread this test exists to catch.
+  assert.doesNotMatch(
+    renderComment(signTestRow([...Array(6).fill(1200), 800, 800]), ctx()),
+    RULED
+  );
+
+  // Majority. Six agree and nothing contradicts, so the other two clauses both
+  // pass — but six of fourteen is not a result.
+  assert.doesNotMatch(
+    renderComment(
+      signTestRow([...Array(6).fill(1200), ...Array(8).fill(1000)]),
+      ctx()
+    ),
+    RULED
+  );
+
+  // And the effective-size clause is not merely "reject anything with a tie":
+  // six agreeing out of eight reaches the calibrated count and rules.
+  assert.match(
+    renderComment(signTestRow([...Array(6).fill(1200), 1000, 1000]), ctx()),
+    RULED
+  );
 });
 
 // A median setup cost ABOVE the reported deadline is the expected shape of a
@@ -3041,4 +3114,119 @@ test("the unit is a trusted-side claim, not a fork-authored one", () => {
     ),
     /\(ms\)/
   );
+});
+
+// "No significant change" is a VERDICT, and a run that cannot rule is not
+// entitled to it in either direction. The precondition gates stopped a blocked
+// run from headlining a movement, but the ABSENCE of a movement went out
+// unqualified — so a run that measured two of eight repetitions still headlined
+// "No significant change" directly above a note saying no verdict is issued from
+// it. On a truncated run the estimate is a selected sample, which makes "nothing
+// moved" exactly as unsupported as "something moved".
+test("a run that cannot rule does not headline 'no significant change'", () => {
+  // Below the floor on every reading, so the only thing the heading can be about
+  // is whether the run is entitled to conclude anything.
+  const belowFloor = (top) =>
+    results({
+      top: {
+        provesPerRep: PROVES_PER_REP,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
+        ...top,
+      },
+      benchmark: {
+        base: {
+          samples: Array.from({ length: top.reps ?? REPS }, () =>
+            Array(top.provesPerRep ?? PROVES_PER_REP).fill(1000)
+          ),
+        },
+        head: {
+          samples: Array.from({ length: top.reps ?? REPS }, () =>
+            Array(top.provesPerRep ?? PROVES_PER_REP).fill(1010)
+          ),
+        },
+      },
+    });
+
+  const blocked = {
+    "stopped early": {
+      reps: REPS,
+      repsExecuted: REPS + 1,
+      repsRequested: REPS + 2,
+      stoppedEarly: "x",
+      stoppedEarlyKind: "budget",
+    },
+    "too few repetitions": { reps: 4, repsExecuted: 5, repsRequested: 4 },
+    "too few proves": {
+      reps: REPS,
+      repsExecuted: REPS + 1,
+      repsRequested: REPS,
+      provesPerRep: 2,
+      provesExecutedPerRep: 3,
+    },
+  };
+  for (const [label, top] of Object.entries(blocked)) {
+    const body = renderComment(belowFloor(top), ctx());
+    assert.doesNotMatch(
+      body,
+      /No significant change/,
+      `${label} still claimed no significant change`
+    );
+    assert.match(body, /this run cannot be ruled on/, label);
+    // And the heading's "see below" resolves to a reason, rather than pointing
+    // at nothing — four of the five blocking reasons used to render no note.
+    assert.match(body, /does not rule that out/, label);
+    assert.match(body, /^> because /m, label);
+  }
+
+  // A calibration run is blocked by the trusted context rather than the artifact.
+  const calibrated = renderComment(
+    belowFloor({ reps: REPS, repsExecuted: REPS + 1, repsRequested: REPS }),
+    ctx({ calibration: true })
+  );
+  assert.doesNotMatch(calibrated, /No significant change/);
+  assert.match(calibrated, /because it is a calibration run/);
+
+  // The control: an unblocked run below the floor still gets the plain verdict,
+  // or the assertions above would pass for a renderer that never says it.
+  const clean = renderComment(
+    belowFloor({ reps: REPS, repsExecuted: REPS + 1, repsRequested: REPS }),
+    ctx()
+  );
+  assert.match(clean, /No significant change/);
+  assert.doesNotMatch(clean, /cannot be ruled on/);
+});
+
+// MAX_SAMPLE_VALUES is a budget shared across every benchmark, not a per-
+// benchmark cap, and the difference is the whole guard: the existing test uses
+// one benchmark three times over the cap, which a per-benchmark budget would
+// also refuse. Many small benchmarks is the cheaper shape for the OOM this
+// protects against, and it is the one a per-benchmark budget lets straight
+// through.
+test("the sample budget is shared across benchmarks, not per benchmark", () => {
+  const manySmall = (count, valuesEach) =>
+    results({
+      top: {
+        reps: 1,
+        provesPerRep: valuesEach,
+        repsExecuted: 2,
+        provesExecutedPerRep: valuesEach + 1,
+        repsRequested: 1,
+        benchmarks: Array.from({ length: count }, (_unused, i) =>
+          bench(
+            `b${i}`,
+            { samples: [Array(valuesEach).fill(1000)] },
+            { samples: [Array(valuesEach).fill(1010)] }
+          )
+        ),
+      },
+    });
+  // 6,000 benchmarks × 36 values = 216,000 across both sides' worth of rows,
+  // over the 200,000 cap only when the budget is shared.
+  assert.throws(
+    () => renderComment(manySmall(3000, 36), ctx()),
+    /too many samples/
+  );
+  // And a run just under it still renders, so the cap is not simply refusing
+  // every multi-benchmark artifact.
+  assert.doesNotThrow(() => renderComment(manySmall(100, 36), ctx()));
 });

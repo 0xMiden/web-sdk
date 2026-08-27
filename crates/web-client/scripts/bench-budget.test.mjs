@@ -27,7 +27,12 @@ import {
   SETUP_CEILING_MS,
 } from "./bench-budget.mjs";
 
-const FLOOR = 60 * 1000;
+// Imported, not restated, for exactly the reason the comment below gives about
+// the profiles: as a literal `60 * 1000` this tracked nothing, so lowering
+// BUDGET_FLOOR_MS — the dangerous direction, since the floor is what stops work
+// starting under a deadline too tight to mean anything — left the whole suite
+// green. Only raising it was caught, and only incidentally, by the margin test.
+const FLOOR = BUDGET_FLOOR_MS;
 // The REAL profiles, imported rather than restated. They used to be declared here
 // as copies of constants in bench-proving.mjs, which meant a retune that broke the
 // scheme shipped with this suite green — the values under test and the values that
