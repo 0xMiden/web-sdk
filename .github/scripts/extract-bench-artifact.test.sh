@@ -93,7 +93,9 @@ check "staged action code untouched" 'REAL ACTION CODE' \
   "$(cat "$runner/work/_actions/some-action/index.js")"
 check "nothing landed outside the destination" "" \
   "$(find "$runner" -newer "$zip2" -type f -not -path "$dest2/*" 2>/dev/null)"
-# Every extracted name is a bare basename: `-j` discarded the rest, so no entry
+# Every extracted name is a bare basename because this script's own redirect
+# chooses every destination path — `unzip -p` writes to stdout and never touches
+# the filesystem, so an entry name cannot steer a write, so no entry
 # name ever reached a path decision.
 check "destination holds only the two members" "pr.json results.json" \
   "$(cd "$dest2" && find . -mindepth 1 | sed 's|^\./||' | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -207,6 +209,12 @@ poller=$!
 touch "$work/extract-done"
 wait "$poller"
 observed_peak=$(cat "$peak_file")
+# Both bounds. The upper one is the actual claim; the lower one is what stops the
+# claim from being vacuous — if the poller raced and never sampled the file,
+# observed_peak is 0, which satisfies any upper bound and reports a pass for a
+# measurement that did not happen.
+check "the peak-usage poller actually observed the extraction" "yes" \
+  "$([ "$observed_peak" -gt 0 ] && echo yes || echo no)"
 check "the stream cap bounds bytes written, not just bytes kept" "yes" \
   "$([ "$observed_peak" -le 8388608 ] && echo yes || echo no)"
 
@@ -238,8 +246,12 @@ check "no partial file survives a failed write" "no" \
 printf 'this is not a zip file at all' > "$work/garbage.zip"
 dest11="$work/d11"
 out11=$("$subject" "$work/garbage.zip" "$dest11" 2>"$work/e11")
+# Captured on the invocation itself. Read after the `check` below, $? is that
+# check's status — and `check` ends in an echo, so it is always 0 and the
+# assertion could never fail.
+rc11=$?
 check "a corrupt archive yields nothing usable" "" "$out11"
-check "a corrupt archive still exits 0" "0" "$?"
+check "a corrupt archive still exits 0" "0" "$rc11"
 check "the unreadable archive is announced" "yes" \
   "$(grep -q "Could not read" "$work/e11" && echo yes || echo no)"
 

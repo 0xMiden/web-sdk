@@ -114,6 +114,18 @@ const LOWER_IS_BETTER = true;
 const CALIBRATED_REPS = 6;
 const CALIBRATED_PROVES_PER_REP = 3;
 
+/**
+ * Fewest repetitions at which the paired sign test can discriminate at all.
+ *
+ * Its one-sided false-positive rate is 1/2^(reps-1): 100% at one repetition,
+ * 50% at two, 25% at three, 12.5% at four. Below four the second leg of the
+ * verdict is theatre — at one repetition it passes unconditionally — so a
+ * movement from a shorter run is reported as unresolved rather than called
+ * significant. Four is where the leg starts carrying weight; the default run is
+ * six (≈3%), and the floor was calibrated there.
+ */
+const MIN_REPS_FOR_SIGN_TEST = 4;
+
 const NUM_FMT = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
@@ -666,6 +678,15 @@ const EMOJI_UNRESOLVED = "❔";
 function pairedAgreement(base, head) {
   const reps = Math.min(base.samples.length, head.samples.length);
   if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
+  // Below four repetitions the test cannot discriminate: a one-repetition run
+  // passes it unconditionally (`contradicting === 0 && 2 > 1`), and its
+  // one-sided false-positive rate is 1/2^(reps-1) — 100% at 1, 50% at 2, 25% at
+  // 3. Since `reps` is artifact-authored, a fork that wants a verdict it has not
+  // earned only has to send fewer repetitions. Anything shorter than this is
+  // reported as unresolved with the reason named, never as significant.
+  if (reps < MIN_REPS_FOR_SIGN_TEST) {
+    return { consistent: false, agree: 0, reps, tooShort: true };
+  }
   const deltas = [];
   for (let i = 0; i < reps; i += 1) {
     deltas.push(minOf(head.samples[i]) - minOf(base.samples[i]));
@@ -709,6 +730,35 @@ function meanDeltaPct(base, head) {
   if (baseMean === 0) return null;
   const pct = ((headMean - baseMean) / baseMean) * 100;
   return Number.isFinite(pct) ? pct : null;
+}
+
+/**
+ * `pairedAgreement`'s test applied to per-repetition MEAN deltas.
+ *
+ * Shares the rule, and the rep-count floor, with the headline sign test — the
+ * point of a cross-check is that it is held to the same standard, not a laxer
+ * one. What it does not share is a calibrated sigma: nothing here has measured
+ * the spread of a mean over all proves on this workload, which is exactly why
+ * the sign test rather than a threshold is what bounds this note's false
+ * positives.
+ */
+function pairedMeanAgreement(base, head) {
+  const reps = Math.min(base.samples.length, head.samples.length);
+  if (reps === 0) return { consistent: false, agree: 0, reps: 0 };
+  if (reps < MIN_REPS_FOR_SIGN_TEST) {
+    return { consistent: false, agree: 0, reps, tooShort: true };
+  }
+  const deltas = [];
+  for (let i = 0; i < reps; i += 1) {
+    deltas.push(mean(head.samples[i]) - mean(base.samples[i]));
+  }
+  const direction = Math.sign(mean(deltas));
+  if (direction === 0) return { consistent: false, agree: 0, reps };
+  const agree = deltas.filter((d) => Math.sign(d) === direction).length;
+  const contradicting = deltas.filter(
+    (d) => d !== 0 && Math.sign(d) !== direction
+  ).length;
+  return { consistent: contradicting === 0 && agree * 2 > reps, agree, reps };
 }
 
 function computeRows(results) {
@@ -757,12 +807,27 @@ function computeRows(results) {
     const unresolved = clearsFloor && !agreement.consistent;
     const isWorse = LOWER_IS_BETTER ? deltaValue > 0 : deltaValue < 0;
     // Flagged when the mean moved past the floor but the headline did not: that
-    // is the signature of a slowdown that missed every repetition's fastest
-    // prove, which the headline estimator cannot see by construction.
+    // is the signature of a change that missed every repetition's fastest prove,
+    // which the headline estimator cannot see by construction.
+    //
+    // Gated on a sign test over the per-repetition MEAN deltas, not on the
+    // threshold alone. THRESHOLD_PCT is 3σ of the headline estimator (σ 1.79%);
+    // the spread of a mean over all proves has never been measured on this
+    // workload, so using that threshold as if it were 3σ of this statistic too
+    // would be borrowing a number from the wrong distribution. The sign test
+    // does the work instead: it needs no σ, and at six repetitions its one-sided
+    // false-positive rate is 1/2^5 ≈ 3%. The magnitude floor stays on as a
+    // relevance gate — "large enough to bother reading about" — which is a
+    // different claim from "3σ".
     const meanPct = meanDeltaPct(b.base, b.head);
+    const meanAgreement =
+      b.base === null ? null : pairedMeanAgreement(b.base, b.head);
     const meanOnly =
       meanPct !== null &&
+      deltaPct !== null &&
       !clearsFloor &&
+      meanAgreement !== null &&
+      meanAgreement.consistent &&
       Number(Math.abs(meanPct).toFixed(2)) >= Number(THRESHOLD_PCT.toFixed(2));
     return {
       ...b,
@@ -774,12 +839,13 @@ function computeRows(results) {
       agreement,
       isWorse,
       meanPct,
+      meanAgreement,
       meanOnly,
       emoji: beyond
         ? isWorse
           ? EMOJI_WORSE
           : EMOJI_BETTER
-        : unresolved
+        : unresolved || deltaPct === null
           ? EMOJI_UNRESOLVED
           : EMOJI_NOISE,
     };
@@ -814,7 +880,14 @@ function buildVerdict(rows) {
 
   const comparable = rows.filter((r) => r.deltaPct !== null);
   if (comparable.length === 0) {
-    return "### ❔ Head-only run — no base measurements to compare against";
+    // Two different states, and they were sharing one sentence. "No base
+    // measurements" is true only when there is no base side at all; a base side
+    // whose figure is zero has measurements, they just cannot carry a
+    // percentage. Claiming the first while the table below prints base values
+    // reads as a bug in the bot.
+    return rows.every((r) => r.base === null)
+      ? "### ❔ Head-only run — no base measurements to compare against"
+      : "### ❔ No comparison possible — every benchmark's base figure is zero, so a percentage would be meaningless";
   }
 
   const thresholdText = `${THRESHOLD_PROVISIONAL ? "provisional " : ""}±${formatPct(THRESHOLD_PCT)}`;
@@ -829,7 +902,14 @@ function buildVerdict(rows) {
     const leader = unresolved[0];
     const rest =
       unresolved.length > 1 ? ` (+${unresolved.length - 1} more)` : "";
-    return `### ${EMOJI_UNRESOLVED} Unresolved ${formatSignedPct(leader.deltaPct)}: ${codeSpan(leader.name)} moved beyond the floor but its repetitions disagree${rest}`;
+    // Two ways to land here, and they call for different reading. Disagreement
+    // means the samples contradict each other; too short means they were never
+    // asked to. Printing "its repetitions disagree" for a one-repetition run
+    // describes a disagreement that cannot exist.
+    const why = leader.agreement.tooShort
+      ? `moved beyond the floor, but ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")} is too few to tell a real movement from noise`
+      : "moved beyond the floor but its repetitions disagree";
+    return `### ${EMOJI_UNRESOLVED} Unresolved ${formatSignedPct(leader.deltaPct)}: ${codeSpan(leader.name)} ${why}${rest}`;
   }
 
   if (moved.length === 0) {
@@ -1099,17 +1179,37 @@ function buildLegend() {
  * is not in is noise.
  */
 function buildMeanOnlyNote(rows) {
-  const flagged = rows.filter((r) => r.meanOnly);
+  // Ordered by the size of the MEAN movement. `rows` is sorted by headline
+  // magnitude, and every flagged row is below the floor on that, so taking
+  // rows[0] would headline the flagged row with the least to say.
+  const flagged = rows
+    .filter((r) => r.meanOnly)
+    .sort((a, b) => Math.abs(b.meanPct) - Math.abs(a.meanPct));
   if (flagged.length === 0) return "";
   const leader = flagged[0];
+  // The note triggers on magnitude in either direction, so the explanation has
+  // to follow the sign. A change that made the SLOW proves faster is the mirror
+  // image of the case below, and describing it as an invisible slowdown would be
+  // exactly wrong.
+  const slower = LOWER_IS_BETTER ? leader.meanPct > 0 : leader.meanPct < 0;
+  const explanation = slower
+    ? [
+        `> The reported figure takes a minimum per repetition, so a slowdown that misses the fastest prove of`,
+        `> each repetition is invisible to it: think a collection pause, a lock, a retry, or a cold cache.`,
+      ]
+    : [
+        `> The reported figure takes a minimum per repetition, so an improvement that only helps the SLOWER`,
+        `> proves is invisible to it — the fastest prove was already on the fast path.`,
+      ];
   return [
     `> **${flagged.length} ${plural(flagged.length, "benchmark")} moved on the mean but not on the reported figure.**`,
     `> ${codeSpan(leader.name)} is ${formatSignedPct(leader.deltaPct)} on the mean of each repetition's *fastest* prove —`,
-    `> within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of *every* prove.`,
-    `> The reported figure takes a minimum per repetition, so a slowdown that misses the fastest prove of`,
-    `> each repetition is invisible to it: think a collection pause, a lock, a retry, or a cold cache.`,
-    `> The mean is far noisier (5.39% against 1.79%), so this is not a verdict — but it is worth a look at`,
-    `> the raw samples below before concluding nothing changed.`,
+    `> within the floor — but ${formatSignedPct(leader.meanPct)} on the mean of *every* prove, in the same direction in`,
+    `> ${leader.meanAgreement.agree} of ${leader.meanAgreement.reps} repetitions.`,
+    ...explanation,
+    `> The spread of a mean over all proves has never been calibrated on this workload, so this is not a`,
+    `> verdict and carries no threshold — but it is worth reading the raw samples below before concluding`,
+    `> nothing changed.`,
   ].join("\n");
 }
 
@@ -1121,6 +1221,14 @@ function buildUnresolvedNote(rows) {
   const unresolved = rows.filter((r) => r.unresolved);
   if (unresolved.length === 0) return "";
   const leader = unresolved[0];
+  if (leader.agreement.tooShort) {
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but this run`,
+      `> has only ${leader.agreement.reps} ${plural(leader.agreement.reps, "repetition")}, and the direction test needs at least ${MIN_REPS_FOR_SIGN_TEST}`,
+      `> to say anything: its false-positive rate is 1/2^(reps-1), which at one repetition is certainty.`,
+      `> Re-run with the default \`--reps\` to get a verdict.`,
+    ].join("\n");
+  }
   return [
     `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved.** The aggregate movement clears the noise floor, but the`,
     `> per-repetition pairs do not agree on its direction — ${codeSpan(leader.name)} agrees in only`,
@@ -1187,12 +1295,10 @@ function assemble(
 
   if (includeAllTable && !allTableWouldDuplicate) {
     blocks.push(buildAllBenchmarksSection(rows, unit));
-  } else if (!includeAllTable) {
-    blocks.push(
-      `> ✂️ The full benchmark table was dropped to fit the comment size limit. ` +
-        `No rows were discarded from the data — all ${rows.length} are in \`results.json\` on the run.`
-    );
   }
+  // No `else` announcing the dropped table: the attempt that drops it supplies
+  // TRUNCATION_NOTICES.table, which is already in `notices` and says the same
+  // thing. Announcing it here too printed two scissor lines about one cut.
 
   blocks.push(
     buildMethodologySection(results, ctx, rows, unit, includeSamples)
@@ -1308,10 +1414,20 @@ const USAGE =
 
 /**
  * Exit codes, which the calling workflow branches on:
- *   0 rendered; 1 the artifact was refused (the fork's problem, stay quiet);
- *   2 bad usage; 3 this script or its environment broke (our problem, be loud).
+ *   0  rendered
+ *   2  bad usage
+ *   3  this script or its environment broke (our problem, be loud)
+ *   64 the artifact was refused (the fork's problem, stay quiet)
+ *
+ * 64 and not 1 for the refusal, because 1 is what node itself exits with on an
+ * uncaught exception — including one thrown while merely LOADING this module, a
+ * syntax error or a bad import, which never reaches `main()`. Sharing the code
+ * meant a first-party breakage was indistinguishable from a hostile artifact,
+ * and the workflow's quiet-refusal branch swallowed it. 64 is outside every code
+ * node assigns itself (1, 3–9, 12, 13), so the two cannot be confused, and the
+ * workflow can treat "anything nonzero that is not 64" as ours and be loud.
  */
-const EXIT_REJECTED = 1;
+const EXIT_REJECTED = 64;
 const EXIT_INTERNAL_ERROR = 3;
 
 /** Usage: node render-bench-comment.mjs [--summary] <results.json> <ctx.json> */

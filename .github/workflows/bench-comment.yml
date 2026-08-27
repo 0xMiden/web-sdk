@@ -66,10 +66,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      # Deliberately a bare checkout: this resolves to the DEFAULT branch, the
-      # same first-party code this workflow already runs from. We never check
-      # out PR code here, and actions/checkout would refuse it anyway under
-      # workflow_run.
+      # Deliberately a bare checkout, which resolves to `github.ref`. On the
+      # `workflow_run` path that is the DEFAULT branch — the same first-party
+      # code this workflow already runs from — and PR code is unreachable: the
+      # ref belongs to this repo, not to the fork.
+      #
+      # On the `workflow_dispatch` path it is instead whichever branch the
+      # dispatcher chose, so this job can run a branch's renderer under a write
+      # token. That is the point of the dispatch input (this workflow cannot be
+      # tested from the PR that introduces it) and it is not a fork-reachable
+      # path: dispatching requires write access to this repository. Worth knowing
+      # rather than assuming the default branch on both paths.
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -242,6 +249,16 @@ jobs:
               return;
             }
 
+            // JSON.parse accepts bare literals, so `null`, `7`, `"x"` and `[]`
+            // all parse. Reading `.number` off the first of those throws, and
+            // this access is outside the try above — which turned a two-byte
+            // artifact into a red workflow on the default branch, triggerable by
+            // any fork. Shape-check before touching a property.
+            if (claimed === null || typeof claimed !== 'object' || Array.isArray(claimed)) {
+              refuse(`pr.json is not a JSON object (got ${Array.isArray(claimed) ? 'array' : typeof claimed})`);
+              return;
+            }
+
             const number = Number(claimed.number);
             if (!Number.isInteger(number) || number <= 0 || number > 1e7) {
               refuse(`Invalid PR number: ${JSON.stringify(claimed.number)}`);
@@ -309,9 +326,43 @@ jobs:
               return;
             }
 
+            // The comment links this as "Base commit", so a fork choosing it
+            // freely can attribute its numbers to a commit that was never
+            // measured — or to one from an unrelated branch, which reads as this
+            // repo vouching for a comparison it never made. There IS a trusted
+            // check available: the sha has to exist in THIS repository and be
+            // reachable from the PR's base branch. That does not prove it is the
+            // exact merge-base (the base branch can move between the bench run
+            // and this one, so an equality check would produce false refusals),
+            // but it does confine the value to real history behind the base ref.
+            const claimedBase = String(claimed.baseSha ?? '');
+            if (!/^[0-9a-f]{7,40}$/.test(claimedBase)) {
+              refuse(`Artifact baseSha is not a lowercase commit sha: ${JSON.stringify(claimed.baseSha)}`);
+              return;
+            }
+            try {
+              const { data: cmp } = await github.rest.repos.compareCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                base: claimedBase,
+                head: pr.base.ref,
+              });
+              // 'identical' when the base ref is still exactly there, 'ahead'
+              // when it has moved on since. 'behind' or 'diverged' means the
+              // claimed commit is not in the base branch's history at all.
+              if (cmp.status !== 'identical' && cmp.status !== 'ahead') {
+                refuse(`Artifact baseSha ${claimedBase} is not reachable from ${pr.base.ref} (${cmp.status})`);
+                return;
+              }
+            } catch (error) {
+              refuse(`Artifact baseSha ${claimedBase} could not be resolved in this repository: ${error.message}`);
+              return;
+            }
+
             core.setOutput('number', String(number));
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', claimedBase);
 
       # Rendered HERE, in trusted code, from structured JSON. The untrusted job
       # never supplies markdown: benchmark names are fork-controlled, and
@@ -327,6 +378,7 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
           RUN_ID: ${{ steps.run.outputs.id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run.outputs.id }}
           REPORT_DIR: ${{ runner.temp }}/bench-report
@@ -335,20 +387,13 @@ jobs:
           BODY_PATH: ${{ runner.temp }}/body.md
         run: |
           set -euo pipefail
-          # The rendering context is rebuilt from values GitHub gave THIS job,
-          # not read from the artifact — the artifact only supplies measurements.
-          # baseSha is the one field with no trusted source here (it is the
-          # merge-base the bench actually measured), so it is taken from the
-          # artifact and checked to be a lowercase hex sha before use.
-          #
-          # `[[ =~ ]]` and not `grep`: grep matches per LINE and so would accept
-          # a multi-line value whose first line happens to look like a sha.
-          base_sha=$(jq -r '.baseSha // ""' "$REPORT_DIR/pr.json" || true)
-          if [[ ! "$base_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
-            echo "::notice title=Proving Benchmark::Artifact baseSha is not a commit sha; nothing to post."
-            echo "reason=The benchmark report did not name the commit it measured against, so there was nothing to compare." >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # The rendering context is rebuilt entirely from values this job
+          # obtained itself — the artifact supplies measurements and nothing
+          # else. baseSha reaches here as a step output only after `Verify PR
+          # identity` has confirmed it is a real commit reachable from the PR's
+          # base branch, so this step has no artifact-derived string left to
+          # validate.
+          base_sha="$BASE_SHA"
           # calibration is false by definition here: this job only ever posts on
           # a pull_request-triggered bench run, and a calibration run has no PR.
           jq -n \
@@ -377,8 +422,13 @@ jobs:
             > "$BODY_PATH"
           render_rc=$?
           set -e
-          if [ "$render_rc" -eq 3 ]; then
-            echo "::error title=Proving Benchmark::The comment renderer failed on its own code path (exit 3), not on the artifact. This is a bug in .github/scripts/render-bench-comment.mjs or its environment."
+          # 64 is the renderer's only "the artifact is bad" code. Everything else
+          # nonzero is ours — including node's own exit 1 from a module that fails
+          # to load, which never reaches the renderer's error handling at all.
+          # Branching the other way round (quiet on everything but 3) is what let
+          # a first-party breakage masquerade as a hostile fork.
+          if [ "$render_rc" -ne 0 ] && [ "$render_rc" -ne 64 ]; then
+            echo "::error title=Proving Benchmark::The comment renderer failed on its own code path (exit ${render_rc}), not on the artifact. This is a bug in .github/scripts/render-bench-comment.mjs or its environment."
             echo "reason=The comment renderer failed on its own code path, not on the benchmark report. This is a fault on the reporting side, not in the pull request." >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -390,6 +440,41 @@ jobs:
           echo "Rendered $(wc -c < "$BODY_PATH") bytes"
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
+      # Identity was checked before rendering, and rendering is not instant. The
+      # reporter group is keyed per triggering run so reporters do not serialize,
+      # which means a newer push's reporter can finish and post while this one is
+      # still rendering — and then this one overwrites the newer numbers, because
+      # both write the same sticky header. Re-sampling the head immediately before
+      # the write closes the window to the API round-trip.
+      #
+      # Not a lock, and not claimed to be one: two reporters can both pass this
+      # and race. It removes the case that actually happens (a push during a
+      # render) rather than the theoretical one.
+      - name: Re-check the PR head before writing
+        id: recheck
+        if: steps.render.outputs.ok == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        with:
+          retries: 3
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            });
+            if (pr.head.sha !== process.env.HEAD_SHA) {
+              core.notice(
+                `PR #${process.env.PR_NUMBER} moved to ${pr.head.sha} while this report was rendering; ` +
+                  `not posting numbers for ${process.env.HEAD_SHA}.`,
+              );
+              core.setOutput('stale', 'true');
+              return;
+            }
+            core.setOutput('stale', 'false');
+
       # `continue-on-error`: the PR was open when `Verify PR identity` sampled
       # it, and the bench job it reports on ran for up to 90 minutes. In that
       # window the PR can be locked or closed, which makes createComment 403.
@@ -398,7 +483,7 @@ jobs:
       # business of turning the default branch red.
       - name: Post sticky comment
         id: comment
-        if: steps.render.outputs.ok == 'true'
+        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale != 'true'
         continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.4
         with:
@@ -412,7 +497,7 @@ jobs:
       # keeps the result out of the conversation timeline for people who would
       # rather read it in the Checks tab.
       - name: Publish neutral check run
-        if: steps.render.outputs.ok == 'true'
+        if: steps.render.outputs.ok == 'true' && steps.recheck.outputs.stale != 'true'
         uses: actions/github-script@v7
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
@@ -525,7 +610,7 @@ jobs:
       # of it, which is why this can run on paths where the artifact was refused
       # as hostile.
       - name: Report that nothing was posted
-        if: always() && steps.run.outputs.id != '' && steps.render.outputs.ok != 'true' 
+        if: always() && steps.run.outputs.id != '' && steps.render.outputs.ok != 'true'
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -550,9 +635,9 @@ jobs:
             }
 
             // Prefer the reason the failing step recorded over inferring one from
-            // step outputs. Inference cannot tell the renderer's refusal apart
-            // from the earlier baseSha bail, and naming the wrong cause is worse
-            // than naming a vague one.
+            // step outputs. Inference cannot tell a renderer refusal apart from a
+            // renderer bug, and naming the wrong cause is worse than naming a
+            // vague one.
             const reason =
               process.env.RENDER_REASON ||
               (process.env.FETCH_OUTCOME === 'failure'

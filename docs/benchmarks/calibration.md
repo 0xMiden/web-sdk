@@ -51,26 +51,48 @@ a normal: beyond 3 that is roughly 0.7% at `n = 20`, 0.55% at `n = 30`, and abou
 minimum for the figure to mean anything, and even then 3σ is closer to a 0.5%
 rate than a 0.3% one. Treat the threshold as "rare", not as a calibrated rate.
 
+The same `n = 6` also means the printed ±5.40% carries two digits it has not
+earned. A χ²₅ interval around s = 1.79% puts σ in roughly [1.12%, 4.39%] at 95%
+confidence, so 3σ is somewhere in **[3.4%, 13.2%]**. The comment marks the floor
+"provisional" for this reason; the hundredths are there so the arithmetic is
+reproducible, not because they are known.
+
 **Normality.** It assumes the deltas are roughly normal, which the grind lottery
 below argues against in the tails.
 
-**One benchmark, and one run.** It is the rate for a single verdict. Use the
-~0.7% from the t caveat above as the per-verdict multiplier, not the 0.3% the
-normal tail suggests — and note that with a single benchmark in the suite the
-family that dominates today is not benchmarks but *runs*: the bench fires on
-every push to a PR, so ten benchmarked pushes give roughly a 6% chance of at
-least one spurious "significant" label somewhere in the PR's life. Adding
-benchmarks multiplies that again.
+**One benchmark, and one run.** It is the rate for a single verdict, and with a
+single benchmark in the suite the family that dominates today is not benchmarks
+but *runs*: the bench fires on every push to a PR, so the relevant question is
+how often a PR's whole life produces one spurious label. That number depends on
+which rate is multiplied, so take it from the conjunction rather than from the
+magnitude leg alone — see the table below, where ten pushes come to under 1%
+rather than the ~6% the magnitude leg on its own would suggest. Adding benchmarks
+multiplies it again.
 
 The renderer does not rest the verdict on the threshold alone, for exactly these
 reasons. A movement is reported as significant only when it clears the floor
-**and** every repetition's paired difference agrees on its direction; base and
+**and** no repetition's paired difference contradicts that direction while a
+majority positively agree (a repetition whose two sides come out exactly equal
+neither agrees nor contradicts, and a run of fewer than four repetitions cannot
+be called significant at all); base and
 head run interleaved within a repetition, so those differences are a genuine
 paired sample and the agreement requirement is a sign test that assumes nothing
-about the shape of the distribution (2/2⁶ ≈ 3% at the default six repetitions).
-A movement that clears the floor while its repetitions disagree is reported as
-**unresolved** rather than as a result — which is the honest label for an
-aggregate whose spread is wider than the effect.
+about the shape of the distribution. A movement that clears the floor while its
+repetitions disagree is reported as **unresolved** rather than as a result —
+which is the honest label for an aggregate whose spread is wider than the effect.
+
+2/2⁶ ≈ 3% is the sign test's *own* false-positive rate at six repetitions, and it
+is a common mistake — made in an earlier draft of this file — to quote it as the
+verdict's. The verdict is a conjunction, so its rate is the joint one, and it is
+far smaller: see the table below. The 3% figure is only the ceiling the sign leg
+contributes if the magnitude leg passed for free.
+
+**The rep-count floor.** The sign test's one-sided rate is `1/2^(reps-1)`: 100%
+at one repetition, 50% at two, 25% at three. At one repetition it passes
+unconditionally, so the second leg would be pure decoration exactly where it is
+needed most — and `reps` is a field in the artifact, so a fork could pick it. The
+renderer therefore refuses to call anything significant below **four**
+repetitions and reports it as unresolved instead.
 
 **What the second leg costs.** Requiring unanimity is not free, and the price is
 paid in false negatives. If a single repetition's delta clears zero with
@@ -79,15 +101,46 @@ the conjunction's detection rate *falls* as repetitions are added for any fixed
 effect size. Two consequences worth internalising before tuning anything:
 
 - **±5.4% is not the detection point.** It is where the *magnitude* leg starts to
-  pass. The conjunction's 50%-detection point sits at roughly the floor itself,
-  and 80% detection needs about 1.5× the floor (≈8%). A genuine 8% regression is
-  called `slower` about three quarters of the time at the default 6 × 3; the rest
-  of the time it comes out **unresolved**, not silent.
-- **More repetitions do not narrow this.** Raising `--reps` sharpens the
-  aggregate and simultaneously makes unanimity harder, which converts real
-  regressions into ❔. The lever that actually helps is `--proves`: more proves
-  per repetition lowers the variance of that repetition's minimum, which makes
-  each individual sign more reliable. The unresolved note in the comment says so.
+  pass. Simulating the renderer's exact rule — per-repetition deltas normal about
+  the true effect, scaled so the aggregate carries the measured 1.79% — gives the
+  three-way split below at the default six repetitions. Read the `silent` column
+  first: it is the one that decides whether a regression reaches a human.
+  Reproduce the tables with `node docs/benchmarks/verdict-power.mjs`, which
+  mirrors the rule and is worth re-running whenever the rule changes.
+
+  | true effect | `slower` | `unresolved` | silent |
+  |---:|---:|---:|---:|
+  | 0% | 0.08% | 0.21% | 99.71% |
+  | 3% | 5.8% | 4.0% | 90.2% |
+  | 5.4% (the floor) | 33.7% | 16.1% | 50.3% |
+  | 6.2% | 49.2% | 17.4% | 33.3% |
+  | 8% | 77.0% | 15.2% | 7.8% |
+  | 10% | 94.2% | 5.3% | 0.4% |
+  | 15% | 99.9% | 0.1% | 0.0% |
+
+  So the 50%-detection point is ≈**6.2%**, not the floor: a true regression of
+  exactly 5.4% is missed half the time. And the complement of a detection is not
+  all unresolved — at 8% the split is 77 / 15 / 8, so roughly one such regression
+  in thirteen is silent rather than flagged. The first row is the verdict's
+  false-positive rate, 0.08% per benchmarked push, which is where the sub-1%
+  familywise figure over ten pushes comes from.
+- **More repetitions do not narrow this — they widen it.** Raising `--reps`
+  sharpens the aggregate and simultaneously makes unanimity harder, which
+  converts real regressions into ❔. The same simulation at a true 8% effect:
+
+  | reps | `slower` | `unresolved` | silent |
+  |---:|---:|---:|---:|
+  | 4 | 89.6% | 2.7% | 7.7% |
+  | 6 | 77.0% | 15.2% | 7.8% |
+  | 12 | 25.5% | 67.0% | 7.5% |
+  | 24 | 1.0% | 91.8% | 7.2% |
+
+  At 24 repetitions a real 8% regression is called significant 1% of the time.
+  The lever that actually helps is `--proves`: more proves per repetition lowers
+  the variance of that repetition's minimum, which makes each individual sign
+  more reliable without adding signs that all have to agree. The unresolved note
+  in the comment says so. Anyone raising `--reps` past six to "be more careful"
+  is making the bot quieter, not stricter.
 
 When calibrating, record the standard deviation of the **per-repetition** deltas
 as well as the aggregate. The aggregate alone cannot predict the conjunction's

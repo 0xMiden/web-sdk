@@ -304,13 +304,7 @@
       "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
     },
     ".": {
-      "entry": [
-        "scripts/**/*.{js,ts}",
-        // Invoked by .github/workflows/bench.yml (job summary) and
-        // bench-comment.yml (PR comment body). Nothing in the source graph
-        // imports it, so knip cannot infer it.
-        ".github/scripts/**/*.mjs",
-      ],
+      "entry": ["scripts/**/*.{js,ts}"],
     },
     "packages/react-sdk": {
       "entry": [
@@ -366,9 +360,6 @@
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
         "scripts/**/*.js",
-        // bench-proving.mjs is run by `make bench-proving` and by
-        // .github/workflows/bench.yml, never imported.
-        "scripts/**/*.mjs",
       ],
       // The `./eager.js` and `./index.js` strings inside
       // `page.evaluate(...)` blocks are dynamic imports executed in the

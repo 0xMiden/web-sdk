@@ -50,6 +50,7 @@
 import { createReadStream } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -93,6 +94,13 @@ for (const arg of args) {
 const flag = (name, fallback) => {
   const i = args.indexOf(name);
   if (i === -1) return fallback;
+  // A repeated flag is a misconfiguration, not a preference for one of the two.
+  // `indexOf` silently took the first, so `--reps 6 --reps 999` ran six and
+  // reported six — the same class of quiet wrong answer the unknown-flag check
+  // above exists to prevent.
+  if (args.indexOf(name, i + 1) !== -1) {
+    usage(`${name} was given more than once.`);
+  }
   const value = args[i + 1];
   // Catches `--reps` at the end of argv and `--reps --out`, both of which
   // would otherwise parse to NaN and silently run zero iterations.
@@ -102,11 +110,24 @@ const flag = (name, fallback) => {
   return value;
 };
 
+// Mirrors the ceilings .github/scripts/render-bench-comment.mjs enforces on the
+// same fields. Without them a run past a cap completes the whole 90-minute job
+// and writes a results.json the renderer then refuses on its quiet path — no
+// comment, no error, nothing pointing at the flag that caused it. Failing in the
+// first two seconds instead is the whole difference.
+const MAX_COUNT = 1000;
+
 const count = (name, fallback) => {
   const raw = flag(name, fallback);
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
     usage(`${name} must be a positive integer, got "${raw}".`);
+  }
+  if (value > MAX_COUNT) {
+    usage(
+      `${name} must be at most ${MAX_COUNT}, got ${value}: the comment renderer ` +
+        `refuses anything larger, so the run would produce no report.`
+    );
   }
   return value;
 };
@@ -223,16 +244,26 @@ const startServer = async (distDir) => {
         "Content-Type",
         contentTypes.get(path.extname(filePath)) ?? "application/octet-stream"
       );
-      // `pipe` does not forward source errors and the headers are already
-      // sent, so a mid-read failure can only be surfaced by tearing the
-      // response down — otherwise the browser stalls on the asset forever.
-      createReadStream(filePath)
-        .on("error", (error) => {
+      // `pipeline` and not `pipe`: `pipe` neither forwards source errors nor
+      // destroys the source when the destination dies, and Chromium aborts
+      // in-flight asset requests every time a context closes mid-fetch — once
+      // per side per repetition. That leaked an open file descriptor each time.
+      // `pipeline` tears down both ends whichever one fails, which also covers
+      // the mid-read failure that would otherwise stall the browser on an
+      // asset whose headers were already sent.
+      await pipeline(createReadStream(filePath), response).catch((error) => {
+        // ERR_STREAM_PREMATURE_CLOSE is the client going away, which is normal
+        // and not worth a line; anything else is a real read failure.
+        if (error?.code !== "ERR_STREAM_PREMATURE_CLOSE") {
           console.error(`[server] read failed for ${filePath}: ${error}`);
-          response.destroy(error);
-        })
-        .pipe(response);
-    } catch {
+        }
+      });
+    } catch (error) {
+      // Logged, because the file's own reasoning for failing early elsewhere is
+      // that an unexplained 404 surfaces in the browser as "Failed to fetch
+      // dynamically imported module" — the exact opaque symptom this catch was
+      // producing for a decode error, an EACCES or a genuine bug.
+      console.error(`[server] 404 for ${request.url}: ${error}`);
       response.writeHead(404).end();
     }
   });
@@ -464,6 +495,48 @@ const median = (xs) => {
 
 const fmt = (ms) => (ms === null ? "n/a" : `${ms.toFixed(0)}ms`);
 
+/**
+ * `page.evaluate` under an explicit deadline.
+ *
+ * Playwright's `evaluate` takes no timeout and is not covered by
+ * `setDefaultTimeout` — only navigation and locator calls are. So a prove that
+ * wedges inside wasm hangs forever, and the only thing that eventually notices
+ * is the job-level timeout, which kills the run without a diagnostic and after
+ * burning the rest of the budget. A rayon deadlock in the prover is precisely
+ * the change class this benchmark exists to catch, so the head build hanging is
+ * an expected case rather than an exotic one.
+ *
+ * The race leaves the evaluate running — there is no way to cancel it — but the
+ * context close in the caller's teardown takes the page down with it.
+ */
+const evaluateWithDeadline = async (page, fn, arg, { ms, what }) => {
+  let timer;
+  try {
+    return await Promise.race([
+      page.evaluate(fn, arg),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `${what} did not finish within ${ms} ms — treating it as wedged rather than waiting out the job timeout`
+              )
+            ),
+          ms
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// Generous, because these bound a HANG, not a slow run: proving on a loaded
+// 8-core runner is single-digit seconds, and setup mints, proves a block and
+// syncs. Anything past these is not slow, it is stuck.
+const SETUP_DEADLINE_MS = 10 * 60 * 1000;
+const PROVE_DEADLINE_MS = 5 * 60 * 1000;
+
 // Opens a page, runs setup on it, and returns handles the driver can drive
 // one prove at a time. The caller owns closing the context.
 const openSide = async (browser, url, label, repIndex) => {
@@ -477,8 +550,30 @@ const openSide = async (browser, url, label, repIndex) => {
       console.error(`[pageerror] ${label} rep ${repIndex}: ${error}`);
       pageErrors.push(error);
     });
+    // `pageerror` fires for the main frame only, and proving runs on a rayon
+    // pool of web workers. A worker dying mid-run left no trace here while the
+    // pool silently shrank, and a shrunken pool yields slower-but-plausible
+    // timings that nothing downstream can distinguish from a real regression.
+    page.on("worker", (worker) => {
+      worker.on("close", () => {
+        // Workers are expected to go away when the context closes; only a close
+        // while the page is still live is a signal.
+        if (!page.isClosed()) {
+          const error = new Error(
+            `a web worker exited while ${label} rep ${repIndex} was still running, so the rayon pool may have shrunk mid-measurement`
+          );
+          console.error(`[worker] ${error.message}`);
+          pageErrors.push(error);
+        }
+      });
+    });
     await page.goto(url);
-    const { rayonThreads } = await page.evaluate(setupInPage, { threads });
+    const { rayonThreads } = await evaluateWithDeadline(
+      page,
+      setupInPage,
+      { threads },
+      { ms: SETUP_DEADLINE_MS, what: `${label} rep ${repIndex} setup` }
+    );
     if (pageErrors.length) {
       throw new Error(
         `${label} rep ${repIndex} raised ${pageErrors.length} page error(s) during setup; first: ${pageErrors[0]}`
@@ -488,7 +583,12 @@ const openSide = async (browser, url, label, repIndex) => {
       label,
       rayonThreads,
       prove: async () => {
-        const ms = await page.evaluate(proveOnceInPage);
+        const ms = await evaluateWithDeadline(
+          page,
+          proveOnceInPage,
+          undefined,
+          { ms: PROVE_DEADLINE_MS, what: `${label} rep ${repIndex} prove` }
+        );
         if (pageErrors.length) {
           throw new Error(
             `${label} rep ${repIndex} raised a page error while proving; first: ${pageErrors[0]}`
@@ -509,7 +609,17 @@ const openSide = async (browser, url, label, repIndex) => {
         }),
     };
   } catch (error) {
-    await context.close().catch(() => {});
+    // Recorded for the same reason the close() above records: setup can fail
+    // with the context already wedged (goto timing out, the setup evaluate
+    // throwing), and a context that will not close leaves a live page behind.
+    // Swallowing it silently left a leaked browser process with no explanation
+    // anywhere in the log.
+    await context.close().catch((closeError) => {
+      console.error(
+        `[teardown] ${label} context (during setup): ${closeError}`
+      );
+      teardownFailures.push(`${label} context (during setup): ${closeError}`);
+    });
     throw error;
   }
 };
@@ -553,11 +663,34 @@ try {
     const isWarmup = rep === 0;
     const sides = [];
     try {
-      if (baseServer) {
-        sides.push(await openSide(browser, baseServer.url, "base", rep));
+      // Setup is alternated too, not just the proves. Every other part of this
+      // loop is ABBA'd, and this was the one place with a fixed order: base
+      // always opened first, so base's mint/execute/sync ran on an idle machine
+      // while head's always ran alongside base's live page and its rayon pool.
+      // Prove #0 of each page is discarded, which absorbs some of that, but a
+      // fixed asymmetry is the one kind of error repetitions cannot average out
+      // — the same reason the proves are alternated at all.
+      const openBaseFirst = rep % 2 === 0;
+      const opens = [
+        ...(baseServer
+          ? [{ url: baseServer.url, label: "base", first: openBaseFirst }]
+          : []),
+        { url: headServer.url, label: "head", first: !openBaseFirst },
+      ].sort((a, b) => Number(b.first) - Number(a.first));
+      for (const { url, label } of opens) {
+        sides.push(await openSide(browser, url, label, rep));
       }
-      sides.push(await openSide(browser, headServer.url, "head", rep));
-      observedThreads = sides[sides.length - 1].rayonThreads;
+      // By label, not by position: the open order alternates, so "last opened"
+      // is no longer "head".
+      observedThreads = sides.find(
+        (side) => side.label === "head"
+      ).rayonThreads;
+      // The prove order below indexes `sides`, so it has to be a stable
+      // [base, head] regardless of which was opened first, or the ABBA flip
+      // below would alternate twice and cancel itself.
+      sides.sort((a, b) =>
+        a.label === "base" ? -1 : b.label === "base" ? 1 : 0
+      );
 
       const perSide = new Map(sides.map((side) => [side.label, []]));
       for (let i = 0; i < proves; i++) {
@@ -589,9 +722,13 @@ try {
     } finally {
       await Promise.allSettled(sides.map((side) => side.close()));
     }
-    // Between repetitions, not after all of them: continuing would measure the
-    // next repetition alongside whatever failed to close.
-    if (teardownFailures.length) {
+    // Between repetitions, not after all of them — hence the bound. The reason
+    // to stop is that the NEXT repetition would be measured alongside whatever
+    // failed to close; after the last one there is no next repetition, the
+    // samples are complete, and throwing here would discard a full run over a
+    // browser that was about to be killed anyway. That case falls through to the
+    // outer teardown, which keeps the results and exits nonzero.
+    if (rep < totalReps - 1 && teardownFailures.length) {
       throw new Error(
         `a page context failed to close after ${isWarmup ? "the warmup" : `rep ${rep}`}, ` +
           `so the repetitions after it would be measured against a live page: ` +
@@ -616,7 +753,9 @@ try {
   ]);
   for (const outcome of teardown) {
     if (outcome.status === "rejected") {
-      console.error(`[teardown] ${outcome.reason}`);
+      // Recorded, not printed. The summary at the end of the script lists every
+      // entry with the reason they matter; logging here as well made a two-
+      // failure run read like a four-failure one.
       teardownFailures.push(String(outcome.reason));
     }
   }

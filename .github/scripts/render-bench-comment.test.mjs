@@ -29,8 +29,15 @@ const ctx = (overrides = {}) => ({
   ...overrides,
 });
 
-/** Must match the fixture's `reps` / `provesPerRep`: the shape is enforced. */
-const REPS = 2;
+/**
+ * Must match the fixture's `reps` / `provesPerRep`: the shape is enforced.
+ *
+ * Six is the calibrated default and also the smallest count that exercises the
+ * real verdict path — below four repetitions the renderer declines to call any
+ * movement significant, because the paired sign test cannot discriminate there.
+ * A fixture with fewer would silently test only the unresolved branch.
+ */
+const REPS = 6;
 const PROVES_PER_REP = 3;
 
 /**
@@ -96,29 +103,30 @@ test("reports the mean of per-rep minima, not the median or the global minimum",
   // renderer used the median or the global minimum instead, that paragraph
   // would become a lie while the comment still looked plausible.
   //
-  // base per-rep minima 1000, 1000 -> 1000. Median over all six is 1250 and
-  // the global minimum is 1000, so a wrong estimator lands on a different %.
+  // Every base rep's fastest prove is 1000, so the base figure is 1000. Half the
+  // head reps are fastest at 1000 and half at 1020, so the mean of per-rep
+  // minima is 1010 — while the median over all head samples is 5000 and the
+  // global minimum is 1000. Each wrong estimator lands on a different number.
   const body = renderComment(
     results({
       benchmark: {
         base: {
-          samples: [
-            [1000, 3000, 3000],
-            [1000, 3000, 3000],
-          ],
+          samples: Array.from({ length: REPS }, () => [1000, 3000, 3000]),
         },
         head: {
-          samples: [
-            [1000, 1020, 5000],
-            [1020, 5000, 5000],
-          ],
+          samples: Array.from({ length: REPS }, (_unused, rep) =>
+            rep % 2 === 0 ? [1000, 5000, 5000] : [1020, 5000, 5000]
+          ),
         },
       },
     }),
     ctx()
   );
-  // (mean(1000, 1020) - 1000) / 1000 = +1.00%
+  // (mean(1000, 1020, ...) - 1000) / 1000 = +1.00%
   assert.match(body, /\+1\.00%/);
+  // The two wrong estimators, spelled out so this cannot pass by coincidence.
+  assert.doesNotMatch(body, /\+400\.00%/, "median over all samples");
+  assert.doesNotMatch(body, /\+0\.00%/, "global minimum");
 });
 
 test("recomputes the statistics and ignores the summary the artifact claims", () => {
@@ -134,26 +142,20 @@ test("recomputes the statistics and ignores the summary the artifact claims", ()
         base: {
           statistic: "mean-of-per-rep-minima",
           value: 1200,
-          perRepMin: [1200, 1200],
+          perRepMin: Array.from({ length: REPS }, () => 1200),
           min: 1200,
           median: 1200,
           max: 1200,
-          samples: [
-            [1000, 1400, 1400],
-            [1000, 1400, 1400],
-          ],
+          samples: Array.from({ length: REPS }, () => [1000, 1400, 1400]),
         },
         head: {
           statistic: "mean-of-per-rep-minima",
           value: 1100,
-          perRepMin: [1100, 1100],
+          perRepMin: Array.from({ length: REPS }, () => 1100),
           min: 1100,
           median: 1100,
           max: 1100,
-          samples: [
-            [1100, 1500, 1500],
-            [1100, 1500, 1500],
-          ],
+          samples: Array.from({ length: REPS }, () => [1100, 1500, 1500]),
         },
       },
     }),
@@ -197,12 +199,11 @@ test("refuses samples that disagree with the declared retained counts", () => {
   // An artifact claiming six reps and shipping two groups is internally
   // inconsistent: every number derived from it would be mislabelled, and the
   // per-rep block would attribute samples to reps that never ran.
-  const wrongGroups = { samples: [[1000, 1000, 1000]] };
+  const wrongGroups = {
+    samples: Array.from({ length: REPS - 1 }, () => [1000, 1000, 1000]),
+  };
   const wrongWidth = {
-    samples: [
-      [1000, 1000],
-      [1000, 1000],
-    ],
+    samples: Array.from({ length: REPS }, () => [1000, 1000]),
   };
   // Length REPS, so it reaches the per-group check rather than being caught by
   // the group-COUNT guard first — that is the difference between testing "a flat
@@ -211,7 +212,11 @@ test("refuses samples that disagree with the declared retained counts", () => {
   // Pinned per case, since a bare /samples/ passes on any of the three messages
   // and so cannot show that each guard is the one that fired.
   for (const [label, bad, pattern] of [
-    ["group count", wrongGroups, /must hold 2 per-rep groups/],
+    [
+      "group count",
+      wrongGroups,
+      new RegExp(`must hold ${REPS} per-rep groups`),
+    ],
     ["group width", wrongWidth, /must hold 3 samples/],
     ["flat array", flat, /must be an array of numbers/],
   ]) {
@@ -416,14 +421,14 @@ test("refuses to call a movement significant when the repetitions disagree", () 
   const body = renderComment(
     results({
       top: {
-        reps: 3,
+        reps: 5,
         provesPerRep: 1,
-        repsExecuted: 4,
+        repsExecuted: 6,
         provesExecutedPerRep: 2,
       },
       benchmark: {
-        base: { samples: [[100], [100], [100]] },
-        head: { samples: [[150], [150], [62]] },
+        base: { samples: [[100], [100], [100], [100], [100]] },
+        head: { samples: [[150], [150], [150], [150], [62]] },
       },
     }),
     ctx()
@@ -432,7 +437,7 @@ test("refuses to call a movement significant when the repetitions disagree", () 
   assert.match(heading, /Unresolved/);
   assert.doesNotMatch(heading, /slower/);
   assert.match(body, /\*\*1 benchmark unresolved\.\*\*/);
-  assert.match(body, /agrees in only\n> 2 of 3 repetitions/);
+  assert.match(body, /agrees in only\n> 4 of 5 repetitions/);
   assert.match(benchmarkRows(body)[0], /❔/u);
 });
 
@@ -442,14 +447,14 @@ test("calls a consistent movement significant", () => {
   const body = renderComment(
     results({
       top: {
-        reps: 3,
+        reps: 5,
         provesPerRep: 1,
-        repsExecuted: 4,
+        repsExecuted: 6,
         provesExecutedPerRep: 2,
       },
       benchmark: {
-        base: { samples: [[100], [100], [100]] },
-        head: { samples: [[120], [121], [119]] },
+        base: { samples: [[100], [100], [100], [100], [100]] },
+        head: { samples: [[120], [121], [119], [120], [120]] },
       },
     }),
     ctx()
@@ -1102,13 +1107,55 @@ test("the degradation ladder reaches every rung it defines", () => {
     (dropsTable.match(/<\/details>/g) ?? []).length
   );
 
-  // The final block-dropping cut is not reachable through the artifact: rung 3
-  // fits inside the budget for every input tried, up to 4000 benchmarks at 1e300
-  // (~48 kB against a 60 kB cap). It stays as a structural guarantee for the
-  // assemble() output growing, and is asserted here only to the extent that
-  // nothing above it ever needs it.
+  // Rung 3 still fits here, so the last rung below it must not have fired.
   assert.ok(dropsTable.length <= MAX_BODY_CHARS);
   assert.doesNotMatch(dropsTable, /Output truncated at the size limit/);
+});
+
+test("the last-resort cut fires without leaving broken markup", () => {
+  // This rung drops whole blocks, and it IS reachable from artifact data: a
+  // single value near the top of the double range formats to ~310 characters, so
+  // once there are enough rows even the table-less rung 3 overflows. Values are
+  // kept at 1e307 rather than 1.7e308 because six of the latter sum past
+  // MAX_VALUE and the renderer refuses the artifact outright — a different
+  // guard, and not the one under test.
+  const wide = () => ({
+    samples: Array.from({ length: REPS }, () =>
+      Array.from({ length: PROVES_PER_REP }, () => 1e307)
+    ),
+  });
+  const body = renderComment(
+    results({
+      top: {
+        benchmarks: Array.from({ length: 60 }, (_unused, i) => ({
+          name: `benchmark-${i}`,
+          unit: "ms",
+          base: wide(),
+          head: {
+            samples: Array.from({ length: REPS }, () =>
+              Array.from({ length: PROVES_PER_REP }, () => 2e307)
+            ),
+          },
+        })),
+      },
+    }),
+    ctx()
+  );
+
+  assert.ok(body.length <= MAX_BODY_CHARS);
+  // The cut has to be announced — a silently shortened report is the one thing
+  // the ladder exists to avoid.
+  assert.match(body, /Output truncated at the size limit/);
+  // And it must not cut through markup. An unbalanced <details> swallows the
+  // rest of the comment in GitHub's renderer.
+  assert.equal(
+    (body.match(/<details>/g) ?? []).length,
+    (body.match(/<\/details>/g) ?? []).length
+  );
+  assert.ok(body.isWellFormed());
+  // The verdict survives: whatever else is dropped, the reader must still learn
+  // the outcome.
+  assert.match(body.split("\n")[0], /^### /);
 });
 
 test("the summary variant keeps content the comment has to drop", () => {
@@ -1176,7 +1223,7 @@ test("the CLI never emits a workflow command from untrusted bytes", async (t) =>
     process.stderr.write = original;
   });
 
-  assert.equal(await main([resultsPath, ctxPath]), 1);
+  assert.equal(await main([resultsPath, ctxPath]), 64);
   const text = written.join("");
   for (const line of text.split("\n")) {
     assert.doesNotMatch(line, /^::/, `workflow command emitted: ${line}`);
@@ -1189,11 +1236,16 @@ test("the CLI never emits a workflow command from untrusted bytes", async (t) =>
 });
 
 test("the CLI's exit codes distinguish a refused artifact from a renderer bug", async (t) => {
-  // bench-comment.yml branches on these: 0 posts, 1 stays quiet because the
-  // fork's payload was refused, 3 turns the reporter red because the fault is
-  // first-party. Swapping 1 and 3 either reddens the default branch on every
-  // fork PR, or silently blames PR authors for our own breakage — and until this
-  // test existed, either inversion kept the suite green.
+  // bench-comment.yml branches on these: 0 posts, 64 stays quiet because the
+  // fork's payload was refused, anything else nonzero turns the reporter red
+  // because the fault is first-party. Swapping the two either reddens the
+  // default branch on every fork PR, or silently blames PR authors for our own
+  // breakage — and until this test existed, either inversion kept the suite
+  // green.
+  //
+  // 64 rather than 1 because node exits 1 on an uncaught exception, including
+  // one thrown while loading this module, which never reaches `main()`. The
+  // codes must not overlap or the workflow cannot tell those apart.
   const { mkdtemp, writeFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -1241,12 +1293,21 @@ test("the CLI's exit codes distinguish a refused artifact from a renderer bug", 
     "no body on stdout"
   );
 
-  assert.equal(await main([refusedResults, goodCtx]), 1, "refused artifact");
+  assert.equal(await main([refusedResults, goodCtx]), 64, "refused artifact");
   assert.equal(
     await main([malformedResults, goodCtx]),
-    1,
+    64,
     "malformed artifact"
   );
+  // The refusal code must stay clear of everything node assigns itself, or the
+  // workflow's "not 64 means it was our bug" branch silently stops working.
+  for (const nodeOwn of [1, 3, 4, 5, 6, 7, 8, 9, 12, 13]) {
+    assert.notEqual(
+      64,
+      nodeOwn,
+      "the refusal code collides with a code node uses itself"
+    );
+  }
 
   // ctx.json is written by the reporter's own jq from trusted event fields, so
   // every failure on it is ours, whatever its shape.
@@ -1353,7 +1414,10 @@ test("zero-difference repetitions cannot manufacture a consistent verdict", () =
     }),
     ctx()
   );
-  assert.match(body, /❔/, "not reported as unresolved");
+  // Asserted on the benchmark's own ROW. The legend always names the unresolved
+  // state, so matching ❔ anywhere in the body is satisfied by text that is
+  // present on every report and cannot fail.
+  assert.match(benchmarkRows(body)[0], /❔/u, "not reported as unresolved");
   assert.doesNotMatch(body, /faster: /, "a dominated aggregate was headlined");
 });
 
@@ -1480,4 +1544,138 @@ test("does not cry mean-only when the two statistics agree", () => {
   );
   assert.match(clear, /slower/);
   assert.doesNotMatch(clear, /moved on the mean but not/);
+});
+
+test("will not call a movement significant on too few repetitions", () => {
+  // `reps` is artifact-authored, and the paired sign test's one-sided
+  // false-positive rate is 1/2^(reps-1) — at one repetition it passes
+  // unconditionally. So a fork wanting a verdict it had not earned only had to
+  // send fewer repetitions: one rep, one prove, any magnitude, and the comment
+  // said "+40.00% slower" with a straight face.
+  for (const reps of [1, 2, 3]) {
+    const body = renderComment(
+      results({
+        top: {
+          reps,
+          provesPerRep: 1,
+          repsExecuted: reps + 1,
+          provesExecutedPerRep: 2,
+        },
+        benchmark: {
+          base: { samples: Array.from({ length: reps }, () => [100]) },
+          head: { samples: Array.from({ length: reps }, () => [140]) },
+        },
+      }),
+      ctx()
+    );
+    const heading = body.split("\n")[0];
+    assert.match(heading, /Unresolved/, `reps=${reps} produced a verdict`);
+    assert.doesNotMatch(heading, /slower/, `reps=${reps} named a direction`);
+    // And it says WHY. "its repetitions disagree" would be a description of a
+    // disagreement that cannot exist in a one-repetition run.
+    assert.match(heading, /too few to tell a real movement from noise/);
+    assert.doesNotMatch(heading, /repetitions disagree/);
+    assert.match(benchmarkRows(body)[0], /❔/u);
+  }
+
+  // Four is where the test starts discriminating, so the same movement is a
+  // result there. Without this the assertions above would also pass if the
+  // renderer had simply stopped reporting movements altogether.
+  const four = renderComment(
+    results({
+      top: {
+        reps: 4,
+        provesPerRep: 1,
+        repsExecuted: 5,
+        provesExecutedPerRep: 2,
+      },
+      benchmark: {
+        base: { samples: [[100], [100], [100], [100]] },
+        head: { samples: [[140], [141], [139], [140]] },
+      },
+    }),
+    ctx()
+  );
+  assert.match(four.split("\n")[0], /⚠️ \+40\.00% slower/);
+});
+
+test("a zero base figure is not reported as a head-only run", () => {
+  // deltaPct is null both when there is no base side and when the base figure is
+  // zero, and the verdict keyed on that while the head-only BANNER keyed on
+  // `base === null`. A zero base therefore printed "no base measurements to
+  // compare against" directly above a table of base measurements.
+  const body = renderComment(
+    results({
+      benchmark: {
+        base: { samples: Array.from({ length: REPS }, () => [0, 1000, 1000]) },
+        head: {
+          samples: Array.from({ length: REPS }, () => [500, 2000, 2000]),
+        },
+      },
+    }),
+    ctx()
+  );
+
+  assert.doesNotMatch(body, /no base measurements to compare against/);
+  assert.match(body.split("\n")[0], /base figure is zero/);
+  // And it is not dressed up as an unchanged benchmark either: there is no
+  // comparison here, which is ❔, not ➖.
+  assert.match(benchmarkRows(body)[0], /❔/u);
+  assert.doesNotMatch(benchmarkRows(body)[0], /➖/u);
+});
+
+test("the mean cross-check follows the direction it found", () => {
+  // The note fires on |mean movement|, so it has to explain both signs. An
+  // optimisation that only helps the SLOW proves lands here too, and calling
+  // that an invisible slowdown is exactly backwards.
+  const faster = renderComment(
+    results({
+      benchmark: {
+        base: {
+          samples: Array.from({ length: REPS }, () => [1000, 2000, 2000]),
+        },
+        head: {
+          samples: Array.from({ length: REPS }, () => [1000, 1000, 1000]),
+        },
+      },
+    }),
+    ctx()
+  );
+  assert.match(faster, /moved on the mean but not on the reported figure/);
+  assert.match(faster, /an improvement that only helps the SLOWER/);
+  assert.doesNotMatch(faster, /think a collection pause/);
+
+  // No borrowed sigma IN THE NOTE: the old copy quoted 5.39% as this
+  // statistic's spread, but 5.39% is the measured spread of a MEDIAN over all
+  // samples. The methodology table still cites it correctly, hence scoping the
+  // assertion to the note rather than the whole body.
+  const note = faster
+    .split("\n\n")
+    .find((block) => block.includes("moved on the mean but not"));
+  assert.doesNotMatch(note, /5\.39%/);
+  assert.match(note, /never been calibrated on this workload/);
+});
+
+test("the mean cross-check holds itself to the same sign test", () => {
+  // One repetition carrying the whole mean movement is the same defect the
+  // headline verdict was fixed for in an earlier round. Gating the note on
+  // magnitude alone would have reintroduced it on the cross-check.
+  const oneRepDominates = renderComment(
+    results({
+      benchmark: {
+        base: {
+          samples: Array.from({ length: REPS }, () => [1000, 1000, 1000]),
+        },
+        head: {
+          samples: Array.from({ length: REPS }, (_unused, rep) =>
+            rep === 0 ? [1000, 9000, 9000] : [1000, 1000, 1000]
+          ),
+        },
+      },
+    }),
+    ctx()
+  );
+  // The mean over all proves moved far past the floor, but only one repetition
+  // moved at all, so there is nothing to report.
+  assert.doesNotMatch(oneRepDominates, /moved on the mean but not/);
 });

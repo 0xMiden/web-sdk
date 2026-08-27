@@ -190,11 +190,11 @@ jobs:
 
       # Cheap and fails fast: a broken renderer would otherwise only surface
       # after ~20 minutes of building, and then only as a missing comment.
-      # Explicit path, not a glob — `node --test` only globs from Node 21.
+      #
+      # Through the Makefile rather than repeating its two commands here, so the
+      # target a contributor runs locally and the one CI runs cannot drift apart.
       - name: Test the comment renderer and the artifact extraction
-        run: |
-          node --test .github/scripts/render-bench-comment.test.mjs
-          bash .github/scripts/extract-bench-artifact.test.sh
+        run: make test-bench-scripts
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -213,6 +213,15 @@ jobs:
       # of every PR builds both sides. Sharing across PRs would mean building the
       # base dist on pushes to the default branch, which is a cost decision, not
       # an oversight.
+      #
+      # One hole in that hit rate, worth knowing rather than discovering: the save
+      # step runs after the base build, and this job is `cancel-in-progress`. A
+      # push arriving while the base build is still running cancels the run before
+      # it saves, so a rapid burst of pushes can rebuild the base every time and
+      # never populate the cache. It self-corrects as soon as one run gets far
+      # enough to save, and the alternative — a separate job owning the base dist
+      # — costs more than the degenerate case does.
+      #
       # Keyed on more than the commit. The dist is a function of the base source
       # AND of how this workflow builds it: the runner class, the toolchain that
       # `rustup update` happened to resolve, and the build commands in this file.
@@ -261,7 +270,13 @@ jobs:
         # target dir inside the worktree, which the rust-cache restore does not
         # reach, so a slow cold `-Z build-std` release build is the normal case
         # rather than the exceptional one.
-        timeout-minutes: 45
+        #
+        # The caps have to COMPOSE inside the 90-minute job, which is why this is
+        # 30 and not half the budget: preamble + 30 (base) + 30 (head) + 20
+        # (bench) leaves headroom. Giving this half the job would mean a base
+        # build that used its whole window had already made the head build —
+        # identical work, and the one with no fallback — unable to finish.
+        timeout-minutes: 30
         shell: bash
         env:
           BASE_SHA: ${{ steps.shas.outputs.base_sha }}
@@ -305,7 +320,11 @@ jobs:
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
 
+      # No fallback exists for this one — a missing head dist means no benchmark
+      # at all — so the cap is here to make the failure legible and leave the
+      # summary step time to run, not to degrade to something lesser.
       - name: Build head MT dist (full release profile)
+        timeout-minutes: 30
         shell: bash
         run: |
           set -euo pipefail
@@ -320,7 +339,11 @@ jobs:
       # dirs. Checking out the base copy of the script would mean the PR that
       # introduces the bench has no base script at all, and thereafter a script
       # edit would silently compare two different measurement definitions.
+      # The producer bounds each in-page call itself, so this is the backstop for
+      # a hang OUTSIDE those deadlines — a wedged browser launch, a static server
+      # that never binds. Sized to leave the summary and upload steps room.
       - name: Run benchmark
+        timeout-minutes: 20
         shell: bash
         env:
           # Recorded in results.json so the comment can name where the numbers
@@ -337,7 +360,12 @@ jobs:
             # the run exercises the real two-server code path.
             cp -R "$RUNNER_TEMP/dist-head" "$RUNNER_TEMP/dist-calib"
             extra=(--base "$RUNNER_TEMP/dist-calib" --calibrate)
-          elif [ -d "$RUNNER_TEMP/dist-base" ]; then
+          # -f on the entry point, not -d on the directory: the producer stats
+          # `<dir>/eager.js` and treats its absence as a USAGE error, exiting 2
+          # with no results at all. An interrupted `mv` therefore turned a
+          # graceful head-only degradation into total loss. Probe the same file
+          # the script probes.
+          elif [ -f "$RUNNER_TEMP/dist-base/eager.js" ]; then
             extra=(--base "$RUNNER_TEMP/dist-base")
           elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             # A head-only run on a PR makes NO comparison, which is the one
