@@ -233,8 +233,10 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain stable
 
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # The optimizer that produces the PUBLISHED bytes. Pinned by checksum
+        # so a release is reproducible, and so the proving benchmark measures
+        # the same optimizer users actually ship — see bench.yml.
+        run: ./scripts/install-binaryen.sh
 
       # Single workspace install — used for web-client build (when needed),
       # react-sdk build (which consumes the WASM dist), and vite-plugin build.
