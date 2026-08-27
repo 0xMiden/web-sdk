@@ -13,11 +13,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DEFAULT_PROFILE } from "./bench-profile.mjs";
 import {
   EXIT_INTERNAL_ERROR,
   EXIT_REJECTED,
@@ -28,6 +29,43 @@ import {
 
 /** Mirrors MAX_BODY_CHARS in the renderer — the invariant it actually enforces. */
 const MAX_BODY_CHARS = 60000;
+
+// --- The two floor states ---------------------------------------------------
+//
+// The threshold and its provisional flag used to be module-level constants in
+// the renderer, so exactly ONE of the two states was reachable from this file:
+// flipping the constant swapped which half of the suite could pass, and porting
+// the bot between the repository's lines meant hand-swapping half a dozen
+// assertions here to match. Both states are now data, passed in, so both are
+// tested in the same run and a re-calibration is an edit to bench-profile.mjs
+// alone.
+//
+// Derived from the shipped profile rather than written out, so these two stay
+// the shipped numbers in every respect but the one under test.
+const provisionalProfile = { ...DEFAULT_PROFILE, thresholdProvisional: true };
+const calibratedProfile = { ...DEFAULT_PROFILE, thresholdProvisional: false };
+
+/**
+ * The moved-section heading, whichever state the floor is in.
+ *
+ * The tests that use this are about something else — where the floor comparison
+ * rounds — and pinning them to one state's wording is what made them part of the
+ * port's cost. They assert that a movement was or was not put in that section;
+ * the section's title is not their subject.
+ */
+const MOVED_HEADING = /#### Moved beyond (a provisional|the) noise floor/;
+
+/** How the methodology section describes the floor, per state. */
+const thresholdLine = (profile) => {
+  // Escaped, so the decimal point matches a point rather than any character —
+  // otherwise a re-calibration to 5.4x% would keep this passing by accident.
+  const pct = profile.thresholdPct.toFixed(2).replace(".", "\\.");
+  return profile.thresholdProvisional
+    ? new RegExp(`±${pct}% threshold is \\*\\*provisional\\*\\*`)
+    : new RegExp(
+        `±${pct}% threshold is calibrated on \`${profile.calibration.runner}\``
+      );
+};
 
 const ctx = (overrides = {}) => ({
   owner: "0xMiden",
@@ -43,13 +81,35 @@ const ctx = (overrides = {}) => ({
 /**
  * Must match the fixture's `reps` / `provesPerRep`: the shape is enforced.
  *
- * Six is the calibrated default and also the smallest count that exercises the
- * real verdict path — below six the renderer declines to call any movement
- * significant, because both legs of the verdict weaken together there.
- * A fixture with fewer would silently test only the unresolved branch.
+ * Read from the profile rather than written out. The calibrated count is also
+ * the smallest that exercises the real verdict path — below it the renderer
+ * declines to call any movement significant, because both legs of the verdict
+ * weaken together there — so a fixture pinned to a literal would silently drop
+ * the whole suite onto the unresolved branch the day the profile moved, while
+ * still passing.
+ *
+ * This does NOT make the two counts a one-file edit; see the header of
+ * bench-profile.mjs. It removes the largest single source of the coupling, not
+ * all of it: the fixtures below that write out per-prove sample values still
+ * choose them for the calibrated shape.
  */
-const REPS = 6;
-const PROVES_PER_REP = 3;
+const REPS = DEFAULT_PROFILE.calibratedReps;
+const PROVES_PER_REP = DEFAULT_PROFILE.calibratedProvesPerRep;
+
+/**
+ * The floor as the renderer compares against it — rounded to the two decimals
+ * it is displayed at, which is the precision the comparison actually uses.
+ */
+const FLOOR = Number(DEFAULT_PROFILE.thresholdPct.toFixed(2));
+
+/**
+ * A percentage as the comment prints it, escaped for use inside a RegExp.
+ *
+ * The escape is the point: an unescaped decimal point matches any character, so
+ * a re-calibration to a neighbouring value would keep an assertion passing by
+ * accident.
+ */
+const shownPct = (pct) => pct.toFixed(2).replace(".", "\\.");
 
 /**
  * A side whose RECOMPUTED statistic is exactly `value`.
@@ -504,10 +564,22 @@ test("calls a consistent movement significant", () => {
   assert.match(benchmarkRows(body)[0], /🔺/u);
 });
 
+// The measured spread, as the methodology bullet prints it, and the shape it was
+// measured at — read from the profile in both cases. Written out, these
+// assertions restated the very data they were checking came from the profile:
+// they passed a re-measurement of `estimatorSpread` and then failed on the next
+// render, which is the wrong way round.
+const SPREAD_SENTENCE = new RegExp(
+  `holds a standard deviation of ${shownPct(DEFAULT_PROFILE.estimatorSpread.sdPct)}%`
+);
+const CALIBRATED_SHAPE = new RegExp(
+  `does not use the ${REPS} × ${PROVES_PER_REP}`
+);
+
 test("does not inherit the calibrated spread for a thinner run", () => {
-  // The 1.79% figure was measured at 6 reps × 3 warm proves, and both counts are
-  // artifact-authored. A single sample per side must not be dressed up in a
-  // standard deviation measured over eighteen.
+  // The spread was measured at the calibrated reps × warm proves, and both
+  // counts are artifact-authored. A single sample per side must not be dressed
+  // up in a standard deviation measured over eighteen.
   const thin = renderComment(
     results({
       top: {
@@ -523,46 +595,50 @@ test("does not inherit the calibrated spread for a thinner run", () => {
     }),
     ctx()
   );
-  assert.doesNotMatch(thin, /holds a standard deviation of 1\.79%/);
-  assert.match(thin, /does not use the 6 × 3/);
+  assert.doesNotMatch(thin, SPREAD_SENTENCE);
+  assert.match(thin, CALIBRATED_SHAPE);
 
   const full = renderComment(
     results({
-      top: {
-        reps: 6,
-        provesPerRep: 3,
-        repsExecuted: 7,
-        provesExecutedPerRep: 4,
-      },
       benchmark: {
-        base: { samples: Array.from({ length: 6 }, () => [1000, 1200, 1400]) },
-        head: { samples: Array.from({ length: 6 }, () => [1010, 1200, 1400]) },
+        base: {
+          samples: Array.from({ length: REPS }, () => [1000, 1200, 1400]),
+        },
+        head: {
+          samples: Array.from({ length: REPS }, () => [1010, 1200, 1400]),
+        },
       },
     }),
     ctx()
   );
-  assert.match(full, /holds a standard deviation of 1\.79%/);
+  assert.match(full, SPREAD_SENTENCE);
 
   // More repetitions do not merely satisfy the claim, they invalidate the
-  // arithmetic behind it: the spread narrows as 1/sqrt(reps), so at 24 reps the
-  // real figure is nearer 0.90% and the fixed 5.40% cutoff stops being 3σ.
+  // arithmetic behind it: the spread narrows as 1/sqrt(reps), so at four times
+  // the calibrated count the real figure is roughly halved and the fixed cutoff
+  // stops being 3σ.
+  const wideReps = 4 * REPS;
   const wide = renderComment(
     results({
       top: {
-        reps: 24,
-        provesPerRep: 3,
-        repsExecuted: 25,
-        provesExecutedPerRep: 4,
+        reps: wideReps,
+        provesPerRep: PROVES_PER_REP,
+        repsExecuted: wideReps + 1,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
       },
       benchmark: {
-        base: { samples: Array.from({ length: 24 }, () => [1000, 1200, 1400]) },
-        head: { samples: Array.from({ length: 24 }, () => [1010, 1200, 1400]) },
+        base: {
+          samples: Array.from({ length: wideReps }, () => [1000, 1200, 1400]),
+        },
+        head: {
+          samples: Array.from({ length: wideReps }, () => [1010, 1200, 1400]),
+        },
       },
     }),
     ctx()
   );
-  assert.doesNotMatch(wide, /holds a standard deviation of 1\.79%/);
-  assert.match(wide, /does not use the 6 × 3/);
+  assert.doesNotMatch(wide, SPREAD_SENTENCE);
+  assert.match(wide, CALIBRATED_SHAPE);
 });
 
 test("refuses artifact-authored counts no real run could produce", () => {
@@ -591,7 +667,7 @@ test("classifies movement against the threshold", () => {
     ctx()
   );
   assert.match(beyond, /\+20\.00% slower/);
-  assert.match(beyond, /Moved beyond the noise floor/);
+  assert.match(beyond, MOVED_HEADING);
 });
 
 // The heading and the provisional note used to contradict each other: the
@@ -603,43 +679,481 @@ test("classifies movement against the threshold", () => {
 // provisional floor leaves the ESTIMATE sound and only the cutoff uncertain,
 // unlike the cases in verdictPreconditions, so the direction is still worth
 // naming — it just must not be phrased as a verdict.
-// NOTE ON COVERAGE. THRESHOLD_PROVISIONAL is true on this line: the floor was
-// measured on `main` at QUERY_POW_BITS = 16 with Blake3, and this is the 0.16
-// line (QUERY_POW_BITS = 17, Poseidon2 once web-sdk#333 lands). The CALIBRATED
-// branches in the renderer are therefore not reachable from these tests. They
-// are module-level constants, not inputs, so a test cannot flip them. When this
-// branch is re-calibrated and the constant flips, swap these two tests for the
-// calibrated assertions on `main` — they are the mirror image.
-// NOTE ON COVERAGE. THRESHOLD_PROVISIONAL is false on this line — the floor was
-// measured here, 30 runs at reps=6 proving with Poseidon2 — so the PROVISIONAL
-// branches in the renderer are not reachable from these tests. They are
-// module-level constants, not inputs, so a test cannot flip them. This mirror-
-// swap has now been paid three times; making the profile injectable removes it.
-test("a calibrated floor states a verdict, not an observation", () => {
-  const beyond = renderComment(
-    results({ benchmark: { base: side(1000), head: side(1200) } }),
-    ctx()
-  );
+//
+// BOTH STATES, IN ONE RUN. These were a single test against whichever state the
+// module constant happened to be in, with a note saying to swap the assertions
+// by hand at the next port. Half of the renderer was unreachable from the suite
+// for as long as that constant sat still — including, at various times, the half
+// that was about to ship. The profile is an argument now, so the pair below is
+// the mirror image of each other and neither branch is dead.
+const REGRESSION = { benchmark: { base: side(1000), head: side(1200) } };
+
+test("a provisional floor states an observation, never a verdict", () => {
+  const beyond = renderComment(results(REGRESSION), ctx(), provisionalProfile);
   const heading = beyond.split("\n")[0];
-  assert.match(heading, /^### \S+ WASM proving — \+20\.00% slower: /);
-  // The hedges belong to the provisional form; carrying them into a calibrated
-  // verdict makes the comment argue with its own heading.
+  assert.match(heading, /on this run/);
+  assert.match(heading, /not yet a verdict/);
+  assert.match(heading, /uncalibrated/);
+  // And it must not read as the calibrated form, which claims significance.
+  assert.doesNotMatch(heading, /^### \S+ WASM proving — \+20\.00% slower: /);
+  // The movement itself is not suppressed.
+  assert.match(beyond, /\+20\.00%/);
+  assert.match(beyond, /Moved beyond a provisional noise floor/);
+});
+
+test("a calibrated floor states the verdict outright", () => {
+  const beyond = renderComment(results(REGRESSION), ctx(), calibratedProfile);
+  const heading = beyond.split("\n")[0];
+  // The exact form the provisional heading is forbidden to take.
+  assert.match(heading, /^### ⚠️ WASM proving — \+20\.00% slower: /);
   assert.doesNotMatch(heading, /on this run/);
   assert.doesNotMatch(heading, /not yet a verdict/);
   assert.doesNotMatch(heading, /uncalibrated/);
-  assert.match(beyond, /Moved beyond the noise floor/);
+  assert.match(beyond, /#### Moved beyond the noise floor/);
+  assert.doesNotMatch(beyond, /Moved beyond a provisional noise floor/);
+  // And the standing caveat is gone: a calibrated floor makes no apology.
+  assert.doesNotMatch(beyond, /The noise floor is provisional/);
 });
 
-test("quotes the calibration record, and derives how the floor was reached", () => {
-  const body = renderComment(results(), ctx());
-  assert.match(body, /floor ±1\.90%/);
-  assert.doesNotMatch(body, /provisional/i);
-  assert.match(body, /30 runs of one build against a copy of itself/);
-  // The observed maximum is BELOW 3σ on this line, so the derivation sentence
-  // must take the 3σ branch — not main's empirical-maximum wording.
-  assert.match(body, /It is 3σ \(1\.85%\) rounded up/);
-  assert.doesNotMatch(body, /sits above that observed maximum/);
+test("the heading's own floor phrase carries the provisional state", () => {
+  // The heading builds its floor phrase itself — `thresholdText`, a separate
+  // string from the methodology bullet `thresholdLine` covers. Deleting the
+  // "provisional " prefix from it left the whole suite green: every existing
+  // assertion about the word looked at the banner or the methodology section,
+  // and the one line most readers actually read was unchecked.
+  //
+  // A run with nothing past the floor, because that is the heading branch that
+  // quotes the floor rather than the movement.
+  const floor = shownPct(DEFAULT_PROFILE.thresholdPct);
+
+  const provisional = renderComment(results(), ctx(), provisionalProfile);
+  assert.match(
+    provisional.split("\n")[0],
+    new RegExp(`floor provisional ±${floor}%\\)$`)
+  );
+
+  const calibrated = renderComment(results(), ctx(), calibratedProfile);
+  const heading = calibrated.split("\n")[0];
+  // The same phrase without the qualifier — present, and provably not by the
+  // qualifier merely moving elsewhere in the line.
+  assert.match(heading, new RegExp(`floor ±${floor}%\\)$`));
+  assert.doesNotMatch(heading, /provisional/);
+
+  // And on the unresolved-mean heading, the other branch that quotes it, so the
+  // prefix cannot survive in one place and vanish in the other.
+  const meanMover = {
+    benchmark: {
+      base: {
+        samples: Array.from({ length: REPS }, () =>
+          Array(PROVES_PER_REP).fill(1000)
+        ),
+      },
+      head: {
+        samples: Array.from({ length: REPS }, () => [
+          1000,
+          ...Array(PROVES_PER_REP - 1).fill(3000),
+        ]),
+      },
+    },
+  };
+  assert.match(
+    renderComment(results(meanMover), ctx(), provisionalProfile).split("\n")[0],
+    new RegExp(`nothing clears the provisional ±${floor}% floor`)
+  );
+  assert.match(
+    renderComment(results(meanMover), ctx(), calibratedProfile).split("\n")[0],
+    new RegExp(`nothing clears the ±${floor}% floor`)
+  );
+});
+
+test("says out loud when the threshold is provisional", () => {
+  const body = renderComment(results(), ctx(), provisionalProfile);
+  assert.match(body, /provisional/i);
+  assert.match(body, /\*\*The noise floor is provisional\.\*\*/);
+  assert.match(body, thresholdLine(provisionalProfile));
   assert.match(body, /docs\/benchmarks\/calibration\.md/);
+});
+
+test("quotes the calibration record when the threshold is calibrated", () => {
+  // The prose and the number it describes drifted apart once already — the
+  // methodology bullet asserted the threshold "is three times the calibrated
+  // standard deviation" after the floor had been moved above the empirical
+  // maximum instead. Every figure in that sentence is read from the profile's
+  // calibration record, so this pins each of them to it rather than to a
+  // literal.
+  const { calibration, thresholdPct } = calibratedProfile;
+  const body = renderComment(results(), ctx(), calibratedProfile);
+  assert.match(body, thresholdLine(calibratedProfile));
+  assert.match(body, new RegExp(`\\(${calibration.date}\\)`));
+  assert.match(body, new RegExp(`${calibration.runs} runs of one build`));
+  assert.match(body, new RegExp(`at ${calibration.reps} repetitions`));
+  assert.match(
+    body,
+    new RegExp(`standard deviation of ${calibration.sdPct.toFixed(2)}%`)
+  );
+  assert.match(
+    body,
+    new RegExp(`largest movement of ${calibration.maxObservedPct.toFixed(2)}%`)
+  );
+  assert.match(
+    body,
+    new RegExp(`3σ \\(${calibration.threeSigmaPct.toFixed(2)}%\\)`)
+  );
+  // The floor sits above the observed maximum, which is the whole reason the
+  // sentence exists. If a re-calibration ever inverts that, this sentence
+  // becomes false and the test says so before the comment does.
+  assert.ok(
+    thresholdPct >= calibration.maxObservedPct,
+    `threshold ${thresholdPct}% is below the observed maximum ${calibration.maxObservedPct}%`
+  );
+  assert.doesNotMatch(body, /threshold is \*\*provisional\*\*/);
+});
+
+test("the public entry points default to the shipped profile", () => {
+  // The default is applied HERE and nowhere internal, so this is the only place
+  // it can be observed — and the only thing standing between the CLI and a
+  // floor nobody wrote down.
+  assert.equal(
+    renderComment(results(REGRESSION), ctx()),
+    renderComment(results(REGRESSION), ctx(), DEFAULT_PROFILE)
+  );
+  assert.equal(
+    renderSummary(results(REGRESSION), ctx()),
+    renderSummary(results(REGRESSION), ctx(), DEFAULT_PROFILE)
+  );
+  // Whichever state the shipped profile is in, the comment describes THAT one.
+  const body = renderComment(results(REGRESSION), ctx());
+  assert.match(body, thresholdLine(DEFAULT_PROFILE));
+});
+
+test("the shipped profile cannot be mutated out from under a render", () => {
+  // Frozen one level down as well. The renderer threads this object through
+  // every note builder in a run; a stray assignment anywhere along that path
+  // would otherwise judge the benchmarks after it against a different floor
+  // than the ones before it, with nothing in the comment saying so.
+  // Captured rather than written out: a re-calibration is meant to be an edit to
+  // bench-profile.mjs and nothing else, and a literal here would put this file
+  // back on that bill.
+  const floor = DEFAULT_PROFILE.thresholdPct;
+  const runner = DEFAULT_PROFILE.calibration.runner;
+  const sd = DEFAULT_PROFILE.estimatorSpread.sdPct;
+  assert.throws(() => {
+    DEFAULT_PROFILE.thresholdPct = 1e9;
+  }, TypeError);
+  assert.throws(() => {
+    DEFAULT_PROFILE.calibration.runner = "somewhere-else";
+  }, TypeError);
+  // Every sub-record, not the first one. A second frozen record added beside a
+  // frozen one is exactly where the freeze gets forgotten.
+  assert.throws(() => {
+    DEFAULT_PROFILE.estimatorSpread.sdPct = 0;
+  }, TypeError);
+  assert.equal(DEFAULT_PROFILE.thresholdPct, floor);
+  assert.equal(DEFAULT_PROFILE.calibration.runner, runner);
+  assert.equal(DEFAULT_PROFILE.estimatorSpread.sdPct, sd);
+});
+
+// ---------------------------------------------------------------------------
+// The profile's NUMBERS, not just its flags.
+//
+// Threading the profile through every internal made the flag reachable from a
+// test, and the suite grew a pair of tests for it — but every one of those
+// renders still used the shipped 5.4 / 6 / 3. So the numeric fields were passed
+// down eighteen call frames and never once observed, and three separate
+// one-token slips restored the old compile-time behaviour with the suite fully
+// green:
+//
+//   `profile.thresholdPct`      -> `DEFAULT_PROFILE.thresholdPct`
+//   `minRepsForSignTest`        -> a literal 6
+//   the provesPerRep gate       -> a literal 3
+//
+// The first is the dangerous one. `DEFAULT_PROFILE` is in the renderer's module
+// scope, so that substitution is not a crash, a type error or a missing binding
+// — it reads a real number of the right kind and silently ignores the argument.
+// It is the exact silent-fallback class this refactor exists to prevent, in the
+// one shape the "an incomplete profile throws" property cannot catch: nothing is
+// incomplete.
+//
+// So each test below renders with a profile whose NUMBER differs from the
+// shipped one, and asserts the output followed the argument. Each also renders
+// the SAME artifact under the shipped profile and asserts it behaves the other
+// way, so none of them can pass by the renderer simply always doing this.
+// ---------------------------------------------------------------------------
+
+test("the floor comes from the profile's number, not the shipped one", () => {
+  // A floor far above anything the fixtures use, so a movement that is a clear
+  // regression against the shipped 5.4% is noise against this one. Under the
+  // substitution the artifact is classified against 5.4% while every sentence
+  // still prints 25.00%, which is a comment that contradicts itself.
+  const wideFloor = {
+    ...DEFAULT_PROFILE,
+    thresholdPct: 25,
+    thresholdProvisional: true,
+  };
+  const regression = results({
+    benchmark: { base: side(1000), head: side(1200) },
+  });
+
+  const wide = renderComment(regression, ctx(), wideFloor);
+  const heading = wide.split("\n")[0];
+  // The floor is quoted from the argument...
+  assert.match(heading, /floor provisional ±25\.00%/);
+  // ...and, the part a substitution cannot fake, the CLASSIFICATION follows it:
+  // +20.00% is below 25.00%, so this is noise.
+  assert.match(heading, /No significant change/);
+  assert.doesNotMatch(heading, /slower|faster/);
+  assert.doesNotMatch(wide, MOVED_HEADING);
+  // The movement itself is still reported — withheld verdict, not withheld data.
+  assert.match(wide, /\+20\.00%/);
+
+  // The control: the same artifact against the shipped floor is a movement.
+  const shipped = renderComment(regression, ctx());
+  assert.match(shipped, MOVED_HEADING);
+  assert.doesNotMatch(shipped.split("\n")[0], /No significant change/);
+
+  // And the other direction, so this cannot pass by the renderer treating every
+  // supplied floor as unreachable: a floor below the fixture's movement rules on
+  // it, at a number the shipped profile would call noise.
+  const tightFloor = { ...DEFAULT_PROFILE, thresholdPct: 0.5 };
+  const tight = renderComment(results(), ctx(), tightFloor);
+  assert.match(tight, thresholdLine(tightFloor));
+  // The default fixture is +1.00%: noise at 5.4%, a movement at 0.5%. The
+  // heading here is the movement's own, which does not quote the floor — the
+  // classification is the assertion that matters.
+  assert.match(tight, MOVED_HEADING);
+  assert.match(tight.split("\n")[0], /\+1\.00% slower/);
+  assert.doesNotMatch(renderComment(results(), ctx()), MOVED_HEADING);
+});
+
+test("the repetition floor comes from the profile's calibrated count", () => {
+  // `minRepsForSignTest` is derived from `calibratedReps` rather than being a
+  // field of its own, which is right — it is a rule about how the floor
+  // transfers, not a measurement — but a derivation is exactly as easy to
+  // replace with the literal it currently evaluates to.
+  const eightReps = { ...DEFAULT_PROFILE, calibratedReps: 8 };
+  const regression = results({
+    benchmark: { base: side(1000), head: side(1200) },
+  });
+
+  const body = renderComment(regression, ctx(), eightReps);
+  const heading = body.split("\n")[0];
+  // The fixture runs at the shipped six, which is now BELOW the floor.
+  assert.match(heading, /Unresolved \+20\.00%/);
+  assert.match(heading, new RegExp(`${REPS} repetitions is too few`));
+  assert.doesNotMatch(heading, /slower|faster/);
+  // The prose that quotes the count quotes the supplied one too.
+  assert.match(body, /a verdict needs at least 8/);
+  assert.match(body, /Runs shorter than 8 repetitions/);
+
+  // The control: at the shipped calibrated count the same artifact rules.
+  const shipped = renderComment(regression, ctx());
+  assert.match(shipped.split("\n")[0], /\+20\.00% slower/);
+  assert.doesNotMatch(shipped.split("\n")[0], /too few/);
+});
+
+test("the prove-count gate comes from the profile's calibrated count", () => {
+  // The other axis of `verdictPreconditions`, and the one an artifact can move
+  // for free: `provesPerRep` is fork-authored, so the count it is compared
+  // against has to be the trusted one.
+  const fiveProves = { ...DEFAULT_PROFILE, calibratedProvesPerRep: 5 };
+  const regression = results({
+    benchmark: { base: side(1000), head: side(1200) },
+  });
+
+  const body = renderComment(regression, ctx(), fiveProves);
+  const heading = body.split("\n")[0];
+  // The fixture retains the shipped three, which is now below the calibrated
+  // count, so the run reports without ruling.
+  assert.match(heading, /Unresolved \+20\.00%/);
+  assert.match(heading, /this run cannot be ruled on/);
+  assert.doesNotMatch(heading, /slower|faster/);
+  // Every sentence that names the count names the supplied one.
+  assert.match(body, /too few proves per repetition/);
+  assert.match(body, /fastest of 5 warm proves/);
+  assert.doesNotMatch(body, /fastest of 3 warm proves/);
+  // The remedy points one past it, because the gate refuses both directions.
+  assert.match(body, /--proves 6/);
+  assert.doesNotMatch(body, /--proves 4/);
+
+  // The control: at the shipped calibrated count the same artifact rules.
+  const shipped = renderComment(regression, ctx());
+  assert.match(shipped.split("\n")[0], /\+20\.00% slower/);
+  assert.doesNotMatch(shipped.split("\n")[0], /cannot be ruled on/);
+});
+
+test("the estimator's measured spread comes from the profile", () => {
+  // These four figures — the run count and the three standard deviations — were
+  // string literals in the methodology section while the bullet printing them
+  // was ALREADY gated on `calibratedReps` and `calibratedProvesPerRep`. So a
+  // re-calibrated profile printed this standard deviation and
+  // `calibration.sdPct` in the same comment, as two different answers to "how
+  // much does this estimator scatter", with nothing saying they came from
+  // different sessions.
+  const spread = {
+    ...DEFAULT_PROFILE,
+    estimatorSpread: Object.freeze({
+      runs: 9,
+      sdPct: 3.33,
+      globalMinSdPct: 4.44,
+      medianSdPct: 7.77,
+    }),
+  };
+
+  const body = renderComment(results(), ctx(), spread);
+  // Spelled out, as it was: a count inside a sentence, not a figure in a table.
+  assert.match(
+    body,
+    /Measured over nine calibration runs of identical binaries, this estimator holds a standard deviation of 3\.33%, against 4\.44% for a global minimum and 7\.77% for a plain median\./
+  );
+  // The shipped figures must be gone, not merely joined.
+  for (const stale of [/1\.79%/, /2\.96%/, /5\.39%/, /over six calibration/]) {
+    assert.doesNotMatch(body, stale, `${stale} survived the supplied profile`);
+  }
+
+  // The thinner-run branch quotes the same figure and must read it from the same
+  // place. A run at any other shape does not inherit the measured spread.
+  const wider = (v) => ({
+    samples: Array.from({ length: REPS }, () =>
+      Array(PROVES_PER_REP + 1).fill(v)
+    ),
+  });
+  const thinner = renderComment(
+    results({
+      top: {
+        provesPerRep: PROVES_PER_REP + 1,
+        provesExecutedPerRep: PROVES_PER_REP + 2,
+      },
+      benchmark: { base: wider(1000), head: wider(1010) },
+    }),
+    ctx(),
+    spread
+  );
+  assert.match(
+    thinner,
+    /the estimator's 3\.33% standard deviation was measured at/
+  );
+  assert.doesNotMatch(thinner, /1\.79%/);
+
+  // And the shipped profile still prints the SHIPPED figures, so the assertions
+  // above are about the argument rather than about the sentence disappearing.
+  // Read from the profile, not written out: a literal here would fail the next
+  // re-calibration, which is the bill this file is supposed to be off.
+  const { runs, sdPct, globalMinSdPct, medianSdPct } =
+    DEFAULT_PROFILE.estimatorSpread;
+  assert.match(
+    renderComment(results(), ctx()),
+    new RegExp(
+      `this estimator holds a standard deviation of ${shownPct(sdPct)}%, ` +
+        `against ${shownPct(globalMinSdPct)}% for a global minimum and ` +
+        `${shownPct(medianSdPct)}% for a plain median\\.`
+    )
+  );
+  // The run count is spelled out in prose, so it is checked as a word — against
+  // this file's own list rather than the renderer's, which is the whole value of
+  // the assertion. Indexed by the profile, so a re-measurement moves it.
+  const words = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+  ];
+  assert.match(
+    renderComment(results(), ctx()),
+    new RegExp(
+      `Measured over ${words[runs]} calibration runs of identical binaries`
+    )
+  );
+});
+
+test("a profile missing a field is refused, never quietly completed", () => {
+  // The default is applied at the public entry points and NOWHERE else, so a
+  // partial profile is a half-finished port or a mistyped fixture — not a
+  // request to fill the gap in. Filling it would publish a verdict against a
+  // floor nobody wrote down, which is the same failure as reading the floor out
+  // of the artifact, arriving from the other side.
+  //
+  // Every field, not a representative one: the point is that the requirement is
+  // stated in a list the renderer walks, so a field added to bench-profile.mjs
+  // and forgotten here is the only way through.
+  for (const field of Object.keys(DEFAULT_PROFILE)) {
+    const partial = { ...DEFAULT_PROFILE };
+    delete partial[field];
+    assert.throws(
+      () => renderComment(results(), ctx(), partial),
+      new RegExp(
+        `profile\\.${field} (is missing or invalid|must be an object)`
+      ),
+      `a profile without ${field} rendered anyway`
+    );
+  }
+  // One level down as well. The calibrated wording quotes every one of these by
+  // name, and it is required even while the floor is provisional and nothing
+  // reads it — a record validated only in the state that prints it is a record
+  // that goes stale unseen.
+  //
+  // Both sub-records, walked the same way. `estimatorSpread` needs it more, not
+  // less: its figures render on EVERY run at the calibrated counts, so a missing
+  // one is `undefined%` mid-sentence on the ordinary path rather than only in
+  // the state that quotes the calibration.
+  for (const record of ["calibration", "estimatorSpread"]) {
+    for (const field of Object.keys(DEFAULT_PROFILE[record])) {
+      const partial = { ...DEFAULT_PROFILE[record] };
+      delete partial[field];
+      assert.throws(
+        () =>
+          renderComment(results(), ctx(), {
+            ...DEFAULT_PROFILE,
+            [record]: partial,
+          }),
+        new RegExp(`profile\\.${record}\\.${field} is missing or invalid`),
+        `a ${record} record without ${field} rendered anyway`
+      );
+    }
+  }
+  // Wrong TYPE is refused on the same footing as absent: a threshold of "5.4"
+  // compares against a percentage as a string, and a provisional flag of 0 is
+  // falsy enough to silently pick the calibrated wording.
+  for (const bad of [
+    { thresholdPct: "5.4" },
+    { thresholdPct: Number.NaN },
+    { thresholdProvisional: 0 },
+    { calibratedReps: 6.5 },
+    { calibratedProvesPerRep: 0 },
+    { calibration: null },
+    { estimatorSpread: null },
+    { estimatorSpread: { ...DEFAULT_PROFILE.estimatorSpread, sdPct: "1.79" } },
+    { estimatorSpread: { ...DEFAULT_PROFILE.estimatorSpread, runs: 0 } },
+  ]) {
+    assert.throws(
+      () => renderComment(results(), ctx(), { ...DEFAULT_PROFILE, ...bad }),
+      /rendering context: profile\./,
+      `${Object.keys(bad)[0]} was accepted as ${JSON.stringify(bad[Object.keys(bad)[0]])}`
+    );
+  }
+  // Not an artifact refusal. The profile is trusted-side configuration like
+  // `ctx`, so a bad one is a first-party bug and must take the exit-3 path — the
+  // quiet exit-64 branch is for a fork's malformed JSON, and routing our own
+  // mistake there is how benchmark reporting goes dark while the workflow stays
+  // green.
+  assert.throws(
+    () => renderComment(results(), ctx(), {}),
+    (error) =>
+      error instanceof TypeError && error.rejectedArtifact === undefined
+  );
+  // And the same guard on the summary surface, which has its own entry point.
+  assert.throws(
+    () => renderSummary(results(), ctx(), {}),
+    /profile\.thresholdPct is missing or invalid/
+  );
 });
 
 test("labels a calibration run so its delta is not read as a regression", () => {
@@ -670,41 +1184,112 @@ test("ignores artifact fields that would author the verdict", () => {
     { thresholdPct: 1e9 },
     { thresholdProvisional: false },
     { calibration: true },
+    // The calibrated counts gate whether a verdict is published at all, so an
+    // artifact that could move them could buy one for a run of any shape.
+    { calibratedReps: 1 },
+    { calibratedProvesPerRep: 99 },
+    // And the profile as a whole, under every name it plausibly travels by.
+    // Nothing spreads the artifact into the renderer's configuration, so these
+    // are inert by construction — this is the test that keeps it that way.
+    { benchProfile: { ...DEFAULT_PROFILE, thresholdPct: 1e9 } },
+    { renderProfile: { ...DEFAULT_PROFILE, thresholdProvisional: false } },
+    // `profile` is a REAL artifact field — the cargo profile the dist was built
+    // with — so this is the one collision that matters: an object arriving there
+    // must be sanitized into a string and printed as a claim about the run, not
+    // adopted as the floor.
+    { profile: { ...DEFAULT_PROFILE, thresholdPct: 1e9 } },
   ];
-  for (const override of hostile) {
-    const key = Object.keys(override)[0];
-    const body = renderComment(
-      results({
-        benchmark: { ...regression.benchmark, ...override },
-        top: override,
-      }),
-      ctx()
-    );
-    const heading = body.split("\n")[0];
-    assert.match(
-      heading,
-      /### ⚠️ WASM proving — \+300\.00% slower/,
-      `${key} changed the verdict`
-    );
-    assert.doesNotMatch(heading, /faster/, `${key} inverted the direction`);
-    assert.doesNotMatch(
-      body,
-      /measurement noise, not a code change/,
-      `${key} claimed the regression was noise`
-    );
-    assert.doesNotMatch(
-      body,
-      /is the calibrated run-to-run variance/,
-      `${key} claimed an uncalibrated threshold was calibrated`
-    );
-    // The trusted threshold, and the calibration facts describing it, must
-    // survive whatever the artifact claimed.
-    assert.match(
-      body,
-      /±1\.90% threshold is calibrated on `warp-ubuntu-latest-x64-8x`/,
-      `${key} replaced the trusted threshold`
-    );
+  // Run against BOTH floor states, because "the artifact cannot author the
+  // verdict" has to hold in whichever one this branch ships. Under a calibrated
+  // floor the hostile `thresholdProvisional: false` also stops being a no-op by
+  // luck and starts having to be ignored on purpose.
+  for (const profile of [provisionalProfile, calibratedProfile]) {
+    for (const override of hostile) {
+      const key = Object.keys(override)[0];
+      const label = `${key} @ ${profile.thresholdProvisional ? "provisional" : "calibrated"}`;
+      const body = renderComment(
+        results({
+          benchmark: { ...regression.benchmark, ...override },
+          top: override,
+        }),
+        ctx(),
+        profile
+      );
+      const heading = body.split("\n")[0];
+      assert.match(
+        heading,
+        /### ⚠️ WASM proving — \+300\.00% slower/,
+        `${label} changed the verdict`
+      );
+      assert.doesNotMatch(heading, /faster/, `${label} inverted the direction`);
+      assert.doesNotMatch(
+        body,
+        /measurement noise, not a code change/,
+        `${label} claimed the regression was noise`
+      );
+      assert.doesNotMatch(
+        body,
+        /is the calibrated run-to-run variance/,
+        `${label} claimed an uncalibrated threshold was calibrated`
+      );
+      // The trusted threshold, and the calibration facts describing it, must
+      // survive whatever the artifact claimed.
+      assert.match(
+        body,
+        thresholdLine(profile),
+        `${label} replaced the trusted threshold`
+      );
+      // The 1e9 threshold would silence the regression entirely; the calibrated
+      // counts would change which methodology sentence is printed. Neither
+      // reached anything.
+      assert.match(
+        body,
+        MOVED_HEADING,
+        `${label} suppressed the moved section`
+      );
+    }
   }
+});
+
+test("the artifact cannot supply a profile", () => {
+  // The sharpest form of the rule above: a complete, well-formed profile — the
+  // exact shape `renderComment` accepts as its third argument — planted in the
+  // artifact under every name it could travel by, alongside a real regression it
+  // is tuned to silence. `normalizeResults` builds its output by naming the
+  // fields it wants, so an unnamed one cannot reach the renderer whatever it is
+  // called; this is what stops that from being rewritten as a spread.
+  const silencer = {
+    ...DEFAULT_PROFILE,
+    thresholdPct: 1e9,
+    thresholdProvisional: false,
+    calibration: { ...DEFAULT_PROFILE.calibration, runner: "attacker-runner" },
+  };
+  const planted = {};
+  for (const key of [
+    "profile",
+    "benchProfile",
+    "renderProfile",
+    "DEFAULT_PROFILE",
+  ]) {
+    planted[key] = silencer;
+  }
+  const body = renderComment(
+    results({
+      top: { ...planted, ...silencer },
+      benchmark: { base: side(1000), head: side(4000), ...planted },
+    }),
+    ctx()
+  );
+  assert.match(body, /### ⚠️ WASM proving — \+300\.00% slower/);
+  assert.match(body, MOVED_HEADING);
+  assert.match(body, thresholdLine(DEFAULT_PROFILE));
+  assert.doesNotMatch(body, /attacker-runner/);
+  assert.doesNotMatch(body, /±1000000000\.00%/);
+  // `results.profile` renders as the build profile it really is: a sanitized
+  // string in the Method row, not an adopted configuration. `[object Object]`
+  // is what `String({})` gives, and printing it is the honest outcome — the
+  // artifact said something unusable and the comment says so.
+  assert.match(body, /`\[object Object\]`/);
 });
 
 test("headlines the worst regression, not the biggest mover", () => {
@@ -1284,6 +1869,40 @@ test("the CLI rejects a bad argument list", async () => {
   assert.equal(await main([]), 2);
   assert.equal(await main(["only-one.json"]), 2);
   assert.equal(await main(["a.json", "b.json", "c.json"]), 2);
+});
+
+test("the CLI offers no way to supply a profile", async () => {
+  // The profile decides the verdict this job posts under a write token, so the
+  // only copy that may reach a real render is the module default — reviewed in
+  // the default branch's tree. A flag, an extra path or an environment variable
+  // would each hand that decision to whoever can influence how the workflow
+  // invokes this script, which is the same hole as reading the floor out of the
+  // artifact. The argument list is CLOSED: anything past the two paths is a
+  // usage error rather than an option to interpret.
+  for (const argv of [
+    ["--profile", "profile.json", "results.json", "ctx.json"],
+    ["results.json", "ctx.json", "profile.json"],
+    ["--threshold-pct=1e9", "results.json", "ctx.json"],
+  ]) {
+    assert.equal(await main(argv), 2, `argv accepted: ${argv.join(" ")}`);
+  }
+  // `--summary` is the ONLY flag, and it selects a size budget, not a floor.
+  const source = readFileSync(
+    fileURLToPath(new URL("./render-bench-comment.mjs", import.meta.url)),
+    "utf8"
+  );
+  const main_ = source.slice(source.indexOf("export async function main("));
+  assert.doesNotMatch(main_, /process\.env/, "main() reads the environment");
+  assert.doesNotMatch(
+    main_,
+    /renderComment\([^)]*,[^)]*,/,
+    "main() passes a third argument to renderComment"
+  );
+  assert.doesNotMatch(
+    main_,
+    /renderSummary\([^)]*,[^)]*,/,
+    "main() passes a third argument to renderSummary"
+  );
 });
 
 test("the CLI never emits a workflow command from untrusted bytes", async (t) => {
@@ -2185,13 +2804,20 @@ test("a mean that contradicts the headline withdraws the direction", () => {
   const body = renderComment(
     results({
       benchmark: {
-        // Fastest prove 6% faster in every repetition, the other two 100%
+        // Fastest prove 20% faster in every repetition, the other two 100%
         // slower in every repetition: both directions hold in 6 of 6.
+        //
+        // 20%, not the 6% this used to use. The fixture only has to clear the
+        // floor — its size is not the subject — and at 6% it cleared a 5.4%
+        // floor by six hundredths of a percent, so a re-calibration upward
+        // turned this test red without anything in the renderer changing. The
+        // figures stay literal, which is what makes them an independent check;
+        // they are just chosen with room above any floor this bot would ship.
         base: {
           samples: Array.from({ length: REPS }, () => [1000, 1000, 1000]),
         },
         head: {
-          samples: Array.from({ length: REPS }, () => [940, 2000, 2000]),
+          samples: Array.from({ length: REPS }, () => [800, 2000, 2000]),
         },
       },
     }),
@@ -2204,8 +2830,8 @@ test("a mean that contradicts the headline withdraws the direction", () => {
   assert.doesNotMatch(heading, /faster|slower/);
   assert.doesNotMatch(heading, /🚀|⚠️/);
   // Both figures present, so the reader can see what disagreed.
-  assert.match(body, /-6\.00%/);
-  assert.match(body, /\+64\.67%/);
+  assert.match(body, /-20\.00%/);
+  assert.match(body, /\+60\.00%/);
   assert.match(body, /moved both ways/);
   // The row withholds its verdict too, rather than showing a clean improvement
   // under a heading that declined to rule.
@@ -2275,8 +2901,13 @@ test("a short run still reports a mean that moved", () => {
 // floor is the EXPECTED outcome of these runs, not an exotic one, since reading
 // the delta off twenty to thirty of them is how the floor gets set.
 test("a calibration run never headlines a direction", () => {
+  // +20%, where this used to use +8%. The movement only has to clear the floor
+  // — the gate under test is the calibration flag, not the magnitude — and at
+  // +8% the fixture sat two and a half points above a 5.4% floor, close enough
+  // that a re-calibration upward silently turned this into a test of the
+  // below-the-floor path while still asserting the above-the-floor wording.
   const artifact = results({
-    benchmark: { base: side(1000), head: side(1080) },
+    benchmark: { base: side(1000), head: side(1200) },
   });
   const calibrated = renderComment(artifact, ctx({ calibration: true }));
   const heading = calibrated.split("\n")[0];
@@ -2284,7 +2915,7 @@ test("a calibration run never headlines a direction", () => {
   assert.doesNotMatch(heading, /🚀|⚠️/);
   assert.match(heading, /Unresolved/);
   // The magnitude survives — the run exists to measure it.
-  assert.match(calibrated, /\+8\.00%/);
+  assert.match(calibrated, /\+20\.00%/);
   assert.match(calibrated, /moved past the floor on a calibration run/);
   assert.match(calibrated, /\*\*Calibration run\.\*\*/);
 
@@ -2292,7 +2923,7 @@ test("a calibration run never headlines a direction", () => {
   // made to always fire.
   assert.match(
     renderComment(artifact, ctx()).split("\n")[0],
-    /\+8\.00% slower/
+    /\+20\.00% slower/
   );
 });
 
@@ -2417,7 +3048,7 @@ test("setupCount is bounded by the repetitions that ran", () => {
 // deleting any one of them individually left the whole suite green.
 //
 // Two traps make that easy to get wrong, and the first version of this test fell
-// into both. A `provesPerRep` below CALIBRATED_PROVES_PER_REP trips the
+// into both. A `provesPerRep` below the profile's `calibratedProvesPerRep` trips the
 // `tooFewProves` precondition, which returns before the sign test is consulted, so
 // a fixture built at `provesPerRep: 1` asserts nothing about this code at all. And
 // `### 🔺` appears in no heading — headings use ⚠️ or 🚀, and 🔺 is a table-row
@@ -3859,7 +4490,8 @@ test("a configured-short run keeps the repetition advice", () => {
 // check. Comparing at the shown precision instead calls that movement a
 // movement, which overstates it by 0.004pp.
 //
-// The shown precision wins because THRESHOLD_PCT is itself coarse: it is set
+// The shown precision wins because the profile's `thresholdPct` is itself
+// coarse: it is set
 // above the largest movement observed across 30 no-change calibration runs
 // (5.03%), rounded to 5.4%, so its own precision is ~0.1pp. Exactness at
 // 0.004pp against a number that coarse is spurious rigour, while the
@@ -3874,27 +4506,92 @@ test("a configured-short run keeps the repetition advice", () => {
 /** Head value whose delta against 1000 displays as `pct` to two decimals. */
 const headFor = (pct) => 1000 * (1 + pct / 100);
 
+// Both boundary cases are expressed as offsets from the FLOOR rather than as the
+// two literals they used to be, because the floor is precisely what these two
+// tests are about. Pinned to 5.396 / 5.394 they passed for the wrong reason the
+// moment the floor moved: at a floor of 6.10 the first one asserted that a
+// movement three quarters of a percent BELOW the floor was put in the moved
+// section, and it failed — correctly, but for a reason that has nothing to do
+// with rounding. A hair under the floor is the case; the floor's value is not.
+//
+// Half a display step under, on either side of the rounding boundary: -0.004
+// rounds back up to the floor, -0.006 rounds down away from it.
+
 test("a movement that displays as the floor is treated as reaching it", () => {
   const body = renderComment(
-    results({ benchmark: { base: side(1000), head: side(headFor(1.896)) } }),
+    results({
+      benchmark: { base: side(1000), head: side(headFor(FLOOR - 0.004)) },
+    }),
     ctx()
   );
-  assert.match(body, /\+1\.90%/);
+  assert.match(body, new RegExp(`\\+${shownPct(FLOOR)}%`));
   assert.match(
     body,
-    /Moved beyond the noise floor/,
-    "1.896% displays as +1.90% against a ±1.90% floor; calling it noise would " +
-      "contradict the line printing it"
+    // The moved section's own heading is worded by the floor's state, and this
+    // test is about where the comparison rounds, not about that wording.
+    MOVED_HEADING,
+    `${FLOOR - 0.004}% displays as +${FLOOR.toFixed(2)}% against a ±${FLOOR.toFixed(2)}% ` +
+      "floor; calling it noise would contradict the line printing it"
   );
 });
 
 test("a movement that displays below the floor is noise", () => {
   const body = renderComment(
-    results({ benchmark: { base: side(1000), head: side(headFor(1.894)) } }),
+    results({
+      benchmark: { base: side(1000), head: side(headFor(FLOOR - 0.006)) },
+    }),
     ctx()
   );
-  assert.match(body, /\+1\.89%/);
-  assert.doesNotMatch(body, /Moved beyond the noise floor/);
+  assert.match(body, new RegExp(`\\+${shownPct(FLOOR - 0.01)}%`));
+  assert.doesNotMatch(body, MOVED_HEADING);
+});
+
+test("a mean movement that displays as the floor is treated as reaching it", () => {
+  // The mean channel compares at the displayed precision against `>=`, exactly
+  // as the headline does — and its boundary was the one nothing covered.
+  // Weakening it to `>` left the suite green, because every mean fixture in the
+  // file is far past the floor or far short of it, and the channel then goes
+  // silent on precisely the movement that displays as the floor the same comment
+  // prints. That is the contradiction the headline's own boundary test exists to
+  // prevent, on the other estimator.
+  //
+  // The fixture: every repetition's fastest prove unchanged, so the HEADLINE is
+  // ±0.00% and cannot clear anything, while the remaining proves are set so the
+  // mean of all proves lands exactly on the floor.
+  const slowProve =
+    (1000 * PROVES_PER_REP * (1 + FLOOR / 100) - 1000) / (PROVES_PER_REP - 1);
+  const body = renderComment(
+    results({
+      benchmark: {
+        base: {
+          samples: Array.from({ length: REPS }, () =>
+            Array(PROVES_PER_REP).fill(1000)
+          ),
+        },
+        head: {
+          samples: Array.from({ length: REPS }, () => [
+            1000,
+            ...Array(PROVES_PER_REP - 1).fill(slowProve),
+          ]),
+        },
+      },
+    }),
+    ctx()
+  );
+  const shown = shownPct(FLOOR);
+  // The headline saw nothing: the minimum of every repetition is unchanged.
+  assert.match(
+    body,
+    /±0\.00% on the mean of each repetition's \*fastest\* prove/
+  );
+  // The mean landed exactly on the floor, and the channel fired for it.
+  assert.match(
+    body.split("\n")[0],
+    new RegExp(`the mean of all proves is \\+${shown}% slower`),
+    `a mean of +${FLOOR.toFixed(2)}% against a ±${FLOOR.toFixed(2)}% floor must reach it, ` +
+      "or the comment calls a movement noise on the same line it prints the two as equal"
+  );
+  assert.match(body, /moved on the mean but not on the reported figure/);
 });
 
 test("an exactly unchanged benchmark is never a movement", () => {
@@ -3904,7 +4601,7 @@ test("an exactly unchanged benchmark is never a movement", () => {
     results({ benchmark: { base: side(1000), head: side(1000) } }),
     ctx()
   );
-  assert.doesNotMatch(body, /Moved beyond the noise floor/);
+  assert.doesNotMatch(body, MOVED_HEADING);
 });
 
 test("the unit is a trusted-side claim, not a fork-authored one", () => {
