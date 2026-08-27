@@ -135,7 +135,16 @@ jobs:
           # github-script defaults retries to 0, so a single GitHub 5xx or a
           # secondary rate limit fails the step — and on the trusted side that
           # reddens the default branch over an outage nobody in the PR caused.
+          #
+          # `retry-exempt-status-codes` overrides the action's default of
+          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
+          # failure these retries exist for, since this workflow makes a burst of
+          # writes against one PR — are reported as 403, so the default exemption
+          # excluded exactly the case named above and retried only 5xx. 400, 401,
+          # 404 and 422 stay exempt: those are deterministic and retrying them
+          # only delays the failure.
           retries: 3
+          retry-exempt-status-codes: 400,401,404,422
           script: |
             const fs = require('fs');
 
@@ -230,7 +239,16 @@ jobs:
           # github-script defaults retries to 0, so a single GitHub 5xx or a
           # secondary rate limit fails the step — and on the trusted side that
           # reddens the default branch over an outage nobody in the PR caused.
+          #
+          # `retry-exempt-status-codes` overrides the action's default of
+          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
+          # failure these retries exist for, since this workflow makes a burst of
+          # writes against one PR — are reported as 403, so the default exemption
+          # excluded exactly the case named above and retried only 5xx. 400, 401,
+          # 404 and 422 stay exempt: those are deterministic and retrying them
+          # only delays the failure.
           retries: 3
+          retry-exempt-status-codes: 400,401,404,422
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -244,6 +262,17 @@ jobs:
             // without failing a default-branch workflow.
             const refuse = (message) => {
               core.error(`Proving Benchmark: ${message}`);
+            };
+
+            // For the refusals that are NOT identity failures. Reaching the
+            // fallback with no reason set makes it infer one from what is absent,
+            // and with `PR_NUMBER` unset it lands on "the pull request the report
+            // claimed could not be confirmed" — a forgery accusation. Every path
+            // that declines because GitHub itself was unreachable says so
+            // instead, in the PR, where the author is the one reading it.
+            const refuseAsOutage = (message, prSkipReason) => {
+              refuse(message);
+              core.setOutput('skip_reason', prSkipReason);
             };
 
             let claimed;
@@ -309,8 +338,9 @@ jobs:
                 });
                 run = data;
               } catch (error) {
-                refuse(
+                refuseAsOutage(
                   `Could not fetch bench run ${process.env.BENCH_RUN_ID}: ${error.message}`,
+                  'The reporter could not read the benchmark run it was pointed at, so the report was not posted. This is a fault on the reporting side, not in the pull request.',
                 );
                 return;
               }
@@ -328,9 +358,16 @@ jobs:
                 pull_number: number,
               }));
             } catch (error) {
-              // A number that does not resolve is a forged or stale artifact,
-              // not an outage worth failing the workflow over.
-              refuse(`PR #${number} could not be read: ${error.message}`);
+              // Could be either: a number that does not resolve is a forged or
+              // stale artifact, but a 5xx or a secondary rate limit on a number
+              // that is perfectly real gets here too, and this step cannot tell
+              // them apart. The PR-visible wording covers both without accusing
+              // the author of the one it cannot rule out; the log line above has
+              // the status for whoever is triaging.
+              refuseAsOutage(
+                `PR #${number} could not be read: ${error.message}`,
+                `The reporter could not read pull request #${number} from the GitHub API, so the report was not posted. This is a fault on the reporting side, or the pull request no longer exists.`,
+              );
               return;
             }
 
@@ -401,7 +438,12 @@ jobs:
                 return;
               }
             } catch (error) {
-              refuse(`Artifact baseSha ${claimedBase} could not be resolved in this repository: ${error.message}`);
+              // Same ambiguity as the `pulls.get` above: an unresolvable commit is
+              // a forged baseSha, but `compareCommits` also 5xxes on real ones.
+              refuseAsOutage(
+                `Artifact baseSha ${claimedBase} could not be resolved in this repository: ${error.message}`,
+                'The reporter could not verify the base commit the benchmark measured against, so the report was not posted.',
+              );
               return;
             }
 
@@ -504,7 +546,10 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
+          # Same as the other API steps; see the fetch step for why 403 is not
+          # exempt.
           retries: 3
+          retry-exempt-status-codes: 400,401,404,422
           script: |
             let pr;
             try {
@@ -586,7 +631,16 @@ jobs:
           # github-script defaults retries to 0, so a single GitHub 5xx or a
           # secondary rate limit fails the step — and on the trusted side that
           # reddens the default branch over an outage nobody in the PR caused.
+          #
+          # `retry-exempt-status-codes` overrides the action's default of
+          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
+          # failure these retries exist for, since this workflow makes a burst of
+          # writes against one PR — are reported as 403, so the default exemption
+          # excluded exactly the case named above and retried only 5xx. 400, 401,
+          # 404 and 422 stay exempt: those are deterministic and retrying them
+          # only delays the failure.
           retries: 3
+          retry-exempt-status-codes: 400,401,404,422
           script: |
             const fs = require('fs');
             // check-run output.summary is capped at 65535 chars; the renderer
@@ -712,10 +766,16 @@ jobs:
         # Also fires when a report rendered fine but the pre-write head re-check
         # could not confirm the PR — that step declines rather than posting, and
         # without this clause a rendered-but-unposted report left no trace at all.
-        # It deliberately does NOT fire when the re-check found the head had
-        # simply MOVED: a newer reporter is already on its way with the right
-        # numbers, and this check shares its name, so announcing the stand-down
-        # would overwrite the report it stood down for. That case sets no reason.
+        # That includes the case where the head simply MOVED. It used to be
+        # excluded, on the reasoning that a newer reporter was already on its way
+        # and this check shares its name so the stand-down would overwrite it.
+        # Both halves were wrong: the write below targets
+        # `github.event.workflow_run.head_sha`, this run's OLD commit, while a
+        # newer reporter targets the new one, so they cannot collide — and no
+        # newer reporter is guaranteed, because the push that moved the head may
+        # have matched this workflow's `paths-ignore` or its bench run may fail.
+        # Also fires when the check-run write itself failed, which is the only
+        # state a rendered report could otherwise vanish from silently.
         if: >-
           always() && steps.run.outputs.id != '' &&
           (steps.render.outputs.ok != 'true' || steps.recheck.outputs.reason != ''
@@ -739,7 +799,16 @@ jobs:
           # github-script defaults retries to 0, so a single GitHub 5xx or a
           # secondary rate limit fails the step — and on the trusted side that
           # reddens the default branch over an outage nobody in the PR caused.
+          #
+          # `retry-exempt-status-codes` overrides the action's default of
+          # `400,401,403,404,422`, dropping 403. Secondary rate limits — the
+          # failure these retries exist for, since this workflow makes a burst of
+          # writes against one PR — are reported as 403, so the default exemption
+          # excluded exactly the case named above and retried only 5xx. 400, 401,
+          # 404 and 422 stay exempt: those are deterministic and retrying them
+          # only delays the failure.
           retries: 3
+          retry-exempt-status-codes: 400,401,404,422
           script: |
             const head_sha = process.env.HEAD_SHA;
             if (!head_sha) {
@@ -764,8 +833,16 @@ jobs:
             // renderer bug, and naming the wrong cause is worse than naming a
             // vague one.
             const reason =
+              // Branched on the comment's own outcome. A single hardcoded "neither
+              // could be written" was published verbatim on runs where the sticky
+              // comment HAD posted — the check-run write can fail transiently and
+              // the fallback's own write succeed seconds later — so the pull
+              // request showed the numbers in one surface and "nothing was
+              // posted" in the other, each contradicting the other.
               (process.env.CHECKRUN_PUBLISHED === 'false'
-                ? `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
+                ? process.env.COMMENT_OUTCOME === 'success'
+                  ? 'The report is in the pull request comment, but the check run could not be written. This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.'
+                  : `The report rendered, but neither the pull request comment nor the check run could be written (comment: ${process.env.COMMENT_OUTCOME || 'skipped'}). This is a fault on the reporting side — most likely a GitHub rate limit — not in the pull request.`
                 : '') ||
               process.env.RECHECK_REASON ||
               // Ahead of the PR_NUMBER inference below, which is a guess about
@@ -842,9 +919,12 @@ jobs:
                   status: body.status,
                   conclusion: body.conclusion,
                   details_url: body.details_url,
-                  // Carried on the update too: this path is how the fallback's
-                  // unmarked notice gets replaced by a real report, and without
-                  // the marker the next attempt could downgrade it again.
+                  // `external_id` is deliberately absent, here and in `body`. The
+                  // marker means "a real report is published at this sha", and the
+                  // guard above reads it to refuse to downgrade one. Stamping it
+                  // on this notice would make the next attempt mistake "nothing
+                  // was posted" for a report worth protecting, and no later run
+                  // could ever replace it.
                   output: body.output,
                 });
               } else {

@@ -1694,10 +1694,65 @@ test("teardown failures are fork-controlled and treated as such", () => {
   );
   assert.match(body, /reported 8 teardown failures/); // capped
   assert.doesNotMatch(body, /<img/);
-  assert.doesNotMatch(body, /`rm -rf/);
   assert.doesNotMatch(body, /^::error::/m);
   for (const line of body.split("\n").filter((l) => l.startsWith("> - "))) {
-    assert.ok(line.length <= 4 + 120, `entry not capped: ${line.length}`);
+    // Wrapped in a code span, and the two backticks are part of the budget.
+    assert.match(line, /^> - `.*`$/, `entry not in a code span: ${line}`);
+    assert.ok(line.length <= 4 + 120 + 2, `entry not capped: ${line.length}`);
+  }
+});
+
+test("no rendered line can be read as a workflow command", () => {
+  // The renderer writes the comment body to stdout in a job holding a write
+  // token. A `::`-prefixed line at column 0 is a workflow command, and the only
+  // fork-controlled strings that reach column 0 are the benchmark name (inside
+  // the samples fence) and the teardown entries.
+  const hostile = "::error title=Injected::fake";
+  const body = renderComment(
+    results({
+      benchmark: { name: hostile },
+      top: { teardownFailures: [hostile] },
+    }),
+    ctx()
+  );
+  for (const line of body.split("\n")) {
+    assert.ok(
+      !line.startsWith("::"),
+      `line reads as a workflow command: ${line}`
+    );
+  }
+});
+
+test("teardown failures cannot carry an autolink into the comment", () => {
+  // The same payloads the benchmark-name test uses, against the other
+  // fork-controlled string this file renders. These entries were interpolated as
+  // raw GFM, so every one of them reached the privileged comment live: a link
+  // reading "Security review passed", a remote image, and `#1` — which makes
+  // GitHub write a cross-reference onto the target issue under this repo's own
+  // bot identity. `sanitizeText` does not touch markdown link, image, autolink,
+  // cross-reference or emoji syntax; only the code span does.
+  const payloads = [
+    "[Security review passed](https://evil.example/x)",
+    "![](https://evil.example/beacon.png)",
+    "reverted in #1 and 0xMiden/miden-client#1965",
+    "GH-1234 tracks this",
+    "https://evil.example/pwn?x=1",
+    ":white_check_mark: approved",
+    "[x] pwned",
+  ];
+  const body = renderComment(
+    results({ top: { teardownFailures: payloads } }),
+    ctx()
+  );
+  assert.match(body, /reported 7 teardown failures/);
+  for (const line of body.split("\n")) {
+    if (line.startsWith("```")) break;
+    const cleaned = line.replace(/`[^`]*`/g, "");
+    assert.doesNotMatch(
+      cleaned,
+      /https?:\/\/evil\.example|:white_check_mark:|GH-\d|#1\b|\[x\]/,
+      `a teardown entry escaped its code span on line: ${line}`
+    );
   }
 });
 

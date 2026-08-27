@@ -1014,7 +1014,15 @@ function buildTeardownNote(teardownFailures) {
     "> meaning it could not release a page, a browser or a server. Resources left open during the run",
     "> are measured against, and resources left open after it affect the next run on the same machine.",
     "> The benchmark job is failing for this — see its log.",
-    ...teardownFailures.map((failure) => `> - ${failure}`),
+    // In a code span, like every other fork-controlled string this file renders.
+    // `sanitizeText` removes what makes HTML and tables dangerous — backticks,
+    // pipes, angle brackets, `@`, `&` — but markdown link, image, autolink,
+    // cross-reference and emoji syntax survive it untouched, and these lines were
+    // interpolated as raw GFM. A fork could put `[Security review passed](…)` in
+    // the privileged comment as a live link, `![](…)` as a remote image, `#1` as
+    // a real cross-reference that backlinks from the target issue, and a bare URL
+    // as an autolink. The span makes all of it literal text.
+    ...teardownFailures.map((failure) => `> - ${codeSpan(failure)}`),
   ].join("\n");
 }
 
@@ -1188,7 +1196,13 @@ function buildSamplesBlock(rows, unit) {
   const lines = [];
   for (const row of rows.slice(0, MAX_ROWS)) {
     const rowUnit = unit || row.unit;
-    lines.push(row.name);
+    // Indented, like every other line in this block. The name is the one fork-
+    // controlled string here and it was the only one at column 0, so a name of
+    // `::error::…` made the renderer write a line that looks exactly like a
+    // workflow command on stdout. The trusted workflow redirects stdout to a
+    // file, so the runner never honoured it — but that is the caller's habit
+    // protecting the callee, and it costs one space to not depend on it.
+    lines.push(`  ${row.name}`);
     for (const side of ["base", "head"]) {
       const data = row[side];
       const label = side.padEnd(4);

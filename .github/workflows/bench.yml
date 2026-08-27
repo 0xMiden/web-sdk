@@ -13,7 +13,7 @@ name: Proving Benchmark
 
 on:
   pull_request:
-    # A 90-minute job on an 8-core runner that builds WASM twice is not worth
+    # A multi-hour job on an 8-core runner that builds WASM twice is not worth
     # spending on a PR that cannot move a proving number. `paths-ignore` only
     # skips when EVERY changed file matches, so a PR touching docs and code
     # still runs.
@@ -86,31 +86,43 @@ jobs:
   bench:
     name: Prove (MT, ECDSA-k256-keccak)
     runs-on: warp-ubuntu-latest-x64-8x
-    # Budget accounting, because the per-step caps below have to fit inside it
-    # and a previous version of this file asserted a composition that did not:
+    # Budget accounting. Every step that can take real time is capped and listed;
+    # the previous two versions of this block each asserted a composition that did
+    # not hold, the first by leaving ten minutes for a 25-minute preamble and the
+    # second by summing to exactly the budget while omitting three steps that run
+    # between the base build and the head build.
     #
-    #   preamble  ~25  checkout at fetch-depth 0, rustup + two wasm targets,
-    #                  apt binaryen, rust-cache restore, pnpm install,
-    #                  make test-bench-scripts, dist-cache restore
-    #   base       30  capped
-    #   head       30  capped
-    #   chromium   10  capped
-    #   bench      20  capped
-    #   postamble  ~5  worktree reclaim, cache save, summary, artifact upload
-    #                  ── 120
+    #   preamble    25  checkout at fetch-depth 0, rustup + two wasm targets,
+    #                   apt binaryen, rust-cache restore, pnpm install,
+    #                   make test-bench-scripts, dist-cache restore
+    #   base        30  capped
+    #   reclaim      5  capped — rm -rf of a worktree holding tens of GB
+    #   cache save   5  capped — ~100 MB upload
+    #   inject       5  capped — cargo update behind a network git fetch
+    #   head        30  capped
+    #   chromium    10  capped
+    #   bench        20  capped
+    #   postamble    5  summary render, artifact upload
+    #                   ── 135, inside 150 with 15 to spare
     #
-    # The caps are worst cases, not typical ones: a warm base-dist cache skips
-    # the 30 entirely. But the worst case has to FIT, because the failure mode
-    # when it does not is the expensive one — the job is killed inside `Run
-    # benchmark`, and the driver writes results.json only at the very end, so
-    # 80 minutes of compute produce an artifact with no measurements and the
-    # reporter posts "no usable report".
-    timeout-minutes: 120
+    # The caps are worst cases, not typical ones: a warm base-dist cache skips the
+    # base build, the reclaim and the save entirely, which is the common path. But
+    # the worst case has to FIT WITH SLACK, because the failure mode when it does
+    # not is the expensive one — the job is killed inside `Run benchmark`, the
+    # driver writes results.json only after its own teardown, and 100+ minutes of
+    # compute produce an artifact with no measurements while the reporter posts
+    # "no usable report". Slack rather than an exact fit, because the preamble
+    # figure is an estimate and the runner's own startup is not in it.
+    timeout-minutes: 150
     env:
       # See test.yml's build-web-client-dist-folder for the full rationale:
       # sccache-action sets SCCACHE_PATH but not RUSTC_WRAPPER, and we only
       # export the wrapper after probing that the GHA cache backend is healthy.
       SCCACHE_GHA_ENABLED: "true"
+      # The `Run benchmark` step's cap, and the budget the producer clamps its own
+      # in-page deadlines against. One number so the two cannot drift; see the
+      # step for why drift here is silent and regressive.
+      BENCH_STEP_BUDGET_MINUTES: "20"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -323,6 +335,7 @@ jobs:
       # continue-on-error, and the failure path is the one that most needs the
       # space back, since it falls through to a head-only run.
       - name: Reclaim the base worktree
+        timeout-minutes: 5
         if: always() && steps.base-dist-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
@@ -335,6 +348,7 @@ jobs:
 
       - name: Save cache - base MT dist
         if: steps.base-dist-cache.outputs.cache-hit != 'true' && steps.base-build.outcome == 'success'
+        timeout-minutes: 5
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/dist-base
@@ -343,6 +357,7 @@ jobs:
       # Runs on the head checkout only, and never posts: build.yml's build-wasm
       # job owns the single sticky comment for the linked-client patch.
       - name: Inject linked miden-client PR
+        timeout-minutes: 5
         uses: ./.github/actions/inject-linked-client-pr
 
       # No fallback exists for this one — a missing head dist means no benchmark
@@ -374,16 +389,20 @@ jobs:
       # kept in sync with BENCH_BUDGET_MINUTES below, which the producer uses to
       # clamp its own deadlines so the in-page diagnostic wins the race.
       - name: Run benchmark
-        timeout-minutes: 20
+        # Both the runner's cap and the producer's clamp come from one number.
+        # They were two literals nine lines apart with nothing checking them, and
+        # drift in one direction is silent AND regressive: lowering the cap
+        # without the env makes the producer's deadlines exceed the runner's kill
+        # again, restoring the "killed with no diagnostic" this clamp exists to
+        # prevent, while nothing fails and a reviewer sees only a cap change.
+        timeout-minutes: ${{ fromJSON(env.BENCH_STEP_BUDGET_MINUTES) }}
         shell: bash
         env:
-          # Must match `timeout-minutes` above. The producer clamps each of its
-          # in-page deadlines to what is left of this, so a hang late in the run
-          # still prints a diagnostic naming what wedged instead of being killed
-          # silently by the runner. Its own deadlines (10 min setup, 5 min prove)
-          # would otherwise fire past the cap for anything that wedges after
-          # minute ten.
-          BENCH_BUDGET_MINUTES: 20
+          # The producer clamps each of its in-page deadlines to what is left of
+          # this, so a hang late in the run still prints a diagnostic naming what
+          # wedged. Its own deadlines (10 min setup, 5 min prove) would otherwise
+          # fire past the cap for anything that wedges after minute ten.
+          BENCH_BUDGET_MINUTES: ${{ env.BENCH_STEP_BUDGET_MINUTES }}
           # Recorded in results.json so the comment can name where the numbers
           # came from — a threshold calibrated on one runner class is
           # meaningless on another. Keep in sync with `runs-on` above.
@@ -546,7 +565,7 @@ jobs:
           if-no-files-found: warn
           # v4 artifacts are immutable and scoped to the RUN, not the attempt.
           # Without this, "Re-run failed jobs" keeps attempt 1's artifact, the
-          # re-upload 409s at the end of another 90-minute build, and the
+          # re-upload 409s at the end of another full build, and the
           # reporter — which lists artifacts per run, not per attempt — publishes
           # attempt 1's numbers under a link to attempt 2.
           overwrite: true

@@ -119,7 +119,7 @@ const flag = (name, fallback) => {
 };
 
 // Mirrors the ceilings .github/scripts/render-bench-comment.mjs enforces on the
-// same fields. Without them a run past a cap completes the whole 90-minute job
+// same fields. Without them a run past a cap completes the whole multi-hour job
 // and writes a results.json the renderer then refuses on its quiet path — no
 // comment, no error, nothing pointing at the flag that caused it. Failing in the
 // first two seconds instead is the whole difference.
@@ -163,6 +163,15 @@ const outPath = flag("--out", null);
 const budgetMinutesRaw = flag("--budget-minutes", null);
 // Not `count()`: that caps at MAX_COUNT to mirror the renderer's sample limits,
 // which has nothing to do with a wall-clock budget.
+// A budget has to be large enough for the clamp to mean anything. Two accepted
+// values made it a no-op in opposite directions: `0.001` gave a 60 ms budget
+// against a 10 s floor, so every deadline was already past the budget the moment
+// it was issued, and `1e308` overflowed the minutes-to-ms multiply to Infinity,
+// which switched the clamp off entirely while looking like a valid number.
+const BUDGET_MARGIN_MS = 90 * 1000;
+const BUDGET_FLOOR_MS = 10 * 1000;
+const MIN_BUDGET_MS = BUDGET_MARGIN_MS + BUDGET_FLOOR_MS;
+let BUDGET_MS = null;
 if (budgetMinutesRaw !== null) {
   const value = Number(budgetMinutesRaw);
   if (!Number.isFinite(value) || value <= 0) {
@@ -170,9 +179,23 @@ if (budgetMinutesRaw !== null) {
       `--budget-minutes must be a positive number, got "${budgetMinutesRaw}".`
     );
   }
+  const ms = value * 60 * 1000;
+  if (!Number.isFinite(ms)) {
+    usage(
+      `--budget-minutes ${budgetMinutesRaw} overflows to Infinity in milliseconds; ` +
+        `pass the step's real timeout-minutes.`
+    );
+  }
+  if (ms < MIN_BUDGET_MS) {
+    usage(
+      `--budget-minutes must be at least ${(MIN_BUDGET_MS / 60000).toFixed(2)} (got ` +
+        `${budgetMinutesRaw}): the clamp reserves ${BUDGET_MARGIN_MS / 1000}s for the ` +
+        `diagnostic and teardown and never issues a deadline under ` +
+        `${BUDGET_FLOOR_MS / 1000}s, so a smaller budget cannot be honoured.`
+    );
+  }
+  BUDGET_MS = ms;
 }
-const BUDGET_MS =
-  budgetMinutesRaw === null ? null : Number(budgetMinutesRaw) * 60 * 1000;
 
 if (proves < 2) {
   usage(
@@ -190,10 +213,14 @@ if (proves < 2) {
 // check silently stops being conservative.
 const MAX_SAMPLE_VALUES = 200000;
 const BENCHMARK_COUNT = 1;
-const plannedSamples = reps * (proves - 1) * 2 * BENCHMARK_COUNT;
+// One side or two: a head-only run (no --base) writes half as many samples, and
+// charging it for a base it will not measure rejected configurations the renderer
+// would have accepted.
+const SIDES = BASE_DIR ? 2 : 1;
+const plannedSamples = reps * (proves - 1) * SIDES * BENCHMARK_COUNT;
 if (plannedSamples > MAX_SAMPLE_VALUES) {
   usage(
-    `reps × (proves-1) × 2 sides = ${plannedSamples} retained samples exceeds the ` +
+    `reps × (proves-1) × ${SIDES} side${SIDES === 1 ? "" : "s"} = ${plannedSamples} retained samples exceeds the ` +
       `${MAX_SAMPLE_VALUES} the comment renderer accepts, so the run would produce ` +
       `no report. Lower --reps or --proves.`
   );
@@ -607,6 +634,9 @@ const evaluateWithDeadline = async (page, fn, arg, { ms, what }) => {
 // syncs. Anything past these is not slow, it is stuck.
 const SETUP_DEADLINE_MS = 10 * 60 * 1000;
 const PROVE_DEADLINE_MS = 5 * 60 * 1000;
+// The settle barrier is an empty round trip on an idle page. Generous next to
+// what it does, tiny next to the other two, and it runs 2 × (reps + 1) times.
+const SETTLE_DEADLINE_MS = 30 * 1000;
 
 // The constants above are useless on their own late in a run. The step that runs
 // this is capped (20 minutes in bench.yml), and a setup that wedges 12 minutes
@@ -615,21 +645,21 @@ const PROVE_DEADLINE_MS = 5 * 60 * 1000;
 // prevent: dead with no diagnostic, having burned the rest of the budget.
 //
 // So each deadline is also clamped to what is left of the step's budget, minus a
-// margin for the diagnostic to print and the teardown to run. --budget-ms comes
+// margin for the diagnostic to print and the teardown to run. --budget-minutes comes
 // from the workflow, which is the only place that knows the cap; without it the
 // clamp is skipped and the constants stand alone, which is right for a local run
 // with no cap at all.
-const BUDGET_MARGIN_MS = 90 * 1000;
 const startedAt = Date.now();
 
 const deadlineFor = (ceiling) => {
   if (BUDGET_MS === null) return ceiling;
   const left = BUDGET_MS - (Date.now() - startedAt) - BUDGET_MARGIN_MS;
-  // A floor of ten seconds rather than zero or a negative: past the budget the
-  // next call should fail fast with a named diagnostic, not be handed a deadline
-  // that has already expired (which would read as an instant, inexplicable
-  // timeout) and not be handed an unbounded one either.
-  return Math.max(10 * 1000, Math.min(ceiling, left));
+  // A floor rather than zero or a negative: past the budget the next call should
+  // fail fast with a named diagnostic, not be handed a deadline that has already
+  // expired (which would read as an instant, inexplicable timeout) and not be
+  // handed an unbounded one either. Validation above guarantees the budget is
+  // large enough that the floor is reachable inside it.
+  return Math.max(BUDGET_FLOOR_MS, Math.min(ceiling, left));
 };
 
 // Opens a page, runs setup on it, and returns handles the driver can drive
@@ -683,15 +713,54 @@ const openSide = async (browser, url, label, repIndex) => {
         `${label} rep ${repIndex} raised ${pageErrors.length} page error(s) during setup; first: ${pageErrors[0]}`
       );
     }
+    // Snapshot after setup, when the rayon pool is fully spun up: `settle()`
+    // compares against this rather than against `threads`, because how many
+    // workers the pool actually opens is the browser's business.
+    const workersAfterSetup = page.workers().length;
+
     return {
       label,
       rayonThreads,
-      // Read once more after the prove loop. Playwright delivers worker `close`
-      // over CDP asynchronously, so a worker that dies during a repetition's
-      // LAST prove can be recorded after that prove's own check has returned —
-      // and `close()` then latches `closing`, suppressing everything after. The
-      // samples for that repetition were kept and the run reported success.
       pageErrors,
+      /**
+       * Drain in-flight CDP events, then report what the page recorded.
+       *
+       * Reading `pageErrors` straight after the last prove is not enough.
+       * Playwright delivers worker `close` over CDP asynchronously, so a worker
+       * that dies during a repetition's LAST prove can be recorded after that
+       * prove's own check has already returned — and `close()` then latches
+       * `closing` and suppresses everything after it, so the tainted repetition
+       * was retained and the run reported success.
+       *
+       * The `evaluate` is the barrier: it is a round trip on the same connection
+       * the worker events arrive on, so anything the browser emitted before the
+       * reply has been dispatched by the time it resolves. Bounded like every
+       * other in-page call, and a barrier that fails is itself a reason to
+       * distrust the repetition.
+       *
+       * The worker count is the belt to that suspenders: an event lost outright
+       * still leaves the pool visibly smaller than it was after setup.
+       */
+      settle: async () => {
+        try {
+          await evaluateWithDeadline(page, () => 0, undefined, {
+            ms: deadlineFor(SETTLE_DEADLINE_MS),
+            what: `${label} rep ${repIndex} settle`,
+          });
+        } catch (error) {
+          pageErrors.push(error);
+          return pageErrors;
+        }
+        const workersNow = page.workers().length;
+        if (workersNow < workersAfterSetup) {
+          pageErrors.push(
+            new Error(
+              `${label} rep ${repIndex} ended with ${workersNow} web workers but had ${workersAfterSetup} after setup, so the rayon pool shrank during the measurement`
+            )
+          );
+        }
+        return pageErrors;
+      },
       prove: async () => {
         const ms = await evaluateWithDeadline(
           page,
@@ -741,6 +810,40 @@ const openSide = async (browser, url, label, repIndex) => {
     });
     throw error;
   }
+};
+
+// A close that will not finish must not cost the run its numbers.
+//
+// Short on purpose: this is not bounding work, it is bounding a hang. A browser
+// or a listening socket that has not closed in 30 seconds is not closing, and
+// every second spent waiting is taken from the same step budget that still has
+// to write results.json.
+const CLOSE_DEADLINE_MS = 30 * 1000;
+
+const withCloseDeadline = (label, closing) => {
+  if (!closing) return Promise.resolve();
+  let timer;
+  return Promise.race([
+    // The rejection carries the label because the caller records `outcome.reason`
+    // verbatim into the teardown list, and "timed out" with no subject would be
+    // the least useful line in the report.
+    Promise.resolve(closing).finally(() => clearTimeout(timer)),
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `${label} did not close within ${CLOSE_DEADLINE_MS / 1000}s; abandoning it so the results can still be written`
+          )
+        );
+      }, CLOSE_DEADLINE_MS);
+      // Deliberately NOT unref'd. A wedged close leaves nothing else pending, so
+      // an unref'd timer lets node exit with code 13 ("unsettled top-level
+      // await") before the deadline can fire — which loses the results the
+      // deadline exists to save. Holding the loop open is the point; the
+      // `finally` above clears the timer on every close that does settle, so a
+      // clean run is not delayed by it.
+    }),
+  ]);
 };
 
 const servers = [];
@@ -864,9 +967,13 @@ try {
         }
       }
 
-      // Before anything is retained: a worker death recorded late — after the
-      // last prove's own check — otherwise went into `pageErrors` and was never
-      // read, so a repetition measured on a shrunken rayon pool was kept.
+      // Before anything is retained, and after a protocol barrier so a late
+      // worker death has actually been delivered: without it the event could
+      // land after this check and then be swallowed by the `closing` latch, and
+      // a repetition measured on a shrunken rayon pool was kept.
+      for (const side of sides) {
+        await side.settle();
+      }
       for (const side of sides) {
         if (side.pageErrors.length) {
           throw new Error(
@@ -918,16 +1025,26 @@ try {
 } finally {
   // Settle every teardown independently: a failing browser close must not skip
   // the server closes, and none of them may replace the benchmark's own error.
+  //
+  // Each one is also BOUNDED. These awaits run before results.json is written, so
+  // a `browser.close()` that never settles — a wedged Chromium, which is a
+  // plausible outcome of exactly the prover hang this benchmark exists to catch —
+  // did not merely leak a process: it hung here until the runner killed the step,
+  // and a complete set of measurements was never written at all. A close that
+  // will not finish is recorded as a teardown failure like any other and the run
+  // goes on to write its numbers.
   const teardown = await Promise.allSettled([
-    browser?.close(),
-    ...servers.map(
-      ({ server }) =>
+    withCloseDeadline("browser", browser?.close()),
+    ...servers.map(({ server }, i) =>
+      withCloseDeadline(
+        `server ${i}`,
         new Promise((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));
           // `close` only stops accepting; without this it waits out the
           // keep-alive timeout on any socket Chromium left open.
           server.closeAllConnections();
         })
+      )
     ),
   ]);
   for (const outcome of teardown) {
@@ -1034,9 +1151,11 @@ const results = {
   // a red bench job, and nothing connected the two. A reader had no way to know
   // the numbers came from a run that left a page or a browser alive.
   //
-  // Filled in twice: once here for the mid-run failures, which are the ones that
-  // can contaminate the numbers above, and again after the final teardown for
-  // the end-of-run ones. See the rewrite below.
+  // Complete at this point, and there is no second write. Everything that can
+  // append to this list has already run: the per-repetition context closes
+  // inside the driver loop, and the browser and server closes in the `finally`
+  // above, which is upstream of this object. An earlier version rewrote the file
+  // after teardown on the belief that teardown came later; it could not fire.
   teardownFailures: [...teardownFailures],
   benchmarks: [
     {
@@ -1081,7 +1200,6 @@ const emitResults = async () => {
 
 const writtenTo = await emitResults();
 if (writtenTo) console.log(`\nwrote ${writtenTo}`);
-const teardownFailuresAtWrite = teardownFailures.length;
 
 // The measurements are complete and written, so they are worth keeping — but a
 // browser or server that would not close means this process is about to exit 0
@@ -1089,16 +1207,4 @@ const teardownFailuresAtWrite = teardownFailures.length;
 // outlives the job and lands in the NEXT run's numbers as interference, which is
 // the failure this whole script is built to avoid. Report the results, then say
 // plainly that the run is not clean.
-// The browser and the servers close AFTER the results are written, so failures
-// there are not in the file yet. Rewrite it rather than leave the artifact
-// claiming a clean run — the reporter reads only the file, never this log.
-if (teardownFailures.length > teardownFailuresAtWrite) {
-  results.teardownFailures = [...teardownFailures];
-  await emitResults().catch((error) => {
-    console.error(
-      `[teardown] could not record teardown failures in the results file: ${error}`
-    );
-  });
-}
-
 reportTeardownFailures({ resultsWritten: true });
