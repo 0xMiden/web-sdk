@@ -1508,18 +1508,24 @@ test("zero-difference repetitions cannot manufacture a consistent verdict", () =
   // — but on its own it let five zero deltas plus one large one pass as
   // "consistent", which is the single dominating repetition the guard exists to
   // catch, arriving through the exemption instead of a sign flip.
-  const flat = Array.from({ length: 5 }, () => [1000]);
+  //
+  // `provesPerRep` is the CALIBRATED count, not 1. At one prove
+  // `verdictPreconditions` returns `tooFewProves` and `computeRows` clears
+  // `consistent` regardless of the majority rule — so deleting the majority
+  // check from `pairedAgreement` left this test green, testing a precondition
+  // instead of the thing it is named for.
+  const flat = Array.from({ length: 5 }, () => [1000, 1000, 1000]);
   const body = renderComment(
     results({
       top: {
         reps: 6,
-        provesPerRep: 1,
+        provesPerRep: PROVES_PER_REP,
         repsExecuted: 7,
-        provesExecutedPerRep: 2,
+        provesExecutedPerRep: PROVES_PER_REP + 1,
       },
       benchmark: {
-        base: { samples: [...flat, [1000]] },
-        head: { samples: [...flat, [400]] },
+        base: { samples: [...flat, [1000, 1000, 1000]] },
+        head: { samples: [...flat, [400, 400, 400]] },
       },
     }),
     ctx()
@@ -2118,6 +2124,179 @@ test("a short run still reports a mean that moved", () => {
   // The reason has to be stated in the note: a short run carries no other note
   // saying why it cannot rule, so "for the reason above" would point at nothing.
   assert.match(body, /4 repetitions is too few to rule on either figure/);
+});
+
+// On a calibration run base and head are the SAME build, so the true difference
+// is zero and any movement is this runner's noise. `ctx.calibration` reached only
+// the note, which left the heading asserting a direction directly above a banner
+// saying every number below it is measurement noise — and a movement past the
+// floor is the EXPECTED outcome of these runs, not an exotic one, since reading
+// the delta off twenty to thirty of them is how the floor gets set.
+test("a calibration run never headlines a direction", () => {
+  const artifact = results({
+    benchmark: { base: side(1000), head: side(1080) },
+  });
+  const calibrated = renderComment(artifact, ctx({ calibration: true }));
+  const heading = calibrated.split("\n")[0];
+  assert.doesNotMatch(heading, /slower|faster/);
+  assert.doesNotMatch(heading, /🚀|⚠️/);
+  assert.match(heading, /Unresolved/);
+  // The magnitude survives — the run exists to measure it.
+  assert.match(calibrated, /\+8\.00%/);
+  assert.match(calibrated, /moved past the floor on a calibration run/);
+  assert.match(calibrated, /\*\*Calibration run\.\*\*/);
+
+  // Same artifact without the flag still rules, so the gate has not simply been
+  // made to always fire.
+  assert.match(
+    renderComment(artifact, ctx()).split("\n")[0],
+    /\+8\.00% slower/
+  );
+});
+
+// The contradiction heading was returned ahead of every other branch, so a
+// SECOND benchmark that regressed cleanly vanished from the heading — not even
+// counted in "(+N more)". That is the exact failure the regression branch below
+// it was written to prevent.
+test("a clean regression outranks a contradicted benchmark in the heading", () => {
+  const flat = (v) => ({
+    samples: Array.from({ length: REPS }, () => [v, v, v]),
+  });
+  const contradicting = {
+    samples: Array.from({ length: REPS }, () => [900, 2000, 2000]),
+  };
+  const withRegression = renderComment(
+    results({
+      benchmark: {},
+      top: {
+        benchmarks: [
+          bench("A-contradicting", flat(1000), contradicting),
+          bench("B-real-regression", flat(1000), flat(1250)),
+        ],
+      },
+    }),
+    ctx()
+  );
+  const heading = withRegression.split("\n")[0];
+  assert.match(heading, /\+25\.00% slower/);
+  assert.match(heading, /B-real-regression/);
+  // The contradicted benchmark is still counted, so nothing that cleared the
+  // floor disappears from the heading.
+  assert.match(heading, /\(\+1 more\)/);
+  // And the contradiction is still explained below.
+  assert.match(withRegression, /moved both ways/);
+
+  // With no regression to defer to, the contradiction owns the heading again.
+  const withoutRegression = renderComment(
+    results({
+      benchmark: {},
+      top: {
+        benchmarks: [bench("A-contradicting", flat(1000), contradicting)],
+      },
+    }),
+    ctx()
+  );
+  assert.match(
+    withoutRegression.split("\n")[0],
+    /Unresolved: the two estimators disagree/
+  );
+});
+
+// `reps` is the RETAINED count, so `repsRequested - reps` mixes repetitions the
+// budget never funded with one that ran to completion and was then discarded to
+// keep the setup order balanced. `repsExecuted` is the discriminator — it was
+// validated and then dropped from `normalizeResults`, so the note asserted "never
+// attempted" for both.
+test("a repetition dropped for balance is not called never attempted", () => {
+  const stopped = (repsExecuted) =>
+    results({
+      top: {
+        reps: REPS,
+        repsRequested: REPS + 2,
+        repsExecuted,
+        stoppedEarly: "the step budget is exhausted",
+        stoppedEarlyKind: "budget",
+      },
+    });
+
+  // reps + 2: one repetition finished and was discarded for parity, so only one
+  // of the two dropped was never attempted.
+  const withBalanceDrop = renderComment(stopped(REPS + 2), ctx());
+  assert.match(withBalanceDrop, /One repetition was never attempted/);
+  assert.match(withBalanceDrop, /discarded, because retaining it would have/);
+  assert.doesNotMatch(withBalanceDrop, /2 repetitions were never attempted/);
+
+  // reps + 1: nothing was dropped for parity, so both really were unfunded.
+  const withoutBalanceDrop = renderComment(stopped(REPS + 1), ctx());
+  assert.match(withoutBalanceDrop, /2 repetitions were never attempted/);
+  assert.doesNotMatch(withoutBalanceDrop, /discarded, because retaining/);
+});
+
+// `setupCount` is the sample size the deadline note presents as the evidence for
+// whether the work was stuck. A standalone ceiling of 10,000 let a
+// seven-repetition run claim a median "over 4,000 samples"; every executed
+// repetition sets up at most both sides, which is a bound the renderer has
+// already cross-checked.
+test("setupCount is bounded by the repetitions that ran", () => {
+  const withSetupCount = (setupCount) =>
+    results({
+      top: {
+        reps: REPS,
+        repsRequested: REPS + 2,
+        repsExecuted: REPS + 1,
+        stoppedEarly: "prove overran",
+        stoppedEarlyKind: "deadline",
+        stoppedEarlyDeadlineMs: 320_000,
+        setupMsMedian: 90_900,
+        setupCount,
+      },
+    });
+  // 2 × 7 executed repetitions is the ceiling.
+  assert.doesNotThrow(() =>
+    renderComment(withSetupCount(2 * (REPS + 1)), ctx())
+  );
+  assert.throws(
+    () => renderComment(withSetupCount(2 * (REPS + 1) + 1), ctx()),
+    /setupCount must be at most 14/
+  );
+  assert.throws(() => renderComment(withSetupCount(4000), ctx()), /setupCount/);
+});
+
+// A median setup cost ABOVE the reported deadline is the expected shape of a
+// late-run overrun — the grant is clamped to the budget's remainder — and neither
+// "well under" nor "close to" describes it.
+test("a setup median past the deadline gets its own reading", () => {
+  const body = renderComment(
+    results({
+      top: {
+        reps: REPS,
+        repsRequested: REPS + 2,
+        repsExecuted: REPS + 1,
+        stoppedEarly: "setup overran",
+        stoppedEarlyKind: "deadline",
+        stoppedEarlyDeadlineMs: 70_000,
+        setupMsMedian: 90_000,
+        setupCount: 5,
+      },
+    }),
+    ctx()
+  );
+  assert.match(body, /already exceeds the deadline, so the clock was short/);
+  assert.doesNotMatch(body, /Well under the deadline means it was stuck/);
+});
+
+// Every other field on the trusted context gets a shape check; `runId` was
+// sanitized instead, and it is interpolated as markdown link TEXT where
+// `sanitizeText` leaves `](` intact.
+test("a malformed run id is a first-party error, not sanitized text", () => {
+  for (const runId of ["12](https://evil.example/", "", "abc", null]) {
+    assert.throws(
+      () => renderComment(results(), ctx({ runId })),
+      /rendering context: ctx\.runId is not a run id/
+    );
+  }
+  // And a real one still renders as a link.
+  assert.match(renderComment(results(), ctx()), /\[bench run 32568739941\]/);
 });
 
 // The renderer decides whether it was invoked as a script by comparing its own

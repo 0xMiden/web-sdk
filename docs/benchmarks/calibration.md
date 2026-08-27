@@ -144,8 +144,10 @@ effect size. Two consequences worth internalising before tuning anything:
   in fourteen is silent rather than flagged. The first row is the false-positive
   rate, and it splits evenly by direction because the rule is symmetric under the
   null: **0.07%** of unchanged pushes are called slower and as many are called
-  faster. Any spurious verdict is 0.15% per push, which compounds to **1.49%**
-  over ten pushes — under this model's assumption that pushes are independent.
+  faster. Any spurious verdict is 0.15% per push, which compounds to **1.47%**
+  over ten pushes — the figure `verdict-power.mjs` prints, computed from the
+  unrounded trial fraction rather than from the 0.15% above — under this model's
+  assumption that pushes are independent.
   Real pushes are not: they share runner state and build on each other's source,
   so treat that as a modelled figure rather than a measured familywise rate.
 
@@ -236,6 +238,13 @@ six calibration runs of identical binaries, on a (busy) developer laptop:
 | median over all samples | 5.39% | 11.44% |
 | minimum over all samples | 2.96% | 5.88% |
 | **mean of per-repetition minima** | **1.79%** | **2.71%** |
+
+These three numbers, and the +1.19% positional penalty below, come from a
+one-off session on a laptop; the raw series is not in the repo, so unlike every
+other figure on this page they cannot be reproduced by running a script here.
+That is the whole reason `THRESHOLD_PROVISIONAL` is still `true` — the runbook at
+the top of this page replaces them with measurements from the actual runner. Treat
+them as the reason the design is shaped this way, not as the calibration.
 
 - **Minimum within a repetition.** Every prove in one repetition is
   bit-identical work — the same `TransactionResult`, proven again. So the only
@@ -434,9 +443,17 @@ setup charged to the clock. The only knob is where a 12% run-level factor lives.
 The symmetric rows shift by a fifth of a point, and they do so even with drift and
 heavy tails — which is why making the noise nastier is not a way to break a paired
 design. Give one side a run-level factor and nothing to the other, and truncation
-shifts the estimate by many points, in whichever direction the asymmetry points,
-while a complete run of the same model does not move at all. The exact magnitude
-depends on how aggressively the clock cuts; the sign and the structure do not.
+shifts the estimate by many points, in whichever direction the asymmetry points.
+The exact magnitude depends on how aggressively the clock cuts; the sign and the
+structure do not.
+
+What truncation causes is the **shift** between the two columns, which is why that
+is the column the argument reads. The complete-run column of the one-sided rows is
+not zero either — a percentage of a noisy denominator is biased upward by roughly
+its variance, so a 12% run-level factor on the base side alone lifts it about
+1.4pp whether the clock cut the run or not. At the measured 1.79% spread that term
+is ~0.03pp, two orders under the floor, so it does not reach a verdict; it is
+worth knowing about only so the table's clean column is not read as a null.
 
 So: is the symmetry real? The two sides are the same benchmark on the same machine
 in the same browser, differing only in the WASM binary — which is a good argument

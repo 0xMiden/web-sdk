@@ -195,7 +195,15 @@ Reading this. The "shift" is the whole argument; the two other columns need care
 
   "head-only" and "base-only" give one side a ${(SIGMA_RUN * 100).toFixed(0)}% run-level factor and nothing
   to the other. Truncation then shifts the mean by many points, in opposite
-  directions. A clean run of the same model does not move at all.
+  directions — and the SHIFT is what the argument rests on, because it is the
+  part truncation causes.
+
+  The clean column of those two rows is not zero, and that is a different effect:
+  a percentage of a noisy denominator is biased upward by roughly its variance
+  (Jensen), so ${(SIGMA_RUN * 100).toFixed(0)}% run-level noise on the BASE side alone lifts the clean
+  mean by about ${(SIGMA_RUN * SIGMA_RUN * 100).toFixed(2)}pp whether the run was cut short or not. At the real
+  measured spread the same term is ~0.03pp, far under the floor, so it does not
+  move a verdict — but it is why "base-only, clean" reads +1.4% rather than 0%.
 
   The verdict column is NOT a false-positive rate except in the "neither" row.
   Everywhere else this model contains a genuine per-run difference between the

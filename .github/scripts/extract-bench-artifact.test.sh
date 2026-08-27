@@ -140,6 +140,79 @@ check "a symlink entry does not read through to its target" "no" \
   "$(grep -q 'SECRET CONTENT' "$dests/results.json" 2>/dev/null && echo yes || echo no)"
 check "the secret file is not modified" "SECRET CONTENT" "$(cat "$secret")"
 
+# The symlink case above was the only `external_attr` the suite exercised, which
+# left the other half of the header's claim — that no archive-supplied FILE MODE
+# can matter — resting on one bit. A FIFO is the shape that bites: `unzip -j`
+# would create it, and every reader downstream would then block on open forever
+# in a job holding a write token.
+zipf="$work/fifo.zip"
+python3 - "$zipf" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    info = zipfile.ZipInfo("results.json")
+    info.create_system = 3             # Unix
+    info.external_attr = 0o010666 << 16  # S_IFIFO
+    z.writestr(info, '{"schemaVersion":3}')
+    z.writestr("pr.json", '{"number":7}')
+PY
+destf="$work/df"
+outf=$("$subject" "$zipf" "$destf" 2>/dev/null)
+check "a fifo entry does not become a fifo" "no" \
+  "$([ -p "$destf/results.json" ] && echo yes || echo no)"
+check "a fifo entry extracts as a plain file" '{"schemaVersion":3}' \
+  "$(cat "$destf/results.json" 2>/dev/null)"
+check "the fifo entry is still reported as usable" "usable" "$outf"
+
+# A directory entry named exactly like a member: `-p` writes its (empty) content,
+# so what the redirect owns is a zero-byte file, and the empty-member path is what
+# must catch it rather than a directory appearing where a file belongs.
+zipdir="$work/direntry.zip"
+python3 - "$zipdir" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    info = zipfile.ZipInfo("results.json/")
+    info.external_attr = (0o040755 << 16) | 0x10  # S_IFDIR + MS-DOS directory
+    z.writestr(info, "")
+    z.writestr("pr.json", '{"number":7}')
+PY
+destdir="$work/ddir"
+outdir=$("$subject" "$zipdir" "$destdir" 2>/dev/null)
+check "a directory entry yields nothing usable" "" "$outdir"
+check "no directory is created where a member belongs" "no" \
+  "$([ -d "$destdir/results.json" ] && echo yes || echo no)"
+
+# An encrypted member is the one shape that could HANG rather than fail: `unzip`
+# prompts for a password. The trusted job's stdin is not guaranteed to be
+# /dev/null, so this pins that the script terminates rather than waiting.
+zipe="$work/encrypted.zip"
+# `gtimeout` on macOS, where coreutils is prefixed; the CI runner has `timeout`.
+if command -v timeout >/dev/null 2>&1; then
+  timeout_cmd=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  timeout_cmd=gtimeout
+else
+  timeout_cmd=
+fi
+if command -v zip >/dev/null 2>&1 && [ -n "$timeout_cmd" ]; then
+  # Zipped from a directory whose files already carry the member names, because
+  # `zip` stores the path it was given and the script matches on the exact name.
+  encsrc="$work/encsrc"
+  mkdir -p "$encsrc"
+  printf '{"schemaVersion":3}' > "$encsrc/results.json"
+  printf '{"number":7}' > "$encsrc/pr.json"
+  ( cd "$encsrc" && zip -q -P hunter2 "$zipe" results.json pr.json )
+  deste="$work/de"
+  oute=$("$timeout_cmd" 20 "$subject" "$zipe" "$deste" 2>/dev/null </dev/null)
+  rce=$?
+  check "an encrypted archive does not hang on a password prompt" "no" \
+    "$([ "$rce" = 124 ] && echo yes || echo no)"
+  check "an encrypted member yields nothing usable" "" "$oute"
+  check "no encrypted member survives" "no" \
+    "$([ -f "$deste/results.json" ] && echo yes || echo no)"
+else
+  echo "skip - encrypted member (zip(1) or timeout(1) not installed)"
+fi
+
 # Duplicate names would let `-p` concatenate a second payload behind a benign
 # first one.
 zipd="$work/dup.zip"

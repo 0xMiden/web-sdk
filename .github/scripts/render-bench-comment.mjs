@@ -671,6 +671,18 @@ function normalizeResults(input) {
       `provesExecutedPerRep must be one more than the ${provesPerRep} retained ${plural(provesPerRep, "prove")} (the discarded first prove), got ${provesExecutedPerRep}`
     );
   }
+  // Every executed repetition sets up at most both sides, so this is the ceiling
+  // whether the run was two-sided or head-only. The standalone check above only
+  // held it under 10,000, which let an artifact claim a median setup cost
+  // "over 4,000 samples" from a seven-repetition run — a number the deadline
+  // note presents as the evidence for whether the work was stuck. Bounding it
+  // against a count that is already cross-checked makes the claim verifiable
+  // instead of merely plausible.
+  if (setupCount !== null && setupCount > 2 * repsExecuted) {
+    fail(
+      `setupCount must be at most ${2 * repsExecuted} for a run that executed ${repsExecuted} ${plural(repsExecuted, "rep")} (both sides set up once per rep), got ${setupCount}`
+    );
+  }
 
   if (!Array.isArray(results.benchmarks)) {
     fail(
@@ -718,6 +730,12 @@ function normalizeResults(input) {
     threads,
     reps,
     provesPerRep,
+    // Carried through because it is the only thing that distinguishes a
+    // repetition that was never attempted from one that ran to completion and
+    // was then discarded to keep the setup order balanced. It was validated and
+    // dropped, which left the truncation note asserting "never attempted" for
+    // both.
+    repsExecuted,
     stoppedEarly,
     stoppedEarlyKind,
     stoppedEarlyDeadlineMs,
@@ -807,6 +825,13 @@ function normalizeContext(input) {
       `ctx.baseSha is not a commit sha: ${describeValue(ctx.baseSha)}`
     );
 
+  // Matching the `^[0-9]+$` check the reporter already applies to it, so a drift
+  // between the two becomes loud rather than silently rendering a link the
+  // reader cannot follow.
+  const runId = String(ctx.runId ?? "");
+  if (!/^[0-9]{1,20}$/.test(runId))
+    failInternal(`ctx.runId is not a run id: ${describeValue(ctx.runId)}`);
+
   const runUrl = String(ctx.runUrl ?? "");
   return {
     owner,
@@ -814,7 +839,14 @@ function normalizeContext(input) {
     headSha,
     baseSha,
     baseRef: sanitizeText(ctx.baseRef, 60, "base"),
-    runId: sanitizeText(ctx.runId, 24, "unknown"),
+    // Validated, not sanitized. Every sibling here gets a shape check because
+    // this file's own contract is that `ctx.json` is first-party and a bad value
+    // is a first-party bug; `runId` was the one exception, and it is
+    // interpolated as markdown link TEXT, where `sanitizeText` leaves `](`
+    // intact and a run id containing it would rewrite the footer's link target.
+    // Both producers derive it from `github.run_id`, so a failure here is drift
+    // in the context step, which is exactly what failInternal is for.
+    runId,
     // Whether this was a calibration run is knowable only from the triggering
     // event, so it comes from the caller's context and never from the artifact:
     // `calibration: true` on a real regression bolts a "this is all measurement
@@ -1030,7 +1062,30 @@ function pairedMeanAgreement(base, head) {
  * mean cross-check all still render; what is withheld is the claim that they
  * establish a direction.
  */
-function verdictPreconditions({ stoppedEarly, reps, provesPerRep }) {
+function verdictPreconditions({
+  stoppedEarly,
+  reps,
+  provesPerRep,
+  calibration,
+}) {
+  // First, because it outranks every other reason: on a calibration run base and
+  // head are the SAME build, so the true difference is zero by construction and
+  // any movement is this runner's noise. That is the entire point of the run —
+  // docs/benchmarks/calibration.md asks for twenty to thirty of them and reads
+  // the delta off each — so a movement past the floor is the EXPECTED outcome,
+  // not an exotic one. `calibration` reached only the note, which left the
+  // heading asserting "⚠️ +8.00% slower" directly above a banner saying every
+  // number below it is measurement noise.
+  //
+  // Trusted input: this comes from the triggering workflow's dispatch input, not
+  // from the artifact. A fork setting it could otherwise disclaim its own
+  // regression.
+  if (calibration) {
+    return {
+      ok: false,
+      blocked: "calibration",
+    };
+  }
   if (stoppedEarly) {
     return {
       ok: false,
@@ -1063,8 +1118,14 @@ function verdictPreconditions({ stoppedEarly, reps, provesPerRep }) {
   return { ok: true };
 }
 
-function computeRows(results) {
-  const preconditions = verdictPreconditions(results);
+function computeRows(results, ctx) {
+  // `calibration` is the one precondition that lives on the CONTEXT rather than
+  // the artifact, because whether a run benched a build against a copy of itself
+  // is knowable only from what triggered it.
+  const preconditions = verdictPreconditions({
+    ...results,
+    calibration: ctx.calibration === true,
+  });
   const rows = results.benchmarks.map((b) => {
     // `value` is the mean of per-rep minima — see the estimator comment in
     // bench-proving.mjs. Measured over six calibration runs of identical
@@ -1290,14 +1351,21 @@ function buildVerdict(rows) {
   const unresolved = rows.filter((r) => r.unresolved);
   const worst = comparable[0];
 
-  // Ahead of every other branch: a run where the reported figure and the mean
-  // of all proves disagree about the DIRECTION is the one state where naming a
-  // direction in the heading is affirmatively wrong, and the heading is the only
-  // part of this comment most readers ever see.
-  if (contradicted.length > 0) {
+  // Ahead of the noise and unresolved branches, BEHIND the regression branch: a
+  // run whose two estimators disagree about the DIRECTION is a state where
+  // naming a direction for that benchmark is affirmatively wrong — but a
+  // different benchmark that regressed cleanly still outranks it. Returning
+  // here first meant the regression was absent from the heading entirely, not
+  // even inside "(+N more)", which is the failure the regression branch below
+  // was written to prevent.
+  const regressions = moved.filter((r) => r.isWorse);
+  if (contradicted.length > 0 && regressions.length === 0) {
     const leader = contradicted[0];
-    const rest =
-      contradicted.length > 1 ? ` (+${contradicted.length - 1} more)` : "";
+    // Counts everything that cleared the floor, not just the contradicted rows:
+    // an improvement that ruled cleanly is still a movement the reader should
+    // know is there.
+    const others = contradicted.length - 1 + moved.length;
+    const rest = others > 0 ? ` (+${others} more)` : "";
     return (
       `### ${EMOJI_UNRESOLVED} Unresolved: the two estimators disagree on ${codeSpan(leader.name)}${rest} — ` +
       `${formatSignedPct(leader.deltaPct)} on the reported figure, ` +
@@ -1375,12 +1443,16 @@ function buildVerdict(rows) {
   // Headline the worst REGRESSION whenever there is one. `moved` is sorted by
   // magnitude, so taking moved[0] lets a large improvement own the heading
   // while a smaller regression hides behind "(+N more)" — and this heading is
-  // the only part of the comment most readers ever see.
-  const regressions = moved.filter((r) => r.isWorse);
+  // the only part of the comment most readers ever see. `regressions` is
+  // computed above the contradiction branch, which defers to it for the same
+  // reason.
   const leader = regressions[0] ?? moved[0];
   const direction = leader.isWorse ? "slower" : "faster";
   const emoji = regressions.length > 0 ? "⚠️" : "🚀";
-  const rest = moved.length > 1 ? ` (+${moved.length - 1} more)` : "";
+  // Contradicted rows are excluded from `moved`, so they have to be counted
+  // here or a benchmark that cleared the floor disappears from the heading.
+  const others = moved.length - 1 + contradicted.length;
+  const rest = others > 0 ? ` (+${others} more)` : "";
   // While the floor is provisional this heading states an OBSERVATION, not a
   // ruling, and the difference is not cosmetic. `⚠️ +10.00% slower` reads as
   // "this pull request regressed proving", which is a claim of significance —
@@ -1463,12 +1535,21 @@ function buildStoppedEarlyNote(results) {
   const {
     reps,
     repsRequested,
+    repsExecuted,
     stoppedEarlyKind,
     stoppedEarlyDeadlineMs,
     setupMsMedian,
     setupCount,
   } = results;
   const dropped = repsRequested - reps;
+  // `reps` is the RETAINED count, so `dropped` mixes two different fates. On a
+  // truncated run the producer discards one completed repetition when the
+  // remainder would leave the setup order unbalanced, and that shows up here as
+  // the extra executed repetition — `repsExecuted === reps + 2` rather than
+  // `reps + 1` (the discarded warm-up). Calling it "never attempted" told the
+  // reader the budget stopped a repetition that had in fact finished.
+  const balanceDropped = repsExecuted === reps + 2 ? 1 : 0;
+  const neverAttempted = dropped - balanceDropped;
   const shared = [
     `> **This run stopped early.** It retained ${reps} of the ${repsRequested} ${plural(repsRequested, "repetition")} it was configured for.`,
     `> Everything below is computed over the ${reps} it finished, and no faster/slower verdict is issued`,
@@ -1482,8 +1563,14 @@ function buildStoppedEarlyNote(results) {
   if (stoppedEarlyKind === "budget") {
     return [
       ...shared,
-      `> The ${dropped === 1 ? "repetition" : `${dropped} repetitions`} it dropped ${dropped === 1 ? "was" : "were"} never attempted — the step's remaining budget could not`,
-      "> fund another one. If this recurs the budget is too tight rather than the run too slow: raise the",
+      neverAttempted > 0
+        ? `> ${neverAttempted === 1 ? "One repetition was" : `${neverAttempted} repetitions were`} never attempted — the step's remaining budget could not fund another one.` +
+          (balanceDropped === 1
+            ? " One more finished and was then discarded, because retaining it would have left the setup order unbalanced."
+            : "")
+        : `> The repetition it dropped finished, and was then discarded because retaining it would have left the` +
+          ` setup order unbalanced — the budget stopped the run before another could be funded.`,
+      "> If this recurs the budget is too tight rather than the run too slow: raise the",
       "> benchmark step's `timeout-minutes` and `--budget-minutes` together, or lower the repetition count.",
     ].join("\n");
   }
@@ -1500,7 +1587,16 @@ function buildStoppedEarlyNote(results) {
       : `> Setup on this machine took ${seconds(setupMsMedian)} at the median over ${setupCount} ${plural(setupCount, "sample")}.` +
         (setupCount < 3
           ? " That is too few to lean on."
-          : ` Well under the deadline means it was stuck; close to it means it needed longer than the clock had.`);
+          : // Three readings, not two. A setup grant is clamped to whatever the
+            // budget has left, floored at a minute, so a median setup cost ABOVE
+            // the reported deadline is the expected shape of a late-run overrun
+            // rather than an exotic one — and neither "well under" nor "close to"
+            // describes it, which left the reader with a comparison that fit
+            // nothing they were looking at.
+            setupMsMedian >= stoppedEarlyDeadlineMs
+            ? ` That already exceeds the deadline, so the clock was short rather than the work stuck — the grant is` +
+              ` clamped to the budget's remainder, and by this point the remainder was smaller than a typical setup.`
+            : ` Well under the deadline means it was stuck; close to it means it needed longer than the clock had.`);
   return [
     ...shared,
     `> It stopped because work ran past its ${seconds(stoppedEarlyDeadlineMs)} deadline. Whether that work was stuck or simply`,
@@ -1932,6 +2028,18 @@ function buildUnresolvedNote(rows, stoppedEarly = false, kind = null) {
           ` \`--proves\`, and the re-run will rule.`,
     ].join("\n");
   }
+  if (leader.agreement.blocked === "calibration") {
+    // Short, and it does not re-explain what a calibration run is: the
+    // calibration note directly above this already does, and repeating it here
+    // buries the one thing this note adds — that a movement of this size IS the
+    // measurement, and what to do with it.
+    return [
+      `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} moved past the floor on a calibration run.** That is`,
+      `> the measurement, not a finding: both sides are the same build, so this is what this runner's`,
+      `> noise looks like at this repetition count. Record the figure and re-run — the spread across`,
+      `> runs is what sets the floor, and a single run cannot.`,
+    ].join("\n");
+  }
   if (leader.agreement.blocked === "tooFewProves") {
     return [
       `> **${unresolved.length} ${plural(unresolved.length, "benchmark")} unresolved: too few proves per repetition.** The \u00b1${formatPct(THRESHOLD_PCT)}`,
@@ -2087,7 +2195,7 @@ const TRUNCATION_NOTICES = {
 function render(input, context, maxChars) {
   const results = normalizeResults(input);
   const ctx = normalizeContext(context);
-  const rows = computeRows(results);
+  const rows = computeRows(results, ctx);
   const unit = uniformUnit(rows);
 
   const attempts = [

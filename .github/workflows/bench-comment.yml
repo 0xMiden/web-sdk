@@ -189,13 +189,24 @@ jobs:
             const fs = require('fs');
 
             const run_id = Number(process.env.BENCH_RUN_ID);
-            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id,
-              per_page: 100,
-            });
-            const artifact = data.artifacts.find(
+            // Paginated AND name-filtered. bench.yml runs fork-authored code on
+            // the PR head, so the artifact list is attacker-populated: a run that
+            // uploads more than a hundred artifacts pushed proving-bench-report
+            // off the single page this read, after which the reporter announced
+            // "no usable report" for a run that had produced one. The `name`
+            // filter is a server-side match; paginate covers an octokit build
+            // that does not forward it.
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id,
+                name: 'proving-bench-report',
+                per_page: 100,
+              },
+            );
+            const artifact = artifacts.find(
               (a) => a.name === 'proving-bench-report',
             );
             if (!artifact) {
@@ -342,6 +353,14 @@ jobs:
               core.setOutput('skip_reason', prSkipReason);
             };
 
+            // Every sha this step prints goes through here. The declines below
+            // fire precisely when two shas differ, which is also the shape a
+            // nullish one takes — and a raw `.slice` on it would throw out of a
+            // step whose entire contract is to decline gracefully, turning an
+            // ordinary "the head moved" into a red job on the default branch.
+            const short = (sha) =>
+              typeof sha === 'string' && sha.length > 0 ? sha.slice(0, 7) : 'unknown';
+
             let claimed;
             try {
               claimed = JSON.parse(
@@ -470,9 +489,9 @@ jobs:
               // same case, caught earlier.
               declineWithCause(
                 `PR #${number} head ${pr.head.sha} != run head ${run.head_sha}`,
-                `The pull request moved to a newer commit (${pr.head.sha.slice(0, 7)}) ` +
+                `The pull request moved to a newer commit (${short(pr.head.sha)}) ` +
                   `while the benchmark was running, so these numbers — measured on ` +
-                  `${run.head_sha.slice(0, 7)} — were not posted. Push again, or re-run the ` +
+                  `${short(run.head_sha)} — were not posted. Push again, or re-run the ` +
                   `benchmark workflow, to get a report for the current head.`,
               );
               return;
@@ -566,7 +585,7 @@ jobs:
                 // confirmed", which reads as a forged report.
                 declineWithCause(
                   `Artifact baseSha ${claimedBase} is not reachable from ${pr.base.ref} (${cmp.status})`,
-                  `The benchmark measured against ${claimedBase.slice(0, 7)}, which is not in ` +
+                  `The benchmark measured against ${short(claimedBase)}, which is not in ` +
                     `\`${pr.base.ref}\`'s history — most likely the pull request was retargeted ` +
                     `after the run started. Push again, or re-run the benchmark workflow, to ` +
                     `measure against the current base.`,
@@ -705,6 +724,13 @@ jobs:
               core.setOutput('reason', 'The reporter could not confirm the pull request was still at the benchmarked commit, so it declined to post. This is a fault on the reporting side, not in the pull request.');
               return;
             }
+            // Same guard as in `Verify PR identity`, and needed for the same
+            // reason: this branch is entered when two shas differ, which
+            // includes one of them being nullish, and a raw `.slice` would throw
+            // out of a step whose whole job is to decline without reddening the
+            // default branch.
+            const short = (sha) =>
+              typeof sha === 'string' && sha.length > 0 ? sha.slice(0, 7) : 'unknown';
             if (pr.head.sha !== process.env.HEAD_SHA) {
               core.notice(
                 `PR #${process.env.PR_NUMBER} moved to ${pr.head.sha} while this report was rendering; ` +
@@ -724,7 +750,7 @@ jobs:
               // vanished with nothing anywhere saying so.
               core.setOutput(
                 'reason',
-                `The pull request moved to a newer commit (${pr.head.sha.slice(0, 7)}) while this report was rendering, so these numbers — measured on ${process.env.HEAD_SHA.slice(0, 7)} — were not posted. If a benchmark ran for the newer commit its report will appear separately.`,
+                `The pull request moved to a newer commit (${short(pr.head.sha)}) while this report was rendering, so these numbers — measured on ${short(process.env.HEAD_SHA)} — were not posted. If a benchmark ran for the newer commit its report will appear separately.`,
               );
               return;
             }

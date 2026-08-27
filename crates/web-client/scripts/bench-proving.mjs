@@ -291,7 +291,11 @@ if (plannedSamples > MAX_SAMPLE_VALUES) {
 // formula. The formula version asserted the design instead of the code, and when
 // the code stopped matching the design it went on reporting the calibrated
 // default as balanced.
-const balance = orderBalance({ reps, proves });
+// Only meaningful with two sides. `orderBalance` takes no side count and always
+// simulates a base and a head, so a head-only run was asserting a base/head
+// split for a base that never opens and printing a lean note about it — the
+// first line a reader consults, describing an interleave that did not happen.
+const balance = BASE_DIR ? orderBalance({ reps, proves }) : null;
 
 // Assertions now, not warnings, and the change of severity is the point. Both of
 // these were reachable only through an odd `--reps`, which is refused at parse
@@ -302,7 +306,7 @@ const balance = orderBalance({ reps, proves });
 //
 // Kept rather than deleted for exactly that reason: they are the only thing
 // checking that the even-`--reps` rule actually delivers the balance it claims.
-if (!balance.provesBalanced) {
+if (balance && !balance.provesBalanced) {
   throw new Error(
     `the retained PROVES do not split evenly between base and head: base goes ` +
       `first in ${balance.proveBaseFirst} of ${balance.proveTotal}, with --reps ` +
@@ -310,7 +314,7 @@ if (!balance.provesBalanced) {
       `the interleave in bench-order.mjs and the even-reps rule have diverged`
   );
 }
-if (!balance.setupBalanced) {
+if (balance && !balance.setupBalanced) {
   throw new Error(
     `the SETUP order does not split evenly: base is opened first in ` +
       `${balance.setupBaseFirst} of ${balance.setupTotal} retained repetitions, ` +
@@ -318,7 +322,7 @@ if (!balance.setupBalanced) {
       `alternation in bench-order.mjs and the even-reps rule have diverged`
   );
 }
-if (balance.provesBalanced && !balance.perRepBalanced) {
+if (balance && balance.provesBalanced && !balance.perRepBalanced) {
   // Aggregate balance is not per-repetition balance, and a per-repetition
   // statistic gates the verdict: the sign test reads each repetition's delta
   // separately. With an odd retained count per repetition (the calibrated
@@ -1264,12 +1268,20 @@ if (benchError) {
 //   mean of per-rep minima       sd 1.79%  (worst run 2.71%)   <- this one
 //
 // Within one rep every prove is bit-identical work, so interference is the only
-// thing that varies and it only ever ADDS time: the rep's MINIMUM is the clean
-// compute cost for that rep. Across reps the faucet differs (it is not seedable
-// here), which changes the note commitment, the Fiat-Shamir transcript and
-// hence the proof-of-work grind length — a skewed lottery that a global
-// minimum would just pick the luckiest draw from. Averaging the per-rep minima
-// keeps the interference filtering and averages the grind away.
+// thing that varies and it only ever ADDS time: the rep's MINIMUM is its best
+// OBSERVED warm prove. Not its clean compute cost — a minimum is a lower-tail
+// order statistic whose bias toward that tail depends on how many proves are
+// drawn, so it is blind to a regression that leaves the best case alone. The
+// comparison stays fair because both sides are forced to the same retained
+// prove count, and the renderer's mean-of-every-prove cross-check is what
+// covers the blind spot. See docs/benchmarks/calibration.md.
+//
+// Across reps the faucet differs (it is not seedable here), which changes the
+// note commitment, the Fiat-Shamir transcript and hence the proof-of-work grind
+// length — a skewed lottery that a global minimum would just pick the luckiest
+// draw from. Averaging the per-rep minima keeps the interference filtering and
+// SHRINKS the grind's contribution; it does not cancel it, because each side
+// draws its own.
 //
 // `min` / `median` / `max` over all samples are retained as a spread check.
 const mean = (xs) => xs.reduce((total, x) => total + x, 0) / xs.length;
@@ -1501,14 +1513,18 @@ reportTeardownFailures({ resultsWritten: true });
 // results line and the teardown summary have to be flushed first or the
 // diagnostic is lost to the very exit meant to preserve it.
 if (abandonedCloses > 0) {
+  // Queued BEFORE the flush, not after. Flushing first and then writing put the
+  // one message explaining the exit behind the flush that exists to preserve it:
+  // when stderr is backed up — the only case where the flush does any work —
+  // that write is still in the buffer when `process.exit` discards it.
+  console.error(
+    `\n${abandonedCloses} resource${abandonedCloses === 1 ? "" : "s"} had to be abandoned, so this process is exiting rather than waiting for ${abandonedCloses === 1 ? "it" : "them"}. Something may still be running.`
+  );
   const flush = (stream) =>
     new Promise((resolve) => {
       if (stream.writableLength === 0) return resolve();
       stream.write("", () => resolve());
     });
   await Promise.all([flush(process.stdout), flush(process.stderr)]);
-  console.error(
-    `\n${abandonedCloses} resource${abandonedCloses === 1 ? "" : "s"} had to be abandoned, so this process is exiting rather than waiting for ${abandonedCloses === 1 ? "it" : "them"}. Something may still be running.`
-  );
   process.exit(process.exitCode || 1);
 }
