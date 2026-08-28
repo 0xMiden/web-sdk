@@ -480,6 +480,108 @@ jobs:
           name: coverage-react-sdk
           path: packages/react-sdk/coverage
 
+  # React 18 regression guard for @miden-sdk/react.
+  #
+  # The package promises `react: ">=18.0.0"` to consumers, but its own
+  # devDependencies pin React 19, so `test-react-sdk` above exercises 19 and
+  # nothing else. Until the React 19 migration the suite ran on 18.3.1, and
+  # that run was the only thing keeping the 18 half of the peer range honest;
+  # afterwards nothing tested 18 at all. A peer range nothing exercises can't
+  # break loudly — it breaks quietly, in a consumer's app, at a version we
+  # published as supported.
+  #
+  # Why a separate job rather than a matrix on `test-react-sdk`: that job
+  # uploads `coverage-react-sdk`, which `coverage-badge` downloads by name,
+  # and upload-artifact@v4 rejects two matrix legs writing the same artifact
+  # name. A matrix would drag the badge pipeline into a change that buys no
+  # extra test signal. Two jobs also fail independently, so a red here reads
+  # unambiguously as "React 18 broke", not "the React SDK tests broke".
+  #
+  # Why pnpm `overrides` in the ROOT package.json rather than a scoped
+  # `pnpm --filter @miden-sdk/react add -D react@18`: the scoped install is
+  # the obvious move and the untrustworthy one — it edits one manifest while
+  # leaving every other requester in the workspace free to resolve 19, and a
+  # peer-resolved or deduped 19 reaching vitest would turn this job into a
+  # green light that re-tested nothing. A root override is applied at
+  # resolution time to every requester, so `react` resolves to one version
+  # workspace-wide no matter who asked for it. The edit is runner-local and
+  # never committed — same shape as ./.github/actions/inject-linked-client-pr
+  # rewriting deps in place.
+  #
+  # 18.3.1 is the terminal React 18 release, so pinning it exactly is both the
+  # top of the 18.x range and reproducible. The @types are ranged inside 18.x
+  # because they get patched often and the declarations are half the point of
+  # the job (`useRef<string>()` compiles under @types/react 18 and not 19 —
+  # that class of divergence is invisible to a runtime-only check).
+  test-react-sdk-react18:
+    name: React SDK tests (React 18)
+    runs-on: ubuntu-24.04
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
+    env:
+      REACT_18: 18.3.1
+      TYPES_REACT_18: ^18.3.0
+    steps:
+      - uses: actions/checkout@v6
+      # vitest aliases @miden-sdk/miden-sdk to a mock and doesn't need the
+      # dist, but `tsc --noEmit` resolves the SDK's generated .d.ts files.
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # Keyed on the committed lockfile, i.e. computed before the override
+          # rewrites anything. That's fine: a pnpm store cache is additive, so
+          # the extra React 18 tarballs this job fetches only ever make the
+          # restored store a superset for whoever hits the key next.
+          cache: 'pnpm'
+      - name: Pin the workspace to React 18
+        run: |
+          pnpm pkg set \
+            "pnpm.overrides.react=${REACT_18}" \
+            "pnpm.overrides.react-dom=${REACT_18}" \
+            "pnpm.overrides.@types/react=${TYPES_REACT_18}" \
+            "pnpm.overrides.@types/react-dom=${TYPES_REACT_18}"
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      # Load-bearing, not decoration. If the override silently fails to apply,
+      # every step below still passes — against React 19 — and this job turns
+      # into a second, slower copy of test-react-sdk wearing a React 18 name.
+      # Resolve from packages/react-sdk so the assertion is about what vitest
+      # and tsc actually load, not about what a manifest claims.
+      - name: Verify React 18 is what actually got installed
+        run: |
+          node -e '
+            const path = require("path");
+            const from = { paths: [path.resolve("packages/react-sdk")] };
+            let bad = 0;
+            for (const p of ["react", "react-dom", "@types/react", "@types/react-dom"]) {
+              const v = require(require.resolve(p + "/package.json", from)).version;
+              const ok = v.split(".")[0] === "18";
+              console.log((ok ? "ok   " : "FAIL ") + p + " = " + v);
+              if (!ok) bad++;
+            }
+            if (bad > 0) {
+              console.error("::error::React 18 override did not take effect for packages/react-sdk; this job would have silently re-tested the version test-react-sdk already covers.");
+              process.exit(1);
+            }
+          '
+      - name: Run typecheck against React 18 type declarations
+        run: pnpm --filter @miden-sdk/react run typecheck
+      # test:unit, not test:coverage. The thresholds and the badge artifact
+      # belong to test-react-sdk; instrumenting a second time would double the
+      # runtime and collide on the artifact name for no additional signal.
+      - name: Run unit tests
+        run: pnpm --filter @miden-sdk/react run test:unit
+
   test-idxdb-store:
     name: idxdb-store unit tests
     runs-on: ubuntu-24.04
