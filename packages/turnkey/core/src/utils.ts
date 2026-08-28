@@ -1,4 +1,4 @@
-import type { Turnkey } from "./types";
+import type { Turnkey } from "./types.js";
 
 export const fromTurnkeySig = (sig: { r: string; s: string; v: string }) => {
   // TODO: bug in miden crypto where there is an extra byte in the signature buffer

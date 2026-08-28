@@ -1,21 +1,28 @@
 {
   "name": "@miden-sdk/turnkey",
   "version": "0.16.0-rc.5",
+  "type": "commonjs",
   "description": "Miden Turnkey Integration SDK",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
-  "types": "./dist/types/index.d.ts",
+  "types": "./dist/cjs/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/types/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js"
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
     }
   },
   "scripts": {
     "test": "node --test",
-    "build": "rm -rf dist && node scripts/build.mjs && tsc --emitDeclarationOnly --outDir dist/types",
-    "prepack": "pnpm build"
+    "build": "rm -rf dist && node scripts/build.mjs && pnpm run build:types",
+    "prepack": "pnpm build",
+    "build:types": "tsc --module es2020 --declarationDir dist/esm --emitDeclarationOnly --declaration && tsc --module commonjs --declarationDir dist/cjs --emitDeclarationOnly --declaration"
   },
   "keywords": [
     "miden",

@@ -81,8 +81,8 @@ import {
 } from "@miden-sdk/miden-wallet-adapter-base";
 import type { NoteFilterTypes, AccountComponent } from "@miden-sdk/miden-sdk";
 import { MidenWalletAdapter } from "@miden-sdk/miden-wallet-adapter-miden";
-import { useLocalStorage } from "./useLocalStorage";
-import { WalletContext as CanonicalWalletContext } from "./useWallet";
+import { useLocalStorage } from "./useLocalStorage.js";
+import { WalletContext as CanonicalWalletContext } from "./useWallet.js";
 
 // TYPES
 // ================================================================================================

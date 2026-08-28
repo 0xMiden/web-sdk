@@ -316,32 +316,81 @@ jobs:
       # packages need no Rust at all — they need their own dist/, which the step
       # above just produced. Linting a package.json here reuses that build
       # instead of paying for a WASM toolchain to do it.
+      #
+      # It runs at publint's default level, which fails on errors only. `--strict`
+      # promotes warnings to errors as well, and is deliberately NOT on yet: it is
+      # red today for 3 of the 11, and every one of those is a real defect to fix
+      # in the package rather than a threshold to argue with —
+      # @miden-sdk/miden-wallet-adapter-base (12 messages), -miden (6) and
+      # -reactui (14), all the same shape: ESM emitted into `.js` files in a
+      # package with no `"type"` field, so Node reads them as CommonJS.
+      #
+      # Those three also declare no `main` and no `exports`, only `module` —
+      # which Node consults for neither `require` nor `import`. On Node 20 and 22
+      # alike `require('@miden-sdk/miden-wallet-adapter-base')` is
+      # MODULE_NOT_FOUND and `import` of it is ERR_MODULE_NOT_FOUND; they are
+      # reachable from bundlers only. That is not hypothetical, it already breaks
+      # a sibling: @miden-sdk/miden-wallet-adapter-react is itself clean, and
+      # loading it under Node dies on `Cannot find package
+      # '@miden-sdk/miden-wallet-adapter-base'` reached from dist/WalletProvider.js.
+      # The repair is the shape adapter/react now has — `"type": "module"`, an
+      # `exports` map, `"files": ["dist"]` — and `--strict` belongs in
+      # check:publint:adopted in the same change that lands it.
       - name: publint (adopted packages)
         run: pnpm run check:publint:adopted
 
-      # attw (arethetypeswrong) is REPORT-ONLY, deliberately and temporarily. It
-      # is red today for 5 of the 9 adopted packages that publish types, and
-      # every remaining failure is a package-shape defect that has to be fixed
-      # in the package itself:
-      #   - @miden-sdk/para, @miden-sdk/turnkey, @miden-sdk/turnkey-react:
-      #     FalseCJS — the "import" condition resolves to an ESM JavaScript file
-      #     but a CommonJS type declaration.
-      #   - @miden-sdk/miden-wallet-adapter-react: CJSResolvesToESM (`require`
-      #     resolves to an ESM file) plus InternalResolutionError (its .d.ts
-      #     imports something the emitted JavaScript does not resolve to).
-      #   - @miden-sdk/para-react: NoResolution on the "./vite" subpath under
-      #     node10.
-      # @miden-sdk/miden-wallet-adapter is green: packages/adapter/all/.attw.json
-      # declares "profile": "esm-only" and excludes the styles.css entry point,
-      # which was attw resolving a stylesheet as a module. That is a config
-      # answer to a config-shaped complaint; the five above are not.
-      # Landing it red on day one would only teach everyone to ignore it. The
-      # signal is worth having now; delete `continue-on-error` once that list is
-      # empty. `pnpm run check:attw:adopted` reproduces it locally.
+      # attw (arethetypeswrong) BLOCKS. It shipped report-only for exactly one
+      # cycle, carrying a list of the five package-shape defects it found on day
+      # one and the instruction to delete `continue-on-error` once that list was
+      # empty. The list is empty, so the escape hatch is gone.
+      #
+      # Four of the five were repaired in the packages. @miden-sdk/para,
+      # @miden-sdk/turnkey and @miden-sdk/turnkey-react now declare `types`
+      # *inside* each of the `import`/`require` conditions and emit a matching
+      # .d.ts per module format, instead of pointing both conditions at one
+      # CommonJS declaration — that was the FalseCJS. @miden-sdk/para-react ships
+      # a vite/package.json subpath shim so its "./vite" export also resolves
+      # under node10, which has no notion of `exports`. The fifth,
+      # @miden-sdk/miden-wallet-adapter-react, had its InternalResolutionError
+      # repaired for real: NodeNext in its tsconfig, so tsc emits (and validates)
+      # the explicit ".js" specifiers that Node's ESM loader and TypeScript's
+      # node16 resolver both require and that the old ESNext/node pair silently
+      # omitted. Its remaining CJSResolvesToESM is answered by the same esm-only
+      # profile packages/adapter/all already carried — see below for why that is
+      # a description of the package rather than a suppression of a defect.
+      # `pnpm run check:attw:adopted` reproduces the gate locally.
       #
       # The script skips packages that publish no type declarations at all (the
       # create-* scaffolders are bin-only), decided from their package.json — not
-      # from a list — so attw is never asked a question it cannot answer.
-      - name: attw (adopted packages, report-only)
-        continue-on-error: true
+      # from a list — so attw is never asked a question it cannot answer. 9 of
+      # the 11 manifest packages are therefore actually checked.
+      #
+      # ---- The two .attw.json files, and why neither is a suppression ----
+      #
+      # Both set `"profile": "esm-only"`, which drops the node10 and node16-cjs
+      # resolutions. That profile is honest only for a package that genuinely
+      # ships no CommonJS, and both of these qualify: `"type": "module"`, an
+      # ESM-only dist, no CJS output anywhere in their build. The complaint it
+      # drops, CJSResolvesToESM, does not read "your types are wrong" — it reads
+      # "CommonJS consumers will need to use a dynamic import", which is a true
+      # and intended statement about an ESM-only package, and is the case attw
+      # documents this profile for.
+      #
+      #   packages/adapter/all/.attw.json additionally carries
+      #   `"excludeEntrypoints": ["styles.css"]`. That one is a tool blind spot
+      #   rather than a judgement call: attw resolves entry points as JS/TS
+      #   modules, so a stylesheet export reports NoResolution on all four
+      #   profiles however correct it is. The export is not going unchecked —
+      #   build-adopted-packages.sh's entry-point verification opens the tarball
+      #   and asserts dist/styles.css is really inside it, which is the check
+      #   that catches the dead "./styles.css" export rc.5 shipped.
+      #
+      #   packages/adapter/react/.attw.json has no exclusions. One note for
+      #   whoever edits that package's exports next: it reaches its ESM entry via
+      #   a `"default"` condition rather than `"import"`, so `require()` of it
+      #   resolves (to an ESM file) instead of failing cleanly at resolution the
+      #   way adapter/all's `import`-only export does. Changing `"default"` to
+      #   `"import"` would put the ESM-only intent in the package.json instead of
+      #   leaving it to the attw profile alone.
+      - name: attw (adopted packages)
         run: pnpm run check:attw:adopted
