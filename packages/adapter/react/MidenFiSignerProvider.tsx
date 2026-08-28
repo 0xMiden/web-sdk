@@ -6,58 +6,10 @@ import {
   useRef,
   createContext,
   useContext,
-  type Context,
   type FC,
   type ReactNode,
 } from "react";
-import {
-  SignerContext as SignerContextUnsafe,
-  type SignerContextValue,
-} from "@miden-sdk/react";
-
-// Re-cast SignerContext to this package's React typings.
-//
-// WHY: this workspace installs TWO @types/react. packages/react-sdk declares
-// `@types/react` as a devDependency at `^18.2.0`; every adopted package here
-// declares `^19` (adapter/react and turnkey/react `^19.0.0`, para/react
-// `^19.2.5`). With `node-linker=isolated` (see .npmrc) pnpm materializes both
-// — @types/react@18.3.28 and @types/react@19.2.18 — and links the 18.x copy
-// into packages/react-sdk/node_modules. TypeScript resolves the bare `react`
-// import inside packages/react-sdk/dist/index.d.ts relative to that file, so
-// `SignerContext` arrives typed by 18.3.28 while everything in this file is
-// typed by 19.2.18. The two genuinely disagree: React 19's `ReactNode` admits
-// `bigint` and its `Context<T>` carries `$$typeof`; React 18's do neither.
-// Drop the cast and tsc reports exactly this pair (verified by removing it):
-//   TS2322  Type 'React.ReactNode' is not assignable to type
-//           '...@types+react@18.3.28...ReactNode' — 'bigint' is not assignable
-//   TS2345  Property '$$typeof' is missing in type
-//           '...@types+react@18.3.28...Context<SignerContextValue | null>'
-//
-// The cast is safe: there is one React context object at runtime and only the
-// .d.ts identities differ.
-//
-// THE REAL FIX is to make a single @types/react serve both sides: bump
-// packages/react-sdk's @types/react DEVDEPENDENCY to the major the adopted
-// packages use, or pin @types/react via `pnpm.overrides` in the root
-// package.json. The devDependency is what decides which copy types the
-// emitted .d.ts, so that is the knob.
-//
-// NOT the fix, despite what an earlier version of this comment claimed:
-// widening a @types/react PEER range. packages/adapter/react already carries
-// `"@types/react": "^18.0.0 || ^19.0.0"` in peerDependencies (optional), and
-// it changes nothing — peer ranges do not decide what pnpm installs.
-// adapter/react still resolves 19.2.18 and still needs this same cast.
-//
-// SCOPE: this is a workspace-local type-identity split, not a consumer bug.
-// No published package here depends on @types/react — react-sdk has it only
-// as a devDependency, which npm never installs for consumers, and its
-// published manifest lists neither a dependency nor a peer on it — so an
-// installed consumer resolves the single copy their own app provides. The
-// fix above is deferred because @miden-sdk/react is already published at
-// 0.16.0-rc.5 and this branch is a release repair: changing what its
-// declarations are built against is out of scope here.
-const SignerContext =
-  SignerContextUnsafe as unknown as Context<SignerContextValue | null>;
+import { SignerContext, type SignerContextValue } from "@miden-sdk/react";
 import {
   type Adapter,
   AllowedPrivateData,
