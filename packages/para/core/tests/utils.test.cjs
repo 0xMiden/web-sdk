@@ -360,3 +360,53 @@ test("evmPkToCommitment hashes with Poseidon2 and never Rpo256", async () => {
     );
   }
 });
+
+const makeTxSummary = ({ outputAssets }) => ({
+  inputNotes: () => ({ notes: () => [] }),
+  outputNotes: () => ({
+    notes: () => [
+      {
+        id: () => ({ toString: () => "0xoutputnote" }),
+        assets: () => outputAssets,
+        metadata: () => ({ noteType: () => 1 }),
+      },
+    ],
+  }),
+});
+
+test("txSummaryToJson reports the assets an output note carries", () => {
+  const { txSummaryToJson } = loadUtils();
+
+  const summary = txSummaryToJson(
+    makeTxSummary({
+      outputAssets: {
+        fungibleAssets: () => [
+          {
+            faucetId: () => ({ toString: () => "0xfaucet" }),
+            amount: () => ({ toString: () => "42" }),
+          },
+        ],
+      },
+    })
+  );
+
+  assert.deepEqual(summary.outputNotes, [
+    {
+      id: "0xoutputnote",
+      assets: [{ assetId: "0xfaucet", amount: "42" }],
+      noteType: "public",
+    },
+  ]);
+});
+
+test("txSummaryToJson refuses to report unknown output assets as none", () => {
+  const { txSummaryToJson } = loadUtils();
+
+  // The signing-confirmation modal renders an empty asset list as "None", so an
+  // absent NoteAssets must abort the summary rather than become `assets: []` —
+  // otherwise a user is asked to approve a transaction whose assets are unknown.
+  assert.throws(
+    () => txSummaryToJson(makeTxSummary({ outputAssets: undefined })),
+    /carries no asset data/
+  );
+});

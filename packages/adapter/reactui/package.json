@@ -12,7 +12,7 @@
   "author": "Miden Contributors",
   "license": "MIT",
   "scripts": {
-    "build": "tsc && yarn copy-files",
+    "build": "tsc && pnpm run copy-files",
     "clean": "rimraf dist/ node_modules/",
     "copy-files": "copyfiles styles.css dist/",
     "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown"

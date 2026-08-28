@@ -72,28 +72,45 @@ const coordToLimbs = (hex: string): number[] => {
   return limbs;
 };
 
+/** The subset of Para's JWT payload this module reads. */
+interface ParaJwtConnectedWallet {
+  id: string;
+  publicKey?: string;
+}
+
+interface ParaJwtPayload {
+  data?: {
+    connectedWallets?: ParaJwtConnectedWallet[];
+  };
+}
+
 /**
  * Retrieves the uncompressed public key for a Para wallet, falling back to JWT data when absent.
+ * Throws rather than returning undefined: callers derive the account commitment from this value,
+ * so an absent key is an error, not a state to propagate.
  */
 export const getUncompressedPublicKeyFromWallet = async (
   para: ParaWeb,
   wallet: Wallet
-) => {
-  let publicKey = wallet.publicKey;
-  if (!publicKey) {
-    const { token } = await para.issueJwt();
-    const payload = JSON.parse(window.atob(token.split(".")[1]));
-    if (!payload.data) {
-      throw new Error("Got invalid jwt token");
-    }
-    const wallets = payload.data.connectedWallets;
-    const w = wallets.find((w) => w.id === wallet.id);
-    if (!w) {
-      throw new Error("Wallet Not Found in jwt data");
-    }
-    publicKey = w.publicKey;
+): Promise<string> => {
+  if (wallet.publicKey) {
+    return wallet.publicKey;
   }
-  return publicKey;
+
+  const { token } = await para.issueJwt();
+  const payload: ParaJwtPayload = JSON.parse(window.atob(token.split(".")[1]));
+  const wallets = payload.data?.connectedWallets;
+  if (!wallets) {
+    throw new Error("Got invalid jwt token");
+  }
+  const w = wallets.find((connected) => connected.id === wallet.id);
+  if (!w) {
+    throw new Error("Wallet Not Found in jwt data");
+  }
+  if (!w.publicKey) {
+    throw new Error("Wallet in jwt data has no public key");
+  }
+  return w.publicKey;
 };
 
 export const txSummaryToJson = (
@@ -120,19 +137,31 @@ export const txSummaryToJson = (
   const outputNotes = txSummary
     .outputNotes()
     .notes()
-    .map((outputNote) => ({
-      id: outputNote.id().toString(),
-      assets: outputNote
-        .assets()
-        .fungibleAssets()
-        .map((asset) => {
+    .map((outputNote) => {
+      // `OutputNote.assets()` is typed `NoteAssets | undefined` only because the
+      // Rust binding returns an `Option`; every variant it can hold today (Full,
+      // Partial) carries assets, so this branch is unreachable with the pinned
+      // SDK. Never soften it into an empty list: this summary is rendered on the
+      // signing-confirmation modal, which prints an empty asset list as "None" —
+      // showing "Assets: None" for a note whose assets are merely unknown would
+      // let a user approve a transaction they cannot actually see.
+      const assets = outputNote.assets();
+      if (!assets) {
+        throw new Error(
+          `Output note ${outputNote.id().toString()} carries no asset data; refusing to summarize a transaction whose assets are unknown`
+        );
+      }
+      return {
+        id: outputNote.id().toString(),
+        assets: assets.fungibleAssets().map((asset) => {
           return {
             assetId: asset.faucetId().toString(),
             amount: asset.amount().toString(),
           };
         }),
-      noteType: noteTypeToString(outputNote.metadata().noteType()),
-    }));
+        noteType: noteTypeToString(outputNote.metadata().noteType()),
+      };
+    });
 
   return {
     inputNotes,
