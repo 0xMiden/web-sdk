@@ -53,7 +53,7 @@ set -uo pipefail
 # green is believed.
 #
 # The manifest is also validated BEFORE `pnpm` is invoked: a missing or
-# unparseable manifest is a fact about this repo, and reporting it must not
+# unparsable manifest is a fact about this repo, and reporting it must not
 # depend on a working pnpm workspace.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -163,7 +163,7 @@ while IFS=$'\t' read -r name path build; do
       drift=$((drift + 1))
       continue
     fi
-    # An unparseable package.json must not read as "no build script" (one error
+    # An unparsable package.json must not read as "no build script" (one error
     # message) nor as "has one" (silently building nothing) — name it for what
     # it is.
     if ! build_script=$(jq -r '.scripts.build // ""' "$ROOT/$path/package.json" 2>&1); then
