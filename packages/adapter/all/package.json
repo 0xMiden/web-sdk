@@ -2,14 +2,15 @@
   "name": "@miden-sdk/miden-wallet-adapter",
   "version": "0.16.0-rc.5",
   "description": "Modular TypeScript wallet adapters and React components for Miden applications.",
+  "type": "module",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "author": "Miden Contributors",
   "license": "MIT",
   "scripts": {
-    "build": "tsc && yarn copy-styles",
+    "build": "tsc && pnpm run copy-styles",
     "clean": "rimraf dist/ node_modules/",
-    "copy-styles": "copyfiles -u 6 ../../node_modules/@miden-sdk/miden-wallet-adapter-reactui/dist/styles.css dist/",
+    "copy-styles": "node -e \"const fs=require('node:fs');const src=require.resolve('@miden-sdk/miden-wallet-adapter-reactui/dist/styles.css');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync(src,'dist/styles.css');console.log('copy-styles: '+src+' -> dist/styles.css')\"",
     "doc": "echo \"(no docs)\""
   },
   "dependencies": {
@@ -20,7 +21,6 @@
   },
   "devDependencies": {
     "@types/react-dom": "^19.0.4",
-    "copyfiles": "^2.4.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -35,8 +35,8 @@
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./styles.css": "./dist/styles.css"
   },
