@@ -1,7 +1,7 @@
 import ParaWeb, { Wallet } from "@getpara/web-sdk";
 import type { NoteType, TransactionSummary } from "@miden-sdk/miden-sdk";
 import { hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import { TxSummaryJson } from "./types";
+import { TxSummaryJson } from "./types.js";
 /** @public */
 export { hexToBytes };
 
