@@ -26,9 +26,10 @@ impl SparseMerklePath {
 
     /// Verifies the path against a root.
     pub fn verify(&self, index: JsU64, node: &Word, root: &Word) -> bool {
-        self.0
-            .verify(js_u64_to_u64(index), node.clone().into(), &root.clone().into())
-            .is_ok()
+        let Ok(index) = js_u64_to_u64(index) else {
+            return false;
+        };
+        self.0.verify(index, node.clone().into(), &root.clone().into()).is_ok()
     }
 }
 

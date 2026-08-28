@@ -49,7 +49,7 @@ impl WebClient {
         note_type: NoteType,
         amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
-        let amount = js_u64_to_u64(amount);
+        let amount = js_u64_to_u64(amount)?;
         let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
             .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
 
@@ -91,7 +91,7 @@ impl WebClient {
             from_str_err("Client not initialized while generating transaction request")
         })?;
 
-        let amount = js_u64_to_u64(amount);
+        let amount = js_u64_to_u64(amount)?;
         let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
             .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
 
@@ -143,7 +143,7 @@ impl WebClient {
             from_str_err("Client not initialized while generating transaction request")
         })?;
 
-        let amount = js_u64_to_u64(amount);
+        let amount = js_u64_to_u64(amount)?;
         let fungible_asset = FungibleAsset::new(faucet_id.into(), amount)
             .map_err(|err| js_error_with_context(err, "failed to create fungible asset"))?;
         let note_assets = NativeNoteAssets::new(vec![fungible_asset.into()])
@@ -181,7 +181,7 @@ impl WebClient {
         note_type: NoteType,
         payback_note_type: NoteType,
     ) -> Result<TransactionRequest, JsErr> {
-        let offered_asset_amount = js_u64_to_u64(offered_asset_amount);
+        let offered_asset_amount = js_u64_to_u64(offered_asset_amount)?;
         let offered_fungible_asset =
             FungibleAsset::new(offered_asset_faucet_id.into(), offered_asset_amount)
                 .map_err(|err| {
@@ -189,7 +189,7 @@ impl WebClient {
                 })?
                 .into();
 
-        let requested_asset_amount = js_u64_to_u64(requested_asset_amount);
+        let requested_asset_amount = js_u64_to_u64(requested_asset_amount)?;
         let requested_fungible_asset =
             FungibleAsset::new(requested_asset_faucet_id.into(), requested_asset_amount)
                 .map_err(|err| {
@@ -236,13 +236,13 @@ impl WebClient {
         note_type: NoteType,
         payback_note_type: NoteType,
     ) -> Result<TransactionRequest, JsErr> {
-        let offered_asset_amount = js_u64_to_u64(offered_asset_amount);
+        let offered_asset_amount = js_u64_to_u64(offered_asset_amount)?;
         let offered_fungible_asset =
             FungibleAsset::new(offered_asset_faucet_id.into(), offered_asset_amount).map_err(
                 |err| js_error_with_context(err, "failed to create offered fungible asset"),
             )?;
 
-        let requested_asset_amount = js_u64_to_u64(requested_asset_amount);
+        let requested_asset_amount = js_u64_to_u64(requested_asset_amount)?;
         let requested_fungible_asset =
             FungibleAsset::new(requested_asset_faucet_id.into(), requested_asset_amount).map_err(
                 |err| js_error_with_context(err, "failed to create requested fungible asset"),
@@ -294,8 +294,8 @@ impl WebClient {
         note_fill_amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
-        let account_fill_amount = js_u64_to_u64(account_fill_amount);
-        let note_fill_amount = js_u64_to_u64(note_fill_amount);
+        let account_fill_amount = js_u64_to_u64(account_fill_amount)?;
+        let note_fill_amount = js_u64_to_u64(note_fill_amount)?;
 
         let pswap_transaction_request = NativeTransactionRequestBuilder::new()
             .build_pswap_consume(
