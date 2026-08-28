@@ -1,0 +1,6 @@
+{
+  "//": "node10 resolution predates subpath \"exports\": a legacy consumer resolves '@miden-sdk/para-react/vite' by looking for this directory on disk. Modern Node, bundlers, and TS node16/bundler never read this file because the root package.json has an \"exports\" map, which takes precedence and blocks directory access. Mirrors packages/react-sdk/{lazy,mt}.",
+  "main": "../dist/paraVitePlugin.js",
+  "module": "../dist/paraVitePlugin.mjs",
+  "types": "../dist/paraVitePlugin.d.ts"
+}

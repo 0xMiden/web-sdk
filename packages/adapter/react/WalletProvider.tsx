@@ -15,9 +15,9 @@ import {
 } from "@miden-sdk/miden-wallet-adapter-base";
 import type { FC, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocalStorage } from "./useLocalStorage";
-import type { Wallet } from "./useWallet";
-import { WalletContext } from "./useWallet";
+import { useLocalStorage } from "./useLocalStorage.js";
+import type { Wallet } from "./useWallet.js";
+import { WalletContext } from "./useWallet.js";
 import type { NoteFilterTypes } from "@miden-sdk/miden-sdk";
 
 export interface WalletProviderProps {
