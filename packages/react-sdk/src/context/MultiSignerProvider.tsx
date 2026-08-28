@@ -249,7 +249,7 @@ export function MultiSignerProvider({ children }: { children: ReactNode }) {
 export function SignerSlot(): null {
   const signerValue = useSigner();
   const registry = useContext(MultiSignerRegistryContext);
-  const nameRef = useRef<string>();
+  const nameRef = useRef<string | undefined>(undefined);
 
   // Register on every signerValue change.
   // register() does shallow comparison to avoid snapshot churn.
