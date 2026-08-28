@@ -16,6 +16,7 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 
 use crate::js_error_with_context;
 use crate::models::advice_map::AdviceMap;
+use crate::models::fee_conversion_info::FeeConversionInfo;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::miden_arrays::{
     ForeignAccountArray,
@@ -144,6 +145,27 @@ impl TransactionRequestBuilder {
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();
         self.0 = self.0.clone().auth_arg(native_word);
+        self.clone()
+    }
+
+    /// Commits fee conversion info to the transaction's auth args.
+    ///
+    /// Since protocol 0.16 a signature-authenticated transaction pays its fee inside the auth
+    /// procedure, and `fee::pay_fee` requires `AUTH_ARGS` to be the commitment
+    /// `hash(CONVERSION_INFO || SALT)` with the preimage reachable in the advice map. Without it
+    /// the transaction aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on any chain whose
+    /// `verificationBaseFee` is non-zero.
+    ///
+    /// The salt is the caller's: for a multisig flow it doubles as the summary's replay guard, so
+    /// this deliberately takes it rather than generating one.
+    #[js_export(js_name = "withFeeConversionInfo")]
+    pub fn with_fee_conversion_info(
+        &mut self,
+        conversion_info: &FeeConversionInfo,
+        salt: &Word,
+    ) -> Self {
+        let native_salt: NativeWord = salt.into();
+        self.0 = self.0.clone().fee_conversion_info(conversion_info.into(), native_salt);
         self.clone()
     }
 

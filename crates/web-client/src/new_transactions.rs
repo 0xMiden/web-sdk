@@ -3,6 +3,9 @@ use alloc::collections::BTreeMap;
 use js_export_macro::js_export;
 use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
+use miden_client::{Client, Word as NativeWord};
+use miden_client::account::component::FeeConversionInfo as NativeFeeConversionInfo;
+use miden_client::crypto::FeltRng;
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::{AssetAmount, FungibleAsset};
 use miden_client::note::{
@@ -71,7 +74,8 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            NativeTransactionRequestBuilder::new()
+            let builder = fee_aware_builder(client).await?;
+            builder
                 .build_mint_fungible_asset(
                     fungible_asset,
                     target_account_id.into(),
@@ -123,7 +127,8 @@ impl WebClient {
                 payment_description.with_timelock_height(BlockNumber::from(height));
         }
 
-        let send_transaction_request = NativeTransactionRequestBuilder::new()
+        let builder = fee_aware_builder(client).await?;
+        let send_transaction_request = builder
             .build_pay_to_id(payment_description, note_type.into(), client.rng())
             .map_err(|err| {
                 js_error_with_context(err, "failed to create send transaction request")
@@ -221,7 +226,8 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            NativeTransactionRequestBuilder::new()
+            let builder = fee_aware_builder(client).await?;
+            builder
                 .build_swap(
                     &swap_transaction_data,
                     note_type.into(),
@@ -272,7 +278,8 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            NativeTransactionRequestBuilder::new()
+            let builder = fee_aware_builder(client).await?;
+            builder
                 .build_pswap_create(
                     &pswap_transaction_data,
                     note_type.into(),
@@ -753,10 +760,19 @@ impl WebClient {
     }
 
     #[js_export(js_name = "newConsumeTransactionRequest")]
-    pub fn new_consume_transaction_request(
+    pub async fn new_consume_transaction_request(
         &self,
         list_of_notes: Vec<Note>,
     ) -> Result<TransactionRequest, JsErr> {
+        // Async only so the chain's fee parameters can be read; the request itself is built the
+        // same way it always was. A consume is the one transaction an empty account can afford,
+        // because the note's credit lands in the vault before `pay_fee` withdraws from it -- but
+        // only if the conversion info is committed, or it never reaches the fee at all.
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating consume transaction request")
+        })?;
+
         let consume_transaction_request = {
             let native_notes = list_of_notes
                 .into_iter()
@@ -766,7 +782,8 @@ impl WebClient {
                     from_str_err(&format!("Failed to convert note to native note: {err}"))
                 })?;
 
-            NativeTransactionRequestBuilder::new()
+            let builder = fee_aware_builder(client).await?;
+            builder
                 .build_consume_notes(native_notes)
                 .map_err(|err| {
                     from_str_err(&format!("Failed to create Consume Transaction Request: {err}"))
@@ -800,4 +817,50 @@ fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
         ),
         err => js_error_with_context(err, context),
     }
+}
+
+// FEE CONVERSION INFO
+// ================================================================================================
+
+/// Fee conversion info for the chain's own fee asset, paired with a fresh salt.
+///
+/// Returns `None` when the chain charges nothing. Since protocol 0.16 the fee is paid inside
+/// the account's auth procedure and `fee::pay_fee` reads the conversion info from the
+/// transaction's auth args, so a request built without it aborts with
+/// `ERR_FEE_CONVERSION_INFO_MISSING` wherever `verification_base_fee` is non-zero. The
+/// convenience constructors below return a finished request and expose no way to set an auth
+/// arg afterwards, so attaching it here is the only point at which they can be made to work on
+/// a fee-charging chain.
+///
+/// Gating on a zero base fee keeps such chains byte-identical to before: no auth arg, no
+/// advice entry. That matters because the auth arg is not free to set — a multisig flow reuses
+/// it as the transaction summary salt, so inventing one where none is needed would change a
+/// summary that callers may already be signing over.
+async fn native_fee_conversion_info(
+    client: &mut Client<crate::ClientAuth>,
+) -> Result<Option<(NativeFeeConversionInfo, NativeWord)>, JsErr> {
+    let header = client.get_latest_block_header().await.map_err(|err| {
+        js_error_with_context(err, "failed to read fee parameters from the latest block header")
+    })?;
+    let fee_parameters = header.fee_parameters();
+    if fee_parameters.verification_base_fee() == 0 {
+        return Ok(None);
+    }
+    let conversion_info = NativeFeeConversionInfo::one_to_one(fee_parameters.fee_faucet_id());
+    let salt = client.rng().draw_word();
+    Ok(Some((conversion_info, salt)))
+}
+
+/// A request builder already carrying this chain's fee conversion info, where one is needed.
+///
+/// Every convenience constructor starts from this rather than
+/// `TransactionRequestBuilder::new()`, so none of them can be the one that forgets.
+async fn fee_aware_builder(
+    client: &mut Client<crate::ClientAuth>,
+) -> Result<NativeTransactionRequestBuilder, JsErr> {
+    let mut builder = NativeTransactionRequestBuilder::new();
+    if let Some((conversion_info, salt)) = native_fee_conversion_info(client).await? {
+        builder = builder.fee_conversion_info(conversion_info, salt);
+    }
+    Ok(builder)
 }
