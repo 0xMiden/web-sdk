@@ -141,6 +141,11 @@ impl TransactionRequestBuilder {
     }
 
     /// Adds an authentication argument.
+    ///
+    /// Mutually exclusive with `withFeeConversionInfo`, which stores its commitment in the same
+    /// slot: calling this afterwards replaces the commitment while leaving the conversion-info
+    /// preimage keyed by the old one, so `fee::pay_fee` then aborts with
+    /// `ERR_FEE_CONVERSION_INFO_MISSING`. Build one request per auth arg.
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();
@@ -158,6 +163,8 @@ impl TransactionRequestBuilder {
     ///
     /// The salt is the caller's: for a multisig flow it doubles as the summary's replay guard, so
     /// this deliberately takes it rather than generating one.
+    ///
+    /// Mutually exclusive with `withAuthArg` — see the note there.
     #[js_export(js_name = "withFeeConversionInfo")]
     pub fn with_fee_conversion_info(
         &mut self,

@@ -20,6 +20,7 @@ export {
   BasicFungibleFaucetComponent,
   ChainAnchor,
   EthAddress,
+  FeeConversionInfo,
   Felt,
   InputNoteRecord,
   NetworkAccountTarget,

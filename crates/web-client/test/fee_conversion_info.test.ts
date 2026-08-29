@@ -17,11 +17,14 @@ import { test, expect } from "./test-setup";
 // anything — a "the transfer worked" test would pass identically with the
 // bindings removed. Asserting on the request's own auth arg and advice map
 // keeps these honest at any fee level.
+//
+// Every assertion about the convenience constructors is therefore expressed
+// against the base fee the header actually reports, rather than against the
+// zero the local node happens to use. That way the file stays correct if the
+// test node is ever reconfigured to charge.
 
 test.describe("fee conversion info", () => {
-  test("block headers expose the chain's verification base fee", async ({
-    run,
-  }) => {
+  test("block headers expose the chain's fee parameters", async ({ run }) => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
 
@@ -34,24 +37,50 @@ test.describe("fee conversion info", () => {
       const anchor = await client.chainAnchorForRequest(request);
       const header = anchor.blockHeader();
 
+      const feeFaucetId = header.feeFaucetId();
+
       return {
         baseFee: header.verificationBaseFee(),
-        // Read alongside the faucet id so a header that reports a fee but no
-        // faucet (or vice versa) is visible rather than silently half-right.
-        feeFaucetId: header.feeFaucetId().toString(),
+        // Round-trip the id through the SDK's own parser rather than pattern
+        // matching the string: a garbled or all-zero id would still look like
+        // an account id to a regex.
+        feeFaucetRoundTrips:
+          sdk.AccountId.fromHex(feeFaucetId.toString()).toString() ===
+          feeFaucetId.toString(),
+        // Reading the header twice must agree — a fee faucet that changes
+        // between reads would mean we are not reading the header's own field.
+        feeFaucetIsStable:
+          anchor.blockHeader().feeFaucetId().toString() ===
+          feeFaucetId.toString(),
       };
     });
 
-    expect(typeof result.baseFee).toBe("number");
+    // `verification_base_fee` is a u32 on the wire, so it must survive as an
+    // exact non-negative integer rather than an arbitrary JS number.
+    expect(Number.isInteger(result.baseFee)).toBe(true);
     expect(result.baseFee).toBeGreaterThanOrEqual(0);
-    expect(result.feeFaucetId).toMatch(/^0x|^m/);
+    expect(result.baseFee).toBeLessThanOrEqual(0xffffffff);
+    expect(result.feeFaucetRoundTrips).toBe(true);
+    expect(result.feeFaucetIsStable).toBe(true);
   });
 
   test("withFeeConversionInfo commits the conversion info to the auth arg", async ({
     run,
   }) => {
     const result = await run(async ({ client, sdk, helpers }) => {
-      const { faucet } = await helpers.setupWalletAndFaucet();
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      // Pay in the chain's own fee asset. `oneToOne` applies the identity rate,
+      // which is only meaningful for the faucet the chain actually charges in —
+      // so take it from the header rather than reusing an arbitrary token.
+      const probe = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+      const anchor = await client.chainAnchorForRequest(probe);
+      const feeFaucetId = anchor.blockHeader().feeFaucetId();
 
       const salt = sdk.Word.newFromFelts([
         new sdk.Felt(11n),
@@ -62,7 +91,7 @@ test.describe("fee conversion info", () => {
 
       const built = new sdk.TransactionRequestBuilder()
         .withFeeConversionInfo(
-          sdk.FeeConversionInfo.oneToOne(faucet.id()),
+          sdk.FeeConversionInfo.oneToOne(feeFaucetId),
           salt
         )
         .build();
@@ -70,28 +99,44 @@ test.describe("fee conversion info", () => {
       const authArg = built.authArg();
 
       return {
-        hasAuthArg: authArg !== undefined,
+        // Compared with `== null` so the napi path (which yields `null` for a
+        // Rust `Option::None`) and the wasm-bindgen path (`undefined`) agree.
+        hasAuthArg: authArg != null,
         // The commitment must not be the salt passed through bare — that is
         // precisely the pre-0.16 shape the MASM rejects.
-        authArgIsSalt: authArg?.toHex() === salt.toHex(),
+        authArgIsSalt: authArg != null && authArg.toHex() === salt.toHex(),
         // The preimage has to be reachable, keyed by the commitment, or
         // `load_conversion_info`'s advice-map lookup misses and the
         // transaction aborts.
         preimageIsKeyedByCommitment:
-          built.adviceMap().get(authArg) !== undefined,
+          authArg != null && built.adviceMap().get(authArg) != null,
+        // A word unrelated to the commitment must NOT resolve, or the lookup
+        // above would pass against any non-empty advice map.
+        unrelatedKeyMisses: built.adviceMap().get(salt) == null,
       };
     });
 
     expect(result.hasAuthArg).toBe(true);
     expect(result.authArgIsSalt).toBe(false);
     expect(result.preimageIsKeyedByCommitment).toBe(true);
+    expect(result.unrelatedKeyMisses).toBe(true);
   });
 
-  test("a request left alone declares no auth arg", async ({ run }) => {
-    // The complement of the test above: without an explicit call the builder
-    // must not invent an auth arg, or a caller committing its own (the
-    // multisig flow, where the salt is the replay guard) would be silently
-    // overridden.
+  test("an untouched builder declares no auth arg", async ({ run }) => {
+    // Without an explicit call the builder must not invent an auth arg, or a
+    // caller committing its own (the multisig flow, where the salt is the
+    // replay guard) would be silently overridden.
+    const result = await run(async ({ sdk }) => {
+      const request = new sdk.TransactionRequestBuilder().build();
+      return { hasAuthArg: request.authArg() != null };
+    });
+
+    expect(result.hasAuthArg).toBe(false);
+  });
+
+  test("convenience constructors attach conversion info exactly when the chain charges", async ({
+    run,
+  }) => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
 
@@ -101,10 +146,25 @@ test.describe("fee conversion info", () => {
         sdk.NoteType.Private,
         BigInt(5)
       );
+      const anchor = await client.chainAnchorForRequest(request);
+      const baseFee = anchor.blockHeader().verificationBaseFee();
+      const authArg = request.authArg();
 
-      return { authArg: request.authArg() };
+      return {
+        baseFee,
+        hasAuthArg: authArg != null,
+        // When one is attached it must carry a reachable preimage, exactly as
+        // an explicit `withFeeConversionInfo` call would.
+        preimageIsKeyedByCommitment:
+          authArg != null && request.adviceMap().get(authArg) != null,
+      };
     });
 
-    expect(result.authArg).toBeUndefined();
+    // Zero-fee chains stay byte-identical to the pre-0.16 shape: no auth arg,
+    // no advice entry. Anywhere else the constructor must have attached one.
+    expect(result.hasAuthArg).toBe(result.baseFee > 0);
+    if (result.baseFee > 0) {
+      expect(result.preimageIsKeyedByCommitment).toBe(true);
+    }
   });
 });

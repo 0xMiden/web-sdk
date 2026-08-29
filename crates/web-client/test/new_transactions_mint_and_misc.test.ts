@@ -639,7 +639,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
         );
 
         const consumeTransactionRequest =
-          client.newConsumeTransactionRequest(createdNotes);
+          await client.newConsumeTransactionRequest(createdNotes);
 
         await client.submitNewTransaction(
           targetAccount.id(),
@@ -685,7 +685,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
         );
 
         const consumeSentNoteRequest =
-          client.newConsumeTransactionRequest(sentNotes);
+          await client.newConsumeTransactionRequest(sentNotes);
 
         const summary = await client.executeForSummary(
           accountBuilderResult.account.id(),

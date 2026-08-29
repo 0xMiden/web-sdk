@@ -77,7 +77,9 @@ const noAuthConsumeTest = async (testingPage: Page) => {
 
     // Consume the note against the NoAuth account — this is the bug repro
     const mintedNote = mintedNoteRecord.toNote();
-    const consumeRequest = client.newConsumeTransactionRequest([mintedNote]);
+    const consumeRequest = await client.newConsumeTransactionRequest([
+      mintedNote,
+    ]);
     await client.submitNewTransaction(noAuthAccount.id(), consumeRequest);
     await client.proveBlock();
     await client.syncState();

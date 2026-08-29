@@ -63,22 +63,25 @@ export {
 // Naming note: "SYNC_METHODS" is a historical misnomer. This set groups methods
 // that are forwarded transparently to the underlying WASM via the Proxy in
 // `createClientProxy` — meaning they don't need an explicit JS-class wrapper
-// here. It does NOT mean "the method is synchronous"; several entries
-// (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
-// `async fn` in Rust because they take the client's RNG via an async lock.
+// here. It does NOT mean "the method is synchronous"; some entries are
+// `async fn` in Rust.
+//
+// What an entry DOES promise is that it never holds the client's `AsyncCell`
+// borrow across a suspension point: either it takes no borrow, or the whole
+// span between acquiring and dropping it is synchronous. Raw binding skips
+// `_serializeWasmCall`, so an entry that awaits while holding the borrow can
+// be polled concurrently with any other call and panics with
+// `already borrowed: BorrowMutError`. The transaction-request constructors
+// that read the chain's fee parameters (an IndexedDB round-trip) are for that
+// reason classified as write methods and go through the serialized path.
 const SYNC_METHODS = new Set([
   "buildPswapCancelByOrder",
   "buildSwapTag",
   "createCodeBuilder",
   "lastAuthError",
   "newB2AggTransactionRequest",
-  "newConsumeTransactionRequest",
-  "newMintTransactionRequest",
   "newPswapCancelTransactionRequest",
   "newPswapConsumeTransactionRequest",
-  "newPswapCreateTransactionRequest",
-  "newSendTransactionRequest",
-  "newSwapTransactionRequest",
   "proveBlock",
   "serializeMockChain",
   "serializeMockNoteTransportNode",
@@ -101,6 +104,11 @@ const WRITE_METHODS = new Set([
   "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
+  "newConsumeTransactionRequest",
+  "newMintTransactionRequest",
+  "newPswapCreateTransactionRequest",
+  "newSendTransactionRequest",
+  "newSwapTransactionRequest",
   "pruneAccountHistory",
   "removeAccountAddress",
   "removeTag",

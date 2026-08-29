@@ -51,9 +51,8 @@ test.describe("mock chain tests", () => {
       const mintedNoteRecord = await client.getInputNote(mintedNoteId);
 
       const mintedNote = mintedNoteRecord.toNote();
-      const consumeTransactionRequest = client.newConsumeTransactionRequest([
-        mintedNote,
-      ]);
+      const consumeTransactionRequest =
+        await client.newConsumeTransactionRequest([mintedNote]);
       await client.submitNewTransaction(
         account.id(),
         consumeTransactionRequest

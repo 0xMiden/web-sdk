@@ -149,7 +149,7 @@ export const discardedTransaction = async (
       notes.push(note);
     }
     const senderConsumeTransactionRequest =
-      client.newConsumeTransactionRequest(notes);
+      await client.newConsumeTransactionRequest(notes);
     let senderConsumeTransactionUpdate =
       await window.helpers.executeAndApplyTransaction(
         senderAccount.id(),
@@ -211,7 +211,7 @@ export const discardedTransaction = async (
       const note = inputNoteRecord.toNote();
       notes.push(note);
     }
-    let senderTxRequest = client.newConsumeTransactionRequest(notes);
+    let senderTxRequest = await client.newConsumeTransactionRequest(notes);
     let senderTxResult = await window.helpers.executeAndApplyTransaction(
       senderAccount.id(),
       senderTxRequest

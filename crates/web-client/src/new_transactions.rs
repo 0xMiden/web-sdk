@@ -1,13 +1,11 @@
 use alloc::collections::BTreeMap;
 
 use js_export_macro::js_export;
-use miden_client::ClientError;
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::{Client, Word as NativeWord};
 use miden_client::account::component::FeeConversionInfo as NativeFeeConversionInfo;
-use miden_client::crypto::FeltRng;
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::{AssetAmount, FungibleAsset};
+use miden_client::crypto::FeltRng;
 use miden_client::note::{
     BlockNumber,
     Note as NativeNote,
@@ -26,6 +24,7 @@ use miden_client::transaction::{
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
+use miden_client::{Client, ClientError, Word as NativeWord};
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -176,10 +175,9 @@ impl WebClient {
         )
         .map_err(|err| js_error_with_context(err, "failed to create b2agg note"))?;
 
-        let b2agg_transaction_request = NativeTransactionRequestBuilder::new()
-            .own_output_notes(vec![b2agg_note])
-            .build()
-            .map_err(|err| {
+        let builder = fee_aware_builder(client).await?;
+        let b2agg_transaction_request =
+            builder.own_output_notes(vec![b2agg_note]).build().map_err(|err| {
                 js_error_with_context(err, "failed to create b2agg transaction request")
             })?;
 
@@ -783,11 +781,9 @@ impl WebClient {
                 })?;
 
             let builder = fee_aware_builder(client).await?;
-            builder
-                .build_consume_notes(native_notes)
-                .map_err(|err| {
-                    from_str_err(&format!("Failed to create Consume Transaction Request: {err}"))
-                })?
+            builder.build_consume_notes(native_notes).map_err(|err| {
+                from_str_err(&format!("Failed to create Consume Transaction Request: {err}"))
+            })?
         };
 
         Ok(consume_transaction_request.into())
@@ -853,8 +849,13 @@ async fn native_fee_conversion_info(
 
 /// A request builder already carrying this chain's fee conversion info, where one is needed.
 ///
-/// Every convenience constructor starts from this rather than
-/// `TransactionRequestBuilder::new()`, so none of them can be the one that forgets.
+/// Every convenience constructor that already holds the client starts from this rather than
+/// `TransactionRequestBuilder::new()`. `newPswapConsumeTransactionRequest` and
+/// `newPswapCancelTransactionRequest` are the exceptions: both are synchronous and never take
+/// the client, so reading the chain's fee parameters would make them `async` — a signature
+/// change their callers have not been given. Requests from those two still abort with
+/// `ERR_FEE_CONVERSION_INFO_MISSING` on a fee-charging chain unless the caller attaches
+/// conversion info with `TransactionRequestBuilder.withFeeConversionInfo`.
 async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {

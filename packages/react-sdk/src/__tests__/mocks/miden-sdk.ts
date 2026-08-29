@@ -291,7 +291,7 @@ export const createMockWebClient = (
       .mockResolvedValue(createMockTransactionRequest()),
     newConsumeTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newSwapTransactionRequest: vi
       .fn()
       .mockReturnValue(createMockTransactionRequest()),

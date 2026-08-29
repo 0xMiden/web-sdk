@@ -34,7 +34,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     newMintTransactionRequest: vi.fn().mockReturnValue({}),
     newSendTransactionRequest: vi.fn().mockReturnValue({}),
     newB2AggTransactionRequest: vi.fn().mockReturnValue({}),
-    newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+    newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
     newSwapTransactionRequest: vi.fn().mockReturnValue({}),
     submitNewTransaction: vi
       .fn()

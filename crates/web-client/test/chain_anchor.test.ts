@@ -125,7 +125,7 @@ test.describe("chain anchor", () => {
       );
 
       const inputNote = await client.getInputNote(createdNoteId);
-      const consumeRequest = client.newConsumeTransactionRequest([
+      const consumeRequest = await client.newConsumeTransactionRequest([
         inputNote.toNote(),
       ]);
 
@@ -189,7 +189,7 @@ test.describe("chain anchor", () => {
       );
 
       const inputNote = await client.getInputNote(createdNoteId);
-      const consumeRequest = client.newConsumeTransactionRequest([
+      const consumeRequest = await client.newConsumeTransactionRequest([
         inputNote.toNote(),
       ]);
 
@@ -280,7 +280,7 @@ test.describe("chain anchor", () => {
       const { multisigAccountId, notes } =
         await helpers.setupMultisigWithConsumableNote();
 
-      const request = client.newConsumeTransactionRequest(notes);
+      const request = await client.newConsumeTransactionRequest(notes);
       const anchor = await client.chainAnchorForRequest(request);
       const anchorBlock = anchor.blockNum();
       const anchorCommitment = anchor.commitment().toHex();

@@ -664,7 +664,7 @@ const setupInPage = async ({ threads: wantThreads }) => {
 
   // Execute once, untimed: proving is the subject, and reusing one
   // TransactionResult removes all execution variance between proves.
-  const consumeRequest = client.newConsumeTransactionRequest([note]);
+  const consumeRequest = await client.newConsumeTransactionRequest([note]);
   const txResult = await client.executeTransaction(walletId, consumeRequest);
   if (!txResult) throw new Error("executeTransaction returned nothing");
 

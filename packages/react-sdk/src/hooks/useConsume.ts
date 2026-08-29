@@ -153,7 +153,7 @@ export function useConsume(): UseConsumeResult {
 
           const notes = resolved;
 
-          const txRequest = client.newConsumeTransactionRequest(notes);
+          const txRequest = await client.newConsumeTransactionRequest(notes);
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,

@@ -208,7 +208,7 @@ type WaitAndConsumeClient = {
   getConsumableNotes: (
     accountId?: unknown
   ) => Promise<Array<{ inputNoteRecord: () => { toNote: () => unknown } }>>;
-  newConsumeTransactionRequest: (notes: unknown[]) => unknown;
+  newConsumeTransactionRequest: (notes: unknown[]) => Promise<unknown>;
   submitNewTransaction: (
     accountId: unknown,
     request: unknown
@@ -235,7 +235,7 @@ async function waitAndConsume(
     const consumable = await client.getConsumableNotes(accountIdObj);
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
-      const txRequest = client.newConsumeTransactionRequest(notes);
+      const txRequest = await client.newConsumeTransactionRequest(notes);
       const freshAccountId = parseAccountId(walletId);
       await client.submitNewTransaction(freshAccountId, txRequest);
       return;
