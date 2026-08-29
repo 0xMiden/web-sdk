@@ -838,7 +838,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const consumeRequest = c.newPswapConsumeTransactionRequest(
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
             pswapNoteRecord.toNote(),
             fillerId,
             BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
@@ -944,7 +944,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const consumeRequest = c.newPswapConsumeTransactionRequest(
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
             pswapNoteRecord.toNote(),
             fillerId,
             BigInt(fillAmount),
@@ -1053,7 +1053,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const cancelRequest = c.newPswapCancelTransactionRequest(
+          const cancelRequest = await c.newPswapCancelTransactionRequest(
             pswapNoteRecord.toNote(),
             creatorId
           );

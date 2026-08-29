@@ -478,7 +478,7 @@ async function createAndFillPswapNote(
   // 2. Filler consumes (fills) the PSWAP note from its own vault.
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const consumeRequest = client.newPswapConsumeTransactionRequest(
+  const consumeRequest = await client.newPswapConsumeTransactionRequest(
     pswapNoteRecord.toNote(),
     fillerId,
     sdk.u64(fillAmount),
@@ -691,7 +691,7 @@ export async function mockPswapCancel(
 
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const cancelRequest = client.newPswapCancelTransactionRequest(
+  const cancelRequest = await client.newPswapCancelTransactionRequest(
     pswapNoteRecord.toNote(),
     creatorId
   );

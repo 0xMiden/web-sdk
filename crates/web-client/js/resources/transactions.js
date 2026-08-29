@@ -325,15 +325,16 @@ export class TransactionsResource {
 
     const notes = toConsume.map((c) => c.inputNoteRecord().toNote());
 
-    // `accountId` was consumed by getConsumableNotes above, so both calls
-    // below need their own.
+    // `accountId` is gone — getConsumableNotes took it by value. Both calls
+    // below take `&AccountId`, which borrows, so one replacement serves both.
+    const consumingAccountId = wasm.AccountId.fromHex(accountIdHex);
     const request = await this.#inner.newConsumeTransactionRequest(
       notes,
-      wasm.AccountId.fromHex(accountIdHex)
+      consumingAccountId
     );
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
-      wasm.AccountId.fromHex(accountIdHex),
+      consumingAccountId,
       request,
       opts.prover
     );

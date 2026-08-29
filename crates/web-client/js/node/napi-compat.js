@@ -165,6 +165,7 @@ function patchSdkPrototypes(rawSdk) {
   for (const [cls, methods] of [
     [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
+    [rawSdk.AdviceMap, ["get"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
   ]) {
     if (!cls?.prototype) continue;

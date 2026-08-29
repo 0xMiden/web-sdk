@@ -349,6 +349,14 @@ describe("TransactionsResource", () => {
       expect(wasm.Note.createP2IDNote).toHaveBeenCalled();
       expect(result.note).toBe("p2idNote");
       expect(result.txId).toBeDefined();
+
+      // This path assembles its own request, so it must start from a fee-aware
+      // builder for the sender — the account whose auth procedure pays. A bare
+      // `new wasm.TransactionRequestBuilder()` aborts with
+      // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges a fee.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" })
+      );
     });
   });
 
@@ -414,6 +422,12 @@ describe("TransactionsResource", () => {
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.note).toBe("networkNote");
       expect(result.txId).toBeDefined();
+
+      // Assembles its own request, so it must start from a fee-aware builder for
+      // the sender — the account whose auth procedure pays.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" })
+      );
     });
 
     it("uses a pre-built recipient without building one from a script", async () => {
@@ -732,10 +746,12 @@ describe("TransactionsResource", () => {
       expect(result.txId).toBeDefined();
     });
 
-    it("does not reuse the account id getConsumableNotes consumed", async () => {
+    it("replaces the account id getConsumableNotes consumed, once", async () => {
       // getConsumableNotes takes AccountId by value, so the WASM wrapper it was
       // given is freed by that call. Handing the same instance to the request
-      // constructor or to submit would be a use-after-free.
+      // constructor or to submit would be a use-after-free. Both of those take
+      // `&AccountId` though, which borrows, so a single replacement serves both
+      // — allocating a second wrapper would be waste, not safety.
       const note = {
         inputNoteRecord: vi
           .fn()
@@ -750,7 +766,7 @@ describe("TransactionsResource", () => {
         inner.newConsumeTransactionRequest.mock.calls[0];
       const [executeAccountId] = inner.executeTransaction.mock.calls[0];
       expect(requestAccountId).not.toBe(consumedAccountId);
-      expect(executeAccountId).not.toBe(consumedAccountId);
+      expect(executeAccountId).toBe(requestAccountId);
       expect(requestAccountId.toString()).toBe("0xaccHex");
     });
 
@@ -2112,10 +2128,19 @@ describe("TransactionsResource", () => {
       expect(result).toEqual({ blockNumber: 42 });
       // custom request.serialize() called via submitBatch path
       expect(customReq.serialize).toHaveBeenCalled();
+      // The `execute` operation is the one kind that assembles its own request,
+      // so it must come from the batch account's fee-aware builder — a bare
+      // builder aborts with ERR_FEE_CONVERSION_INFO_MISSING on a fee-charging
+      // chain. The other five kinds delegate to `new*TransactionRequest`, which
+      // attach conversion info themselves.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledTimes(1);
+      expect(
+        inner.feeAwareTransactionRequestBuilder.mock.calls[0][0].toString()
+      ).toBe("0xsender");
     });
 
     it("execute kind threads foreignAccounts through ForeignAccountArray", async () => {
-      const { resource, wasm } = makeResource({
+      const { resource, wasm, inner } = makeResource({
         submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
         feeAwareTransactionRequestBuilder: vi
           .fn()
@@ -2139,6 +2164,11 @@ describe("TransactionsResource", () => {
 
       expect(wasm.ForeignAccount.public).toHaveBeenCalledTimes(2);
       expect(wasm.ForeignAccountArray).toHaveBeenCalled();
+      // Foreign accounts do not change which account executes, so the
+      // fee-aware builder is still the batch account's.
+      expect(
+        inner.feeAwareTransactionRequestBuilder.mock.calls[0][0].toString()
+      ).toBe("0xsender");
     });
 
     it("throws when account is missing", async () => {

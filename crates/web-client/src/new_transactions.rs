@@ -307,7 +307,7 @@ impl WebClient {
     }
 
     #[js_export(js_name = "newPswapConsumeTransactionRequest")]
-    pub fn new_pswap_consume_transaction_request(
+    pub async fn new_pswap_consume_transaction_request(
         &self,
         pswap_note: &Note,
         consumer_account_id: &AccountId,
@@ -339,33 +339,53 @@ impl WebClient {
             )));
         }
 
-        let pswap_transaction_request = NativeTransactionRequestBuilder::new()
-            .build_pswap_consume(
-                &native_pswap_note,
-                consumer_account_id.into(),
-                account_fill_amount,
-                note_fill_amount,
-            )
-            .map_err(|err| {
-                js_error_with_context(err, "failed to create PSWAP consume transaction request")
+        let pswap_transaction_request = {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| {
+                from_str_err("Client not initialized while generating transaction request")
             })?;
+
+            // The consumer executes the fill, so it is the account whose auth procedure reads
+            // the conversion info.
+            let builder = fee_aware_builder(client, consumer_account_id.into()).await?;
+            builder
+                .build_pswap_consume(
+                    &native_pswap_note,
+                    consumer_account_id.into(),
+                    account_fill_amount,
+                    note_fill_amount,
+                )
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to create PSWAP consume transaction request")
+                })?
+        };
 
         Ok(pswap_transaction_request.into())
     }
 
     #[js_export(js_name = "newPswapCancelTransactionRequest")]
-    pub fn new_pswap_cancel_transaction_request(
+    pub async fn new_pswap_cancel_transaction_request(
         &self,
         pswap_note: &Note,
         creator_account_id: &AccountId,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
 
-        let pswap_transaction_request = NativeTransactionRequestBuilder::new()
-            .build_pswap_cancel(native_pswap_note, creator_account_id.into())
-            .map_err(|err| {
-                js_error_with_context(err, "failed to create PSWAP cancel transaction request")
+        let pswap_transaction_request = {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| {
+                from_str_err("Client not initialized while generating transaction request")
             })?;
+
+            // The creator executes the cancellation, so it is the account whose auth procedure
+            // reads the conversion info.
+            let builder = fee_aware_builder(client, creator_account_id.into()).await?;
+            builder
+                .build_pswap_cancel(native_pswap_note, creator_account_id.into())
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to create PSWAP cancel transaction request")
+                })?
+        };
 
         Ok(pswap_transaction_request.into())
     }
@@ -946,15 +966,11 @@ async fn native_fee_conversion_info(
 /// callers assembling a request themselves. `executing_account_id` names the account that will
 /// execute the request, which is what decides whether conversion info is useful to it.
 ///
-/// Three request constructors remain unable to attach it, and their requests abort with
-/// `ERR_FEE_CONVERSION_INFO_MISSING` on a fee-charging chain unless the caller assembles the
-/// request through `feeAwareTransactionRequestBuilder` instead:
-/// - `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` are synchronous.
-///   They do take `&self`, but reading the chain's fee parameters is an `await`, so attaching would
-///   make them `async` — a signature change their callers have not been given.
-/// - `buildPswapCancelByOrder` delegates request building to miden-client, which builds from a bare
-///   `TransactionRequestBuilder`; there is no seam to attach at without an upstream change, because
-///   a finished `TransactionRequest` cannot be amended.
+/// One request constructor remains unable to attach it: `buildPswapCancelByOrder` delegates request
+/// building to miden-client, which builds from a bare `TransactionRequestBuilder`. There is no seam
+/// to attach at without an upstream change, because a finished `TransactionRequest` cannot be
+/// amended, so its requests abort with `ERR_FEE_CONVERSION_INFO_MISSING` on a fee-charging chain.
+/// Cancelling by note through `newPswapCancelTransactionRequest` is the fee-paying alternative.
 async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,

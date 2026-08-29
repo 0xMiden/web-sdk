@@ -6,7 +6,6 @@ import {
   NoteAssets,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type {
   MultiSendOptions,
@@ -146,11 +145,14 @@ export function useMultiSend(): UseMultiSendResult {
         for (const o of outputs) {
           ownOutputs.push(o.note);
         }
-        const txRequest = new TransactionRequestBuilder()
-          .withOwnOutputNotes(ownOutputs)
-          .build();
-
+        // The sender executes this transaction, so its auth procedure is what
+        // pays the fee; a bare builder would abort with
+        // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
         const txSenderId = parseAccountId(options.from);
+        const builder =
+          await client.feeAwareTransactionRequestBuilder(txSenderId);
+        const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
+
         const txResult = await client.executeTransaction(txSenderId, txRequest);
 
         setStage("proving");

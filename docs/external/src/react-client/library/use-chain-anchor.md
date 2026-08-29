@@ -58,6 +58,39 @@ function ProposeButton({ multisigId, buildRequest }) {
 }
 ```
 
+## Building the request: paying the fee
+
+These three hooks take the request from you, so paying the verification fee is
+yours too. Since protocol 0.16 the fee is paid inside the account's auth
+procedure, and `fee::pay_fee` reads the asset and rate out of the transaction's
+auth argument — a request built from `new TransactionRequestBuilder()` carries
+nothing there and aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on any chain
+whose verification base fee is non-zero. Multisig is one of the two auth
+components that read conversion info, so this applies squarely to the flow on
+this page.
+
+Ask the client for a builder that already carries it:
+
+```tsx
+import { AccountId } from "@miden-sdk/miden-sdk";
+
+const buildRequest = async (client) =>
+  (await client.feeAwareTransactionRequestBuilder(AccountId.fromHex(multisigId)))
+    .withCustomScript(script)
+    .build();
+```
+
+The argument is the account that **executes** the request — the multisig here,
+not a recipient. On a zero-fee chain the builder comes back untouched, so this is
+a safe drop-in. Requests produced by the `new*TransactionRequest` constructors
+already carry it and need nothing extra.
+
+Two caveats specific to this flow. `withAuthArg` overwrites the same auth
+argument the fee commitment lives in, so a summary salt set that way and a fee
+cannot coexist on one request. And because the fee salt is drawn per build, the
+warning below about resolving a factory exactly once applies here too — capture
+the anchor, then preview and execute against `anchoredRequest`.
+
 ## Verifying and co-signing
 
 A co-signer rebuilds the anchor from bytes and re-derives the summary **at that
@@ -133,12 +166,15 @@ function ExecuteButton({ multisigId, request, anchor }) {
 
 :::warning Preview and execute against `anchoredRequest`
 
-A factory resolves to a new `TransactionRequest` on every call, and any builder
-that creates an output note draws a fresh serial number from the client's RNG.
-Passing the factory on to `preview` or `execute` therefore builds a *different*
-transaction from the one the anchor pins — the summary your co-signers verified
-would not match the one submitted, and their signatures would not apply. Reuse
-`anchoredRequest`, or capture from a concrete `TransactionRequest` you hold.
+A factory resolves to a new `TransactionRequest` on every call, and two things
+draw from the client's RNG as it does: any builder that creates an output note
+draws a fresh serial number, and on a fee-charging chain the fee conversion
+info's salt is drawn per build. The second applies to every request, including
+custom-script ones with no output notes. Passing the factory on to `preview` or
+`execute` therefore builds a *different* transaction from the one the anchor pins
+— the summary your co-signers verified would not match the one submitted, and
+their signatures would not apply. Reuse `anchoredRequest`, or capture from a
+concrete `TransactionRequest` you hold.
 
 :::
 

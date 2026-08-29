@@ -41,7 +41,7 @@ for (const filePath of requiredFiles) {
 
 if (missingFiles.length > 0) {
   console.error(
-    "Method classification check failed because expected files are missing. Run `yarn build` first."
+    "Method classification check failed because expected files are missing. Run `make build-web-client` first."
   );
   for (const filePath of missingFiles) {
     console.error(`- ${filePath}`);
@@ -207,6 +207,42 @@ if (unclassified.length > 0) {
   process.exit(1);
 }
 
+// A name in two sets is ambiguous rather than merely redundant: only
+// SYNC_METHODS is read at runtime (by `createClientProxy`), so a method listed
+// in SYNC_METHODS *and* WRITE_METHODS is bound raw while the classification
+// claims it is serialized. Checking only "is it classified at all" cannot see
+// that, which is how a stale duplicate survives.
+const membership = new Map();
+for (const [setName, names] of [
+  ["SYNC_METHODS", syncMethods],
+  ["WRITE_METHODS", writeMethods],
+  ["READ_METHODS", readMethods],
+]) {
+  for (const name of names) {
+    if (!membership.has(name)) membership.set(name, []);
+    membership.get(name).push(setName);
+  }
+}
+
+const duplicates = [...membership.entries()].filter(
+  ([, sets]) => sets.length > 1
+);
+
+if (duplicates.length > 0) {
+  console.error(
+    "The following methods appear in more than one classification set in js/index.js:"
+  );
+  duplicates
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([name, sets]) =>
+      console.error(`  - ${name}: ${sets.join(", ")}`)
+    );
+  console.error(
+    "\nEach method belongs to exactly one set. Only SYNC_METHODS is consulted at runtime, so a duplicate there silently keeps the raw binding."
+  );
+  process.exit(1);
+}
+
 console.log(
-  "Method classification check passed: all WASM WebClient methods are classified."
+  "Method classification check passed: all WASM WebClient methods are classified, each in exactly one set."
 );

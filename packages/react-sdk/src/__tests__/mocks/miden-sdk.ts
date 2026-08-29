@@ -253,6 +253,25 @@ export const createMockFeltArray = (length: number = 16) => ({
   })),
 });
 
+/**
+ * Rejects a thenable where a `TransactionRequest` is expected.
+ *
+ * Every `new*TransactionRequest` binding is `async fn` in Rust, so a caller that
+ * forgets the `await` passes a Promise on to the next WASM call. Real
+ * wasm-bindgen rejects that ("expected instance of TransactionRequest"); a mock
+ * that resolves but accepts anything downstream does not, which let a dropped
+ * `await` in `useConsume` and `useSessionAccount` reach production unnoticed.
+ * Mirror the real failure so the suite can see it.
+ */
+const assertIsRequest = (request: unknown, method: string) => {
+  if (request && typeof (request as { then?: unknown }).then === "function") {
+    throw new Error(
+      `${method}: expected instance of TransactionRequest, got a Promise — ` +
+        `the request constructor's result was not awaited`
+    );
+  }
+};
+
 // Create a mock WebClient
 export const createMockWebClient = (
   overrides: Partial<MockWebClientType> = {}
@@ -279,13 +298,18 @@ export const createMockWebClient = (
     getInputNote: vi.fn().mockResolvedValue(null),
     getTransactions: vi.fn().mockResolvedValue([createMockTransactionRecord()]),
 
-    // Transaction methods
+    // Transaction methods. Every `new*TransactionRequest` below is an `async fn`
+    // in Rust, so the mocks resolve rather than return. Resolving is not on its
+    // own enough to catch a hook that drops the `await` — a permissive consumer
+    // mock accepts the Promise happily — so the methods that take a request
+    // (`submitNewTransaction*`, `executeTransaction*`, ...) reject a thenable
+    // through `assertIsRequest` below.
     newMintTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newSendTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newB2AggTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
@@ -294,20 +318,37 @@ export const createMockWebClient = (
       .mockResolvedValue(createMockTransactionRequest()),
     newSwapTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newPswapCreateTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
+    feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
+      const builder = {
+        withOwnOutputNotes: vi.fn(() => builder),
+        withInputNotes: vi.fn(() => builder),
+        withCustomScript: vi.fn(() => builder),
+        build: vi.fn(() => createMockTransactionRequest()),
+      };
+      return builder;
+    }),
     newPswapConsumeTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newPswapCancelTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
-    submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
-    submitNewTransactionWithProver: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionId()),
+      .mockResolvedValue(createMockTransactionRequest()),
+    submitNewTransaction: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "submitNewTransaction");
+        return createMockTransactionId();
+      }
+    ),
+    submitNewTransactionWithProver: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "submitNewTransactionWithProver");
+        return createMockTransactionId();
+      }
+    ),
 
     // PSWAP lineage tracking
     getPswapLineages: vi.fn().mockResolvedValue([]),
@@ -317,12 +358,16 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
 
-    executeTransaction: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionResult()),
-    executeTransactionAt: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionResult()),
+    executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
+      assertIsRequest(request, "executeTransaction");
+      return createMockTransactionResult();
+    }),
+    executeTransactionAt: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "executeTransactionAt");
+        return createMockTransactionResult();
+      }
+    ),
     executeForSummary: vi
       .fn()
       .mockResolvedValue(createMockTransactionSummary()),
@@ -397,6 +442,7 @@ type MockWebClientType = {
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
+  feeAwareTransactionRequestBuilder: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
   getPswapLineages: ReturnType<typeof vi.fn>;

@@ -162,6 +162,75 @@ Notes on the staged form:
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+## Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A request that does not carry that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor, which also names the fee asset the chain prices in:
+
+```typescript
+const anchor = await client.transactions.captureAnchor(request);
+const header = anchor.blockHeader();
+
+const chargesFees = header.verificationBaseFee() > 0;
+const feeFaucet = header.feeFaucetId();
+```
+
+On a chain that charges nothing, everything below is a no-op — requests are byte-identical to what earlier versions produced, with no auth argument and no advice entry. You do not have to check first: every path that builds a request applies the same test internally.
+
+### The convenience constructors handle it
+
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` attach 1:1 conversion info themselves. Each returns a finished `TransactionRequest` with no way to set an auth argument afterwards, so there would otherwise be no way for a caller to pay the fee at all.
+
+The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — attach it too. The ones that take a finished request **from you** forward it untouched: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
+
+### Assembling a request yourself
+
+When you build a request from a builder, ask the client for one that already carries the conversion info:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: on a zero-fee chain, or for an account whose auth procedure cannot read conversion info, it returns an untouched builder.
+
+Two things discard the conversion info and reintroduce the abort:
+
+- **`withAuthArg`** overwrites the auth argument the commitment lives in, leaving the preimage keyed by the old commitment. Nothing rejects the combination — the request builds, passes miden-client's pre-execution validation, and aborts in the VM — so treat the two as mutually exclusive yourself.
+- **`new TransactionRequestBuilder()`** never had it to begin with.
+
+### Paying in a different asset
+
+`FeeConversionInfo.oneToOne(faucetId)` names an asset paid at the identity rate, which is what "pay the fee in the chain's own fee asset" means, and is what the constructors attach. Pass a different faucet to pay in a different asset, committing the info yourself:
+
+```typescript
+import {
+  FeeConversionInfo,
+  TransactionRequestBuilder,
+  Word,
+} from "@miden-sdk/miden-sdk";
+
+const info = FeeConversionInfo.oneToOne(myTokenFaucetId);
+// Any `Word` works when you are not co-signing; co-signers must agree on it.
+const salt = new Word([1n, 2n, 3n, 4n]);
+
+const request = new TransactionRequestBuilder()
+  .withFeeConversionInfo(info, salt)
+  .withCustomScript(script)
+  .build();
+```
+
+The identity rate is the only rate this binding expresses — `oneToOne` is the single constructor on `FeeConversionInfo`. Paying at a non-identity conversion rate is not available from the web SDK today.
+
+The salt comes from the caller rather than being drawn internally because a multisig flow reuses it as the transaction summary's replay guard — the co-signers have to agree on it, so it cannot be a value the builder invents. Any `Word` works when you are not co-signing.
+
+### Which accounts read conversion info
+
+Only signature-based auth components do. A no-auth or network account pays the fee natively, and miden-client **rejects** a request that declares conversion info against one — so this is a real distinction, not a redundant guard. The convenience constructors and `feeAwareTransactionRequestBuilder` check the executing account's auth component and leave the info off where it does not belong.
+
+One request-building path stays fee-less: `client.pswap.cancelByOrder` resolves the order and builds the request inside miden-client, so the SDK never sees a builder to attach conversion info to. Cancel by note with `client.transactions.pswapCancel` on a fee-charging chain.
+
 ## Chain-Anchored Execution
 
 By default a transaction executes against the client's current sync height. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution whose reference block is the one the summary was built at.

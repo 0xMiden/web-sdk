@@ -176,6 +176,18 @@ describe("useSend", () => {
       expect(mockClient.submitNewTransaction).toHaveBeenCalled();
       expect(mockClient.executeTransaction).not.toHaveBeenCalled();
       expect(mockSync).toHaveBeenCalled();
+
+      // The returnNote path assembles its own request, so it must start from a
+      // fee-aware builder for the sender; a bare `TransactionRequestBuilder`
+      // aborts with ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+      expect(
+        mockClient.feeAwareTransactionRequestBuilder
+      ).toHaveBeenCalledTimes(1);
+      const [executingAccount] =
+        mockClient.feeAwareTransactionRequestBuilder.mock.calls[0];
+      expect((executingAccount as { toString(): string }).toString()).toBe(
+        "0xsender"
+      );
     });
 
     it("should handle different note types", async () => {

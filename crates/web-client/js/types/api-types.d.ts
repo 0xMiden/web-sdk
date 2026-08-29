@@ -13,6 +13,7 @@ import type {
   Felt,
   TransactionId,
   TransactionRequest,
+  TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
   ProvenTransaction,
@@ -1070,6 +1071,14 @@ export interface TransactionsResource {
    * code prefixes the error message instead) — submit the transaction with
    * `execute` instead.
    *
+   * To collect signatures over the summary and submit afterwards, preview with
+   * `operation: "custom"` and pass the *same* `TransactionRequest` object to
+   * both this call and the submission. Every other operation builds its request
+   * from the options given, and two builds are not identical — output note
+   * serial numbers and the fee conversion info's salt are both drawn from the
+   * client's RNG — so the summary signed here would not be the summary the
+   * submitted transaction produces.
+   *
    * @param options - Preview options discriminated by `operation` field.
    */
   preview(options: PreviewOptions): Promise<TransactionSummary>;
@@ -1255,6 +1264,14 @@ export interface PswapResource {
    * resolves the creator account from the tracked lineage, and submits it
    * through the same prove/submit path as the other transaction helpers.
    * Throws if no lineage is tracked for the order.
+   *
+   * This is the one request-building path that cannot pay a verification fee:
+   * miden-client builds the request internally from a bare builder, so there is
+   * no seam at which to attach fee conversion info, and a finished
+   * `TransactionRequest` cannot be amended. On a chain whose
+   * `BlockHeader.verificationBaseFee()` is non-zero it aborts with
+   * `ERR_FEE_CONVERSION_INFO_MISSING`. Cancel by note with
+   * {@link TransactionsResource.pswapCancel} instead, which does pay.
    *
    * @param options - Order id and optional transaction options.
    */
@@ -1591,6 +1608,48 @@ export declare class MidenClient {
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
+
+  /**
+   * Returns a `TransactionRequestBuilder` that already carries the chain's fee
+   * conversion info for the account that will execute the request.
+   *
+   * Since protocol 0.16 the verification fee is paid inside the account's auth
+   * procedure, and `fee::pay_fee` requires the transaction's auth argument to
+   * be `hash(CONVERSION_INFO || SALT)` with the preimage reachable in the
+   * advice map. A request assembled from `new TransactionRequestBuilder()`
+   * carries neither and aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on a
+   * chain whose `BlockHeader.verificationBaseFee()` is non-zero. Use this
+   * instead whenever you build a request yourself. The `new*TransactionRequest`
+   * constructors attach it, and so does every `client.transactions` operation
+   * that builds its own request — but the ones that take a request from you
+   * (`submit`, `executeRequest`, `submitBatch`, and the `custom` operation of
+   * `batch` / `preview`) forward it untouched, so those are exactly the paths
+   * this method exists for.
+   *
+   * `account` is the account that **executes** the request — the one whose
+   * auth procedure pays the fee — not the recipient or a note's sender.
+   *
+   * Safe as a drop-in: the info is attached only when the chain charges a fee
+   * *and* the executing account's auth component can read it. A no-auth or
+   * network account pays the fee natively and miden-client rejects a request
+   * that declares conversion info against one, so for those — and on any
+   * zero-fee chain — the builder comes back untouched and the request is
+   * byte-identical to one built from a bare builder.
+   *
+   * Calling `withAuthArg` on the result discards the conversion info and
+   * reintroduces the abort; the two are mutually exclusive.
+   *
+   * @param account - The account that will execute the request.
+   *
+   * @example
+   * ```js
+   * const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+   * const request = builder.withCustomScript(script).build();
+   * ```
+   */
+  feeAwareTransactionRequestBuilder(
+    account: AccountRef
+  ): Promise<TransactionRequestBuilder>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;

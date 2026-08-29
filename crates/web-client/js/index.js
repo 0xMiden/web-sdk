@@ -66,26 +66,35 @@ export {
 // here. It does NOT mean "the method is synchronous"; some entries are
 // `async fn` in Rust.
 //
-// What an entry DOES promise is that it never holds the client's `AsyncCell`
-// borrow across a suspension point: either it takes no borrow, or the whole
-// span between acquiring and dropping it is synchronous. Raw binding skips
-// `_serializeWasmCall`, so an entry that awaits while holding the borrow can
-// be polled concurrently with any other call and panics with
-// `already borrowed: BorrowMutError`. Every request constructor that reads the
-// store while holding the borrow — the six that read the chain's fee
-// parameters, and `buildPswapCancelByOrder`, which reads the order's lineage —
-// is for that reason classified as a write method and goes through the
-// serialized path.
+// What an entry DOES promise is that it takes no borrow of the client's
+// `AsyncCell` at all. Raw binding skips `_serializeWasmCall`, and the hazard
+// runs in both directions:
+//
+//   - An entry that awaits while holding the borrow can be polled concurrently
+//     with any other call and panics with `already borrowed: BorrowMutError`.
+//     The methods that read the store while holding the borrow — the eight
+//     request constructors and `feeAwareTransactionRequestBuilder`, which read
+//     the chain's fee parameters, and `buildPswapCancelByOrder`, which reads the
+//     order's lineage — are write methods for this reason.
+//   - An entry that takes the borrow only *synchronously* is still unsafe,
+//     because a serialized method holding the borrow across an await yields to
+//     the event loop with it outstanding. A raw call landing in that window
+//     borrows again and panics the same way. `createCodeBuilder` and
+//     `storeIdentifier` are serialized reads for this reason; they are awaited
+//     at every call site, so serializing them costs nothing.
+//
+// `lastAuthError` is the one accepted exception: it is synchronous by contract
+// (`client.js` returns its value directly, and `api-types.d.ts` declares it
+// non-Promise), so it cannot be serialized without a breaking change. The
+// `keystore` getter has the same shape and is not a method, so the
+// classification script never sees it. Both take a shared borrow, so both can
+// still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
-  "createCodeBuilder",
   "lastAuthError",
-  "newPswapCancelTransactionRequest",
-  "newPswapConsumeTransactionRequest",
   "proveBlock",
   "serializeMockChain",
   "serializeMockNoteTransportNode",
-  "storeIdentifier",
   "usesMockChain",
 ]);
 
@@ -96,7 +105,6 @@ const WRITE_METHODS = new Set([
   "chainAnchorForRequest",
   "executeForSummary",
   "executeForSummaryAt",
-  "executeProgram",
   "feeAwareTransactionRequestBuilder",
   "fetchPrivateNotes",
   "forceImportStore",
@@ -109,6 +117,8 @@ const WRITE_METHODS = new Set([
   "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "newPswapConsumeTransactionRequest",
   "newPswapCreateTransactionRequest",
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
@@ -125,6 +135,7 @@ const WRITE_METHODS = new Set([
 
 const READ_METHODS = new Set([
   "accountReader",
+  "createCodeBuilder",
   "exportAccountFile",
   "getAccountAuthByPubKeyCommitment",
   "getAccountByKeyCommitment",
@@ -150,6 +161,7 @@ const READ_METHODS = new Set([
   "listSettingKeys",
   "listTags",
   "executeProgram",
+  "storeIdentifier",
 ]);
 
 const MOCK_STORE_NAME = "mock_client_db";

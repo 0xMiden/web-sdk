@@ -97,6 +97,14 @@ export class PswapResource {
    * it with a "note already nullified" error. Treat that as a signal to
    * re-read the lineage and retry against the new tip.
    *
+   * Fees: this is the one request-building path that cannot pay a verification
+   * fee. `buildPswapCancelByOrder` delegates request building to miden-client,
+   * which builds from a bare `TransactionRequestBuilder`, and a finished
+   * `TransactionRequest` cannot be amended — so there is no seam at which to
+   * attach fee conversion info. On a fee-charging chain this aborts with
+   * `ERR_FEE_CONVERSION_INFO_MISSING`; cancel by note with
+   * `client.transactions.pswapCancel` instead.
+   *
    * @param {PswapCancelByOrderOptions} opts - Order id and optional tx options.
    * @returns {Promise<TransactionSubmitResult>} The submitted transaction.
    */

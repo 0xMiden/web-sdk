@@ -519,6 +519,23 @@ Nothing is persisted until `apply` runs — stopping after `submit()` leaves the
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+### Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, paid from inside the account's auth procedure rather than by the kernel. `fee::pay_fee` reads the asset and rate out of the transaction's auth argument, which has to be `hash(CONVERSION_INFO || SALT)` with the preimage in the advice map; a request without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+Every `new*TransactionRequest` constructor attaches 1:1 conversion info itself, and so does every `client.transactions` operation that builds its own request, so the common cases need no changes. The operations that take a finished request from you — `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview` — forward it untouched. When you assemble a request from a builder, get one that already carries it:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for an account whose auth procedure cannot read conversion info (no-auth and network accounts pay natively, and miden-client rejects a request that declares it against one), the builder comes back untouched.
+
+Calling `withAuthArg` on the result overwrites the auth argument the commitment lives in and reintroduces the abort. Nothing rejects the combination — the request builds and fails in the VM — so treat the two as mutually exclusive yourself. To pay in a non-default asset, commit it yourself with `FeeConversionInfo.oneToOne(faucetId)` and `builder.withFeeConversionInfo(info, salt)`; the identity rate is the only rate the binding expresses, and the salt is the caller's because a multisig flow reuses it as the summary's replay guard.
+
+One path stays fee-less: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder to attach info to — cancel by note with `client.transactions.pswapCancel` on a fee-charging chain. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
+
 ### Chain-Anchored Execution
 
 Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.

@@ -246,6 +246,10 @@ async function waitAndConsume(
         notes,
         freshAccountId
       );
+      // Building the request suspends, so re-check before submitting: a
+      // cancellation landing in that window would otherwise still submit, and
+      // the caller's catch discards the outcome once cancelled.
+      if (cancelledRef.current) return;
       await client.submitNewTransaction(freshAccountId, txRequest);
       return;
     }

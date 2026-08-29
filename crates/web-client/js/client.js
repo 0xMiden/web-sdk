@@ -6,7 +6,7 @@ import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
-import { hashSeed } from "./utils.js";
+import { hashSeed, resolveAccountRef } from "./utils.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -407,6 +407,35 @@ export class MidenClient {
   async storeIdentifier() {
     this.assertNotTerminated();
     return await this.#inner.storeIdentifier();
+  }
+
+  /**
+   * Returns a `TransactionRequestBuilder` that already carries the chain's fee
+   * conversion info for the account that will execute the request.
+   *
+   * Use this instead of `new TransactionRequestBuilder()` whenever you assemble
+   * a request yourself. Since protocol 0.16 the verification fee is paid inside
+   * the account's auth procedure and `fee::pay_fee` reads the conversion info
+   * from the transaction's auth argument, so a request built from a bare builder
+   * aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on a chain whose
+   * `BlockHeader.verificationBaseFee()` is non-zero.
+   *
+   * The argument is the account that **executes** the request — the one whose
+   * auth procedure pays — not the recipient or a note's sender. On a zero-fee
+   * chain, or for an account whose auth procedure cannot read conversion info,
+   * the builder comes back untouched, so this is a safe drop-in. Calling
+   * `withAuthArg` on the result overwrites the auth argument the commitment
+   * lives in and reintroduces the abort.
+   *
+   * @param {string | Account | AccountId} account - The executing account.
+   * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
+   */
+  async feeAwareTransactionRequestBuilder(account) {
+    this.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.feeAwareTransactionRequestBuilder(
+      resolveAccountRef(account, wasm)
+    );
   }
 
   // ── Mock-only methods ──

@@ -6,7 +6,6 @@ import {
   NoteAssets,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
@@ -169,11 +168,14 @@ export function useSend(): UseSendResult {
             // to keep `p2idNote` valid so the caller can use the returned Note.
             const ownOutputs = new NoteArray();
             ownOutputs.push(p2idNote);
-            const txRequest = new TransactionRequestBuilder()
-              .withOwnOutputNotes(ownOutputs)
-              .build();
-
+            // The sender executes this transaction, so its auth procedure is
+            // what pays the fee; a bare builder would abort with
+            // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
             const execFromId = parseAccountId(options.from);
+            const builder =
+              await client.feeAwareTransactionRequestBuilder(execFromId);
+            const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
+
             const txId = prover
               ? await client.submitNewTransactionWithProver(
                   execFromId,
@@ -216,7 +218,11 @@ export function useSend(): UseSendResult {
               noteType,
               attachment
             );
-            txRequest = new TransactionRequestBuilder()
+            // `createP2IDNote` borrows its sender, so `fromAccountId` is still
+            // live here and this call borrows it too.
+            const builder =
+              await client.feeAwareTransactionRequestBuilder(fromAccountId);
+            txRequest = builder
               .withOwnOutputNotes(new NoteArray([note]))
               .build();
           } else {

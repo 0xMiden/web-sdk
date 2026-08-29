@@ -255,6 +255,44 @@ const client = useMidenClient();
 const blockHeader = await client.getBlockHeaderByNumber(100);
 ```
 
+### Pay the Fee on a Hand-Built Request
+
+Hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
+`useMint`, `useCreateNetworkNote`, the PSWAP hooks) attach the chain's fee
+conversion info for you. The hooks that take a request *from you* —
+`useTransaction`, `usePreview`, `useChainAnchor` — cannot, so a request built
+from `new TransactionRequestBuilder()` aborts with
+`ERR_FEE_CONVERSION_INFO_MISSING` wherever the chain charges a verification fee.
+
+Ask the client for a builder that already carries it. The factory form of
+`request` hands you the client, so this needs no extra plumbing:
+
+```tsx
+import { AccountId } from "@miden-sdk/miden-sdk";
+import { useTransaction } from "@miden-sdk/react";
+
+const { execute } = useTransaction();
+
+await execute({
+  accountId,
+  request: async (client) =>
+    (
+      await client.feeAwareTransactionRequestBuilder(
+        AccountId.fromHex(accountId)
+      )
+    )
+      .withCustomScript(script)
+      .build(),
+});
+```
+
+The argument is the account that **executes** the request — the one whose auth
+procedure pays — not the recipient. On a zero-fee chain, or for an account whose
+auth procedure cannot read conversion info (no-auth and network accounts pay
+natively), the builder comes back untouched, so it is a safe drop-in. Calling
+`withAuthArg` on it overwrites the auth argument the fee commitment lives in and
+reintroduces the abort.
+
 ### Prevent Race Conditions
 ```tsx
 const { runExclusive } = useMiden();

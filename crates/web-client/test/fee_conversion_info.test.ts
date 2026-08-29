@@ -11,17 +11,18 @@ import { test, expect } from "./test-setup";
 // `ERR_FEE_CONVERSION_INFO_MISSING` on any chain whose `verification_base_fee`
 // is non-zero.
 //
-// These assertions are deliberately STRUCTURAL rather than behavioural. The
-// local test node runs with `verification_base_fee = 0`, so the fee branch is
-// skipped entirely and a transaction succeeds whether or not it commits
-// anything — a "the transfer worked" test would pass identically with the
-// bindings removed. Asserting on the request's own auth arg and advice map
-// keeps these honest at any fee level.
+// These assertions are deliberately STRUCTURAL rather than behavioural. These
+// tests run against the mock chain, which builds its blocks with
+// `verification_base_fee = 0`, so the fee branch is skipped entirely and a
+// transaction succeeds whether or not it commits anything — a "the transfer
+// worked" test would pass identically with the bindings removed. Asserting on
+// the request's own auth arg and advice map keeps these honest at any fee level.
 //
 // Every assertion about the convenience constructors is therefore expressed
 // against the base fee the header actually reports, rather than against the
-// zero the local node happens to use. That way the file stays correct if the
-// test node is ever reconfigured to charge.
+// zero the mock chain happens to use. That way the file stays correct if the
+// mock chain is ever changed to charge — and the attach path, which no test
+// here can currently reach, starts being exercised the moment it is.
 
 test.describe("fee conversion info", () => {
   test("block headers expose the chain's fee parameters", async ({ run }) => {
@@ -89,16 +90,18 @@ test.describe("fee conversion info", () => {
         new sdk.Felt(44n),
       ]);
 
+      const info = sdk.FeeConversionInfo.oneToOne(feeFaucetId);
+
       const built = new sdk.TransactionRequestBuilder()
-        .withFeeConversionInfo(
-          sdk.FeeConversionInfo.oneToOne(feeFaucetId),
-          salt
-        )
+        .withFeeConversionInfo(info, salt)
         .build();
 
       const authArg = built.authArg();
 
       return {
+        // `oneToOne` names the asset the fee is paid in, so the faucet it was
+        // given has to be the faucet it reports back.
+        faucetRoundTrips: info.faucetId().toString() === feeFaucetId.toString(),
         // Compared with `== null` so the napi path (which yields `null` for a
         // Rust `Option::None`) and the wasm-bindgen path (`undefined`) agree.
         hasAuthArg: authArg != null,
@@ -116,6 +119,7 @@ test.describe("fee conversion info", () => {
       };
     });
 
+    expect(result.faucetRoundTrips).toBe(true);
     expect(result.hasAuthArg).toBe(true);
     expect(result.authArgIsSalt).toBe(false);
     expect(result.preimageIsKeyedByCommitment).toBe(true);
@@ -159,6 +163,11 @@ test.describe("fee conversion info", () => {
           authArg != null && request.adviceMap().get(authArg) != null,
       };
     });
+
+    // Pin the type before comparing. `verificationBaseFee` is a `u32`, so it
+    // arrives as a number; were it ever `undefined`, `undefined > 0` is `false`
+    // and the assertion below would pass for the wrong reason on every chain.
+    expect(typeof result.baseFee).toBe("number");
 
     // Zero-fee chains stay byte-identical to the pre-0.16 shape: no auth arg,
     // no advice entry. Anywhere else the constructor must have attached one.
