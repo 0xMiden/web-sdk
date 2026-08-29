@@ -272,6 +272,78 @@ const assertIsRequest = (request: unknown, method: string) => {
   }
 };
 
+/**
+ * Every method that takes a `TransactionRequest`, and the argument position the
+ * request sits in.
+ */
+const REQUEST_ARG_POSITION: Record<string, number> = {
+  submitNewTransaction: 1,
+  submitNewTransactionWithProver: 1,
+  executeTransaction: 1,
+  executeTransactionAt: 1,
+  executeForSummary: 1,
+  executeForSummaryAt: 1,
+  chainAnchorForRequest: 0,
+};
+
+/**
+ * Every binding that is `async fn` in Rust and hands back something a later
+ * WASM call consumes, so a caller who drops the `await` passes on a Promise.
+ */
+const ASYNC_IN_RUST = [
+  "newMintTransactionRequest",
+  "newSendTransactionRequest",
+  "newB2AggTransactionRequest",
+  "newConsumeTransactionRequest",
+  "newSwapTransactionRequest",
+  "newPswapCreateTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "buildPswapCancelByOrder",
+  "feeAwareTransactionRequestBuilder",
+];
+
+/**
+ * Re-applies the dropped-`await` guards after overrides are merged in.
+ *
+ * Guarding only the defaults is not enough, because the merge is a spread, and
+ * the two halves fail independently:
+ *
+ * - A test supplying its own `executeTransaction` / `submitNewTransaction`
+ *   replaces the guarded implementation with a permissive one, so a Promise
+ *   reaching it is accepted again.
+ * - A test supplying a *synchronous* constructor mock means a dropped `await`
+ *   never produces a Promise in the first place, so there is nothing for the
+ *   consumer guard to reject. Production returns one; the mock has to as well or
+ *   the test is exercising a different program.
+ *
+ * Wrapping both families post-merge covers whichever implementation won. Each
+ * wrapper is itself a `vi.fn` delegating to that implementation, so assertions
+ * and `mock.calls` on the returned client keep working.
+ */
+const applyRequestGuards = (client: MockWebClientType): MockWebClientType => {
+  const guarded = client as unknown as Record<string, unknown>;
+
+  for (const method of ASYNC_IN_RUST) {
+    const impl = guarded[method];
+    if (typeof impl !== "function") continue;
+    guarded[method] = vi.fn(async (...args: unknown[]) =>
+      (impl as (...a: unknown[]) => unknown)(...args)
+    );
+  }
+
+  for (const [method, argIndex] of Object.entries(REQUEST_ARG_POSITION)) {
+    const impl = guarded[method];
+    if (typeof impl !== "function") continue;
+    guarded[method] = vi.fn(async (...args: unknown[]) => {
+      assertIsRequest(args[argIndex], method);
+      return (impl as (...a: unknown[]) => unknown)(...args);
+    });
+  }
+
+  return client;
+};
+
 // Create a mock WebClient
 export const createMockWebClient = (
   overrides: Partial<MockWebClientType> = {}
@@ -419,7 +491,7 @@ export const createMockWebClient = (
     free: vi.fn(),
   };
 
-  return { ...defaultClient, ...overrides };
+  return applyRequestGuards({ ...defaultClient, ...overrides });
 };
 
 type MockWebClientType = {

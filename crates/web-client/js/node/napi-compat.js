@@ -165,8 +165,11 @@ function patchSdkPrototypes(rawSdk) {
   for (const [cls, methods] of [
     [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
-    [rawSdk.AdviceMap, ["get"]],
+    [rawSdk.AdviceMap, ["get", "insert"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    // `authArg` is how a caller checks whether fee conversion info was attached,
+    // so it has to read the same on both bindings.
+    [rawSdk.TransactionRequest, ["authArg", "scriptArg"]],
   ]) {
     if (!cls?.prototype) continue;
     for (const method of methods) {

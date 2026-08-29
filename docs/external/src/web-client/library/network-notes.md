@@ -108,7 +108,11 @@ const { account } = builder.build();
 await client.accounts.insert({ account });
 
 // The auth component bumps the nonce itself, so a scriptless transaction
-// commits the account on-chain.
+// commits the account on-chain. The bare builder is right here even on a
+// fee-charging chain: the network-account auth component pays the fee from the
+// chain's native conversion info rather than the transaction's auth args, so
+// there is nothing to attach. See "Which accounts read conversion info" in the
+// transactions guide.
 await client.transactions.submit(
   account.id(),
   new TransactionRequestBuilder().build()

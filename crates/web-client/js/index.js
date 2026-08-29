@@ -83,12 +83,16 @@ export {
 //     `storeIdentifier` are serialized reads for this reason; they are awaited
 //     at every call site, so serializing them costs nothing.
 //
-// `lastAuthError` is the one accepted exception: it is synchronous by contract
-// (`client.js` returns its value directly, and `api-types.d.ts` declares it
-// non-Promise), so it cannot be serialized without a breaking change. The
-// `keystore` getter has the same shape and is not a method, so the
-// classification script never sees it. Both take a shared borrow, so both can
-// still lose the race above — don't add a third.
+// `scripts/check-method-classification.js` enforces this: it reads the Rust
+// sources and fails when a SYNC_METHODS entry calls `get_mut_inner`. Don't rely
+// on the comment alone when adding an entry — run the script.
+//
+// `lastAuthError` is the one accepted exception, and the script allowlists it by
+// name: it is synchronous by contract (`client.js` returns its value directly,
+// and `api-types.d.ts` declares it non-Promise), so it cannot be serialized
+// without a breaking change. The `keystore` getter has the same shape and is not
+// a method, so the classification script never sees it. Both take a shared
+// borrow, so both can still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
   "buildSwapTag",
   "lastAuthError",

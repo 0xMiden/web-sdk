@@ -171,18 +171,17 @@ export function useSend(): UseSendResult {
             // The sender executes this transaction, so its auth procedure is
             // what pays the fee; a bare builder would abort with
             // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
-            const execFromId = parseAccountId(options.from);
             const builder =
-              await client.feeAwareTransactionRequestBuilder(execFromId);
+              await client.feeAwareTransactionRequestBuilder(fromId);
             const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
 
             const txId = prover
               ? await client.submitNewTransactionWithProver(
-                  execFromId,
+                  fromId,
                   txRequest,
                   prover
                 )
-              : await client.submitNewTransaction(execFromId, txRequest);
+              : await client.submitNewTransaction(fromId, txRequest);
 
             return { txId: txId.toHex(), note: p2idNote } as SendResult;
           });
@@ -218,8 +217,6 @@ export function useSend(): UseSendResult {
               noteType,
               attachment
             );
-            // `createP2IDNote` borrows its sender, so `fromAccountId` is still
-            // live here and this call borrows it too.
             const builder =
               await client.feeAwareTransactionRequestBuilder(fromAccountId);
             txRequest = builder
@@ -237,10 +234,7 @@ export function useSend(): UseSendResult {
             );
           }
 
-          // Fresh AccountId — the originals may have been consumed by
-          // createP2IDNote or newSendTransactionRequest above.
-          const execAccountId = parseAccountId(options.from);
-          return await client.executeTransaction(execAccountId, txRequest);
+          return await client.executeTransaction(fromAccountId, txRequest);
         });
 
         setStage("proving");

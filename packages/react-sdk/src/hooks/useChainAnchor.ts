@@ -73,10 +73,13 @@ export interface UseChainAnchorResult {
  * originates here and is always a property.
  *
  * Preview and execute against the returned `anchoredRequest`, not the value you
- * passed in. If `request` is a factory it resolves to a new object per call,
- * and any builder that mints an output note draws a fresh serial number from
- * the client's RNG — so a second call yields a transaction the anchor does not
- * pin and the co-signers did not approve.
+ * passed in. If `request` is a factory it resolves to a new object per call, and
+ * two draws from the client's RNG make that object differ each time: any builder
+ * that mints an output note takes a fresh serial number, and on a fee-charging
+ * chain the fee conversion info takes a fresh salt — which reaches every
+ * request, including one with no output notes at all. Either way a second call
+ * yields a transaction the anchor does not pin and the co-signers did not
+ * approve.
  *
  * @example
  * ```tsx

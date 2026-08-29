@@ -504,8 +504,9 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let fut =
-            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        ensure_fee_conversion_info_classifiable(client, account_id.into(), &native_request).await?;
+        let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
         maybe_wrap_send(fut)
             .await
             .map(TransactionResult::from)
@@ -566,9 +567,11 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        ensure_fee_conversion_info_classifiable(client, account_id.into(), &native_request).await?;
         let fut = Box::pin(client.execute_transaction_at(
             account_id.into(),
-            transaction_request.into(),
+            native_request,
             anchor.into(),
         ));
         maybe_wrap_send(fut)
@@ -598,9 +601,11 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        ensure_fee_conversion_info_classifiable(client, account_id.into(), &native_request).await?;
         let fut = Box::pin(client.execute_transaction_at(
             account_id.into(),
-            transaction_request.into(),
+            native_request,
             anchor.into(),
         ));
         match maybe_wrap_send(fut).await {
@@ -639,8 +644,9 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
 
-        let fut =
-            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        ensure_fee_conversion_info_classifiable(client, account_id.into(), &native_request).await?;
+        let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
         match maybe_wrap_send(fut).await {
             Ok(_) => Err(from_str_err_with_code(
                 "transaction is already fully authorized, so no transaction summary was \
@@ -899,6 +905,13 @@ fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
 /// clear `ERR_FEE_CONVERSION_INFO_MISSING` at execution beats a trap. When the account is not in
 /// the store at all the answer does not matter — nothing can execute against it — so it takes the
 /// permissive branch and lets the account-not-found error surface on its own.
+///
+/// Matching is by MAST procedure root against the locally pinned miden-standards, so an account
+/// whose auth component was compiled from a different revision classifies as `Custom` and answers
+/// `false` even though its procedure does read conversion info. That request then aborts with
+/// `ERR_FEE_CONVERSION_INFO_MISSING`. Nothing here can tell that case apart from a genuinely
+/// custom auth procedure that pays natively, so it is a reason to keep this crate's
+/// miden-standards pin aligned with the networks it targets rather than something to detect.
 async fn reads_fee_conversion_info(
     client: &Client<crate::ClientAuth>,
     account_id: NativeAccountId,
@@ -906,7 +919,9 @@ async fn reads_fee_conversion_info(
     let Some(code) = client.get_account_code(account_id).await.map_err(|err| {
         js_error_with_context(
             err,
-            "failed to read the account's code to classify its auth component",
+            &format!(
+                "failed to read the code of account {account_id} to classify its auth component"
+            ),
         )
     })?
     else {
@@ -921,6 +936,78 @@ async fn reads_fee_conversion_info(
                 AccountComponentInterface::AuthSingleSig | AccountComponentInterface::AuthMultisig
             )
         }))
+}
+
+/// Refuses a request that declares fee conversion info against an account carrying a custom auth
+/// procedure, before the request reaches miden-client.
+///
+/// miden-client validates this case itself and rejects it cleanly — but only for accounts whose
+/// auth component it can classify. `validate_fee_conversion_info_support` builds an
+/// `AccountInterface`, whose constructor asserts that exactly one *standard* auth component is
+/// present, and `is_auth_component` recognises only the six standard variants. An account carrying
+/// a custom auth procedure classifies as `Custom` alone, so the count is zero and the assertion
+/// fires. On `wasm32`, which is `panic = "abort"`, that is a trap taken while the client borrow is
+/// held, which leaves the client unusable for every later call rather than returning an error.
+///
+/// Such accounts are ordinary public surface here — `AccountComponent.compile` takes arbitrary
+/// MASM and `AccountBuilder.withAuthComponent` accepts any component — and a consumer who writes
+/// an auth procedure that reads conversion info has no way to attach it other than
+/// `withFeeConversionInfo`, so this is exactly the caller the escape hatch exists for.
+///
+/// Deliberately narrower than `reads_fee_conversion_info`: it fires only where upstream would
+/// panic, and leaves the standard-but-unsupported components (`AuthNoAuth`,
+/// `AuthNetworkAccount`, `AuthMultisigSmart`, `AuthGuardedMultisig`) to upstream's own
+/// `FeeConversionInfoUnsupported`, which names the component it rejected.
+///
+/// Costs one account-code read, and only for a request that declares conversion info.
+async fn ensure_fee_conversion_info_classifiable(
+    client: &Client<crate::ClientAuth>,
+    account_id: NativeAccountId,
+    request: &NativeTransactionRequest,
+) -> Result<(), JsErr> {
+    if !request.declares_fee_conversion_info() {
+        return Ok(());
+    }
+
+    let Some(code) = client.get_account_code(account_id).await.map_err(|err| {
+        js_error_with_context(
+            err,
+            &format!(
+                "failed to read the code of account {account_id} to classify its auth component"
+            ),
+        )
+    })?
+    else {
+        // Not in the store: nothing can execute against it, and upstream loads the account before
+        // validating, so let its account-not-found error surface instead of pre-empting it.
+        return Ok(());
+    };
+
+    let has_standard_auth = AccountComponentInterface::from_procedures(code.procedures())
+        .iter()
+        .any(|component| {
+            matches!(
+                component,
+                AccountComponentInterface::AuthSingleSig
+                    | AccountComponentInterface::AuthMultisig
+                    | AccountComponentInterface::AuthMultisigSmart
+                    | AccountComponentInterface::AuthGuardedMultisig
+                    | AccountComponentInterface::AuthNoAuth
+                    | AccountComponentInterface::AuthNetworkAccount
+            )
+        });
+
+    if has_standard_auth {
+        return Ok(());
+    }
+
+    Err(from_str_err_with_code(
+        "this request declares fee conversion info, but the account's auth component is not one \
+         of the standard ones, and miden-client can only validate fee conversion info against a \
+         standard auth component. Build the request without `withFeeConversionInfo` and have the \
+         custom auth procedure read the fee conversion info natively instead.",
+        "FEE_CONVERSION_INFO_UNCLASSIFIABLE",
+    ))
 }
 
 /// Fee conversion info for the chain's own fee asset, paired with a fresh salt.
@@ -943,7 +1030,13 @@ async fn native_fee_conversion_info(
     executing_account_id: NativeAccountId,
 ) -> Result<Option<(NativeFeeConversionInfo, NativeWord)>, JsErr> {
     let header = client.get_latest_block_header().await.map_err(|err| {
-        js_error_with_context(err, "failed to read fee parameters from the latest block header")
+        js_error_with_context(
+            err,
+            &format!(
+                "failed to read fee parameters from the latest block header while preparing a \
+                 request for account {executing_account_id}"
+            ),
+        )
     })?;
     let fee_parameters = header.fee_parameters();
     if fee_parameters.verification_base_fee() == 0 {

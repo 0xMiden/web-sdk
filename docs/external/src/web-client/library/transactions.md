@@ -176,7 +176,7 @@ const chargesFees = header.verificationBaseFee() > 0;
 const feeFaucet = header.feeFaucetId();
 ```
 
-On a chain that charges nothing, everything below is a no-op — requests are byte-identical to what earlier versions produced, with no auth argument and no advice entry. You do not have to check first: every path that builds a request applies the same test internally.
+On a chain that charges nothing, everything below is a no-op — requests are byte-identical to what earlier versions produced, with no auth argument and no advice entry. You do not have to check first: every path that builds a request applies the same test internally, with one exception (`client.pswap.cancelByOrder`) named at the end of this section.
 
 ### The convenience constructors handle it
 
@@ -228,6 +228,8 @@ The salt comes from the caller rather than being drawn internally because a mult
 ### Which accounts read conversion info
 
 Only signature-based auth components do. A no-auth or network account pays the fee natively, and miden-client **rejects** a request that declares conversion info against one — so this is a real distinction, not a redundant guard. The convenience constructors and `feeAwareTransactionRequestBuilder` check the executing account's auth component and leave the info off where it does not belong.
+
+If you have written your own auth procedure, `withFeeConversionInfo` is not the way to pay the fee from it. An account carrying a custom auth procedure is not one of the standard auth components miden-client can classify, so it cannot validate the declaration; executing such a request fails with error code `FEE_CONVERSION_INFO_UNCLASSIFIABLE`. Read the conversion info natively in the procedure instead, the way the no-auth and network-account components do.
 
 One request-building path stays fee-less: `client.pswap.cancelByOrder` resolves the order and builds the request inside miden-client, so the SDK never sees a builder to attach conversion info to. Cancel by note with `client.transactions.pswapCancel` on a fee-charging chain.
 

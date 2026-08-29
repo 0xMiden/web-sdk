@@ -164,6 +164,12 @@ impl TransactionRequestBuilder {
     /// The salt is the caller's: for a multisig flow it doubles as the summary's replay guard, so
     /// this deliberately takes it rather than generating one.
     ///
+    /// Only meaningful for an account whose auth component is one of the standard ones. An account
+    /// carrying a custom auth procedure cannot be classified by miden-client, which is what
+    /// validates the declaration, so executing such a request fails with error code
+    /// `FEE_CONVERSION_INFO_UNCLASSIFIABLE`. A custom auth procedure should read the conversion
+    /// info natively instead, as the no-auth and network-account components do.
+    ///
     /// Mutually exclusive with `withAuthArg` — see the note there.
     #[js_export(js_name = "withFeeConversionInfo")]
     pub fn with_fee_conversion_info(

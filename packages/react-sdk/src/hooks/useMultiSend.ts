@@ -148,6 +148,14 @@ export function useMultiSend(): UseMultiSendResult {
         // The sender executes this transaction, so its auth procedure is what
         // pays the fee; a bare builder would abort with
         // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+        //
+        // Unlike `useSend` and `useCreateNetworkNote`, this hook holds no
+        // AsyncLock around its client calls, so these two run serialized only by
+        // the proxy's own per-call lock: both `feeAwareTransactionRequestBuilder`
+        // and `executeTransaction` are WRITE_METHODS, so neither is raw-bound and
+        // neither can alias the client. That is enough to rule out the aliasing
+        // panic, not to make the sequence atomic against another hook — the same
+        // as every other step here.
         const txSenderId = parseAccountId(options.from);
         const builder =
           await client.feeAwareTransactionRequestBuilder(txSenderId);

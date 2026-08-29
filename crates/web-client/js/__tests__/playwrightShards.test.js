@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 // The chromium CI matrix runs ONLY the four `ci-shard-*` projects
 // (.github/workflows/test.yml passes `--project=ci-shard-N`), so the catch-all
@@ -48,24 +49,78 @@ const EXCLUDED = {
   "no_wasm_reentry_via_tojson.test.ts": "KNOWN GAP — runs in no CI project",
 };
 
+// Playwright discovers recursively under `testDir`, so a flat listing would
+// report a file in `test/<subdir>/` as absent rather than unsharded.
+function integrationTestFiles(dir = testDir, prefix = "") {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) {
+      return integrationTestFiles(
+        path.join(dir, entry.name),
+        `${prefix}${entry.name}/`
+      );
+    }
+    return entry.name.endsWith(".test.ts") ? [`${prefix}${entry.name}`] : [];
+  });
+}
+
+// Read the config through the TypeScript parser rather than by regex over its
+// text. Two hazards make the textual version wrong, and the second one bit:
+// a commented-out shard entry still reads as a quoted path, so a file
+// playwright has stopped running would still count as sharded; and stripping
+// comments textually first breaks on `"test/*.node.test.ts"` in
+// `browserTestIgnore`, whose `/*` opens a comment that swallows the rest of the
+// file. Comments are not AST nodes and string literals are, so the parser gets
+// both right by construction.
 function shardedFiles() {
-  const config = fs.readFileSync(configPath, "utf8");
-  // Only the `ciShardProjects` block declares per-shard testMatch arrays.
-  const start = config.indexOf("const ciShardProjects");
-  expect(start, "ciShardProjects block not found").toBeGreaterThan(-1);
-  const block = config.slice(start, config.indexOf("export default"));
-  // The class includes `-`: a hyphenated filename would otherwise not match and
-  // would be reported as unsharded even when it is listed.
-  return [...block.matchAll(/"test\/([A-Za-z0-9_.-]+\.test\.ts)"/g)].map(
-    (m) => m[1]
+  const source = ts.createSourceFile(
+    configPath,
+    fs.readFileSync(configPath, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
   );
+
+  let shardBlock = null;
+  const findShardBlock = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "ciShardProjects"
+    ) {
+      shardBlock = node;
+      return;
+    }
+    ts.forEachChild(node, findShardBlock);
+  };
+  findShardBlock(source);
+  expect(shardBlock, "ciShardProjects declaration not found").not.toBeNull();
+
+  // Only `testMatch` array entries name a sharded file; `testIgnore` in the
+  // same objects must not be collected.
+  const files = [];
+  const collect = (node) => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "testMatch" &&
+      ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      for (const element of node.initializer.elements) {
+        if (!ts.isStringLiteral(element)) continue;
+        const match = /^test\/(.+\.test\.ts)$/.exec(element.text);
+        if (match) files.push(match[1]);
+      }
+      return;
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(shardBlock);
+  return files;
 }
 
 describe("playwright CI shard coverage", () => {
   it("assigns every integration test file to a shard or documents the exclusion", () => {
-    const onDisk = fs
-      .readdirSync(testDir)
-      .filter((f) => f.endsWith(".test.ts"));
+    const onDisk = integrationTestFiles();
     const sharded = new Set(shardedFiles());
 
     const unaccounted = onDisk.filter(
@@ -88,9 +143,7 @@ describe("playwright CI shard coverage", () => {
   });
 
   it("lists no shard entry that does not exist on disk", () => {
-    const onDisk = new Set(
-      fs.readdirSync(testDir).filter((f) => f.endsWith(".test.ts"))
-    );
+    const onDisk = new Set(integrationTestFiles());
     const missing = shardedFiles().filter((f) => !onDisk.has(f));
     expect(
       missing,
@@ -99,9 +152,7 @@ describe("playwright CI shard coverage", () => {
   });
 
   it("does not exclude a file that no longer exists", () => {
-    const onDisk = new Set(
-      fs.readdirSync(testDir).filter((f) => f.endsWith(".test.ts"))
-    );
+    const onDisk = new Set(integrationTestFiles());
     const stale = Object.keys(EXCLUDED).filter((f) => !onDisk.has(f));
     expect(stale, "stale EXCLUDED entries hide real gaps").toEqual([]);
   });

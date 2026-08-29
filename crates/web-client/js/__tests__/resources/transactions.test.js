@@ -161,11 +161,49 @@ function makeWasm(overrides = {}) {
 
 // ── Inner mock factory ─────────────────────────────────────────────────────────
 
+// Every `new*TransactionRequest` binding is `async fn` in Rust, so a resource
+// method that forgets the `await` hands the next WASM call a Promise. Real
+// wasm-bindgen rejects that ("expected instance of TransactionRequest"); a mock
+// that accepts anything does not, which is what let dropped awaits reach
+// production. Mirror the real failure so the suite can see it.
+function assertIsRequest(request, method) {
+  if (request && typeof request.then === "function") {
+    throw new Error(
+      `${method}: expected instance of TransactionRequest, got a Promise — ` +
+        `the request constructor's result was not awaited`
+    );
+  }
+}
+
+// The request argument's position for each method that consumes one.
+const REQUEST_ARG_POSITION = {
+  executeTransaction: 1,
+  executeTransactionAt: 1,
+  executeForSummary: 1,
+  executeForSummaryAt: 1,
+  chainAnchorForRequest: 0,
+};
+
+// Applied after `overrides` are merged: a test supplying its own
+// `executeTransaction` would otherwise reinstate a permissive mock and lose the
+// guard for exactly the method under test.
+function applyRequestGuards(inner) {
+  for (const [method, argIndex] of Object.entries(REQUEST_ARG_POSITION)) {
+    const impl = inner[method];
+    if (typeof impl !== "function") continue;
+    inner[method] = vi.fn(async (...args) => {
+      assertIsRequest(args[argIndex], method);
+      return impl(...args);
+    });
+  }
+  return inner;
+}
+
 function makeInner(overrides = {}) {
   const txResult = {
     id: vi.fn().mockReturnValue({ toHex: () => "txHex" }),
   };
-  return {
+  return applyRequestGuards({
     executeTransaction: vi.fn().mockResolvedValue(txResult),
     proveTransaction: vi.fn().mockResolvedValue("provenTx"),
     submitProvenTransaction: vi.fn().mockResolvedValue(100),
@@ -201,7 +239,7 @@ function makeInner(overrides = {}) {
     syncChain: vi.fn().mockResolvedValue(undefined),
     _txResult: txResult,
     ...overrides,
-  };
+  });
 }
 
 function makeClient(overrides = {}) {
