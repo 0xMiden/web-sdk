@@ -197,7 +197,7 @@ const request = builder.withCustomScript(script).build();
 
 Two things discard the conversion info and reintroduce the abort:
 
-- **`withAuthArg`** overwrites the auth argument the commitment lives in, leaving the preimage keyed by the old commitment. Nothing rejects the combination — the request builds, passes miden-client's pre-execution validation, and aborts in the VM — so treat the two as mutually exclusive yourself.
+- **`withAuthArg`** overwrites the auth argument the commitment lives in, leaving the preimage keyed by the old commitment. The request still builds — the builder has no client to check against — but executing it is refused with error code `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` rather than aborting in the VM. Build one request per auth argument.
 - **`new TransactionRequestBuilder()`** never had it to begin with.
 
 ### Paying in a different asset

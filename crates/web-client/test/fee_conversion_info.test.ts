@@ -126,6 +126,84 @@ test.describe("fee conversion info", () => {
     expect(result.unrelatedKeyMisses).toBe(true);
   });
 
+  test("executing a request whose auth arg was overwritten is refused", async ({
+    run,
+  }) => {
+    // `withAuthArg` and `withFeeConversionInfo` write the same slot, so calling
+    // the former second leaves the preimage keyed by the discarded commitment
+    // and `fee::pay_fee` aborts deep in the VM. The builder cannot catch it —
+    // it has no client — so the client refuses at execution instead. Runs on
+    // the zero-fee mock chain because a manual `withFeeConversionInfo` sets the
+    // declaration regardless of the chain's base fee.
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      const probe = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+      const feeFaucetId = (await client.chainAnchorForRequest(probe))
+        .blockHeader()
+        .feeFaucetId();
+
+      const info = sdk.FeeConversionInfo.oneToOne(feeFaucetId);
+      const salt = sdk.Word.newFromFelts([
+        new sdk.Felt(11n),
+        new sdk.Felt(22n),
+        new sdk.Felt(33n),
+        new sdk.Felt(44n),
+      ]);
+      const collidingArg = sdk.Word.newFromFelts([
+        new sdk.Felt(99n),
+        new sdk.Felt(98n),
+        new sdk.Felt(97n),
+        new sdk.Felt(96n),
+      ]);
+
+      const request = new sdk.TransactionRequestBuilder()
+        .withFeeConversionInfo(info, salt)
+        .withAuthArg(collidingArg)
+        .build();
+
+      // The overwrite is observable on the request itself: the auth arg is now
+      // the colliding word, and nothing in the advice map is keyed by it.
+      const authArg = request.authArg();
+
+      let message = "";
+      let code: string | undefined;
+      let threw = false;
+      try {
+        await client.executeTransaction(wallet.id(), request);
+      } catch (err) {
+        threw = true;
+        message = String((err as Error)?.message ?? err);
+        code = (err as { code?: string })?.code;
+      }
+
+      return {
+        threw,
+        authArgIsCollidingWord:
+          authArg != null && authArg.toHex() === collidingArg.toHex(),
+        preimageMissesNewArg:
+          authArg != null && request.adviceMap().get(authArg) == null,
+        message,
+        code,
+      };
+    });
+
+    expect(result.authArgIsCollidingWord).toBe(true);
+    expect(result.preimageMissesNewArg).toBe(true);
+    expect(result.threw).toBe(true);
+    // The code is a `code` property on the browser binding and a message prefix
+    // on Node, since napi reserves `code` for its own Status enum.
+    expect(
+      result.code === "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN" ||
+        result.message.startsWith("FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN")
+    ).toBe(true);
+  });
+
   test("an untouched builder declares no auth arg", async ({ run }) => {
     // Without an explicit call the builder must not invent an auth arg, or a
     // caller committing its own (the multisig flow, where the salt is the

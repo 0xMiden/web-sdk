@@ -144,8 +144,9 @@ impl TransactionRequestBuilder {
     ///
     /// Mutually exclusive with `withFeeConversionInfo`, which stores its commitment in the same
     /// slot: calling this afterwards replaces the commitment while leaving the conversion-info
-    /// preimage keyed by the old one, so `fee::pay_fee` then aborts with
-    /// `ERR_FEE_CONVERSION_INFO_MISSING`. Build one request per auth arg.
+    /// preimage keyed by the old one. The builder cannot reject it — it has no client — but
+    /// executing the result fails with error code `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`
+    /// rather than aborting in the VM. Build one request per auth arg.
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();

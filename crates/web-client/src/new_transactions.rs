@@ -969,6 +969,28 @@ async fn ensure_fee_conversion_info_classifiable(
         return Ok(());
     }
 
+    // `withAuthArg` and `withFeeConversionInfo` write the same slot, so calling the former second
+    // replaces the commitment while leaving the preimage in the advice map keyed by the old one.
+    // `fee::load_conversion_info` looks the preimage up by the *current* auth arg, finds nothing,
+    // and `pay_fee` aborts with `ERR_FEE_CONVERSION_INFO_MISSING` deep in the VM. The two are
+    // documented as mutually exclusive; this is what makes the combination say so.
+    //
+    // Checked here rather than in the builder because the advice map can legitimately be extended
+    // after the request is built — the multisig flow attaches collected signatures that way — so
+    // only at execution is the map final.
+    if let Some(commitment) = request.auth_arg()
+        && request.advice_map().get(commitment).is_none()
+    {
+        return Err(from_str_err_with_code(
+            "this request declares fee conversion info, but its advice map has no preimage for \
+             the auth argument the commitment lives in. Calling `withAuthArg` after \
+             `withFeeConversionInfo` overwrites that commitment and leaves the preimage keyed by \
+             the old one, which aborts in the VM with ERR_FEE_CONVERSION_INFO_MISSING. The two \
+             are mutually exclusive — build one request per auth argument.",
+            "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN",
+        ));
+    }
+
     let Some(code) = client.get_account_code(account_id).await.map_err(|err| {
         js_error_with_context(
             err,

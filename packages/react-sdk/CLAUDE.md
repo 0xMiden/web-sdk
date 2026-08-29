@@ -290,8 +290,9 @@ The argument is the account that **executes** the request — the one whose auth
 procedure pays — not the recipient. On a zero-fee chain, or for an account whose
 auth procedure cannot read conversion info (no-auth and network accounts pay
 natively), the builder comes back untouched, so it is a safe drop-in. Calling
-`withAuthArg` on it overwrites the auth argument the fee commitment lives in and
-reintroduces the abort.
+`withAuthArg` on it overwrites the auth argument the fee commitment lives in;
+executing that request is refused with error code
+`FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`.
 
 ### Prevent Race Conditions
 ```tsx
