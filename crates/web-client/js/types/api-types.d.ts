@@ -1184,6 +1184,10 @@ export interface TransactionsResource {
    * V1 supports only same-account batches (mirrors the underlying Rust
    * `Client::new_transaction_batch()` constraint).
    *
+   * The named operations attach fee conversion info themselves; a request you
+   * supply through the `custom` operation is subject to the fee checks
+   * described on {@link submitBatch}, which this delegates to.
+   *
    * @param options - Batch options including the account and operations.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
@@ -1192,6 +1196,21 @@ export interface TransactionsResource {
    * Submit pre-built TransactionRequests as an atomic batch. Plural
    * counterpart of {@link submit} — for callers that already have built
    * requests in hand and want to skip the high-level operation builders.
+   *
+   * Fee conversion info is never attached for you here, but the batch is
+   * checked before anything is proven, because batch submission does not reach
+   * the validation miden-client applies to a singly-submitted request. A batch
+   * is rejected whole, before any proving, when a request in it declares fee
+   * conversion info and either:
+   *
+   * - `withAuthArg` was called after `withFeeConversionInfo`, overwriting the
+   *   auth argument the commitment lives in — error code
+   *   `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`; or
+   * - the executing account's auth procedure pays the fee from the chain's
+   *   native fee asset and discards auth arguments entirely, so the declared
+   *   asset and rate would have no effect — error code
+   *   `FEE_CONVERSION_INFO_IGNORED`. No-auth and network accounts are the two
+   *   that do this.
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
@@ -1623,8 +1642,8 @@ export declare class MidenClient {
    * constructors attach it, and so does every `client.transactions` operation
    * that builds its own request — but the ones that take a request from you
    * (`submit`, `executeRequest`, `submitBatch`, and the `custom` operation of
-   * `batch` / `preview`) forward it untouched, so those are exactly the paths
-   * this method exists for.
+   * `batch` / `preview`) never attach it for you, so those are exactly the
+   * paths this method exists for.
    *
    * `account` is the account that **executes** the request — the one whose
    * auth procedure pays the fee — not the recipient or a note's sender.
@@ -1636,8 +1655,11 @@ export declare class MidenClient {
    * zero-fee chain — the builder comes back untouched and the request is
    * byte-identical to one built from a bare builder.
    *
-   * Calling `withAuthArg` on the result discards the conversion info and
-   * reintroduces the abort; the two are mutually exclusive.
+   * Calling `withAuthArg` on the result overwrites the auth argument the
+   * commitment lives in. The request still builds — the builder has no client
+   * to check against — but executing or submitting it is refused with error
+   * code `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`. The two are mutually
+   * exclusive; build one request per auth argument.
    *
    * @param account - The account that will execute the request.
    *

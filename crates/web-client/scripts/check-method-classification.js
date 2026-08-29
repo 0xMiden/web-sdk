@@ -132,7 +132,24 @@ function extractClassifications(sourceText, filePath) {
     ) {
       const entries = new Set();
       for (const element of node.initializer.arguments[0].elements) {
-        if (ts.isStringLiteral(element)) entries.add(element.text);
+        if (ts.isStringLiteral(element)) {
+          entries.add(element.text);
+          continue;
+        }
+        // Anything else — a spread, an identifier, a computed name — means the
+        // real membership is not what this scan can see. Skipping it would let
+        // `...["someMethod"]` put a borrow-holding method into SYNC_METHODS
+        // with the check still reporting green, so refuse to run instead.
+        console.error(
+          `${node.name.text} in ${filePath} contains an entry that is not a ` +
+            `plain string literal: ${element.getText(sourceFile)}\n\n` +
+            "This check reads the three sets statically, so it cannot see the " +
+            "real membership of a spread or a computed entry. Skipping it " +
+            'would let `...["someMethod"]` place a borrow-holding method in ' +
+            "SYNC_METHODS with this check still reporting green. List every " +
+            "entry as a literal."
+        );
+        process.exit(1);
       }
       sets[node.name.text] = entries;
       return;

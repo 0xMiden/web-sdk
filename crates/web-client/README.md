@@ -523,7 +523,7 @@ To submit a proof produced somewhere that shares nothing with this client (a det
 
 Since protocol 0.16 a chain can charge a verification fee, paid from inside the account's auth procedure rather than by the kernel. `fee::pay_fee` reads the asset and rate out of the transaction's auth argument, which has to be `hash(CONVERSION_INFO || SALT)` with the preimage in the advice map; a request without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
 
-Every `new*TransactionRequest` constructor attaches 1:1 conversion info itself, and so does every `client.transactions` operation that builds its own request, so the common cases need no changes. The operations that take a finished request from you — `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview` — forward it untouched. When you assemble a request from a builder, get one that already carries it:
+Every `new*TransactionRequest` constructor attaches 1:1 conversion info itself, and so does every `client.transactions` operation that builds its own request, so the common cases need no changes. The operations that take a finished request from you — `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview` — never attach it. When you assemble a request from a builder, get one that already carries it:
 
 ```typescript
 const builder = await client.feeAwareTransactionRequestBuilder(wallet);

@@ -176,13 +176,15 @@ const chargesFees = header.verificationBaseFee() > 0;
 const feeFaucet = header.feeFaucetId();
 ```
 
-On a chain that charges nothing, everything below is a no-op — requests are byte-identical to what earlier versions produced, with no auth argument and no advice entry. You do not have to check first: every path that builds a request applies the same test internally, with one exception (`client.pswap.cancelByOrder`) named at the end of this section.
+On a chain that charges nothing the automatic machinery is a no-op — requests are byte-identical to what earlier versions produced, with no auth argument and no advice entry. You do not have to check first: every path that builds a request applies the same test internally, with one exception (`client.pswap.cancelByOrder`) named at the end of this section. Committing conversion info by hand with `withFeeConversionInfo` is not gated on the base fee — it attaches whatever you give it, on any chain.
 
 ### The convenience constructors handle it
 
 `newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` attach 1:1 conversion info themselves. Each returns a finished `TransactionRequest` with no way to set an auth argument afterwards, so there would otherwise be no way for a caller to pay the fee at all.
 
-The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — attach it too. The ones that take a finished request **from you** forward it untouched: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
+The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — attach it too. The ones that take a finished request **from you** never attach it: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
+
+`submitBatch` does still *check* what you hand it, because batch submission never reaches the validation miden-client applies to a singly-submitted request. If a batched request declares conversion info and the executing account pays the fee natively — a no-auth or network account — the batch is rejected whole, before any proving, with error code `FEE_CONVERSION_INFO_IGNORED`; the declared asset and rate would otherwise have been silently discarded. `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` is rejected the same way, on both paths.
 
 ### Assembling a request yourself
 

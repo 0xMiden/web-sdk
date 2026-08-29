@@ -29,18 +29,22 @@ same summary.
 submitting anything.
 
 ```tsx
-import { useChainAnchor, usePreview } from "@miden-sdk/react";
+import { useChainAnchor, useMiden, usePreview } from "@miden-sdk/react";
 
 function ProposeButton({ multisigId, buildRequest }) {
-  const { captureAnchor, anchoredRequest, isCapturing } = useChainAnchor();
+  const { client } = useMiden();
+  const { captureAnchor, isCapturing } = useChainAnchor();
   const { preview, isPreviewing } = usePreview();
 
   const propose = async () => {
-    const anchor = await captureAnchor({ request: buildRequest });
-    // `anchoredRequest`, not `buildRequest`: see the note below.
+    // Resolve the factory here, once, and pass that one object to both calls.
+    // Don't reach for `anchoredRequest` in this handler: it is state, so it
+    // still holds the previous value — `null` on a first capture. See below.
+    const request = await buildRequest(client);
+    const anchor = await captureAnchor({ request });
     const summary = await preview({
       accountId: multisigId,
-      request: anchoredRequest,
+      request,
       anchor,
     });
 
@@ -49,7 +53,7 @@ function ProposeButton({ multisigId, buildRequest }) {
     // fresh on every build, and the auth procedure uses it as the summary's
     // replay guard, so a locally rebuilt request yields a different summary.
     await shipToCosigners({
-      request: anchoredRequest.serialize(),
+      request: request.serialize(),
       anchor: anchor.serialize(),
       summary: summary.serialize(),
     });
@@ -178,8 +182,15 @@ info's salt is drawn per build. The second applies to every request, including
 custom-script ones with no output notes. Passing the factory on to `preview` or
 `execute` therefore builds a *different* transaction from the one the anchor pins
 — the summary your co-signers verified would not match the one submitted, and
-their signatures would not apply. Reuse `anchoredRequest`, or capture from a
-concrete `TransactionRequest` you hold.
+their signatures would not apply. Every call that touches the transaction has to
+receive the same object.
+
+Which object depends on when you need it. Inside the handler that captured, use
+the one you resolved yourself, as the example above does: `anchoredRequest` is
+React state, so during that handler it still holds the previous render's value —
+`null` the first time, and the previous request afterwards, which is the failure
+this warning is about. In a later render — showing the summary, then executing on
+a second click — `anchoredRequest` is the value to use, and is what it is for.
 
 :::
 

@@ -96,9 +96,18 @@ function midenClientDeclarations() {
       (isStatic ? statics : methods).push(key);
     } else if (
       ts.isPropertySignature(member) ||
-      ts.isPropertyDeclaration(member)
+      ts.isPropertyDeclaration(member) ||
+      ts.isGetAccessorDeclaration(member)
     ) {
       fields.push(key);
+    } else {
+      // Fail rather than skip. A member kind this test does not model is a
+      // declared part of the surface going unchecked, which is the exact
+      // failure the regex version had.
+      expect(
+        null,
+        `unhandled member kind in the MidenClient declaration: ${ts.SyntaxKind[member.kind]} (${member.getText(source)})`
+      ).not.toBeNull();
     }
   }
 

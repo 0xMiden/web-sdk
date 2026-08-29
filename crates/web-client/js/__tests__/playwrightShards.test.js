@@ -106,7 +106,13 @@ function shardedFiles() {
       ts.isArrayLiteralExpression(node.initializer)
     ) {
       for (const element of node.initializer.elements) {
-        if (!ts.isStringLiteral(element)) continue;
+        // Fail rather than skip: a spread or identifier means the real shard
+        // membership is not what this scan sees, so a file could be listed
+        // twice — or not at all — with the guard still green.
+        expect(
+          ts.isStringLiteral(element),
+          `a testMatch entry in ciShardProjects is not a string literal (${element.getText(source)}); this guard reads the shards statically`
+        ).toBe(true);
         const match = /^test\/(.+\.test\.ts)$/.exec(element.text);
         if (match) files.push(match[1]);
       }

@@ -634,6 +634,14 @@ export class TransactionsResource {
    * counterpart of `batch()` — for callers that already have built requests in
    * hand. Equivalent to `submit()` but plural.
    *
+   * Fee conversion info is never attached here, but a request that declares it
+   * is checked before anything is proven, since batch submission does not reach
+   * the validation miden-client applies to a singly-submitted request. The
+   * batch is rejected whole with `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` if
+   * `withAuthArg` overwrote the commitment, or `FEE_CONVERSION_INFO_IGNORED` if
+   * the executing account pays the fee natively and would ignore the
+   * declaration.
+   *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.
    * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
