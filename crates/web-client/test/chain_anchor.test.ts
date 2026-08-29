@@ -125,9 +125,10 @@ test.describe("chain anchor", () => {
       );
 
       const inputNote = await client.getInputNote(createdNoteId);
-      const consumeRequest = await client.newConsumeTransactionRequest([
-        inputNote.toNote(),
-      ]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [inputNote.toNote()],
+        wallet.id()
+      );
 
       const anchor = await client.chainAnchorForRequest(consumeRequest);
       const bytes = anchor.serialize();
@@ -189,9 +190,10 @@ test.describe("chain anchor", () => {
       );
 
       const inputNote = await client.getInputNote(createdNoteId);
-      const consumeRequest = await client.newConsumeTransactionRequest([
-        inputNote.toNote(),
-      ]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [inputNote.toNote()],
+        wallet.id()
+      );
 
       let errorMessage = null;
       try {
@@ -280,7 +282,10 @@ test.describe("chain anchor", () => {
       const { multisigAccountId, notes } =
         await helpers.setupMultisigWithConsumableNote();
 
-      const request = await client.newConsumeTransactionRequest(notes);
+      const request = await client.newConsumeTransactionRequest(
+        notes,
+        multisigAccountId
+      );
       const anchor = await client.chainAnchorForRequest(request);
       const anchorBlock = anchor.blockNum();
       const anchorCommitment = anchor.commitment().toHex();

@@ -1,8 +1,8 @@
 use alloc::collections::BTreeMap;
 
 use js_export_macro::js_export;
-use miden_client::account::AccountId as NativeAccountId;
 use miden_client::account::component::FeeConversionInfo as NativeFeeConversionInfo;
+use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::{AssetAmount, FungibleAsset};
 use miden_client::crypto::FeltRng;
@@ -15,6 +15,7 @@ use miden_client::note::{
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
+    AccountComponentInterface,
     ForeignAccount as NativeForeignAccount,
     PaymentNoteDescription,
     ProvenTransaction as NativeProvenTransaction,
@@ -38,6 +39,7 @@ use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
 use crate::models::transaction_id::TransactionId;
 use crate::models::transaction_request::TransactionRequest;
+use crate::models::transaction_request::transaction_request_builder::TransactionRequestBuilder;
 use crate::models::transaction_result::TransactionResult;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::transaction_store_update::TransactionStoreUpdate;
@@ -73,7 +75,9 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            let builder = fee_aware_builder(client).await?;
+            // The faucet executes a mint, so it is the account whose auth procedure reads the
+            // conversion info.
+            let builder = fee_aware_builder(client, faucet_id.into()).await?;
             builder
                 .build_mint_fungible_asset(
                     fungible_asset,
@@ -126,7 +130,7 @@ impl WebClient {
                 payment_description.with_timelock_height(BlockNumber::from(height));
         }
 
-        let builder = fee_aware_builder(client).await?;
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
         let send_transaction_request = builder
             .build_pay_to_id(payment_description, note_type.into(), client.rng())
             .map_err(|err| {
@@ -175,7 +179,7 @@ impl WebClient {
         )
         .map_err(|err| js_error_with_context(err, "failed to create b2agg note"))?;
 
-        let builder = fee_aware_builder(client).await?;
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
         let b2agg_transaction_request =
             builder.own_output_notes(vec![b2agg_note]).build().map_err(|err| {
                 js_error_with_context(err, "failed to create b2agg transaction request")
@@ -224,7 +228,7 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            let builder = fee_aware_builder(client).await?;
+            let builder = fee_aware_builder(client, sender_account_id.into()).await?;
             builder
                 .build_swap(
                     &swap_transaction_data,
@@ -276,7 +280,7 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            let builder = fee_aware_builder(client).await?;
+            let builder = fee_aware_builder(client, creator_account_id.into()).await?;
             builder
                 .build_pswap_create(
                     &pswap_transaction_data,
@@ -757,10 +761,17 @@ impl WebClient {
         Ok(update)
     }
 
+    /// Builds a request consuming `list_of_notes`, to be executed by `consuming_account_id`.
+    ///
+    /// The account is required because it is what decides whether the chain's fee conversion info
+    /// is committed to the request's auth args. Committing it to a request destined for an account
+    /// whose auth procedure does not read it — a no-auth or network account — makes miden-client
+    /// reject the request before execution, so there is no default that is right for every caller.
     #[js_export(js_name = "newConsumeTransactionRequest")]
     pub async fn new_consume_transaction_request(
         &self,
         list_of_notes: Vec<Note>,
+        consuming_account_id: &AccountId,
     ) -> Result<TransactionRequest, JsErr> {
         // Async only so the chain's fee parameters can be read; the request itself is built the
         // same way it always was. A consume is the one transaction an empty account can afford,
@@ -780,13 +791,39 @@ impl WebClient {
                     from_str_err(&format!("Failed to convert note to native note: {err}"))
                 })?;
 
-            let builder = fee_aware_builder(client).await?;
+            let builder = fee_aware_builder(client, consuming_account_id.into()).await?;
             builder.build_consume_notes(native_notes).map_err(|err| {
                 from_str_err(&format!("Failed to create Consume Transaction Request: {err}"))
             })?
         };
 
         Ok(consume_transaction_request.into())
+    }
+
+    /// A `TransactionRequestBuilder` already carrying this chain's fee conversion info, for
+    /// `account_id` to execute.
+    ///
+    /// Use this instead of `new TransactionRequestBuilder()` whenever the request is assembled by
+    /// the caller rather than by one of the convenience constructors. Since protocol 0.16 the fee
+    /// is paid inside the account's auth procedure and `fee::pay_fee` reads the conversion info
+    /// from the transaction's auth args, so a request built from a bare builder aborts with
+    /// `ERR_FEE_CONVERSION_INFO_MISSING` on any chain whose verification base fee is non-zero.
+    ///
+    /// The returned builder is otherwise empty and carries no auth arg on a zero-fee chain or for
+    /// an account whose auth procedure cannot read conversion info, so it is a safe drop-in. Note
+    /// that it sets the auth arg where it does apply: calling `withAuthArg` on the result discards
+    /// the conversion info and reintroduces the abort.
+    #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
+    pub async fn fee_aware_transaction_request_builder(
+        &self,
+        account_id: &AccountId,
+    ) -> Result<TransactionRequestBuilder, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while creating a transaction request builder")
+        })?;
+
+        Ok(fee_aware_builder(client, account_id.into()).await?.into())
     }
 }
 
@@ -818,9 +855,57 @@ fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
 // FEE CONVERSION INFO
 // ================================================================================================
 
+/// Whether `account_id`'s auth procedure reads fee conversion info from the transaction's auth
+/// args, and therefore whether committing any is useful to it.
+///
+/// Only `AuthSingleSig` and `AuthMultisig` do. `AuthNoAuth` and `AuthNetworkAccount` discard
+/// `AUTH_ARGS` and call `fee::native_conversion_info` instead, so they pay the fee natively and
+/// need nothing committed. `AuthMultisigSmart` and `AuthGuardedMultisig` are excluded not because
+/// they cannot read conversion info but because miden-client's allowlist does not admit them:
+/// `validate_fee_conversion_info_support` *rejects* a request declaring conversion info against
+/// any account outside those two, before execution, with
+/// `TransactionRequestError::FeeConversionInfoUnsupported`. Attaching it to such a request turns a
+/// working transaction into a rejected one, so this allowlist has to mirror upstream's exactly and
+/// the two must move together — widening this one alone makes things worse, not better.
+///
+/// Classification reads the account's code only, and deliberately avoids `AccountInterface`:
+/// building one asserts that exactly one auth component is present, and an account carrying a
+/// custom auth procedure classifies as `Custom` rather than any auth variant, so the assertion
+/// fires. `wasm32` is `panic = "abort"`, which makes that a trap taken while the client borrow is
+/// held — poisoning the client for every later call. `from_procedures` cannot panic.
+///
+/// Answers `false` when the auth component is not one of the standard ones, for the same reason:
+/// declaring conversion info would hand upstream's check an account it also cannot classify. A
+/// clear `ERR_FEE_CONVERSION_INFO_MISSING` at execution beats a trap. When the account is not in
+/// the store at all the answer does not matter — nothing can execute against it — so it takes the
+/// permissive branch and lets the account-not-found error surface on its own.
+async fn reads_fee_conversion_info(
+    client: &Client<crate::ClientAuth>,
+    account_id: NativeAccountId,
+) -> Result<bool, JsErr> {
+    let Some(code) = client.get_account_code(account_id).await.map_err(|err| {
+        js_error_with_context(
+            err,
+            "failed to read the account's code to classify its auth component",
+        )
+    })?
+    else {
+        return Ok(true);
+    };
+
+    Ok(AccountComponentInterface::from_procedures(code.procedures())
+        .iter()
+        .any(|component| {
+            matches!(
+                component,
+                AccountComponentInterface::AuthSingleSig | AccountComponentInterface::AuthMultisig
+            )
+        }))
+}
+
 /// Fee conversion info for the chain's own fee asset, paired with a fresh salt.
 ///
-/// Returns `None` when the chain charges nothing. Since protocol 0.16 the fee is paid inside
+/// Returns `None` when none should be committed. Since protocol 0.16 the fee is paid inside
 /// the account's auth procedure and `fee::pay_fee` reads the conversion info from the
 /// transaction's auth args, so a request built without it aborts with
 /// `ERR_FEE_CONVERSION_INFO_MISSING` wherever `verification_base_fee` is non-zero. The
@@ -828,12 +913,14 @@ fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
 /// arg afterwards, so attaching it here is the only point at which they can be made to work on
 /// a fee-charging chain.
 ///
-/// Gating on a zero base fee keeps such chains byte-identical to before: no auth arg, no
+/// Two gates. A zero base fee keeps such chains byte-identical to before: no auth arg, no
 /// advice entry. That matters because the auth arg is not free to set — a multisig flow reuses
 /// it as the transaction summary salt, so inventing one where none is needed would change a
-/// summary that callers may already be signing over.
+/// summary that callers may already be signing over. The second gate is the executing account's
+/// auth component, for the reasons in `reads_fee_conversion_info`.
 async fn native_fee_conversion_info(
     client: &mut Client<crate::ClientAuth>,
+    executing_account_id: NativeAccountId,
 ) -> Result<Option<(NativeFeeConversionInfo, NativeWord)>, JsErr> {
     let header = client.get_latest_block_header().await.map_err(|err| {
         js_error_with_context(err, "failed to read fee parameters from the latest block header")
@@ -842,6 +929,11 @@ async fn native_fee_conversion_info(
     if fee_parameters.verification_base_fee() == 0 {
         return Ok(None);
     }
+
+    if !reads_fee_conversion_info(client, executing_account_id).await? {
+        return Ok(None);
+    }
+
     let conversion_info = NativeFeeConversionInfo::one_to_one(fee_parameters.fee_faucet_id());
     let salt = client.rng().draw_word();
     Ok(Some((conversion_info, salt)))
@@ -850,17 +942,27 @@ async fn native_fee_conversion_info(
 /// A request builder already carrying this chain's fee conversion info, where one is needed.
 ///
 /// Every convenience constructor that already holds the client starts from this rather than
-/// `TransactionRequestBuilder::new()`. `newPswapConsumeTransactionRequest` and
-/// `newPswapCancelTransactionRequest` are the exceptions: both are synchronous and never take
-/// the client, so reading the chain's fee parameters would make them `async` — a signature
-/// change their callers have not been given. Requests from those two still abort with
-/// `ERR_FEE_CONVERSION_INFO_MISSING` on a fee-charging chain unless the caller attaches
-/// conversion info with `TransactionRequestBuilder.withFeeConversionInfo`.
+/// `TransactionRequestBuilder::new()`, and `feeAwareTransactionRequestBuilder` exposes it to
+/// callers assembling a request themselves. `executing_account_id` names the account that will
+/// execute the request, which is what decides whether conversion info is useful to it.
+///
+/// Three request constructors remain unable to attach it, and their requests abort with
+/// `ERR_FEE_CONVERSION_INFO_MISSING` on a fee-charging chain unless the caller assembles the
+/// request through `feeAwareTransactionRequestBuilder` instead:
+/// - `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` are synchronous.
+///   They do take `&self`, but reading the chain's fee parameters is an `await`, so attaching would
+///   make them `async` — a signature change their callers have not been given.
+/// - `buildPswapCancelByOrder` delegates request building to miden-client, which builds from a bare
+///   `TransactionRequestBuilder`; there is no seam to attach at without an upstream change, because
+///   a finished `TransactionRequest` cannot be amended.
 async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
+    executing_account_id: NativeAccountId,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
     let mut builder = NativeTransactionRequestBuilder::new();
-    if let Some((conversion_info, salt)) = native_fee_conversion_info(client).await? {
+    if let Some((conversion_info, salt)) =
+        native_fee_conversion_info(client, executing_account_id).await?
+    {
         builder = builder.fee_conversion_info(conversion_info, salt);
     }
     Ok(builder)

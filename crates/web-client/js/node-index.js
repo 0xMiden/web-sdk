@@ -198,6 +198,7 @@ export const EthAddress = /* @__PURE__ */ _reexport("EthAddress");
 export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
+export const FeeConversionInfo = /* @__PURE__ */ _reexport("FeeConversionInfo");
 export const Felt = /* @__PURE__ */ _reexport("Felt");
 export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
 export const FetchedNote = /* @__PURE__ */ _reexport("FetchedNote");

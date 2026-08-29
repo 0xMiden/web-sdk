@@ -189,6 +189,12 @@ impl TransactionRequestBuilder {
 // CONVERSIONS
 // ================================================================================================
 
+impl From<NativeTransactionRequestBuilder> for TransactionRequestBuilder {
+    fn from(builder: NativeTransactionRequestBuilder) -> Self {
+        TransactionRequestBuilder(builder)
+    }
+}
+
 impl From<TransactionRequestBuilder> for NativeTransactionRequestBuilder {
     fn from(transaction_request: TransactionRequestBuilder) -> Self {
         transaction_request.0

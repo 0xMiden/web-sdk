@@ -174,6 +174,9 @@ function makeInner(overrides = {}) {
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
+    feeAwareTransactionRequestBuilder: vi
+      .fn()
+      .mockImplementation(async () => makeTxRequestBuilder()),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     newPswapCreateTransactionRequest: vi
       .fn()
@@ -599,7 +602,7 @@ describe("TransactionsResource", () => {
     });
 
     it("uses NoteAndArgs builder path when direct Note objects passed", async () => {
-      const { resource, wasm } = makeResource();
+      const { resource, wasm, inner } = makeResource();
       const directNote = {
         id: vi.fn().mockReturnValue({ toString: () => "noteid" }),
         assets: vi.fn(),
@@ -610,7 +613,9 @@ describe("TransactionsResource", () => {
         notes: [directNote],
       });
       expect(wasm.NoteAndArgs).toHaveBeenCalledWith(directNote, null);
-      expect(wasm.TransactionRequestBuilder).toHaveBeenCalled();
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
     });
 
     it("unwraps InputNoteRecord via toNote() in standard path", async () => {
@@ -669,9 +674,20 @@ describe("TransactionsResource", () => {
         account: "0xaccHex",
         notes: [unknownNote],
       });
-      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([
-        unknownNote,
-      ]);
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        [unknownNote],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+    });
+
+    it("names the consuming account so the request can gate fee conversion info", async () => {
+      const { resource, inner } = makeResource();
+      await resource.consume({ account: "0xaccHex", notes: ["0xnoteHex"] });
+      const [, requestAccountId] =
+        inner.newConsumeTransactionRequest.mock.calls[0];
+      const [executeAccountId] = inner.executeTransaction.mock.calls[0];
+      expect(requestAccountId.toString()).toBe("0xaccHex");
+      expect(requestAccountId.toString()).toBe(executeAccountId.toString());
     });
   });
 
@@ -707,13 +723,35 @@ describe("TransactionsResource", () => {
         getConsumableNotes: vi.fn().mockResolvedValue([note1, note2]),
       });
       const result = await resource.consumeAll({ account: "0xaccHex" });
-      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([
-        "n1",
-        "n2",
-      ]);
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["n1", "n2"],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
       expect(result.consumed).toBe(2);
       expect(result.remaining).toBe(0);
       expect(result.txId).toBeDefined();
+    });
+
+    it("does not reuse the account id getConsumableNotes consumed", async () => {
+      // getConsumableNotes takes AccountId by value, so the WASM wrapper it was
+      // given is freed by that call. Handing the same instance to the request
+      // constructor or to submit would be a use-after-free.
+      const note = {
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+      };
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi.fn().mockResolvedValue([note]),
+      });
+      await resource.consumeAll({ account: "0xaccHex" });
+      const [consumedAccountId] = inner.getConsumableNotes.mock.calls[0];
+      const [, requestAccountId] =
+        inner.newConsumeTransactionRequest.mock.calls[0];
+      const [executeAccountId] = inner.executeTransaction.mock.calls[0];
+      expect(requestAccountId).not.toBe(consumedAccountId);
+      expect(executeAccountId).not.toBe(consumedAccountId);
+      expect(requestAccountId.toString()).toBe("0xaccHex");
     });
 
     it("respects maxNotes option", async () => {
@@ -1274,13 +1312,18 @@ describe("TransactionsResource", () => {
 
   describe("execute", () => {
     it("builds request with custom script and submits", async () => {
-      const { resource, inner, wasm } = makeResource();
+      const { resource, inner } = makeResource();
       const result = await resource.execute({
         account: "0xaccHex",
         script: "txScript",
       });
-      expect(wasm.TransactionRequestBuilder).toHaveBeenCalled();
-      const builder = wasm.TransactionRequestBuilder.mock.results[0].value;
+      // The builder comes from the client, not from `new TransactionRequestBuilder()`,
+      // so that it already carries the chain's fee conversion info.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+      const builder =
+        await inner.feeAwareTransactionRequestBuilder.mock.results[0].value;
       expect(builder.withCustomScript).toHaveBeenCalledWith("txScript");
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
@@ -2011,34 +2054,31 @@ describe("TransactionsResource", () => {
     }
 
     it("dispatches send / mint / consume / swap / execute / custom kinds and submits", async () => {
-      // Override the TransactionRequestBuilder so `build()` returns a
-      // serializable fake request (the `execute` kind path goes through
-      // build() rather than a `new*Request` inner method).
-      const { resource, inner } = makeResource(
-        {
-          newSendTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("send")),
-          newMintTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("mint")),
-          newConsumeTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("consume")),
-          newSwapTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("swap")),
-          submitNewTransactionBatch: vi.fn().mockResolvedValue(42),
-        },
-        {},
-        {
-          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+      // Override the fee-aware builder so `build()` returns a serializable fake
+      // request (the `execute` kind path goes through build() rather than a
+      // `new*Request` inner method).
+      const { resource, inner } = makeResource({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("send")),
+        newMintTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("mint")),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("consume")),
+        newSwapTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("swap")),
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(42),
+        feeAwareTransactionRequestBuilder: vi
+          .fn()
+          .mockImplementation(async () => {
             const b = makeTxRequestBuilder();
             b.build = vi.fn().mockReturnValue(fakeRequest("built"));
             return b;
           }),
-        }
-      );
+      });
       const customReq = fakeRequest("custom");
 
       const result = await resource.batch({
@@ -2075,19 +2115,16 @@ describe("TransactionsResource", () => {
     });
 
     it("execute kind threads foreignAccounts through ForeignAccountArray", async () => {
-      const { resource, wasm } = makeResource(
-        {
-          submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
-        },
-        {},
-        {
-          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+      const { resource, wasm } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
+        feeAwareTransactionRequestBuilder: vi
+          .fn()
+          .mockImplementation(async () => {
             const b = makeTxRequestBuilder();
             b.build = vi.fn().mockReturnValue(fakeRequest("execBuilt"));
             return b;
           }),
-        }
-      );
+      });
 
       await resource.batch({
         account: "0xsender",

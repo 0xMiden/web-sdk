@@ -119,9 +119,9 @@ export class TransactionsResource {
       // `note` valid so we can return it to the caller below.
       const ownOutputs = new wasm.NoteArray();
       ownOutputs.push(note);
-      const request = new wasm.TransactionRequestBuilder()
-        .withOwnOutputNotes(ownOutputs)
-        .build();
+      const builder =
+        await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+      const request = builder.withOwnOutputNotes(ownOutputs).build();
 
       const { txId, result } = await this.#submitOrSubmitWithProver(
         senderId,
@@ -226,9 +226,9 @@ export class TransactionsResource {
     // `note` valid so we can return it to the caller.
     const ownOutputs = new wasm.NoteArray();
     ownOutputs.push(note);
-    const request = new wasm.TransactionRequestBuilder()
-      .withOwnOutputNotes(ownOutputs)
-      .build();
+    const builder =
+      await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+    const request = builder.withOwnOutputNotes(ownOutputs).build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       senderId,
@@ -325,7 +325,12 @@ export class TransactionsResource {
 
     const notes = toConsume.map((c) => c.inputNoteRecord().toNote());
 
-    const request = await this.#inner.newConsumeTransactionRequest(notes);
+    // `accountId` was consumed by getConsumableNotes above, so both calls
+    // below need their own.
+    const request = await this.#inner.newConsumeTransactionRequest(
+      notes,
+      wasm.AccountId.fromHex(accountIdHex)
+    );
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       wasm.AccountId.fromHex(accountIdHex),
@@ -529,7 +534,7 @@ export class TransactionsResource {
     rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
-    const { accountId, request } = this.#buildExecuteRequest(opts, wasm);
+    const { accountId, request } = await this.#buildExecuteRequest(opts, wasm);
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
@@ -599,7 +604,7 @@ export class TransactionsResource {
           );
           break;
         case "execute":
-          built = this.#buildExecuteRequest(
+          built = await this.#buildExecuteRequest(
             { ...op, account: opts.account },
             wasm
           );
@@ -687,12 +692,12 @@ export class TransactionsResource {
     }
   }
 
-  #buildExecuteRequest(opts, wasm) {
+  async #buildExecuteRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
 
-    let builder = new wasm.TransactionRequestBuilder().withCustomScript(
-      opts.script
-    );
+    let builder = (
+      await this.#inner.feeAwareTransactionRequestBuilder(accountId)
+    ).withCustomScript(opts.script);
 
     if (opts.foreignAccounts?.length) {
       const accounts = opts.foreignAccounts.map((fa) => {
@@ -1050,7 +1055,9 @@ export class TransactionsResource {
       const noteAndArgsArr = resolvedNotes.map(
         (note) => new wasm.NoteAndArgs(note, null)
       );
-      const request = new wasm.TransactionRequestBuilder()
+      const builder =
+        await this.#inner.feeAwareTransactionRequestBuilder(accountId);
+      const request = builder
         .withInputNotes(new wasm.NoteAndArgsArray(noteAndArgsArr))
         .build();
       return { accountId, request };
@@ -1060,7 +1067,10 @@ export class TransactionsResource {
     const notes = await Promise.all(
       noteInputs.map((input) => this.#resolveNoteInput(input))
     );
-    const request = await this.#inner.newConsumeTransactionRequest(notes);
+    const request = await this.#inner.newConsumeTransactionRequest(
+      notes,
+      accountId
+    );
     return { accountId, request };
   }
 

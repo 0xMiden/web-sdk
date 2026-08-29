@@ -153,7 +153,12 @@ export function useConsume(): UseConsumeResult {
 
           const notes = resolved;
 
-          const txRequest = await client.newConsumeTransactionRequest(notes);
+          // Naming the consuming account lets the request omit fee conversion
+          // info for auth components that cannot read it.
+          const txRequest = await client.newConsumeTransactionRequest(
+            notes,
+            accountIdObj
+          );
           const txId = prover
             ? await client.submitNewTransactionWithProver(
                 accountIdObj,

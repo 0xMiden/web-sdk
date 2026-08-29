@@ -71,15 +71,15 @@ export {
 // span between acquiring and dropping it is synchronous. Raw binding skips
 // `_serializeWasmCall`, so an entry that awaits while holding the borrow can
 // be polled concurrently with any other call and panics with
-// `already borrowed: BorrowMutError`. The transaction-request constructors
-// that read the chain's fee parameters (an IndexedDB round-trip) are for that
-// reason classified as write methods and go through the serialized path.
+// `already borrowed: BorrowMutError`. Every request constructor that reads the
+// store while holding the borrow — the six that read the chain's fee
+// parameters, and `buildPswapCancelByOrder`, which reads the order's lineage —
+// is for that reason classified as a write method and goes through the
+// serialized path.
 const SYNC_METHODS = new Set([
-  "buildPswapCancelByOrder",
   "buildSwapTag",
   "createCodeBuilder",
   "lastAuthError",
-  "newB2AggTransactionRequest",
   "newPswapCancelTransactionRequest",
   "newPswapConsumeTransactionRequest",
   "proveBlock",
@@ -92,10 +92,12 @@ const SYNC_METHODS = new Set([
 const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
   "addTag",
+  "buildPswapCancelByOrder",
   "chainAnchorForRequest",
   "executeForSummary",
   "executeForSummaryAt",
   "executeProgram",
+  "feeAwareTransactionRequestBuilder",
   "fetchPrivateNotes",
   "forceImportStore",
   "importAccountById",
@@ -104,6 +106,7 @@ const WRITE_METHODS = new Set([
   "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
+  "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",
   "newMintTransactionRequest",
   "newPswapCreateTransactionRequest",

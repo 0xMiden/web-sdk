@@ -292,9 +292,10 @@ test.describe("MockWebClient Integration", () => {
         : mintedNoteId;
 
       // Consume the note
-      const consumeRequest = await client.newConsumeTransactionRequest([
-        mintedNote,
-      ]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [mintedNote],
+        wallet.id()
+      );
       await client.submitNewTransaction(wallet.id(), consumeRequest);
 
       // Prove and sync
@@ -379,9 +380,10 @@ test.describe("MockWebClient Integration", () => {
       const mintedNote = mintedInput.toNote
         ? mintedInput.toNote()
         : mintedNoteId;
-      const consumeRequest = await client.newConsumeTransactionRequest([
-        mintedNote,
-      ]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [mintedNote],
+        sender.id()
+      );
       await client.submitNewTransaction(sender.id(), consumeRequest);
       await client.proveBlock();
       await client.syncState();
@@ -411,9 +413,10 @@ test.describe("MockWebClient Integration", () => {
         throw new Error(`Sent note ${sentNoteId} not found`);
       }
       const sentNote = sentInput.toNote ? sentInput.toNote() : sentNoteId;
-      const receiveRequest = await client.newConsumeTransactionRequest([
-        sentNote,
-      ]);
+      const receiveRequest = await client.newConsumeTransactionRequest(
+        [sentNote],
+        receiver.id()
+      );
       await client.submitNewTransaction(receiver.id(), receiveRequest);
       await client.proveBlock();
       await client.syncState();
