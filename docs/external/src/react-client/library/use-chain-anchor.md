@@ -44,7 +44,12 @@ function ProposeButton({ multisigId, buildRequest }) {
       anchor,
     });
 
+    // Ship the request too: a co-signer must re-derive from these exact
+    // bytes. A multisig request's fee conversion info carries a salt drawn
+    // fresh on every build, and the auth procedure uses it as the summary's
+    // replay guard, so a locally rebuilt request yields a different summary.
     await shipToCosigners({
+      request: anchoredRequest.serialize(),
       anchor: anchor.serialize(),
       summary: summary.serialize(),
     });

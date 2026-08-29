@@ -543,9 +543,13 @@ Transactions execute against the client's current sync height by default. Since 
 A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
 
 ```typescript
-import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
 
-// Proposer: capture, derive the summary at the anchor, ship both.
+// Proposer: capture, derive the summary at the anchor, ship all three.
 const anchor = await client.transactions.captureAnchor(request);
 const summary = await client.transactions.preview({
   operation: "custom",
@@ -553,15 +557,25 @@ const summary = await client.transactions.preview({
   request,
   anchor,
 });
-await shipToCosigners(anchor.serialize(), summary.serialize());
+await shipToCosigners(
+  request.serialize(),
+  anchor.serialize(),
+  summary.serialize()
+);
 
 // Co-signer: re-derive at the proposer's anchor and compare before signing.
+// Re-derive from the proposer's request bytes, never from a locally rebuilt
+// request — a multisig request's fee conversion info carries a salt drawn fresh
+// on every build, and the auth procedure uses it as the summary's replay guard,
+// so a rebuilt request yields a different summary and the check below fails as
+// if the proposal had been tampered with.
 const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
 const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,
-  request,
+  request: proposedRequest,
   anchor: received,
 });
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {

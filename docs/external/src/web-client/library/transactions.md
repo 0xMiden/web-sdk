@@ -223,7 +223,9 @@ const request = new TransactionRequestBuilder()
 
 The identity rate is the only rate this binding expresses — `oneToOne` is the single constructor on `FeeConversionInfo`. Paying at a non-identity conversion rate is not available from the web SDK today.
 
-The salt comes from the caller rather than being drawn internally because a multisig flow reuses it as the transaction summary's replay guard — the co-signers have to agree on it, so it cannot be a value the builder invents. Any `Word` works when you are not co-signing.
+The salt comes from the caller because a multisig flow reuses it as the transaction summary's replay guard, and the co-signers all have to derive the same summary from it. Any `Word` works when you are not co-signing.
+
+The convenience constructors and `feeAwareTransactionRequestBuilder` do draw a salt internally, since they have no one to ask. That is fine for a single-signer transaction, and fine for a multisig one as long as the proposer's request bytes are what every participant re-derives from — see [Chain-Anchored Execution](#chain-anchored-execution). Set the salt yourself when the participants need to agree on it without transporting the request.
 
 ### Which accounts read conversion info
 
@@ -242,7 +244,11 @@ That is a problem for any flow that collects signatures and executes later — a
 A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
 
 ```typescript
-import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
 
 // ── Proposer ──────────────────────────────────────────────
 const anchor = await client.transactions.captureAnchor(request);
@@ -255,7 +261,11 @@ const summary = await client.transactions.preview({
   anchor,
 });
 
+// Ship the request too — a co-signer must re-derive from these exact bytes,
+// not from a request they build themselves. See "The request travels with the
+// anchor" below.
 await shipToCosigners({
+  request: request.serialize(),
   anchor: anchor.serialize(),
   summary: summary.serialize(),
 });
@@ -263,13 +273,14 @@ await shipToCosigners({
 // ── Co-signer ─────────────────────────────────────────────
 const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
 
 // Re-derive at the proposer's anchor and compare before signing. Deriving at
 // the local sync height would produce a different summary every time.
 const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,
-  request,
+  request: proposedRequest,
   anchor: received,
 });
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
@@ -277,12 +288,16 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 }
 
 // ── Executor ──────────────────────────────────────────────
-// `request` here carries the collected signatures in its advice map; attaching
-// them is part of the signing protocol, not the anchor.
-await client.transactions.submit(multisig, request, { anchor: received });
+// The proposer's request, carrying the collected signatures in its advice map;
+// attaching them is part of the signing protocol, not the anchor.
+await client.transactions.submit(multisig, proposedRequest, {
+  anchor: received,
+});
 ```
 
 Notes on anchors:
+
+- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport.
 
 - **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
 
