@@ -2,6 +2,7 @@ use js_export_macro::js_export;
 use miden_client::note::Note as NativeNote;
 use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
 use miden_client::vm::AdviceMap as NativeAdviceMap;
+use miden_client::Word as NativeWord;
 
 use crate::models::advice_map::AdviceMap;
 use crate::models::note::Note;
@@ -76,6 +77,28 @@ impl TransactionRequest {
     #[js_export(js_name = "adviceMap")]
     pub fn advice_map(&self) -> AdviceMap {
         self.0.advice_map().into()
+    }
+
+    /// Returns a copy of this request carrying `auth_arg` as its auth argument.
+    ///
+    /// Since protocol 0.16 `fee::pay_fee` reads the fee faucet and conversion rate from the auth
+    /// args, so a request that pays a fee must carry the commitment
+    /// `hash(CONVERSION_INFO || SALT)` — and a request that has already been SERIALIZED cannot
+    /// otherwise acquire one, because `TransactionRequest` is only constructible through its
+    /// builder. That blocks every flow whose bytes are produced elsewhere and handed over:
+    /// bridged sends, earn deposits, swaps, and a dApp's own `execute` request, none of which the
+    /// wallet can rebuild.
+    ///
+    /// Deliberately NOT `withFeeConversionInfo`: that flags the request as declaring conversion
+    /// info, which makes the client classify the account's auth component first and reject an
+    /// account whose component it cannot match. This attaches the word and nothing else.
+    ///
+    /// Overwrites any existing auth arg. The commitment's preimage still has to be reachable, so
+    /// pair this with `extendAdviceMap`.
+    #[js_export(js_name = "withAuthArg")]
+    pub fn with_auth_arg(&self, auth_arg: &Word) -> TransactionRequest {
+        let native_auth_arg: NativeWord = auth_arg.into();
+        self.0.clone().with_auth_arg(native_auth_arg).into()
     }
 
     /// Returns a copy of this request with `advice_map` merged into its advice map.
