@@ -42,6 +42,10 @@ const client = await MidenClient.create({
 
 * [CHANGE][ci] `scripts/check-react-sdk-sync.js` now verifies the `@miden-sdk/miden-sdk` pin of **every** package that builds against it, not just `@miden-sdk/react` and the wallet example. The packages are discovered from the workspace rather than listed in the script, so a new package is covered from the moment it exists rather than when someone remembers to add it — `@miden-sdk/telemetry-sentry` and `@miden-sdk/telemetry-otel` shipped pinned to the core with nothing verifying them. Discovery keys off the build-time `workspace:*` dev dependency rather than off the pin being checked, so deleting a peer range fails the check instead of removing the package from it. The check also covers the wallet example's other first-party dependencies, which caught `@miden-sdk/react` there sitting two minors stale at `^0.15.8`; it is now in step with the rest.
 
+### Fixes
+
+* [FIX][web] `submitBatch({ waitForConfirmation: true })` now drives a real `syncState()` per poll instead of calling nonexistent `syncStateWithTimeout` (whose `TypeError` was swallowed, so the wait never advanced sync on its own). The loop also waits for `getSyncHeight() > tipAtSubmission`, matching the V1 batch API which returns the node tip at submit time rather than the commit block. ([web-sdk#320](https://github.com/0xMiden/web-sdk/issues/320), [web-sdk#314](https://github.com/0xMiden/web-sdk/issues/314))
+
 ## 0.15.9 (2026-08-04)
 
 ### Enhancements
