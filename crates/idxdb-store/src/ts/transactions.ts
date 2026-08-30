@@ -175,6 +175,40 @@ export async function upsertTransactionRecord(
   }
 }
 
+export async function upsertTransactionRecordWithScript(
+  dbId: string,
+  transactionId: string,
+  details: Uint8Array,
+  blockNum: number,
+  statusVariant: number,
+  status: Uint8Array,
+  scriptRoot?: Uint8Array,
+  txScript?: Uint8Array
+) {
+  const db = getDatabase(dbId);
+
+  await db.dexie.transaction(
+    "rw",
+    [db.transactions, db.transactionScripts],
+    async (tx) => {
+      if (scriptRoot && txScript) {
+        await insertTransactionScript(dbId, scriptRoot, txScript, tx);
+      }
+
+      await upsertTransactionRecord(
+        dbId,
+        transactionId,
+        details,
+        blockNum,
+        statusVariant,
+        status,
+        scriptRoot,
+        tx
+      );
+    }
+  );
+}
+
 // BATCH APPLY
 // ================================================================================================
 

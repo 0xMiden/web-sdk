@@ -4,6 +4,7 @@ import {
   getTransactions,
   insertTransactionScript,
   upsertTransactionRecord,
+  upsertTransactionRecordWithScript,
 } from "./transactions.js";
 
 let dbCounter = 0;
@@ -388,6 +389,33 @@ describe("transactions", () => {
     const all = await db.transactionScripts.toArray();
     expect(all).toHaveLength(1);
     expect(all[0].txScript).toEqual(script2);
+  });
+
+  it("rolls back the script when the transaction record write fails", async () => {
+    const dbId = await openTestDb();
+    const scriptRootBytes = new Uint8Array([0x0a, 0x0b]);
+    const txScriptBytes = new Uint8Array([0x0c, 0x0d]);
+
+    await expect(
+      upsertTransactionRecordWithScript(
+        dbId,
+        undefined as unknown as string,
+        new Uint8Array([1]),
+        1,
+        0,
+        new Uint8Array([2]),
+        scriptRootBytes,
+        txScriptBytes
+      )
+    ).rejects.toThrow();
+
+    const db = getDatabase(dbId);
+    const storedScript = await db.transactionScripts
+      .where("scriptRoot")
+      .equals(toBase64(scriptRootBytes))
+      .first();
+
+    expect(storedScript).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
