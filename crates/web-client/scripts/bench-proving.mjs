@@ -218,8 +218,11 @@ if (reps % 2 !== 0) {
 // Extra proves are the cheap way to buy samples: setup (mint + block + sync)
 // dominates a rep's cost and is not measured, while each extra prove is one
 // more chance for `min` to catch an uncontended run.
-// Mirrors CALIBRATED_PROVES_PER_REP + 1 in the renderer: that constant counts
-// retained proves, this flag counts issued ones, and the first is discarded.
+// Mirrors `calibratedProvesPerRep` + 1 in .github/scripts/bench-profile.mjs:
+// that field counts RETAINED proves, this flag counts ISSUED ones, and the first
+// of every page is discarded. The two have to move together — the renderer
+// blocks any run whose retained count does not match the profile — so this is
+// one of the three places a change to that count has to land.
 const CALIBRATED_PROVES = 4;
 const proves = count("--proves", String(CALIBRATED_PROVES));
 const outPath = flag("--out", null);
@@ -285,9 +288,9 @@ if (proves < 2) {
 // over exactly three retained proves, and the spread of a minimum is not
 // monotonic in the number of draws it is taken over, so the floor cannot be
 // carried to a different count in either direction. The renderer gates on this
-// (`CALIBRATED_PROVES_PER_REP` in .github/scripts/render-bench-comment.mjs) and
-// reports without ruling when it does not match. Say so here rather than at the
-// end of a twenty-minute run.
+// (`calibratedProvesPerRep` in .github/scripts/bench-profile.mjs) and reports
+// without ruling when it does not match. Say so here rather than at the end of a
+// twenty-minute run.
 if (proves !== CALIBRATED_PROVES) {
   console.log(
     `[warn] --proves ${proves} retains ${proves - 1} per repetition, but the ` +
@@ -1733,8 +1736,10 @@ const results = {
   // No `thresholdPct` / `thresholdProvisional` / `lowerIsBetter` here: those
   // decide the verdict, and .github/scripts/render-bench-comment.mjs renders
   // this file on the side that holds a write token, from an artifact a fork
-  // controls. They are pinned there instead. Changing the noise floor means
-  // editing THRESHOLD_PCT in that file — see docs/benchmarks/calibration.md.
+  // controls. They are pinned on that side instead, in
+  // .github/scripts/bench-profile.mjs, which the renderer imports and no
+  // artifact can reach. Changing the noise floor means editing `thresholdPct`
+  // there — see docs/benchmarks/calibration.md.
   // Carried into the artifact so the report can say so. `process.exitCode = 1`
   // reddens the bench job, but `Record PR context` and `Upload benchmark report`
   // are `if: always()` and the samples are complete — so without this the

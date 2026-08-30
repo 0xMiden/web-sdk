@@ -8,9 +8,11 @@ The PR comment posted by the proving benchmark says whether a movement is
 "beyond the noise floor". That sentence is only worth reading if the floor is a
 number somebody measured on the runner the benchmark actually uses.
 
-Until that measurement exists on `warp-ubuntu-latest-x64-8x`, the comment says
-so explicitly and treats the threshold as **provisional**. This page is how the
-placeholder gets replaced.
+**This has been done.** `thresholdPct` in `.github/scripts/bench-profile.mjs`
+is 5.4%, calibrated on
+`warp-ubuntu-latest-x64-8x` on 2026-08-27 — see *The measurement* below. This
+page is how it was derived and how to redo it, which is required whenever the
+runner class, thread count, repetition count or workload changes.
 
 ## What a calibration run is
 
@@ -28,6 +30,38 @@ Locally:
 ```bash
 make bench-proving-calibrate
 ```
+
+## The measurement (2026-08-27)
+
+30 dispatch runs of one build against a copy of itself on
+`warp-ubuntu-latest-x64-8x` at `reps: 6`. True delta is zero by construction, so
+every number below is measurement noise.
+
+| | |
+|---|---|
+| runs | 30 |
+| mean | **+0.213%** (standard error 0.264%) |
+| standard deviation | **1.447%** |
+| 3σ | 4.34% |
+| largest observed movement | **+5.03%** |
+| `thresholdPct` set to | **5.4%** |
+
+Two things to read out of this.
+
+**The mean is indistinguishable from zero.** +0.213% against a standard error of
+0.264% is well under one standard error, so there is no detectable residual bias
+between the two sides. That is what the per-prove ABBA order flip bought: before
+it, the side that ran second paid a consistent +1.19%.
+
+**The threshold is NOT 3σ, deliberately.** 3σ is 4.34%, but one of the thirty
+no-change runs came in at +5.03% — past 3σ on a run where nothing changed. 3σ is
+the right cutoff only for a normal distribution, and these deltas are not normal
+in the tail: each side draws its own proof-of-work grind, which is geometric.
+Setting the floor at 4.34% would have called that observed run a regression. So
+the floor is taken from the empirical maximum with a small margin instead.
+
+Following the procedure below into a false positive we had already watched
+happen would have been worse than deviating from it and saying why.
 
 ## How to derive the threshold
 
@@ -208,9 +242,9 @@ effect size. Two consequences worth internalising before tuning anything:
   and the renderer declines to rule on any
   prove count other than the calibrated one. On this axis the only lever is to
   recalibrate the floor at the count you want to use, and then move
-  `CALIBRATED_PROVES_PER_REP` and the CI default together.
+  `calibratedProvesPerRep` and the CI default together.
 - **Below six repetitions there is no verdict at all,** which is why the 4-reps
-  row above is 0%. `MIN_REPS_FOR_SIGN_TEST` is pinned to the calibrated
+  row above is 0%. The sign-test repetition floor is pinned to the calibrated
   repetition count, and the reason is that both legs of the rule weaken together
   below it, not just the sign test:
 
@@ -258,7 +292,7 @@ six calibration runs of identical binaries, on a (busy) developer laptop:
 These three numbers, and the +1.19% positional penalty below, come from a
 one-off session on a laptop; the raw series is not in the repo, so unlike every
 other figure on this page they cannot be reproduced by running a script here.
-That is the whole reason `THRESHOLD_PROVISIONAL` is still `true` — the runbook at
+That is the whole reason `thresholdProvisional` matters — the runbook at
 the top of this page replaces them with measurements from the actual runner. Treat
 them as the reason the design is shaped this way, not as the calibration.
 
@@ -342,7 +376,7 @@ Three further corrections, also measured:
   wins — an uncalibrated floor means no verdict at all, while the imbalance only
   costs power. So an odd `--proves` is not an improvement that can be adopted on
   its own: it needs a recalibration at the new retained count, moving
-  `CALIBRATED_PROVES_PER_REP` and the producer default in the same change. Until
+  `calibratedProvesPerRep` and the producer default in the same change. Until
   then the default `--proves 4` is the only configuration that both runs and
   rules.
 
@@ -660,8 +694,9 @@ collecting the 20–30 runs below and setting the threshold; leaving the
 laptop-derived number in place indefinitely is the failure mode to avoid, not a
 safe default.
 
-Set `THRESHOLD_PCT` in `.github/scripts/render-bench-comment.mjs` to the
-measured value and flip `THRESHOLD_PROVISIONAL` to `false`. Record the date, the
+Set `thresholdPct` in `.github/scripts/bench-profile.mjs` to the measured
+value and flip `thresholdProvisional` to `false` — that file is the only one a
+re-calibration needs to touch. Record the date, the
 runner label, the `reps` × `proves` configuration, the sample count and the
 measured σ in the commit message so the next person can tell whether the number
 has gone stale.
@@ -690,7 +725,7 @@ moment it lands on the default branch, and has no effect at all while it sits in
 a PR. Two consequences worth knowing before you change either half:
 
 - **A PR targeting `next` is judged by `main`'s renderer.** Editing
-  `THRESHOLD_PCT` on `next` changes nothing until `next` reaches `main`. Verify
+  `thresholdPct` on `next` changes nothing until `next` reaches `main`. Verify
   a
   renderer change by dispatching the reporter, not by reading the diff on your
   branch.
