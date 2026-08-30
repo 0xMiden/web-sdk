@@ -16,6 +16,7 @@ import { MidenError } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
 import { proveWithFallback } from "../utils/prover";
+import { extractFullNote } from "../utils/transactions";
 import { useMidenStore } from "../store/MidenStore";
 
 export interface UseSendResult {
@@ -329,21 +330,4 @@ export function useSend(): UseSendResult {
     error,
     reset,
   };
-}
-
-function extractFullNote(txResult: unknown): Note | null {
-  try {
-    const executedTx = (
-      txResult as { executedTransaction?: () => unknown }
-    ).executedTransaction?.() as {
-      outputNotes?: () => {
-        notes?: () => Array<{ intoFull?: () => Note | null }>;
-      };
-    };
-    const notes = executedTx?.outputNotes?.().notes?.() ?? [];
-    const note = notes[0];
-    return note?.intoFull?.() ?? null;
-  } catch {
-    return null;
-  }
 }

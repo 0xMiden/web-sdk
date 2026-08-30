@@ -1,8 +1,10 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountHeader as NativeAccountHeader;
 use miden_client::note::TxFeeNote;
-use miden_client::transaction::ExecutedTransaction as NativeExecutedTransaction;
-use miden_client::transaction::RawOutputNote as NativeRawOutputNote;
+use miden_client::transaction::{
+    ExecutedTransaction as NativeExecutedTransaction,
+    RawOutputNote as NativeRawOutputNote,
+};
 
 use super::account_header::AccountHeader;
 use super::account_id::AccountId;
@@ -62,7 +64,7 @@ impl ExecutedTransaction {
 
     /// Returns the output notes produced by the transaction.
     ///
-    /// NOTE: this includes the kernel's TX_FEE note on any chain whose `verification_base_fee`
+    /// NOTE: this includes the kernel's `TX_FEE` note on any chain whose `verification_base_fee`
     /// is non-zero. A transaction that produced one note on a fee-free chain produces two here,
     /// so callers that index or count this list must split it first -- see [`Self::fee_note`]
     /// and [`Self::user_output_notes`].
@@ -71,25 +73,19 @@ impl ExecutedTransaction {
         self.0.output_notes().into()
     }
 
-    /// Returns the kernel's TX_FEE note, or `undefined` when the transaction paid no fee.
+    /// Returns the kernel's `TX_FEE` note, or `undefined` when the transaction paid no fee.
     ///
-    /// Identified by NOTE SCRIPT ROOT against `TxFeeNote::script_root()`, which is the
-    /// kernel's own designation. Consumers previously had to infer this from the `0xfee`
-    /// note tag, and a tag is a plain `u32` that any caller-supplied output note can carry --
-    /// so a tag-based split could both mislabel an ordinary note as the fee AND erase it from
-    /// the transaction's totals. The script root cannot be forged by a note the transaction
-    /// was merely asked to create.
+    /// The fee note is identified by its note script root -- the kernel's own designation -- and
+    /// not by the `0xfee` note tag, which is a plain `u32` that any caller-supplied output note
+    /// can carry. A script root is the hash of the note's script, so it takes the fee script
+    /// itself to collide with.
     #[js_export(js_name = "feeNote")]
     pub fn fee_note(&self) -> Option<OutputNote> {
-        self.0
-            .output_notes()
-            .iter()
-            .find(|note| is_fee_note(note))
-            .map(Into::into)
+        self.0.output_notes().iter().find(|note| is_fee_note(note)).map(Into::into)
     }
 
     /// Returns the output notes the transaction's author actually created, with the kernel's
-    /// TX_FEE note removed.
+    /// `TX_FEE` note removed.
     ///
     /// This is what almost every caller of [`Self::output_notes`] means. Reaching for index 0
     /// of the unsplit list is correct only on a fee-free chain, and silently picks the fee note
@@ -142,11 +138,17 @@ impl From<&NativeExecutedTransaction> for ExecutedTransaction {
     }
 }
 
-/// Whether an output note is the kernel's TX_FEE note.
+/// Whether an output note is the kernel's `TX_FEE` note.
 ///
-/// By script root, not by tag: the tag is forgeable by any note the transaction was asked to
-/// create, the script root is not. A note whose body is not available (header-only) cannot be
-/// the fee note -- the kernel always emits it as a full public note.
+/// By script root, not by tag: a tag is a free `u32` on any note the transaction was asked to
+/// create, whereas colliding on the root takes the fee script itself. A note whose body is not
+/// available (header-only) cannot be the fee note -- the kernel always emits it as a full public
+/// note.
+// Not literally unforgeable: `TxFeeNote::script()` is public, so a transaction can be asked to
+// emit an output note carrying the fee script, and the first match wins. The only party able to do
+// that is the transaction's own author, who gains nothing by misleading their own client.
+// `TxFeeNote::derive_serial_number` would make the predicate exact if a caller-hostile case ever
+// appears.
 fn is_fee_note(note: &NativeRawOutputNote) -> bool {
     note.recipient()
         .is_some_and(|recipient| recipient.script().root() == TxFeeNote::script_root())

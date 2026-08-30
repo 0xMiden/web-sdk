@@ -19,6 +19,13 @@ impl FeeConversionInfo {
     ///
     /// This is the right choice when paying in the chain's own fee asset, whose faucet is
     /// `BlockHeader.feeFaucetId()` — no conversion is involved, so the rate is the identity.
+    ///
+    /// The identity rate is the only rate this binding expresses, so passing any OTHER faucet pays
+    /// the native fee's raw magnitude in that asset's smallest unit. That is only what you want for
+    /// an asset whose unit scale and value match the fee asset's; for anything else it overpays or
+    /// underpays by the true exchange rate, and the amount is withdrawn from the account's vault
+    /// without appearing in the request's expected output notes, since the kernel creates the fee
+    /// note itself.
     #[js_export(js_name = "oneToOne")]
     pub fn one_to_one(faucet_id: &AccountId) -> FeeConversionInfo {
         let native: NativeAccountId = faucet_id.into();

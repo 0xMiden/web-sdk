@@ -16,6 +16,7 @@ use miden_client::note::{
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
     AccountComponentInterface,
+    ChainAnchorError,
     ForeignAccount as NativeForeignAccount,
     PaymentNoteDescription,
     ProvenTransaction as NativeProvenTransaction,
@@ -487,7 +488,7 @@ impl WebClient {
             }
         }
         if any_declares_fee_conversion_info {
-            ensure_fee_conversion_info_not_ignored(client, native_account_id).await?;
+            ensure_batch_fee_conversion_info_supported(client, native_account_id).await?;
         }
 
         // `new_transaction_batch()` is now a synchronous builder constructor that takes no
@@ -855,8 +856,9 @@ impl WebClient {
     ///
     /// The returned builder is otherwise empty and carries no auth arg on a zero-fee chain or for
     /// an account whose auth procedure cannot read conversion info, so it is a safe drop-in. Note
-    /// that it sets the auth arg where it does apply: calling `withAuthArg` on the result discards
-    /// the conversion info and reintroduces the abort.
+    /// that it sets the auth arg where it does apply: calling `withAuthArg` on the result
+    /// overwrites the commitment, and `build` then refuses it with error code
+    /// `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`.
     #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
     pub async fn fee_aware_transaction_request_builder(
         &self,
@@ -867,31 +869,46 @@ impl WebClient {
             from_str_err("Client not initialized while creating a transaction request builder")
         })?;
 
-        Ok(fee_aware_builder(client, account_id.into()).await?.into())
+        let (builder, declares_fee_conversion_info) =
+            fee_aware_builder_and_declaration(client, account_id.into()).await?;
+        Ok(TransactionRequestBuilder::from_native(builder, declares_fee_conversion_info))
     }
 }
 
-/// Maps an anchor-path failure to a JS error, tagging anchor-validation failures with a
-/// machine-readable code so callers can retry the capture rather than surface a generic error.
+/// Maps an anchor-path failure to a JS error, tagging every anchor rejection with a
+/// machine-readable code so callers can tell one apart from a generic execution failure.
 ///
-/// In practice this fires during capture: the anchor is assembled from three separate store reads
-/// (sync height, that block's header, the current blockchain peaks) and validated for mutual
-/// consistency, so a sync landing from another tab mid-capture yields an inconsistent anchor.
-/// Retrying is the correct response, which is why it is worth distinguishing.
+/// Two kinds reach this. A capture-time inconsistency: the anchor is assembled from three separate
+/// store reads (sync height, that block's header, the current blockchain peaks) and validated for
+/// mutual consistency, so a sync landing from another tab mid-capture yields an anchor whose parts
+/// disagree. Retrying the capture is the fix, and saying so is worth doing because nothing in the
+/// upstream message does.
 ///
-/// Execution-time anchor rejections do not currently reach this arm — upstream stringifies them
-/// into `DataStoreError::other` rather than surfacing `ClientError::ChainAnchorError` — so they
-/// arrive as plain messages. They are routed through here anyway so they pick the code up if that
-/// changes; don't document a code for them until it does.
+/// The rest are execution-time rejections of an anchor that is internally consistent — a block the
+/// anchor does not track, a reference block that does not match it, an anchor tracking more blocks
+/// than a transaction may reference, or an anchored transaction the chain has already expired past.
+/// Each already names its own remedy in the upstream message, and for them re-capturing unchanged
+/// would loop, so the sync-race hint is deliberately not appended.
 fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
     match err {
-        ClientError::ChainAnchorError(anchor_err) => from_str_err_with_code(
-            &format!(
-                "{context}: {anchor_err}; a sync may have landed during capture, so retrying is \
-                 usually the fix"
-            ),
-            "INVALID_CHAIN_ANCHOR",
-        ),
+        ClientError::ChainAnchorError(anchor_err) => {
+            // Only the two mutual-consistency checks can be lost to a concurrent sync; every other
+            // variant describes a property of the anchor that retrying will reproduce.
+            let lost_to_concurrent_sync = matches!(
+                anchor_err,
+                ChainAnchorError::ChainLengthMismatch { .. }
+                    | ChainAnchorError::ChainCommitmentMismatch { .. }
+            );
+            let message = if lost_to_concurrent_sync {
+                format!(
+                    "{context}: {anchor_err}; a sync may have landed during capture, so retrying \
+                     is usually the fix"
+                )
+            } else {
+                format!("{context}: {anchor_err}")
+            };
+            from_str_err_with_code(&message, "INVALID_CHAIN_ANCHOR")
+        },
         err => js_error_with_context(err, context),
     }
 }
@@ -953,21 +970,34 @@ async fn standard_auth_components(
 /// Whether `account_id`'s auth procedure reads fee conversion info from the transaction's auth
 /// args, and therefore whether committing any is useful to it.
 ///
-/// Only `AuthSingleSig` and `AuthMultisig` do. `AuthNoAuth` and `AuthNetworkAccount` discard
-/// `AUTH_ARGS` and call `fee::native_conversion_info` instead, so they pay the fee natively and
-/// need nothing committed. `AuthMultisigSmart` and `AuthGuardedMultisig` are excluded not because
-/// they cannot read conversion info but because miden-client's allowlist does not admit them:
-/// `validate_fee_conversion_info_support` *rejects* a request declaring conversion info against
-/// any account outside those two, before execution, with
-/// `TransactionRequestError::FeeConversionInfoUnsupported`. Attaching it to such a request turns a
-/// working transaction into a rejected one, so this allowlist has to mirror upstream's exactly and
-/// the two must move together — widening this one alone makes things worse, not better.
+/// `AuthSingleSig`, `AuthMultisig` and `AuthGuardedMultisig` do — all three call
+/// `fee::load_conversion_info` from their auth procedure. `AuthNoAuth` and `AuthNetworkAccount`
+/// discard `AUTH_ARGS` and call `fee::native_conversion_info` instead, so they pay the fee natively
+/// and need nothing committed. `AuthMultisigSmart` never reaches `miden::standards::fee` at all and
+/// reinterprets the word as a transaction summary salt, so committing conversion info to it would
+/// be read as something else entirely.
 ///
-/// Answers `false` for an auth procedure this crate cannot name, for the same reason: declaring
-/// conversion info would hand upstream's check an account it also cannot classify. A clear
-/// `ERR_FEE_CONVERSION_INFO_MISSING` at execution beats a trap. When the account is not in the
-/// store at all the answer does not matter — nothing can execute against it — so it takes the
-/// permissive branch and lets the account-not-found error surface on its own.
+/// This set has to mirror miden-client's exactly, and the two must move together in both
+/// directions. `validate_fee_conversion_info_support` *rejects* a request declaring conversion info
+/// against an account outside upstream's allowlist, so attaching it too widely turns a working
+/// transaction into a rejected one — and for the two multisig variants
+/// `resolve_fee_conversion_info` *requires* it, returning
+/// `TransactionRequestError::FeeConversionInfoRequired` when a request declares none on a
+/// fee-charging chain, so attaching it too narrowly is equally fatal. Only `AuthSingleSig` has
+/// conversion info injected upstream when a request declares none.
+///
+/// Answers `false` for an auth procedure this crate cannot name, and for an account carrying more
+/// than one standard auth component: declaring conversion info would hand upstream's check an
+/// account it also cannot classify, which it rejects. Such an account has to commit its own
+/// commitment through `TransactionRequest.withAuthArg`, which carries no declaration for upstream
+/// to validate.
+///
+/// Takes the permissive branch when the account is not in the store, so that the account-not-found
+/// error surfaces on its own rather than being pre-empted by a fee decision made about an account
+/// nothing knows anything about. That is the wrong answer for an account tracked only by whoever
+/// the request is serialized to, but a request built against an untracked account cannot be
+/// executed locally, and the alternative — declaring nothing — is equally wrong for the multisig
+/// case that transport flow exists to serve.
 async fn reads_fee_conversion_info(
     client: &Client<crate::ClientAuth>,
     account_id: NativeAccountId,
@@ -976,39 +1006,43 @@ async fn reads_fee_conversion_info(
         return Ok(true);
     };
 
-    Ok(components.iter().any(|component| {
-        matches!(
-            component,
-            AccountComponentInterface::AuthSingleSig | AccountComponentInterface::AuthMultisig
-        )
-    }))
+    // Exactly one, mirroring `auth_component_of`: it matches `(Some, None)` over the filtered
+    // components and yields `None` for anything else, so two standard auth components are as
+    // unclassifiable upstream as zero are. Answering `true` on `any` would attach conversion info
+    // to a request that `ensure_fee_conversion_info_classifiable` then refuses to execute.
+    let [component] = components.as_slice() else {
+        return Ok(false);
+    };
+
+    Ok(matches!(
+        component,
+        AccountComponentInterface::AuthSingleSig
+            | AccountComponentInterface::AuthMultisig
+            | AccountComponentInterface::AuthGuardedMultisig
+    ))
 }
 
-/// Whether `account_id`'s auth procedure pays the fee from the chain's native fee asset and
-/// discards the transaction's auth arguments entirely.
+/// Whether an auth procedure built from `components` pays the fee from the chain's native fee
+/// asset and discards the transaction's auth arguments entirely.
 ///
 /// `AuthNoAuth` and `AuthNetworkAccount` are the two that do: both call
 /// `fee::native_conversion_info` rather than `fee::load_conversion_info`. For them any declared
 /// conversion info has no effect at all.
 ///
 /// Deliberately not the negation of `reads_fee_conversion_info`. The components in neither set —
-/// `AuthGuardedMultisig`, `AuthMultisigSmart`, and anything this crate cannot name — do not read
-/// conversion info under upstream's allowlist *and* do not pay natively, so nothing can be
-/// concluded about them and they answer `false` here.
-async fn pays_fee_natively(
-    client: &Client<crate::ClientAuth>,
-    account_id: NativeAccountId,
-) -> Result<bool, JsErr> {
-    let Some(components) = standard_auth_components(client, account_id).await? else {
-        return Ok(false);
-    };
-
-    Ok(components.iter().any(|component| {
+/// `AuthMultisigSmart`, and anything this crate cannot name — neither read conversion info under
+/// upstream's allowlist *nor* pay natively, so nothing can be concluded about them and they answer
+/// `false` here.
+///
+/// Takes the components rather than reading them, so a caller that already needs them for another
+/// question pays for one account-code read instead of two.
+fn pays_fee_natively(components: &[AccountComponentInterface]) -> bool {
+    components.iter().any(|component| {
         matches!(
             component,
             AccountComponentInterface::AuthNoAuth | AccountComponentInterface::AuthNetworkAccount
         )
-    }))
+    })
 }
 
 /// Refuses a request whose fee-conversion commitment no longer matches its advice map.
@@ -1017,15 +1051,29 @@ async fn pays_fee_natively(
 /// looks only at the auth arg and the advice map, so on a request that does not declare any it
 /// would refuse a plain `withAuthArg` and blame a collision that never happened.
 ///
-/// `withAuthArg` and `withFeeConversionInfo` write the same slot, so calling the former second
-/// replaces the commitment while leaving the preimage keyed by the old one.
-/// `fee::load_conversion_info` looks the preimage up by the *current* auth arg, finds nothing, and
-/// `pay_fee` aborts with `ERR_FEE_CONVERSION_INFO_MISSING` deep in the VM — a message naming
-/// neither the collision nor the two methods involved.
+/// This catches the *request*-level overwrite: `TransactionRequest.withAuthArg` replaces the auth
+/// arg on an already-built request and, unlike the builder's method, leaves its fee-conversion
+/// declaration standing. The commitment is gone but the preimage is still keyed by it, so
+/// `fee::load_conversion_info` looks up the *current* auth arg, finds nothing, and `pay_fee` aborts
+/// with `ERR_FEE_CONVERSION_INFO_MISSING` deep in the VM — a message naming neither the collision
+/// nor the methods involved.
 ///
-/// The detection is exact rather than heuristic: upstream's `fee_conversion_info` attaches the
-/// preimage keyed by the auth arg it just set, so the invariant breaks precisely when something
-/// overwrote that arg afterwards.
+/// The builder's own `withAuthArg` cannot reach this: it clears the native declaration, so a
+/// request built that way arrives here declaring nothing. That collision is refused earlier, by
+/// `TransactionRequestBuilder::build`, with the same error code.
+///
+/// The detection is a presence test, not a recomputation: upstream's `fee_conversion_info` attaches
+/// the preimage keyed by the auth arg it just set, so a declared request whose auth arg has no
+/// advice entry had that arg replaced afterwards.
+///
+/// That makes it defeatable, deliberately: pointing the auth arg at some *other* key that already
+/// holds a value — a signature blob, a note payload, an orphaned preimage from an earlier
+/// `withFeeConversionInfo` — passes this check. Nothing is mispaid as a result.
+/// `load_conversion_info` asserts `poseidon2::merge` of the advice value against `AUTH_ARGS` and
+/// aborts with `ERR_FEE_CONVERSION_INFO_COMMITMENT_MISMATCH`, so short of a hash collision the VM
+/// still refuses it; only the named early error is lost. Recomputing the hash here would close
+/// that, at the cost of duplicating the commitment scheme in a second place — not worth it while
+/// the VM's check is the authority.
 ///
 /// Refuses regardless of the chain's base fee. On a zero-fee chain the combination would in fact
 /// execute — `pay_fee` requires the conversion info only when the fee is non-zero — but a request
@@ -1043,10 +1091,12 @@ fn ensure_fee_conversion_info_auth_arg_intact(
     {
         return Err(from_str_err_with_code(
             "this request declares fee conversion info, but its advice map has no preimage for \
-             the auth argument the commitment lives in. Calling `withAuthArg` after \
-             `withFeeConversionInfo` overwrites that commitment and leaves the preimage keyed by \
-             the old one, which aborts in the VM with ERR_FEE_CONVERSION_INFO_MISSING. The two \
-             are mutually exclusive — build one request per auth argument.",
+             the auth argument the commitment lives in. Calling `TransactionRequest.withAuthArg` \
+             on a request that committed fee conversion info replaces that commitment and leaves \
+             the preimage keyed by the old one, which aborts in the VM with \
+             ERR_FEE_CONVERSION_INFO_MISSING. The two are mutually exclusive — attach a \
+             self-computed commitment to a request that declares none, or build one request per \
+             auth argument.",
             "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN",
         ));
     }
@@ -1054,64 +1104,125 @@ fn ensure_fee_conversion_info_auth_arg_intact(
     Ok(())
 }
 
-/// Refuses a batch whose requests declare fee conversion info the executing account will ignore.
+/// Refuses a batch whose declared fee conversion info the executing account cannot honour.
 ///
 /// Batch execution never runs `validate_account_request`: `BatchBuilder::push` goes straight to
 /// `prepare_transaction`, which has only the in-batch `PartialAccount` and deliberately skips the
-/// checks that need a full `Account`. So nothing upstream inspects fee conversion info on this
-/// path, and without this the batch would quietly pay in a different asset than the caller asked
-/// for.
+/// checks that need a full `Account`. Upstream compensates by calling
+/// `validate_fee_conversion_info_support` from `resolve_fee_conversion_info` inside
+/// `prepare_transaction`, so the batch is not unguarded — it would be rejected there rather than
+/// mispaid. What this adds is *when* and *how legibly*: `push` proves each transaction as it goes,
+/// so a rejection discovered mid-push has already cost the proofs of everything ahead of it, and
+/// upstream's own rejection carries no machine-readable code.
 ///
-/// Fires only for the two auth components that provably discard `AUTH_ARGS` and pay from the
-/// chain's native fee asset — `AuthNoAuth` and `AuthNetworkAccount`, both of which call
-/// `fee::native_conversion_info`. For those, and only those, the declaration demonstrably has no
-/// effect.
+/// Raises the same two codes the single-transaction path does, so a caller branching on them does
+/// not have to special-case batches:
 ///
-/// Deliberately narrower than both upstream's allowlist and
-/// `ensure_fee_conversion_info_classifiable`. Importing upstream's `AuthSingleSig`/`AuthMultisig`
-/// pair here would also refuse `AuthGuardedMultisig`, `AuthMultisigSmart` and custom auth
-/// procedures — none of which pays natively, so for them the declaration is not ignored and there
-/// is nothing to warn about. Batch is also the only path those accounts have left, since
-/// upstream's allowlist rejects them before execution on the single-transaction path, so refusing
-/// here would close it for no gain.
-async fn ensure_fee_conversion_info_not_ignored(
+/// - `FEE_CONVERSION_INFO_IGNORED` for the two components that provably discard `AUTH_ARGS` and pay
+///   from the chain's native fee asset (`AuthNoAuth`, `AuthNetworkAccount`, both of which call
+///   `fee::native_conversion_info`). For those, and only those, the declaration demonstrably has no
+///   effect. Deliberately narrower than upstream's allowlist: `AuthMultisigSmart` and custom auth
+///   procedures do not pay natively, so for them nothing is being ignored.
+/// - `FEE_CONVERSION_INFO_UNCLASSIFIABLE` when the account carries anything other than exactly one
+///   standard auth component, mirroring `auth_component_of`.
+///
+/// The batch is single-account by contract, so the account's code is read once here rather than
+/// once per request.
+async fn ensure_batch_fee_conversion_info_supported(
     client: &Client<crate::ClientAuth>,
     account_id: NativeAccountId,
 ) -> Result<(), JsErr> {
-    if !pays_fee_natively(client, account_id).await? {
+    let Some(components) = standard_auth_components(client, account_id).await? else {
+        // Not in the store: let upstream's account-not-found error surface on its own rather than
+        // pre-empting it with a fee decision about an account nothing knows anything about.
         return Ok(());
+    };
+
+    // Cardinality first, matching `auth_component_of`: an account carrying several standard auth
+    // components is one upstream can name no single component for, so "unclassifiable" is what is
+    // actually true of it. Asking `pays_fee_natively` first would answer `IGNORED` for an account
+    // that merely *contains* a native-paying component alongside others, which is a stronger claim
+    // than the components support.
+    if components.len() != 1 {
+        return Err(fee_conversion_info_unclassifiable_err(components.len()));
     }
 
-    Err(from_str_err_with_code(
-        "this batch contains a request that declares fee conversion info, but the executing \
-         account's auth procedure pays the fee from the chain's native fee asset and discards the \
-         transaction's auth arguments, so the declared asset and rate would have no effect. Build \
-         the request without fee conversion info, or batch it against an account whose auth \
-         procedure reads it.",
+    if pays_fee_natively(&components) {
+        return Err(fee_conversion_info_ignored_err());
+    }
+
+    Ok(())
+}
+
+/// The `FEE_CONVERSION_INFO_IGNORED` rejection, for an account whose auth procedure pays the fee
+/// from the chain's native fee asset and discards the transaction's auth arguments.
+///
+/// Shared by the single-transaction and batch preflights, and worded for both: a caller branching
+/// on the code should get the same explanation wherever the request was submitted.
+fn fee_conversion_info_ignored_err() -> JsErr {
+    from_str_err_with_code(
+        "this request declares fee conversion info, but the executing account's auth procedure \
+         pays the fee from the chain's native fee asset and discards the transaction's auth \
+         arguments, so the declared asset and rate would have no effect. Build the request \
+         without fee conversion info, or execute it against an account whose auth procedure \
+         reads it.",
         "FEE_CONVERSION_INFO_IGNORED",
-    ))
+    )
+}
+
+/// The `FEE_CONVERSION_INFO_UNCLASSIFIABLE` rejection, for an account carrying `component_count`
+/// standard auth components rather than the exactly one `auth_component_of` can name.
+///
+/// Shared by the single-transaction and batch preflights so both paths report the case
+/// identically; a caller branching on the code should not have to tell them apart.
+///
+/// Names both escape hatches, because which one applies depends on a procedure this crate cannot
+/// see. An auth procedure that reads `AUTH_ARGS` needs the commitment attached without the
+/// declaration upstream would try to validate, which is `TransactionRequest.withAuthArg` plus
+/// `extendAdviceMap`; one that has not been written yet is better off reading the chain's native
+/// conversion info directly and needing no auth argument at all.
+fn fee_conversion_info_unclassifiable_err(component_count: usize) -> JsErr {
+    from_str_err_with_code(
+        &format!(
+            "this request declares fee conversion info, but the account carries \
+             {component_count} standard auth components rather than exactly one, and miden-client \
+             can only validate fee conversion info against an account with a single standard auth \
+             component. Build the request without `withFeeConversionInfo`, then either attach a \
+             self-computed commitment with `TransactionRequest.withAuthArg` plus \
+             `extendAdviceMap` — which carries no declaration for miden-client to validate — or, \
+             if the auth procedure is yours to write, have it read the chain's native fee \
+             conversion info instead of the transaction's auth arguments."
+        ),
+        "FEE_CONVERSION_INFO_UNCLASSIFIABLE",
+    )
 }
 
 /// Refuses a request that declares fee conversion info against an account carrying a custom auth
 /// procedure, before the request reaches miden-client.
 ///
-/// miden-client validates this case itself and rejects it cleanly — but only for accounts whose
-/// auth component it can classify. `validate_fee_conversion_info_support` builds an
-/// `AccountInterface`, whose constructor asserts that exactly one *standard* auth component is
-/// present, and `is_auth_component` recognises only the six standard variants. An account carrying
-/// a custom auth procedure classifies as `Custom` alone, so the count is zero and the assertion
-/// fires. On `wasm32`, which is `panic = "abort"`, that is a trap taken while the client borrow is
-/// held, which leaves the client unusable for every later call rather than returning an error.
+/// miden-client rejects this case too, but namelessly and without a code:
+/// `validate_fee_conversion_info_support` asks `auth_component_of` for the account's single
+/// recognized auth component, and when the component set does not name exactly one it reports
+/// `FeeConversionInfoUnsupported("set (no single recognized auth component)")` — a string that
+/// names neither the account's actual component nor a way forward. Raising
+/// `FEE_CONVERSION_INFO_UNCLASSIFIABLE` first is what gives the case a stable machine-readable code
+/// and a message that says what to do instead.
 ///
 /// Such accounts are ordinary public surface here — `AccountComponent.compile` takes arbitrary
 /// MASM and `AccountBuilder.withAuthComponent` accepts any component — and a consumer who writes
 /// an auth procedure that reads conversion info has no way to attach it other than
 /// `withFeeConversionInfo`, so this is exactly the caller the escape hatch exists for.
 ///
-/// Deliberately narrower than `reads_fee_conversion_info`: it fires only where upstream would
-/// panic, and leaves the standard-but-unsupported components (`AuthNoAuth`,
-/// `AuthNetworkAccount`, `AuthMultisigSmart`, `AuthGuardedMultisig`) to upstream's own
-/// `FeeConversionInfoUnsupported`, which names the component it rejected.
+/// Also raises `FEE_CONVERSION_INFO_IGNORED` for the two components that pay the fee natively and
+/// discard auth arguments, so this path and `submitNewTransactionBatch` report the same mistake
+/// with the same code. It costs nothing extra — the components are already in hand — and without
+/// it a caller branching on `FEE_CONVERSION_INFO_IGNORED` would find it worked for a batch and not
+/// for the single transaction that batch is made of.
+///
+/// Still narrower than `reads_fee_conversion_info`: `AuthMultisigSmart` neither reads conversion
+/// info under upstream's allowlist nor pays natively, so nothing can be concluded about it here
+/// and it is left to upstream's own `FeeConversionInfoUnsupported`, which names the component it
+/// rejected.
 ///
 /// Costs one account-code read, and only for a request that declares conversion info.
 async fn ensure_fee_conversion_info_classifiable(
@@ -1131,23 +1242,20 @@ async fn ensure_fee_conversion_info_classifiable(
         return Ok(());
     };
 
-    // Exactly one, mirroring the assertion this pre-empts: `AccountInterface::new` does
-    // `assert_eq!(auth_count, 1)`, so two standard auth components trap just as zero does.
-    if components.len() == 1 {
-        return Ok(());
+    // Exactly one, mirroring `auth_component_of`: it matches `(Some, None)` over the filtered
+    // components and yields `None` for anything else, so two standard auth components are as
+    // unclassifiable upstream as zero are. Checked before the native-payment question, and in the
+    // same order as `ensure_batch_fee_conversion_info_supported`, so the two paths agree on which
+    // code an account triggering both conditions gets.
+    if components.len() != 1 {
+        return Err(fee_conversion_info_unclassifiable_err(components.len()));
     }
 
-    Err(from_str_err_with_code(
-        &format!(
-            "this request declares fee conversion info, but the account carries {} standard auth \
-             components rather than exactly one, and miden-client can only validate fee \
-             conversion info against an account with a single standard auth component. Build the \
-             request without `withFeeConversionInfo` and have the auth procedure read the fee \
-             conversion info natively instead.",
-            components.len()
-        ),
-        "FEE_CONVERSION_INFO_UNCLASSIFIABLE",
-    ))
+    if pays_fee_natively(&components) {
+        return Err(fee_conversion_info_ignored_err());
+    }
+
+    Ok(())
 }
 
 /// Fee conversion info for the chain's own fee asset, paired with a fresh salt.
@@ -1165,6 +1273,14 @@ async fn ensure_fee_conversion_info_classifiable(
 /// it as the transaction summary salt, so inventing one where none is needed would change a
 /// summary that callers may already be signing over. The second gate is the executing account's
 /// auth component, for the reasons in `reads_fee_conversion_info`.
+///
+/// Reads the fee parameters from the store's sync height, while execution reads them from the
+/// reference block — the same block only on the unanchored path, since `prepare_transaction` takes
+/// the reference header from the anchor when one is supplied. So a request built at a sync height
+/// whose base fee is zero and then executed against an anchor whose base fee is not carries no
+/// conversion info, and an `AuthMultisig` or `AuthGuardedMultisig` account fails with
+/// `FeeConversionInfoRequired` at execute time — after the summary has already gone out to
+/// co-signers. Build the request and take the anchor at the same sync height.
 async fn native_fee_conversion_info(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
@@ -1208,11 +1324,26 @@ async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
+    Ok(fee_aware_builder_and_declaration(client, executing_account_id).await?.0)
+}
+
+/// As `fee_aware_builder`, but also reports whether conversion info was in fact attached.
+///
+/// Only `feeAwareTransactionRequestBuilder` needs the flag, and only because the builder it hands
+/// back is the caller's to keep mutating: the JS wrapper records the declaration so a later
+/// `withAuthArg` can be refused for overwriting the commitment. The native builder cannot be asked
+/// after the fact — its `auth_arg` clears the declaration as a side effect.
+async fn fee_aware_builder_and_declaration(
+    client: &mut Client<crate::ClientAuth>,
+    executing_account_id: NativeAccountId,
+) -> Result<(NativeTransactionRequestBuilder, bool), JsErr> {
     let mut builder = NativeTransactionRequestBuilder::new();
+    let mut declares_fee_conversion_info = false;
     if let Some((conversion_info, salt)) =
         native_fee_conversion_info(client, executing_account_id).await?
     {
         builder = builder.fee_conversion_info(conversion_info, salt);
+        declares_fee_conversion_info = true;
     }
-    Ok(builder)
+    Ok((builder, declares_fee_conversion_info))
 }

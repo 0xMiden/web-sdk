@@ -635,12 +635,18 @@ export class TransactionsResource {
    * hand. Equivalent to `submit()` but plural.
    *
    * Fee conversion info is never attached here, but a request that declares it
-   * is checked before anything is proven, since batch submission does not reach
-   * the validation miden-client applies to a singly-submitted request. The
-   * batch is rejected whole with `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` if
-   * `withAuthArg` overwrote the commitment, or `FEE_CONVERSION_INFO_IGNORED` if
-   * the executing account pays the fee natively and would ignore the
-   * declaration.
+   * is checked before anything is proven. miden-client validates the same thing
+   * during the batch's own preparation, so the point of checking here is *when*
+   * and how legibly: pushing a batch proves each transaction as it goes, a
+   * rejection found mid-push has already cost the proofs ahead of it, and
+   * upstream's own rejection carries no machine-readable code. The batch is
+   * rejected whole with `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` if
+   * `TransactionRequest.withAuthArg` replaced the commitment on a request that
+   * still declares conversion info, `FEE_CONVERSION_INFO_IGNORED` if the
+   * executing account pays the fee natively and would ignore the declaration,
+   * or `FEE_CONVERSION_INFO_UNCLASSIFIABLE` if it carries anything other than
+   * exactly one standard auth component. The account's code is read once for
+   * the whole batch, since a batch is single-account by contract.
    *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.

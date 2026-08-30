@@ -1087,6 +1087,12 @@ export interface TransactionsResource {
    * Submit a pre-built TransactionRequest. Note: WASM requires accountId
    * separately, so `account` is the first argument.
    *
+   * The request is yours, so paying protocol 0.16's verification fee is yours
+   * too — build it from {@link MidenClient.feeAwareTransactionRequestBuilder}
+   * rather than `new TransactionRequestBuilder()`, or it aborts with
+   * `ERR_FEE_CONVERSION_INFO_MISSING` on a chain that charges one. Raises the
+   * same fee error codes {@link executeRequest} does.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Optional transaction options (prover, confirmation, anchor).
@@ -1146,11 +1152,27 @@ export interface TransactionsResource {
    * group: awaiting other mutating calls on the same account between them can
    * interleave state — drive the chain as an uninterrupted sequence per account.
    *
+   * The request is yours, so paying protocol 0.16's verification fee is yours
+   * too — build it from {@link MidenClient.feeAwareTransactionRequestBuilder}
+   * rather than `new TransactionRequestBuilder()`, or it aborts with
+   * `ERR_FEE_CONVERSION_INFO_MISSING` on a chain that charges one.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Pass `anchor` to execute against a pinned reference block
    *   instead of the current sync height.
    * @returns A handle to the executed transaction, ready to prove.
+   * @throws With `code: "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN"` when
+   *   `TransactionRequest.withAuthArg` replaced the auth argument a declared fee
+   *   commitment lives in, leaving its preimage keyed by the old one.
+   * @throws With `code: "FEE_CONVERSION_INFO_UNCLASSIFIABLE"` when the request
+   *   declares fee conversion info and the account carries anything other than
+   *   exactly one standard auth component, which miden-client cannot validate
+   *   the declaration against.
+   *
+   *   Both codes arrive as an `error.code` property in the browser and as a
+   *   `"CODE: "` prefix on the message under the Node bindings, which cannot
+   *   attach a property. {@link preview} raises the same two.
    */
   executeRequest(
     account: AccountRef,
@@ -1198,19 +1220,27 @@ export interface TransactionsResource {
    * requests in hand and want to skip the high-level operation builders.
    *
    * Fee conversion info is never attached for you here, but the batch is
-   * checked before anything is proven, because batch submission does not reach
-   * the validation miden-client applies to a singly-submitted request. A batch
-   * is rejected whole, before any proving, when a request in it declares fee
-   * conversion info and either:
+   * checked before anything is proven. miden-client validates the same thing
+   * while preparing the batch, so what this adds is timing: pushing a batch
+   * proves each transaction as it goes, and a rejection discovered mid-push has
+   * already cost the proofs ahead of it. A batch is rejected whole, before any
+   * proving, when a request in it declares fee conversion info and either:
    *
-   * - `withAuthArg` was called after `withFeeConversionInfo`, overwriting the
-   *   auth argument the commitment lives in — error code
-   *   `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`; or
+   * - `TransactionRequest.withAuthArg` replaced the auth argument the
+   *   commitment lives in, leaving its preimage keyed by the old one — error
+   *   code `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`;
    * - the executing account's auth procedure pays the fee from the chain's
    *   native fee asset and discards auth arguments entirely, so the declared
    *   asset and rate would have no effect — error code
    *   `FEE_CONVERSION_INFO_IGNORED`. No-auth and network accounts are the two
-   *   that do this.
+   *   that do this; or
+   * - the account carries anything other than exactly one standard auth
+   *   component, so miden-client cannot validate the declaration against it —
+   *   error code `FEE_CONVERSION_INFO_UNCLASSIFIABLE`, the same code
+   *   {@link executeRequest} raises for it.
+   *
+   * The account's code is read once for the whole batch, not once per request,
+   * since a batch is single-account by contract.
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
@@ -1284,13 +1314,15 @@ export interface PswapResource {
    * through the same prove/submit path as the other transaction helpers.
    * Throws if no lineage is tracked for the order.
    *
-   * This is the one request-building path that cannot pay a verification fee:
-   * miden-client builds the request internally from a bare builder, so there is
-   * no seam at which to attach fee conversion info, and a finished
-   * `TransactionRequest` cannot be amended. On a chain whose
-   * `BlockHeader.verificationBaseFee()` is non-zero it aborts with
-   * `ERR_FEE_CONVERSION_INFO_MISSING`. Cancel by note with
-   * {@link TransactionsResource.pswapCancel} instead, which does pay.
+   * This is the one request-building path the SDK does not attach fee
+   * conversion info to: miden-client builds the request internally from a bare
+   * builder. On a chain whose `BlockHeader.verificationBaseFee()` is non-zero
+   * that leaves the outcome to the creator's auth component — a single-sig
+   * creator is rescued by miden-client's native injection and pays normally,
+   * while a multisig or guarded-multisig creator fails with
+   * `FeeConversionInfoRequired`. For those, cancel by note with
+   * {@link TransactionsResource.pswapCancel}, which commits conversion info
+   * against the creator before submitting.
    *
    * @param options - Order id and optional transaction options.
    */
@@ -1636,14 +1668,25 @@ export declare class MidenClient {
    * procedure, and `fee::pay_fee` requires the transaction's auth argument to
    * be `hash(CONVERSION_INFO || SALT)` with the preimage reachable in the
    * advice map. A request assembled from `new TransactionRequestBuilder()`
-   * carries neither and aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on a
-   * chain whose `BlockHeader.verificationBaseFee()` is non-zero. Use this
-   * instead whenever you build a request yourself. The `new*TransactionRequest`
-   * constructors attach it, and so does every `client.transactions` operation
-   * that builds its own request — but the ones that take a request from you
-   * (`submit`, `executeRequest`, `submitBatch`, and the `custom` operation of
-   * `batch` / `preview`) never attach it for you, so those are exactly the
-   * paths this method exists for.
+   * carries neither, and what happens then depends on the executing account:
+   *
+   * - **Single-sig** — miden-client injects native 1:1 conversion info for you
+   *   when the auth argument is empty, so the transaction pays and nothing
+   *   fails. Using this method changes only *which* asset and rate are
+   *   committed, and lets you set the salt.
+   * - **Multisig and guarded multisig** — miden-client refuses to guess, and
+   *   the transaction fails with `FeeConversionInfoRequired` naming the
+   *   component. This method is what makes those accounts work at all on a
+   *   fee-charging chain.
+   * - **A custom auth procedure that reads conversion info** — nothing injects
+   *   anything, and the transaction aborts in the VM with
+   *   `ERR_FEE_CONVERSION_INFO_MISSING`.
+   *
+   * The `new*TransactionRequest` constructors attach it, and so does every
+   * `client.transactions` operation that builds its own request — but the ones
+   * that take a request from you (`submit`, `executeRequest`, `submitBatch`,
+   * and the `custom` operation of `batch` / `preview`) never attach it for you,
+   * so those are exactly the paths this method exists for.
    *
    * `account` is the account that **executes** the request — the one whose
    * auth procedure pays the fee — not the recipient or a note's sender.
@@ -1656,10 +1699,10 @@ export declare class MidenClient {
    * byte-identical to one built from a bare builder.
    *
    * Calling `withAuthArg` on the result overwrites the auth argument the
-   * commitment lives in. The request still builds — the builder has no client
-   * to check against — but executing or submitting it is refused with error
-   * code `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`. The two are mutually
-   * exclusive; build one request per auth argument.
+   * commitment lives in, so `build()` refuses it with error code
+   * `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`. Build one request per auth
+   * argument, or call `withFeeConversionInfo` last — it writes the commitment
+   * and its preimage together, so it wins outright.
    *
    * @param account - The account that will execute the request.
    *

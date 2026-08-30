@@ -13,9 +13,26 @@
  * must take no borrow of the client's `AsyncCell`. The borrow is not
  * re-entrant — a `RefCell` on browser, where `panic = "abort"` turns a second
  * borrow into a trap, and a tokio `Mutex` on node, where it deadlocks — so a
- * borrowing method bound raw is a live crash, not a style problem. Since
- * `get_mut_inner` is the crate's only borrow accessor, the invariant is
- * decidable from the Rust sources, and that check runs below.
+ * borrowing method bound raw is a live crash, not a style problem.
+ *
+ * The crate borrows in three shapes, and the check below recognises all three:
+ * the `get_mut_inner` accessor, a direct `self.inner.lock()` /
+ * `self.inner.borrow()`, and a call to a helper that does one of those —
+ * `get_keystore` being the one with real reach. Transitive borrows are resolved
+ * to a fixed point, so a helper chain of any depth still counts. Recognising
+ * only `get_mut_inner` would leave `storeIdentifier`, `createCodeBuilder`,
+ * `accountReader` and every keystore-backed method invisible here, which is
+ * exactly the set a reader would most expect this check to cover.
+ *
+ * This is a textual scan, not a call graph, and it is deliberately not claimed
+ * to be complete. It follows `self.<helper>()` and nothing else, so a borrow
+ * reached through a free function taking `&WebClient`, a trait method, or an
+ * alias is invisible to it. Writing one of those and calling it from a
+ * SYNC_METHODS entry would defeat the check — the guard is against the ordinary
+ * mistake of adding or moving a method, not against a determined workaround.
+ * Closing that would take real Rust parsing; if it ever seems worth it, the
+ * cheaper move is forcing every borrow through the accessors and linting direct
+ * `self.inner` access outside lib.rs.
  */
 
 import { access, readFile, readdir } from "node:fs/promises";
@@ -171,7 +188,26 @@ function extractClassifications(sourceText, filePath) {
 // ---------------------------------------------------------------------------
 
 const rustSrcDir = path.join(rootDir, "src");
-const BORROW_ACCESSOR = "get_mut_inner";
+
+// A body that matches this borrows the client outright, with no helper in
+// between: the shared accessor, or a direct lock/borrow of the cell itself.
+// `self.inner` is only reachable from inside `impl WebClient`, so matching it
+// textually cannot collide with an unrelated field of the same name.
+const DIRECT_BORROW =
+  /get_mut_inner|self\s*\.\s*inner\s*\.\s*(?:lock|borrow(?:_mut)?)\s*\(/;
+
+// A borrow of one of WebClient's *other* `AsyncCell`s — `mock_rpc_api` and
+// `mock_note_transport_api` — rather than of the client. The panic is the same
+// shape if two callers overlap, but the resource is not, so these get their own
+// allowlist rather than being folded into the client invariant: a method here
+// cannot alias the client, and the mock methods that do this are called from
+// inside `_serializeWasmCall` and would deadlock if serialized again.
+const SIBLING_BORROW =
+  /self\s*\.\s*(?!inner\b)[a-z_][a-z0-9_]*\s*\.\s*(?:lock|borrow(?:_mut)?)\s*\(/i;
+
+// `self.foo(` / `self.foo()` — the shape a method uses to reach a helper on the
+// same impl. Used to propagate borrowing through helpers like `get_keystore`.
+const SELF_CALL = /self\s*\.\s*([a-z_][a-z0-9_]*)\s*\(/gi;
 
 async function collectRustFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -241,16 +277,110 @@ function extractBlock(source, from) {
   return null;
 }
 
+// Names every helper the body calls as `self.<name>(`.
+function selfCallees(body) {
+  const callees = new Set();
+  SELF_CALL.lastIndex = 0;
+  let match;
+  while ((match = SELF_CALL.exec(body)) !== null) callees.add(match[1]);
+  return callees;
+}
+
+// Whether the `fn` starting at `start` has a body, rather than being a bodyless
+// trait declaration (`fn foo(&self);`). Without this, `extractBlock` would hand
+// back whichever unrelated block came next and attribute its borrows to this
+// name. Nothing in the crate declares one today, so this is insurance against a
+// future one turning into a confusing CI failure.
+//
+// Depth-tracked rather than a plain `indexOf(";")` because a parameter can
+// legitimately contain one: `fn read(buf: [u8; 32])` has a semicolon inside
+// brackets, and skipping that function would silently stop checking it — the
+// under-reporting this whole check exists to prevent.
+function hasBody(source, start) {
+  let depth = 0;
+  for (let i = start; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === "(" || char === "[") depth += 1;
+    else if (char === ")" || char === "]") depth -= 1;
+    else if (depth === 0) {
+      if (char === "{") return true;
+      if (char === ";") return false;
+    }
+  }
+  return false;
+}
+
+// Every `fn name(…) { … }` in the crate, mapped to its bodies. A name can be
+// defined on more than one impl, so the value is a list and any borrowing
+// definition makes the name count as borrowing — the same over-report-rather-
+// than-under-report rule applied below.
+function collectFnBodies(sources) {
+  const bodies = new Map();
+  for (const source of sources) {
+    const fnPattern = /\bfn\s+([a-z_][a-z0-9_]*)\s*[(<]/gi;
+    let match;
+    while ((match = fnPattern.exec(source)) !== null) {
+      const from = match.index + match[0].length;
+      if (!hasBody(source, match.index)) continue;
+
+      const body = extractBlock(source, from);
+      if (body === null) continue;
+      if (!bodies.has(match[1])) bodies.set(match[1], []);
+      bodies.get(match[1]).push(body);
+    }
+  }
+  return bodies;
+}
+
+// The set of function names matching `directRegex`, directly or through any
+// depth of `self.<helper>()` calls. Iterated to a fixed point so a helper chain
+// is followed all the way down rather than one level, which is what makes
+// `get_keystore` — and anything later written in terms of it — count.
+function resolveBorrowingFns(fnBodies, directRegex) {
+  const borrowing = new Set();
+  for (const [name, bodies] of fnBodies) {
+    if (bodies.some((body) => directRegex.test(body))) borrowing.add(name);
+  }
+
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, bodies] of fnBodies) {
+      if (borrowing.has(name)) continue;
+      const reachesBorrower = bodies.some((body) =>
+        [...selfCallees(body)].some((callee) => borrowing.has(callee))
+      );
+      if (reachesBorrower) {
+        borrowing.add(name);
+        changed = true;
+      }
+    }
+  }
+
+  return borrowing;
+}
+
+function bodyBorrows(body, borrowingFns, directRegex) {
+  if (directRegex.test(body)) return true;
+  return [...selfCallees(body)].some((callee) => borrowingFns.has(callee));
+}
+
 // Maps every `#[js_export(js_name = "X")]` method to whether its body borrows
-// the client. Methods exported without an explicit `js_name` keep their
-// snake_case Rust name in JS and so can never match a classification entry,
-// which is camelCase throughout; they are skipped.
+// the client, and separately whether it borrows one of the sibling cells.
+// Methods exported without an explicit `js_name` keep their snake_case Rust
+// name in JS and so can never match a classification entry, which is camelCase
+// throughout; they are skipped.
 async function extractBorrowingExports() {
   const files = await collectRustFiles(rustSrcDir);
+  const sources = await Promise.all(
+    files.map((file) => readFile(file, "utf8"))
+  );
+  const fnBodies = collectFnBodies(sources);
+  const borrowingFns = resolveBorrowingFns(fnBodies, DIRECT_BORROW);
+  const siblingBorrowingFns = resolveBorrowingFns(fnBodies, SIBLING_BORROW);
   const borrows = new Map();
 
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
+  for (const [index, file] of files.entries()) {
+    const source = sources[index];
     const attrPattern = /#\[js_export\([^)]*js_name\s*=\s*"([^"]+)"[^)]*\)\]/g;
     let match;
     while ((match = attrPattern.exec(source)) !== null) {
@@ -262,10 +392,16 @@ async function extractBorrowingExports() {
       // the last one seen: over-reporting is a comment away from resolved,
       // while under-reporting is the panic this check exists to prevent.
       const seen = borrows.get(jsName);
-      const thisBorrows = body.includes(BORROW_ACCESSOR);
+      const thisBorrows = bodyBorrows(body, borrowingFns, DIRECT_BORROW);
+      const thisBorrowsSibling = bodyBorrows(
+        body,
+        siblingBorrowingFns,
+        SIBLING_BORROW
+      );
       if (seen?.borrows && !thisBorrows) continue;
       borrows.set(jsName, {
         borrows: thisBorrows,
+        borrowsSibling: thisBorrowsSibling,
         file: path.relative(rootDir, file),
       });
     }
@@ -413,6 +549,21 @@ const borrowingExports = await extractBorrowingExports();
 // reachable panic — say why in the same place.
 const allowedRawBorrowers = new Set(["lastAuthError"]);
 
+// The mock helpers borrow `mock_rpc_api` / `mock_note_transport_api`, never the
+// client, so they cannot cause the aliasing panic the list above guards. They
+// must stay raw-bound for a second reason: `syncState` calls
+// `serializeMockChain` and `serializeMockNoteTransportNode` from *inside*
+// `_serializeWasmCall` (js/index.js), so classifying them as WRITE/READ would
+// re-enter the same chain and deadlock the mock sync path. Their own overlap is
+// prevented by that outer serialization, not by anything here. Add to this list
+// only with the same two facts established.
+const allowedSiblingBorrowers = new Set([
+  "proveBlock",
+  "serializeMockChain",
+  "serializeMockNoteTransportNode",
+  "usesMockChain",
+]);
+
 const checkableSyncMethods = [...syncMethods].filter(
   (name) => !allowedRawBorrowers.has(name)
 );
@@ -440,13 +591,32 @@ const rawBorrowers = checkableSyncMethods
 
 if (rawBorrowers.length > 0) {
   console.error(
-    "The following SYNC_METHODS entries borrow the client (they call `get_mut_inner`), but SYNC_METHODS is bound raw by the Proxy and skips serialization:"
+    "The following SYNC_METHODS entries borrow the client — via `get_mut_inner`, a direct `self.inner.lock()`/`borrow()`, or a helper that does one of those — but SYNC_METHODS is bound raw by the Proxy and skips serialization:"
   );
   rawBorrowers
     .sort(([a], [b]) => a.localeCompare(b))
     .forEach(([name, info]) => console.error(`  - ${name} (${info.file})`));
   console.error(
-    "\nA raw-bound method that borrows can be polled while another call holds the borrow, which aborts with `already borrowed: BorrowMutError` on browser and deadlocks on node. Move each to WRITE_METHODS (it persists something) or READ_METHODS (it does not)."
+    "\nA raw-bound method that borrows can be polled while another call holds the borrow, which aborts with `already borrowed: BorrowMutError` on browser and deadlocks on node. Move each into WRITE_METHODS or READ_METHODS — both are serialized, and the choice between them is the store-mutation annotation described above SYNC_METHODS in js/index.js."
+  );
+  process.exit(1);
+}
+
+const rawSiblingBorrowers = checkableSyncMethods
+  .map((name) => [name, borrowingExports.get(name)])
+  .filter(
+    ([name, info]) => info.borrowsSibling && !allowedSiblingBorrowers.has(name)
+  );
+
+if (rawSiblingBorrowers.length > 0) {
+  console.error(
+    "The following SYNC_METHODS entries hold a borrow of one of WebClient's sibling `AsyncCell`s across an await, and SYNC_METHODS is bound raw by the Proxy:"
+  );
+  rawSiblingBorrowers
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([name, info]) => console.error(`  - ${name} (${info.file})`));
+  console.error(
+    "\nTwo overlapping calls abort with `already borrowed: BorrowMutError` on browser. Serialize the method by moving it into WRITE_METHODS or READ_METHODS, or — if it is called from inside `_serializeWasmCall` and so would deadlock if serialized again — add it to `allowedSiblingBorrowers` with that established."
   );
   process.exit(1);
 }

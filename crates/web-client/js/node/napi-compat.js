@@ -166,6 +166,9 @@ function patchSdkPrototypes(rawSdk) {
     [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
     [rawSdk.AdviceMap, ["get", "insert"]],
+    // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
+    // local chain, so the "no fee note" reading has to be the same on both bindings.
+    [rawSdk.ExecutedTransaction, ["feeNote"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
     // `authArg` is how a caller checks whether fee conversion info was attached,
     // so it has to read the same on both bindings.

@@ -39,6 +39,19 @@ export interface UsePreviewResult {
  * and `code: "STALE_CLIENT"` if the client is swapped mid-call. Both originate
  * here and are always properties.
  *
+ * The request is yours, so paying protocol 0.16's verification fee is too:
+ * build it from `client.feeAwareTransactionRequestBuilder(account)` rather than
+ * `new TransactionRequestBuilder()`, or it aborts with
+ * `ERR_FEE_CONVERSION_INFO_MISSING` wherever the chain charges one. A request
+ * that declares fee conversion info the account cannot honour rejects with
+ * `code: "FEE_CONVERSION_INFO_UNCLASSIFIABLE"` or
+ * `"FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN"`.
+ *
+ * Preview the request you will submit, not a rebuild of it. The fee commitment
+ * carries a salt drawn fresh on every build, and the multisig auth procedure
+ * uses that auth argument as the summary's replay guard — so a summary taken
+ * over one build does not authorize another.
+ *
  * Runs the transaction in the VM on the main thread — unlike
  * `useTransaction().execute`, this is not offloaded to the worker (matching the
  * client's unanchored `executeForSummary`), so it blocks the UI for the

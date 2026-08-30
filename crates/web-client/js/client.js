@@ -425,9 +425,11 @@ export class MidenClient {
    * chain, or for an account whose auth procedure cannot read conversion info,
    * the builder comes back untouched, so this is a safe drop-in. Calling
    * `withAuthArg` on the result overwrites the auth argument the commitment
-   * lives in and reintroduces the abort.
+   * lives in, so `build()` refuses it with error code
+   * `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`; call `withFeeConversionInfo`
+   * last if you need both.
    *
-   * @param {string | Account | AccountId} account - The executing account.
+   * @param {AccountRef} account - The executing account.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
    */
   async feeAwareTransactionRequestBuilder(account) {

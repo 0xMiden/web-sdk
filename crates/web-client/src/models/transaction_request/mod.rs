@@ -1,8 +1,8 @@
 use js_export_macro::js_export;
+use miden_client::Word as NativeWord;
 use miden_client::note::Note as NativeNote;
 use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
 use miden_client::vm::AdviceMap as NativeAdviceMap;
-use miden_client::Word as NativeWord;
 
 use crate::models::advice_map::AdviceMap;
 use crate::models::note::Note;
@@ -91,10 +91,18 @@ impl TransactionRequest {
     ///
     /// Deliberately NOT `withFeeConversionInfo`: that flags the request as declaring conversion
     /// info, which makes the client classify the account's auth component first and reject an
-    /// account whose component it cannot match. This attaches the word and nothing else.
+    /// account whose component it cannot match. This ADDS no declaration — it attaches the word and
+    /// nothing else. It does not remove one either: a request built by
+    /// `feeAwareTransactionRequestBuilder` already carries the declaration, and calling this on it
+    /// replaces the commitment the declaration refers to, which execution refuses with
+    /// `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`. The declaration-free path is this method on a
+    /// request built from a bare builder.
     ///
     /// Overwrites any existing auth arg. The commitment's preimage still has to be reachable, so
-    /// pair this with `extendAdviceMap`.
+    /// pair this with `extendAdviceMap`. To obtain both for a custom auth procedure, build a
+    /// throwaway request on a bare `TransactionRequestBuilder` with `withFeeConversionInfo`, then
+    /// read its `authArg()` and the preimage under that key from its `adviceMap()` — which is what
+    /// `AdviceMap.get` is for. This crate exposes no standalone commitment helper.
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&self, auth_arg: &Word) -> TransactionRequest {
         let native_auth_arg: NativeWord = auth_arg.into();

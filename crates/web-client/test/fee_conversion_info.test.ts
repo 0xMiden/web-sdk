@@ -116,6 +116,19 @@ test.describe("fee conversion info", () => {
         // A word unrelated to the commitment must NOT resolve, or the lookup
         // above would pass against any non-empty advice map.
         unrelatedKeyMisses: built.adviceMap().get(salt) == null,
+        // `get` is documented to return the stored VALUE, so assert the felts
+        // themselves: `load_conversion_info` reads the preimage as
+        // [SALT, CONVERSION_INFO], eight felts opening with the salt. Checking
+        // presence alone would pass against a binding returning any non-empty
+        // sequence for every key.
+        preimage:
+          authArg == null
+            ? null
+            : (built
+                .adviceMap()
+                .get(authArg)
+                ?.map((felt) => felt.asInt().toString()) ?? null),
+        saltFelts: salt.toFelts().map((felt) => felt.asInt().toString()),
       };
     });
 
@@ -124,17 +137,106 @@ test.describe("fee conversion info", () => {
     expect(result.authArgIsSalt).toBe(false);
     expect(result.preimageIsKeyedByCommitment).toBe(true);
     expect(result.unrelatedKeyMisses).toBe(true);
+    expect(result.preimage).toHaveLength(8);
+    expect(result.preimage?.slice(0, 4)).toEqual(result.saltFelts);
+    // The conversion-info half must not be all zeros — that is what an empty
+    // or defaulted preimage would look like.
+    expect(result.preimage?.slice(4)).not.toEqual(["0", "0", "0", "0"]);
   });
 
-  test("executing a request whose auth arg was overwritten is refused", async ({
+  test("building a request whose fee commitment was overwritten is refused", async ({
     run,
   }) => {
     // `withAuthArg` and `withFeeConversionInfo` write the same slot, so calling
     // the former second leaves the preimage keyed by the discarded commitment
-    // and `fee::pay_fee` aborts deep in the VM. The builder cannot catch it —
-    // it has no client — so the client refuses at execution instead. Runs on
-    // the zero-fee mock chain because a manual `withFeeConversionInfo` sets the
+    // and `fee::pay_fee` would abort deep in the VM. It cannot be caught later:
+    // the native builder clears its own fee-conversion declaration when the
+    // auth arg is replaced, so a request built that way arrives at the client
+    // declaring nothing and looking ordinary. `build()` is the last point at
+    // which the mistake is still visible, and it is refused there. Runs on the
+    // zero-fee mock chain because a manual `withFeeConversionInfo` sets the
     // declaration regardless of the chain's base fee.
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      const probe = await client.newMintTransactionRequest(
+        wallet.id(),
+        faucet.id(),
+        sdk.NoteType.Private,
+        BigInt(5)
+      );
+      const feeFaucetId = (await client.chainAnchorForRequest(probe))
+        .blockHeader()
+        .feeFaucetId();
+
+      const info = sdk.FeeConversionInfo.oneToOne(feeFaucetId);
+      const salt = sdk.Word.newFromFelts([
+        new sdk.Felt(11n),
+        new sdk.Felt(22n),
+        new sdk.Felt(33n),
+        new sdk.Felt(44n),
+      ]);
+      const collidingArg = sdk.Word.newFromFelts([
+        new sdk.Felt(99n),
+        new sdk.Felt(98n),
+        new sdk.Felt(97n),
+        new sdk.Felt(96n),
+      ]);
+
+      let message = "";
+      let code: string | undefined;
+      let threw = false;
+      try {
+        new sdk.TransactionRequestBuilder()
+          .withFeeConversionInfo(info, salt)
+          .withAuthArg(collidingArg)
+          .build();
+      } catch (err) {
+        threw = true;
+        message = String((err as Error)?.message ?? err);
+        code = (err as { code?: string })?.code;
+      }
+
+      // The reverse order is legitimate and must keep working:
+      // `withFeeConversionInfo` writes the commitment and its preimage
+      // together, so calling it last wins outright.
+      const reversed = new sdk.TransactionRequestBuilder()
+        .withAuthArg(collidingArg)
+        .withFeeConversionInfo(info, salt)
+        .build();
+      const reversedAuthArg = reversed.authArg();
+
+      return {
+        threw,
+        message,
+        code,
+        reversedCommitsConversionInfo:
+          reversedAuthArg != null &&
+          reversedAuthArg.toHex() !== collidingArg.toHex() &&
+          reversed.adviceMap().get(reversedAuthArg) != null,
+      };
+    });
+
+    expect(result.threw).toBe(true);
+    // The code is a `code` property on the browser binding and a message prefix
+    // on Node, since napi reserves `code` for its own Status enum.
+    expect(
+      result.code === "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN" ||
+        result.message.startsWith("FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN")
+    ).toBe(true);
+    expect(result.reversedCommitsConversionInfo).toBe(true);
+  });
+
+  test("executing a built request whose fee commitment was replaced is refused", async ({
+    run,
+  }) => {
+    // `TransactionRequest.withAuthArg` attaches a word to an already-built
+    // request WITHOUT touching its fee-conversion declaration — that is the
+    // point of it, since it exists for callers who computed a commitment
+    // themselves and must not be classified. Used on a request that already
+    // committed conversion info, it replaces the commitment and leaves the
+    // preimage keyed by the old word. That combination survives to the client,
+    // which refuses it before execution rather than letting `pay_fee` abort.
     const result = await run(async ({ client, sdk, helpers }) => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
 
@@ -164,8 +266,8 @@ test.describe("fee conversion info", () => {
 
       const request = new sdk.TransactionRequestBuilder()
         .withFeeConversionInfo(info, salt)
-        .withAuthArg(collidingArg)
-        .build();
+        .build()
+        .withAuthArg(collidingArg);
 
       // The overwrite is observable on the request itself: the auth arg is now
       // the colliding word, and nothing in the advice map is keyed by it.
@@ -196,8 +298,6 @@ test.describe("fee conversion info", () => {
     expect(result.authArgIsCollidingWord).toBe(true);
     expect(result.preimageMissesNewArg).toBe(true);
     expect(result.threw).toBe(true);
-    // The code is a `code` property on the browser binding and a message prefix
-    // on Node, since napi reserves `code` for its own Status enum.
     expect(
       result.code === "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN" ||
         result.message.startsWith("FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN")
@@ -217,8 +317,8 @@ test.describe("fee conversion info", () => {
       const { wallet, faucet } = await helpers.setupWalletAndFaucet();
 
       const request = await client.newMintTransactionRequest(
-        faucet.id(),
         wallet.id(),
+        faucet.id(),
         sdk.NoteType.Public,
         BigInt(7)
       );

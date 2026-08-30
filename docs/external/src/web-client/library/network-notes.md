@@ -72,6 +72,39 @@ const { note } = await client.transactions.createNetworkNote({
 note.attachments(); // [NetworkAccountTarget attachment, extra payload]
 ```
 
+## Who pays on a fee-charging chain
+
+**The sender funds the consumption, at note-creation time.** This is the part
+that surprises people: creating a network note is not free of the consuming
+transaction's cost.
+
+When the sender's transaction pays its own fee, `fee::pay_fee` first creates a
+`FEE_SPONSORSHIP` note for every network output note the transaction emits. Each
+one is priced by asking the *target* network account for its fee policy — the
+`NoteScriptFee` it allowlisted for that note's script, denominated in the
+target's `feeFaucetId` — and funded out of the sender's vault. The network
+account collects that sponsorship note when it consumes the note, and uses it to
+pay. Only a script the target priced at zero produces no sponsorship note.
+
+Two consequences worth planning for:
+
+- **The pricing is an FPI call into the target**, so the target account must be
+  provisioned as a foreign account on the sender's transaction. It is made for
+  every network output note before the price is known, so a zero-priced script
+  does not avoid it — anywhere the sender's auth procedure pays a fee at all,
+  the provisioning is required. `createNetworkNote` does not add it, so on a
+  fee-charging chain assemble the request yourself: take a builder from
+  `client.feeAwareTransactionRequestBuilder(sender)`, add the target with
+  `withForeignAccounts`, and submit it through `client.transactions.execute`.
+- **The sender's vault must cover the sponsorship**, not just its own fee. An
+  underfunded sender aborts rather than emitting an unsponsored note, and a
+  target whose fee policy is unset or unreachable aborts the same way.
+
+`NoteScript.feeSponsorship()` is the script those notes carry, and
+`AccountComponent.createNetworkAuthComponents` allowlists it at zero by default,
+so charging for it is a deliberate act —
+`new NoteScriptFee(NoteScript.feeSponsorship().root(), amount)`.
+
 ## Creating a network account
 
 A network account is a **public** account carrying the network-account auth

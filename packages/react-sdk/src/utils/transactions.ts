@@ -126,11 +126,18 @@ export function extractFullNote(txResult: unknown): Note | null {
     const executedTx = (
       txResult as { executedTransaction?: () => unknown }
     ).executedTransaction?.() as {
+      userOutputNotes?: () => Array<{ intoFull?: () => Note | null }>;
       outputNotes?: () => {
         notes?: () => Array<{ intoFull?: () => Note | null }>;
       };
     };
-    const notes = executedTx?.outputNotes?.().notes?.() ?? [];
+    // `userOutputNotes()` is `outputNotes()` with the kernel's fee note removed. Indexing the
+    // unsplit list is only correct on a fee-free chain: where the chain charges, index 0 can be
+    // the fee note, and this note's id is what gets relayed to the recipient.
+    const notes =
+      executedTx?.userOutputNotes?.() ??
+      executedTx?.outputNotes?.().notes?.() ??
+      [];
     const note = notes[0];
     return note?.intoFull?.() ?? null;
   } catch {

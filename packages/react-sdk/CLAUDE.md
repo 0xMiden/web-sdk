@@ -258,11 +258,20 @@ const blockHeader = await client.getBlockHeaderByNumber(100);
 ### Pay the Fee on a Hand-Built Request
 
 Hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
-`useMint`, `useCreateNetworkNote`, the PSWAP hooks) attach the chain's fee
-conversion info for you. The hooks that take a request *from you* —
-`useTransaction`, `usePreview`, `useChainAnchor` — cannot, so a request built
-from `new TransactionRequestBuilder()` aborts with
-`ERR_FEE_CONVERSION_INFO_MISSING` wherever the chain charges a verification fee.
+`useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
+`usePswapCancel`) attach the chain's fee conversion info for you. The hooks that
+take a request *from you* — `useTransaction`, `usePreview`, `useChainAnchor` —
+cannot. What a bare `new TransactionRequestBuilder()` then does on a
+fee-charging chain depends on the account: a single-sig account is rescued by
+miden-client, which injects native 1:1 conversion info when the auth argument is
+empty, while a multisig or guarded multisig fails with
+`FeeConversionInfoRequired`. So this matters most for multisig, for paying in a
+non-native asset, and for controlling the salt.
+
+`usePswapCancelByOrder` is the exception in the first group: it resolves the
+order and builds the request inside miden-client, so the SDK never attaches
+anything. Same split — single-sig is rescued, multisig is not, so cancel by note
+with `usePswapCancel` there.
 
 Ask the client for a builder that already carries it. The factory form of
 `request` hands you the client, so this needs no extra plumbing:
@@ -290,9 +299,10 @@ The argument is the account that **executes** the request — the one whose auth
 procedure pays — not the recipient. On a zero-fee chain, or for an account whose
 auth procedure cannot read conversion info (no-auth and network accounts pay
 natively), the builder comes back untouched, so it is a safe drop-in. Calling
-`withAuthArg` on it overwrites the auth argument the fee commitment lives in;
-executing that request is refused with error code
-`FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`.
+`withAuthArg` on it overwrites the auth argument the fee commitment lives in, so
+`build()` refuses it with error code
+`FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` — call `withFeeConversionInfo` last
+if you need both.
 
 ### Prevent Race Conditions
 ```tsx
