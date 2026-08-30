@@ -101,6 +101,39 @@ function freshState() {
   };
 }
 
+function inputNoteFingerprint(note: InputNoteRecord): string | null {
+  try {
+    const id = note.id()!.toString();
+    const consumed = note.isConsumed() ? "1" : "0";
+    const processing = note.isProcessing() ? "1" : "0";
+    const inclusionPending = note.isInclusionPending() ? "1" : "0";
+    return `${id}:${consumed}:${processing}:${inclusionPending}`;
+  } catch {
+    return null;
+  }
+}
+
+function sortedFingerprints(fingerprints: Iterable<string | null>): string[] {
+  const out: string[] = [];
+  for (const fp of fingerprints) {
+    if (fp) out.push(fp);
+  }
+  out.sort();
+  return out;
+}
+
+function sameSortedFingerprints(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((fp, i) => fp === b[i]);
+}
+
+function consumableNoteFingerprint(note: ConsumableNoteRecord): string | null {
+  try {
+    return inputNoteFingerprint(note.inputNoteRecord());
+  } catch {
+    return null;
+  }
+}
+
 export const useMidenStore = create<MidenStoreState>()((set) => ({
   ...freshState(),
 
@@ -161,30 +194,13 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
 
   setNotesIfChanged: (notes) =>
     set((state) => {
-      const safeId = (n: InputNoteRecord): string | null => {
-        try {
-          // `id()` is `NoteId | undefined`; `!` lets the `.toString()` of
-          // `undefined` fall into the catch (mirroring how every other id-
-          // bearing throw is handled here).
-          return n.id()!.toString();
-        } catch {
-          return null;
-        }
-      };
-      const prevIds = new Set<string>();
-      for (const n of state.notes) {
-        const id = safeId(n);
-        if (id) prevIds.add(id);
-      }
-      const newIds = new Set<string>();
-      for (const n of notes) {
-        const id = safeId(n);
-        if (id) newIds.add(id);
-      }
-      if (
-        prevIds.size === newIds.size &&
-        [...prevIds].every((id) => newIds.has(id))
-      ) {
+      const prevFingerprints = sortedFingerprints(
+        state.notes.map(inputNoteFingerprint)
+      );
+      const newFingerprints = sortedFingerprints(
+        notes.map(inputNoteFingerprint)
+      );
+      if (sameSortedFingerprints(prevFingerprints, newFingerprints)) {
         return {};
       }
       const now = Date.now();
@@ -208,28 +224,13 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
 
   setConsumableNotesIfChanged: (consumableNotes) =>
     set((state) => {
-      const safeId = (n: ConsumableNoteRecord): string | null => {
-        try {
-          // `id()` is `NoteId | undefined`; see `setNotesIfChanged`.
-          return n.inputNoteRecord().id()!.toString();
-        } catch {
-          return null;
-        }
-      };
-      const prevIds = new Set<string>();
-      for (const n of state.consumableNotes) {
-        const id = safeId(n);
-        if (id) prevIds.add(id);
-      }
-      const newIds = new Set<string>();
-      for (const n of consumableNotes) {
-        const id = safeId(n);
-        if (id) newIds.add(id);
-      }
-      if (
-        prevIds.size === newIds.size &&
-        [...prevIds].every((id) => newIds.has(id))
-      ) {
+      const prevFingerprints = sortedFingerprints(
+        state.consumableNotes.map(consumableNoteFingerprint)
+      );
+      const newFingerprints = sortedFingerprints(
+        consumableNotes.map(consumableNoteFingerprint)
+      );
+      if (sameSortedFingerprints(prevFingerprints, newFingerprints)) {
         return {};
       }
       return { consumableNotes };
