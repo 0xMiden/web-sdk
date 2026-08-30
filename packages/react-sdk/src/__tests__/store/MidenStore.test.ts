@@ -393,7 +393,7 @@ describe("MidenStore", () => {
       expect(useMidenStore.getState().notes.length).toBe(2);
     });
 
-    it("should skip update when note IDs are the same", () => {
+    it("should skip update when note IDs and status are the same", () => {
       const note1 = createMockInputNoteRecord("0xnote1");
       const note2 = createMockInputNoteRecord("0xnote2");
 
@@ -418,6 +418,17 @@ describe("MidenStore", () => {
 
       expect(useMidenStore.getState().noteFirstSeen.has("0xnote2")).toBe(true);
     });
+
+    it("should update notes when a note's status changes but its ID is unchanged", () => {
+      const pending = createMockInputNoteRecord("0xnote1", false);
+      useMidenStore.getState().setNotes([pending] as any);
+
+      const consumed = createMockInputNoteRecord("0xnote1", true);
+      useMidenStore.getState().setNotesIfChanged([consumed] as any);
+
+      const stored = useMidenStore.getState().notes[0] as any;
+      expect(stored.isConsumed()).toBe(true);
+    });
   });
 
   describe("setConsumableNotesIfChanged", () => {
@@ -431,7 +442,7 @@ describe("MidenStore", () => {
       expect(useMidenStore.getState().consumableNotes.length).toBe(2);
     });
 
-    it("should skip update when consumable note IDs are the same", () => {
+    it("should skip update when consumable note IDs and status are the same", () => {
       const cn1 = createMockConsumableNoteRecord("0xcn1");
       useMidenStore.getState().setConsumableNotes([cn1] as any);
       const firstRef = useMidenStore.getState().consumableNotes;
@@ -440,6 +451,17 @@ describe("MidenStore", () => {
       useMidenStore.getState().setConsumableNotesIfChanged([cn1b] as any);
 
       expect(useMidenStore.getState().consumableNotes).toBe(firstRef);
+    });
+
+    it("should update consumable notes when the underlying note status changes", () => {
+      const pending = createMockConsumableNoteRecord("0xcn1", false);
+      useMidenStore.getState().setConsumableNotes([pending] as any);
+
+      const consumed = createMockConsumableNoteRecord("0xcn1", true);
+      useMidenStore.getState().setConsumableNotesIfChanged([consumed] as any);
+
+      const stored = useMidenStore.getState().consumableNotes[0] as any;
+      expect(stored.inputNoteRecord().isConsumed()).toBe(true);
     });
 
     it("setNotes skips notes whose id() throws (catch arm)", () => {

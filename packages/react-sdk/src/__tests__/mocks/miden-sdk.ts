@@ -114,14 +114,18 @@ export const createMockInputNoteRecord = (
     isAuthenticated: vi.fn(() => true),
     isConsumed: vi.fn(() => consumed),
     isProcessing: vi.fn(() => false),
+    isInclusionPending: vi.fn(() => false),
     toNote: vi.fn(() => note),
     free: vi.fn(),
   };
 };
 
 // Mock ConsumableNoteRecord
-export const createMockConsumableNoteRecord = (noteId: string = "0xnote1") => ({
-  inputNoteRecord: vi.fn(() => createMockInputNoteRecord(noteId)),
+export const createMockConsumableNoteRecord = (
+  noteId: string = "0xnote1",
+  consumed: boolean = false
+) => ({
+  inputNoteRecord: vi.fn(() => createMockInputNoteRecord(noteId, consumed)),
   noteConsumability: vi.fn(() => [
     {
       accountId: vi.fn(() => createMockAccountId()),
