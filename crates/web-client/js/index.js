@@ -83,7 +83,6 @@ const SYNC_METHODS = new Set([
   "proveBlock",
   "serializeMockChain",
   "serializeMockNoteTransportNode",
-  "setDebugMode",
   "storeIdentifier",
   "usesMockChain",
 ]);
