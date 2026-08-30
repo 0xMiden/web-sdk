@@ -249,6 +249,16 @@ export interface ClientOptions {
    */
   useWorker?: boolean;
   /**
+   * Ceiling for worker-bridged keystore callbacks (`getKey` / `insertKey` /
+   * `sign`). Only applies when `useWorker` is enabled.
+   *
+   * - omit: 30s for `getKey`/`insertKey`, **no timeout** for `sign` (human
+   *   approval / hardware wallets must not hit a fixed 30s ceiling)
+   * - `number`: apply that ceiling to every callback
+   * - `null`: no timeout for any callback
+   */
+  callbackTimeoutMs?: number | null;
+  /**
    * Observation sink. Called synchronously once per client operation with the
    * operation name, outcome, and duration.
    *

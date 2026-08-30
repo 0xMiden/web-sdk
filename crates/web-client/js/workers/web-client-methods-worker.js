@@ -1,5 +1,9 @@
 import loadWasm from "../../dist/wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "../constants.js";
+import {
+  deserializeCallbackFailure,
+  resolveCallbackTimeoutMs,
+} from "../callback-bridge.js";
 
 let wasmModule = null;
 
@@ -92,66 +96,63 @@ let processing = false; // Flag to ensure one message is processed at a time.
 // Track pending callback requests
 let pendingCallbacks = new Map();
 
-// Timeout for pending callbacks (30 seconds)
-const CALLBACK_TIMEOUT_MS = 30000;
+// Optional ceiling from ClientOptions.callbackTimeoutMs (undefined = defaults).
+let configuredCallbackTimeoutMs = undefined;
+
+/**
+ * @param {string} callbackType
+ * @param {function} resolve
+ * @param {function} reject
+ * @returns {string} requestId
+ */
+function enqueueCallback(callbackType, resolve, reject, postArgs) {
+  const requestId = `${callbackType}-${Date.now()}-${Math.random()}`;
+  const timeoutMs = resolveCallbackTimeoutMs(
+    configuredCallbackTimeoutMs,
+    callbackType
+  );
+  let timeoutId;
+  if (timeoutMs != null) {
+    timeoutId = setTimeout(() => {
+      if (pendingCallbacks.has(requestId)) {
+        pendingCallbacks.delete(requestId);
+        reject(
+          new Error(`Callback ${requestId} timed out after ${timeoutMs}ms`)
+        );
+      }
+    }, timeoutMs);
+  }
+  pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
+  self.postMessage({
+    action: WorkerAction.EXECUTE_CALLBACK,
+    callbackType,
+    args: postArgs,
+    requestId,
+  });
+  return requestId;
+}
 
 // Define proxy functions for callbacks that communicate with main thread
 const callbackProxies = {
   getKey: async (pubKey) => {
     return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.GET_KEY}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.GET_KEY,
-        args: [pubKey],
-        requestId,
-      });
+      enqueueCallback(CallbackType.GET_KEY, resolve, reject, [pubKey]);
     });
   },
   insertKey: async (pubKey, secretKey) => {
     return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.INSERT_KEY}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.INSERT_KEY,
-        args: [pubKey, secretKey],
-        requestId,
-      });
+      enqueueCallback(CallbackType.INSERT_KEY, resolve, reject, [
+        pubKey,
+        secretKey,
+      ]);
     });
   },
   sign: async (pubKey, signingInputs) => {
     return new Promise((resolve, reject) => {
-      const requestId = `${CallbackType.SIGN}-${Date.now()}-${Math.random()}`;
-      const timeoutId = setTimeout(() => {
-        if (pendingCallbacks.has(requestId)) {
-          pendingCallbacks.delete(requestId);
-          reject(new Error(`Callback ${requestId} timed out`));
-        }
-      }, CALLBACK_TIMEOUT_MS);
-      pendingCallbacks.set(requestId, { resolve, reject, timeoutId });
-
-      self.postMessage({
-        action: WorkerAction.EXECUTE_CALLBACK,
-        callbackType: CallbackType.SIGN,
-        args: [pubKey, signingInputs],
-        requestId,
-      });
+      enqueueCallback(CallbackType.SIGN, resolve, reject, [
+        pubKey,
+        signingInputs,
+      ]);
     });
   },
 };
@@ -431,7 +432,9 @@ async function processMessage(event) {
         hasSignCb,
         logLevel,
         numThreads,
+        callbackTimeoutMs,
       ] = args;
+      configuredCallbackTimeoutMs = callbackTimeoutMs;
       const wasm = await getWasmOrThrow();
 
       if (logLevel) {
@@ -557,15 +560,30 @@ self.onmessage = (event) => {
     event.data.callbackRequestId &&
     pendingCallbacks.has(event.data.callbackRequestId)
   ) {
-    const { callbackRequestId, callbackResult, callbackError } = event.data;
+    const { callbackRequestId, callbackResult, callbackOk, callbackError } =
+      event.data;
     const { resolve, reject, timeoutId } =
       pendingCallbacks.get(callbackRequestId);
-    clearTimeout(timeoutId);
+    if (timeoutId != null) {
+      clearTimeout(timeoutId);
+    }
     pendingCallbacks.delete(callbackRequestId);
-    if (!callbackError) {
+    // Explicit discriminator — never infer failure from a truthy message
+    // string (empty messages / string throws / {code} objects would look
+    // like success under the old protocol).
+    if (callbackOk === true) {
+      resolve(callbackResult);
+    } else if (callbackOk === false) {
+      reject(deserializeCallbackFailure(callbackError));
+    } else if (!callbackError) {
+      // Legacy success shape (pre-discriminator).
       resolve(callbackResult);
     } else {
-      reject(new Error(callbackError));
+      reject(
+        typeof callbackError === "string"
+          ? new Error(callbackError)
+          : deserializeCallbackFailure(callbackError)
+      );
     }
     return;
   }
