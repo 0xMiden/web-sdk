@@ -17,7 +17,7 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let result = client
-            .get_input_notes(filter.into())
+            .get_input_notes(filter.try_into()?)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get input notes"))?;
         Ok(result.into_iter().map(Into::into).collect())
@@ -47,7 +47,7 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let notes = client
-            .get_output_notes(filter.into())
+            .get_output_notes(filter.try_into()?)
             .await
             .map_err(|err| js_error_with_context(err, "failed to get output notes"))?;
         Ok(notes.into_iter().map(Into::into).collect())
