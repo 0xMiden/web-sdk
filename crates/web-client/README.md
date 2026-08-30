@@ -346,7 +346,7 @@ pnpm check:wasm-types
 
 ## Usage
 
-The following are just a few simple examples to get started. For more details, see the [API Reference](../../docs/typedoc/web-client/README.md).
+The following are just a few simple examples to get started. For more details, see the [Web Client docs](https://docs.miden.xyz/builder/tools/clients/web-client/).
 
 ### Quick Start
 
