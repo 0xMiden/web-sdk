@@ -993,7 +993,7 @@ async fn standard_auth_components(
 /// to validate.
 ///
 /// Takes the permissive branch when the account is not in the store, so that the account-not-found
-/// error surfaces on its own rather than being pre-empted by a fee decision made about an account
+/// error surfaces on its own rather than being preempted by a fee decision made about an account
 /// nothing knows anything about. That is the wrong answer for an account tracked only by whoever
 /// the request is serialized to, but a request built against an untracked account cannot be
 /// executed locally, and the alternative — declaring nothing — is equally wrong for the multisig
