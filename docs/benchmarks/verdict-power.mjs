@@ -3,9 +3,10 @@
 //   node docs/benchmarks/verdict-power.mjs
 //
 // Models each repetition's paired delta as normal about the true effect, scaled
-// so the aggregate carries the measured 1.79% sd, then applies the renderer's
-// HEADLINE verdict rule: magnitude at displayed precision, no contradicting
-// sign, a positive majority, and the six-repetition floor. Kept in the repo
+// so the aggregate carries the measured sd from the profile's `estimatorSpread`,
+// then applies the renderer's HEADLINE verdict rule: magnitude at displayed
+// precision, no contradicting sign, a positive majority, and the repetition
+// floor the profile's `calibratedReps` sets. Kept in the repo
 // because the tables in calibration.md would otherwise be unreproducible claims
 // about a rule that lives in code and changes.
 //
@@ -36,11 +37,20 @@
 // If the renderer's rule changes, change `verdict` below to match and re-run —
 // the tables in calibration.md are only as current as the last run.
 
-const THRESHOLD_PCT = 5.4;
-// σ of the reported figure, measured over six calibration runs at the default
-// six repetitions (calibration.md, "Why the estimator is what it is").
-const SIGMA_AGGREGATE = 1.79;
-const CALIBRATED_REPS = 6;
+// The rule's three numbers are READ from the profile, not copied from it. Each
+// used to be a literal here as well as in the renderer, so a re-calibration
+// silently left this simulator modelling the OLD rule while calibration.md
+// presented its tables as the current one. The profile is plain data with no
+// dependencies, so importing it costs this script nothing and makes the pinning
+// real rather than asserted.
+import { DEFAULT_PROFILE } from "../../.github/scripts/bench-profile.mjs";
+
+const THRESHOLD_PCT = DEFAULT_PROFILE.thresholdPct;
+// σ of the reported figure, measured over the profile's `estimatorSpread` runs
+// at the calibrated repetition count (calibration.md, "Why the estimator is what
+// it is").
+const SIGMA_AGGREGATE = DEFAULT_PROFILE.estimatorSpread.sdPct;
+const CALIBRATED_REPS = DEFAULT_PROFILE.calibratedReps;
 // The per-repetition spread is the fixed quantity — it is a property of the
 // machine, not of how many repetitions you choose to average. Deriving it once
 // here, rather than from each row's own `reps`, is the difference between
@@ -49,7 +59,9 @@ const CALIBRATED_REPS = 6;
 // precision at all, and produced a "24 repetitions" row claiming a true 8%
 // regression would be called significant 0.8% of the time.
 const SIGMA_REP = SIGMA_AGGREGATE * Math.sqrt(CALIBRATED_REPS);
-// Pinned to the renderer's floor, which is pinned to CALIBRATED_REPS.
+// The renderer derives its repetition floor from `calibratedReps` the same way
+// (`minRepsForSignTest` in .github/scripts/render-bench-comment.mjs), so both
+// now follow the profile rather than agreeing by hand.
 const MIN_REPS_FOR_SIGN_TEST = CALIBRATED_REPS;
 const TRIALS = 400000;
 
