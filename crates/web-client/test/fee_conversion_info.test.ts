@@ -204,6 +204,46 @@ test.describe("fee conversion info", () => {
     ).toBe(true);
   });
 
+  test("feeNote and userOutputNotes split the kernel's fee note off", async ({
+    run,
+  }) => {
+    // STRUCTURAL, like the rest of this file: the mock chain builds blocks with
+    // verification_base_fee = 0, so no fee note exists and `feeNote()` must be undefined.
+    // What that DOES prove is the half that regressed in practice -- that the split never
+    // drops a user note -- and it pins the invariant the wallet now depends on: index 0 of
+    // `userOutputNotes()` is the author's note, whatever order the kernel used. The
+    // fee-present case needs a charging chain and is covered wallet-side.
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
+
+      const request = await client.newMintTransactionRequest(
+        faucet.id(),
+        wallet.id(),
+        sdk.NoteType.Public,
+        BigInt(7)
+      );
+      const executed = (
+        await client.executeTransaction(faucet.id(), request)
+      ).executedTransaction();
+
+      const all = executed.outputNotes().notes();
+      const user = executed.userOutputNotes();
+      return {
+        allIds: all.map((n) => n.id().toString()),
+        userIds: user.map((n) => n.id().toString()),
+        // Compared with `== null` so the napi (`null`) and wasm-bindgen (`undefined`)
+        // bindings agree.
+        hasFeeNote: executed.feeNote() != null,
+      };
+    });
+
+    expect(result.hasFeeNote).toBe(false);
+    // No fee note on this chain, so the split is the identity -- and critically it did not
+    // swallow the mint's own output note, which is the failure a bad predicate produces.
+    expect(result.userIds).toEqual(result.allIds);
+    expect(result.userIds.length).toBeGreaterThan(0);
+  });
+
   test("an untouched builder declares no auth arg", async ({ run }) => {
     // Without an explicit call the builder must not invent an auth arg, or a
     // caller committing its own (the multisig flow, where the salt is the
