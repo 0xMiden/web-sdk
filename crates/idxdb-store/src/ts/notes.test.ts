@@ -79,6 +79,9 @@ async function insertNote(
     scriptRoot?: string;
     nullifier?: string;
     detailsCommitment?: string;
+    // `InputNoteRecord::id()` is an Option, so pass `undefined` to model a note whose id is
+    // not yet known. The label is carried by `serializedCreatedAt` either way.
+    noteId?: string;
   } = {}
 ) {
   await upsertInputNote(
@@ -86,7 +89,7 @@ async function insertNote(
     // The details commitment is the primary key. Default it to the noteId so
     // each distinct note in these tests lands in its own row.
     opts.detailsCommitment ?? noteId,
-    noteId,
+    "noteId" in opts ? opts.noteId : noteId,
     DUMMY_BYTES,
     DUMMY_BYTES,
     DUMMY_BYTES,
@@ -115,14 +118,24 @@ interface Cursor {
  * handed rather than off the wire.
  */
 async function cursorFor(dbId: string, noteId: string): Promise<Cursor> {
+  // Found by the label rather than by `noteId`, which is optional and may be unset, and
+  // rather than by either ordering key, so a fixture is free to make noteId and
+  // detailsCommitment disagree.
   const row = await getDatabase(dbId)
-    .inputNotes.where("noteId")
-    .equals(noteId)
+    .inputNotes.filter((n) => n.serializedCreatedAt === noteId)
     .first();
   if (!row) throw new Error(`no note ${noteId} in the store`);
+  // Every returned row must carry a consumption position, so it can always seed the next
+  // cursor. If one cannot, the query returned a note the SQLite store excludes and the
+  // client's InputNoteReader would reject — fail loudly rather than page from a null key.
+  if (row.consumedBlockHeight == null || row.consumedTxOrder == null) {
+    throw new Error(
+      `note ${noteId} was returned without a consumption position`
+    );
+  }
   return {
-    blockHeight: row.consumedBlockHeight!,
-    txOrder: row.consumedTxOrder!,
+    blockHeight: row.consumedBlockHeight,
+    txOrder: row.consumedTxOrder,
     detailsCommitment: row.detailsCommitment,
   };
 }
@@ -155,10 +168,14 @@ async function collectAllNoteIds(
       cursor?.detailsCommitment
     );
     if (!result || result.length === 0) break;
+    // Exactly one row per call — the store's contract is "the note after the cursor".
+    expect(result).toHaveLength(1);
     // createdAt holds the noteId (see insertNote)
     const noteId = result[0].createdAt;
     ids.push(noteId);
     cursor = await cursorFor(dbId, noteId);
+
+    if (ids.length > 100) throw new Error("paging did not terminate");
   }
 
   return ids;
@@ -228,6 +245,31 @@ describe("getInputNoteAfter ordering", () => {
     expect(ids).toEqual(["note-z", "note-a"]);
   });
 
+  it("returns consumed notes that have no noteId", async () => {
+    const dbId = await openTestDb();
+
+    // `noteId` is unset whenever the record carries no metadata, which is the normal shape of
+    // an externally-consumed note. It is not part of the ordering key, so it must not affect
+    // whether a row is paged — and both notes here are otherwise identical in state. Keying
+    // the consumption index on `detailsCommitment`, which is required, is what admits them:
+    // IndexedDB omits a record missing any component of a compound index, so an index keyed
+    // on the optional `noteId` dropped exactly these rows.
+    await insertNote(dbId, "note-with-id", {
+      consumedBlockHeight: 1,
+      consumedTxOrder: 0,
+      detailsCommitment: "0xaa",
+    });
+    await insertNote(dbId, "note-without-id", {
+      consumedBlockHeight: 1,
+      consumedTxOrder: 1,
+      detailsCommitment: "0xbb",
+      noteId: undefined,
+    });
+
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
+    expect(ids).toEqual(["note-with-id", "note-without-id"]);
+  });
+
   it("leaves out notes that carry no tx order", async () => {
     const dbId = await openTestDb();
 
@@ -243,6 +285,27 @@ describe("getInputNoteAfter ordering", () => {
 
     const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
     expect(ids).toEqual(["note-consumed"]);
+  });
+
+  it("never pages a row that has a tx order but no block height", async () => {
+    const dbId = await openTestDb();
+
+    // The mirror of the case above: a tx order present but the height absent. It is still a
+    // missing component of the compound index, so the row is absent from the index entirely.
+    // Hence the low detailsCommitment — were the row reachable at all it would sort first and
+    // be returned ahead of the positioned note.
+    await insertNote(dbId, "note-tx-order-no-height", {
+      consumedTxOrder: 0,
+      detailsCommitment: "0x0000",
+    });
+    await insertNote(dbId, "note-positioned", {
+      consumedBlockHeight: 5,
+      consumedTxOrder: 0,
+      detailsCommitment: "0xffff",
+    });
+
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
+    expect(ids).toEqual(["note-positioned"]);
   });
 });
 
@@ -430,6 +493,36 @@ describe("getInputNoteAfter block range filtering", () => {
 
     const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, "0xalice", 3, 5);
     expect(ids).toEqual(["alice-b3", "alice-b5"]);
+  });
+
+  it("keeps blockStart when the cursor is below it", async () => {
+    const dbId = await openTestDb();
+
+    await insertNote(dbId, "note-b5", {
+      consumedBlockHeight: 5,
+      consumedTxOrder: 0,
+      consumerAccountId: "0xalice",
+    });
+    await insertNote(dbId, "note-b20", {
+      consumedBlockHeight: 20,
+      consumedTxOrder: 0,
+      consumerAccountId: "0xalice",
+    });
+
+    // A cursor below blockStart is the looser of the two lower bounds. The seek starts from
+    // the cursor, so blockStart has to keep applying as a predicate — dropping it here would
+    // return the block-5 note, below the requested range.
+    const result = await getInputNoteAfter(
+      dbId,
+      CONSUMED_STATES,
+      "0xalice",
+      10,
+      undefined,
+      1,
+      0,
+      "0x00"
+    );
+    expect(result?.map((n) => n.createdAt)).toEqual(["note-b20"]);
   });
 });
 
