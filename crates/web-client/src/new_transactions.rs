@@ -482,10 +482,12 @@ impl WebClient {
         // rather than once per request.
         let mut any_declares_fee_conversion_info = false;
         for native_req in &native_reqs {
-            if native_req.declares_fee_conversion_info() {
-                ensure_fee_conversion_info_auth_arg_intact(native_req)?;
-                any_declares_fee_conversion_info = true;
-            }
+            // Unconditional, for the reason spelled out in
+            // `ensure_fee_conversion_info_classifiable`: a request whose commitment was
+            // replaced reports `declares_fee_conversion_info() == false`,
+            // so gating this on that flag skips the request that most needs it.
+            ensure_fee_conversion_info_auth_arg_intact(native_req)?;
+            any_declares_fee_conversion_info |= native_req.declares_fee_conversion_info();
         }
         if any_declares_fee_conversion_info {
             ensure_batch_fee_conversion_info_supported(client, native_account_id).await?;
@@ -1080,9 +1082,11 @@ fn pays_fee_natively(components: &[AccountComponentInterface]) -> bool {
 /// that declares conversion info and cannot honour it is a mistake worth surfacing at the
 /// development height rather than on the first chain that charges.
 ///
-/// Checked at submission rather than in the builder because the advice map can legitimately be
-/// extended after the request is built — the multisig flow attaches collected signatures that way
-/// — so only here is the map final.
+/// Checked at the execution and submission entry points rather than in the builder because the
+/// advice map can legitimately be extended after the request is built — the multisig flow attaches
+/// collected signatures that way — so only here is the map final. Every path that hands a request
+/// to the kernel checks it: a replaced auth arg that slips through aborts deep inside execution
+/// with a kernel error instead of being refused by name.
 fn ensure_fee_conversion_info_auth_arg_intact(
     request: &NativeTransactionRequest,
 ) -> Result<(), JsErr> {
@@ -1090,13 +1094,13 @@ fn ensure_fee_conversion_info_auth_arg_intact(
         && request.advice_map().get(commitment).is_none()
     {
         return Err(from_str_err_with_code(
-            "this request declares fee conversion info, but its advice map has no preimage for \
-             the auth argument the commitment lives in. Calling `TransactionRequest.withAuthArg` \
-             on a request that committed fee conversion info replaces that commitment and leaves \
-             the preimage keyed by the old one, which aborts in the VM with \
-             ERR_FEE_CONVERSION_INFO_MISSING. The two are mutually exclusive — attach a \
-             self-computed commitment to a request that declares none, or build one request per \
-             auth argument.",
+            "this request carries an auth argument with no preimage in its advice map. An auth \
+             argument is a commitment and the kernel reads it back through that preimage, so a \
+             commitment with none aborts in the VM with ERR_FEE_CONVERSION_INFO_MISSING. Calling \
+             `TransactionRequest.withAuthArg` on a request that committed fee conversion info \
+             does exactly that: it replaces the commitment and leaves the preimage keyed by the \
+             old one. The two are mutually exclusive — attach a self-computed commitment together \
+             with its preimage, or build one request per auth argument.",
             "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN",
         ));
     }
@@ -1230,11 +1234,15 @@ async fn ensure_fee_conversion_info_classifiable(
     account_id: NativeAccountId,
     request: &NativeTransactionRequest,
 ) -> Result<(), JsErr> {
+    // Above the early return, not below it: `TransactionRequest::with_auth_arg` sets
+    // `declares_fee_conversion_info` back to false, so a request whose commitment was replaced —
+    // the exact mistake this refuses — returns false here. Gating the check on that flag made it
+    // unreachable for the one case it exists to catch.
+    ensure_fee_conversion_info_auth_arg_intact(request)?;
+
     if !request.declares_fee_conversion_info() {
         return Ok(());
     }
-
-    ensure_fee_conversion_info_auth_arg_intact(request)?;
 
     let Some(components) = standard_auth_components(client, account_id).await? else {
         // Not in the store: nothing can execute against it, and upstream loads the account before
