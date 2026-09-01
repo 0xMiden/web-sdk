@@ -231,7 +231,7 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
 // ensureClientVersion — stored version is newer than requested (downgrade path)
 // ============================================================
 describe("ensureClientVersion: stored version is newer (downgrade path)", () => {
-  it("does not nuke on downgrade — updates persisted version only", async () => {
+  it("resets the store when downgrading across major.minor (2.0.0 → 1.9.0)", async () => {
     const name = uniqueDbName();
     await openDatabase(name, "2.0.0");
     const db1 = getDatabase(name);
@@ -242,13 +242,29 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     });
     db1.dexie.close();
 
-    // Open with an older version (1.9.0 < 2.0.0)
     const mdb2 = trackMidenDb(new MidenDatabase(name));
     await mdb2.open("1.9.0");
 
-    // The non-gt branch just persists the new version without nuking
     const sentinel = await mdb2.settings.get("sentinel");
-    expect(sentinel).toBeDefined();
+    expect(sentinel).toBeUndefined();
+  });
+
+  it("resets the store when downgrading from a prerelease to an older stable (0.16.0-rc.3 → 0.15.9)", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.16.0-rc.3");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("rc-data"),
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    await mdb2.open("0.15.9");
+
+    const sentinel = await mdb2.settings.get("sentinel");
+    expect(sentinel).toBeUndefined();
   });
 });
 

@@ -260,7 +260,9 @@ export class MidenDatabase {
             const parsedStored = semver.parse(validStored);
             const sameMajorMinor = parsedCurrent?.major === parsedStored?.major &&
                 parsedCurrent?.minor === parsedStored?.minor;
-            if (sameMajorMinor || !semver.gt(clientVersion, storedVersion)) {
+            // Keep the store only for patch upgrades within the same major.minor line.
+            // Downgrades (e.g. 0.16.0-rc.x → 0.15.9) and major/minor bumps reset.
+            if (sameMajorMinor && semver.gt(clientVersion, storedVersion)) {
                 await this.persistClientVersion(clientVersion);
                 return;
             }
