@@ -1,0 +1,317 @@
+name: Inject linked protocol PR
+description: >
+  If the current PR's body contains a "Protocol PR: #N" marker, append a
+  [patch.crates-io] block to Cargo.toml that points the protocol crates at
+  the linked PR's head. Runs only on `pull_request` events (silent no-op on
+  `push`, and when the marker is absent). Fails fast and loudly if the
+  linked PR can't be read, or is closed without merge.
+
+  Marker syntax (anywhere in the body, first match wins):
+    Protocol PR: #3786
+    Protocol PR: 0xMiden/protocol#3786          (cross-repo / forks)
+
+  Why [patch.crates-io] and not the dep-line rewrite that
+  .github/actions/inject-linked-client-pr performs: the protocol crates are
+  NOT direct dependencies of this workspace. They arrive transitively
+  through miden-client, so there is no dep line here to rewrite. A
+  [patch.crates-io] block is workspace-wide, which is also what makes it
+  correct — it redirects the protocol crates that a git-pinned miden-client
+  (from a "Client PR:" marker) compiles against too, so both halves of a
+  stacked change build against one miden-standards.
+
+  Patched crates, all from the single protocol repo: miden-protocol,
+  miden-standards, miden-tx, miden-tx-batch, miden-block-prover, miden-agglayer.
+
+  Runs after inject-linked-client-pr wherever both are used, and composes
+  with it: that action rewrites the miden-client dep lines, this one appends
+  a patch table, and neither touches the other's region. Re-running is a
+  no-op — the injected region is marker-bracketed and replaced in place.
+
+  Patch state lands in the job summary. No sticky PR comment: this repo
+  keeps a 0-or-1 comment invariant and inject-linked-client-pr owns it.
+
+inputs:
+  github-token:
+    description: Token for gh CLI calls (defaults to GITHUB_TOKEN).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  patched:
+    description: "true if a patch was injected, false otherwise."
+    value: ${{ steps.parse.outputs.patched }}
+  protocol_pr:
+    description: The linked PR number, or empty.
+    value: ${{ steps.parse.outputs.num }}
+  protocol_repo:
+    description: The linked PR's repo (owner/repo), or empty.
+    value: ${{ steps.parse.outputs.repo }}
+  protocol_head_sha:
+    description: The linked PR's head SHA, or empty.
+    value: ${{ steps.parse.outputs.head_sha }}
+
+runs:
+  using: composite
+  steps:
+    - id: parse
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+
+        # Skip on push / schedule / workflow_dispatch.
+        if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "pull_request_target" ]; then
+          echo "patched=false" >> "$GITHUB_OUTPUT"
+          echo "::notice title=inject-linked-protocol-pr::Skipping on event=$EVENT_NAME (only pull_request triggers patch injection)."
+          exit 0
+        fi
+
+        if [ -z "${PR_NUMBER:-}" ]; then
+          echo "patched=false" >> "$GITHUB_OUTPUT"
+          echo "::notice title=inject-linked-protocol-pr::No PR number in event payload."
+          exit 0
+        fi
+
+        # Pull the body via API (avoids context interpolation hazards with
+        # arbitrary user input in PR descriptions).
+        body=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+
+        # Marker: "Protocol PR:" optionally followed by "<owner>/<repo>" then
+        # "#N". First match wins; case-insensitive. Same shape as the
+        # "Client PR:" marker parsed by inject-linked-client-pr.
+        marker=$(printf '%s' "$body" \
+          | grep -ioE '^[[:space:]]*Protocol PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' \
+          | head -1 || true)
+        if [ -z "$marker" ]; then
+          echo "patched=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        repo=$(printf '%s' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || echo "0xMiden/protocol")
+        num=$(printf '%s' "$marker" | grep -oE '[0-9]+$')
+
+        # Resolve head + state.
+        meta=$(gh api "repos/${repo}/pulls/${num}" \
+          --jq '"\(.head.repo.owner.login)\t\(.head.repo.name)\t\(.head.ref)\t\(.head.sha)\t\(.state)\t\(.merged)"' 2>/dev/null \
+          || { echo "::error title=inject-linked-protocol-pr::Failed to fetch ${repo}#${num}. Does the PR exist? Is GH_TOKEN scoped to read it?"; exit 1; })
+
+        IFS=$'\t' read -r head_owner head_repo head_ref head_sha state merged <<< "$meta"
+
+        # Closed without merge → loud failure. (A merged PR is acceptable —
+        # it just means the linked branch may be stale; cargo will resolve
+        # to the head sha which still exists.)
+        # gh's REST API returns state in lowercase ("open"/"closed"), GraphQL
+        # uses uppercase. Normalize to lowercase before comparing.
+        state_lc=$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')
+        if [ "$state_lc" != "open" ] && [ "$merged" != "true" ]; then
+          {
+            echo "## ❌ Linked protocol PR is closed without merge"
+            echo
+            echo "PR description marker: \`Protocol PR: ${repo}#${num}\`"
+            echo
+            echo "[\`${repo}#${num}\`](https://github.com/${repo}/pull/${num}) is in state \`${state}\` (not merged)."
+            echo
+            echo "Either re-open the linked PR, point \`Protocol PR:\` at a different one, or remove the marker (and add the patch block by hand)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Linked PR closed::${repo}#${num} is closed without merge."
+          exit 1
+        fi
+
+        echo "patched=true" >> "$GITHUB_OUTPUT"
+        echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+        echo "num=${num}" >> "$GITHUB_OUTPUT"
+        echo "head_owner=${head_owner}" >> "$GITHUB_OUTPUT"
+        echo "head_repo=${head_repo}" >> "$GITHUB_OUTPUT"
+        echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"
+        echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+        echo "state=${state}" >> "$GITHUB_OUTPUT"
+        echo "merged=${merged}" >> "$GITHUB_OUTPUT"
+
+    - if: steps.parse.outputs.patched == 'true'
+      shell: bash
+      env:
+        REPO: ${{ steps.parse.outputs.repo }}
+        NUM: ${{ steps.parse.outputs.num }}
+        HEAD_OWNER: ${{ steps.parse.outputs.head_owner }}
+        HEAD_REPO: ${{ steps.parse.outputs.head_repo }}
+        HEAD_REF: ${{ steps.parse.outputs.head_ref }}
+        HEAD_SHA: ${{ steps.parse.outputs.head_sha }}
+        MERGED: ${{ steps.parse.outputs.merged }}
+      run: |
+        set -euo pipefail
+
+        # Pin by SHA, not branch. Branches on the linked repo are typically
+        # auto-deleted when the PR merges, which makes a `branch = "..."` pin
+        # fail to resolve from that moment on (cargo errors with `failed to
+        # find branch X`). A `rev = "<sha>"` pin survives branch deletion
+        # because the commit object itself stays reachable regardless of what
+        # refs point at it. That is what makes this action's "a merged PR is
+        # acceptable" claim actually true.
+        #
+        # The block is bracketed by markers so it's clear at a glance that
+        # this Cargo.toml is in a CI-mutated state, so a re-run can replace
+        # it rather than stack a second copy, and so a future cleanup can
+        # locate and revert it.
+        url="https://github.com/${HEAD_OWNER}/${HEAD_REPO}.git"
+
+        python3 - Cargo.toml "$url" "$HEAD_SHA" "${REPO}#${NUM}" \
+                 "${HEAD_OWNER}/${HEAD_REPO}@${HEAD_REF}" "$MERGED" <<'PYEOF'
+        import re, sys
+
+        path, url, sha, origin, head, merged = sys.argv[1:7]
+
+        BEGIN = "# >>>>>>> linked-protocol-pr (auto-injected by .github/actions/inject-linked-protocol-pr) >>>>>>>"
+        END   = "# <<<<<<< linked-protocol-pr <<<<<<<"
+        SUPERSEDED = "# [linked-protocol-pr] superseded: "
+
+        # One protocol repo, five crates pulled from it.
+        CRATES = [
+            "miden-protocol",
+            "miden-standards",
+            "miden-tx",
+            "miden-tx-batch",
+            "miden-block-prover",
+            # Also lives in the protocol repo and is a normal dep of miden-client, so it must
+            # move with the rest or the graph mixes two protocol versions.
+            "miden-agglayer",
+        ]
+
+        with open(path) as f:
+            lines = f.readlines()
+
+        # Idempotency: drop a region left by an earlier run before re-adding.
+        kept, dropping = [], False
+        for ln in lines:
+            if ln.strip() == BEGIN:
+                dropping = True
+                continue
+            if dropping:
+                dropping = ln.strip() != END
+                continue
+            kept.append(ln)
+        if dropping:
+            sys.exit("Unterminated linked-protocol-pr region in Cargo.toml; refusing to edit.")
+        lines = kept
+
+        pad = max(len(c) for c in CRATES)
+        entries = [
+            '{0:<{1}} = {{ git = "{2}", rev = "{3}" }}\n'.format(c, pad, url, sha)
+            for c in CRATES
+        ]
+        header = [
+            BEGIN + "\n",
+            '# Source: PR description marker "Protocol PR: {0}".\n'.format(origin),
+            "# Pin tip: {0} on {1}.\n".format(sha, head),
+            "# Merged: {0}. Runner-local override; never committed.\n".format(merged),
+            "# These crates are transitive (via miden-client), so they are patched\n",
+            "# workspace-wide rather than rewritten as dep lines.\n",
+        ]
+
+        # Compose with a [patch.crates-io] the committed file may already
+        # carry: a second table header of the same name is a TOML redefinition
+        # error, and a duplicate key inside one is too. So when the section
+        # exists, append into it and comment out any pre-existing entry for a
+        # crate we patch. Already-superseded lines are left alone, which keeps
+        # a re-run a no-op.
+        is_table = re.compile(r"^\s*\[")
+        is_patch = re.compile(r"^\s*\[patch\.crates-io\]\s*$")
+        # Bare or quoted key for any crate we patch, e.g. `miden-tx = ...`.
+        # Anchored on the exact name so miden-tx doesn't shadow miden-tx-batch.
+        owns = re.compile(
+            "^\\s*[\"']?(" + "|".join(map(re.escape, CRATES)) + ")[\"']?\\s*="
+        )
+
+        start = next((i for i, ln in enumerate(lines) if is_patch.match(ln)), None)
+
+        if start is None:
+            if lines and lines[-1].strip():
+                lines.append("\n")
+            body = header + ["[patch.crates-io]\n"] + entries + [END + "\n"]
+            out = lines + body
+            superseded = []
+        else:
+            end = next(
+                (j for j in range(start + 1, len(lines)) if is_table.match(lines[j])),
+                len(lines),
+            )
+            superseded = []
+            for j in range(start + 1, end):
+                if owns.match(lines[j]):
+                    superseded.append(lines[j].rstrip("\n"))
+                    lines[j] = SUPERSEDED + lines[j].lstrip()
+            # Sit snugly at the end of the section, not after its trailing blanks.
+            while end > start + 1 and not lines[end - 1].strip():
+                end -= 1
+            out = lines[:end] + header + entries + [END + "\n"] + lines[end:]
+
+        with open(path, "w") as f:
+            f.writelines(out)
+
+        print("Patched {0} crate(s) to {1}".format(len(CRATES), sha[:8]))
+        for s in superseded:
+            print("  superseded: " + s.strip())
+        PYEOF
+
+        # Refresh Cargo.lock so the Makefile's `cargo build --locked` accepts
+        # the new patch source. `cargo metadata` performs a full resolve and
+        # rewrites the lock, keeping every unrelated version pinned as-is; it
+        # also fails here, loudly and early, if the rev is unreachable rather
+        # than deep inside a later build step.
+        # `cargo update -p` on each patched crate, not just a resolve. A [patch] entry is
+        # only consulted when cargo re-resolves that crate; without this the pin lands only
+        # because inject-linked-client-pr happens to run `cargo update -p miden-client`
+        # immediately before us, which is an ordering dependency this action must not have —
+        # a Protocol PR with no Client PR would silently build against published protocol.
+        CRATES="miden-protocol miden-standards miden-tx miden-tx-batch miden-block-prover miden-agglayer"
+        update_args=""
+        for crate in $CRATES; do
+          grep -q "^name = \"$crate\"$" Cargo.lock 2>/dev/null && update_args="$update_args -p $crate"
+        done
+        # Advisory: `cargo update -p X` errors 101 with "did not match any packages" when X is
+        # not yet a resolved package (it arrives via the patch), and that is not a failure —
+        # the resolve below is the real gate and applies the patch on its own. Verified against
+        # protocol#3786: update exits 101, metadata exits 0 and pulls the patched crates.
+        if [ -n "$update_args" ]; then
+          cargo update $update_args --quiet || true
+        fi
+
+        # An unused patch is a cargo WARNING with exit 0, so a semver-incompatible protocol
+        # version would leave CI silently building against the published crates — the exact
+        # failure this action exists to prevent. Counting `git+...?rev=` lines in Cargo.lock
+        # cannot catch it either: cargo writes unused patch entries into the lock regardless.
+        # Grep the resolve output instead, and fail.
+        resolve_log="${RUNNER_TEMP:-/tmp}/protocol-patch-resolve.log"
+        cargo metadata --format-version 1 --manifest-path Cargo.toml > /dev/null 2> "$resolve_log" || {
+          cat "$resolve_log"; echo "::error title=inject-linked-protocol-pr::cargo failed to resolve with the injected patch"; exit 1;
+        }
+        if grep -q "was not used in the crate graph" "$resolve_log"; then
+          grep "was not used in the crate graph" "$resolve_log" | sed 's/^/  /'
+          echo "::error title=inject-linked-protocol-pr::the injected [patch.crates-io] was NOT applied (see the unused-patch warnings above). CI would have built against the published protocol crates."
+          exit 1
+        fi
+
+        # Report what the resolver actually took from the patch. Zero is a
+        # warning, not an error: a protocol PR may legitimately touch only
+        # crates this workspace never reaches, and cargo already warns about
+        # unused patches.
+        applied=$(grep -cF "git+${url}?rev=${HEAD_SHA}" Cargo.lock || true)
+        applied=${applied:-0}
+
+        {
+          echo "## 🔗 Linked protocol PR injected"
+          echo
+          echo "| Field | Value |"
+          echo "|---|---|"
+          echo "| Marker | \`Protocol PR: ${REPO}#${NUM}\` |"
+          echo "| Head | \`${HEAD_OWNER}/${HEAD_REPO}@${HEAD_REF}\` |"
+          echo "| Pin | \`${HEAD_SHA}\` |"
+          echo "| Merged upstream | \`${MERGED}\` |"
+          echo "| Crates resolved from the pin | \`${applied}\` |"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$applied" = "0" ]; then
+          echo "::warning title=inject-linked-protocol-pr::No crate resolved to ${REPO}#${NUM}'s head; the patch is inert for this workspace."
+        fi

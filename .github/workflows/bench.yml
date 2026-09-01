@@ -506,6 +506,14 @@ jobs:
         timeout-minutes: 5
         uses: ./.github/actions/inject-linked-client-pr
 
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        timeout-minutes: 5
+        uses: ./.github/actions/inject-linked-protocol-pr
+
       # No fallback exists for this one — a missing head dist means no benchmark
       # at all — so the cap is here to make the failure legible and leave the
       # summary step time to run, not to degrade to something lesser.

@@ -89,6 +89,12 @@ jobs:
       # build-wasm job (single comment per PR run); we don't post here.
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
@@ -248,6 +254,12 @@ jobs:
       # build-wasm job (single comment per PR run); we don't post here.
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
@@ -858,6 +870,12 @@ jobs:
       # build.yml's build-wasm job; we don't post here.
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust
