@@ -10,6 +10,29 @@ const textDecoder = new TextDecoder();
 // use this instead to keep track of open DBs. A client can have
 // a DB for mainnet, devnet, testnet or a custom one, so this should be ok.
 const databaseRegistry = new Map();
+// In-process fallback queue for environments without navigator.locks (e.g. Node/Vitest)
+const initLocks = new Map();
+export async function acquireDbInitLock(name, fn) {
+    if (typeof navigator !== "undefined" && navigator.locks) {
+        return await navigator.locks.request(`miden-db-init:${name}`, fn);
+    }
+    const prevLock = initLocks.get(name) ?? Promise.resolve();
+    let release;
+    const nextLock = new Promise((resolve) => {
+        release = resolve;
+    });
+    initLocks.set(name, nextLock);
+    await prevLock;
+    try {
+        return await fn();
+    }
+    finally {
+        release();
+        if (initLocks.get(name) === nextLock) {
+            initLocks.delete(name);
+        }
+    }
+}
 /**
  * Get a database instance from the registry by its ID.
  * Throws if the database hasn't been opened yet.
@@ -26,14 +49,16 @@ export function getDatabase(dbId) {
  * Returns the database ID (network name) which can be used to retrieve the database later.
  */
 export async function openDatabase(network, clientVersion) {
-    const db = new MidenDatabase(network);
-    const success = await db.open(clientVersion);
-    /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
-    if (!success) {
-        throw new Error(`Failed to open IndexedDB database: ${network}`);
-    }
-    databaseRegistry.set(network, db);
-    return network;
+    return await acquireDbInitLock(network, async () => {
+        const db = new MidenDatabase(network);
+        const success = await db.open(clientVersion);
+        /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
+        if (!success) {
+            throw new Error(`Failed to open IndexedDB database: ${network}`);
+        }
+        databaseRegistry.set(network, db);
+        return network;
+    });
 }
 var Table;
 (function (Table) {
