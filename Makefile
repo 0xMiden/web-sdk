@@ -55,6 +55,10 @@ rust-client-ts-lint:
 web-client-check-methods: ## Check that all WASM methods are classified in the web client proxy
 	pnpm --filter @miden-sdk/miden-sdk run check:method-classification
 
+.PHONY: vite-plugin-lint
+vite-plugin-lint: ## Run lint for the Vite plugin
+	pnpm --filter @miden-sdk/vite-plugin run lint
+
 .PHONY: react-sdk-lint
 react-sdk-lint: ## Run lint for the React SDK
 	pnpm --filter @miden-sdk/react run lint
