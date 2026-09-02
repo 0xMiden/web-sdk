@@ -507,6 +507,24 @@ export class MidenDatabase {
           .delete();
       });
 
+    // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+    // `detailsCommitment` instead of `noteId`. `Store::get_input_note_after`
+    // seeks with an `InputNoteCursor`, whose tiebreaker is the details
+    // commitment, and the seek must not depend on the cursor's own note still
+    // being present. `detailsCommitment` is also mandatory on every row, while
+    // `noteId` is optional and silently kept unindexed rows out of the seek.
+    // Index-only change, so Dexie rebuilds it without an upgrade hook.
+    this.dexie.version(3).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"
+      ),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );

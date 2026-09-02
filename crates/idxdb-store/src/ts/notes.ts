@@ -231,27 +231,46 @@ export async function upsertInputNote(
   return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
 }
 
-// Uses the [consumedBlockHeight+consumedTxOrder+noteId] compound index for cursor-based
-// iteration.  When a consumerAccountId is provided the cursor path is used exclusively —
-// only notes that are fully indexed (all three fields present) are returned.  When no
-// consumer is specified a two-pass fallback is used: first the indexed notes (with a tx
-// order), then the unindexed notes (null tx order), appended after so they sort last
-// within the same block as described by the ordering contract.
-export async function getInputNoteByOffset(
+const INPUT_NOTE_CONSUMPTION_INDEX =
+  "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+
+// Seeks the consumption index past the cursor and returns the first row passing the filters, as
+// a one-element array so the caller keeps a uniform shape. The cursor is compared as an index
+// key rather than looked up, so it resolves the right position even after its own note is gone.
+// Rows missing a consumption field are absent from the compound index, which is the ordering
+// contract's "not consumed yet, not in the sequence".
+export async function getInputNoteAfter(
   dbId: string,
   states: Uint8Array,
-  consumerAccountId: string | undefined,
+  consumerAccountId: string,
   blockStart: number | undefined,
   blockEnd: number | undefined,
-  offset: number
+  cursorBlockHeight: number | undefined,
+  cursorTxOrder: number | undefined,
+  cursorDetailsCommitment: string | undefined
 ) {
   try {
     const db = getDatabase(dbId);
 
-    // The compound index sorts by consumedBlockHeight, consumedTxOrder, noteId.
-    // Rows without these fields are excluded by the index.
-    const indexed = await db.inputNotes
-      .orderBy("[consumedBlockHeight+consumedTxOrder+noteId]")
+    const hasCursor =
+      cursorBlockHeight != null &&
+      cursorTxOrder != null &&
+      cursorDetailsCommitment != null;
+
+    // `blockStart` only narrows the seek when no cursor is given; with one it stays in the
+    // predicate below, since a cursor past `blockStart` is the tighter bound and a cursor
+    // before it excludes nothing that the predicate does not.
+    const ordered = hasCursor
+      ? db.inputNotes
+          .where(INPUT_NOTE_CONSUMPTION_INDEX)
+          .above([cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment])
+      : blockStart != null
+        ? db.inputNotes
+            .where(INPUT_NOTE_CONSUMPTION_INDEX)
+            .aboveOrEqual([blockStart])
+        : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
+
+    const note = await ordered
       .filter((n: IInputNote) => {
         if (states.length > 0 && !states.includes(n.stateDiscriminant))
           return false;
@@ -261,40 +280,12 @@ export async function getInputNoteByOffset(
         if (blockEnd != null && n.consumedBlockHeight! > blockEnd) return false;
         return true;
       })
-      .toArray();
+      .first();
 
-    // When no consumer is specified, also collect notes that lack a tx order
-    // (they do not appear in the compound index at all) and append them after
-    // the ordered notes so they sort last.
-    let unordered: IInputNote[] = [];
-    if (consumerAccountId == null) {
-      unordered = await db.inputNotes
-        .filter((n: IInputNote) => {
-          if (n.consumedTxOrder != null) return false; // already in indexed set
-          if (states.length > 0 && !states.includes(n.stateDiscriminant))
-            return false;
-          if (n.consumerAccountId !== consumerAccountId) return false;
-          if (
-            blockStart != null &&
-            (n.consumedBlockHeight == null ||
-              n.consumedBlockHeight < blockStart)
-          )
-            return false;
-          if (
-            blockEnd != null &&
-            (n.consumedBlockHeight == null || n.consumedBlockHeight > blockEnd)
-          )
-            return false;
-          return true;
-        })
-        .sortBy("noteId");
-    }
-
-    const all = [...indexed, ...unordered];
-    if (offset >= all.length) return [];
-    return await processInputNotes(dbId, [all[offset]]);
+    if (note == null) return [];
+    return await processInputNotes(dbId, [note]);
   } catch (err) {
-    logWebStoreError(err, "Failed to get input note by offset");
+    logWebStoreError(err, "Failed to get input note after cursor");
   }
 }
 

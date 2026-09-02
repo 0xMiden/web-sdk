@@ -39,6 +39,7 @@ use miden_client::store::{
     AccountStorageFilter,
     BlockRelevance,
     ClientAccountType,
+    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
@@ -244,15 +245,15 @@ impl Store for IdxdbStore {
         self.get_output_notes(note_filter).await
     }
 
-    async fn get_input_note_by_offset(
+    async fn get_input_note_after(
         &self,
         filter: NoteFilter,
         consumer: AccountId,
         block_start: Option<BlockNumber>,
         block_end: Option<BlockNumber>,
-        offset: u32,
+        cursor: Option<InputNoteCursor>,
     ) -> Result<Option<InputNoteRecord>, StoreError> {
-        self.get_input_note_by_offset(filter, consumer, block_start, block_end, offset)
+        self.get_input_note_after(filter, consumer, block_start, block_end, cursor)
             .await
     }
 

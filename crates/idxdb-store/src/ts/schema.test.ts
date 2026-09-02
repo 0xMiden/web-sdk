@@ -140,6 +140,54 @@ describe("MidenDatabase migrations", () => {
 
     expect(await mdb.tags.count()).toBe(1);
   });
+
+  // v3: rekeys the input-note consumption index on detailsCommitment, which is what
+  // `Store::get_input_note_after` seeks with. See the version(3) block in schema.ts.
+  it("v3 migration rebuilds the consumption index on detailsCommitment", async () => {
+    const name = uniqueDbName();
+    const lowCommitment = "0x" + "aa".repeat(32);
+    const highCommitment = "0x" + "ff".repeat(32);
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+
+    // noteId order and detailsCommitment order disagree, so reading through the new index
+    // yields an order the noteId-keyed one could not produce.
+    await dbV1.table("inputNotes").bulkPut([
+      {
+        detailsCommitment: lowCommitment,
+        noteId: "0xff",
+        stateDiscriminant: 8,
+        consumedBlockHeight: 1,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xconsumer",
+      },
+      {
+        detailsCommitment: highCommitment,
+        noteId: "0xaa",
+        stateDiscriminant: 8,
+        consumedBlockHeight: 1,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xconsumer",
+      },
+    ]);
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.15.5")).toBe(true);
+
+    const ordered = await mdb.inputNotes
+      .orderBy("[consumedBlockHeight+consumedTxOrder+detailsCommitment]")
+      .toArray();
+    expect(ordered.map((n) => n.detailsCommitment)).toEqual([
+      lowCommitment,
+      highCommitment,
+    ]);
+
+    // Rebuilding an index moves no rows.
+    expect(await mdb.inputNotes.count()).toBe(2);
+  });
 });
 
 // ============================================================
