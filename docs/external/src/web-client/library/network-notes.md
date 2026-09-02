@@ -94,7 +94,8 @@ Two consequences worth planning for:
   does not avoid it — anywhere the sender's auth procedure pays a fee at all,
   the provisioning is required. `createNetworkNote` does not add it, so on a
   fee-charging chain assemble the request yourself: take a builder from
-  `client.feeAwareTransactionRequestBuilder(sender)`, add the target with
+  `client.feeAwareTransactionRequestBuilder(sender)` (which also declares a fee
+  conversion salt where the sender needs one), add the target with
   `withForeignAccounts`, and submit it through `client.transactions.execute`.
 - **The sender's vault must cover the sponsorship**, not just its own fee. An
   underfunded sender aborts rather than emitting an unsponsored note, and a

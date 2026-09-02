@@ -97,16 +97,16 @@ export class PswapResource {
    * it with a "note already nullified" error. Treat that as a signal to
    * re-read the lineage and retry against the new tip.
    *
-   * Fees: this is the one request-building path the SDK does not attach fee
-   * conversion info to. `buildPswapCancelByOrder` delegates request building to
+   * Fees: this is the one request-building path the SDK cannot declare a fee
+   * conversion salt on. `buildPswapCancelByOrder` delegates request building to
    * miden-client, which builds from a bare `TransactionRequestBuilder`. On a
    * fee-charging chain the outcome then depends on the creator's auth
-   * component: a single-sig creator is rescued by miden-client, which injects
-   * native 1:1 conversion info when the auth argument is empty, and pays
-   * normally. A multisig or guarded-multisig creator fails with
-   * `FeeConversionInfoRequired` — miden-client refuses to guess for those.
-   * Cancel by note with `client.transactions.pswapCancel` there, which commits
-   * conversion info against the creator first.
+   * component: an ordinary creator has its native conversion info committed by
+   * miden-client and pays normally, while a multisig creator fails with
+   * `FeeConversionInfoRequired` — miden-client will not invent the salt those
+   * use as a replay guard. Cancel by note with
+   * `client.transactions.pswapCancel` there, which declares a salt against the
+   * creator first.
    *
    * @param {PswapCancelByOrderOptions} opts - Order id and optional tx options.
    * @returns {Promise<TransactionSubmitResult>} The submitted transaction.

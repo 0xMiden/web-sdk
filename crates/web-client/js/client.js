@@ -414,20 +414,20 @@ export class MidenClient {
    * conversion info for the account that will execute the request.
    *
    * Use this instead of `new TransactionRequestBuilder()` whenever you assemble
-   * a request yourself. Since protocol 0.16 the verification fee is paid inside
-   * the account's auth procedure and `fee::pay_fee` reads the conversion info
-   * from the transaction's auth argument, so a request built from a bare builder
-   * aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on a chain whose
-   * `BlockHeader.verificationBaseFee()` is non-zero.
+   * a request yourself for a MULTISIG account. Since protocol 0.16 the
+   * verification fee is paid inside the account's auth procedure, which reads it
+   * from the transaction's auth argument. Fees settle in the chain's native fee
+   * asset at rate 1/1 and miden-client commits that itself, so an ordinary
+   * account needs nothing; a multisig reuses the fee conversion salt as its
+   * summary's replay guard, so miden-client refuses to invent one and execution
+   * fails with `FeeConversionInfoRequired`.
    *
    * The argument is the account that **executes** the request — the one whose
    * auth procedure pays — not the recipient or a note's sender. On a zero-fee
-   * chain, or for an account whose auth procedure cannot read conversion info,
-   * the builder comes back untouched, so this is a safe drop-in. Calling
-   * `withAuthArg` on the result overwrites the auth argument the commitment
-   * lives in, so `build()` refuses it with error code
-   * `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`; call `withFeeConversionInfo`
-   * last if you need both.
+   * chain, or for an account that does not choose its own salt, the builder
+   * comes back untouched, so this is a safe drop-in. `withAuthArg` and
+   * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
+   * whichever is called last wins.
    *
    * @param {AccountRef} account - The executing account.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.

@@ -71,14 +71,15 @@ function ProposeButton({ multisigId, buildRequest }) {
 
 These three hooks take the request from you, so paying the verification fee is
 yours too. Since protocol 0.16 the fee is paid inside the account's auth
-procedure, and `fee::pay_fee` reads the asset and rate out of the transaction's
-auth argument — a request built from `new TransactionRequestBuilder()` carries
-nothing there and aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on any chain
-whose verification base fee is non-zero. Multisig is one of the two auth
-components that read conversion info, so this applies squarely to the flow on
-this page.
+procedure, which reads the asset and rate out of the transaction's auth
+argument. Fees always settle in the chain's native fee asset at rate 1/1 and
+miden-client commits that itself — but it will not invent the SALT the
+commitment is computed under, because a multisig reuses that salt as its
+transaction summary's replay guard. A multisig request that declares none fails
+with `FeeConversionInfoRequired`, so this applies squarely to the flow on this
+page.
 
-Ask the client for a builder that already carries it:
+Ask the client for a builder that already declares one:
 
 ```tsx
 import { AccountId } from "@miden-sdk/miden-sdk";
@@ -92,13 +93,13 @@ const buildRequest = async (client) =>
 The argument is the account that **executes** the request — the multisig here,
 not a recipient. On a zero-fee chain the builder comes back untouched, so this is
 a safe drop-in. Requests produced by the `new*TransactionRequest` constructors
-already carry it and need nothing extra.
+already declare a salt and need nothing extra.
 
-Two caveats specific to this flow. `withAuthArg` overwrites the same auth
-argument the fee commitment lives in, so a summary salt set that way and a fee
-cannot coexist on one request. And because the fee salt is drawn per build, the
-warning below about resolving a factory exactly once applies here too — capture
-the anchor, then preview and execute against `anchoredRequest`.
+Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`
+occupy the same slot and each setter clears the other, so a request cannot carry
+both — call whichever you actually want last. And because the salt is drawn per
+build, the warning below about resolving a factory exactly once applies here too
+— capture the anchor, then preview and execute against `anchoredRequest`.
 
 ## Verifying and co-signing
 

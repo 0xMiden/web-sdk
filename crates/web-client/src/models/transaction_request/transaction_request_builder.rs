@@ -16,7 +16,6 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 
 use crate::js_error_with_context;
 use crate::models::advice_map::AdviceMap;
-use crate::models::fee_conversion_info::FeeConversionInfo;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::miden_arrays::{
     ForeignAccountArray,
@@ -31,7 +30,7 @@ use crate::models::transaction_request::note_and_args::NoteAndArgs;
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::word::Word;
-use crate::platform::{JsErr, from_str_err_with_code};
+use crate::platform::JsErr;
 
 /// A builder for a `TransactionRequest`.
 ///
@@ -41,39 +40,20 @@ use crate::platform::{JsErr, from_str_err_with_code};
 #[js_export]
 pub struct TransactionRequestBuilder {
     builder: NativeTransactionRequestBuilder,
-    /// Whether the builder currently commits fee conversion info in its auth arg.
-    ///
-    /// Tracked here rather than read back from `builder` for two reasons: the native builder
-    /// exposes no getter for its own declaration, and `auth_arg` clears that declaration as a side
-    /// effect, so by the time a request is built the overwrite is no longer observable on it.
-    declares_fee_conversion_info: bool,
-    /// Whether `withAuthArg` replaced a fee-conversion commitment, leaving its preimage in the
-    /// advice map keyed by a word nothing will look up. `build` refuses such a builder.
-    fee_conversion_info_auth_arg_overwritten: bool,
 }
 
 // Internal methods accessible from Rust code (not processed by napi/wasm_bindgen).
 impl TransactionRequestBuilder {
     /// Creates a new empty transaction request builder (internal Rust access).
     pub(crate) fn new() -> TransactionRequestBuilder {
-        TransactionRequestBuilder::from_native(NativeTransactionRequestBuilder::new(), false)
+        TransactionRequestBuilder::from_native(NativeTransactionRequestBuilder::new())
     }
 
     /// Wraps a builder assembled in Rust.
-    ///
-    /// `declares_fee_conversion_info` states whether that builder already commits fee conversion
-    /// info, which is what lets a later `withAuthArg` be recognised as overwriting the commitment.
-    /// There is deliberately no `From<NativeTransactionRequestBuilder>` impl: the answer cannot be
-    /// recovered from the builder, so every wrapping site has to supply it.
     pub(crate) fn from_native(
         builder: NativeTransactionRequestBuilder,
-        declares_fee_conversion_info: bool,
     ) -> TransactionRequestBuilder {
-        TransactionRequestBuilder {
-            builder,
-            declares_fee_conversion_info,
-            fee_conversion_info_auth_arg_overwritten: false,
-        }
+        TransactionRequestBuilder { builder }
     }
 }
 
@@ -167,84 +147,53 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
-    /// Adds an authentication argument.
+    /// Adds an authentication argument: a `Word` pushed to the stack for the account's
+    /// authentication procedure.
     ///
-    /// Mutually exclusive with `withFeeConversionInfo`, which commits to the same slot: calling
-    /// this afterwards replaces the commitment while leaving its preimage in the advice map keyed
-    /// by the old one. `fee::load_conversion_info` looks the preimage up by the *current* auth arg,
-    /// finds nothing, and `pay_fee` aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`.
-    /// `build` refuses that combination with error code
-    /// `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` instead. Build one request per auth argument.
+    /// Mutually exclusive with `withFeeConversionSalt`, and the exclusion is enforced by
+    /// miden-client rather than reported as an error: each setter clears the other, so whichever
+    /// is called last wins and the request can never carry both.
     ///
-    /// The other order is fine: `withFeeConversionInfo` writes both the commitment and its
-    /// preimage, so calling it last wins outright.
+    /// Setting this opts the request out of the client's fee-conversion machinery entirely. The
+    /// client commits conversion info only when the request carries no auth argument of its own,
+    /// so a caller that sets one is taking responsibility for the fee: on a fee-charging chain
+    /// the word has to be the commitment `hash(CONVERSION_INFO || SALT)`, with its preimage
+    /// reachable through `extendAdviceMap`, or `fee::pay_fee` aborts in the VM with
+    /// `ERR_FEE_CONVERSION_INFO_MISSING`. This is the escape hatch for an account whose auth
+    /// component miden-client does not recognise and therefore will not commit for; where the
+    /// account is a standard one, prefer `withFeeConversionSalt` or nothing at all.
     #[js_export(js_name = "withAuthArg")]
     pub fn with_auth_arg(&mut self, auth_arg: &Word) -> Self {
         let native_word: NativeWord = auth_arg.into();
         self.builder = self.builder.clone().auth_arg(native_word);
-        // Recorded here because the native `auth_arg` also clears its own fee-conversion
-        // declaration, so nothing downstream can tell the commitment was ever present.
-        if self.declares_fee_conversion_info {
-            self.declares_fee_conversion_info = false;
-            self.fee_conversion_info_auth_arg_overwritten = true;
-        }
         self.clone()
     }
 
-    /// Commits fee conversion info to the transaction's auth args.
+    /// Declares the salt the transaction's fee conversion info is committed under.
     ///
-    /// Since protocol 0.16 a signature-authenticated transaction pays its fee inside the auth
-    /// procedure, and `fee::pay_fee` requires `AUTH_ARGS` to be the commitment
-    /// `hash(CONVERSION_INFO || SALT)` with the preimage reachable in the advice map. Without it
-    /// the transaction aborts with `ERR_FEE_CONVERSION_INFO_MISSING` on any chain whose
-    /// `verificationBaseFee` is non-zero.
+    /// Fees are always settled in the chain's native fee asset at rate 1/1, so there is no
+    /// conversion info to supply — only, optionally, the salt it is committed under. The client
+    /// builds the info and commits it through the auth args itself while preparing the
+    /// transaction.
     ///
-    /// The salt is the caller's: for a multisig flow it doubles as the summary's replay guard, so
-    /// this deliberately takes it rather than generating one.
-    ///
-    /// Only meaningful for an account whose auth component is one of the standard ones that reads
-    /// the auth args as conversion info — single-sig, multisig, or guarded multisig. An account
-    /// carrying a custom auth procedure cannot be classified by miden-client, which is what
-    /// validates the declaration, so executing such a request fails with error code
-    /// `FEE_CONVERSION_INFO_UNCLASSIFIABLE`; use `TransactionRequest.withAuthArg` to attach a
-    /// self-computed commitment without the declaration instead.
+    /// Needed only where the account's auth component reuses that salt as a replay guard, which
+    /// is every multisig flavour (`AuthMultisig`, `AuthMultisigSmart`, `AuthGuardedMultisig`):
+    /// there the client refuses to guess and execution fails with `FeeConversionInfoRequired`
+    /// naming the component. A single-sig account needs nothing — the client commits under a
+    /// fixed default salt, deliberately fixed so the signed transaction summary is reproducible.
+    /// Declaring a salt against an account whose auth component does not read the auth args as
+    /// conversion info is refused with `FeeConversionInfoUnsupported`.
     ///
     /// Mutually exclusive with `withAuthArg` — see the note there.
-    #[js_export(js_name = "withFeeConversionInfo")]
-    pub fn with_fee_conversion_info(
-        &mut self,
-        conversion_info: &FeeConversionInfo,
-        salt: &Word,
-    ) -> Self {
+    #[js_export(js_name = "withFeeConversionSalt")]
+    pub fn with_fee_conversion_salt(&mut self, salt: &Word) -> Self {
         let native_salt: NativeWord = salt.into();
-        self.builder =
-            self.builder.clone().fee_conversion_info(conversion_info.into(), native_salt);
-        self.declares_fee_conversion_info = true;
-        // This writes the commitment and its preimage together, so it clears any earlier overwrite.
-        self.fee_conversion_info_auth_arg_overwritten = false;
+        self.builder = self.builder.clone().fee_conversion_salt(native_salt);
         self.clone()
     }
 
     /// Finalizes the builder into a `TransactionRequest`.
-    ///
-    /// # Errors
-    ///
-    /// Fails with code `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` when `withAuthArg` was called
-    /// after `withFeeConversionInfo`, which leaves the request unable to pay its fee. Refused here
-    /// rather than at execution because the native builder drops its own record of the
-    /// declaration, so this is the last point at which the mistake is still visible.
     pub fn build(&self) -> Result<TransactionRequest, JsErr> {
-        if self.fee_conversion_info_auth_arg_overwritten {
-            return Err(from_str_err_with_code(
-                "this builder committed fee conversion info and then had its auth argument \
-                 replaced by `withAuthArg`, which leaves the commitment's preimage in the advice \
-                 map keyed by a word nothing looks up. Executing the result would abort in the VM \
-                 with ERR_FEE_CONVERSION_INFO_MISSING. The two are mutually exclusive — build one \
-                 request per auth argument, or call `withFeeConversionInfo` last.",
-                "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN",
-            ));
-        }
-
         self.builder
             .clone()
             .build()
@@ -255,11 +204,6 @@ impl TransactionRequestBuilder {
 
 // CONVERSIONS
 // ================================================================================================
-
-// Deliberately no `From<TransactionRequestBuilder> for NativeTransactionRequestBuilder`: it would
-// hand out the inner builder without `build`'s `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` check,
-// and the native builder no longer records the declaration that check is derived from. `build` is
-// the only finalizing path for that reason.
 
 impl Default for TransactionRequestBuilder {
     fn default() -> Self {

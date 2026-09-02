@@ -189,13 +189,7 @@ export const createMockTransactionRequest = () => ({
   expectedFutureNotes: vi.fn(() => []),
   scriptArg: vi.fn(() => undefined),
   authArg: vi.fn(() => undefined),
-  // Returns a request rather than mutating, like `extendAdviceMap`: the real
-  // `withAuthArg` clones and is chained, so a mock returning undefined would
-  // make any chained call in a test read as a null deref rather than a
-  // missing mock.
-  withAuthArg: vi.fn(
-    () => createMockTransactionRequest() as unknown as TransactionRequest
-  ),
+  feeConversionSalt: vi.fn(() => undefined),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest

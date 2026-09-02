@@ -634,19 +634,13 @@ export class TransactionsResource {
    * counterpart of `batch()` — for callers that already have built requests in
    * hand. Equivalent to `submit()` but plural.
    *
-   * Fee conversion info is never attached here, but a request that declares it
-   * is checked before anything is proven. miden-client validates the same thing
-   * during the batch's own preparation, so the point of checking here is *when*
-   * and how legibly: pushing a batch proves each transaction as it goes, a
-   * rejection found mid-push has already cost the proofs ahead of it, and
-   * upstream's own rejection carries no machine-readable code. The batch is
-   * rejected whole with `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` if
-   * `TransactionRequest.withAuthArg` replaced the commitment on a request that
-   * still declares conversion info, `FEE_CONVERSION_INFO_IGNORED` if the
-   * executing account pays the fee natively and would ignore the declaration,
-   * or `FEE_CONVERSION_INFO_UNCLASSIFIABLE` if it carries anything other than
-   * exactly one standard auth component. The account's code is read once for
-   * the whole batch, since a batch is single-account by contract.
+   * No fee conversion salt is declared here. miden-client commits the chain's
+   * native conversion info while preparing each transaction, so requests against
+   * ordinary accounts pay normally; a multisig account needs a salt declared on
+   * the request itself, or the push fails with `FeeConversionInfoRequired`.
+   * Because a batch proves each transaction as it is pushed, such a rejection
+   * has already cost the proofs ahead of it — build multisig requests from
+   * `client.feeAwareTransactionRequestBuilder`.
    *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.

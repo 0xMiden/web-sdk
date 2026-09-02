@@ -8,14 +8,7 @@
  */
 export type WasmErrorCode =
   | "INVALID_CHAIN_ANCHOR"
-  | "TRANSACTION_ALREADY_AUTHORIZED"
-  // Raised when a request cannot pay the verification fee protocol 0.16
-  // charges. All three are reachable from any hook that executes a request you
-  // built yourself (`useTransaction`, `usePreview`) and from batch execution;
-  // the two paths preflight the same conditions and report them identically.
-  | "FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN"
-  | "FEE_CONVERSION_INFO_UNCLASSIFIABLE"
-  | "FEE_CONVERSION_INFO_IGNORED";
+  | "TRANSACTION_ALREADY_AUTHORIZED";
 
 /**
  * An `Error` that may carry a machine-readable `code`.

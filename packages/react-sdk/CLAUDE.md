@@ -257,21 +257,24 @@ const blockHeader = await client.getBlockHeaderByNumber(100);
 
 ### Pay the Fee on a Hand-Built Request
 
-Hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
+Fees are settled in the chain's native fee asset at rate 1/1, and miden-client
+commits that conversion info through the transaction's auth args itself. The one
+thing it will not invent is the SALT the info is committed under, because every
+multisig flavour reuses that salt as its transaction summary's replay guard.
+
+So hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
 `useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
-`usePswapCancel`) attach the chain's fee conversion info for you. The hooks that
-take a request *from you* — `useTransaction`, `usePreview`, `useChainAnchor` —
-cannot. What a bare `new TransactionRequestBuilder()` then does on a
-fee-charging chain depends on the account: a single-sig account is rescued by
-miden-client, which injects native 1:1 conversion info when the auth argument is
-empty, while a multisig or guarded multisig fails with
-`FeeConversionInfoRequired`. So this matters most for multisig, for paying in a
-non-native asset, and for controlling the salt.
+`usePswapCancel`) declare a salt for you where the executing account needs one.
+The hooks that take a request *from you* — `useTransaction`, `usePreview`,
+`useChainAnchor` — cannot. A bare `new TransactionRequestBuilder()` is fine for
+an ordinary account at any base fee; against a multisig on a fee-charging chain
+it fails with `FeeConversionInfoRequired` naming the component. So this matters
+for multisig, and for controlling the salt.
 
 `usePswapCancelByOrder` is the exception in the first group: it resolves the
-order and builds the request inside miden-client, so the SDK never attaches
-anything. Same split — single-sig is rescued, multisig is not, so cancel by note
-with `usePswapCancel` there.
+order and builds the request inside miden-client, so the SDK never declares
+anything. Same split — ordinary accounts are fine, multisig is not, so cancel by
+note with `usePswapCancel` there.
 
 Ask the client for a builder that already carries it. The factory form of
 `request` hands you the client, so this needs no extra plumbing:
@@ -296,13 +299,11 @@ await execute({
 ```
 
 The argument is the account that **executes** the request — the one whose auth
-procedure pays — not the recipient. On a zero-fee chain, or for an account whose
-auth procedure cannot read conversion info (no-auth and network accounts pay
-natively), the builder comes back untouched, so it is a safe drop-in. Calling
-`withAuthArg` on it overwrites the auth argument the fee commitment lives in, so
-`build()` refuses it with error code
-`FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN` — call `withFeeConversionInfo` last
-if you need both.
+procedure pays — not the recipient. On a zero-fee chain, or for any account that
+does not choose its own salt, the builder comes back untouched, so it is a safe
+drop-in. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
+miden-client has each setter clear the other, so whichever is called last wins
+rather than producing an error.
 
 ### Prevent Race Conditions
 ```tsx

@@ -22,7 +22,6 @@ export {
   ChainAnchor,
   EthAddress,
   ExecutedTransaction,
-  FeeConversionInfo,
   Felt,
   InputNoteRecord,
   NetworkAccountTarget,

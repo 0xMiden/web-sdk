@@ -170,9 +170,11 @@ function patchSdkPrototypes(rawSdk) {
     // local chain, so the "no fee note" reading has to be the same on both bindings.
     [rawSdk.ExecutedTransaction, ["feeNote"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
-    // `authArg` is how a caller checks whether fee conversion info was attached,
-    // so it has to read the same on both bindings.
-    [rawSdk.TransactionRequest, ["authArg", "scriptArg"]],
+    // `authArg` and `feeConversionSalt` are how a caller checks what a request
+    // declared about paying its fee, so they have to read the same on both
+    // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
+    // `== null` for exactly this reason.
+    [rawSdk.TransactionRequest, ["authArg", "feeConversionSalt", "scriptArg"]],
   ]) {
     if (!cls?.prototype) continue;
     for (const method of methods) {

@@ -1,5 +1,4 @@
 use js_export_macro::js_export;
-use miden_client::Word as NativeWord;
 use miden_client::note::Note as NativeNote;
 use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
 use miden_client::vm::AdviceMap as NativeAdviceMap;
@@ -68,45 +67,38 @@ impl TransactionRequest {
     }
 
     /// Returns the authentication argument if present.
+    ///
+    /// A request built by a builder that called neither `withAuthArg` nor `withFeeConversionSalt`
+    /// has none: the client commits fee conversion info into the auth args while preparing the
+    /// transaction, which is after this can observe it.
+    ///
+    /// There is deliberately no setter here. An auth argument can only be set through
+    /// `TransactionRequestBuilder.withAuthArg`, because miden-client keeps it mutually exclusive
+    /// with the fee conversion salt and enforces that on the builder — a setter on a finished
+    /// request would sit outside that exclusion.
     #[js_export(js_name = "authArg")]
     pub fn auth_arg(&self) -> Option<Word> {
         self.0.auth_arg().map(Word::from)
+    }
+
+    /// Returns the fee conversion salt this request declares, if any.
+    ///
+    /// Declared through `TransactionRequestBuilder.withFeeConversionSalt`, and carried through
+    /// serialization, so a request transported to a co-signer still names the salt its summary
+    /// was derived under. `undefined` means none was declared: miden-client then commits the
+    /// chain's native conversion info under its own fixed default salt, which is what every
+    /// account other than a multisig wants.
+    ///
+    /// Mutually exclusive with `authArg` — setting either clears the other on the builder.
+    #[js_export(js_name = "feeConversionSalt")]
+    pub fn fee_conversion_salt(&self) -> Option<Word> {
+        self.0.fee_conversion_salt().map(Word::from)
     }
 
     /// Returns a copy of the advice map carried by this request.
     #[js_export(js_name = "adviceMap")]
     pub fn advice_map(&self) -> AdviceMap {
         self.0.advice_map().into()
-    }
-
-    /// Returns a copy of this request carrying `auth_arg` as its auth argument.
-    ///
-    /// Since protocol 0.16 `fee::pay_fee` reads the fee faucet and conversion rate from the auth
-    /// args, so a request that pays a fee must carry the commitment
-    /// `hash(CONVERSION_INFO || SALT)` — and a request that has already been SERIALIZED cannot
-    /// otherwise acquire one, because `TransactionRequest` is only constructible through its
-    /// builder. That blocks every flow whose bytes are produced elsewhere and handed over:
-    /// bridged sends, earn deposits, swaps, and a dApp's own `execute` request, none of which the
-    /// wallet can rebuild.
-    ///
-    /// Deliberately NOT `withFeeConversionInfo`: that flags the request as declaring conversion
-    /// info, which makes the client classify the account's auth component first and reject an
-    /// account whose component it cannot match. This ADDS no declaration — it attaches the word and
-    /// nothing else. It does not remove one either: a request built by
-    /// `feeAwareTransactionRequestBuilder` already carries the declaration, and calling this on it
-    /// replaces the commitment the declaration refers to, which execution refuses with
-    /// `FEE_CONVERSION_INFO_AUTH_ARG_OVERWRITTEN`. The declaration-free path is this method on a
-    /// request built from a bare builder.
-    ///
-    /// Overwrites any existing auth arg. The commitment's preimage still has to be reachable, so
-    /// pair this with `extendAdviceMap`. To obtain both for a custom auth procedure, build a
-    /// throwaway request on a bare `TransactionRequestBuilder` with `withFeeConversionInfo`, then
-    /// read its `authArg()` and the preimage under that key from its `adviceMap()` — which is what
-    /// `AdviceMap.get` is for. This crate exposes no standalone commitment helper.
-    #[js_export(js_name = "withAuthArg")]
-    pub fn with_auth_arg(&self, auth_arg: &Word) -> TransactionRequest {
-        let native_auth_arg: NativeWord = auth_arg.into();
-        self.0.clone().with_auth_arg(native_auth_arg).into()
     }
 
     /// Returns a copy of this request with `advice_map` merged into its advice map.
