@@ -188,20 +188,17 @@ export async function upsertInputNote(dbId, detailsCommitment, noteId, assets, a
     return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
 }
 const INPUT_NOTE_CONSUMPTION_INDEX = "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
-// Seeks the consumption index past the cursor and returns the first row passing the filters, as
-// a one-element array so the caller keeps a uniform shape. The cursor is compared as an index
-// key rather than looked up, so it resolves the right position even after its own note is gone.
-// Rows missing a consumption field are absent from the compound index, which is the ordering
-// contract's "not consumed yet, not in the sequence".
+// Returns a one-element array so the caller's shape is uniform with the other readers. The
+// cursor is compared as an index key rather than looked up, so it still resolves the right
+// position once its own note is deleted.
 export async function getInputNoteAfter(dbId, states, consumerAccountId, blockStart, blockEnd, cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment) {
     try {
         const db = getDatabase(dbId);
         const hasCursor = cursorBlockHeight != null &&
             cursorTxOrder != null &&
             cursorDetailsCommitment != null;
-        // `blockStart` only narrows the seek when no cursor is given; with one it stays in the
-        // predicate below, since a cursor past `blockStart` is the tighter bound and a cursor
-        // before it excludes nothing that the predicate does not.
+        // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
+        // lower bound, and emitting both abandons the row-value seek.
         const ordered = hasCursor
             ? db.inputNotes
                 .where(INPUT_NOTE_CONSUMPTION_INDEX)
