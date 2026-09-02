@@ -1,18 +1,13 @@
-import { getDatabase, CLIENT_VERSION_SETTING_KEY } from "./schema.js";
+import { getDatabase } from "./schema.js";
 import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
-const INTERNAL_SETTING_KEYS = new Set([CLIENT_VERSION_SETTING_KEY]);
-export async function getSetting(dbId, key) {
+export async function getSetting(dbId, scope, key) {
     try {
         const db = getDatabase(dbId);
-        const allMatchingRecords = await db.settings
-            .where("key")
-            .equals(key)
-            .toArray();
-        if (allMatchingRecords.length === 0) {
+        const matchingRecord = await db.settings.get([scope, key]);
+        if (!matchingRecord) {
             console.log("No setting record found for given key.");
             return null;
         }
-        const matchingRecord = allMatchingRecords[0];
         const valueBase64 = uint8ArrayToBase64(matchingRecord.value);
         return {
             key: matchingRecord.key,
@@ -23,27 +18,28 @@ export async function getSetting(dbId, key) {
         logWebStoreError(error, `Error while fetching setting key: ${key}`);
     }
 }
-export async function insertSetting(dbId, key, value) {
+export async function insertSetting(dbId, scope, key, value) {
     try {
         const db = getDatabase(dbId);
-        const setting = {
-            key,
-            value,
-        };
-        await db.settings.put(setting);
+        await db.settings.put({ scope, key, value });
     }
     catch (error) {
         logWebStoreError(error, `Error inserting setting with key: ${key} and value(base64): ${uint8ArrayToBase64(value)}`);
     }
 }
 // Reports whether the key was present, which the `Store` trait requires of
-// `remove_setting`. Dexie's `Collection.delete()` resolves to the number of
-// records it removed, so the answer needs no extra read.
-export async function removeSetting(dbId, key) {
+// `remove_setting`. `Table.delete()` resolves to nothing whether or not a row
+// matched, so the answer comes from a read inside the same transaction.
+export async function removeSetting(dbId, scope, key) {
     try {
         const db = getDatabase(dbId);
-        const deleted = await db.settings.where("key").equals(key).delete();
-        return deleted > 0;
+        return await db.dexie.transaction("rw", db.settings, async () => {
+            const present = (await db.settings.get([scope, key])) !== undefined;
+            if (present) {
+                await db.settings.delete([scope, key]);
+            }
+            return present;
+        });
     }
     catch (error) {
         logWebStoreError(error, `Error deleting setting with key: ${key}`);
@@ -52,19 +48,17 @@ export async function removeSetting(dbId, key) {
         throw error;
     }
 }
-export async function listSettingKeys(dbId) {
+export async function listSettingKeys(dbId, scope) {
     try {
         const db = getDatabase(dbId);
-        const keys = await db.settings
-            .toArray()
-            .then((settings) => settings.map((setting) => setting.key));
-        return keys.filter((key) => !INTERNAL_SETTING_KEYS.has(key));
+        const keys = await db.settings.where("scope").equals(scope).primaryKeys();
+        return keys.map(([, key]) => key);
     }
     catch (error) {
         logWebStoreError(error, `Error listing setting keys`);
     }
 }
-export async function applySettingsMutations(dbId, mutations) {
+export async function applySettingsMutations(dbId, scope, mutations) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", db.settings, async () => {
@@ -73,10 +67,14 @@ export async function applySettingsMutations(dbId, mutations) {
                     if (mutation.value === undefined) {
                         throw new Error(`Setting mutation "set" for key ${mutation.key} is missing a value`);
                     }
-                    await db.settings.put({ key: mutation.key, value: mutation.value });
+                    await db.settings.put({
+                        scope,
+                        key: mutation.key,
+                        value: mutation.value,
+                    });
                 }
                 else if (mutation.kind === "remove") {
-                    await db.settings.where("key").equals(mutation.key).delete();
+                    await db.settings.delete([scope, mutation.key]);
                 }
                 else {
                     throw new Error(`Unknown setting mutation kind: ${mutation.kind}`);

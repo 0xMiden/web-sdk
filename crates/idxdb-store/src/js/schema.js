@@ -61,6 +61,9 @@ var Table;
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
 })(Table || (Table = {}));
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
     return items.join(",");
 }
@@ -197,14 +200,19 @@ export class MidenDatabase {
                 .delete();
         });
         // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
-        // `detailsCommitment` instead of `noteId`. `Store::get_input_note_after`
-        // seeks with an `InputNoteCursor`, whose tiebreaker is the details
-        // commitment, and the seek must not depend on the cursor's own note still
-        // being present. `detailsCommitment` is also mandatory on every row, while
-        // `noteId` is optional and silently kept unindexed rows out of the seek.
-        // Index-only change, so Dexie rebuilds it without an upgrade hook.
+        // `detailsCommitment` instead of `noteId`, so the seek in
+        // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+        // carries and needs no lookup of the cursor's own note. Index-only, so
+        // Dexie rebuilds it without an upgrade hook.
         this.dexie.version(3).stores({
             [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"),
+        });
+        // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+        // cannot change in place, hence the drop and the recreate; the rows it held are cached
+        // values the client re-fetches.
+        this.dexie.version(4).stores({ [Table.Settings]: null });
+        this.dexie.version(5).stores({
+            [Table.Settings]: indexes("[scope+key]", "scope"),
         });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
@@ -288,8 +296,13 @@ export class MidenDatabase {
         await this.dexie.open();
         await this.persistClientVersion(clientVersion);
     }
+    // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+    // user-facing settings API never reaches.
     async getStoredClientVersion() {
-        const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+        const record = await this.settings.get([
+            SETTING_SCOPE_CLIENT,
+            CLIENT_VERSION_SETTING_KEY,
+        ]);
         if (!record) {
             return null;
         }
@@ -297,6 +310,7 @@ export class MidenDatabase {
     }
     async persistClientVersion(clientVersion) {
         await this.settings.put({
+            scope: SETTING_SCOPE_CLIENT,
             key: CLIENT_VERSION_SETTING_KEY,
             value: textEncoder.encode(clientVersion),
         });

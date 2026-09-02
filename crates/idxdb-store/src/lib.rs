@@ -45,6 +45,7 @@ use miden_client::store::{
     OutputNoteRecord,
     PartialBlockchainFilter,
     SettingMutation,
+    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
@@ -459,27 +460,41 @@ impl Store for IdxdbStore {
     // SETTINGS
     // --------------------------------------------------------------------------------------------
 
-    async fn set_setting(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
-        self.set_setting(key, value).await
+    async fn set_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.set_setting(scope, key, value).await
     }
 
-    async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, StoreError> {
-        self.get_setting(key).await
+    async fn get_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_setting(scope, key).await
     }
 
-    async fn remove_setting(&self, key: String) -> Result<bool, StoreError> {
-        self.remove_setting(key).await
+    async fn remove_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+    ) -> Result<bool, StoreError> {
+        self.remove_setting(scope, key).await
     }
 
-    async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
-        self.list_setting_keys().await
+    async fn list_setting_keys(&self, scope: SettingScope) -> Result<Vec<String>, StoreError> {
+        self.list_setting_keys(scope).await
     }
 
     async fn apply_settings_mutations(
         &self,
+        scope: SettingScope,
         mutations: Vec<SettingMutation>,
     ) -> Result<(), StoreError> {
-        self.apply_settings_mutations(mutations).await
+        self.apply_settings_mutations(scope, mutations).await
     }
 }
 
