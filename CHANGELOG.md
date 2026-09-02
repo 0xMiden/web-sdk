@@ -2,6 +2,12 @@
 
 ## 0.16.0-rc.6 (TBD)
 
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.16.0-rc.4 (from 0.16.0-rc.3), which adopts protocol 0.16.0-rc.9 and raises its MSRV to 1.98, moving the pinned nightly to `nightly-2026-05-23`. Requires a node on the matching protocol. ([#357](https://github.com/0xMiden/web-sdk/pull/357), client [#2484](https://github.com/0xMiden/rust-sdk/pull/2484))
+* [BREAKING][web] Removed `TransactionFilter.expiredBefore()` and the `{ expiredBefore: number }` query shape, following the client dropping `TransactionFilter::ExpiredBefore` — expiry is decided during state sync instead. TypeScript callers get a type error; a JavaScript caller passing `{ expiredBefore }` silently falls through to unfiltered `all()`. Use `{ status: "uncommitted" }`. ([#357](https://github.com/0xMiden/web-sdk/pull/357), client [#2364](https://github.com/0xMiden/rust-sdk/pull/2364))
+* [CHANGE][web] `IdxdbStore` follows the upstream `Store` trait from `get_input_note_by_offset` to `get_input_note_after`, which seeks past a cursor instead of an ordinal offset that skips or repeats notes when the set changes between calls. The IndexedDB schema advances to version 3, rekeying the input-note consumption index on `detailsCommitment` so the seek matches the cursor and survives the cursor's note being deleted; Dexie rebuilds the index on first open and no rows move. Notes carrying no consumption order are no longer returned, matching `SqliteStore`. No JS API change. ([#357](https://github.com/0xMiden/web-sdk/pull/357), client [#2364](https://github.com/0xMiden/rust-sdk/pull/2364))
+
 ### Fixes
 
 * [FIX][adapter][para][turnkey] Five of the eleven adopted packages never reached npm in `0.16.0-rc.5`, their first release on the 0.16 line: `@miden-sdk/para`, `@miden-sdk/turnkey-react`, `@miden-sdk/miden-wallet-adapter-react`, `@miden-sdk/miden-wallet-adapter-reactui` and `@miden-sdk/miden-wallet-adapter`. No CI job had ever compiled these packages, so the first `tsc` over them ran inside the release job — on the tag, after six siblings had already been published — and each one failed there; the individual failures are the entries below. Installing `0.16.0-rc.5` for the whole set therefore fails with `ETARGET` on those five. They are repaired here and published at `0.16.0-rc.5`, the version their `package.json` files already carry; the six that did publish at that version are immutable and are not republished.
