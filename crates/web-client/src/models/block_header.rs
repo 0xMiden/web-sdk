@@ -107,6 +107,21 @@ impl BlockHeader {
     pub fn fee_faucet_id(&self) -> AccountId {
         self.0.fee_parameters().fee_faucet_id().into()
     }
+
+    /// Returns the chain's verification base fee, in the fee asset's smallest unit.
+    ///
+    /// This is a rate, not the amount a transaction pays: the fee charged is the base fee times
+    /// the transaction's log verification cycles, so two transactions on the same chain pay
+    /// different amounts.
+    ///
+    /// Zero means the chain charges nothing. `fee::pay_fee` discards the conversion info unread
+    /// once the computed fee is zero, so a transaction succeeds on such a chain whether or not it
+    /// commits any. Reading this is what lets a caller decide whether the fee wiring is required
+    /// at all, rather than hardcoding the answer per network.
+    #[js_export(js_name = "verificationBaseFee")]
+    pub fn verification_base_fee(&self) -> u32 {
+        self.0.fee_parameters().verification_base_fee()
+    }
 }
 
 // CONVERSIONS

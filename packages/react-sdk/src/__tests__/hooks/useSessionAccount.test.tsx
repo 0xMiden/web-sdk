@@ -112,7 +112,7 @@ describe("useSessionAccount", () => {
           .fn()
           .mockResolvedValueOnce([]) // First poll: no notes
           .mockResolvedValue([mockConsumableNote]), // Second poll: funding note arrives
-        newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+        newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
         submitNewTransaction: vi.fn().mockResolvedValue({
           toString: vi.fn(() => "0xtx"),
         }),
@@ -142,6 +142,22 @@ describe("useSessionAccount", () => {
       expect(result.current.step).toBe("ready");
       expect(result.current.isReady).toBe(true);
       expect(result.current.sessionAccountId).toBe("0xsession_wallet");
+
+      // `newConsumeTransactionRequest` is async, so submit must receive the
+      // resolved request rather than the promise. Asserting on identity is what
+      // catches a dropped `await` — a permissive submit mock takes a thenable
+      // without complaint, which is how that bug shipped once already.
+      const consumeRequest =
+        await mockClient.newConsumeTransactionRequest.mock.results[0].value;
+      expect(mockClient.submitNewTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        consumeRequest
+      );
+
+      // The consuming account is the second, required argument.
+      expect(
+        mockClient.newConsumeTransactionRequest.mock.calls[0][1]
+      ).toBeDefined();
     });
   });
 
@@ -166,7 +182,7 @@ describe("useSessionAccount", () => {
       const mockClient = createMockWebClient({
         newWallet: vi.fn().mockResolvedValue(mockWallet),
         getConsumableNotes: vi.fn().mockResolvedValue([mockConsumableNote]),
-        newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+        newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
         submitNewTransaction: vi.fn().mockResolvedValue({
           toString: vi.fn(() => "0xtx"),
         }),

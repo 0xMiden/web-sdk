@@ -182,6 +182,26 @@ describe("extractFullNote", () => {
     } as never;
     expect(extractFullNote(txResult)).toBeNull();
   });
+
+  it("prefers userOutputNotes() so the kernel's fee note is never picked", () => {
+    // On a fee-charging chain the unsplit list also holds the kernel's fee note, so index 0 of
+    // it can be the fee note rather than the note being sent — and this note's id is what gets
+    // relayed to the recipient.
+    const userNote = { kind: "user-note" } as never;
+    const feeNote = { kind: "fee-note" } as never;
+    const txResult = {
+      executedTransaction: () => ({
+        userOutputNotes: () => [{ intoFull: () => userNote }],
+        outputNotes: () => ({
+          notes: () => [
+            { intoFull: () => feeNote },
+            { intoFull: () => userNote },
+          ],
+        }),
+      }),
+    } as never;
+    expect(extractFullNote(txResult)).toBe(userNote);
+  });
 });
 
 describe("assertAnchorValueUsable", () => {

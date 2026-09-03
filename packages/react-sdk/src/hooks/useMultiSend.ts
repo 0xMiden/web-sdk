@@ -6,7 +6,6 @@ import {
   NoteAssets,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type {
   MultiSendOptions,
@@ -146,11 +145,27 @@ export function useMultiSend(): UseMultiSendResult {
         for (const o of outputs) {
           ownOutputs.push(o.note);
         }
-        const txRequest = new TransactionRequestBuilder()
-          .withOwnOutputNotes(ownOutputs)
-          .build();
-
+        // The sender executes this transaction, so its auth procedure is what
+        // pays the fee; a bare builder would abort with
+        // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+        //
+        // These two run serialized only by the proxy's own per-call lock:
+        // `feeAwareTransactionRequestBuilder` is a WRITE_METHOD and
+        // `executeTransaction` is an explicitly serialized wrapper, so neither is
+        // raw-bound and neither can alias the client. That rules out the aliasing
+        // panic, not a state change between them — and the AsyncLock the other
+        // send hooks hold would not close that gap either, since the provider
+        // drives auto-sync outside it. The window is real but narrow: the builder
+        // reads the verification base fee at the store's current sync height
+        // while execution resolves fee parameters from the reference block, so a
+        // sync that moves the base fee across zero in between leaves the request
+        // carrying info the execution no longer wants, or wanting info it does
+        // not carry.
         const txSenderId = parseAccountId(options.from);
+        const builder =
+          await client.feeAwareTransactionRequestBuilder(txSenderId);
+        const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
+
         const txResult = await client.executeTransaction(txSenderId, txRequest);
 
         setStage("proving");

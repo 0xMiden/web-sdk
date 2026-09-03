@@ -70,7 +70,10 @@ test.describe("import from seed", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        initialWalletId
+      );
       execResult = await intClient.executeTransaction(
         initialWalletId,
         consumeRequest
@@ -214,7 +217,10 @@ test.describe("import public account by id", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        initialWalletId
+      );
       execResult = await intClient.executeTransaction(
         initialWalletId,
         consumeRequest

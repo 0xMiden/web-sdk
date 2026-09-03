@@ -6,7 +6,7 @@ import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
-import { hashSeed } from "./utils.js";
+import { hashSeed, resolveAccountRef } from "./utils.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -407,6 +407,37 @@ export class MidenClient {
   async storeIdentifier() {
     this.assertNotTerminated();
     return await this.#inner.storeIdentifier();
+  }
+
+  /**
+   * Returns a `TransactionRequestBuilder` that already carries the chain's fee
+   * conversion info for the account that will execute the request.
+   *
+   * Use this instead of `new TransactionRequestBuilder()` whenever you assemble
+   * a request yourself for a MULTISIG account. Since protocol 0.16 the
+   * verification fee is paid inside the account's auth procedure, which reads it
+   * from the transaction's auth argument. Fees settle in the chain's native fee
+   * asset at rate 1/1 and miden-client commits that itself, so an ordinary
+   * account needs nothing; a multisig reuses the fee conversion salt as its
+   * summary's replay guard, so miden-client refuses to invent one and execution
+   * fails with `FeeConversionInfoRequired`.
+   *
+   * The argument is the account that **executes** the request — the one whose
+   * auth procedure pays — not the recipient or a note's sender. On a zero-fee
+   * chain, or for an account that does not choose its own salt, the builder
+   * comes back untouched, so this is a safe drop-in. `withAuthArg` and
+   * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
+   * whichever is called last wins.
+   *
+   * @param {AccountRef} account - The executing account.
+   * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
+   */
+  async feeAwareTransactionRequestBuilder(account) {
+    this.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    return await this.#inner.feeAwareTransactionRequestBuilder(
+      resolveAccountRef(account, wasm)
+    );
   }
 
   // ── Mock-only methods ──
