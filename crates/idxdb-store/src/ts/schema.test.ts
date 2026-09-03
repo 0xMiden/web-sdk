@@ -225,6 +225,28 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("1.2.5");
   });
+
+  it("keeps the store on a same major.minor patch pin-back (0.15.9 → 0.15.8)", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.15.9");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("patch-keep"),
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb2.open("0.15.8");
+    expect(success).toBe(true);
+
+    const sentinel = await mdb2.settings.get("sentinel");
+    expect(sentinel).toBeDefined();
+
+    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("0.15.8");
+  });
 });
 
 // ============================================================
