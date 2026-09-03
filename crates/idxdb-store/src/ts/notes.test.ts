@@ -4,7 +4,7 @@ import {
   upsertInputNote,
   upsertOutputNote,
   upsertNoteScript,
-  getInputNoteByOffset,
+  getInputNoteAfter,
   getInputNotes,
   getInputNotesFromIds,
   getInputNotesFromNullifiers,
@@ -61,10 +61,12 @@ const STATE_PROCESSING_UNAUTHENTICATED = 5;
 const DUMMY_BYTES = new Uint8Array([1, 2, 3]);
 const DUMMY_SCRIPT_ROOT = "script-root-1";
 
+const CONSUMER = "0xconsumer";
+
 /**
  * Insert a minimal input note with consumption metadata.
  * The noteId is stored in the `createdAt` field so we can recover it from the
- * processed (base64-encoded) output of `getInputNoteByOffset`.
+ * processed (base64-encoded) output of `getInputNoteAfter`.
  */
 async function insertNote(
   dbId: string,
@@ -97,39 +99,66 @@ async function insertNote(
     DUMMY_BYTES,
     opts.consumedBlockHeight,
     opts.consumedTxOrder,
-    opts.consumerAccountId
+    opts.consumerAccountId ?? CONSUMER
   );
 }
 
+interface Cursor {
+  blockHeight: number;
+  txOrder: number;
+  detailsCommitment: string;
+}
+
 /**
- * Iterate through all notes using `getInputNoteByOffset`, collecting noteIds
- * from the actual function output. The noteId is recovered from the `createdAt`
- * field of the processed result (where we stored it during insertion).
+ * Reads the cursor pointing at `noteId` out of the store. Mirrors what the client does with
+ * `InputNoteCursor::from_record`, which reads the same three fields off the record it was
+ * handed rather than off the wire.
+ */
+async function cursorFor(dbId: string, noteId: string): Promise<Cursor> {
+  const row = await getDatabase(dbId)
+    .inputNotes.where("noteId")
+    .equals(noteId)
+    .first();
+  if (!row) throw new Error(`no note ${noteId} in the store`);
+  return {
+    blockHeight: row.consumedBlockHeight!,
+    txOrder: row.consumedTxOrder!,
+    detailsCommitment: row.detailsCommitment,
+  };
+}
+
+/**
+ * Pages through the whole sequence with `getInputNoteAfter`, collecting noteIds from the
+ * function's own output. The noteId is recovered from the `createdAt` field of the processed
+ * result (where we stored it during insertion).
  */
 async function collectAllNoteIds(
   dbId: string,
   states: Uint8Array,
-  consumer?: string,
+  consumer: string,
   blockStart?: number,
   blockEnd?: number
 ): Promise<string[]> {
   const ids: string[] = [];
-  let offset = 0;
+  let cursor: Cursor | undefined = undefined;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const result = await getInputNoteByOffset(
+    const result = await getInputNoteAfter(
       dbId,
       states,
       consumer,
       blockStart,
       blockEnd,
-      offset
+      cursor?.blockHeight,
+      cursor?.txOrder,
+      cursor?.detailsCommitment
     );
     if (!result || result.length === 0) break;
     // createdAt holds the noteId (see insertNote)
-    ids.push(result[0].createdAt);
-    offset++;
+    const noteId = result[0].createdAt;
+    ids.push(noteId);
+    cursor = await cursorFor(dbId, noteId);
   }
 
   return ids;
@@ -138,7 +167,7 @@ async function collectAllNoteIds(
 // ORDERING TESTS
 // ================================================================================================
 
-describe("getInputNoteByOffset ordering", () => {
+describe("getInputNoteAfter ordering", () => {
   it("returns notes ordered by block height", async () => {
     const dbId = await openTestDb();
 
@@ -155,7 +184,7 @@ describe("getInputNoteByOffset ordering", () => {
       consumedTxOrder: 0,
     });
 
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES);
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
     expect(ids).toEqual(["note-b1", "note-b2", "note-b3"]);
   });
 
@@ -175,52 +204,134 @@ describe("getInputNoteByOffset ordering", () => {
       consumedTxOrder: 1,
     });
 
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES);
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
     expect(ids).toEqual(["note-tx0", "note-tx1", "note-tx2"]);
   });
 
-  it("sorts null tx order last within same block (fallback path)", async () => {
+  it("breaks ties on detailsCommitment, not noteId", async () => {
     const dbId = await openTestDb();
 
-    await insertNote(dbId, "note-ordered", {
-      consumedBlockHeight: 5,
-      consumedTxOrder: 0,
-    });
-    await insertNote(dbId, "note-unordered", {
-      consumedBlockHeight: 5,
-      // no consumedTxOrder
-    });
-
-    // No consumer -> fallback path that includes null tx_order notes
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES);
-    expect(ids).toEqual(["note-ordered", "note-unordered"]);
-  });
-
-  it("uses noteId as tiebreaker for same block and tx order", async () => {
-    const dbId = await openTestDb();
-
-    await insertNote(dbId, "note-c", {
+    // noteId order and detailsCommitment order disagree here, so this only holds if the seek
+    // is keyed by the commitment the cursor actually carries.
+    await insertNote(dbId, "note-z", {
+      detailsCommitment: "commitment-a",
       consumedBlockHeight: 1,
       consumedTxOrder: 0,
     });
     await insertNote(dbId, "note-a", {
-      consumedBlockHeight: 1,
-      consumedTxOrder: 0,
-    });
-    await insertNote(dbId, "note-b", {
+      detailsCommitment: "commitment-z",
       consumedBlockHeight: 1,
       consumedTxOrder: 0,
     });
 
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES);
-    expect(ids).toEqual(["note-a", "note-b", "note-c"]);
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
+    expect(ids).toEqual(["note-z", "note-a"]);
+  });
+
+  it("leaves out notes that carry no tx order", async () => {
+    const dbId = await openTestDb();
+
+    await insertNote(dbId, "note-consumed", {
+      consumedBlockHeight: 5,
+      consumedTxOrder: 0,
+    });
+    // Missing a key path, so absent from the compound index. The client cannot build a cursor
+    // for such a note either, which is why it has no place in the sequence.
+    await insertNote(dbId, "note-no-order", {
+      consumedBlockHeight: 5,
+    });
+
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
+    expect(ids).toEqual(["note-consumed"]);
+  });
+});
+
+// CURSOR SEMANTICS TESTS
+// ================================================================================================
+
+describe("getInputNoteAfter cursor semantics", () => {
+  it("returns the first note when no cursor is given", async () => {
+    const dbId = await openTestDb();
+
+    await insertNote(dbId, "note-1", {
+      consumedBlockHeight: 1,
+      consumedTxOrder: 0,
+    });
+    await insertNote(dbId, "note-2", {
+      consumedBlockHeight: 2,
+      consumedTxOrder: 0,
+    });
+
+    const result = await getInputNoteAfter(
+      dbId,
+      CONSUMED_STATES,
+      CONSUMER,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    );
+    expect(result).toHaveLength(1);
+    expect(result![0].createdAt).toBe("note-1");
+  });
+
+  it("resolves the next note after a cursor whose own note was deleted", async () => {
+    const dbId = await openTestDb();
+
+    await insertNote(dbId, "note-1", {
+      consumedBlockHeight: 1,
+      consumedTxOrder: 0,
+    });
+    await insertNote(dbId, "note-2", {
+      consumedBlockHeight: 2,
+      consumedTxOrder: 0,
+    });
+
+    const cursor = await cursorFor(dbId, "note-1");
+    await getDatabase(dbId).inputNotes.delete(cursor.detailsCommitment);
+
+    const result = await getInputNoteAfter(
+      dbId,
+      CONSUMED_STATES,
+      CONSUMER,
+      undefined,
+      undefined,
+      cursor.blockHeight,
+      cursor.txOrder,
+      cursor.detailsCommitment
+    );
+    expect(result).toHaveLength(1);
+    expect(result![0].createdAt).toBe("note-2");
+  });
+
+  it("returns empty once the cursor passes the last note", async () => {
+    const dbId = await openTestDb();
+
+    await insertNote(dbId, "note-1", {
+      consumedBlockHeight: 1,
+      consumedTxOrder: 0,
+    });
+
+    const cursor = await cursorFor(dbId, "note-1");
+    const result = await getInputNoteAfter(
+      dbId,
+      CONSUMED_STATES,
+      CONSUMER,
+      undefined,
+      undefined,
+      cursor.blockHeight,
+      cursor.txOrder,
+      cursor.detailsCommitment
+    );
+    expect(result).toEqual([]);
   });
 });
 
 // CONSUMER FILTER TESTS
 // ================================================================================================
 
-describe("getInputNoteByOffset consumer filtering", () => {
+describe("getInputNoteAfter consumer filtering", () => {
   it("filters by consumer account", async () => {
     const dbId = await openTestDb();
 
@@ -259,7 +370,7 @@ describe("getInputNoteByOffset consumer filtering", () => {
     });
 
     const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, "0xalice");
-    // Only the note with tx_order should be returned (cursor path uses compound index).
+    // Only the note with a tx order is in the compound index the seek walks.
     expect(ids).toEqual(["note-with-order"]);
   });
 });
@@ -267,7 +378,7 @@ describe("getInputNoteByOffset consumer filtering", () => {
 // BLOCK RANGE FILTER TESTS
 // ================================================================================================
 
-describe("getInputNoteByOffset block range filtering", () => {
+describe("getInputNoteAfter block range filtering", () => {
   it("filters by block range", async () => {
     const dbId = await openTestDb();
 
@@ -289,7 +400,7 @@ describe("getInputNoteByOffset block range filtering", () => {
     });
 
     // Block range 3..=5
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, undefined, 3, 5);
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER, 3, 5);
     expect(ids).toEqual(["note-b3", "note-b5"]);
   });
 
@@ -322,78 +433,10 @@ describe("getInputNoteByOffset block range filtering", () => {
   });
 });
 
-describe("getInputNoteByOffset unordered-filter branches", () => {
-  it("excludes unordered notes with null consumedBlockHeight when blockStart is set", async () => {
-    // Exercises the `consumedBlockHeight == null` branch in the unordered filter
-    // (line 218 of notes.ts: blockStart != null && (consumedBlockHeight == null || ...))
-    const dbId = await openTestDb();
-
-    await insertNote(dbId, "note-ordered-b5", {
-      consumedBlockHeight: 5,
-      consumedTxOrder: 0,
-    });
-    // Unordered note with null consumedBlockHeight — should be excluded by blockStart filter
-    await insertNote(dbId, "note-unordered-no-height", {
-      // no consumedBlockHeight — null
-    });
-
-    const ids = await collectAllNoteIds(
-      dbId,
-      CONSUMED_STATES,
-      undefined,
-      3,
-      undefined
-    );
-    expect(ids).toContain("note-ordered-b5");
-    expect(ids).not.toContain("note-unordered-no-height");
-  });
-
-  it("excludes unordered notes with null consumedBlockHeight when blockEnd is set", async () => {
-    // Exercises the `consumedBlockHeight == null` branch in the unordered filter
-    // (line 220 of notes.ts: blockEnd != null && (consumedBlockHeight == null || ...))
-    const dbId = await openTestDb();
-
-    await insertNote(dbId, "note-ordered-b5", {
-      consumedBlockHeight: 5,
-      consumedTxOrder: 0,
-    });
-    await insertNote(dbId, "note-unordered-no-height-2", {
-      // no consumedBlockHeight — null
-    });
-
-    const ids = await collectAllNoteIds(
-      dbId,
-      CONSUMED_STATES,
-      undefined,
-      undefined,
-      10
-    );
-    expect(ids).toContain("note-ordered-b5");
-    expect(ids).not.toContain("note-unordered-no-height-2");
-  });
-
-  it("excludes unordered notes with consumerAccountId != undefined (line 217 branch)", async () => {
-    // In the unordered path, consumerAccountId filter is undefined. If a note has
-    // a non-undefined consumerAccountId, it should be excluded via line 217.
-    const dbId = await openTestDb();
-
-    await insertNote(dbId, "note-no-tx-with-consumer", {
-      consumerAccountId: "0xsomeconsumer",
-      consumedBlockHeight: 5,
-      // no consumedTxOrder — so not in compound index
-    });
-
-    // Query with no consumer (undefined) — the unordered filter line 217 excludes
-    // notes with a different consumerAccountId
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES);
-    expect(ids).not.toContain("note-no-tx-with-consumer");
-  });
-});
-
 // STATE FILTER TESTS
 // ================================================================================================
 
-describe("getInputNoteByOffset state filtering", () => {
+describe("getInputNoteAfter state filtering", () => {
   it("skips non-consumed notes", async () => {
     const dbId = await openTestDb();
 
@@ -406,20 +449,22 @@ describe("getInputNoteByOffset state filtering", () => {
       stateDiscriminant: STATE_EXPECTED,
     });
 
-    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES);
+    const ids = await collectAllNoteIds(dbId, CONSUMED_STATES, CONSUMER);
     expect(ids).toEqual(["consumed"]);
   });
 
   it("returns empty when no notes match", async () => {
     const dbId = await openTestDb();
 
-    const result = await getInputNoteByOffset(
+    const result = await getInputNoteAfter(
       dbId,
       CONSUMED_STATES,
+      CONSUMER,
       undefined,
       undefined,
       undefined,
-      0
+      undefined,
+      undefined
     );
     expect(result).toEqual([]);
   });
@@ -1068,15 +1113,17 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(getNoteScript(BAD_DB, "root1")).rejects.toThrow();
   });
 
-  it("getInputNoteByOffset rejects on bad dbId", async () => {
+  it("getInputNoteAfter rejects on bad dbId", async () => {
     await expect(
-      getInputNoteByOffset(
+      getInputNoteAfter(
         BAD_DB,
         new Uint8Array([]),
+        CONSUMER,
         undefined,
         undefined,
         undefined,
-        0
+        undefined,
+        undefined
       )
     ).rejects.toThrow();
   });
