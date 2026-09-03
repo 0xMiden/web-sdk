@@ -11,6 +11,7 @@ use miden_client::note::{
     Nullifier,
 };
 use miden_client::store::{
+    InputNoteCursor,
     InputNoteRecord,
     InputNoteState,
     NoteFilter,
@@ -27,7 +28,7 @@ use crate::promise::await_js;
 
 mod js_bindings;
 use js_bindings::{
-    idxdb_get_input_note_by_offset,
+    idxdb_get_input_note_after,
     idxdb_get_input_notes,
     idxdb_get_input_notes_from_details_commitments,
     idxdb_get_input_notes_from_ids,
@@ -106,31 +107,33 @@ impl IdxdbStore {
             .collect::<Result<Vec<Nullifier>, _>>()
     }
 
-    pub(crate) async fn get_input_note_by_offset(
+    pub(crate) async fn get_input_note_after(
         &self,
         filter: NoteFilter,
         consumer: AccountId,
         block_start: Option<BlockNumber>,
         block_end: Option<BlockNumber>,
-        offset: u32,
+        cursor: Option<InputNoteCursor>,
     ) -> Result<Option<InputNoteRecord>, StoreError> {
         let states = input_note_state_discriminants(&filter).ok_or_else(|| {
             StoreError::QueryError(
-                "get_input_note_by_offset only supports state-based filters".to_string(),
+                "get_input_note_after only supports state-based filters".to_string(),
             )
         })?;
         let consumer_hex = consumer.to_hex();
-        let promise = idxdb_get_input_note_by_offset(
+        let promise = idxdb_get_input_note_after(
             self.db_id(),
             states,
             consumer_hex,
             block_start.map(|b| b.as_u32()),
             block_end.map(|b| b.as_u32()),
-            offset,
+            cursor.map(|c| c.consumed_block_height().as_u32()),
+            cursor.map(|c| c.consumed_tx_order()),
+            cursor.map(|c| c.details_commitment().to_hex()),
         );
 
         let notes: Vec<InputNoteIdxdbObject> =
-            await_js(promise, "failed to get input note by offset").await?;
+            await_js(promise, "failed to get input note after cursor").await?;
 
         notes.into_iter().next().map(parse_input_note_idxdb_object).transpose()
     }

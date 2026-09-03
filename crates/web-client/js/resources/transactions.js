@@ -868,8 +868,6 @@ export class TransactionsResource {
         wasm.TransactionId.fromHex(resolveTransactionIdHex(id))
       );
       filter = wasm.TransactionFilter.ids(txIds);
-    } else if (query.expiredBefore !== undefined) {
-      filter = wasm.TransactionFilter.expiredBefore(query.expiredBefore);
     } else {
       filter = wasm.TransactionFilter.all();
     }

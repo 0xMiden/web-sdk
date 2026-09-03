@@ -137,7 +137,6 @@ function makeWasm(overrides = {}) {
       all: vi.fn().mockReturnValue("filterAll"),
       uncommitted: vi.fn().mockReturnValue("filterUncommitted"),
       ids: vi.fn().mockReturnValue("filterIds"),
-      expiredBefore: vi.fn().mockReturnValue("filterExpired"),
     },
     TransactionId: {
       fromHex: vi.fn((hex) => ({ hex, toHex: () => hex })),
@@ -1550,12 +1549,6 @@ describe("TransactionsResource", () => {
       await resource.list({ ids: ["0xid1", "0xid2"] });
       expect(wasm.TransactionId.fromHex).toHaveBeenCalledTimes(2);
       expect(wasm.TransactionFilter.ids).toHaveBeenCalled();
-    });
-
-    it("uses filter.expiredBefore() for query.expiredBefore", async () => {
-      const { resource, wasm } = makeResource();
-      await resource.list({ expiredBefore: 12345 });
-      expect(wasm.TransactionFilter.expiredBefore).toHaveBeenCalledWith(12345);
     });
 
     it("falls back to filter.all() for unknown query shape", async () => {

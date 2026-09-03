@@ -803,8 +803,7 @@ export interface ConsumeAllResult {
  */
 export type TransactionQuery =
   | { status: "uncommitted" }
-  | { ids: (string | TransactionId)[] }
-  | { expiredBefore: number };
+  | { ids: (string | TransactionId)[] };
 
 // ════════════════════════════════════════════════════════════════
 // Note types
