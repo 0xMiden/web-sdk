@@ -1,6 +1,7 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { withSyncLock } from "./syncLock.js";
+import { errorFromWorkerEvent, latchWorkerFailure } from "./workerFailure.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
@@ -415,6 +416,7 @@ class WebClient {
 
       // Map to track pending worker requests.
       this.pendingRequests = new Map();
+      this.workerFailure = null;
 
       // Promises to track when the worker script is loaded and ready.
       this.loaded = new Promise((resolve) => {
@@ -511,8 +513,22 @@ class WebClient {
             "WebClient: worker initialization failed:",
             workerError
           );
-          this.readyRejecter(workerError);
+          latchWorkerFailure(this, workerError);
         }
+      });
+
+      this.worker.addEventListener("error", (event) => {
+        event.preventDefault();
+        const workerError = errorFromWorkerEvent(event);
+        console.error("WebClient: worker error:", workerError);
+        latchWorkerFailure(this, workerError, event);
+      });
+
+      this.worker.addEventListener("messageerror", (event) => {
+        event.preventDefault();
+        const workerError = errorFromWorkerEvent(event);
+        console.error("WebClient: worker messageerror:", workerError);
+        latchWorkerFailure(this, workerError, event);
       });
 
       // Once the worker script has loaded, initialize the worker.
@@ -526,6 +542,7 @@ class WebClient {
       // Worker not available or explicitly disabled; set up fallback values.
       this.worker = null;
       this.pendingRequests = null;
+      this.workerFailure = null;
       this.loaded = Promise.resolve();
       this.ready = Promise.resolve();
     }
@@ -784,7 +801,13 @@ class WebClient {
    * @returns {Promise<any>}
    */
   async callMethodWithWorker(methodName, ...args) {
+    if (this.workerFailure) {
+      return Promise.reject(this.workerFailure);
+    }
     await this.ready;
+    if (this.workerFailure) {
+      return Promise.reject(this.workerFailure);
+    }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
     return new Promise((resolve, reject) => {
