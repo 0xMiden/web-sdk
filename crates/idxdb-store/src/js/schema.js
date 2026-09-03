@@ -2,6 +2,12 @@ import Dexie from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+function isIndexedDbVersionError(err) {
+    return (typeof err === "object" &&
+        err !== null &&
+        "name" in err &&
+        err.name === "VersionError");
+}
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
@@ -229,7 +235,23 @@ export class MidenDatabase {
     async open(clientVersion) {
         console.log(`Opening database ${this.dexie.name} for client version ${clientVersion}...`);
         try {
-            await this.dexie.open();
+            try {
+                await this.dexie.open();
+            }
+            catch (err) {
+                // A newer client may have advanced the IndexedDB schema version (e.g.
+                // 0.16.0-rc declares Dexie v5 while 0.15.x stops at v2). Dexie throws
+                // VersionError before ensureClientVersion can run — wipe and reopen so
+                // the RC → stable downgrade path actually recovers.
+                if (isIndexedDbVersionError(err)) {
+                    console.warn(`IndexedDB VersionError opening ${this.dexie.name} (on-disk schema newer than this client). Resetting store.`);
+                    await this.dexie.delete();
+                    await this.dexie.open();
+                }
+                else {
+                    throw err;
+                }
+            }
             await this.ensureClientVersion(clientVersion);
             console.log("Database opened successfully");
             return true;

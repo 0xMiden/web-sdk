@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import Dexie from "dexie";
 import {
   openDatabase,
@@ -287,6 +287,39 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
 
     const sentinel = await mdb2.settings.get("sentinel");
     expect(sentinel).toBeUndefined();
+  });
+
+  it("wipes and reopens when dexie.open throws VersionError (newer on-disk schema)", async () => {
+    const name = uniqueDbName();
+    const mdb = trackMidenDb(new MidenDatabase(name));
+
+    // fake-indexeddb softens schema downgrades; drive the real-browser path
+    // Mustdzyl reported (RC Dexie v5 → 0.15.x v2) with an explicit VersionError.
+    let openCalls = 0;
+    const nativeOpen = mdb.dexie.open.bind(mdb.dexie);
+    const openSpy = vi.spyOn(mdb.dexie, "open").mockImplementation(async () => {
+      openCalls += 1;
+      if (openCalls === 1) {
+        const err = new Error(
+          "The requested version (2) is less than the existing version (5)."
+        );
+        err.name = "VersionError";
+        throw err;
+      }
+      return nativeOpen();
+    });
+    const deleteSpy = vi.spyOn(mdb.dexie, "delete");
+
+    const success = await mdb.open("0.15.9");
+    expect(success).toBe(true);
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(openCalls).toBe(2);
+
+    const versionRecord = await mdb.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("0.15.9");
+
+    openSpy.mockRestore();
+    deleteSpy.mockRestore();
   });
 });
 
