@@ -12,13 +12,16 @@ type AccountPrototype = {
   bech32id?: () => string;
 };
 
-const inferNetworkId = (): NetworkId => {
-  const { rpcUrl } = useMidenStore.getState().config;
-  if (!rpcUrl) {
-    return NetworkId.testnet();
+// Derive the bech32 network from the live client's endpoint (single source of truth).
+// A real client always carries an endpoint (testnet by default), so the only
+// undetermined cases are: no client yet (provider still initializing) or a configured
+// custom endpoint we can't map — both return `null` so callers fall back to the raw
+// account id rather than tagging it for the wrong network.
+const resolveNetworkId = (): NetworkId | null => {
+  const url = useMidenStore.getState().client?.endpoint()?.toLowerCase();
+  if (!url) {
+    return null;
   }
-
-  const url = rpcUrl.toLowerCase();
   if (url.includes("devnet") || url.includes("mdev")) {
     return NetworkId.devnet();
   }
@@ -28,23 +31,30 @@ const inferNetworkId = (): NetworkId => {
   if (url.includes("testnet") || url.includes("mtst")) {
     return NetworkId.testnet();
   }
-
-  return NetworkId.testnet();
+  if (url.includes("localhost") || url.includes("127.0.0.1")) {
+    // Local nodes run a devnet genesis by default.
+    return NetworkId.devnet();
+  }
+  return null;
 };
 
 const toBech32FromAccountId = (id: AccountId): string => {
+  const networkId = resolveNetworkId();
+  // Network not yet determinable (provider initializing, or a custom endpoint):
+  // return the raw id rather than risk a wrong-network bech32 address.
+  if (!networkId) {
+    return id.toString();
+  }
+
   try {
     const address = Address.fromAccountId(id, "BasicWallet");
-    return address.toBech32(inferNetworkId());
+    return address.toBech32(networkId);
   } catch {
     // Fall through to AccountId conversion or string fallback.
   }
 
   try {
-    const maybeBech32 = id.toBech32?.(
-      inferNetworkId(),
-      AccountInterface.BasicWallet
-    );
+    const maybeBech32 = id.toBech32?.(networkId, AccountInterface.BasicWallet);
     if (typeof maybeBech32 === "string") {
       return maybeBech32;
     }

@@ -54,6 +54,13 @@ impl RpcClient {
         Ok(RpcClient { inner: rpc_client })
     }
 
+    /// Returns the endpoint URL this RPC client is configured to talk to, or `undefined` if its
+    /// transport doesn't track one.
+    #[js_export(js_name = "endpoint")]
+    pub fn endpoint(&self) -> Option<String> {
+        self.inner.endpoint().map(str::to_string)
+    }
+
     /// Fetches notes by their IDs from the connected Miden node.
     ///
     /// @param note_ids - Array of [`NoteId`] objects to fetch

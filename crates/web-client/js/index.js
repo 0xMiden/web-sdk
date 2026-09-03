@@ -70,6 +70,7 @@ const SYNC_METHODS = new Set([
   "buildPswapCancelByOrder",
   "buildSwapTag",
   "createCodeBuilder",
+  "endpoint",
   "lastAuthError",
   "newB2AggTransactionRequest",
   "newConsumeTransactionRequest",

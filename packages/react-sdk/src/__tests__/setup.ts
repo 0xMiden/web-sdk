@@ -76,6 +76,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       | null,
     setSignCb: vi.fn(),
     free: vi.fn(),
+    endpoint: vi.fn(() => "https://rpc.devnet.miden.io"),
   };
 
   const WebClient = Object.assign(
