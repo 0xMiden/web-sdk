@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.0-rc.7 (TBD)
+## 0.16.0-rc.7 (2026-09-03)
 
 ### Enhancements
 
