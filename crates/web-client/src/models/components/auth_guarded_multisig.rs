@@ -122,8 +122,9 @@ pub fn create_auth_guarded_multisig(
 ) -> Result<AccountComponent, JsErr> {
     let native_config: NativeAuthGuardedMultisigConfig = config.into();
 
-    let guarded = NativeAuthGuardedMultisig::new(native_config)
-        .map_err(|e| js_error_with_context(e, "Failed to create guarded multisig auth component"))?;
+    let guarded = NativeAuthGuardedMultisig::new(native_config).map_err(|e| {
+        js_error_with_context(e, "Failed to create guarded multisig auth component")
+    })?;
 
     let native_component: miden_client::account::AccountComponent = guarded.into();
 
