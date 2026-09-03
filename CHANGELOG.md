@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0-rc.7 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `createAuthGuardedMultisig` builds the standard guarded-multisig auth component from `miden-standards`, so a browser-built guarded account carries the same `auth_tx` procedure root as a Rust-built one. Compiling equivalent MASM through `AccountComponent.compile` instead links the standards package dynamically and yields a different root, which `AccountComponentInterface::from_procedures` cannot classify — the client then treats the account as having no recognised auth component, declines to attach fee conversion info, and every transaction from it fails on a fee-charging chain. ([#361](https://github.com/0xMiden/web-sdk/pull/361))
+
 ## 0.16.0-rc.6 (2026-09-03)
 
 ### Changes
