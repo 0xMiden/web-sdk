@@ -103,6 +103,12 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       AuthRpoFalcon512: 2,
       AuthEcdsaK256Keccak: 1,
     },
+    getWasmOrThrow: vi.fn().mockResolvedValue({
+      AuthScheme: {
+        AuthRpoFalcon512: 2,
+        AuthEcdsaK256Keccak: 1,
+      },
+    }),
     WebClient,
     WasmWebClient: WebClient,
     AccountId: {
