@@ -477,11 +477,7 @@ impl Store for IdxdbStore {
         self.get_setting(scope, key).await
     }
 
-    async fn remove_setting(
-        &self,
-        scope: SettingScope,
-        key: String,
-    ) -> Result<bool, StoreError> {
+    async fn remove_setting(&self, scope: SettingScope, key: String) -> Result<bool, StoreError> {
         self.remove_setting(scope, key).await
     }
 
