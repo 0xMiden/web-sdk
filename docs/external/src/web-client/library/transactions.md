@@ -63,9 +63,6 @@ try {
 
     // Get specific transactions by ID
     const specific = await client.transactions.list({ ids: [txId1, txId2] });
-
-    // Get expired transactions
-    const expired = await client.transactions.list({ expiredBefore: 1000 });
 } catch (error) {
     console.error("Failed to filter transactions:", error.message);
 }
