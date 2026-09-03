@@ -556,7 +556,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           );
           await c.submitNewTransaction(
             wallet.id(),
-            c.newConsumeTransactionRequest(mintedNotes)
+            await c.newConsumeTransactionRequest(mintedNotes, wallet.id())
           );
           await c.proveBlock();
           await c.syncState();
@@ -627,7 +627,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const inputNoteRecord = await c.getInputNote(noteId);
           if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
           const note = inputNoteRecord.toNote();
-          const consumeRequest = c.newConsumeTransactionRequest([note]);
+          const consumeRequest = await c.newConsumeTransactionRequest(
+            [note],
+            accountId
+          );
           const txId = await c.submitNewTransaction(accountId, consumeRequest);
           await c.proveBlock();
           await c.syncState();
@@ -725,7 +728,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           if (!swapNoteRecord)
             throw new Error(`Swap note ${swapNoteId} not found`);
           const swapNote = swapNoteRecord.toNote();
-          const consumeReq1 = c.newConsumeTransactionRequest([swapNote]);
+          const consumeReq1 = await c.newConsumeTransactionRequest(
+            [swapNote],
+            accountBId
+          );
           const consumeTxId1 = await c.submitNewTransaction(
             accountBId,
             consumeReq1
@@ -748,7 +754,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           if (!paybackNoteRecord)
             throw new Error(`Payback note ${paybackNoteId} not found`);
           const paybackNote = paybackNoteRecord.toNote();
-          const consumeReq2 = c.newConsumeTransactionRequest([paybackNote]);
+          const consumeReq2 = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            accountAId
+          );
           await c.submitNewTransaction(accountAId, consumeReq2);
           await c.proveBlock();
           await c.syncState();
@@ -829,7 +838,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const consumeRequest = c.newPswapConsumeTransactionRequest(
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
             pswapNoteRecord.toNote(),
             fillerId,
             BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
@@ -863,7 +872,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const paybackNote = consumeOutputNotes[0].intoFull();
           if (!paybackNote)
             throw new Error("Payback note is not available in full form");
-          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
+          const paybackConsume = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            creatorId
+          );
           await c.submitNewTransaction(creatorId, paybackConsume);
           await c.proveBlock();
           await c.syncState();
@@ -932,7 +944,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const consumeRequest = c.newPswapConsumeTransactionRequest(
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
             pswapNoteRecord.toNote(),
             fillerId,
             BigInt(fillAmount),
@@ -983,7 +995,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const paybackNote = paybackOutputNote.intoFull();
           if (!paybackNote)
             throw new Error("Payback note is not available in full form");
-          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
+          const paybackConsume = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            creatorId
+          );
           await c.submitNewTransaction(creatorId, paybackConsume);
           await c.proveBlock();
           await c.syncState();
@@ -1038,7 +1053,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const cancelRequest = c.newPswapCancelTransactionRequest(
+          const cancelRequest = await c.newPswapCancelTransactionRequest(
             pswapNoteRecord.toNote(),
             creatorId
           );

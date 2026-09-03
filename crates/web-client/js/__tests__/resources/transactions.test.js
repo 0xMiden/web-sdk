@@ -161,11 +161,49 @@ function makeWasm(overrides = {}) {
 
 // ── Inner mock factory ─────────────────────────────────────────────────────────
 
+// Every `new*TransactionRequest` binding is `async fn` in Rust, so a resource
+// method that forgets the `await` hands the next WASM call a Promise. Real
+// wasm-bindgen rejects that ("expected instance of TransactionRequest"); a mock
+// that accepts anything does not, which is what let dropped awaits reach
+// production. Mirror the real failure so the suite can see it.
+function assertIsRequest(request, method) {
+  if (request && typeof request.then === "function") {
+    throw new Error(
+      `${method}: expected instance of TransactionRequest, got a Promise — ` +
+        `the request constructor's result was not awaited`
+    );
+  }
+}
+
+// The request argument's position for each method that consumes one.
+const REQUEST_ARG_POSITION = {
+  executeTransaction: 1,
+  executeTransactionAt: 1,
+  executeForSummary: 1,
+  executeForSummaryAt: 1,
+  chainAnchorForRequest: 0,
+};
+
+// Applied after `overrides` are merged: a test supplying its own
+// `executeTransaction` would otherwise reinstate a permissive mock and lose the
+// guard for exactly the method under test.
+function applyRequestGuards(inner) {
+  for (const [method, argIndex] of Object.entries(REQUEST_ARG_POSITION)) {
+    const impl = inner[method];
+    if (typeof impl !== "function") continue;
+    inner[method] = vi.fn(async (...args) => {
+      assertIsRequest(args[argIndex], method);
+      return impl(...args);
+    });
+  }
+  return inner;
+}
+
 function makeInner(overrides = {}) {
   const txResult = {
     id: vi.fn().mockReturnValue({ toHex: () => "txHex" }),
   };
-  return {
+  return applyRequestGuards({
     executeTransaction: vi.fn().mockResolvedValue(txResult),
     proveTransaction: vi.fn().mockResolvedValue("provenTx"),
     submitProvenTransaction: vi.fn().mockResolvedValue(100),
@@ -174,6 +212,9 @@ function makeInner(overrides = {}) {
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
+    feeAwareTransactionRequestBuilder: vi
+      .fn()
+      .mockImplementation(async () => makeTxRequestBuilder()),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     newPswapCreateTransactionRequest: vi
       .fn()
@@ -198,7 +239,7 @@ function makeInner(overrides = {}) {
     syncChain: vi.fn().mockResolvedValue(undefined),
     _txResult: txResult,
     ...overrides,
-  };
+  });
 }
 
 function makeClient(overrides = {}) {
@@ -346,6 +387,14 @@ describe("TransactionsResource", () => {
       expect(wasm.Note.createP2IDNote).toHaveBeenCalled();
       expect(result.note).toBe("p2idNote");
       expect(result.txId).toBeDefined();
+
+      // This path assembles its own request, so it must start from a fee-aware
+      // builder for the sender — the account whose auth procedure pays. A bare
+      // `new wasm.TransactionRequestBuilder()` aborts with
+      // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges a fee.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" })
+      );
     });
   });
 
@@ -411,6 +460,12 @@ describe("TransactionsResource", () => {
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.note).toBe("networkNote");
       expect(result.txId).toBeDefined();
+
+      // Assembles its own request, so it must start from a fee-aware builder for
+      // the sender — the account whose auth procedure pays.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xsender" })
+      );
     });
 
     it("uses a pre-built recipient without building one from a script", async () => {
@@ -599,7 +654,7 @@ describe("TransactionsResource", () => {
     });
 
     it("uses NoteAndArgs builder path when direct Note objects passed", async () => {
-      const { resource, wasm } = makeResource();
+      const { resource, wasm, inner } = makeResource();
       const directNote = {
         id: vi.fn().mockReturnValue({ toString: () => "noteid" }),
         assets: vi.fn(),
@@ -610,7 +665,9 @@ describe("TransactionsResource", () => {
         notes: [directNote],
       });
       expect(wasm.NoteAndArgs).toHaveBeenCalledWith(directNote, null);
-      expect(wasm.TransactionRequestBuilder).toHaveBeenCalled();
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
     });
 
     it("unwraps InputNoteRecord via toNote() in standard path", async () => {
@@ -669,9 +726,20 @@ describe("TransactionsResource", () => {
         account: "0xaccHex",
         notes: [unknownNote],
       });
-      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([
-        unknownNote,
-      ]);
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        [unknownNote],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+    });
+
+    it("names the consuming account so the request can gate fee conversion info", async () => {
+      const { resource, inner } = makeResource();
+      await resource.consume({ account: "0xaccHex", notes: ["0xnoteHex"] });
+      const [, requestAccountId] =
+        inner.newConsumeTransactionRequest.mock.calls[0];
+      const [executeAccountId] = inner.executeTransaction.mock.calls[0];
+      expect(requestAccountId.toString()).toBe("0xaccHex");
+      expect(requestAccountId.toString()).toBe(executeAccountId.toString());
     });
   });
 
@@ -707,13 +775,37 @@ describe("TransactionsResource", () => {
         getConsumableNotes: vi.fn().mockResolvedValue([note1, note2]),
       });
       const result = await resource.consumeAll({ account: "0xaccHex" });
-      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith([
-        "n1",
-        "n2",
-      ]);
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["n1", "n2"],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
       expect(result.consumed).toBe(2);
       expect(result.remaining).toBe(0);
       expect(result.txId).toBeDefined();
+    });
+
+    it("replaces the account id getConsumableNotes consumed, once", async () => {
+      // getConsumableNotes takes AccountId by value, so the WASM wrapper it was
+      // given is freed by that call. Handing the same instance to the request
+      // constructor or to submit would be a use-after-free. Both of those take
+      // `&AccountId` though, which borrows, so a single replacement serves both
+      // — allocating a second wrapper would be waste, not safety.
+      const note = {
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+      };
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi.fn().mockResolvedValue([note]),
+      });
+      await resource.consumeAll({ account: "0xaccHex" });
+      const [consumedAccountId] = inner.getConsumableNotes.mock.calls[0];
+      const [, requestAccountId] =
+        inner.newConsumeTransactionRequest.mock.calls[0];
+      const [executeAccountId] = inner.executeTransaction.mock.calls[0];
+      expect(requestAccountId).not.toBe(consumedAccountId);
+      expect(executeAccountId).toBe(requestAccountId);
+      expect(requestAccountId.toString()).toBe("0xaccHex");
     });
 
     it("respects maxNotes option", async () => {
@@ -1274,13 +1366,18 @@ describe("TransactionsResource", () => {
 
   describe("execute", () => {
     it("builds request with custom script and submits", async () => {
-      const { resource, inner, wasm } = makeResource();
+      const { resource, inner } = makeResource();
       const result = await resource.execute({
         account: "0xaccHex",
         script: "txScript",
       });
-      expect(wasm.TransactionRequestBuilder).toHaveBeenCalled();
-      const builder = wasm.TransactionRequestBuilder.mock.results[0].value;
+      // The builder comes from the client, not from `new TransactionRequestBuilder()`,
+      // so that it already carries the chain's fee conversion info.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+      const builder =
+        await inner.feeAwareTransactionRequestBuilder.mock.results[0].value;
       expect(builder.withCustomScript).toHaveBeenCalledWith("txScript");
       expect(inner.executeTransaction).toHaveBeenCalled();
       expect(result.txId).toBeDefined();
@@ -2011,34 +2108,31 @@ describe("TransactionsResource", () => {
     }
 
     it("dispatches send / mint / consume / swap / execute / custom kinds and submits", async () => {
-      // Override the TransactionRequestBuilder so `build()` returns a
-      // serializable fake request (the `execute` kind path goes through
-      // build() rather than a `new*Request` inner method).
-      const { resource, inner } = makeResource(
-        {
-          newSendTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("send")),
-          newMintTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("mint")),
-          newConsumeTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("consume")),
-          newSwapTransactionRequest: vi
-            .fn()
-            .mockResolvedValue(fakeRequest("swap")),
-          submitNewTransactionBatch: vi.fn().mockResolvedValue(42),
-        },
-        {},
-        {
-          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+      // Override the fee-aware builder so `build()` returns a serializable fake
+      // request (the `execute` kind path goes through build() rather than a
+      // `new*Request` inner method).
+      const { resource, inner } = makeResource({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("send")),
+        newMintTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("mint")),
+        newConsumeTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("consume")),
+        newSwapTransactionRequest: vi
+          .fn()
+          .mockResolvedValue(fakeRequest("swap")),
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(42),
+        feeAwareTransactionRequestBuilder: vi
+          .fn()
+          .mockImplementation(async () => {
             const b = makeTxRequestBuilder();
             b.build = vi.fn().mockReturnValue(fakeRequest("built"));
             return b;
           }),
-        }
-      );
+      });
       const customReq = fakeRequest("custom");
 
       const result = await resource.batch({
@@ -2072,22 +2166,28 @@ describe("TransactionsResource", () => {
       expect(result).toEqual({ blockNumber: 42 });
       // custom request.serialize() called via submitBatch path
       expect(customReq.serialize).toHaveBeenCalled();
+      // The `execute` operation is the one kind that assembles its own request,
+      // so it must come from the batch account's fee-aware builder — a bare
+      // builder aborts with ERR_FEE_CONVERSION_INFO_MISSING on a fee-charging
+      // chain. The other five kinds delegate to `new*TransactionRequest`, which
+      // attach conversion info themselves.
+      expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledTimes(1);
+      expect(
+        inner.feeAwareTransactionRequestBuilder.mock.calls[0][0].toString()
+      ).toBe("0xsender");
     });
 
     it("execute kind threads foreignAccounts through ForeignAccountArray", async () => {
-      const { resource, wasm } = makeResource(
-        {
-          submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
-        },
-        {},
-        {
-          TransactionRequestBuilder: vi.fn().mockImplementation(() => {
+      const { resource, wasm, inner } = makeResource({
+        submitNewTransactionBatch: vi.fn().mockResolvedValue(7),
+        feeAwareTransactionRequestBuilder: vi
+          .fn()
+          .mockImplementation(async () => {
             const b = makeTxRequestBuilder();
             b.build = vi.fn().mockReturnValue(fakeRequest("execBuilt"));
             return b;
           }),
-        }
-      );
+      });
 
       await resource.batch({
         account: "0xsender",
@@ -2102,6 +2202,11 @@ describe("TransactionsResource", () => {
 
       expect(wasm.ForeignAccount.public).toHaveBeenCalledTimes(2);
       expect(wasm.ForeignAccountArray).toHaveBeenCalled();
+      // Foreign accounts do not change which account executes, so the
+      // fee-aware builder is still the batch account's.
+      expect(
+        inner.feeAwareTransactionRequestBuilder.mock.calls[0][0].toString()
+      ).toBe("0xsender");
     });
 
     it("throws when account is missing", async () => {

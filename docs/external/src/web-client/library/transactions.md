@@ -162,6 +162,78 @@ Notes on the staged form:
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+## Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+**Fees are always settled in the chain's own fee asset at rate 1/1**, so there is no conversion info for you to choose — miden-client builds it and commits it through the auth args while preparing the transaction. The one thing it will not invent is the **salt** the commitment is computed under, because every multisig flavour reuses that salt as its transaction summary's replay guard, and only the caller can choose a value the co-signers will agree on.
+
+So how much of this you have to think about depends on the account:
+
+- **Single-sig, no-auth and network accounts** — nothing to do, at any base fee. miden-client commits under a fixed default salt. It is fixed deliberately: the signed transaction summary covers the auth args, so a fresh salt per execution would change the summary and break any flow that reproduces one to verify a signature over it.
+- **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
+- **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
+
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor, which also names the fee asset the chain prices in:
+
+```typescript
+const anchor = await client.transactions.captureAnchor(request);
+const header = anchor.blockHeader();
+
+const chargesFees = header.verificationBaseFee() > 0;
+const feeFaucet = header.feeFaucetId();
+```
+
+On a chain that charges nothing, requests are byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry.
+
+### The convenience constructors handle it
+
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest` with no way to declare one afterwards, so there would otherwise be no way for a multisig caller to pay the fee at all.
+
+The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
+
+`submitBatch` is worth calling out because a batch proves each transaction as it is pushed. A multisig request that declares no salt is rejected by miden-client during preparation — after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
+
+### Assembling a request yourself
+
+When you build a request from a builder, ask the client for one that already declares a salt where the executing account needs one:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: on a zero-fee chain, or for any account that does not choose its own salt, it returns an untouched builder.
+
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's request bytes — declare it directly:
+
+```typescript
+import { TransactionRequestBuilder, Word } from "@miden-sdk/miden-sdk";
+
+// Co-signers must all derive the same summary, so they must agree on this.
+const salt = new Word([1n, 2n, 3n, 4n]);
+
+const request = new TransactionRequestBuilder()
+  .withFeeConversionSalt(salt)
+  .withCustomScript(script)
+  .build();
+```
+
+The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
+
+`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error.
+
+### Custom auth procedures
+
+miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:
+
+- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Compute the commitment yourself and attach it with `TransactionRequestBuilder.withAuthArg`, plus `extendAdviceMap` for the preimage. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
+- **It is still yours to write.** Read the chain's native conversion info in the procedure instead, the way the no-auth and network-account components do, and the transaction needs no auth argument at all.
+
+Note that declaring a *salt* against such an account does not work: miden-client rejects a salt whose auth component it cannot see reading it, with `FeeConversionInfoUnsupported` naming the component.
+
+One request-building path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` resolves the order and builds the request inside miden-client, so the SDK never sees a builder. On a fee-charging chain that leaves the outcome to the creator's auth component — an ordinary creator has its conversion info committed and pays normally, while a multisig creator fails with `FeeConversionInfoRequired`. Cancel by note with `client.transactions.pswapCancel` there, which declares a salt against the creator first.
+
 ## Chain-Anchored Execution
 
 By default a transaction executes against the client's current sync height. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution whose reference block is the one the summary was built at.
@@ -171,7 +243,11 @@ That is a problem for any flow that collects signatures and executes later — a
 A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
 
 ```typescript
-import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
 
 // ── Proposer ──────────────────────────────────────────────
 const anchor = await client.transactions.captureAnchor(request);
@@ -184,7 +260,11 @@ const summary = await client.transactions.preview({
   anchor,
 });
 
+// Ship the request too — a co-signer must re-derive from these exact bytes,
+// not from a request they build themselves. See "The request travels with the
+// anchor" below.
 await shipToCosigners({
+  request: request.serialize(),
   anchor: anchor.serialize(),
   summary: summary.serialize(),
 });
@@ -192,13 +272,14 @@ await shipToCosigners({
 // ── Co-signer ─────────────────────────────────────────────
 const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
 
 // Re-derive at the proposer's anchor and compare before signing. Deriving at
 // the local sync height would produce a different summary every time.
 const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,
-  request,
+  request: proposedRequest,
   anchor: received,
 });
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
@@ -206,12 +287,16 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 }
 
 // ── Executor ──────────────────────────────────────────────
-// `request` here carries the collected signatures in its advice map; attaching
-// them is part of the signing protocol, not the anchor.
-await client.transactions.submit(multisig, request, { anchor: received });
+// The proposer's request, carrying the collected signatures in its advice map;
+// attaching them is part of the signing protocol, not the anchor.
+await client.transactions.submit(multisig, proposedRequest, {
+  anchor: received,
+});
 ```
 
 Notes on anchors:
+
+- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport.
 
 - **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
 

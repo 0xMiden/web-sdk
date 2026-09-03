@@ -26,8 +26,16 @@ export default defineConfig({
         "js/wasm.js",
         "js/eager.js",
         "js/index.js",
-        "js/client.js",
         "js/storageView.js",
+        // `client.js` imports no WASM itself, so its instance surface unit-tests
+        // fine — `__tests__/client.test.js` and `client.surface.test.js` do
+        // exercise it. It stays excluded because its static constructors
+        // (`create`, `createTestnet`, `createDevnet`, `createMock`) drive the
+        // injected wasm-bindgen classes and the worker setup, which is the bulk
+        // of the file and is covered by the Playwright integration tests. Include
+        // it once those constructors have unit coverage; today it measures ~64%
+        // and would fail the threshold.
+        "js/client.js",
         // Tests not yet ported on next — main has them, but the source has
         // drifted from the napi-binding sync (PR #13) enough that the tests
         // need review before they apply. Tracked for a follow-up PR. Once

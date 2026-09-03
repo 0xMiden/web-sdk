@@ -77,7 +77,13 @@ const noAuthConsumeTest = async (testingPage: Page) => {
 
     // Consume the note against the NoAuth account — this is the bug repro
     const mintedNote = mintedNoteRecord.toNote();
-    const consumeRequest = client.newConsumeTransactionRequest([mintedNote]);
+    // The consuming account is a no-auth account, whose auth procedure cannot
+    // read fee conversion info. Naming it here is what keeps the request from
+    // declaring any, which miden-client would otherwise reject outright.
+    const consumeRequest = await client.newConsumeTransactionRequest(
+      [mintedNote],
+      noAuthAccount.id()
+    );
     await client.submitNewTransaction(noAuthAccount.id(), consumeRequest);
     await client.proveBlock();
     await client.syncState();

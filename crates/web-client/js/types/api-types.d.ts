@@ -13,6 +13,7 @@ import type {
   Felt,
   TransactionId,
   TransactionRequest,
+  TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
   ProvenTransaction,
@@ -1070,6 +1071,14 @@ export interface TransactionsResource {
    * code prefixes the error message instead) — submit the transaction with
    * `execute` instead.
    *
+   * To collect signatures over the summary and submit afterwards, preview with
+   * `operation: "custom"` and pass the *same* `TransactionRequest` object to
+   * both this call and the submission. Every other operation builds its request
+   * from the options given, and two builds are not identical — output note
+   * serial numbers and the fee conversion info's salt are both drawn from the
+   * client's RNG — so the summary signed here would not be the summary the
+   * submitted transaction produces.
+   *
    * @param options - Preview options discriminated by `operation` field.
    */
   preview(options: PreviewOptions): Promise<TransactionSummary>;
@@ -1077,6 +1086,14 @@ export interface TransactionsResource {
   /**
    * Submit a pre-built TransactionRequest. Note: WASM requires accountId
    * separately, so `account` is the first argument.
+   *
+   * The request is yours, so paying protocol 0.16's verification fee is yours
+   * too. miden-client settles it in the chain's native fee asset at rate 1/1
+   * and commits that itself, so a request from `new TransactionRequestBuilder()`
+   * pays normally — except against a multisig account, which needs a fee
+   * conversion salt declared. Build those from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}. Raises the same fee
+   * errors {@link executeRequest} does.
    *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
@@ -1137,11 +1154,25 @@ export interface TransactionsResource {
    * group: awaiting other mutating calls on the same account between them can
    * interleave state — drive the chain as an uninterrupted sequence per account.
    *
+   * The request is yours, so paying protocol 0.16's verification fee is yours
+   * too. miden-client settles it in the chain's native fee asset at rate 1/1
+   * and commits that itself, so a request from `new TransactionRequestBuilder()`
+   * pays normally — except against a multisig account, which needs a fee
+   * conversion salt declared. Build those from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Pass `anchor` to execute against a pinned reference block
    *   instead of the current sync height.
    * @returns A handle to the executed transaction, ready to prove.
+   * @throws `FeeConversionInfoRequired`, naming the auth component, when the
+   *   executing account is a multisig and the request declares no fee
+   *   conversion salt. Multisig accounts reuse that salt as their summary's
+   *   replay guard, so miden-client will not invent one.
+   * @throws `FeeConversionInfoUnsupported`, naming the auth component, when the
+   *   request declares a fee conversion salt the account's auth component never
+   *   reads.
    */
   executeRequest(
     account: AccountRef,
@@ -1175,6 +1206,10 @@ export interface TransactionsResource {
    * V1 supports only same-account batches (mirrors the underlying Rust
    * `Client::new_transaction_batch()` constraint).
    *
+   * The named operations attach fee conversion info themselves; a request you
+   * supply through the `custom` operation is subject to the fee checks
+   * described on {@link submitBatch}, which this delegates to.
+   *
    * @param options - Batch options including the account and operations.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
@@ -1183,6 +1218,18 @@ export interface TransactionsResource {
    * Submit pre-built TransactionRequests as an atomic batch. Plural
    * counterpart of {@link submit} — for callers that already have built
    * requests in hand and want to skip the high-level operation builders.
+   *
+   * No fee conversion salt is declared for you here. miden-client commits the
+   * chain's native conversion info itself while preparing each transaction, so
+   * requests against ordinary accounts pay normally; a multisig account needs a
+   * salt declared on the request, or the push fails with
+   * `FeeConversionInfoRequired`. Note that a batch proves each transaction as it
+   * is pushed, so a rejection discovered mid-push has already cost the proofs
+   * ahead of it — build multisig requests from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   *
+   * The account's code is read once for the whole batch, not once per request,
+   * since a batch is single-account by contract.
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
@@ -1255,6 +1302,15 @@ export interface PswapResource {
    * resolves the creator account from the tracked lineage, and submits it
    * through the same prove/submit path as the other transaction helpers.
    * Throws if no lineage is tracked for the order.
+   *
+   * This is the one request-building path the SDK cannot declare a fee
+   * conversion salt on: miden-client builds the request internally from a bare
+   * builder. On a chain whose `BlockHeader.verificationBaseFee()` is non-zero
+   * that leaves the outcome to the creator's auth component — an ordinary
+   * creator has its conversion info committed by miden-client and pays normally,
+   * while a multisig creator fails with `FeeConversionInfoRequired`. For those,
+   * cancel by note with {@link TransactionsResource.pswapCancel}, which declares
+   * a salt against the creator before submitting.
    *
    * @param options - Order id and optional transaction options.
    */
@@ -1591,6 +1647,63 @@ export declare class MidenClient {
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
+
+  /**
+   * Returns a `TransactionRequestBuilder` that already declares a fee
+   * conversion salt where the account that will execute the request needs one.
+   *
+   * Since protocol 0.16 the verification fee is paid inside the account's auth
+   * procedure, which reads it from the transaction's auth argument. Fees are
+   * always settled in the chain's native fee asset at rate 1/1, so there is no
+   * conversion info to supply — miden-client builds it and commits it for you.
+   * The one thing it will not invent is a salt the account gives meaning to,
+   * and that is what this declares. What happens without it depends on the
+   * executing account:
+   *
+   * - **Single-sig, no-auth, network accounts** — nothing is needed. A request
+   *   from `new TransactionRequestBuilder()` pays normally; miden-client
+   *   commits under a fixed default salt, fixed so that a signed transaction
+   *   summary stays reproducible.
+   * - **Multisig, smart multisig and guarded multisig** — these reuse the salt
+   *   as their transaction summary's replay guard, so miden-client refuses to
+   *   guess and the transaction fails with `FeeConversionInfoRequired` naming
+   *   the component. This method is what makes those accounts work.
+   * - **A custom auth procedure that reads conversion info** — miden-client
+   *   does not recognise the component and commits nothing, so the transaction
+   *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
+   *   commitment yourself with `TransactionRequestBuilder.withAuthArg` plus
+   *   `extendAdviceMap`.
+   *
+   * The `new*TransactionRequest` constructors declare it, and so does every
+   * `client.transactions` operation that builds its own request — but the ones
+   * that take a request from you (`submit`, `executeRequest`, `submitBatch`,
+   * and the `custom` operation of `batch` / `preview`) never do, so those are
+   * exactly the paths this method exists for.
+   *
+   * `account` is the account that **executes** the request — the one whose
+   * auth procedure pays the fee — not the recipient or a note's sender.
+   *
+   * Safe as a drop-in: a salt is declared only when the chain charges a fee
+   * *and* the executing account is one that must choose its own. For every
+   * other account — and on any zero-fee chain — the builder comes back
+   * untouched and the request is byte-identical to one built from a bare
+   * builder.
+   *
+   * Calling `withAuthArg` on the result clears the declared salt, and vice
+   * versa: miden-client keeps the two mutually exclusive, so whichever is
+   * called last wins rather than producing an error.
+   *
+   * @param account - The account that will execute the request.
+   *
+   * @example
+   * ```js
+   * const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+   * const request = builder.withCustomScript(script).build();
+   * ```
+   */
+  feeAwareTransactionRequestBuilder(
+    account: AccountRef
+  ): Promise<TransactionRequestBuilder>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;
