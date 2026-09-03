@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/node-darwin-x64",
-  "version": "0.16.0-rc.6",
+  "version": "0.16.0-rc.7",
   "description": "Miden Client SDK native module for macOS x64 (Intel)",
   "os": [
     "darwin"
