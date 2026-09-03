@@ -1556,6 +1556,28 @@ describe("TransactionsResource", () => {
       await resource.list({ unknown: "field" });
       expect(wasm.TransactionFilter.all).toHaveBeenCalled();
     });
+
+    it("rejects the removed expiredBefore query instead of falling back", async () => {
+      const { resource, wasm } = makeResource();
+      await expect(resource.list({ expiredBefore: 1000 })).rejects.toThrow(
+        /expiredBefore/
+      );
+      expect(wasm.TransactionFilter.all).not.toHaveBeenCalled();
+    });
+
+    it("still honours status when expiredBefore rides along", async () => {
+      // `status` and `ids` outranked `expiredBefore` before the removal too, so such a query
+      // never applied the expiry filter and its behaviour must not change now.
+      const { resource, wasm } = makeResource();
+      await resource.list({ status: "uncommitted", expiredBefore: 1000 });
+      expect(wasm.TransactionFilter.uncommitted).toHaveBeenCalled();
+    });
+
+    it("treats an undefined expiredBefore as no filter, as it always did", async () => {
+      const { resource, wasm } = makeResource();
+      await resource.list({ expiredBefore: undefined });
+      expect(wasm.TransactionFilter.all).toHaveBeenCalled();
+    });
   });
 
   describe("waitFor", () => {

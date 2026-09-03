@@ -1198,9 +1198,18 @@ export interface TransactionsResource {
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
 
   /**
-   * List transactions, optionally filtered by status, IDs, or expiration.
+   * List transactions, optionally filtered by status or IDs.
    *
-   * @param query - Optional filter for transaction status, IDs, or expiration.
+   * Omitting `query`, or passing a shape this method does not recognise, returns every
+   * stored transaction.
+   *
+   * @param query - Optional filter for transaction status or IDs.
+   * @throws If `query` carries a defined `expiredBefore` and neither `status: "uncommitted"`
+   * nor `ids` — the two shapes that outranked the expiry filter before it was removed.
+   * That filter was removed upstream — expiry is decided during state sync — and silently
+   * widening it to the unfiltered query would return a superset of what was asked for.
+   * Compare {@link TransactionRecord.expirationBlockNum} against the height you care about
+   * instead.
    */
   list(query?: TransactionQuery): Promise<TransactionRecord[]>;
 

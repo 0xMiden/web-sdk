@@ -854,6 +854,21 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Lists transactions, optionally narrowed by status or by id.
+   *
+   * Omitting `query`, or passing a shape this method does not recognise, returns every stored
+   * transaction. The one exception is `{ expiredBefore }`: it was a valid filter until the
+   * upstream client stopped deciding expiry in the store, and silently widening it to the
+   * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
+   * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * @returns {Promise<TransactionRecord[]>}
+   * @throws {Error} If `query` carries a defined `expiredBefore` and neither
+   * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
+   * before it was removed, and still do.
+   */
   async list(query) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -868,6 +883,16 @@ export class TransactionsResource {
         wasm.TransactionId.fromHex(resolveTransactionIdHex(id))
       );
       filter = wasm.TransactionFilter.ids(txIds);
+    } else if (query.expiredBefore !== undefined) {
+      // Sits exactly where the expiry filter used to be built, so it throws on the queries
+      // that actually applied it and on no others: `status` and `ids` still win, as they
+      // always did, and an undefined value still means "no filter" rather than an error.
+      // The unknown-shape fallback below is `all()`, so without this branch a stale caller
+      // would silently receive every transaction instead of the subset it asked for.
+      throw new Error(
+        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+          "during state sync; read expiry from the transaction record instead."
+      );
     } else {
       filter = wasm.TransactionFilter.all();
     }
