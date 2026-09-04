@@ -32,8 +32,7 @@ function defaultDataDir(storeName) {
 }
 
 function normBytes(val) {
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
+  return normalizeArg(val);
 }
 
 /**
