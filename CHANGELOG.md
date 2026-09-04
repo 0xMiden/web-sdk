@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][web] Node.js `AuthSecretKey.deserialize` / `Word.deserialize` (and other napi `Buffer` / JsBytes APIs) work through the public package export again. The napi compat wrapper was converting `Buffer`/`Uint8Array` arguments into plain arrays, which drops the backing store napi needs and failed with `Failed to get Buffer pointer and length`. Binary inputs are now kept as `Buffer`. ([#364](https://github.com/0xMiden/web-sdk/issues/364))
+
 ## 0.16.0-rc.7 (2026-09-03)
 
 ### Enhancements
