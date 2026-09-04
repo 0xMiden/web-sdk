@@ -10,7 +10,10 @@
  * - null -> undefined (napi returns null for Option::None, wasm-bindgen returns undefined)
  * - camelCase -> snake_case aliases (napi uses camelCase, wasm-bindgen uses snake_case)
  * - Array type polyfills (browser has typed WASM arrays, napi accepts plain JS arrays)
+ * - AuthGuardedMultisigConfig accepts public string AuthScheme values
  */
+
+import { wrapAuthGuardedMultisigConfig } from "../utils.js";
 
 // ── Argument normalization ───────────────────────────────────────────
 
@@ -261,6 +264,11 @@ export function createSdkWrapper(rawSdk) {
     FungibleAsset: wrapClass(rawSdk.FungibleAsset),
     Word: wrapClass(rawSdk.Word),
     NoteTag: wrapClass(rawSdk.NoteTag),
+    // Resolve public string AuthScheme before the native constructor (see #365).
+    AuthGuardedMultisigConfig: wrapAuthGuardedMultisigConfig(
+      rawSdk.AuthGuardedMultisigConfig,
+      rawSdk
+    ),
     // Array type polyfills
     ...makeArrayPolyfills(),
   };

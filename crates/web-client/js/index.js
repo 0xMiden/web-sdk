@@ -16,6 +16,11 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
+import { wrapAuthGuardedMultisigConfig } from "./utils.js";
+import {
+  AuthGuardedMultisigConfig as NativeAuthGuardedMultisigConfig,
+  AuthScheme as WasmAuthScheme,
+} from "../Cargo.toml";
 export * from "../Cargo.toml";
 
 export const AccountType = Object.freeze({
@@ -28,6 +33,14 @@ export const AuthScheme = Object.freeze({
   Falcon: "falcon",
   ECDSA: "ecdsa",
 });
+
+// The package-root `AuthScheme` const shadows the WASM enum of the same name,
+// so `AuthGuardedMultisigConfig` must accept the friendly string values and
+// resolve them before calling the native constructor (see #365).
+export const AuthGuardedMultisigConfig = wrapAuthGuardedMultisigConfig(
+  NativeAuthGuardedMultisigConfig,
+  { AuthScheme: WasmAuthScheme }
+);
 
 export const NoteVisibility = Object.freeze({
   Public: "public",

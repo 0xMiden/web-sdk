@@ -8,6 +8,7 @@ import {
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
+  wrapAuthGuardedMultisigConfig,
 } from "../utils.js";
 
 // ── WASM mock helpers ──────────────────────────────────────────────────────────
@@ -228,6 +229,11 @@ describe("resolveAuthScheme", () => {
     expect(resolveAuthScheme(undefined, wasm)).toBe(2);
   });
 
+  it("passes through an already-resolved numeric value unchanged", () => {
+    expect(resolveAuthScheme(1, wasm)).toBe(1);
+    expect(resolveAuthScheme(2, wasm)).toBe(2);
+  });
+
   // NOTE: main exposes a hardcoded-discriminant fallback when `wasm` is
   // omitted (1 for ecdsa, 2 for falcon); next dropped that and now
   // requires the WASM module to read enum values from
@@ -241,6 +247,49 @@ describe("resolveAuthScheme", () => {
     expect(() => resolveAuthScheme("rsa", wasm)).toThrow(
       'Unknown auth scheme: "rsa"'
     );
+  });
+});
+
+// ── wrapAuthGuardedMultisigConfig ─────────────────────────────────────────────
+
+describe("wrapAuthGuardedMultisigConfig", () => {
+  const wasm = makeWasm();
+
+  it("resolves AuthScheme.ECDSA / Falcon strings before calling native", () => {
+    const Native = vi.fn(
+      function Native(approvers, threshold, guardian, scheme) {
+        this.approvers = approvers;
+        this.threshold = threshold;
+        this.guardian = guardian;
+        this.scheme = scheme;
+      }
+    );
+    const Wrapped = wrapAuthGuardedMultisigConfig(Native, wasm);
+    const approvers = ["a"];
+    const guardian = "g";
+
+    const ecdsa = new Wrapped(approvers, 1, guardian, "ecdsa");
+    expect(Native).toHaveBeenCalledWith(approvers, 1, guardian, 1);
+    expect(ecdsa.scheme).toBe(1);
+
+    const falcon = new Wrapped(approvers, 1, guardian, "falcon");
+    expect(Native).toHaveBeenCalledWith(approvers, 1, guardian, 2);
+    expect(falcon.scheme).toBe(2);
+  });
+
+  it("passes through already-resolved numeric discriminants", () => {
+    const Native = vi.fn(function Native(_a, _t, _g, scheme) {
+      this.scheme = scheme;
+    });
+    const Wrapped = wrapAuthGuardedMultisigConfig(Native, wasm);
+    const result = new Wrapped([], 1, "g", 1);
+    expect(Native).toHaveBeenCalledWith([], 1, "g", 1);
+    expect(result.scheme).toBe(1);
+  });
+
+  it("returns the input unchanged when NativeCls is missing", () => {
+    expect(wrapAuthGuardedMultisigConfig(null, wasm)).toBeNull();
+    expect(wrapAuthGuardedMultisigConfig(undefined, wasm)).toBeUndefined();
   });
 });
 
