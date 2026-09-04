@@ -105,11 +105,19 @@ export function resolveStorageMode(mode, wasm) {
 /**
  * Resolves an auth scheme string to a WASM AuthScheme enum value.
  *
- * @param {string | undefined} scheme - "falcon" or "ecdsa". Defaults to "falcon".
+ * Already-resolved numeric enum values pass through unchanged, so callers that
+ * receive a pre-resolved value (or that already hold a WASM discriminant) don't
+ * get double-processed.
+ *
+ * @param {string | number | undefined} scheme - "falcon" or "ecdsa" (or an
+ *   already-resolved numeric enum value). Defaults to "falcon".
  * @param {object} wasm - The WASM module.
  * @returns {number} The AuthScheme enum value.
  */
 export function resolveAuthScheme(scheme, wasm) {
+  if (typeof scheme === "number") {
+    return scheme;
+  }
   if (scheme === "ecdsa") {
     return wasm.AuthScheme.AuthEcdsaK256Keccak;
   }
@@ -119,6 +127,34 @@ export function resolveAuthScheme(scheme, wasm) {
   throw new Error(
     `Unknown auth scheme: "${scheme}". Expected "falcon" or "ecdsa".`
   );
+}
+
+/**
+ * Wraps the native `AuthGuardedMultisigConfig` constructor so callers can pass
+ * the public string `AuthScheme` (`"ecdsa"` / `"falcon"`) instead of the WASM
+ * enum that is shadowed at the package root by the friendly const of the same
+ * name.
+ *
+ * @param {Function} NativeCls - The wasm-bindgen / napi constructor.
+ * @param {object} wasm - Module exposing the native `AuthScheme` enum.
+ * @returns {Function} Constructor with the same prototype chain as `NativeCls`.
+ */
+export function wrapAuthGuardedMultisigConfig(NativeCls, wasm) {
+  if (!NativeCls) return NativeCls;
+
+  function AuthGuardedMultisigConfig(
+    approvers,
+    defaultThreshold,
+    guardian,
+    authScheme
+  ) {
+    const resolved = resolveAuthScheme(authScheme, wasm);
+    return new NativeCls(approvers, defaultThreshold, guardian, resolved);
+  }
+
+  AuthGuardedMultisigConfig.prototype = NativeCls.prototype;
+  Object.setPrototypeOf(AuthGuardedMultisigConfig, NativeCls);
+  return AuthGuardedMultisigConfig;
 }
 
 /**

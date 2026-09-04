@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][web] `AuthGuardedMultisigConfig` accepts the public string `AuthScheme` (`AuthScheme.ECDSA` / `AuthScheme.Falcon`) on both browser and Node entry points. The package-root friendly const shadows the WASM/napi enum of the same name, so constructing a guarded multisig with `AuthScheme.AuthEcdsaK256Keccak` previously passed `undefined` and threw `invalid enum value passed`. The constructor now resolves strings through `resolveAuthScheme` before calling the native binding. ([#365](https://github.com/0xMiden/web-sdk/issues/365))
+
 ## 0.16.0-rc.7 (2026-09-03)
 
 ### Enhancements
