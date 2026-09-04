@@ -139,26 +139,27 @@ export declare const Linking: {
 export type Linking = "dynamic" | "static";
 
 /**
- * Union of all values in the AccountType const.
+ * Union of all values in the FaucetType const.
  */
-export type AccountType = (typeof AccountType)[keyof typeof AccountType];
+export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
 
 /**
  * Faucet-kind selectors for `accounts.create({ type })`.
  *
- * These are NOT the low-level WASM `AccountType` enum. As of protocol 0.15 that
- * enum encodes only account visibility (`Private` / `Public`), which the
- * low-level builder sets via `AccountBuilder.storageMode()`. Wallets and
- * contracts are not selected by a `type` value: a wallet is the default, and a
- * contract is any `accounts.create()` call that passes `components`.
+ * These are NOT the low-level WASM/napi `AccountType` enum. As of protocol 0.15
+ * that enum encodes only account visibility (`Private` / `Public`), which the
+ * low-level builder sets via `AccountBuilder.accountType()` /
+ * `AccountBuilder.storageMode()`. Wallets and contracts are not selected by a
+ * `type` value: a wallet is the default, and a contract is any
+ * `accounts.create()` call that passes `components`.
  */
-export declare const AccountType: {
+export declare const FaucetType: {
   readonly FungibleFaucet: 0;
   readonly NonFungibleFaucet: 1;
 };
 
-/** Union of valid AccountType numeric values. */
-export type AccountTypeValue = 0 | 1;
+/** Union of valid FaucetType numeric values. */
+export type FaucetTypeValue = 0 | 1;
 
 // ════════════════════════════════════════════════════════════════
 // Client options
@@ -261,8 +262,8 @@ export interface WalletCreateOptions {
 }
 
 export interface FaucetCreateOptions {
-  /** Use `AccountType.FungibleFaucet` or `AccountType.NonFungibleFaucet`. */
-  type: AccountTypeValue;
+  /** Use `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet`. */
+  type: FaucetTypeValue;
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
   symbol: string;

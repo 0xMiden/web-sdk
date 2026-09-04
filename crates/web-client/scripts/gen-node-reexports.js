@@ -30,10 +30,11 @@ const END = "// </generated:napi-reexports>";
 
 // napi exports the Node entry surfaces manually (so they are NOT generated):
 //   - WebClient:   re-exported as the wrapped `WasmWebClient`.
-//   - AccountType: shadowed by a plain-JS enum constant.
 //   - AuthScheme:  shadowed by a plain-JS enum constant (the napi class is
 //                  re-exported by hand as `AuthSchemeNative`).
-const MANUAL = new Set(["WebClient", "AccountType", "AuthScheme"]);
+// AccountType is the native Private/Public enum and must stay generated —
+// faucet kinds live on the separate JS `FaucetType` constant above.
+const MANUAL = new Set(["WebClient", "AuthScheme"]);
 
 async function buildFile() {
   const napi = loadNativeModule();

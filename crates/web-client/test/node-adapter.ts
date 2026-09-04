@@ -539,14 +539,12 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    // AccountType: the JS wrapper uses string-based types, not the napi enum
-    AccountType: {
-      MutableWallet: "MutableWallet",
-      ImmutableWallet: "ImmutableWallet",
+    // Native Private/Public enum from napi (no longer shadowed by faucet kinds).
+    AccountType: sdk.AccountType,
+    // Faucet-kind selectors for accounts.create({ type }) — separate from AccountType.
+    FaucetType: {
       FungibleFaucet: "FungibleFaucet",
       NonFungibleFaucet: "NonFungibleFaucet",
-      ImmutableContract: "ImmutableContract",
-      MutableContract: "MutableContract",
     },
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),

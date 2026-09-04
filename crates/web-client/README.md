@@ -351,7 +351,7 @@ The following are just a few simple examples to get started. For more details, s
 ### Quick Start
 
 ```typescript
-import { MidenClient, AccountType } from "@miden-sdk/miden-sdk";
+import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
 // 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
 const client = await MidenClient.createDevnet();
@@ -359,7 +359,7 @@ const client = await MidenClient.createDevnet();
 // 2. Create a wallet and a token (faucet account)
 const wallet = await client.accounts.create();
 const dagToken = await client.accounts.create({
-  type: AccountType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
+  type: FaucetType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
 });
 
 // 3. Mint tokens
@@ -388,17 +388,16 @@ client.terminate();
 ### Create a New Wallet
 
 ```typescript
-import { MidenClient, AccountType, AuthScheme } from "@miden-sdk/miden-sdk";
+import { MidenClient, AuthScheme } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create();
 
-// Default wallet (private storage, mutable, Falcon auth)
+// Default wallet (private storage, Falcon auth)
 const wallet = await client.accounts.create();
 
 // Wallet with options
 const wallet2 = await client.accounts.create({
   storage: "public",
-  type: AccountType.ImmutableWallet,
   auth: AuthScheme.ECDSA,
   seed: "deterministic"
 });
@@ -413,7 +412,7 @@ console.log(wallet.isFaucet()); // false
 
 ```typescript
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   symbol: "DAG",
   decimals: 8,
   maxSupply: 10_000_000n
