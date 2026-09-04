@@ -269,6 +269,17 @@ export class MidenDatabase {
         }
         const storedVersion = await this.getStoredClientVersion();
         if (!storedVersion) {
+            // Dexie schema upgrades can leave account rows while dropping settings
+            // (or older clients never wrote clientVersion). Persisting the new
+            // version alone would let a newer WASM deserializer read incompatible
+            // rows and fail with "Invalid public key" / store deserialize errors.
+            const legacyAccountCount = await this.latestAccountHeaders.count();
+            if (legacyAccountCount > 0) {
+                console.warn(`IndexedDB has ${legacyAccountCount} account header(s) but no stored client version. Resetting store.`);
+                this.dexie.close();
+                await this.dexie.delete();
+                await this.dexie.open();
+            }
             await this.persistClientVersion(clientVersion);
             return;
         }

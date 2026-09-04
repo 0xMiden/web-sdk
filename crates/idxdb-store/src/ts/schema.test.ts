@@ -321,6 +321,34 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     openSpy.mockRestore();
     deleteSpy.mockRestore();
   });
+
+  it("resets when account headers exist but no clientVersion was stored", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.15.9");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.delete(CLIENT_VERSION_SETTING_KEY);
+    await db1.latestAccountHeaders.put({
+      id: "0xabc",
+      codeRoot: "c",
+      storageRoot: "s",
+      vaultRoot: "v",
+      nonce: "0",
+      committed: true,
+      accountCommitment: "commit",
+      locked: false,
+      watched: false,
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb2.open("0.16.0-rc.7");
+    expect(success).toBe(true);
+
+    expect(await mdb2.latestAccountHeaders.count()).toBe(0);
+    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("0.16.0-rc.7");
+  });
 });
 
 // ============================================================
