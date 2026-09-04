@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+* [BREAKING][web] Renamed the JS faucet-kind const from `AccountType` to `FaucetType` (`FungibleFaucet` / `NonFungibleFaucet`) so it no longer shadows the WASM/napi `AccountType` enum (`Private` / `Public`). `AccountBuilder.accountType(AccountType.Public)` works again; faucet creation uses `FaucetType.FungibleFaucet` (or the existing numeric/`"FungibleFaucet"` string forms). ([#361](https://github.com/0xMiden/web-sdk/issues/361))
+
 ## 0.16.0-rc.7 (2026-09-03)
 
 ### Enhancements
