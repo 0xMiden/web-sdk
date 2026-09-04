@@ -18,8 +18,10 @@ import {
 } from "./storageView.js";
 export * from "../Cargo.toml";
 
-export const AccountType = Object.freeze({
+export const FaucetType = Object.freeze({
   // Faucet-kind selectors for accounts.create({ type }).
+  // Named FaucetType so it does not shadow the WASM AccountType enum
+  // (Private / Public) re-exported from Cargo.toml above.
   FungibleFaucet: 0,
   NonFungibleFaucet: 1,
 });
