@@ -5,7 +5,9 @@
  * SDK surfaces so the shared MidenClient wrapper works on both platforms.
  *
  * Key normalizations:
- * - Uint8Array/Buffer -> Array (napi's Vec<u8> expects plain arrays)
+ * - Uint8Array/Buffer kept as Buffer (napi `Buffer` / JsBytes needs a backing
+ *   store; `Vec<u8>` still accepts Buffer — converting to a plain array breaks
+ *   `deserialize` with "Failed to get Buffer pointer and length")
  * - BigUint64Array/BigInt64Array -> Array (napi's Vec<u64>/Vec<BigInt> expects plain arrays)
  * - null -> undefined (napi returns null for Option::None, wasm-bindgen returns undefined)
  * - camelCase -> snake_case aliases (napi uses camelCase, wasm-bindgen uses snake_case)
@@ -19,12 +21,16 @@
  *
  * `BigInt` values are passed through untouched — napi-rs accepts JS `BigInt`
  * for `u64` parameters (via `napi::bindgen_prelude::BigInt`), so no conversion
- * is needed. Typed arrays of BigInts and bytes are converted to plain arrays.
+ * is needed. Typed arrays of BigInts become plain arrays. Byte payloads stay as
+ * `Buffer` so both `Vec<u8>` and napi `Buffer` (JsBytes) parameters work.
  */
 export function normalizeArg(val) {
   if (val instanceof BigUint64Array) return Array.from(val);
   if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
+  if (Buffer.isBuffer(val)) return val;
+  if (val instanceof Uint8Array) {
+    return Buffer.from(val.buffer, val.byteOffset, val.byteLength);
+  }
   return val;
 }
 
@@ -114,7 +120,7 @@ export function wrapClient(rawClient, storeName) {
         return (mode, authScheme, seed) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
-              ? Array.from(seed)
+              ? normalizeArg(seed)
               : seed;
           return target
             .newWallet(mode, authScheme, normSeed ?? null)

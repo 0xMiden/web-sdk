@@ -142,7 +142,8 @@ function toNum(val: any): any {
 /**
  * Normalizes arguments for napi:
  * - BigUint64Array / BigInt64Array → bigint[]
- * - Uint8Array/Buffer → Array<number> (for Vec<u8> params)
+ * - Uint8Array/Buffer → Buffer (napi `Buffer`/JsBytes needs a backing store;
+ *   `Vec<u8>` still accepts Buffer)
  *
  * `BigInt` values are passed through — napi-rs accepts JS `BigInt` for `u64`
  * parameters via `napi::bindgen_prelude::BigInt`.
@@ -150,7 +151,10 @@ function toNum(val: any): any {
 function normalizeArg(val: any): any {
   if (val instanceof BigUint64Array) return Array.from(val);
   if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
+  if (Buffer.isBuffer(val)) return val;
+  if (val instanceof Uint8Array) {
+    return Buffer.from(val.buffer, val.byteOffset, val.byteLength);
+  }
   return val;
 }
 
