@@ -4,6 +4,15 @@ import { logWebStoreError } from "./utils.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 
+function isIndexedDbVersionError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    (err as { name: unknown }).name === "VersionError"
+  );
+}
+
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 
@@ -591,7 +600,23 @@ export class MidenDatabase {
       `Opening database ${this.dexie.name} for client version ${clientVersion}...`
     );
     try {
-      await this.dexie.open();
+      try {
+        await this.dexie.open();
+      } catch (err) {
+        // A newer client may have advanced the IndexedDB schema version (e.g.
+        // 0.16.0-rc declares Dexie v5 while 0.15.x stops at v2). Dexie throws
+        // VersionError before ensureClientVersion can run — wipe and reopen so
+        // the RC → stable downgrade path actually recovers.
+        if (isIndexedDbVersionError(err)) {
+          console.warn(
+            `IndexedDB VersionError opening ${this.dexie.name} (on-disk schema newer than this client). Resetting store.`
+          );
+          await this.dexie.delete();
+          await this.dexie.open();
+        } else {
+          throw err;
+        }
+      }
       await this.ensureClientVersion(clientVersion);
       console.log("Database opened successfully");
       return true;
@@ -612,6 +637,19 @@ export class MidenDatabase {
 
     const storedVersion = await this.getStoredClientVersion();
     if (!storedVersion) {
+      // Dexie schema upgrades can leave account rows while dropping settings
+      // (or older clients never wrote clientVersion). Persisting the new
+      // version alone would let a newer WASM deserializer read incompatible
+      // rows and fail with "Invalid public key" / store deserialize errors.
+      const legacyAccountCount = await this.latestAccountHeaders.count();
+      if (legacyAccountCount > 0) {
+        console.warn(
+          `IndexedDB has ${legacyAccountCount} account header(s) but no stored client version. Resetting store.`
+        );
+        this.dexie.close();
+        await this.dexie.delete();
+        await this.dexie.open();
+      }
       await this.persistClientVersion(clientVersion);
       return;
     }
@@ -628,7 +666,10 @@ export class MidenDatabase {
       const sameMajorMinor =
         parsedCurrent?.major === parsedStored?.major &&
         parsedCurrent?.minor === parsedStored?.minor;
-      if (sameMajorMinor || !semver.gt(clientVersion, storedVersion)) {
+      // Keep the store for any patch move within the same major.minor line
+      // (upgrade or pin-back). Schema does not change on patch. Major/minor
+      // bumps and cross-line downgrades (e.g. 0.16.0-rc.x → 0.15.9) reset.
+      if (sameMajorMinor) {
         await this.persistClientVersion(clientVersion);
         return;
       }

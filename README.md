@@ -45,6 +45,14 @@ Everything is published from this monorepo, in lockstep with the upstream Rust [
 
 ## Quick start
 
+> **npm `latest` tag:** As of early 2026, `npm install @miden-sdk/miden-sdk` may resolve to a **release candidate** that public testnet rejects. Pin the current stable line until `latest` points at a testnet-compatible build:
+>
+> ```bash
+> pnpm add @miden-sdk/miden-sdk@0.15.9 @miden-sdk/react@0.15.9
+> ```
+>
+> If you previously installed an RC and downgraded, clear site data / IndexedDB for the app origin if the app still fails to open. As of the fix for [#349](https://github.com/0xMiden/web-sdk/issues/349), opening an older client wipes an on-disk IndexedDB schema that is newer than this build (`VersionError`), and also resets when the stored client semver crosses major/minor.
+
 ### Vanilla JavaScript
 
 ```ts

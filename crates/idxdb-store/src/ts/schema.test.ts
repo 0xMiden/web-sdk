@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import Dexie from "dexie";
 import {
   openDatabase,
@@ -225,13 +225,35 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("1.2.5");
   });
+
+  it("keeps the store on a same major.minor patch pin-back (0.15.9 → 0.15.8)", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.15.9");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("patch-keep"),
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb2.open("0.15.8");
+    expect(success).toBe(true);
+
+    const sentinel = await mdb2.settings.get("sentinel");
+    expect(sentinel).toBeDefined();
+
+    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("0.15.8");
+  });
 });
 
 // ============================================================
 // ensureClientVersion — stored version is newer than requested (downgrade path)
 // ============================================================
 describe("ensureClientVersion: stored version is newer (downgrade path)", () => {
-  it("does not nuke on downgrade — updates persisted version only", async () => {
+  it("resets the store when downgrading across major.minor (2.0.0 → 1.9.0)", async () => {
     const name = uniqueDbName();
     await openDatabase(name, "2.0.0");
     const db1 = getDatabase(name);
@@ -242,13 +264,90 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     });
     db1.dexie.close();
 
-    // Open with an older version (1.9.0 < 2.0.0)
     const mdb2 = trackMidenDb(new MidenDatabase(name));
     await mdb2.open("1.9.0");
 
-    // The non-gt branch just persists the new version without nuking
     const sentinel = await mdb2.settings.get("sentinel");
-    expect(sentinel).toBeDefined();
+    expect(sentinel).toBeUndefined();
+  });
+
+  it("resets the store when downgrading from a prerelease to an older stable (0.16.0-rc.3 → 0.15.9)", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.16.0-rc.3");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.put({
+      key: "sentinel",
+      value: new TextEncoder().encode("rc-data"),
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    await mdb2.open("0.15.9");
+
+    const sentinel = await mdb2.settings.get("sentinel");
+    expect(sentinel).toBeUndefined();
+  });
+
+  it("wipes and reopens when dexie.open throws VersionError (newer on-disk schema)", async () => {
+    const name = uniqueDbName();
+    const mdb = trackMidenDb(new MidenDatabase(name));
+
+    // fake-indexeddb softens schema downgrades; drive the real-browser path
+    // Mustdzyl reported (RC Dexie v5 → 0.15.x v2) with an explicit VersionError.
+    let openCalls = 0;
+    const nativeOpen = mdb.dexie.open.bind(mdb.dexie);
+    const openSpy = vi.spyOn(mdb.dexie, "open").mockImplementation(async () => {
+      openCalls += 1;
+      if (openCalls === 1) {
+        const err = new Error(
+          "The requested version (2) is less than the existing version (5)."
+        );
+        err.name = "VersionError";
+        throw err;
+      }
+      return nativeOpen();
+    });
+    const deleteSpy = vi.spyOn(mdb.dexie, "delete");
+
+    const success = await mdb.open("0.15.9");
+    expect(success).toBe(true);
+    expect(deleteSpy).toHaveBeenCalledOnce();
+    expect(openCalls).toBe(2);
+
+    const versionRecord = await mdb.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("0.15.9");
+
+    openSpy.mockRestore();
+    deleteSpy.mockRestore();
+  });
+
+  it("resets when account headers exist but no clientVersion was stored", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "0.15.9");
+    const db1 = getDatabase(name);
+    openMidenDbs.push(db1);
+    await db1.settings.delete(CLIENT_VERSION_SETTING_KEY);
+    await db1.latestAccountHeaders.put({
+      id: "0xabc",
+      codeRoot: "c",
+      storageRoot: "s",
+      vaultRoot: "v",
+      nonce: "0",
+      committed: true,
+      accountCommitment: "commit",
+      locked: false,
+      watched: false,
+    });
+    db1.dexie.close();
+
+    const mdb2 = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb2.open("0.16.0-rc.7");
+    expect(success).toBe(true);
+
+    expect(await mdb2.latestAccountHeaders.count()).toBe(0);
+    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    expect(new TextDecoder().decode(versionRecord!.value)).toBe("0.16.0-rc.7");
   });
 });
 
