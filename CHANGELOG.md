@@ -56,6 +56,10 @@
 
 ## 0.16.0-rc.5 (2026-08-27)
 
+### Enhancements
+
+* [FEATURE][web] Added `NoteScript.faucetPolicyAction()`, `NoteScript.pauseAction()`, `NoteScript.ownerAction()`, and `NoteScript.rbacAction()`, exposing the four well-known account/faucet management (action) note scripts introduced in the 0.16 `StandardNote` set. Their MAST roots are reachable from TypeScript via e.g. `NoteScript.pauseAction().root().toHex()`. ([#260](https://github.com/0xMiden/web-sdk/pull/260))
+
 ### Changes
 
 * [CHANGE][web] Upgraded `miden-client` to 0.16.0-rc.3 ([#337](https://github.com/0xMiden/web-sdk/pull/337)).
