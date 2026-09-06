@@ -1,7 +1,28 @@
 use js_export_macro::js_export;
+use miden_client::note::NoteId;
+use miden_client::Client;
 
-use crate::platform::{JsErr, from_str_err};
+use crate::platform::{ClientAuth, JsErr, from_str_err};
 use crate::{WebClient, js_error_with_context};
+
+async fn note_commitment_block_hint(
+    client: &mut Client<ClientAuth>,
+    note_id: NoteId,
+) -> Result<Option<u32>, JsErr> {
+    if let Ok(Some(record)) = client.get_output_note(note_id).await {
+        if let Some(proof) = record.inclusion_proof() {
+            return Ok(Some(proof.location().block_num().as_u32()));
+        }
+    }
+
+    if let Ok(Some(record)) = client.get_input_note(note_id).await {
+        if let Some(proof) = record.inclusion_proof() {
+            return Ok(Some(proof.location().block_num().as_u32()));
+        }
+    }
+
+    Ok(None)
+}
 
 #[js_export]
 impl WebClient {
@@ -22,17 +43,17 @@ impl WebClient {
         // hint-less notes. That window silently drops the note for any recipient whose sync height
         // has advanced past it, so hint-less delivery is non-deterministic.
         //
-        // The hint is the sender's current sync height. This is a safe hint ("any block at or
-        // before the commitment is correct") for the intended flow: relaying right after
-        // submitting the note's transaction, while the commitment is still ahead of the synced
-        // tip. It assumes prompt relay — a caller that defers relay until the sender has synced
-        // past the note's own commitment would produce a hint above the commitment, which the
-        // recipient would not scan back to. The note's true creation block isn't reachable from a
-        // bare `Note`, so the sync height is the best available lower bound for the normal path.
-        let block_hint = client
-            .get_sync_height()
-            .await
-            .map_err(|e| js_error_with_context(e, "failed reading block hint for private note"))?;
+        // Prefer the note's on-chain commitment block when the sender's store already has an
+        // inclusion proof (exact hint). Fall back to the sender's current sync height for the
+        // prompt-relay-before-commit path, where sync height is still below the commitment.
+        let note_id: NoteId = note.id().into();
+        let block_hint = match note_commitment_block_hint(client, note_id).await? {
+            Some(block_num) => block_num,
+            None => client
+                .get_sync_height()
+                .await
+                .map_err(|e| js_error_with_context(e, "failed reading block hint for private note"))?,
+        };
 
         client
             .send_private_note_with_block_hint(note.into(), &address.into(), block_hint)
