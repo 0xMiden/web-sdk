@@ -24,8 +24,8 @@ env:
   # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
   # built against. A commit sha (not the branch name) keeps cache keys stable.
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
-  # v0.16.0-rc.3
-  MIDEN_CLIENT_REF: 4afc5b8519a4906f29fb45ae9f3d74b5d43f6640
+  # v0.16.0
+  MIDEN_CLIENT_REF: 5478eeb3baf84a24d129b292fbc5ba558740bd46
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -944,6 +944,10 @@ jobs:
         working-directory: miden-client
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+          # The web-sdk integration tests create accounts without funding them
+          # with the native fee asset, so run the node fee-free. Remove once the
+          # tests draw fee balances from the genesis funder wallets.
+          MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
@@ -1041,6 +1045,10 @@ jobs:
         working-directory: miden-client
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+          # The web-sdk integration tests create accounts without funding them
+          # with the native fee asset, so run the node fee-free. Remove once the
+          # tests draw fee balances from the genesis funder wallets.
+          MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
@@ -1124,6 +1132,10 @@ jobs:
         working-directory: miden-client
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+          # The web-sdk integration tests create accounts without funding them
+          # with the native fee asset, so run the node fee-free. Remove once the
+          # tests draw fee balances from the genesis funder wallets.
+          MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
