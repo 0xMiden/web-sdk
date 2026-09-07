@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.16.0-rc.8 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] Vendor-neutral observability. `ClientOptions.observer` registers a callback the client invokes once per operation with a `MidenObservation` — `op` (the underlying client method name), `outcome` (`"ok"` / `"error"`), and `durationMs`. The SDK never transports an observation: it hands the object to the callback and forgets it. `@miden-sdk/miden-sdk` gains no telemetry dependency (direct, peer, or optional) and the module that delivers observations imports nothing and has no egress primitive; both halves are asserted on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module and checks it reaches for no global, builds no code at runtime, constructs nothing, and calls nothing but the observer. The observer is invoked synchronously after the operation has already settled and inside a `try`/`catch`, so it can neither fail an operation nor change its timing, ordering, or result. `op` names the wrapped client method rather than the high-level call, so one `client.transactions.send(...)` reports four observations (`executeTransaction`, `proveTransaction`, `submitProvenTransaction`, `applyTransaction`). Registration is process-wide: constructing a second client with an `observer` replaces the first one's, and a mock client — which has no `observer` field of its own on `MockOptions` — still reports to an observer registered elsewhere in the process, except from the three sync methods it overrides. ([#303](https://github.com/0xMiden/web-sdk/pull/303))
+
+```ts
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: (o) => console.log(o.op, o.outcome, Math.round(o.durationMs)),
+});
+```
+
+* [FEATURE][web] `ClientOptions.observeSensitive` opts an observation into a high-fidelity `sensitive` channel carrying the verbatim `error.message` and stack — unclassified and unredacted — populated only when an operation fails. It defaults to off, and when off the `sensitive` key is **absent** from the observation object rather than `undefined` or `{}`, so `"sensitive" in observation` distinguishes "not enabled" from "enabled with nothing to report". Only the literal boolean `true` enables it, so a truthy `"true"` from an env var or a JSON round-trip reads as off; the resolved value is sealed onto the client with `Object.defineProperty` as non-writable and non-configurable, so no later assignment can turn disclosure on for a client built without it; and enabling it logs a one-time console warning. `MidenObservationSensitive.accountId` is declared but not currently populated — consumers should not depend on it being present. ([#303](https://github.com/0xMiden/web-sdk/pull/303))
+* [FEATURE][telemetry-sentry] New package `@miden-sdk/telemetry-sentry`. `createSentryObserver({ client, minDurationMs?, includeSensitive? })` returns an observer for `ClientOptions.observer` that reports operations to a Sentry client you own and configure. Sentry is not a dependency of the package, not even a peer — the binding is typed structurally against `captureMessage`, so the consumer keeps control of the version, the DSN, and `Sentry.init`. `minDurationMs` defaults to `Infinity`, i.e. failures only, so an omitted option cannot silently bill a Sentry quota for the SDK's whole successful call volume; failures are always forwarded. A throwing or unreachable Sentry client takes its own report with it and nothing else. ([#303](https://github.com/0xMiden/web-sdk/pull/303))
+
+```ts
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: createSentryObserver({ client: Sentry, minDurationMs: 5_000 }),
+});
+```
+
+* [FEATURE][telemetry-otel] New package `@miden-sdk/telemetry-otel`. `createOtelObserver({ tracer, includeSensitive? })` returns an observer that records each operation as a span named `miden.<op>` on a tracer you own. OpenTelemetry is not a dependency, not even a peer — the binding is typed structurally against `startSpan` and inlines the one constant it needs (`SpanStatusCode.ERROR` as `2`), which also avoids a second `@opentelemetry/api` in the tree quietly registering its own global provider. Spans are reconstructed rather than live, since the SDK reports an operation only once it has finished: the span is backdated to `endTime - durationMs` and ended explicitly at `endTime` (epoch milliseconds), keeping the span's own interval in agreement with its `miden.duration_ms` attribute. A duration that is not finite and non-negative is recorded as an instant with no duration attribute instead of a garbage timestamp. ([#303](https://github.com/0xMiden/web-sdk/pull/303))
+
+```ts
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: createOtelObserver({ tracer: trace.getTracer("my-app") }),
+});
+```
+
+* [FEATURE][telemetry-sentry,telemetry-otel] Both bindings require the sensitive channel to be opted into a second time via `includeSensitive: true`, and drop it by default even when the SDK supplies it — so enabling `observeSensitive` on the client does not by itself disclose anything through a binding. Both read the channel's fields by name rather than enumerating them, so a field a later SDK version adds cannot start flowing to a backend before someone decides it should. Neither binding throws from its observer; both throw a `TypeError` from the factory when the client or tracer is missing, because an observer cannot report its own misconfiguration and one built around a missing sink would discard every observation while looking exactly like a working one. ([#303](https://github.com/0xMiden/web-sdk/pull/303))
+
 ## 0.16.0-rc.7 (2026-09-03)
 
 ### Enhancements
@@ -147,6 +181,21 @@
 
 * [FIX][web] `miden-idxdb-store` no longer silently overwrites already-stored partial blockchain (`PartialMmr`) authentication nodes. Writing a known node index with the same value is accepted, but writing a different value for that index now rejects with an error and leaves the stored value intact, so a buggy or malicious sync path can't replace known-good MMR nodes. ([#193](https://github.com/0xMiden/web-sdk/issues/193))
 * [FIX][web] `miden-idxdb-store` now persists a tracked block header and its MMR authentication nodes in a single IndexedDB transaction. An interrupted sync (closed tab, crash, or failed write) could previously store the header without its nodes, leaving the client unable to rebuild its partial MMR, so sync then failed with `InconsistentPartialMmr` until the local database was cleared. ([#221](https://github.com/0xMiden/web-sdk/pull/221), client [#2294](https://github.com/0xMiden/rust-sdk/pull/2294))
+
+## 0.15.9 (2026-08-04)
+
+### Enhancements
+
+* [FEATURE][web] Added `NoteScript.burn()`, `NoteScript.mint()`, and `NoteScript.pswap()`, exposing the remaining well-known note scripts (the faucet burn/mint pair plus partial-fill swap) so the static constructors now mirror every `StandardNote` variant alongside the existing `p2id()` / `p2ide()` / `swap()`. The standard BURN note script root is now reachable from TypeScript as `NoteScript.burn().root().toHex()`. ([#256](https://github.com/0xMiden/web-sdk/pull/256))
+
+```ts
+const burnScriptRoot = NoteScript.burn().root().toHex();
+```
+
+### Fixes
+
+* [FIX][web] `client.notes.sendPrivate(...)` now relays a block hint (the sender's current sync height) through the transport layer, so an already-synced recipient locates the note's on-chain commitment deterministically instead of relying on a narrow fixed lookback window that silently dropped it. Relay promptly after submitting the note's transaction so the hint stays at or before the note's commitment. No API change. ([web-sdk#258](https://github.com/0xMiden/web-sdk/pull/258))
+* [FIX][web] Bundled `miden-client` bumped to 0.15.5. Upstream note-transport fixes reaching the web SDK: a transport delivery that collides with a note a local transaction is consuming no longer wedges `sync()` (it is skipped and the cursor advances), and transport deliveries are now validated on receipt — entries whose details don't match the header's commitment, or whose tag was never requested, are dropped. `prepare_transaction` also no longer panics on an already-consumed input note that carries no metadata. ([miden-client 0.15.5](https://github.com/0xMiden/rust-sdk/releases/tag/v0.15.5))
 
 ## 0.15.8 (2026-07-22)
 

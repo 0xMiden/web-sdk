@@ -26,6 +26,14 @@
       "name": "@miden-sdk/react"
     },
     {
+      "path": "packages/telemetry-otel",
+      "name": "@miden-sdk/telemetry-otel"
+    },
+    {
+      "path": "packages/telemetry-sentry",
+      "name": "@miden-sdk/telemetry-sentry"
+    },
+    {
       "path": "packages/turnkey/core",
       "name": "@miden-sdk/turnkey"
     },

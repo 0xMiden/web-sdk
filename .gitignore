@@ -29,6 +29,8 @@ coverage/
 # other packages, so the allow-list works per FAMILY. The bare `!packages/<x>/`
 # line is load-bearing: git cannot re-include paths under a directory it never
 # descended into, so with only the `/**` line `git add -A` stages nothing.
+# Re-ignores use `**/` (not `*/`) to reach the second level, e.g.
+# packages/para/core/examples/react/dist/.
 !packages/adapter/
 !packages/adapter/**
 packages/adapter/**/dist/
@@ -52,6 +54,16 @@ packages/turnkey/**/node_modules/
 packages/react-sdk/dist/
 packages/react-sdk/coverage/
 packages/react-sdk/node_modules/
+!packages/telemetry-otel/
+!packages/telemetry-otel/**
+packages/telemetry-otel/dist/
+packages/telemetry-otel/coverage/
+packages/telemetry-otel/node_modules/
+!packages/telemetry-sentry/
+!packages/telemetry-sentry/**
+packages/telemetry-sentry/dist/
+packages/telemetry-sentry/coverage/
+packages/telemetry-sentry/node_modules/
 !packages/vite-plugin/
 !packages/vite-plugin/**
 packages/vite-plugin/dist/
