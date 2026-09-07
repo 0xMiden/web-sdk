@@ -45,10 +45,8 @@ idxdb-store     = { default-features = false, package = "miden-idxdb-store", pat
 js-export-macro = { path = "crates/js-export-macro", version = "0.16.0" }
 
 # Client crates
-# Tracks the rust-sdk 0.16.0 release PR (https://github.com/0xMiden/rust-sdk/pull/2511) until
-# `miden-client` 0.16.0 is published; switch back to a crates.io version once it is.
-miden-client              = { branch = "igamigo-upgrade-to-16", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "igamigo-upgrade-to-16", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client              = { default-features = false, version = "0.16.0" }
+miden-client-sqlite-store = { default-features = false, version = "0.16.0" }
 
 # External dependencies
 async-trait = { version = "0.1" }

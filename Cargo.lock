@@ -2385,7 +2385,8 @@ dependencies = [
 [[package]]
 name = "miden-client"
 version = "0.16.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=igamigo-upgrade-to-16#4d26ffdfce58522156111644ff1c6ab84b0cbe08"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9862fde2ef60a6a1f1066834c9920f50973a2012465c451ec64381fea4654fc"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2425,7 +2426,8 @@ dependencies = [
 [[package]]
 name = "miden-client-sqlite-store"
 version = "0.16.0"
-source = "git+https://github.com/0xMiden/rust-sdk?branch=igamigo-upgrade-to-16#4d26ffdfce58522156111644ff1c6ab84b0cbe08"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1bdb490a10753418209cf9efcb8d923b3b0a39105b9cba987e9674dd1528b66"
 dependencies = [
  "anyhow",
  "async-trait",
