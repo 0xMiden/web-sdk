@@ -12,6 +12,8 @@ export default defineConfig({
   test: {
     projects: [
       "./packages/react-sdk/vitest.config.ts",
+      "./packages/telemetry-otel/vitest.config.ts",
+      "./packages/telemetry-sentry/vitest.config.ts",
       "./packages/vite-plugin/vitest.config.ts",
       "./packages/adapter/base/vitest.config.ts",
       "./packages/adapter/miden/vitest.config.ts",
