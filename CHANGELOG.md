@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 (2026-09-07)
+
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.16.0 (from 0.16.0-rc.4), which adopts protocol 0.16.1 and node 0.16.0 and raises its MSRV to 1.98.1, moving the pinned nightly to `nightly-2026-08-06`. Requires a node on the matching protocol. ([#373](https://github.com/0xMiden/web-sdk/pull/373), client [#2511](https://github.com/0xMiden/rust-sdk/pull/2511))
+
 ## 0.16.0-rc.7 (2026-09-03)
 
 ### Enhancements
