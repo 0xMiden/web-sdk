@@ -41,12 +41,12 @@ codegen-units = 16
 [workspace.dependencies]
 # Workspace crates. The versions are required when publishing path dependencies and must track
 # `workspace.package.version`.
-idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.16.0" }
-js-export-macro = { path = "crates/js-export-macro", version = "0.16.0" }
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.16" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.16" }
 
 # Client crates
-miden-client              = { default-features = false, version = "0.16.0" }
-miden-client-sqlite-store = { default-features = false, version = "0.16.0" }
+miden-client              = { default-features = false, version = "0.16" }
+miden-client-sqlite-store = { default-features = false, version = "0.16" }
 
 # External dependencies
 async-trait = { version = "0.1" }
