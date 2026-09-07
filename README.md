@@ -26,6 +26,8 @@ This repo packages everything you need to interact with Miden from a browser, a 
 | **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `pnpm add @miden-sdk/miden-sdk` | [Web Client docs ↗](https://docs.miden.xyz/builder/tools/clients/web-client/) |
 | **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `pnpm add @miden-sdk/react` | [React SDK docs ↗](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
 | **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | — |
+| **`@miden-sdk/telemetry-sentry`** | Opt-in binding that turns SDK observations into `captureMessage` calls on a Sentry client you own. Does not depend on `@sentry/*`. | `pnpm add @miden-sdk/telemetry-sentry` | [README](packages/telemetry-sentry) |
+| **`@miden-sdk/telemetry-otel`** | Opt-in binding that turns SDK observations into spans on an OpenTelemetry tracer you own. Does not depend on `@opentelemetry/*`. | `pnpm add @miden-sdk/telemetry-otel` | [README](packages/telemetry-otel) |
 | **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
 
 Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client).
@@ -273,6 +275,7 @@ flowchart TB
 - **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
 - **`@miden-sdk/react`** is a thin layer on top: React hooks that call into the WASM client and a pluggable `SignerContext` so the same code works with MidenFi, Para, Turnkey, or your own signer.
 - **`@miden-sdk/vite-plugin`** smooths over the bundler-side WASM ergonomics (worker-context polyfills, COOP/COEP headers, dedup of the WASM module across imports).
+- **`@miden-sdk/telemetry-sentry`** and **`@miden-sdk/telemetry-otel`** sit *outside* that path. The WASM client reports each operation it runs to a callback you register, and never transports one itself; these two adapt those reports to a Sentry client or an OTel tracer you construct. Neither depends on its vendor, and the core depends on neither — see [Observability](crates/web-client/README.md#observability).
 
 ---
 
@@ -316,9 +319,9 @@ Two WASM artifacts are published: a **single-threaded** default built on stable 
 
 ## Versioning
 
-Every package in this repo (`@miden-sdk/miden-sdk`, `@miden-sdk/react`, `@miden-sdk/vite-plugin`, plus the Rust `miden-idxdb-store` crate) ships on the **same major.minor** as the upstream `miden-client` they bind to. Patch versions are independent — a fix in the React hooks does not need a WASM bump.
+Every package in this repo (`@miden-sdk/miden-sdk`, `@miden-sdk/react`, `@miden-sdk/vite-plugin`, `@miden-sdk/telemetry-sentry`, `@miden-sdk/telemetry-otel`, plus the Rust `miden-idxdb-store` crate) ships on the **same major.minor** as the upstream `miden-client` they bind to. Patch versions are independent — a fix in the React hooks does not need a WASM bump.
 
-A repo-wide `scripts/check-react-sdk-sync.js` enforces that React peer ranges and example dependencies pin to the exact patch version of the WASM client they were built against, so `npm install` resolves to a coherent set without surprises.
+A repo-wide `scripts/check-react-sdk-sync.js` enforces that every package pinning the WASM client — its peer ranges and the example app's dependency — resolves to the exact patch version it was built against, so `npm install` produces a coherent set without surprises. The packages it checks are discovered from the workspace rather than listed in the script, so a new package that builds against the client is covered from the moment it exists instead of when someone remembers to add it.
 
 ---
 
@@ -358,6 +361,8 @@ web-sdk/
     ├── react-sdk/         # @miden-sdk/react
     │   └── examples/
     │       └── wallet/    # Cross-signer example app
+    ├── telemetry-otel/    # @miden-sdk/telemetry-otel
+    ├── telemetry-sentry/  # @miden-sdk/telemetry-sentry
     └── vite-plugin/       # @miden-sdk/vite-plugin
 ```
 

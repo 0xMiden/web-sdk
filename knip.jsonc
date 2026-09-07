@@ -50,6 +50,259 @@
     "duplicates": "off",
   },
   "workspaces": {
+    "packages/adapter/base": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/adapter/react": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/adapter/miden": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/adapter/reactui": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/adapter/all": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/para/core": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/para/react": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/para/create": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/turnkey/core": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/turnkey/react": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
+    "packages/turnkey/create": {
+      "entry": [
+        "index.ts!",
+        "src/index.ts!",
+        "bin/*.mjs!",
+        "__tests__/**/*.test.{ts,tsx}",
+      ],
+      "project": ["**/*.{ts,tsx,mjs}!"],
+      "ignore": [
+        "examples/**",
+        "template/**",
+        "tests/**",
+        "dist/**",
+        "__tests__/**",
+        "src/Collapse.tsx",
+        "src/signer-types.ts",
+      ],
+      // rimraf/typedoc are invoked from package scripts; puppeteer and the
+      // eslint parser are used by tests/ and the donor lint setup, both of
+      // which are in "ignore" above, so knip cannot see the usage.
+      "ignoreBinaries": ["rimraf", "typedoc", "printf"],
+      "ignoreDependencies": ["puppeteer", "typedoc-plugin-markdown"],
+    },
     ".": {
       "entry": ["scripts/**/*.{js,ts}"],
     },
@@ -60,6 +313,12 @@
         "test/serve-tests.cjs",
         "test/test-app/**/*.{js,html}",
       ],
+    },
+    "packages/telemetry-otel": {
+      "entry": ["src/__tests__/**/*.test.ts"],
+    },
+    "packages/telemetry-sentry": {
+      "entry": ["src/__tests__/**/*.test.ts"],
     },
     "packages/vite-plugin": {
       "entry": ["src/__tests__/**/*.test.ts"],
@@ -101,6 +360,11 @@
         "test/webClientTestUtils.ts",
         "test/playwright.global.setup.ts",
         "scripts/**/*.js",
+        // The proving benchmark and its interleave module. Invoked from the
+        // Makefile (`bench-proving`, `bench-proving-calibrate`) and from
+        // .github/workflows/bench.yml, and unit-tested by
+        // scripts/bench-order.test.mjs — none of which knip can follow.
+        "scripts/**/*.mjs",
       ],
       // The `./eager.js` and `./index.js` strings inside
       // `page.evaluate(...)` blocks are dynamic imports executed in the
@@ -114,6 +378,10 @@
         "./eager.js",
         "./index.js",
         "./crates/miden_client_web",
+        // bench-proving.mjs serves dist/mt at the root of its own throwaway
+        // HTTP server, so its `page.evaluate` import is root-absolute rather
+        // than relative. Same browser-resolution boundary as the entries above.
+        "/eager.js",
       ],
     },
     "crates/idxdb-store/src": {
@@ -136,5 +404,17 @@
       ],
     },
   },
-  "ignore": ["packages/react-sdk/examples/**", "crates/idxdb-store/src/js/**"],
+  "ignore": [
+    "packages/react-sdk/examples/**",
+    "crates/idxdb-store/src/js/**",
+    // Run by hand from docs/benchmarks/calibration.md to regenerate the tables
+    // it quotes — power rates for the first, the truncation-selection table for
+    // the second —
+    // and by a reviewer checking those tables still reproduce. Nothing imports
+    // either, which is the point: they are standalone reproduction scripts, not
+    // part of any build.
+    "docs/benchmarks/verdict-power.mjs",
+    "docs/benchmarks/truncation-selection.mjs",
+    "docs/benchmarks/budget-reachability.mjs",
+  ],
 }

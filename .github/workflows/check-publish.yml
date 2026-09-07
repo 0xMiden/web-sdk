@@ -85,8 +85,7 @@ jobs:
           fi
 
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        run: ./scripts/install-binaryen.sh
 
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1

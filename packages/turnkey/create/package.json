@@ -1,0 +1,33 @@
+{
+  "name": "@miden-sdk/create-turnkey-react",
+  "version": "0.15.9",
+  "description": "CLI to scaffold a React + Vite app with Miden Turnkey integration",
+  "type": "module",
+  "bin": "./bin/create-miden-turnkey-react.mjs",
+  "keywords": [
+    "miden",
+    "turnkey",
+    "react",
+    "vite",
+    "scaffold",
+    "cli"
+  ],
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/turnkey/create"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin",
+    "template"
+  ],
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
+}

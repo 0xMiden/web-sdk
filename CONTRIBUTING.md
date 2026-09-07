@@ -3,8 +3,24 @@
 We welcome PRs. Before opening one:
 
 1. Read [CLAUDE.md](CLAUDE.md) for repo-specific conventions and tooling notes.
-2. Run `make lint test` locally — CI runs the same suite, but local feedback is faster.
-3. For changes that touch the public API surface (hooks, WASM bindings, plugin options), include or update the type tests in `crates/web-client/scripts/check-*-types.js`.
+2. Run `make test` locally — CI runs the same suite, but local feedback is faster. This is pure TypeScript and needs no Rust toolchain: the unit projects either mock the WASM client or exercise plain JS.
+3. If your change touches Rust, also run `make lint` (Clippy, rustfmt and the WASM method check, all of which need cargo) and `make test-coverage` for the gates CI enforces.
+4. For changes that touch the public API surface (hooks, WASM bindings, plugin options), include or update the type tests in `crates/web-client/scripts/check-*-types.js`.
+
+### Working on the TypeScript packages without a Rust toolchain
+
+`make test` needs nothing but Node and pnpm. `typecheck` and `build` do read a
+built `crates/web-client/dist/`, which normally means a multi-minute WASM build.
+To skip it, populate `dist/` from the published npm tarball instead:
+
+```
+make hydrate-web-client
+```
+
+It fetches the version named in `crates/web-client/package.json`, falling back to
+the newest published version — with a warning — when that version has not shipped
+yet, which is the normal state on `next` and on release PRs. Pass `--force` via
+`node scripts/hydrate-web-client.mjs --force` to replace an existing `dist/`.
 
 The upstream Rust SDK lives at [`0xMiden/miden-client`](https://github.com/0xMiden/miden-client); changes that touch shared types or the gRPC schema usually need a coordinated PR there first.
 

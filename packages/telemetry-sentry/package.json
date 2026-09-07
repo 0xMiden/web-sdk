@@ -1,0 +1,55 @@
+{
+  "name": "@miden-sdk/telemetry-sentry",
+  "version": "0.15.9",
+  "description": "Opt-in Sentry binding for Miden SDK observations",
+  "type": "module",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "@miden-sdk/miden-sdk": "^0.15.9"
+  },
+  "devDependencies": {
+    "@miden-sdk/miden-sdk": "workspace:*",
+    "@typescript-eslint/eslint-plugin": "^8.25.0",
+    "@typescript-eslint/parser": "^8.25.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "eslint": "^9.30.1",
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "miden",
+    "sentry",
+    "telemetry",
+    "observability",
+    "monitoring",
+    "zk"
+  ],
+  "author": "Miden Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  }
+}

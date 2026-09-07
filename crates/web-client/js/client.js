@@ -150,6 +150,8 @@ export class MidenClient {
     // `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
     // Mobile/Tauri/native-prover consumers must pass `useWorker: false`.
     const useWorker = options?.useWorker;
+    // The observability options reach the wrapper's constructor, which is the
+    // only place `observeSensitive` can be set — see `applyObserverOptions`.
     let inner;
     if (options?.keystore) {
       inner = await WebClientClass.createClientWithExternalKeystore(
@@ -161,7 +163,8 @@ export class MidenClient {
         options.keystore.insertKey,
         options.keystore.sign,
         options?.debugMode,
-        useWorker
+        useWorker,
+        options
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -170,7 +173,8 @@ export class MidenClient {
         seed,
         options?.storeName,
         options?.debugMode,
-        useWorker
+        useWorker,
+        options
       );
     }
 

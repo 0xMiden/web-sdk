@@ -158,6 +158,39 @@ export declare const AccountType: {
 export type AccountTypeValue = 0 | 1;
 
 // ════════════════════════════════════════════════════════════════
+// Observability
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * High-fidelity observation detail. Present **only** when the client was
+ * constructed with `observeSensitive: true`. Carries account identifiers and
+ * verbatim error text, so an application with confidentiality obligations to
+ * its users must leave `observeSensitive` unset and never read this field.
+ */
+export interface MidenObservationSensitive {
+  /** Verbatim error message, when the operation failed. */
+  errorMessage?: string;
+  /** Verbatim error stack, when the operation failed. */
+  errorStack?: string;
+  /** Account the operation acted on, when the operation targets one. */
+  accountId?: string;
+}
+
+/** One observed client operation. */
+export interface MidenObservation {
+  /** Client operation name, e.g. `"syncState"`, `"proveTransaction"`. */
+  op: string;
+  outcome: "ok" | "error";
+  /** Wall time the caller waited, in milliseconds. */
+  durationMs: number;
+  /**
+   * Absent unless the client was constructed with `observeSensitive: true`.
+   * Test with `"sensitive" in observation`.
+   */
+  sensitive?: MidenObservationSensitive;
+}
+
+// ════════════════════════════════════════════════════════════════
 // Client options
 // ════════════════════════════════════════════════════════════════
 
@@ -215,6 +248,28 @@ export interface ClientOptions {
    *   competing with the WASM thread anyway.
    */
   useWorker?: boolean;
+  /**
+   * Observation sink. Called synchronously once per client operation with the
+   * operation name, outcome, and duration.
+   *
+   * The SDK never transports observations itself — it has no telemetry
+   * dependency and no network capability in this path. Forward them to your
+   * own provider, or use an opt-in binding package
+   * (`@miden-sdk/telemetry-sentry`, `@miden-sdk/telemetry-otel`).
+   *
+   * A throwing observer is swallowed and can never fail a client operation.
+   */
+  observer?: (observation: MidenObservation) => void;
+  /**
+   * Populate {@link MidenObservation.sensitive} with account identifiers and
+   * verbatim error text. Defaults to `false`, in which case the `sensitive`
+   * key is **absent** from every observation. Enabling it logs a one-time
+   * console warning.
+   *
+   * Read once, at construction: it cannot be turned on for a client that was
+   * built without it.
+   */
+  observeSensitive?: boolean;
 }
 
 // ════════════════════════════════════════════════════════════════
