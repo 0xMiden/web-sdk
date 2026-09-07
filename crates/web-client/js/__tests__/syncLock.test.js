@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { hasWebLocks, withSyncLock } from "../syncLock.js";
+import {
+  hasWebLocks,
+  SYNC_LOCK_TIMEOUT_MS,
+  withSyncLock,
+} from "../syncLock.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -7,6 +11,10 @@ let dbCounter = 0;
 function uniqueDb() {
   return `test-sync-db-${++dbCounter}-${Date.now()}`;
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // ── hasWebLocks ────────────────────────────────────────────────────────────────
 
@@ -264,6 +272,35 @@ describe("withSyncLock — in-process fallback (no Web Locks)", () => {
     expect([a, b, c]).toEqual(["settled", "settled", "settled"]);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("expires never-settling work and lets a later call run", async () => {
+    vi.useFakeTimers();
+    const dbId = uniqueDb();
+    const never = new Promise(() => {});
+    const stuckFn = vi.fn(() => never);
+
+    const first = withSyncLock(dbId, "syncState", stuckFn);
+    const coalesced = withSyncLock(dbId, "syncState", stuckFn);
+    const firstResult = expect(first).rejects.toThrow("Sync lock timed out");
+    const coalescedResult = expect(coalesced).rejects.toThrow(
+      "Sync lock timed out"
+    );
+
+    expect(coalesced).toBe(first);
+    expect(stuckFn).toHaveBeenCalledTimes(0);
+
+    await vi.advanceTimersByTimeAsync(SYNC_LOCK_TIMEOUT_MS);
+
+    await firstResult;
+    await coalescedResult;
+    expect(stuckFn).toHaveBeenCalledTimes(1);
+
+    const freshFn = vi.fn(async () => "fresh");
+    await expect(withSyncLock(dbId, "syncState", freshFn)).resolves.toBe(
+      "fresh"
+    );
+    expect(freshFn).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ── withSyncLock — Web-Locks path ─────────────────────────────────────────────
@@ -304,7 +341,10 @@ describe("withSyncLock — Web-Locks path", () => {
 
     expect(result).toBe("ok");
     expect(calls).toEqual([
-      { name: `miden-sync-${dbId}`, opts: { mode: "exclusive" } },
+      {
+        name: `miden-sync-${dbId}`,
+        opts: { mode: "exclusive", signal: expect.any(AbortSignal) },
+      },
     ]);
   });
 
@@ -336,5 +376,35 @@ describe("withSyncLock — Web-Locks path", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     // Coalesced: only one underlying lock request.
     expect(requested).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a held Web Lock when work never settles", async () => {
+    vi.useFakeTimers();
+    const dbId = uniqueDb();
+    let held = false;
+    const requested = vi.fn(async (_name, _opts, fn) => {
+      expect(held).toBe(false);
+      held = true;
+      try {
+        return await fn();
+      } finally {
+        held = false;
+      }
+    });
+    installLocksMock(requested);
+
+    const first = withSyncLock(dbId, "syncState", () => new Promise(() => {}));
+    const firstResult = expect(first).rejects.toThrow("Sync lock timed out");
+
+    expect(held).toBe(true);
+    await vi.advanceTimersByTimeAsync(SYNC_LOCK_TIMEOUT_MS);
+
+    await firstResult;
+    expect(held).toBe(false);
+
+    await expect(
+      withSyncLock(dbId, "syncState", async () => "fresh")
+    ).resolves.toBe("fresh");
+    expect(requested).toHaveBeenCalledTimes(2);
   });
 });
