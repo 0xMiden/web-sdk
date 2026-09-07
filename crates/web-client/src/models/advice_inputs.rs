@@ -20,7 +20,7 @@ impl AdviceInputs {
 
     /// Returns the stack inputs as a vector of felts.
     pub fn stack(&self) -> Vec<Felt> {
-        self.0.stack.iter().map(Into::into).collect()
+        self.0.advice_stack().iter().map(Into::into).collect()
     }
 
     /// Returns mapped values for a given key if present.

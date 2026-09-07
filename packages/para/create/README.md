@@ -17,4 +17,4 @@
 - Set `VITE_PARA_API_KEY` in a `.env.local` (or similar) file so the generated `App.tsx` can initialize Para. **Production deployments require a Para production API key.**
 - Recommended next steps: `cd my-new-app && npm install && npm run dev` (`.npmrc` opts into legacy peer deps so npm works).
 
-Publish from this folder with `npm publish --access public` when you're ready. For local testing, run `node ../create/bin/create-miden-para-react.mjs my-app`.
+Publish from this folder with `npm publish --access public` when you're ready. For local testing, run `node ./packages/create-miden-para-react/bin/create-miden-para-react.mjs my-app`.

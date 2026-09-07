@@ -13,7 +13,7 @@
     "@getpara/evm-wallet-connectors": "^2.2.0",
     "@miden-sdk/miden-sdk": "^0.15.1",
     "@miden-sdk/react": "^0.15.1",
-    "@miden-sdk/para": "file:../..",
+    "@miden-sdk/para": "file:../../../core",
     "@miden-sdk/para-react": "file:../../../react",
     "@tanstack/react-query": "^5.90.12",
     "react": "^19.2.0",

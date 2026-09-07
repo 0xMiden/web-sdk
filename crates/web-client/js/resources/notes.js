@@ -55,18 +55,26 @@ export class NotesResource {
     return await this.#inner.exportNoteFile(resolveNoteIdHex(noteId), format);
   }
 
-  async fetchPrivate(opts) {
+  async fetchPrivate() {
     this.#client.assertNotTerminated();
-    if (opts?.mode === "all") {
-      await this.#inner.fetchAllPrivateNotes();
-    } else {
-      await this.#inner.fetchPrivateNotes();
-    }
+    await this.#inner.fetchPrivateNotes();
   }
 
   async sendPrivate(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+
+    if (
+      !Number.isInteger(opts?.scanAfterBlockNum) ||
+      opts.scanAfterBlockNum < 0
+    ) {
+      throw new Error(
+        "sendPrivate requires scanAfterBlockNum: the block the recipient scans forward " +
+          "from for the note's commitment. It must be at or below the commitment block. " +
+          "For one of this client's own output notes, use sendPrivateOutput({ noteId, to }) " +
+          "which derives this from the note's expected height."
+      );
+    }
 
     let note;
     const input = opts.note;
@@ -89,7 +97,15 @@ export class NotesResource {
     }
 
     const address = resolveAddress(opts.to, wasm);
-    await this.#inner.sendPrivateNote(note, address);
+    await this.#inner.sendPrivateNote(note, address, opts.scanAfterBlockNum);
+  }
+
+  async sendPrivateOutput(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const noteHex = resolveNoteIdHex(opts.noteId);
+    const address = resolveAddress(opts.to, wasm);
+    await this.#inner.sendPrivateOutputNote(noteHex, address);
   }
 }
 
@@ -103,6 +119,17 @@ function buildNoteFilter(query, wasm) {
       wasm.NoteId.fromHex(resolveNoteIdHex(id))
     );
     return new wasm.NoteFilter(wasm.NoteFilterTypes.List, noteIds);
+  }
+
+  if (query.scriptRoots) {
+    const scriptRoots = query.scriptRoots.map((root) =>
+      typeof root === "string" ? wasm.Word.fromHex(root) : root
+    );
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.ScriptRoots,
+      undefined,
+      scriptRoots
+    );
   }
 
   if (query.status) {

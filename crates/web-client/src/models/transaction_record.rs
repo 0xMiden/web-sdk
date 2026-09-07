@@ -44,6 +44,15 @@ impl TransactionRecord {
     }
 
     /// Returns the output notes created by this transaction.
+    ///
+    /// NOTE: this includes the kernel's `TX_FEE` note on any chain whose `verification_base_fee` is
+    /// non-zero, because the fee the account pays is itself an output note. Callers that index or
+    /// count this list should expect one more note than they created.
+    ///
+    /// The split `ExecutedTransaction` offers through `feeNote` and `userOutputNotes` is not
+    /// available here: a record is read back from the store, and the fee script's root is not
+    /// exposed to JS, so there is nothing to compare against. `ExecutedTransaction` — returned at
+    /// execution time — is the only supported source of the split.
     #[js_export(js_name = "outputNotes")]
     pub fn output_notes(&self) -> OutputNotes {
         self.0.details.output_notes.clone().into()

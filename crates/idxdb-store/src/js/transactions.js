@@ -1,12 +1,9 @@
 import { getDatabase, } from "./schema.js";
 import { logWebStoreError, mapOption, uint8ArrayToBase64 } from "./utils.js";
-import { applyFullAccountState, applyTransactionDelta } from "./accounts.js";
+import { applyAccountPatch, applyFullAccountState } from "./accounts.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 const IDS_FILTER_PREFIX = "Ids:";
-const EXPIRED_BEFORE_FILTER_PREFIX = "ExpiredPending:";
 const STATUS_PENDING_VARIANT = 0;
-const STATUS_COMMITTED_VARIANT = 1;
-const STATUS_DISCARDED_VARIANT = 2;
 export async function getTransactions(dbId, filter) {
     let transactionRecords = [];
     try {
@@ -28,15 +25,6 @@ export async function getTransactions(dbId, filter) {
             else {
                 transactionRecords = [];
             }
-        }
-        else if (filter.startsWith(EXPIRED_BEFORE_FILTER_PREFIX)) {
-            const blockNumString = filter.substring(EXPIRED_BEFORE_FILTER_PREFIX.length);
-            const blockNum = parseInt(blockNumString);
-            transactionRecords = await db.transactions
-                .filter((tx) => tx.blockNum < blockNum &&
-                tx.statusVariant !== STATUS_COMMITTED_VARIANT &&
-                tx.statusVariant !== STATUS_DISCARDED_VARIANT)
-                .toArray();
         }
         else {
             transactionRecords = await db.transactions.toArray();
@@ -158,7 +146,7 @@ export async function applyTransactionBatch(dbId, payloads) {
                 await applyFullAccountState(dbId, acct.account);
             }
             else {
-                await applyTransactionDelta(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment);
+                await applyAccountPatch(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment);
             }
             // 3. Upsert input and output notes
             for (const note of payload.inputNotes) {

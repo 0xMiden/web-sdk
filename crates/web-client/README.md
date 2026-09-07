@@ -519,6 +519,95 @@ Nothing is persisted until `apply` runs — stopping after `submit()` leaves the
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+### Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, paid from inside the account's auth procedure rather than by the kernel. `fee::pay_fee` reads the asset and rate out of the transaction's auth argument, which has to be `hash(CONVERSION_INFO || SALT)` with the preimage in the advice map; a procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+Fees always settle in the chain's own fee asset at rate 1/1, so there is no conversion info to choose — miden-client builds it and commits it for you while preparing the transaction. The one thing it will not invent is the **salt** the commitment is computed under, because every multisig flavour reuses that salt as its transaction summary's replay guard. So single-sig, no-auth and network accounts need nothing at any base fee (the client commits under a fixed default salt, fixed so a signed summary stays reproducible), while a multisig that declares none fails with `FeeConversionInfoRequired` naming the component. A custom auth procedure that reads conversion info is not recognised, gets nothing committed, and hits the VM abort.
+
+Every `new*TransactionRequest` constructor declares a salt where the executing account needs one, and so does every `client.transactions` operation that builds its own request, so the common cases need no changes. The operations that take a finished request from you — `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview` — never do. When you assemble a request from a builder for a multisig, get one that already declares it:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for any account that does not choose its own salt, the builder comes back untouched.
+
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — call `builder.withFeeConversionSalt(salt)`. It is a declaration rather than a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so whichever is called last wins rather than erroring. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+
+One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
+
+### Chain-Anchored Execution
+
+Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
+
+A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
+
+```typescript
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
+
+// Proposer: capture, derive the summary at the anchor, ship all three.
+const anchor = await client.transactions.captureAnchor(request);
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+  anchor,
+});
+await shipToCosigners(
+  request.serialize(),
+  anchor.serialize(),
+  summary.serialize()
+);
+
+// Co-signer: re-derive at the proposer's anchor and compare before signing.
+// Re-derive from the proposer's request bytes, never from a locally rebuilt
+// request — a multisig request's fee conversion info carries a salt drawn fresh
+// on every build, and the auth procedure uses it as the summary's replay guard,
+// so a rebuilt request yields a different summary and the check below fails as
+// if the proposal had been tampered with.
+const received = ChainAnchor.deserialize(anchorBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request: proposedRequest,
+  anchor: received,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+await client.transactions.submit(multisig, request, { anchor: received });
+```
+
+The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
+
+The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
+
+```typescript
+// The summary signs its reference block, so a mismatched anchor is detectable
+// without paying for an execution.
+if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
+  throw new Error("anchor is not the block this summary was built at");
+}
+```
+
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
+
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
+
+A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
+
+See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple
@@ -594,15 +683,23 @@ Provide exactly one of `script` or `recipient`. Notes are always Public — the 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
 ```typescript
-const auth = AccountComponent.createNetworkAuth([myNoteScript.root()]);
-const { account } = new AccountBuilder(seed)
+// Each allowed note script carries the fee charged to consume it, in the
+// fungible asset of `feeFaucetId`. Zero is a valid price.
+const components = AccountComponent.createNetworkAuthComponents(
+  [new NoteScriptFee(myNoteScript.root(), 0n)],
+  feeFaucetId
+);
+
+const builder = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
-  .withComponent(myComponent)
-  .withAuthComponent(auth)
-  .build();
+  .withComponent(myComponent);
+// The call returns the auth component plus the components backing its fee
+// policy; the account needs all of them.
+for (const component of components) builder.withComponent(component);
+const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. Transaction scripts are forbidden unless allowlisted via the optional second argument (`TransactionScript.root()`); the component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

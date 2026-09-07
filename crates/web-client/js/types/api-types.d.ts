@@ -13,10 +13,12 @@ import type {
   Felt,
   TransactionId,
   TransactionRequest,
+  TransactionRequestBuilder,
   TransactionResult,
   TransactionStoreUpdate,
   ProvenTransaction,
   TransactionSummary,
+  ChainAnchor,
   TransactionRecord,
   InputNoteRecord,
   OutputNoteRecord,
@@ -28,6 +30,7 @@ import type {
   NoteExportFormat,
   StorageSlot,
   AccountComponent,
+  Library,
   AuthSecretKey,
   AccountStorageRequirements,
   TransactionScript,
@@ -225,8 +228,6 @@ export interface ClientOptions {
   storeName?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
-  /** Enable debug mode for transaction execution (default: false). */
-  debugMode?: boolean;
   /** External keystore callbacks. */
   keystore?: {
     getKey: GetKeyCallback;
@@ -373,6 +374,31 @@ export interface ExportAccountOptions {}
 // ════════════════════════════════════════════════════════════════
 // Transaction types
 // ════════════════════════════════════════════════════════════════
+
+/**
+ * Mixin for the methods that take a caller-built `TransactionRequest`, letting
+ * them execute against a pinned reference block instead of the current sync
+ * height.
+ *
+ * Deliberately not part of {@link TransactionOptions}: `send`, `mint`,
+ * `consume` and friends build their request internally, so a caller can never
+ * hold an anchor captured for one.
+ */
+export interface AnchoredOptions {
+  /**
+   * A {@link ChainAnchor} from `transactions.captureAnchor(request)`, pinning
+   * execution to the reference block the anchor was captured at.
+   *
+   * Since protocol 0.16 a signed transaction summary binds the reference block
+   * commitment, so signatures only authorize an execution at that exact block.
+   * Supplying the proposer's anchor is what makes the signed summary reproduce
+   * on a client whose sync height has since advanced.
+   *
+   * When the anchor came from an untrusted party, compare `anchor.commitment()`
+   * against an independently trusted value before using it.
+   */
+  anchor?: ChainAnchor;
+}
 
 export interface TransactionOptions {
   waitForConfirmation?: boolean;
@@ -791,7 +817,7 @@ export interface PreviewPswapCancelOptions {
   note: NoteInput;
 }
 
-export interface PreviewCustomOptions {
+export interface PreviewCustomOptions extends AnchoredOptions {
   operation: "custom";
   account: AccountRef;
   request: TransactionRequest;
@@ -833,8 +859,7 @@ export interface ConsumeAllResult {
  */
 export type TransactionQuery =
   | { status: "uncommitted" }
-  | { ids: (string | TransactionId)[] }
-  | { expiredBefore: number };
+  | { ids: (string | TransactionId)[] };
 
 // ════════════════════════════════════════════════════════════════
 // Note types
@@ -850,13 +875,20 @@ export type NoteQuery =
         | "processing"
         | "unverified";
     }
-  | { ids: (string | NoteId)[] };
+  | { ids: (string | NoteId)[] }
+  /**
+   * Filter received notes by note script root, given as hex strings or Word
+   * instances (e.g. from `NoteScript.root()`). Notes match regardless of their
+   * state. Only supported by `notes.list`; `notes.listSent` returns an empty
+   * list for this query.
+   */
+  | { scriptRoots: (string | Word)[] };
 
 /** Options for standalone note creation utilities. */
 export interface NoteOptions {
   from: AccountRef;
   to: AccountRef;
-  assets: Asset | Asset[];
+  assets: Asset | [Asset, ...Asset[]];
   type?: NoteVisibility;
   attachment?: Felt[];
 }
@@ -871,12 +903,25 @@ export interface ExportNoteOptions {
   format?: NoteExportFormat;
 }
 
-export interface FetchPrivateNotesOptions {
-  mode?: "incremental" | "all";
+export interface SendPrivateOptions {
+  /** The note to relay — a `Note`, or a note id/record resolved from this client's input notes. */
+  note: NoteInput;
+  /** The recipient. */
+  to: AccountRef;
+  /**
+   * Block the recipient scans FORWARD from for the note's on-chain commitment. Must be at or below
+   * the commitment block — a hint above it is never scanned back to, so the recipient silently
+   * never receives the note. A safe, always-valid choice is the chain tip when the note's
+   * transaction was submitted. For one of this client's own output notes, prefer `sendPrivateOutput`,
+   * which derives this block for you.
+   */
+  scanAfterBlockNum: number;
 }
 
-export interface SendPrivateOptions {
-  note: NoteInput;
+export interface SendPrivateOutputOptions {
+  /** Id of one of this client's own output notes (its transaction must have been applied). */
+  noteId: NoteInput;
+  /** The recipient. */
   to: AccountRef;
 }
 
@@ -1068,8 +1113,26 @@ export interface TransactionsResource {
   execute(options: ExecuteOptions): Promise<TransactionSubmitResult>;
 
   /**
-   * Dry-run a transaction to preview its effects without submitting it to
-   * the network.
+   * Dry-run a transaction to obtain the {@link TransactionSummary} the
+   * account is being asked to authorize, without submitting anything to the
+   * network.
+   *
+   * The summary only exists while authorization is pending: it is returned
+   * when the account's auth procedure aborts with the unauthorized event
+   * (e.g. a multisig below its signing threshold), so it can be signed
+   * out-of-band. If the transaction is already fully authorized, execution
+   * succeeds without producing a summary and this method rejects with an
+   * error whose `code` is `"TRANSACTION_ALREADY_AUTHORIZED"` (on Node.js the
+   * code prefixes the error message instead) — submit the transaction with
+   * `execute` instead.
+   *
+   * To collect signatures over the summary and submit afterwards, preview with
+   * `operation: "custom"` and pass the *same* `TransactionRequest` object to
+   * both this call and the submission. Every other operation builds its request
+   * from the options given, and two builds are not identical — output note
+   * serial numbers and the fee conversion info's salt are both drawn from the
+   * client's RNG — so the summary signed here would not be the summary the
+   * submitted transaction produces.
    *
    * @param options - Preview options discriminated by `operation` field.
    */
@@ -1079,15 +1142,55 @@ export interface TransactionsResource {
    * Submit a pre-built TransactionRequest. Note: WASM requires accountId
    * separately, so `account` is the first argument.
    *
+   * The request is yours, so paying protocol 0.16's verification fee is yours
+   * too. miden-client settles it in the chain's native fee asset at rate 1/1
+   * and commits that itself, so a request from `new TransactionRequestBuilder()`
+   * pays normally — except against a multisig account, which needs a fee
+   * conversion salt declared. Build those from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}. Raises the same fee
+   * errors {@link executeRequest} does.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
-   * @param options - Optional transaction options (prover, confirmation).
+   * @param options - Optional transaction options (prover, confirmation, anchor).
    */
   submit(
     account: AccountRef,
     request: TransactionRequest,
-    options?: TransactionOptions
+    options?: TransactionOptions & AnchoredOptions
   ): Promise<TransactionSubmitResult>;
+
+  /**
+   * Capture a {@link ChainAnchor} at the current sync height for `request`,
+   * pinning the reference block that a later execution can replay against.
+   *
+   * The anchor tracks the creation blocks of the request's authenticated input
+   * notes, so it stays valid for that request once the chain advances. Pass it
+   * back through the `anchor` option on {@link preview}, {@link executeRequest},
+   * or {@link submit}; serialize it with `anchor.serialize()` to ship it
+   * alongside a summary awaiting signatures.
+   *
+   * ```ts
+   * const anchor  = await client.transactions.captureAnchor(request);
+   * const summary = await client.transactions.preview({
+   *   operation: "custom", account, request, anchor,
+   * });
+   * // ... collect signatures over `summary`, shipping `anchor.serialize()` ...
+   * await client.transactions.submit(account, request, { anchor });
+   * ```
+   *
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` (on Node.js the code
+   * prefixes the message instead) if a sync lands mid-capture and leaves the
+   * anchor internally inconsistent. Retry.
+   *
+   * The caller owns the returned anchor. It carries a partial blockchain, so in
+   * a flow that captures repeatedly, call `anchor.free()` once done rather than
+   * leaving it to the finalizer.
+   *
+   * @param request - The request the anchor is captured for.
+   * @returns An anchor pinned to the current sync height.
+   */
+  captureAnchor(request: TransactionRequest): Promise<ChainAnchor>;
 
   /**
    * Execute a transaction request locally — nothing is proven, submitted, or
@@ -1106,13 +1209,30 @@ export interface TransactionsResource {
    * group: awaiting other mutating calls on the same account between them can
    * interleave state — drive the chain as an uninterrupted sequence per account.
    *
+   * The request is yours, so paying protocol 0.16's verification fee is yours
+   * too. miden-client settles it in the chain's native fee asset at rate 1/1
+   * and commits that itself, so a request from `new TransactionRequestBuilder()`
+   * pays normally — except against a multisig account, which needs a fee
+   * conversion salt declared. Build those from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   *
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
+   * @param options - Pass `anchor` to execute against a pinned reference block
+   *   instead of the current sync height.
    * @returns A handle to the executed transaction, ready to prove.
+   * @throws `FeeConversionInfoRequired`, naming the auth component, when the
+   *   executing account is a multisig and the request declares no fee
+   *   conversion salt. Multisig accounts reuse that salt as their summary's
+   *   replay guard, so miden-client will not invent one.
+   * @throws `FeeConversionInfoUnsupported`, naming the auth component, when the
+   *   request declares a fee conversion salt the account's auth component never
+   *   reads.
    */
   executeRequest(
     account: AccountRef,
-    request: TransactionRequest
+    request: TransactionRequest,
+    options?: AnchoredOptions
   ): Promise<TransactionExecution>;
 
   /**
@@ -1141,6 +1261,10 @@ export interface TransactionsResource {
    * V1 supports only same-account batches (mirrors the underlying Rust
    * `Client::new_transaction_batch()` constraint).
    *
+   * The named operations attach fee conversion info themselves; a request you
+   * supply through the `custom` operation is subject to the fee checks
+   * described on {@link submitBatch}, which this delegates to.
+   *
    * @param options - Batch options including the account and operations.
    */
   batch(options: BatchOptions): Promise<BatchSubmitResult>;
@@ -1149,6 +1273,18 @@ export interface TransactionsResource {
    * Submit pre-built TransactionRequests as an atomic batch. Plural
    * counterpart of {@link submit} — for callers that already have built
    * requests in hand and want to skip the high-level operation builders.
+   *
+   * No fee conversion salt is declared for you here. miden-client commits the
+   * chain's native conversion info itself while preparing each transaction, so
+   * requests against ordinary accounts pay normally; a multisig account needs a
+   * salt declared on the request, or the push fails with
+   * `FeeConversionInfoRequired`. Note that a batch proves each transaction as it
+   * is pushed, so a rejection discovered mid-push has already cost the proofs
+   * ahead of it — build multisig requests from
+   * {@link MidenClient.feeAwareTransactionRequestBuilder}.
+   *
+   * The account's code is read once for the whole batch, not once per request,
+   * since a batch is single-account by contract.
    *
    * @param account - The account executing every transaction in the batch.
    * @param requests - Pre-built transaction requests (must be non-empty).
@@ -1164,9 +1300,18 @@ export interface TransactionsResource {
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
 
   /**
-   * List transactions, optionally filtered by status, IDs, or expiration.
+   * List transactions, optionally filtered by status or IDs.
    *
-   * @param query - Optional filter for transaction status, IDs, or expiration.
+   * Omitting `query`, or passing a shape this method does not recognise, returns every
+   * stored transaction.
+   *
+   * @param query - Optional filter for transaction status or IDs.
+   * @throws If `query` carries a defined `expiredBefore` and neither `status: "uncommitted"`
+   * nor `ids` — the two shapes that outranked the expiry filter before it was removed.
+   * That filter was removed upstream — expiry is decided during state sync — and silently
+   * widening it to the unfiltered query would return a superset of what was asked for.
+   * Compare {@link TransactionRecord.expirationBlockNum} against the height you care about
+   * instead.
    */
   list(query?: TransactionQuery): Promise<TransactionRecord[]>;
 
@@ -1213,6 +1358,15 @@ export interface PswapResource {
    * through the same prove/submit path as the other transaction helpers.
    * Throws if no lineage is tracked for the order.
    *
+   * This is the one request-building path the SDK cannot declare a fee
+   * conversion salt on: miden-client builds the request internally from a bare
+   * builder. On a chain whose `BlockHeader.verificationBaseFee()` is non-zero
+   * that leaves the outcome to the creator's auth component — an ordinary
+   * creator has its conversion info committed by miden-client and pays normally,
+   * while a multisig creator fails with `FeeConversionInfoRequired`. For those,
+   * cancel by note with {@link TransactionsResource.pswapCancel}, which declares
+   * a salt against the creator before submitting.
+   *
    * @param options - Order id and optional transaction options.
    */
   cancelByOrder(
@@ -1222,9 +1376,10 @@ export interface PswapResource {
 
 export interface NotesResource {
   /**
-   * List received (input) notes, optionally filtered by status or IDs.
+   * List received (input) notes, optionally filtered by status, IDs, or note
+   * script roots.
    *
-   * @param query - Optional filter by note status or note IDs.
+   * @param query - Optional filter by note status, note IDs, or script roots.
    */
   list(query?: NoteQuery): Promise<InputNoteRecord[]>;
   /**
@@ -1235,7 +1390,9 @@ export interface NotesResource {
   get(noteId: NoteInput): Promise<InputNoteRecord | null>;
 
   /**
-   * List sent (output) notes, optionally filtered by status or IDs.
+   * List sent (output) notes, optionally filtered by status or IDs. A script
+   * root query returns an empty list, since script roots are only tracked for
+   * received notes.
    *
    * @param query - Optional filter by note status or note IDs.
    */
@@ -1270,20 +1427,36 @@ export interface NotesResource {
   /**
    * Fetch private notes from the note transport service.
    *
-   * @param options - Optional fetch mode: `"incremental"` (default) or `"all"`.
+   * Fetches incrementally: only notes past the stored pagination cursor are
+   * downloaded. Historical notes for a newly tracked tag sit below that cursor
+   * and are recovered automatically by {@link MidenClient.sync}, which
+   * backfills each newly tracked tag.
    */
-  fetchPrivate(options?: FetchPrivateNotesOptions): Promise<void>;
+  fetchPrivate(): Promise<void>;
   /**
-   * Send a private note to a recipient via the note transport service.
+   * Relay a private note to a recipient via the note transport service, with an explicit block
+   * hint (`scanAfterBlockNum`) the recipient scans forward from for the note's on-chain commitment.
    *
-   * The note is relayed with a block hint (the client's current sync height) so the recipient
-   * locates its on-chain commitment deterministically rather than relying on a narrow lookback
-   * window. Relay promptly after submitting the note's transaction — while its commitment is
-   * still ahead of the synced tip — so the hint stays at or before the commitment.
+   * The hint must be at or below the commitment block; a hint above it is never scanned back to and
+   * the recipient silently never receives the note. This is the agnostic form for relaying an
+   * arbitrary note; for one of this client's own output notes prefer {@link NotesResource.sendPrivateOutput},
+   * which derives the block from the note's stored expected height.
    *
-   * @param options - Options including the note and the recipient.
+   * @param options - The note, the recipient, and `scanAfterBlockNum`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
+  /**
+   * Relay one of this client's own private output notes via the note transport service.
+   *
+   * The recipient's scan-start block is derived from the note's stored `expected_height` (the chain
+   * tip when its transaction was submitted), so delivery is correct regardless of how far this
+   * client has since synced past the note — a bare sync-height hint would overshoot the commitment
+   * once the sender advances past it (e.g. relaying after waiting for commit) and silently drop
+   * delivery. The note must exist in this client's store as an output note.
+   *
+   * @param options - The output note id and the recipient.
+   */
+  sendPrivateOutput(options: SendPrivateOutputOptions): Promise<void>;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1293,6 +1466,11 @@ export interface NotesResource {
 export interface CompileComponentOptions {
   /** MASM source code for the component. */
   code: string;
+  /**
+   * Module path used to derive procedure identities. Use the same namespace when
+   * linking this component into transaction scripts.
+   */
+  namespace?: string;
   /** Initial storage slots for the component. */
   slots?: StorageSlot[];
   /**
@@ -1319,18 +1497,35 @@ export interface CompileTxScriptLibrary {
   linking?: Linking;
 }
 
+/** Links the exact compiled code installed by an account component. */
+export interface CompileAccountComponentLibrary {
+  /** Account component whose installed code should be linked. */
+  component: AccountComponent;
+  /**
+   * `Linking.Dynamic` (default) — procedures are linked via DYNCALL at runtime.
+   * `Linking.Static` — procedures are inlined at compile time.
+   */
+  linking?: Linking;
+}
+
+/** A script library supplied inline, pre-built, or from an installed account component. */
+export type CompileScriptLibrary =
+  | CompileTxScriptLibrary
+  | CompileAccountComponentLibrary
+  | Library;
+
 export interface CompileTxScriptOptions {
   /** MASM source code for the transaction script. */
   code: string;
   /** Component libraries to link. */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: CompileScriptLibrary[];
 }
 
 export interface CompileNoteScriptOptions {
   /** MASM source code for the note script. */
   code: string;
   /** Component libraries to link. */
-  libraries?: CompileTxScriptLibrary[];
+  libraries?: CompileScriptLibrary[];
 }
 
 export declare class CompilerResource {
@@ -1507,6 +1702,63 @@ export declare class MidenClient {
 
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
+
+  /**
+   * Returns a `TransactionRequestBuilder` that already declares a fee
+   * conversion salt where the account that will execute the request needs one.
+   *
+   * Since protocol 0.16 the verification fee is paid inside the account's auth
+   * procedure, which reads it from the transaction's auth argument. Fees are
+   * always settled in the chain's native fee asset at rate 1/1, so there is no
+   * conversion info to supply — miden-client builds it and commits it for you.
+   * The one thing it will not invent is a salt the account gives meaning to,
+   * and that is what this declares. What happens without it depends on the
+   * executing account:
+   *
+   * - **Single-sig, no-auth, network accounts** — nothing is needed. A request
+   *   from `new TransactionRequestBuilder()` pays normally; miden-client
+   *   commits under a fixed default salt, fixed so that a signed transaction
+   *   summary stays reproducible.
+   * - **Multisig, smart multisig and guarded multisig** — these reuse the salt
+   *   as their transaction summary's replay guard, so miden-client refuses to
+   *   guess and the transaction fails with `FeeConversionInfoRequired` naming
+   *   the component. This method is what makes those accounts work.
+   * - **A custom auth procedure that reads conversion info** — miden-client
+   *   does not recognise the component and commits nothing, so the transaction
+   *   aborts in the VM with `ERR_FEE_CONVERSION_INFO_MISSING`. Attach the
+   *   commitment yourself with `TransactionRequestBuilder.withAuthArg` plus
+   *   `extendAdviceMap`.
+   *
+   * The `new*TransactionRequest` constructors declare it, and so does every
+   * `client.transactions` operation that builds its own request — but the ones
+   * that take a request from you (`submit`, `executeRequest`, `submitBatch`,
+   * and the `custom` operation of `batch` / `preview`) never do, so those are
+   * exactly the paths this method exists for.
+   *
+   * `account` is the account that **executes** the request — the one whose
+   * auth procedure pays the fee — not the recipient or a note's sender.
+   *
+   * Safe as a drop-in: a salt is declared only when the chain charges a fee
+   * *and* the executing account is one that must choose its own. For every
+   * other account — and on any zero-fee chain — the builder comes back
+   * untouched and the request is byte-identical to one built from a bare
+   * builder.
+   *
+   * Calling `withAuthArg` on the result clears the declared salt, and vice
+   * versa: miden-client keeps the two mutually exclusive, so whichever is
+   * called last wins rather than producing an error.
+   *
+   * @param account - The account that will execute the request.
+   *
+   * @example
+   * ```js
+   * const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+   * const request = builder.withCustomScript(script).build();
+   * ```
+   */
+  feeAwareTransactionRequestBuilder(
+    account: AccountRef
+  ): Promise<TransactionRequestBuilder>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
   proveBlock(): Promise<void>;

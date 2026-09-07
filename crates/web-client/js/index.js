@@ -1,8 +1,8 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { withSyncLock } from "./syncLock.js";
-import { MidenClient } from "./client.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
+import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
@@ -64,36 +64,53 @@ export {
 // Naming note: "SYNC_METHODS" is a historical misnomer. This set groups methods
 // that are forwarded transparently to the underlying WASM via the Proxy in
 // `createClientProxy` — meaning they don't need an explicit JS-class wrapper
-// here. It does NOT mean "the method is synchronous"; several entries
-// (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
-// `async fn` in Rust because they take the client's RNG via an async lock.
+// here. It does NOT mean "the method is synchronous"; some entries are
+// `async fn` in Rust.
+//
+// What an entry DOES promise is that it takes no borrow of the client's
+// `AsyncCell` at all. Raw binding skips `_serializeWasmCall`, and the hazard
+// runs in both directions:
+//
+//   - An entry that awaits while holding the borrow can be polled concurrently
+//     with any other call and panics with `already borrowed: BorrowMutError`.
+//     The methods that read the store while holding the borrow — the eight
+//     request constructors and `feeAwareTransactionRequestBuilder`, which read
+//     the chain's fee parameters, and `buildPswapCancelByOrder`, which reads the
+//     order's lineage — are write methods for this reason.
+//   - An entry that takes the borrow only *synchronously* is still unsafe,
+//     because a serialized method holding the borrow across an await yields to
+//     the event loop with it outstanding. A raw call landing in that window
+//     borrows again and panics the same way. `createCodeBuilder` and
+//     `storeIdentifier` are serialized reads for this reason; they are awaited
+//     at every call site, so serializing them costs nothing.
+//
+// `scripts/check-method-classification.js` enforces this: it reads the Rust
+// sources and fails when a SYNC_METHODS entry calls `get_mut_inner`. Don't rely
+// on the comment alone when adding an entry — run the script.
+//
+// `lastAuthError` is the one accepted exception, and the script allowlists it by
+// name: it is synchronous by contract (`client.js` returns its value directly,
+// and `api-types.d.ts` declares it non-Promise), so it cannot be serialized
+// without a breaking change. The `keystore` getter has the same shape and is not
+// a method, so the classification script never sees it. Both take a shared
+// borrow, so both can still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
-  "buildPswapCancelByOrder",
   "buildSwapTag",
-  "createCodeBuilder",
   "lastAuthError",
-  "newB2AggTransactionRequest",
-  "newConsumeTransactionRequest",
-  "newMintTransactionRequest",
-  "newPswapCancelTransactionRequest",
-  "newPswapConsumeTransactionRequest",
-  "newPswapCreateTransactionRequest",
-  "newSendTransactionRequest",
-  "newSwapTransactionRequest",
   "proveBlock",
   "serializeMockChain",
   "serializeMockNoteTransportNode",
-  "setDebugMode",
-  "storeIdentifier",
   "usesMockChain",
 ]);
 
 const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
   "addTag",
+  "buildPswapCancelByOrder",
+  "chainAnchorForRequest",
   "executeForSummary",
-  "executeProgram",
-  "fetchAllPrivateNotes",
+  "executeForSummaryAt",
+  "feeAwareTransactionRequestBuilder",
   "fetchPrivateNotes",
   "forceImportStore",
   "importAccountById",
@@ -102,11 +119,20 @@ const WRITE_METHODS = new Set([
   "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
+  "newB2AggTransactionRequest",
+  "newConsumeTransactionRequest",
+  "newMintTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCreateTransactionRequest",
+  "newSendTransactionRequest",
+  "newSwapTransactionRequest",
   "pruneAccountHistory",
   "removeAccountAddress",
   "removeTag",
   "removeSetting",
   "sendPrivateNote",
+  "sendPrivateOutputNote",
   "setSetting",
   "submitNewTransactionBatch",
   "submitProvenTransaction",
@@ -114,6 +140,7 @@ const WRITE_METHODS = new Set([
 
 const READ_METHODS = new Set([
   "accountReader",
+  "createCodeBuilder",
   "exportAccountFile",
   "getAccountAuthByPubKeyCommitment",
   "getAccountByKeyCommitment",
@@ -139,6 +166,7 @@ const READ_METHODS = new Set([
   "listSettingKeys",
   "listTags",
   "executeProgram",
+  "storeIdentifier",
 ]);
 
 const MOCK_STORE_NAME = "mock_client_db";
@@ -182,37 +210,6 @@ const deserializeError = (errorLike) => {
   });
   return reconstructedError;
 };
-
-let sensitiveWarningEmitted = false;
-
-/**
- * Apply the observability fields of `ClientOptions`. Enabling the
- * high-fidelity channel warns once per process: routing account ids and raw
- * error text into a third party should never happen by accident.
- *
- * The flag is deliberately `=== true` rather than truthy. A `"true"` from an
- * env var, a query string, or a JSON round-trip is far likelier to be a
- * wiring mistake than a decision to disclose user data, and the safe reading
- * of an ambiguous value is "off".
- *
- * @param {{observer?: (o: object) => void, observeSensitive?: boolean}} [options]
- * @returns {boolean} whether the high-fidelity channel is enabled
- */
-function applyObserverOptions(options) {
-  if (typeof options?.observer === "function") {
-    setObserver(options.observer);
-  }
-  const observeSensitive = options?.observeSensitive === true;
-  if (observeSensitive && !sensitiveWarningEmitted) {
-    sensitiveWarningEmitted = true;
-    console.warn(
-      "[miden-sdk] observeSensitive is enabled: observations will carry account " +
-        "identifiers and raw error text. Do not enable this in an application " +
-        "that must not disclose user data to its telemetry provider."
-    );
-  }
-  return observeSensitive;
-}
 
 export const MidenArrays = {};
 
@@ -283,6 +280,37 @@ export const getWasmOrThrow = async () => {
  * Create a Proxy that forwards missing properties to the underlying WASM
  * WebClient.
  */
+let sensitiveWarningEmitted = false;
+
+/**
+ * Apply the observability fields of `ClientOptions`. Enabling the
+ * high-fidelity channel warns once per process: routing account ids and raw
+ * error text into a third party should never happen by accident.
+ *
+ * The flag is deliberately `=== true` rather than truthy. A `"true"` from an
+ * env var, a query string, or a JSON round-trip is far likelier to be a
+ * wiring mistake than a decision to disclose user data, and the safe reading
+ * of an ambiguous value is "off".
+ *
+ * @param {{observer?: (o: object) => void, observeSensitive?: boolean}} [options]
+ * @returns {boolean} whether the high-fidelity channel is enabled
+ */
+function applyObserverOptions(options) {
+  if (typeof options?.observer === "function") {
+    setObserver(options.observer);
+  }
+  const observeSensitive = options?.observeSensitive === true;
+  if (observeSensitive && !sensitiveWarningEmitted) {
+    sensitiveWarningEmitted = true;
+    console.warn(
+      "[miden-sdk] observeSensitive is enabled: observations will carry account " +
+        "identifiers and raw error text. Do not enable this in an application " +
+        "that must not disclose user data to its telemetry provider."
+    );
+  }
+  return observeSensitive;
+}
+
 function createClientProxy(instance) {
   return new Proxy(instance, {
     get(target, prop, receiver) {
@@ -782,9 +810,9 @@ class WebClient {
    * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
    *   and run WASM calls on the current thread. Required for `CallbackProver`
    *   consumers (the worker path serializes the prover and loses the callback).
+   * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
-   * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
   static async createClient(
     rpcUrl,
@@ -840,9 +868,9 @@ class WebClient {
    * @param {boolean} [useWorker=true] - When `false`, bypass the Web Worker shim
    *   and run WASM calls on the current thread. Required for `CallbackProver`
    *   consumers (the worker path serializes the prover and loses the callback).
+   * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
-   * @returns {Promise<WebClient>} The fully initialized WebClient.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -1056,6 +1084,48 @@ class WebClient {
         throw error;
       }
     }, MethodName.EXECUTE_TRANSACTION);
+  }
+
+  async executeTransactionAt(accountId, transactionRequest, anchor) {
+    return this._serializeWasmCall(async () => {
+      try {
+        // Before the worker branch: on the main-thread path a nullish anchor
+        // would otherwise reach wasm and surface as "null pointer passed to
+        // rust", which reads like a consumed handle.
+        if (!anchor) {
+          throw new Error(
+            `anchor was ${String(anchor)}; executeTransactionAt requires one — ` +
+              "use executeTransaction to execute at the current tip"
+          );
+        }
+
+        if (!this.worker) {
+          const wasmWebClient = await this.getWasmWebClient();
+          return await wasmWebClient.executeTransactionAt(
+            accountId,
+            transactionRequest,
+            anchor
+          );
+        }
+
+        const wasm = await getWasmOrThrow();
+        const serializedTransactionRequest = transactionRequest.serialize();
+        const serializedAnchor = anchor.serialize();
+        const serializedResultBytes = await this.callMethodWithWorker(
+          MethodName.EXECUTE_TRANSACTION_AT,
+          accountId.toString(),
+          serializedTransactionRequest,
+          serializedAnchor
+        );
+
+        return wasm.TransactionResult.deserialize(
+          new Uint8Array(serializedResultBytes)
+        );
+      } catch (error) {
+        console.error("INDEX.JS: Error in executeTransactionAt:", error);
+        throw error;
+      }
+    }, MethodName.EXECUTE_TRANSACTION_AT);
   }
 
   async proveTransaction(transactionResult, prover) {

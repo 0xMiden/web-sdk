@@ -1,7 +1,17 @@
 {
   "name": "@miden-sdk/miden-wallet-adapter-react",
-  "version": "0.15.3",
+  "version": "0.16.0",
   "description": "Core react infrastructure for connecting Miden-compatible wallets to your dApp.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "repository": {
@@ -9,7 +19,7 @@
     "url": "git+https://github.com/0xMiden/web-sdk.git",
     "directory": "packages/adapter/react"
   },
-  "author": "Demox Labs",
+  "author": "Miden Contributors",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -19,25 +29,32 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@miden-sdk/miden-wallet-adapter-base": "workspace:^",
-    "@miden-sdk/miden-wallet-adapter-miden": "workspace:^"
+    "@miden-sdk/miden-wallet-adapter-base": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-miden": "workspace:*"
   },
   "devDependencies": {
     "@miden-sdk/miden-sdk": "workspace:*",
     "@miden-sdk/react": "workspace:*",
-    "@testing-library/react": "^14.0.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "jsdom": "^24.0.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "vitest": "^1.0.0"
   },
   "peerDependencies": {
-    "@miden-sdk/react": "^0.15.9",
+    "@miden-sdk/react": "^0.16.0",
+    "@types/react": "^18.0.0 || ^19.0.0",
     "react": "^18.0.0 || ^19.0.0",
-    "@miden-sdk/miden-sdk": "^0.15.9"
+    "@miden-sdk/miden-sdk": "^0.16.0"
   },
   "peerDependenciesMeta": {
     "@miden-sdk/react": {
+      "optional": true
+    },
+    "@types/react": {
       "optional": true
     }
   },

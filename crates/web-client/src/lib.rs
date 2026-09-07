@@ -26,11 +26,11 @@ use miden_client::crypto::RandomCoin;
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient};
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::{Client, ClientError, DebugMode, ErrorHint, Felt};
+use miden_client::{Client, ClientError, ErrorHint, Felt};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
@@ -38,7 +38,7 @@ use napi_derive::napi;
 use platform::maybe_wrap_send;
 use platform::{AsyncCell, ClientAuth, JsErr, from_str_err};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 #[cfg(feature = "browser")]
 use tracing::Level;
 #[cfg(feature = "browser")]
@@ -362,13 +362,13 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. When enabled,
-    ///   the transaction executor records additional information useful for debugging. Defaults to
-    ///   disabled.
     #[wasm_bindgen(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -376,13 +376,13 @@ impl WebClient {
         node_note_transport_url: Option<String>,
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -400,7 +400,7 @@ impl WebClient {
         );
         let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
@@ -411,15 +411,16 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. Defaults to
-    ///   disabled.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -431,13 +432,13 @@ impl WebClient {
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -456,7 +457,7 @@ impl WebClient {
         let keystore =
             WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
@@ -469,18 +470,12 @@ impl WebClient {
         keystore: WebKeyStore<RandomCoin>,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        debug_mode: Option<bool>,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
             .rng(Box::new(rng))
             .store(store)
-            .authenticator(Arc::new(keystore))
-            .in_debug_mode(if debug_mode.unwrap_or(false) {
-                DebugMode::Enabled
-            } else {
-                DebugMode::Disabled
-            });
+            .authenticator(Arc::new(keystore));
 
         if let Some(transport) = note_transport_client {
             builder = builder.note_transport(transport);
@@ -511,11 +506,12 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. Defaults to
-    ///   disabled.
     #[napi(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -524,13 +520,13 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         db_path: String,
         keystore_path: String,
-        debug_mode: Option<bool>,
     ) -> Result<String, JsErr> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
         })?;
 
-        let rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = if let Some(url) = node_note_transport_url {
             let client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
@@ -550,7 +546,7 @@ impl WebClient {
         let keystore = FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok("Client created successfully".to_string())
@@ -563,19 +559,13 @@ impl WebClient {
         keystore: FilesystemKeyStore,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        debug_mode: Option<bool>,
     ) -> Result<(), JsErr> {
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()
                 .rpc(rpc_client)
                 .rng(Box::new(rng))
                 .store(store)
-                .authenticator(Arc::new(keystore))
-                .in_debug_mode(if debug_mode.unwrap_or(false) {
-                    DebugMode::Enabled
-                } else {
-                    DebugMode::Disabled
-                });
+                .authenticator(Arc::new(keystore));
 
             if let Some(transport) = note_transport_client {
                 builder = builder.note_transport(transport);
@@ -612,7 +602,7 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
                 return Err(from_str_err("Seed must be exactly 32 bytes"));
             }
         },
-        None => StdRng::from_os_rng(),
+        None => StdRng::from_rng(&mut rand::rng()),
     };
     let coin_seed: [u64; 4] = rng.random();
     // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
@@ -638,7 +628,7 @@ where
         }
         // Stable, machine-readable code for the ClientError variants JS callers
         // branch on, so they don't have to match the (changeable) message text.
-        // The worker shim's serializeError already forwards `code`.
+        // The worker shim's serializeError forwards both `code` and `help`.
         if let Some(code) = code_from_error(&err) {
             let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }

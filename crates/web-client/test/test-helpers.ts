@@ -70,6 +70,88 @@ export async function setupWalletAndFaucet(
 }
 
 /**
+ * Builds a 2-of-3 multisig account and leaves a note sitting consumable by it.
+ *
+ * Transactions on this account do not self-authorize, which is what makes
+ * `executeForSummary`/`executeForSummaryAt` return a summary rather than
+ * rejecting with `TRANSACTION_ALREADY_AUTHORIZED`. That is the co-signing shape
+ * chain anchors exist to serve.
+ */
+export async function setupMultisigWithConsumableNote(
+  client: any,
+  sdk: any
+): Promise<{ multisigAccountId: any; notes: any[] }> {
+  const walletSeed = new Uint8Array(32);
+  crypto.getRandomValues(walletSeed);
+
+  const approverKeys = [
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+  ];
+  const multisigComponent = sdk.createAuthFalcon512RpoMultisig(
+    new sdk.AuthFalcon512RpoMultisigConfig(
+      approverKeys.map((key) => key.publicKey().toCommitment()),
+      2
+    )
+  );
+
+  const built = new sdk.AccountBuilder(walletSeed)
+    .storageMode(sdk.AccountStorageMode.private())
+    .withAuthComponent(multisigComponent)
+    .withBasicWalletComponent()
+    .build();
+
+  const multisigAccountId = built.account.id();
+  await client.newAccount(built.account, false);
+  for (const key of approverKeys) {
+    await client.keystore.insert(multisigAccountId, key);
+  }
+
+  // Fund a regular wallet, then have it send a note to the multisig. Minting
+  // straight to the multisig would leave nothing for it to consume.
+  const { wallet, faucet } = await setupWalletAndFaucet(client, sdk);
+  const { createdNoteId } = await mockMint(
+    client,
+    sdk,
+    wallet.id(),
+    faucet.id()
+  );
+  await mockConsume(client, sdk, wallet.id(), createdNoteId);
+
+  const sendRequest = await client.newSendTransactionRequest(
+    wallet.id(),
+    multisigAccountId,
+    faucet.id(),
+    sdk.NoteType.Public,
+    sdk.u64(100),
+    null,
+    null
+  );
+  const sendTxId = await client.submitNewTransaction(wallet.id(), sendRequest);
+  await client.proveBlock();
+  await client.syncState();
+
+  const [sendTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([sendTxId])
+  );
+  const notes = await Promise.all(
+    sendTxRecord
+      .outputNotes()
+      .notes()
+      .map(async (note: any) => {
+        const record = await client.getInputNote(note.id().toString());
+        if (!record) {
+          throw new Error(`Note ${note.id().toString()} not found`);
+        }
+        return record.toNote();
+      })
+  );
+
+  return { multisigAccountId, notes };
+}
+
+/**
  * Mints tokens on the mock chain and commits the block.
  * Returns transaction ID and created note ID.
  */
@@ -134,7 +216,10 @@ export async function mockConsume(
   if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
 
   const note = inputNoteRecord.toNote();
-  const consumeRequest = client.newConsumeTransactionRequest([note]);
+  const consumeRequest = await client.newConsumeTransactionRequest(
+    [note],
+    accountId
+  );
   const txId = await client.submitNewTransaction(accountId, consumeRequest);
   await client.proveBlock();
   await client.syncState();
@@ -277,7 +362,10 @@ export async function mockSwap(
   if (!swapNoteRecord) throw new Error(`Swap note ${swapNoteId} not found`);
 
   const swapNote = swapNoteRecord.toNote();
-  const consumeRequest1 = client.newConsumeTransactionRequest([swapNote]);
+  const consumeRequest1 = await client.newConsumeTransactionRequest(
+    [swapNote],
+    accountBId
+  );
   const consumeTxId1 = await client.submitNewTransaction(
     accountBId,
     consumeRequest1
@@ -301,7 +389,10 @@ export async function mockSwap(
     throw new Error(`Payback note ${paybackNoteId} not found`);
 
   const paybackNote = paybackNoteRecord.toNote();
-  const consumeRequest2 = client.newConsumeTransactionRequest([paybackNote]);
+  const consumeRequest2 = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    accountAId
+  );
   await client.submitNewTransaction(accountAId, consumeRequest2);
   await client.proveBlock();
   await client.syncState();
@@ -387,7 +478,7 @@ async function createAndFillPswapNote(
   // 2. Filler consumes (fills) the PSWAP note from its own vault.
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const consumeRequest = client.newPswapConsumeTransactionRequest(
+  const consumeRequest = await client.newPswapConsumeTransactionRequest(
     pswapNoteRecord.toNote(),
     fillerId,
     sdk.u64(fillAmount),
@@ -459,7 +550,10 @@ export async function mockPswapFullFill(
   const paybackNote = consumeOutputNotes[0].intoFull();
   if (!paybackNote)
     throw new Error("Payback note is not available in full form");
-  const paybackConsume = client.newConsumeTransactionRequest([paybackNote]);
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
   await client.submitNewTransaction(creatorId, paybackConsume);
   await client.proveBlock();
   await client.syncState();
@@ -540,7 +634,10 @@ export async function mockPswapPartialFill(
   const paybackNote = paybackOutputNote.intoFull();
   if (!paybackNote)
     throw new Error("Payback note is not available in full form");
-  const paybackConsume = client.newConsumeTransactionRequest([paybackNote]);
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
   await client.submitNewTransaction(creatorId, paybackConsume);
   await client.proveBlock();
   await client.syncState();
@@ -594,7 +691,7 @@ export async function mockPswapCancel(
 
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const cancelRequest = client.newPswapCancelTransactionRequest(
+  const cancelRequest = await client.newPswapCancelTransactionRequest(
     pswapNoteRecord.toNote(),
     creatorId
   );
@@ -639,7 +736,11 @@ export function parseNetworkId(sdk: any, networkId: string): any {
  * Creates a fresh mock client (separate from the test fixture's client).
  * Useful for tests that need multiple independent clients.
  */
-export async function createFreshMockClient(sdk: any): Promise<any | null> {
+export async function createFreshMockClient(
+  sdk: any,
+  serializedMockChain?: any,
+  serializedNoteTransport?: any
+): Promise<any | null> {
   let rawSdk;
   try {
     rawSdk = loadNodeSdk();
@@ -653,8 +754,8 @@ export async function createFreshMockClient(sdk: any): Promise<any | null> {
     path.join(dir, "store.db"),
     path.join(dir, "keystore"),
     null,
-    null,
-    null
+    serializedMockChain ?? null,
+    serializedNoteTransport ?? null
   );
 
   return wrapNodeClient(rawClient, rawSdk);

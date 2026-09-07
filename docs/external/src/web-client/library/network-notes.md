@@ -72,6 +72,40 @@ const { note } = await client.transactions.createNetworkNote({
 note.attachments(); // [NetworkAccountTarget attachment, extra payload]
 ```
 
+## Who pays on a fee-charging chain
+
+**The sender funds the consumption, at note-creation time.** This is the part
+that surprises people: creating a network note is not free of the consuming
+transaction's cost.
+
+When the sender's transaction pays its own fee, `fee::pay_fee` first creates a
+`FEE_SPONSORSHIP` note for every network output note the transaction emits. Each
+one is priced by asking the *target* network account for its fee policy — the
+`NoteScriptFee` it allowlisted for that note's script, denominated in the
+target's `feeFaucetId` — and funded out of the sender's vault. The network
+account collects that sponsorship note when it consumes the note, and uses it to
+pay. Only a script the target priced at zero produces no sponsorship note.
+
+Two consequences worth planning for:
+
+- **The pricing is an FPI call into the target**, so the target account must be
+  provisioned as a foreign account on the sender's transaction. It is made for
+  every network output note before the price is known, so a zero-priced script
+  does not avoid it — anywhere the sender's auth procedure pays a fee at all,
+  the provisioning is required. `createNetworkNote` does not add it, so on a
+  fee-charging chain assemble the request yourself: take a builder from
+  `client.feeAwareTransactionRequestBuilder(sender)` (which also declares a fee
+  conversion salt where the sender needs one), add the target with
+  `withForeignAccounts`, and submit it through `client.transactions.execute`.
+- **The sender's vault must cover the sponsorship**, not just its own fee. An
+  underfunded sender aborts rather than emitting an unsponsored note, and a
+  target whose fee policy is unset or unreachable aborts the same way.
+
+`NoteScript.feeSponsorship()` is the script those notes carry, and
+`AccountComponent.createNetworkAuthComponents` allowlists it at zero by default,
+so charging for it is a deliberate act —
+`new NoteScriptFee(NoteScript.feeSponsorship().root(), amount)`.
+
 ## Creating a network account
 
 A network account is a **public** account carrying the network-account auth
@@ -83,34 +117,51 @@ import {
   AccountBuilder,
   AccountComponent,
   AccountStorageMode,
+  NoteScriptFee,
   TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 
 // Reuse the same compiled note script when building the network note, so
 // the allowlisted root matches.
-const auth = AccountComponent.createNetworkAuth([noteScript.root()]);
+//
+// Each allowed script carries the fee charged to consume it, denominated in
+// the fungible asset of `feeFaucetId`. A zero price is valid.
+const components = AccountComponent.createNetworkAuthComponents(
+  [new NoteScriptFee(noteScript.root(), 0n)],
+  feeFaucetId
+);
 
-const { account } = new AccountBuilder(seed)
+const builder = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
-  .withComponent(myComponent)
-  .withAuthComponent(auth)
-  .build();
+  .withComponent(myComponent);
+// `createNetworkAuthComponents` returns the auth component together with the
+// components backing its fee policy; install all of them.
+for (const component of components) builder.withComponent(component);
+const { account } = builder.build();
 
 await client.accounts.insert({ account });
 
 // The auth component bumps the nonce itself, so a scriptless transaction
-// commits the account on-chain.
+// commits the account on-chain. The bare builder is right here even on a
+// fee-charging chain: the network-account auth component pays the fee from the
+// chain's native conversion info rather than the transaction's auth args, so
+// there is nothing to attach. See "Which accounts read conversion info" in the
+// transactions guide.
 await client.transactions.submit(
   account.id(),
   new TransactionRequestBuilder().build()
 );
 ```
 
-The allowlist must be non-empty (`createNetworkAuth([])` throws). Transaction
-scripts are forbidden unless their roots (`TransactionScript.root()`) are
-allowlisted via the optional second argument — only allowlist scripts whose
-effect is safe for every possible input, since a root pins the code but not
-the submitter-controlled arguments.
+The allowlist must be non-empty (`createNetworkAuthComponents([], ...)` throws).
+Each entry prices its own script, so an allowlisted script can never be left
+unpriced, which would abort the account's fee estimation rather than defaulting
+to free. The canonical expiration transaction script is always allowlisted,
+since the node attaches it to every network transaction; any other transaction
+script is forbidden unless its root (`TransactionScript.root()`) is allowlisted
+via the optional third argument — only allowlist scripts whose effect is safe
+for every possible input, since a root pins the code but not the
+submitter-controlled arguments.
 
 ## Detecting a network account
 

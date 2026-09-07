@@ -121,7 +121,7 @@ yarn add @miden-sdk/turnkey-react
 
 ```bash
 # Clone the repository
-git clone https://github.com/0xMiden/web-sdk.git
+git clone https://github.com/0xPolygonMiden/miden-turnkey.git
 cd miden-turnkey
 
 # Install dependencies

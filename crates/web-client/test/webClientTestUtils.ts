@@ -73,7 +73,7 @@ export const mintTransaction = async (
       return {
         transactionId: mintTransactionResult.executedTransaction().id().toHex(),
         numOutputNotesCreated: mintTransactionResult.createdNotes().numNotes(),
-        nonce: mintTransactionResult.accountDelta().nonceDelta().toString(),
+        nonce: mintTransactionResult.accountPatch().finalNonce().toString(),
         createdNoteId: mintTransactionResult
           .createdNotes()
           .notes()[0]
@@ -147,8 +147,8 @@ export const mintPublicTransaction = async (
           .numNotes(),
         nonce: mintTransactionUpdate
           .executedTransaction()
-          .accountDelta()
-          .nonceDelta()
+          .accountPatch()
+          .finalNonce()
           .toString(),
         createdNoteId: mintTransactionUpdate
           .executedTransaction()
@@ -383,7 +383,10 @@ export const swapTransaction = async (
       }
 
       let note = inputNoteRecord.toNote();
-      let txRequest1 = client.newConsumeTransactionRequest([note]);
+      let txRequest1 = await client.newConsumeTransactionRequest(
+        [note],
+        accountBId
+      );
 
       let consumeTransaction1Result =
         await window.helpers.executeAndApplyTransaction(
@@ -411,7 +414,10 @@ export const swapTransaction = async (
       }
 
       note = inputNoteRecord.toNote();
-      let txRequest2 = client.newConsumeTransactionRequest([note]);
+      let txRequest2 = await client.newConsumeTransactionRequest(
+        [note],
+        accountAId
+      );
 
       let consumeTransaction2Result =
         await window.helpers.executeAndApplyTransaction(
@@ -686,9 +692,8 @@ export const consumeTransaction = async (
       }
 
       const note = inputNoteRecord.toNote();
-      const consumeTransactionRequest = client.newConsumeTransactionRequest([
-        note,
-      ]);
+      const consumeTransactionRequest =
+        await client.newConsumeTransactionRequest([note], targetAccountId);
       const prover =
         _withRemoteProver && window.remoteProverUrl != null
           ? window.remoteProverInstance
@@ -712,8 +717,8 @@ export const consumeTransaction = async (
           .toHex(),
         nonce: consumeTransactionUpdate
           .executedTransaction()
-          .accountDelta()
-          .nonceDelta()
+          .accountPatch()
+          .finalNonce()
           .toString(),
         numConsumedNotes: consumeTransactionUpdate
           .executedTransaction()
@@ -823,8 +828,8 @@ export const mintAndConsumeTransaction = async (
             .numNotes(),
           nonce: mintTransactionUpdate
             .executedTransaction()
-            .accountDelta()
-            .nonceDelta()
+            .accountPatch()
+            .finalNonce()
             .toString(),
           createdNoteId: mintTransactionUpdate
             .executedTransaction()
@@ -840,8 +845,8 @@ export const mintAndConsumeTransaction = async (
             .toHex(),
           nonce: consumeTransactionUpdate
             .executedTransaction()
-            .accountDelta()
-            .nonceDelta()
+            .accountPatch()
+            .finalNonce()
             .toString(),
           numConsumedNotes: consumeTransactionUpdate
             .executedTransaction()

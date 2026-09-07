@@ -1,14 +1,21 @@
 use alloc::collections::BTreeMap;
 
 use js_export_macro::js_export;
-use miden_client::ClientError;
-use miden_client::account::AccountId as NativeAccountId;
+use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
-use miden_client::asset::FungibleAsset;
-use miden_client::note::{BlockNumber, Note as NativeNote, NoteAssets as NativeNoteAssets};
+use miden_client::asset::{AssetAmount, FungibleAsset};
+use miden_client::crypto::FeltRng;
+use miden_client::note::{
+    BlockNumber,
+    Note as NativeNote,
+    NoteAssets as NativeNoteAssets,
+    PswapNote,
+};
 #[cfg(feature = "testing")]
 use miden_client::transaction::LocalTransactionProver;
 use miden_client::transaction::{
+    AccountComponentInterface,
+    ChainAnchorError,
     ForeignAccount as NativeForeignAccount,
     PaymentNoteDescription,
     ProvenTransaction as NativeProvenTransaction,
@@ -17,12 +24,13 @@ use miden_client::transaction::{
     TransactionExecutorError,
     TransactionRequest as NativeTransactionRequest,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
-    TransactionSummary as NativeTransactionSummary,
 };
+use miden_client::{Client, ClientError, Word as NativeWord};
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
 use crate::models::advice_inputs::AdviceInputs;
+use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
 use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
@@ -31,11 +39,19 @@ use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
 use crate::models::transaction_id::TransactionId;
 use crate::models::transaction_request::TransactionRequest;
+use crate::models::transaction_request::transaction_request_builder::TransactionRequestBuilder;
 use crate::models::transaction_result::TransactionResult;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
-use crate::platform::{JsBytes, JsErr, from_str_err, js_u64_to_u64, maybe_wrap_send};
+use crate::platform::{
+    JsBytes,
+    JsErr,
+    from_str_err,
+    from_str_err_with_code,
+    js_u64_to_u64,
+    maybe_wrap_send,
+};
 use crate::utils::deserialize_from_bytes;
 use crate::{WebClient, js_error_with_context};
 
@@ -59,7 +75,10 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            NativeTransactionRequestBuilder::new()
+            // The faucet executes a mint, so it is the account whose auth procedure reads the
+            // conversion info.
+            let builder = fee_aware_builder(client, faucet_id.into()).await?;
+            builder
                 .build_mint_fungible_asset(
                     fungible_asset,
                     target_account_id.into(),
@@ -111,7 +130,8 @@ impl WebClient {
                 payment_description.with_timelock_height(BlockNumber::from(height));
         }
 
-        let send_transaction_request = NativeTransactionRequestBuilder::new()
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let send_transaction_request = builder
             .build_pay_to_id(payment_description, note_type.into(), client.rng())
             .map_err(|err| {
                 js_error_with_context(err, "failed to create send transaction request")
@@ -159,10 +179,9 @@ impl WebClient {
         )
         .map_err(|err| js_error_with_context(err, "failed to create b2agg note"))?;
 
-        let b2agg_transaction_request = NativeTransactionRequestBuilder::new()
-            .own_output_notes(vec![b2agg_note])
-            .build()
-            .map_err(|err| {
+        let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+        let b2agg_transaction_request =
+            builder.own_output_notes(vec![b2agg_note]).build().map_err(|err| {
                 js_error_with_context(err, "failed to create b2agg transaction request")
             })?;
 
@@ -209,7 +228,8 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            NativeTransactionRequestBuilder::new()
+            let builder = fee_aware_builder(client, sender_account_id.into()).await?;
+            builder
                 .build_swap(
                     &swap_transaction_data,
                     note_type.into(),
@@ -260,7 +280,8 @@ impl WebClient {
                 from_str_err("Client not initialized while generating transaction request")
             })?;
 
-            NativeTransactionRequestBuilder::new()
+            let builder = fee_aware_builder(client, creator_account_id.into()).await?;
+            builder
                 .build_pswap_create(
                     &pswap_transaction_data,
                     note_type.into(),
@@ -286,7 +307,7 @@ impl WebClient {
     }
 
     #[js_export(js_name = "newPswapConsumeTransactionRequest")]
-    pub fn new_pswap_consume_transaction_request(
+    pub async fn new_pswap_consume_transaction_request(
         &self,
         pswap_note: &Note,
         consumer_account_id: &AccountId,
@@ -294,36 +315,77 @@ impl WebClient {
         note_fill_amount: JsU64,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
-        let account_fill_amount = js_u64_to_u64(account_fill_amount);
-        let note_fill_amount = js_u64_to_u64(note_fill_amount);
+        let pswap = PswapNote::try_from(&native_pswap_note)
+            .map_err(|err| js_error_with_context(err, "invalid PSWAP note"))?;
 
-        let pswap_transaction_request = NativeTransactionRequestBuilder::new()
-            .build_pswap_consume(
-                &native_pswap_note,
-                consumer_account_id.into(),
-                account_fill_amount,
-                note_fill_amount,
-            )
-            .map_err(|err| {
-                js_error_with_context(err, "failed to create PSWAP consume transaction request")
+        let account_fill_amount = AssetAmount::new(js_u64_to_u64(account_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid account fill amount"))?;
+        let note_fill_amount = AssetAmount::new(js_u64_to_u64(note_fill_amount))
+            .map_err(|err| js_error_with_context(err, "invalid note fill amount"))?;
+
+        // miden-client 0.16 treats an overfill as a full fill. Keep the web client's existing
+        // contract, which rejects fills outside the open order amount, and validate the combined
+        // account/note fill before handing it to the native request builder.
+        let total_fill_amount = (account_fill_amount + note_fill_amount)
+            .map_err(|err| js_error_with_context(err, "invalid total fill amount"))?;
+        if total_fill_amount == AssetAmount::ZERO {
+            return Err(from_str_err("Fill amount must be greater than 0"));
+        }
+
+        let requested_amount = pswap.storage().min_requested_asset().amount();
+        if total_fill_amount > requested_amount {
+            return Err(from_str_err(&format!(
+                "Fill amount {total_fill_amount} exceeds requested amount {requested_amount}"
+            )));
+        }
+
+        let pswap_transaction_request = {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| {
+                from_str_err("Client not initialized while generating transaction request")
             })?;
+
+            // The consumer executes the fill, so it is the account whose auth procedure reads
+            // the conversion info.
+            let builder = fee_aware_builder(client, consumer_account_id.into()).await?;
+            builder
+                .build_pswap_consume(
+                    &native_pswap_note,
+                    consumer_account_id.into(),
+                    account_fill_amount,
+                    note_fill_amount,
+                )
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to create PSWAP consume transaction request")
+                })?
+        };
 
         Ok(pswap_transaction_request.into())
     }
 
     #[js_export(js_name = "newPswapCancelTransactionRequest")]
-    pub fn new_pswap_cancel_transaction_request(
+    pub async fn new_pswap_cancel_transaction_request(
         &self,
         pswap_note: &Note,
         creator_account_id: &AccountId,
     ) -> Result<TransactionRequest, JsErr> {
         let native_pswap_note: NativeNote = pswap_note.into();
 
-        let pswap_transaction_request = NativeTransactionRequestBuilder::new()
-            .build_pswap_cancel(native_pswap_note, creator_account_id.into())
-            .map_err(|err| {
-                js_error_with_context(err, "failed to create PSWAP cancel transaction request")
+        let pswap_transaction_request = {
+            let mut guard = self.get_mut_inner().await;
+            let client = guard.as_mut().ok_or_else(|| {
+                from_str_err("Client not initialized while generating transaction request")
             })?;
+
+            // The creator executes the cancellation, so it is the account whose auth procedure
+            // reads the conversion info.
+            let builder = fee_aware_builder(client, creator_account_id.into()).await?;
+            builder
+                .build_pswap_cancel(native_pswap_note, creator_account_id.into())
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to create PSWAP cancel transaction request")
+                })?
+        };
 
         Ok(pswap_transaction_request.into())
     }
@@ -416,7 +478,7 @@ impl WebClient {
         let mut builder = client.new_transaction_batch();
 
         for native_req in native_reqs {
-            builder = maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
+            maybe_wrap_send(Box::pin(builder.push(native_account_id, native_req)))
                 .await
                 .map_err(|err| js_error_with_context(err, "failed to push transaction to batch"))?;
         }
@@ -442,22 +504,133 @@ impl WebClient {
     ) -> Result<TransactionResult, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let fut =
-            Box::pin(client.execute_transaction(account_id.into(), transaction_request.into()));
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
         maybe_wrap_send(fut)
             .await
             .map(TransactionResult::from)
             .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
     }
 
-    /// Executes a transaction and returns the `TransactionSummary`.
+    /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the creation
+    /// blocks of the request's authenticated input notes so the request can later execute
+    /// against the anchor.
     ///
-    /// If the transaction is unauthorized (auth script emits the unauthorized event),
-    /// returns the summary from the error. If the transaction succeeds, constructs
-    /// a summary from the executed transaction using the `auth_arg` from the transaction
-    /// request as the salt (or a zero salt if not provided).
+    /// This is the capture entry point for flows that never see a successful execution at capture
+    /// time — e.g. a multisig proposal, where execution intentionally fails with the unauthorized
+    /// event to surface the summary for signing. Capture the anchor first, derive the summary
+    /// with `executeForSummaryAt`, and ship the anchor alongside the signed data; the same anchor
+    /// then reproduces the summary during later verification and execution.
     ///
     /// # Errors
+    ///
+    /// Fails with code `INVALID_CHAIN_ANCHOR` if the captured block header and blockchain peaks
+    /// are inconsistent, which happens when a sync lands mid-capture. Retrying is the fix.
+    #[js_export(js_name = "chainAnchorForRequest")]
+    pub async fn chain_anchor_for_request(
+        &self,
+        transaction_request: &TransactionRequest,
+    ) -> Result<ChainAnchor, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        let fut = Box::pin(client.chain_anchor_for_request(&native_request));
+        maybe_wrap_send(fut)
+            .await
+            .map(ChainAnchor::from)
+            .map_err(|err| map_anchor_err(err, "failed to capture chain anchor"))
+    }
+
+    /// Executes a transaction against the specified account using `anchor` as the reference block
+    /// instead of the current sync height, without submitting it or updating the local database.
+    ///
+    /// Since protocol 0.16 the signed transaction summary binds the reference block commitment, so
+    /// signatures collected over a summary only authorize an execution whose reference block is
+    /// the one the summary was built at. This method makes such an execution reproducible on any
+    /// client regardless of its sync height.
+    ///
+    /// Callers holding an anchor from an untrusted source should first compare
+    /// `anchor.commitment()` against an independently trusted value, e.g. the block commitment
+    /// bound into the signed transaction summary.
+    ///
+    /// # Errors
+    /// - If an authenticated input note's creation block is not tracked by the anchor.
+    /// - If an input note was created after the anchored reference block.
+    #[js_export(js_name = "executeTransactionAt")]
+    pub async fn execute_transaction_at(
+        &self,
+        account_id: &AccountId,
+        transaction_request: &TransactionRequest,
+        anchor: &ChainAnchor,
+    ) -> Result<TransactionResult, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        let fut = Box::pin(client.execute_transaction_at(
+            account_id.into(),
+            native_request,
+            anchor.into(),
+        ));
+        maybe_wrap_send(fut)
+            .await
+            .map(TransactionResult::from)
+            .map_err(|err| map_anchor_err(err, "failed to execute transaction at anchor"))
+    }
+
+    /// Executes a transaction at `anchor` and returns the `TransactionSummary` the account is
+    /// being asked to authorize — the anchored counterpart of `executeForSummary`.
+    ///
+    /// This is what lets a co-signer verify a proposal: re-deriving the summary at the proposer's
+    /// anchor reproduces it exactly, so it can be compared against the summary they were asked to
+    /// sign. Deriving it at the local sync height instead would produce a different summary and
+    /// the comparison would always fail.
+    ///
+    /// # Errors
+    /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
+    /// - If there is an internal failure during execution.
+    #[js_export(js_name = "executeForSummaryAt")]
+    pub async fn execute_for_summary_at(
+        &self,
+        account_id: &AccountId,
+        transaction_request: &TransactionRequest,
+        anchor: &ChainAnchor,
+    ) -> Result<TransactionSummary, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let native_request: NativeTransactionRequest = transaction_request.into();
+        let fut = Box::pin(client.execute_transaction_at(
+            account_id.into(),
+            native_request,
+            anchor.into(),
+        ));
+        match maybe_wrap_send(fut).await {
+            Ok(_) => Err(from_str_err_with_code(
+                "transaction is already fully authorized, so no transaction summary was \
+                 produced during execution; submit it with executeTransactionAt against the \
+                 same anchor instead",
+                "TRANSACTION_ALREADY_AUTHORIZED",
+            )),
+            Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
+                summary,
+            ))) => Ok(TransactionSummary::from(*summary)),
+            Err(err) => Err(map_anchor_err(err, "failed to execute transaction at anchor")),
+        }
+    }
+
+    /// Executes a transaction and returns the `TransactionSummary` the account is being asked
+    /// to authorize.
+    ///
+    /// The summary only exists while authorization is pending: when the auth procedure aborts
+    /// with the unauthorized event (e.g. a multisig below its signing threshold), the summary
+    /// built during execution is returned so it can be signed out-of-band. If the transaction
+    /// executes successfully it was already fully authorized, no summary is produced, and this
+    /// method returns an error with code `TRANSACTION_ALREADY_AUTHORIZED` — submit the
+    /// transaction with `execute` instead.
+    ///
+    /// # Errors
+    /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
     /// - If there is an internal failure during execution.
     #[js_export(js_name = "executeForSummary")]
     pub async fn execute_for_summary(
@@ -467,25 +640,15 @@ impl WebClient {
     ) -> Result<TransactionSummary, JsErr> {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let native_request: NativeTransactionRequest = transaction_request.into();
-        // auth_arg is passed to the auth procedure as the salt for the transaction summary
-        // defaults to 0 if not provided.
-        let salt = native_request.auth_arg().unwrap_or_default();
 
+        let native_request: NativeTransactionRequest = transaction_request.into();
         let fut = Box::pin(client.execute_transaction(account_id.into(), native_request));
-        let execute_result = maybe_wrap_send(fut).await;
-        match execute_result {
-            Ok(res) => {
-                // construct summary from executed transaction
-                let executed_tx = res.executed_transaction();
-                let summary = NativeTransactionSummary::new(
-                    executed_tx.account_delta().clone(),
-                    executed_tx.input_notes().clone(),
-                    executed_tx.output_notes().clone(),
-                    salt,
-                );
-                Ok(TransactionSummary::from(summary))
-            },
+        match maybe_wrap_send(fut).await {
+            Ok(_) => Err(from_str_err_with_code(
+                "transaction is already fully authorized, so no transaction summary was \
+                 produced during execution; submit it with execute instead",
+                "TRANSACTION_ALREADY_AUTHORIZED",
+            )),
             Err(ClientError::TransactionExecutorError(TransactionExecutorError::Unauthorized(
                 summary,
             ))) => Ok(TransactionSummary::from(*summary)),
@@ -620,11 +783,27 @@ impl WebClient {
         Ok(update)
     }
 
+    /// Builds a request consuming `list_of_notes`, to be executed by `consuming_account_id`.
+    ///
+    /// The account is required because it is what decides whether the chain's fee conversion info
+    /// is committed to the request's auth args. Committing it to a request destined for an account
+    /// whose auth procedure does not read it — a no-auth or network account — makes miden-client
+    /// reject the request before execution, so there is no default that is right for every caller.
     #[js_export(js_name = "newConsumeTransactionRequest")]
-    pub fn new_consume_transaction_request(
+    pub async fn new_consume_transaction_request(
         &self,
         list_of_notes: Vec<Note>,
+        consuming_account_id: &AccountId,
     ) -> Result<TransactionRequest, JsErr> {
+        // Async only so the chain's fee parameters can be read; the request itself is built the
+        // same way it always was. A consume is the one transaction an empty account can afford,
+        // because the note's credit lands in the vault before `pay_fee` withdraws from it -- but
+        // only if the conversion info is committed, or it never reaches the fee at all.
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while generating consume transaction request")
+        })?;
+
         let consume_transaction_request = {
             let native_notes = list_of_notes
                 .into_iter()
@@ -634,13 +813,249 @@ impl WebClient {
                     from_str_err(&format!("Failed to convert note to native note: {err}"))
                 })?;
 
-            NativeTransactionRequestBuilder::new()
-                .build_consume_notes(native_notes)
-                .map_err(|err| {
-                    from_str_err(&format!("Failed to create Consume Transaction Request: {err}"))
-                })?
+            let builder = fee_aware_builder(client, consuming_account_id.into()).await?;
+            builder.build_consume_notes(native_notes).map_err(|err| {
+                from_str_err(&format!("Failed to create Consume Transaction Request: {err}"))
+            })?
         };
 
         Ok(consume_transaction_request.into())
     }
+
+    /// A `TransactionRequestBuilder` already declaring a fee conversion salt where `account_id`
+    /// needs one to execute.
+    ///
+    /// Use this instead of `new TransactionRequestBuilder()` whenever the request is assembled by
+    /// the caller rather than by one of the convenience constructors, and the executing account is
+    /// a multisig: those reuse the fee conversion salt as their transaction summary's replay
+    /// guard, so miden-client refuses to invent one and execution fails with
+    /// `FeeConversionInfoRequired`.
+    ///
+    /// For every other account this returns an untouched builder, so it is a safe drop-in: fees
+    /// are settled in the chain's native fee asset at rate 1/1 and miden-client commits that
+    /// itself, under a fixed default salt, without anything being declared here. It is also a
+    /// no-op on a zero-fee chain.
+    #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
+    pub async fn fee_aware_transaction_request_builder(
+        &self,
+        account_id: &AccountId,
+    ) -> Result<TransactionRequestBuilder, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| {
+            from_str_err("Client not initialized while creating a transaction request builder")
+        })?;
+
+        let builder = fee_aware_builder(client, account_id.into()).await?;
+        Ok(TransactionRequestBuilder::from_native(builder))
+    }
+}
+
+/// Maps an anchor-path failure to a JS error, tagging every anchor rejection with a
+/// machine-readable code so callers can tell one apart from a generic execution failure.
+///
+/// Two kinds reach this. A capture-time inconsistency: the anchor is assembled from three separate
+/// store reads (sync height, that block's header, the current blockchain peaks) and validated for
+/// mutual consistency, so a sync landing from another tab mid-capture yields an anchor whose parts
+/// disagree. Retrying the capture is the fix, and saying so is worth doing because nothing in the
+/// upstream message does.
+///
+/// The rest are execution-time rejections of an anchor that is internally consistent — a block the
+/// anchor does not track, a reference block that does not match it, an anchor tracking more blocks
+/// than a transaction may reference, or an anchored transaction the chain has already expired past.
+/// Each already names its own remedy in the upstream message, and for them re-capturing unchanged
+/// would loop, so the sync-race hint is deliberately not appended.
+fn map_anchor_err(err: ClientError, context: &'static str) -> JsErr {
+    match err {
+        ClientError::ChainAnchorError(anchor_err) => {
+            // Only the two mutual-consistency checks can be lost to a concurrent sync; every other
+            // variant describes a property of the anchor that retrying will reproduce.
+            let lost_to_concurrent_sync = matches!(
+                anchor_err,
+                ChainAnchorError::ChainLengthMismatch { .. }
+                    | ChainAnchorError::ChainCommitmentMismatch { .. }
+            );
+            let message = if lost_to_concurrent_sync {
+                format!(
+                    "{context}: {anchor_err}; a sync may have landed during capture, so retrying \
+                     is usually the fix"
+                )
+            } else {
+                format!("{context}: {anchor_err}")
+            };
+            from_str_err_with_code(&message, "INVALID_CHAIN_ANCHOR")
+        },
+        err => js_error_with_context(err, context),
+    }
+}
+
+// FEE CONVERSION INFO
+// ================================================================================================
+
+/// The standard auth components installed on `account_id`, or `None` when the account is not in
+/// the store.
+///
+/// An empty vector means the account's auth procedure is one this crate cannot name: either
+/// genuinely custom, or standard but compiled from a different miden-standards revision.
+///
+/// Classification reads the account's code only, and deliberately avoids `AccountInterface`:
+/// building one asserts that exactly one auth component is present, and an account carrying a
+/// custom auth procedure classifies as `Custom` rather than any auth variant, so the assertion
+/// fires. `wasm32` is `panic = "abort"`, which makes that a trap taken while the client borrow is
+/// held — poisoning the client for every later call. `from_procedures` cannot panic.
+///
+/// Matching is by MAST procedure root against the locally pinned miden-standards, so an account
+/// whose auth component was compiled from a different revision classifies as `Custom` and yields
+/// an empty vector even though its procedure is a standard one. Nothing here can tell that case
+/// apart from a genuinely custom auth procedure, so it is a reason to keep this crate's
+/// miden-standards pin aligned with the networks it targets rather than something to detect.
+async fn standard_auth_components(
+    client: &Client<crate::ClientAuth>,
+    account_id: NativeAccountId,
+) -> Result<Option<Vec<AccountComponentInterface>>, JsErr> {
+    let Some(code) = client.get_account_code(account_id).await.map_err(|err| {
+        js_error_with_context(
+            err,
+            &format!(
+                "failed to read the code of account {account_id} to classify its auth component"
+            ),
+        )
+    })?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        AccountComponentInterface::from_procedures(code.procedures())
+            .into_iter()
+            .filter(|component| {
+                matches!(
+                    component,
+                    AccountComponentInterface::AuthSingleSig
+                        | AccountComponentInterface::AuthMultisig
+                        | AccountComponentInterface::AuthMultisigSmart
+                        | AccountComponentInterface::AuthGuardedMultisig
+                        | AccountComponentInterface::AuthNoAuth
+                        | AccountComponentInterface::AuthNetworkAccount
+                )
+            })
+            .collect(),
+    ))
+}
+
+/// Whether `account_id`'s auth component makes the FEE CONVERSION SALT the caller's to choose.
+///
+/// Fees are always settled in the chain's native fee asset at rate 1/1, so nobody supplies
+/// conversion info any more — miden-client builds it and commits it through the auth args itself.
+/// The one thing it will not invent is a salt whose value the account gives meaning to. Every
+/// multisig flavour (`AuthMultisig`, `AuthMultisigSmart`, `AuthGuardedMultisig`) reuses the salt as
+/// its transaction summary's replay guard, so for those the client refuses to guess and execution
+/// fails with `FeeConversionInfoRequired` naming the component. Drawing one here is what keeps the
+/// convenience constructors working against a multisig account.
+///
+/// `AuthSingleSig` deliberately answers `false`. It constrains the salt in no way, so the client
+/// commits under its own fixed default — fixed precisely because the signed transaction summary
+/// covers the auth args, and a fresh salt per execution would change the summary and break any
+/// flow that reproduces one to verify a signature over it. Drawing a random salt for it, as this
+/// crate did while conversion info was the caller's to supply, would reintroduce exactly that.
+///
+/// This mirrors miden-client's `FeeAuth::of`, including its PRECEDENCE: a single-sig component
+/// decides the answer wherever it sits in the component list, so it is tested first and an account
+/// carrying several components is classified rather than rejected. Anything else — an unrecognized
+/// auth procedure, or one that pays natively like `AuthNoAuth` and `AuthNetworkAccount` — reads no
+/// conversion info at all, and declaring a salt against it is refused upstream with
+/// `FeeConversionInfoUnsupported`, so those answer `false` too.
+///
+/// Answers `false` when the account is not in the store, so the account-not-found error surfaces
+/// on its own rather than being preempted by a fee decision about an account nothing knows
+/// anything about.
+async fn requires_caller_chosen_salt(
+    client: &Client<crate::ClientAuth>,
+    account_id: NativeAccountId,
+) -> Result<bool, JsErr> {
+    let Some(components) = standard_auth_components(client, account_id).await? else {
+        return Ok(false);
+    };
+
+    if components
+        .iter()
+        .any(|component| matches!(component, AccountComponentInterface::AuthSingleSig))
+    {
+        return Ok(false);
+    }
+
+    Ok(components.iter().any(|component| {
+        matches!(
+            component,
+            AccountComponentInterface::AuthMultisig
+                | AccountComponentInterface::AuthMultisigSmart
+                | AccountComponentInterface::AuthGuardedMultisig
+        )
+    }))
+}
+
+/// A fresh fee conversion salt for `executing_account_id`, or `None` where the caller should
+/// declare none.
+///
+/// Two gates, both of which keep a request byte-identical to what it would have been when nothing
+/// needs declaring. A zero base fee is the first: miden-client skips the whole fee-conversion path
+/// when the chain charges nothing AND no salt is declared, so declaring one there would start
+/// committing conversion info on chains that do not want it. The second is the executing account's
+/// auth component, for the reasons in `requires_caller_chosen_salt`.
+///
+/// Reads the fee parameters from the store's sync height, while execution reads them from the
+/// reference block — the same block only on the unanchored path, since `prepare_transaction` takes
+/// the reference header from the anchor when one is supplied. So a request built at a sync height
+/// whose base fee is zero and then executed against an anchor whose base fee is not carries no
+/// salt, and a multisig account fails with `FeeConversionInfoRequired` at execute time — after the
+/// summary has already gone out to co-signers. Build the request and take the anchor at the same
+/// sync height.
+async fn caller_chosen_fee_conversion_salt(
+    client: &mut Client<crate::ClientAuth>,
+    executing_account_id: NativeAccountId,
+) -> Result<Option<NativeWord>, JsErr> {
+    let header = client.get_latest_block_header().await.map_err(|err| {
+        js_error_with_context(
+            err,
+            &format!(
+                "failed to read fee parameters from the latest block header while preparing a \
+                 request for account {executing_account_id}"
+            ),
+        )
+    })?;
+    if header.fee_parameters().verification_base_fee() == 0 {
+        return Ok(None);
+    }
+
+    if !requires_caller_chosen_salt(client, executing_account_id).await? {
+        return Ok(None);
+    }
+
+    Ok(Some(client.rng().draw_word()))
+}
+
+/// A request builder already carrying a fee conversion salt where the executing account needs one.
+///
+/// Every convenience constructor that already holds the client starts from this rather than
+/// `TransactionRequestBuilder::new()`, and `feeAwareTransactionRequestBuilder` exposes it to
+/// callers assembling a request themselves. `executing_account_id` names the account that will
+/// execute the request, which is what decides whether a salt has to be declared for it.
+///
+/// For most accounts this returns an untouched builder: miden-client commits the conversion info
+/// itself, under its own fixed default salt, so nothing has to be declared. Only an account that
+/// gives the salt its own meaning — the multisig flavours — needs one drawn here.
+///
+/// One request constructor remains unable to declare a salt: `buildPswapCancelByOrder` delegates
+/// request building to miden-client, which builds from a bare `TransactionRequestBuilder`. There is
+/// no seam to declare at without an upstream change, because a finished `TransactionRequest` cannot
+/// be amended, so a multisig creator's cancel fails with `FeeConversionInfoRequired`. Cancelling by
+/// note through `newPswapCancelTransactionRequest` is the alternative.
+async fn fee_aware_builder(
+    client: &mut Client<crate::ClientAuth>,
+    executing_account_id: NativeAccountId,
+) -> Result<NativeTransactionRequestBuilder, JsErr> {
+    let mut builder = NativeTransactionRequestBuilder::new();
+    if let Some(salt) = caller_chosen_fee_conversion_salt(client, executing_account_id).await? {
+        builder = builder.fee_conversion_salt(salt);
+    }
+    Ok(builder)
 }

@@ -18,11 +18,53 @@ test.describe("network note tests", () => {
     const result = await run(async ({ client, sdk }) => {
       await client.syncState();
 
-      // A public (network-capable) account to target.
-      const networkAccount = await client.newWallet(
+      // The note script is reused for the allowlist root and the note itself.
+      const p2idScript = sdk.NoteScript.p2id();
+
+      // Creating a note that carries a `NetworkAccountTarget` prices the note by
+      // calling `estimate_note_fee` on the target, so the target must be a real
+      // network account — a plain wallet does not expose that procedure — and it
+      // must be committed on-chain at the transaction's reference block.
+      const feeFaucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
+        false,
+        "FEE",
+        "FEE",
+        8,
+        sdk.u64(10000000),
         sdk.AuthScheme.AuthRpoFalcon512
       );
+
+      // Each allowed note carries its own price; this one is free.
+      const allowedNotes = [
+        new sdk.NoteScriptFee(p2idScript.root(), sdk.u64(0)),
+      ];
+      // Yields the auth component plus the components backing its fee policy.
+      const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
+        allowedNotes,
+        feeFaucet.id()
+      );
+
+      const seed = new Uint8Array(32);
+      crypto.getRandomValues(seed);
+      const networkAccountBuilder = new sdk.AccountBuilder(seed).storageMode(
+        sdk.AccountStorageMode.public()
+      );
+      for (const component of networkAuth) {
+        networkAccountBuilder.withComponent(component);
+      }
+      const networkAccount = networkAccountBuilder.build().account;
+      await client.newAccount(networkAccount, false);
+
+      // Scriptless deploy: the network auth component bumps the nonce itself, so
+      // an empty transaction commits the account on-chain.
+      await client.submitNewTransaction(
+        networkAccount.id(),
+        new sdk.TransactionRequestBuilder().build()
+      );
+      await client.proveBlock();
+      await client.syncState();
+
       // The sender/creator.
       const sender = await client.newWallet(
         sdk.AccountStorageMode.public(),
@@ -32,7 +74,6 @@ test.describe("network note tests", () => {
       // Build a Public custom-script network note (P2ID script reused here as a
       // stand-in "custom" script; the point is Note.withAttachments + the target).
       const target = new sdk.NetworkAccountTarget(networkAccount.id());
-      const p2idScript = sdk.NoteScript.p2id();
       const recipient = sdk.NoteRecipient.fromScript(
         p2idScript,
         new sdk.NoteStorage(new sdk.FeltArray([]))

@@ -102,7 +102,7 @@ impl AuthSecretKey {
                     .map_err(|_| from_str_err("Seed must be exactly 32 bytes"))?;
                 Ok(StdRng::from_seed(seed_array))
             },
-            None => Ok(StdRng::from_os_rng()),
+            None => Ok(rand::make_rng()),
         }
     }
 

@@ -2,7 +2,7 @@ use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{
     AccountVaultDelta as NativeAccountVaultDelta,
-    AssetVaultKey,
+    AssetId,
     FungibleAsset as NativeFungibleAsset,
     FungibleAssetDelta as NativeFungibleAssetDelta,
 };
@@ -76,10 +76,8 @@ impl AccountVaultDelta {
 ///
 /// The callback flag is part of the asset's vault-key and value encoding, so dropping it would
 /// report an asset that differs from the one the kernel encoded (e.g. for agglayer-minted assets).
-fn fungible_asset_from_delta(vault_key: &AssetVaultKey, amount: u64) -> Option<FungibleAsset> {
-    NativeFungibleAsset::new(vault_key.faucet_id(), amount)
-        .ok()
-        .map(|asset| asset.with_callbacks(vault_key.callback_flag()).into())
+fn fungible_asset_from_delta(asset_id: &AssetId, amount: u64) -> Option<FungibleAsset> {
+    NativeFungibleAsset::new(asset_id.faucet_id(), amount).ok().map(Into::into)
 }
 
 /// A single fungible asset change in the vault delta.
@@ -105,8 +103,8 @@ impl FungibleAssetDeltaItem {
     }
 }
 
-impl From<(&miden_client::asset::AssetVaultKey, &i64)> for FungibleAssetDeltaItem {
-    fn from(native_fungible_asset_delta_item: (&miden_client::asset::AssetVaultKey, &i64)) -> Self {
+impl From<(&miden_client::asset::AssetId, &i64)> for FungibleAssetDeltaItem {
+    fn from(native_fungible_asset_delta_item: (&miden_client::asset::AssetId, &i64)) -> Self {
         Self {
             faucet_id: native_fungible_asset_delta_item.0.faucet_id().into(),
             amount: *native_fungible_asset_delta_item.1,

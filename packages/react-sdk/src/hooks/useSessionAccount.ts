@@ -208,7 +208,10 @@ type WaitAndConsumeClient = {
   getConsumableNotes: (
     accountId?: unknown
   ) => Promise<Array<{ inputNoteRecord: () => { toNote: () => unknown } }>>;
-  newConsumeTransactionRequest: (notes: unknown[]) => unknown;
+  newConsumeTransactionRequest: (
+    notes: unknown[],
+    consumingAccountId: unknown
+  ) => Promise<unknown>;
   submitNewTransaction: (
     accountId: unknown,
     request: unknown
@@ -235,8 +238,18 @@ async function waitAndConsume(
     const consumable = await client.getConsumableNotes(accountIdObj);
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
-      const txRequest = client.newConsumeTransactionRequest(notes);
+      // `accountIdObj` was consumed by getConsumableNotes above, which takes it
+      // by value; naming the account here is what lets the request omit fee
+      // conversion info for auth components that cannot read it.
       const freshAccountId = parseAccountId(walletId);
+      const txRequest = await client.newConsumeTransactionRequest(
+        notes,
+        freshAccountId
+      );
+      // Building the request suspends, so re-check before submitting: a
+      // cancellation landing in that window would otherwise still submit, and
+      // the caller's catch discards the outcome once cancelled.
+      if (cancelledRef.current) return;
       await client.submitNewTransaction(freshAccountId, txRequest);
       return;
     }

@@ -116,6 +116,9 @@ const ciShardProjects = process.env.CI
           "test/token_symbol.test.ts",
           "test/note_script.test.ts",
           "test/transactions.test.ts",
+          "test/chain_anchor.test.ts",
+          "test/fee_conversion_salt.test.ts",
+          "test/direct_call_serialization.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
         ],
         testIgnore: browserTestIgnore,
@@ -260,9 +263,9 @@ export default defineConfig({
   // single-threaded variant). Integration tests that go through
   // `page.evaluate(() => import('./index.js'))` resolve against
   // dist/st/index.js, the same JS bundle consumers get when they
-  // import `@miden-sdk/miden-sdk/lazy`. The MT variant (dist/mt/) is
-  // covered by separate eager_entry / mt-specific tests when they
-  // exist; running the full integration suite against dist/mt/ would
+  // import `@miden-sdk/miden-sdk/lazy`. The optimized MT variant
+  // (dist/mt/) is covered by scripts/verify-release-mt.mjs in the release
+  // build job; running the full integration suite against dist/mt/ would
   // require a cross-origin-isolated test page (COOP+COEP headers via
   // http-server flags), out of scope for this round.
   //
