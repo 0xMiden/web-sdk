@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/telemetry-sentry",
-  "version": "0.15.9",
+  "version": "0.16.0",
   "description": "Opt-in Sentry binding for Miden SDK observations",
   "type": "module",
   "types": "dist/index.d.ts",
@@ -24,7 +24,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.15.9"
+    "@miden-sdk/miden-sdk": "^0.16.0"
   },
   "devDependencies": {
     "@miden-sdk/miden-sdk": "workspace:*",

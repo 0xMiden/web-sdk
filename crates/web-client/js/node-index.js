@@ -77,6 +77,11 @@ export const StorageMode = Object.freeze({
   Private: "private",
 });
 
+export const Linking = Object.freeze({
+  Dynamic: "dynamic",
+  Static: "static",
+});
+
 // ── Re-exports ───────────────────────────────────────────────────────
 
 export { MidenClient };
@@ -113,6 +118,7 @@ export const getWasmOrThrow = async () => {
   ensureInitialized();
   return _wrappedSdk;
 };
+
 // ── napi re-exports ─────────────────────────────────────
 // Lazy getter so the native module loads on first access.
 function _reexport(name) {
@@ -152,19 +158,21 @@ export const AccountFile = /* @__PURE__ */ _reexport("AccountFile");
 export const AccountHeader = /* @__PURE__ */ _reexport("AccountHeader");
 export const AccountId = /* @__PURE__ */ _reexport("AccountId");
 export const AccountInterface = /* @__PURE__ */ _reexport("AccountInterface");
+export const AccountPatch = /* @__PURE__ */ _reexport("AccountPatch");
 export const AccountProof = /* @__PURE__ */ _reexport("AccountProof");
 export const AccountReader = /* @__PURE__ */ _reexport("AccountReader");
 export const AccountStatus = /* @__PURE__ */ _reexport("AccountStatus");
 export const AccountStorage = /* @__PURE__ */ _reexport("AccountStorage");
-export const AccountStorageDelta = /* @__PURE__ */ _reexport(
-  "AccountStorageDelta"
-);
 export const AccountStorageMode =
   /* @__PURE__ */ _reexport("AccountStorageMode");
+export const AccountStoragePatch = /* @__PURE__ */ _reexport(
+  "AccountStoragePatch"
+);
 export const AccountStorageRequirements = /* @__PURE__ */ _reexport(
   "AccountStorageRequirements"
 );
 export const AccountVaultDelta = /* @__PURE__ */ _reexport("AccountVaultDelta");
+export const AccountVaultPatch = /* @__PURE__ */ _reexport("AccountVaultPatch");
 export const Address = /* @__PURE__ */ _reexport("Address");
 export const AddressInterface = /* @__PURE__ */ _reexport("AddressInterface");
 export const AdviceInputs = /* @__PURE__ */ _reexport("AdviceInputs");
@@ -174,11 +182,15 @@ export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
 export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
   "AuthFalcon512RpoMultisigConfig"
 );
+export const AuthGuardedMultisigConfig = /* @__PURE__ */ _reexport(
+  "AuthGuardedMultisigConfig"
+);
 export const AuthSecretKey = /* @__PURE__ */ _reexport("AuthSecretKey");
 export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
   "BasicFungibleFaucetComponent"
 );
 export const BlockHeader = /* @__PURE__ */ _reexport("BlockHeader");
+export const ChainAnchor = /* @__PURE__ */ _reexport("ChainAnchor");
 export const CodeBuilder = /* @__PURE__ */ _reexport("CodeBuilder");
 export const CommittedNote = /* @__PURE__ */ _reexport("CommittedNote");
 export const ConsumableNoteRecord = /* @__PURE__ */ _reexport(
@@ -243,6 +255,7 @@ export const NoteLocation = /* @__PURE__ */ _reexport("NoteLocation");
 export const NoteMetadata = /* @__PURE__ */ _reexport("NoteMetadata");
 export const NoteRecipient = /* @__PURE__ */ _reexport("NoteRecipient");
 export const NoteScript = /* @__PURE__ */ _reexport("NoteScript");
+export const NoteScriptFee = /* @__PURE__ */ _reexport("NoteScriptFee");
 export const NoteStorage = /* @__PURE__ */ _reexport("NoteStorage");
 export const NoteSyncBlock = /* @__PURE__ */ _reexport("NoteSyncBlock");
 export const NoteSyncInfo = /* @__PURE__ */ _reexport("NoteSyncInfo");
@@ -301,5 +314,8 @@ export const TransactionSummary =
 export const Word = /* @__PURE__ */ _reexport("Word");
 export const createAuthFalcon512RpoMultisig = /* @__PURE__ */ _reexport(
   "createAuthFalcon512RpoMultisig"
+);
+export const createAuthGuardedMultisig = /* @__PURE__ */ _reexport(
+  "createAuthGuardedMultisig"
 );
 // </generated:napi-reexports>

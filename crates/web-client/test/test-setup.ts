@@ -312,6 +312,7 @@ function patchNapiPrototypes(rawSdk: any) {
 
   // Patch null → undefined for Option<T> returns
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
     [
@@ -496,6 +497,100 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
             faucet,
           };
         },
+        // Mirrors setupMultisigWithConsumableNote in test-helpers.ts. Kept
+        // inline because browser helpers run inside page.evaluate and cannot
+        // reach the module.
+        setupMultisigWithConsumableNote: async () => {
+          const c = window.client;
+          const walletSeed = new Uint8Array(32);
+          crypto.getRandomValues(walletSeed);
+
+          const approverKeys = [
+            window.AuthSecretKey.rpoFalconWithRNG(),
+            window.AuthSecretKey.rpoFalconWithRNG(),
+            window.AuthSecretKey.rpoFalconWithRNG(),
+          ];
+          const multisigComponent = window.createAuthFalcon512RpoMultisig(
+            new window.AuthFalcon512RpoMultisigConfig(
+              approverKeys.map((key) => key.publicKey().toCommitment()),
+              2
+            )
+          );
+
+          const built = new window.AccountBuilder(walletSeed)
+            .storageMode(window.AccountStorageMode.private())
+            .withAuthComponent(multisigComponent)
+            .withBasicWalletComponent()
+            .build();
+
+          const multisigAccountId = built.account.id();
+          await c.newAccount(built.account, false);
+          for (const key of approverKeys) {
+            await c.keystore.insert(multisigAccountId, key);
+          }
+
+          const { wallet, faucet } =
+            await window.helpers.setupWalletAndFaucet();
+          const mintRequest = await c.newMintTransactionRequest(
+            wallet.id(),
+            faucet.id(),
+            window.NoteType.Private,
+            BigInt(1000)
+          );
+          const mintTxId = await c.submitNewTransaction(
+            faucet.id(),
+            mintRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+          const [mintRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([mintTxId])
+          );
+          const mintedNotes = await Promise.all(
+            mintRecord
+              .outputNotes()
+              .notes()
+              .map(async (note) =>
+                (await c.getInputNote(note.id().toString())).toNote()
+              )
+          );
+          await c.submitNewTransaction(
+            wallet.id(),
+            await c.newConsumeTransactionRequest(mintedNotes, wallet.id())
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const sendRequest = await c.newSendTransactionRequest(
+            wallet.id(),
+            multisigAccountId,
+            faucet.id(),
+            window.NoteType.Public,
+            BigInt(100),
+            null,
+            null
+          );
+          const sendTxId = await c.submitNewTransaction(
+            wallet.id(),
+            sendRequest
+          );
+          await c.proveBlock();
+          await c.syncState();
+
+          const [sendRecord] = await c.getTransactions(
+            window.TransactionFilter.ids([sendTxId])
+          );
+          const notes = await Promise.all(
+            sendRecord
+              .outputNotes()
+              .notes()
+              .map(async (note) =>
+                (await c.getInputNote(note.id().toString())).toNote()
+              )
+          );
+
+          return { multisigAccountId, notes };
+        },
 
         mockMint: async (targetId, faucetId, opts) => {
           const c = window.client;
@@ -532,7 +627,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const inputNoteRecord = await c.getInputNote(noteId);
           if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
           const note = inputNoteRecord.toNote();
-          const consumeRequest = c.newConsumeTransactionRequest([note]);
+          const consumeRequest = await c.newConsumeTransactionRequest(
+            [note],
+            accountId
+          );
           const txId = await c.submitNewTransaction(accountId, consumeRequest);
           await c.proveBlock();
           await c.syncState();
@@ -630,7 +728,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           if (!swapNoteRecord)
             throw new Error(`Swap note ${swapNoteId} not found`);
           const swapNote = swapNoteRecord.toNote();
-          const consumeReq1 = c.newConsumeTransactionRequest([swapNote]);
+          const consumeReq1 = await c.newConsumeTransactionRequest(
+            [swapNote],
+            accountBId
+          );
           const consumeTxId1 = await c.submitNewTransaction(
             accountBId,
             consumeReq1
@@ -653,7 +754,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           if (!paybackNoteRecord)
             throw new Error(`Payback note ${paybackNoteId} not found`);
           const paybackNote = paybackNoteRecord.toNote();
-          const consumeReq2 = c.newConsumeTransactionRequest([paybackNote]);
+          const consumeReq2 = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            accountAId
+          );
           await c.submitNewTransaction(accountAId, consumeReq2);
           await c.proveBlock();
           await c.syncState();
@@ -734,7 +838,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const consumeRequest = c.newPswapConsumeTransactionRequest(
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
             pswapNoteRecord.toNote(),
             fillerId,
             BigInt(requestedAmount), // full fill: filler supplies the entire requested amount
@@ -768,7 +872,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const paybackNote = consumeOutputNotes[0].intoFull();
           if (!paybackNote)
             throw new Error("Payback note is not available in full form");
-          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
+          const paybackConsume = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            creatorId
+          );
           await c.submitNewTransaction(creatorId, paybackConsume);
           await c.proveBlock();
           await c.syncState();
@@ -837,7 +944,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const consumeRequest = c.newPswapConsumeTransactionRequest(
+          const consumeRequest = await c.newPswapConsumeTransactionRequest(
             pswapNoteRecord.toNote(),
             fillerId,
             BigInt(fillAmount),
@@ -888,7 +995,10 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const paybackNote = paybackOutputNote.intoFull();
           if (!paybackNote)
             throw new Error("Payback note is not available in full form");
-          const paybackConsume = c.newConsumeTransactionRequest([paybackNote]);
+          const paybackConsume = await c.newConsumeTransactionRequest(
+            [paybackNote],
+            creatorId
+          );
           await c.submitNewTransaction(creatorId, paybackConsume);
           await c.proveBlock();
           await c.syncState();
@@ -943,7 +1053,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
           const pswapNoteRecord = await c.getInputNote(pswapNoteId);
           if (!pswapNoteRecord)
             throw new Error(`PSWAP note ${pswapNoteId} not found`);
-          const cancelRequest = c.newPswapCancelTransactionRequest(
+          const cancelRequest = await c.newPswapCancelTransactionRequest(
             pswapNoteRecord.toNote(),
             creatorId
           );
@@ -1064,6 +1174,8 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
   const h = await import("./test-helpers");
   return {
     setupWalletAndFaucet: () => h.setupWalletAndFaucet(client, sdk),
+    setupMultisigWithConsumableNote: () =>
+      h.setupMultisigWithConsumableNote(client, sdk),
     mockMint: (targetId: any, faucetId: any, opts?: any) =>
       h.mockMint(client, sdk, targetId, faucetId, opts),
     mockConsume: (accountId: any, noteId: string) =>
@@ -1163,7 +1275,15 @@ async function createNodeRunHelpers(client: any, sdk: any): Promise<any> {
     waitForTransaction: (txId: string, maxWait?: number, interval?: number) =>
       waitForTransaction(client, sdk, txId, maxWait, interval),
     parseNetworkId: (networkId: string) => h.parseNetworkId(sdk, networkId),
-    createFreshMockClient: () => h.createFreshMockClient(sdk),
+    createFreshMockClient: (
+      serializedMockChain?: any,
+      serializedNoteTransport?: any
+    ) =>
+      h.createFreshMockClient(
+        sdk,
+        serializedMockChain,
+        serializedNoteTransport
+      ),
     createIntegrationClient: () => h.createIntegrationClient(),
     createMidenMockClient: async () => {
       const MidenClient = await h.createMidenClient(sdk);

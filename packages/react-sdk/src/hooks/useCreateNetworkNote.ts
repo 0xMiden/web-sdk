@@ -13,7 +13,6 @@ import {
   NoteTag,
   NoteType,
   NetworkAccountTarget,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type {
   CreateNetworkNoteOptions,
@@ -120,9 +119,12 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
 
           const ownOutputs = new NoteArray();
           ownOutputs.push(note); // push keeps `note` valid to return
-          const txRequest = new TransactionRequestBuilder()
-            .withOwnOutputNotes(ownOutputs)
-            .build();
+          // The sender executes this transaction, so its auth procedure is what
+          // pays the fee; a bare builder would abort with
+          // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+          const builder =
+            await client.feeAwareTransactionRequestBuilder(senderId);
+          const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
 
           // Reuse `senderId` (NoteMetadata only borrows it) rather than
           // re-parsing the same account id for submission.

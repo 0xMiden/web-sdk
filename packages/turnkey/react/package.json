@@ -1,15 +1,21 @@
 {
   "name": "@miden-sdk/turnkey-react",
-  "version": "0.15.9",
+  "version": "0.16.0",
   "description": "React hook for Miden Turnkey integration",
+  "type": "commonjs",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
   },
   "scripts": {
@@ -24,7 +30,7 @@
     "wallet",
     "web3"
   ],
-  "author": "",
+  "author": "Miden Contributors",
   "license": "ISC",
   "repository": {
     "type": "git",
@@ -35,9 +41,9 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.15.9",
-    "@miden-sdk/turnkey": "^0.15.9",
-    "@miden-sdk/react": "^0.15.9",
+    "@miden-sdk/miden-sdk": "^0.16.0",
+    "@miden-sdk/turnkey": "^0.16.0",
+    "@miden-sdk/react": "^0.16.0",
     "@turnkey/core": "^1.8.2",
     "@turnkey/react-wallet-kit": "^1.6.2",
     "@turnkey/sdk-browser": "^5.13.4",

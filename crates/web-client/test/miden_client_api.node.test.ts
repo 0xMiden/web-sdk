@@ -680,7 +680,9 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(noteFile != null).toBe(true);
   });
 
-  test("transactions.preview returns a TransactionSummary", async ({ sdk }) => {
+  test("transactions.preview rejects when the transaction is already authorized", async ({
+    sdk,
+  }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
     const client = await MidenClient.createMock();
@@ -692,17 +694,27 @@ test.describe("MidenClient API - Mock Chain", () => {
       maxSupply: sdk.u64(10000000),
     });
 
-    const summary = await client.transactions.preview({
-      operation: "mint",
-      account: faucet,
-      to: wallet,
-      amount: sdk.u64(1000),
-    });
+    // The faucet's key is in the keystore, so the mint executes successfully
+    // and no pending-authorization summary exists. The Node binding surfaces
+    // the stable code as a message prefix.
+    await expect(
+      client.transactions.preview({
+        operation: "mint",
+        account: faucet,
+        to: wallet,
+        amount: sdk.u64(1000),
+      })
+    ).rejects.toThrow("TRANSACTION_ALREADY_AUTHORIZED");
+  });
 
-    expect(summary != null).toBe(true);
-    expect(typeof summary.outputNotes === "function").toBe(true);
-    expect(summary.outputNotes().numNotes()).toBeGreaterThan(0);
-    expect(typeof summary.accountDelta === "function").toBe(true);
+  test("chain anchor: captureAnchor pins executeRequest to the anchor block", async ({
+    sdk,
+  }) => {
+    // Same reason as the custom-TransactionRequest case above: captureAnchor
+    // takes a raw request, and this file has no low-level request builder.
+    // The napi bindings themselves are covered by chain_anchor.test.ts, which
+    // runs under the nodejs project.
+    test.skip(true, "requires MockWasmWebClient low-level wiring");
   });
 
   test("standalone createP2IDNote creates a valid note", async ({ sdk }) => {

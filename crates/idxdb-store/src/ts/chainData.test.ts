@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  getCurrentBlockchainPeaks,
   insertBlockHeader,
   insertPartialBlockchainNodes,
   getBlockHeaders,
@@ -38,13 +37,12 @@ async function openTestDb(): Promise<string> {
 const BLOCK_NUM = 100;
 const HEADER_V1 = new Uint8Array([1, 2, 3]);
 const HEADER_V2 = new Uint8Array([9, 9, 9]);
-const PEAKS_FROM_SYNC = new Uint8Array([10, 11, 12]);
 
 describe("insertBlockHeader: add-if-not-exists semantics", () => {
   it("inserts a brand-new row when none exists (genesis path)", async () => {
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false, [], []);
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored).toBeDefined();
@@ -52,16 +50,14 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
     expect(stored!.hasClientNotes).toBe("false");
   });
 
-  it("does NOT overwrite the existing header bytes when called a second time for the same block", async () => {
-    // SQLite's `insert_block_header_tx` is INSERT OR IGNORE: once a row exists,
-    // a second call must not replace the stored header. `applyStateSync`
-    // writes the canonical header for a block; later
-    // `get_and_store_authenticated_block` calls hit the same block_num and
-    // must be no-ops on the header column.
+  it("does NOT overwrite the existing header when called a second time for the same block", async () => {
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false);
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, true);
+    // Step 1: first insert stores header V1.
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false, [], []);
+
+    // Step 2: second insert with a different payload must NOT replace V1.
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, true, [], []);
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.header).toEqual(HEADER_V1);
@@ -75,15 +71,25 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
     // path must match or `get_tracked_block_header_numbers` misses this block.
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, false, [], []);
 
     let stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.hasClientNotes).toBe("false");
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, true);
+    // Second insert with hasClientNotes=true.
+    await insertBlockHeader(
+      dbId,
+      BLOCK_NUM,
+      HEADER_V2, // (ignored — header stays HEADER_V1)
+      true,
+      [],
+      []
+    );
 
     stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
+    // Header preserved...
     expect(stored!.header).toEqual(HEADER_V1);
+    // ...but has_client_notes upgraded to true.
     expect(stored!.hasClientNotes).toBe("true");
   });
 
@@ -93,11 +99,37 @@ describe("insertBlockHeader: add-if-not-exists semantics", () => {
     // contain a client note, subsequent writes should not flip that back.
     const dbId = await openTestDb();
 
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, true);
-    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, false);
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V1, true, [], []);
+
+    await insertBlockHeader(dbId, BLOCK_NUM, HEADER_V2, false, [], []);
 
     const stored = await getDatabase(dbId).blockHeaders.get(BLOCK_NUM);
     expect(stored!.hasClientNotes).toBe("true");
+  });
+});
+
+describe("insertBlockHeader: MMR nodes + atomicity", () => {
+  it("persists the header and its MMR nodes atomically", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    // Header and its nodes are stored together.
+    await insertBlockHeader(
+      dbId,
+      4,
+      HEADER_V1,
+      false,
+      ["10", "20"],
+      ["0xa", "0xb"]
+    );
+    expect((await db.blockHeaders.get(4))!.header).toEqual(HEADER_V1);
+    expect((await db.partialBlockchainNodes.get(10))!.node).toBe("0xa");
+
+    // A conflicting node write fails and rolls back the header (one transaction).
+    await expect(
+      insertBlockHeader(dbId, 5, HEADER_V2, true, ["10"], ["0xz"])
+    ).rejects.toThrow("Refusing to overwrite partial blockchain node 10");
+    expect(await db.blockHeaders.get(5)).toBeUndefined();
   });
 });
 
@@ -134,13 +166,59 @@ describe("insertPartialBlockchainNodes", () => {
     ).rejects.toThrow("ids and nodes arrays must be of the same length");
   });
 
-  it("overwrites existing nodes on re-insert (bulkPut semantics)", async () => {
+  it("accepts re-inserting the same node index with the same value", async () => {
     const dbId = await openTestDb();
-    await insertPartialBlockchainNodes(dbId, ["1"], ["0xold"]);
-    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnew"]);
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xsame"]);
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xsame"]);
     const db = getDatabase(dbId);
     const node = await db.partialBlockchainNodes.get(1);
-    expect(node!.node).toBe("0xnew");
+    expect(node!.node).toBe("0xsame");
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toHaveLength(1);
+  });
+
+  it("rejects a conflicting write and keeps the stored value", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xold"]);
+    await expect(
+      insertPartialBlockchainNodes(dbId, ["1"], ["0xnew"])
+    ).rejects.toThrow("Refusing to overwrite partial blockchain node 1");
+    const db = getDatabase(dbId);
+    const node = await db.partialBlockchainNodes.get(1);
+    expect(node!.node).toBe("0xold");
+  });
+
+  it("deduplicates identical node indexes within a single insert", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1", "1"], ["0xnode", "0xnode"]);
+    const db = getDatabase(dbId);
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toEqual([{ id: 1, node: "0xnode" }]);
+  });
+
+  it("rejects conflicting node indexes within a single insert", async () => {
+    const dbId = await openTestDb();
+    await expect(
+      insertPartialBlockchainNodes(dbId, ["1", "1"], ["0xold", "0xnew"])
+    ).rejects.toThrow(
+      "Conflicting partial blockchain node 1 within the same write"
+    );
+    const db = getDatabase(dbId);
+    expect(await db.partialBlockchainNodes.count()).toBe(0);
+  });
+
+  it("inserts only the missing nodes when some indexes already exist", async () => {
+    const dbId = await openTestDb();
+    await insertPartialBlockchainNodes(dbId, ["1"], ["0xnode1"]);
+    await insertPartialBlockchainNodes(
+      dbId,
+      ["1", "2"],
+      ["0xnode1", "0xnode2"]
+    );
+    const db = getDatabase(dbId);
+    const all = await db.partialBlockchainNodes.toArray();
+    expect(all).toHaveLength(2);
+    expect((await db.partialBlockchainNodes.get(2))!.node).toBe("0xnode2");
   });
 });
 
@@ -157,8 +235,8 @@ describe("getBlockHeaders", () => {
 
   it("returns base64-encoded headers for existing blocks", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 1, HEADER_V1, false);
-    await insertBlockHeader(dbId, 2, HEADER_V2, true);
+    await insertBlockHeader(dbId, 1, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 2, HEADER_V2, true, [], []);
 
     const results = await getBlockHeaders(dbId, [1, 2]);
     expect(results).toHaveLength(2);
@@ -185,8 +263,8 @@ describe("getBlockHeaders", () => {
 describe("getTrackedBlockHeaders", () => {
   it("returns only blocks with hasClientNotes=true", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 10, HEADER_V1, false);
-    await insertBlockHeader(dbId, 20, HEADER_V2, true);
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 20, HEADER_V2, true, [], []);
 
     const results = await getTrackedBlockHeaders(dbId);
     expect(results).toHaveLength(1);
@@ -197,7 +275,7 @@ describe("getTrackedBlockHeaders", () => {
 
   it("returns empty array when no tracked blocks", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 10, HEADER_V1, false);
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
     const results = await getTrackedBlockHeaders(dbId);
     expect(results).toEqual([]);
   });
@@ -209,9 +287,9 @@ describe("getTrackedBlockHeaders", () => {
 describe("getTrackedBlockHeaderNumbers", () => {
   it("returns primary keys of tracked blocks only", async () => {
     const dbId = await openTestDb();
-    await insertBlockHeader(dbId, 5, HEADER_V1, true);
-    await insertBlockHeader(dbId, 6, HEADER_V2, false);
-    await insertBlockHeader(dbId, 7, HEADER_V1, true);
+    await insertBlockHeader(dbId, 5, HEADER_V1, true, [], []);
+    await insertBlockHeader(dbId, 6, HEADER_V2, false, [], []);
+    await insertBlockHeader(dbId, 7, HEADER_V1, true, [], []);
 
     const nums = await getTrackedBlockHeaderNumbers(dbId);
     expect(nums).toHaveLength(2);
@@ -223,54 +301,6 @@ describe("getTrackedBlockHeaderNumbers", () => {
     const dbId = await openTestDb();
     const nums = await getTrackedBlockHeaderNumbers(dbId);
     expect(nums).toEqual([]);
-  });
-});
-
-// ============================================================
-// getCurrentBlockchainPeaks
-// ============================================================
-describe("getCurrentBlockchainPeaks", () => {
-  it("returns {blockNum: 0, peaks: undefined} before any sync writes peaks", async () => {
-    const dbId = await openTestDb();
-    const result = await getCurrentBlockchainPeaks(dbId);
-    expect(result).toBeDefined();
-    expect(result!.blockNum).toBe(0);
-    expect(result!.peaks).toBeUndefined();
-  });
-
-  it("returns {blockNum, peaks: undefined} when the chain-tip row has no peaks (backfill)", async () => {
-    // Simulate a chain-tip row that was inserted without peaks (the path
-    // applyStateSync wouldn't take, but `get_and_store_authenticated_block` does).
-    const dbId = await openTestDb();
-    const db = getDatabase(dbId);
-    await db.stateSync.update(1, { blockNum: 50 });
-    await insertBlockHeader(dbId, 50, HEADER_V1, false);
-
-    const result = await getCurrentBlockchainPeaks(dbId);
-    expect(result!.blockNum).toBe(50);
-    expect(result!.peaks).toBeUndefined();
-  });
-
-  it("returns base64-encoded peaks from the blockHeaders row at the current sync height", async () => {
-    const dbId = await openTestDb();
-    const db = getDatabase(dbId);
-    // Simulate what `applyStateSync` writes: blockHeader at blockNum with
-    // partialBlockchainPeaks set, and stateSync.blockNum pointing at it.
-    await db.stateSync.update(1, { blockNum: 50 });
-    await db.blockHeaders.add({
-      blockNum: 50,
-      header: HEADER_V1,
-      partialBlockchainPeaks: PEAKS_FROM_SYNC,
-      hasClientNotes: "false",
-    });
-
-    const result = await getCurrentBlockchainPeaks(dbId);
-    expect(result!.blockNum).toBe(50);
-    expect(result!.peaks).toBeDefined();
-    const decoded = Uint8Array.from(atob(result!.peaks!), (c) =>
-      c.charCodeAt(0)
-    );
-    expect(decoded).toEqual(PEAKS_FROM_SYNC);
   });
 });
 
@@ -355,13 +385,17 @@ describe("pruneIrrelevantBlocks", () => {
     const db = getDatabase(dbId);
 
     // Insert sync height = 10 (default populate gives block 0)
-    await db.stateSync.put({ id: 1, blockNum: 10 });
+    await db.blockchainCheckpoint.put({
+      id: 1,
+      blockNum: 10,
+      partialBlockchainPeaks: new Uint8Array(),
+    });
 
     // Block 0 (genesis), block 5 (irrelevant), block 10 (sync height), block 20 (tracked)
-    await insertBlockHeader(dbId, 0, HEADER_V1, false);
-    await insertBlockHeader(dbId, 5, HEADER_V1, false); // should be pruned
-    await insertBlockHeader(dbId, 10, HEADER_V1, false); // sync height, keep
-    await insertBlockHeader(dbId, 20, HEADER_V2, true); // tracked, keep
+    await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 5, HEADER_V1, false, [], []); // should be pruned
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []); // sync height, keep
+    await insertBlockHeader(dbId, 20, HEADER_V2, true, [], []); // tracked, keep
 
     await pruneIrrelevantBlocks(dbId, [], []);
 
@@ -377,11 +411,15 @@ describe("pruneIrrelevantBlocks", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    await db.stateSync.put({ id: 1, blockNum: 10 });
-    await insertBlockHeader(dbId, 0, HEADER_V1, false);
-    await insertBlockHeader(dbId, 7, HEADER_V1, true); // tracked, will untrack
-    await insertBlockHeader(dbId, 10, HEADER_V1, false);
-    await insertBlockHeader(dbId, 20, HEADER_V2, true);
+    await db.blockchainCheckpoint.put({
+      id: 1,
+      blockNum: 10,
+      partialBlockchainPeaks: new Uint8Array(),
+    });
+    await insertBlockHeader(dbId, 0, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 7, HEADER_V1, true, [], []); // tracked, will untrack
+    await insertBlockHeader(dbId, 10, HEADER_V1, false, [], []);
+    await insertBlockHeader(dbId, 20, HEADER_V2, true, [], []);
 
     await pruneIrrelevantBlocks(dbId, [7], []);
 
@@ -395,7 +433,11 @@ describe("pruneIrrelevantBlocks", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    await db.stateSync.put({ id: 1, blockNum: 10 });
+    await db.blockchainCheckpoint.put({
+      id: 1,
+      blockNum: 10,
+      partialBlockchainPeaks: new Uint8Array(),
+    });
     await insertPartialBlockchainNodes(
       dbId,
       ["1", "2", "3"],
@@ -411,12 +453,12 @@ describe("pruneIrrelevantBlocks", () => {
     expect(ids).not.toContain(3);
   });
 
-  it("rejects when stateSync is undefined", async () => {
+  it("rejects when blockchainCheckpoint is undefined", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    // Delete the default stateSync entry that was populated by the 'populate' hook
-    await db.stateSync.clear();
+    // Delete the default blockchainCheckpoint entry that was populated by the 'populate' hook
+    await db.blockchainCheckpoint.clear();
 
     // logWebStoreError re-throws, so the promise rejects
     await expect(pruneIrrelevantBlocks(dbId, [], [])).rejects.toThrow(
@@ -434,7 +476,7 @@ const BAD_DB = "does-not-exist-chaindata";
 describe("error paths: unregistered dbId re-throws", () => {
   it("insertBlockHeader rejects on bad dbId", async () => {
     await expect(
-      insertBlockHeader(BAD_DB, 1, new Uint8Array([1]), false)
+      insertBlockHeader(BAD_DB, 1, new Uint8Array([1]), false, [], [])
     ).rejects.toThrow();
   });
 
@@ -455,10 +497,6 @@ describe("error paths: unregistered dbId re-throws", () => {
 
   it("getTrackedBlockHeaderNumbers rejects on bad dbId", async () => {
     await expect(getTrackedBlockHeaderNumbers(BAD_DB)).rejects.toThrow();
-  });
-
-  it("getCurrentBlockchainPeaks rejects on bad dbId", async () => {
-    await expect(getCurrentBlockchainPeaks(BAD_DB)).rejects.toThrow();
   });
 
   it("getPartialBlockchainNodesAll rejects on bad dbId", async () => {

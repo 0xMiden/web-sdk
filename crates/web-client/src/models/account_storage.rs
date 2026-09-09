@@ -1,6 +1,8 @@
 use js_export_macro::js_export;
+use miden_client::Word as NativeWord;
 use miden_client::account::{
     AccountStorage as NativeAccountStorage,
+    StorageMapKey,
     StorageSlotContent,
     StorageSlotName,
 };
@@ -60,7 +62,10 @@ impl AccountStorage {
     #[js_export(js_name = "getMapItem")]
     pub fn get_map_item(&self, slot_name: String, key: &Word) -> Option<Word> {
         match StorageSlotName::new(slot_name) {
-            Ok(slot_name) => self.0.get_map_item(&slot_name, key.into()).ok().map(Into::into),
+            Ok(slot_name) => {
+                let key = StorageMapKey::new(NativeWord::from(key));
+                self.0.get_map_item(&slot_name, key).ok().map(Into::into)
+            },
             Err(_) => None,
         }
     }

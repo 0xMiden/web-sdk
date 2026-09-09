@@ -54,13 +54,16 @@ var Table;
     Table["InputNotes"] = "inputNotes";
     Table["OutputNotes"] = "outputNotes";
     Table["NotesScripts"] = "notesScripts";
-    Table["StateSync"] = "stateSync";
+    Table["BlockchainCheckpoint"] = "blockchainCheckpoint";
     Table["BlockHeaders"] = "blockHeaders";
     Table["PartialBlockchainNodes"] = "partialBlockchainNodes";
     Table["Tags"] = "tags";
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
 })(Table || (Table = {}));
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
     return items.join(",");
 }
@@ -83,10 +86,10 @@ export const V1_STORES = {
     [Table.Addresses]: indexes("address", "id"),
     [Table.Transactions]: indexes("id", "statusVariant"),
     [Table.TransactionScripts]: indexes("scriptRoot"),
-    [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
+    [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
     [Table.OutputNotes]: indexes("detailsCommitment", "noteId", "recipientDigest", "stateDiscriminant", "nullifier"),
     [Table.NotesScripts]: indexes("scriptRoot"),
-    [Table.StateSync]: indexes("id"),
+    [Table.BlockchainCheckpoint]: indexes("id"),
     [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
     [Table.PartialBlockchainNodes]: indexes("id"),
     [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -112,7 +115,7 @@ export class MidenDatabase {
     inputNotes;
     outputNotes;
     notesScripts;
-    stateSync;
+    blockchainCheckpoint;
     blockHeaders;
     partialBlockchainNodes;
     tags;
@@ -196,6 +199,21 @@ export class MidenDatabase {
                 !pendingInputNoteCommitments.has(tag.sourceNoteId))
                 .delete();
         });
+        // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+        // `detailsCommitment` instead of `noteId`, so the seek in
+        // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+        // carries and needs no lookup of the cursor's own note. Index-only, so
+        // Dexie rebuilds it without an upgrade hook.
+        this.dexie.version(3).stores({
+            [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"),
+        });
+        // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+        // cannot change in place, hence the drop and the recreate; the rows it held are cached
+        // values the client re-fetches.
+        this.dexie.version(4).stores({ [Table.Settings]: null });
+        this.dexie.version(5).stores({
+            [Table.Settings]: indexes("[scope+key]", "scope"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -213,16 +231,20 @@ export class MidenDatabase {
         this.inputNotes = this.dexie.table(Table.InputNotes);
         this.outputNotes = this.dexie.table(Table.OutputNotes);
         this.notesScripts = this.dexie.table(Table.NotesScripts);
-        this.stateSync = this.dexie.table(Table.StateSync);
+        this.blockchainCheckpoint = this.dexie.table(Table.BlockchainCheckpoint);
         this.blockHeaders = this.dexie.table(Table.BlockHeaders);
         this.partialBlockchainNodes = this.dexie.table(Table.PartialBlockchainNodes);
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
         this.dexie.on("populate", () => {
-            this.stateSync
-                .put({ id: 1, blockNum: 0 })
-                /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+            this.blockchainCheckpoint
+                .put({
+                id: 1,
+                blockNum: 0,
+                partialBlockchainPeaks: new Uint8Array(),
+            })
+                /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
         });
     }
@@ -274,8 +296,13 @@ export class MidenDatabase {
         await this.dexie.open();
         await this.persistClientVersion(clientVersion);
     }
+    // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+    // user-facing settings API never reaches.
     async getStoredClientVersion() {
-        const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+        const record = await this.settings.get([
+            SETTING_SCOPE_CLIENT,
+            CLIENT_VERSION_SETTING_KEY,
+        ]);
         if (!record) {
             return null;
         }
@@ -283,6 +310,7 @@ export class MidenDatabase {
     }
     async persistClientVersion(clientVersion) {
         await this.settings.put({
+            scope: SETTING_SCOPE_CLIENT,
             key: CLIENT_VERSION_SETTING_KEY,
             value: textEncoder.encode(clientVersion),
         });

@@ -85,7 +85,10 @@ test.describe("send transaction tests", () => {
       // Receiver consumes by note ID
       const inputNote = await client.getInputNote(sentNoteId);
       const note = inputNote.toNote();
-      const consumeRequest = client.newConsumeTransactionRequest([note]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [note],
+        receiver.id()
+      );
       await client.submitNewTransaction(receiver.id(), consumeRequest);
       await client.proveBlock();
       await client.syncState();
@@ -162,7 +165,7 @@ test.describe("custom transaction tests", () => {
         use miden::protocol::active_account
         use miden::protocol::account_id
         use miden::protocol::active_note
-        use miden::standards::wallets::basic->basic_wallet
+        use miden::standards::wallets::basic as basic_wallet
         use miden::core::mem
         @note_script
         pub proc main
@@ -215,10 +218,10 @@ test.describe("custom transaction tests", () => {
             # => [account_id_suffix, account_id_prefix, target_account_id_suffix, target_account_id_prefix]
 
             # ensure account_id = target_account_id, fails otherwise
-            exec.account_id::is_equal assert.err="P2ID's target account address and transaction address do not match"
+            exec.account_id::eq assert.err="P2ID's target account address and transaction address do not match"
             # => []
 
-            exec.basic_wallet::add_assets_to_account
+            exec.basic_wallet::move_note_assets_to_account
             # => []
         end
       `;
@@ -264,7 +267,8 @@ test.describe("custom transaction tests", () => {
       // Just like in the miden test, you can modify this script to get the execution to fail
       // by modifying the assert (assertedValue = "0" means success)
       const txScript = `
-        begin
+        @transaction_script
+        pub proc main
             push.0 push.0
             # => [0, 0]
             assert_eq
@@ -357,7 +361,7 @@ test.describe("custom transaction tests", () => {
         use miden::protocol::active_account
         use miden::protocol::account_id
         use miden::protocol::active_note
-        use miden::standards::wallets::basic->basic_wallet
+        use miden::standards::wallets::basic as basic_wallet
         use miden::core::mem
         @note_script
         pub proc main
@@ -376,8 +380,8 @@ test.describe("custom transaction tests", () => {
             eq.2 assert.err="P2ID script expects exactly 2 note storage items"
             dup add.1 mem_load swap mem_load
             exec.active_account::get_id
-            exec.account_id::is_equal assert.err="P2ID's target account address and transaction address do not match"
-            exec.basic_wallet::add_assets_to_account
+            exec.account_id::eq assert.err="P2ID's target account address and transaction address do not match"
+            exec.basic_wallet::move_note_assets_to_account
         end
       `;
 
@@ -412,7 +416,8 @@ test.describe("custom transaction tests", () => {
 
       // Failing tx script: asserts 0 == 1
       const txScript = `
-        begin
+        @transaction_script
+        pub proc main
             push.0 push.1
             # => [0, 1]
             assert_eq

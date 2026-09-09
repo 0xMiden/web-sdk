@@ -92,11 +92,10 @@ describe("useConsume", () => {
       const mockSync = vi.fn().mockResolvedValue(undefined);
       const inputIds = ["0xnote1", "0xnote2"];
       const noteRecords = createNoteRecords(inputIds);
+      const request = createMockTransactionRequest();
       const mockClient = createMockWebClient({
         getInputNotes: vi.fn().mockResolvedValue(noteRecords),
-        newConsumeTransactionRequest: vi
-          .fn()
-          .mockReturnValue(createMockTransactionRequest()),
+        newConsumeTransactionRequest: vi.fn().mockResolvedValue(request),
         submitNewTransaction: vi.fn().mockResolvedValue(mockTxId),
       });
 
@@ -125,6 +124,21 @@ describe("useConsume", () => {
       const passedNotes = mockClient.newConsumeTransactionRequest.mock
         .calls[0][0] as NoteLike[] | undefined;
       expect(extractNoteIds(passedNotes ?? [])).toEqual(inputIds);
+
+      // The consuming account is the second, required argument: it decides
+      // whether fee conversion info is attached, so leaving it off makes the
+      // transaction abort on a fee-charging chain.
+      const consumingAccount = mockClient.newConsumeTransactionRequest.mock
+        .calls[0][1] as { toString(): string } | undefined;
+      expect(consumingAccount?.toString()).toBe("0xaccount");
+
+      // The constructor is async, so submit must receive the *resolved* request
+      // and not the promise. Asserting on identity is what catches a dropped
+      // `await`: a permissive submit mock accepts a thenable without complaint.
+      expect(mockClient.submitNewTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        request
+      );
     });
 
     it("should consume single note", async () => {

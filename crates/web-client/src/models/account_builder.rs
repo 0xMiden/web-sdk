@@ -80,14 +80,14 @@ impl AccountBuilder {
     /// Adds an authentication component to the account.
     #[js_export(js_name = "withAuthComponent")]
     pub fn with_auth_component(&mut self, account_component: &AccountComponent) -> Self {
-        self.0 = self.0.clone().with_auth_component(account_component);
+        self.0 = self.0.clone().with_component(account_component);
         self.clone()
     }
 
     /// Adds a no-auth component to the account (for public accounts).
     #[js_export(js_name = "withNoAuthComponent")]
     pub fn with_no_auth_component(&mut self) -> Self {
-        self.0 = self.0.clone().with_auth_component(NoAuth);
+        self.0 = self.0.clone().with_component(NoAuth);
         self.clone()
     }
 

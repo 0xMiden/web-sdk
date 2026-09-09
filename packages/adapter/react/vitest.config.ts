@@ -4,8 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   // `@miden-sdk/react` is a workspace package here, not a registry install, so
   // its `dist/` only exists after a build. Resolve it to source instead, so
-  // `pnpm test` stays runnable without building anything (and without a Rust
-  // toolchain for the WASM client underneath it).
+  // `pnpm test` stays runnable without building anything.
   resolve: {
     alias: [
       {
@@ -16,8 +15,5 @@ export default defineConfig({
       },
     ],
   },
-  test: {
-    environment: "jsdom",
-    globals: true,
-  },
+  test: { environment: "jsdom", globals: true },
 });

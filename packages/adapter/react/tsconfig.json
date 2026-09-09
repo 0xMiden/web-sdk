@@ -2,15 +2,29 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "target": "ESNext",
-    "module": "ESNext",
+    // Node16-style module + resolution so tsc EMITS and VALIDATES the explicit
+    // ".js" specifiers Node's ESM loader requires. Under the previous
+    // "module": "ESNext" / "moduleResolution": "node" pair, tsc happily emitted
+    // extensionless relative specifiers into dist/*.js and dist/*.d.ts, which
+    // Node ESM and TypeScript's node16/nodenext resolver both refuse to
+    // resolve — the published declarations silently dropped every `export *`.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "declaration": true,
     "outDir": "dist",
     "sourceMap": true,
-    "moduleResolution": "node",
+    // dist/*.js.map point at "../WalletProvider.tsx" etc, and "files": ["dist"]
+    // no longer ships those sources. Embed them in the map so consumer
+    // devtools can still step through original TypeScript.
+    "inlineSources": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true
   },
-  "exclude": ["node_modules", "dist", "__tests__"]
+  // vitest.config.ts is build tooling, not shipped API: compiling it put a
+  // dist/vitest.config.d.ts referencing `import("vite")` — a package this
+  // package does not depend on — into the tarball.
+  "include": ["*.ts", "*.tsx"],
+  "exclude": ["node_modules", "dist", "__tests__", "vitest.config.ts"]
 }

@@ -8,6 +8,7 @@ use miden_client::account::{
     AccountHeader,
     AccountId,
     AccountIdError,
+    AccountPatch,
     AccountStorage,
     Address,
     PartialAccount,
@@ -22,8 +23,8 @@ use miden_client::account::{
 use miden_client::asset::{
     AccountStorageHeader,
     Asset,
+    AssetId,
     AssetVault,
-    AssetVaultKey,
     AssetWitness,
     PartialVault,
     StorageMapWitness,
@@ -35,6 +36,7 @@ use miden_client::store::{
     AccountRecordData,
     AccountStatus,
     AccountStorageFilter,
+    AccountUpdate,
     ClientAccountType,
     StoreError,
 };
@@ -81,6 +83,7 @@ use models::{
 
 pub(crate) mod utils;
 use utils::{
+    apply_account_patch,
     apply_full_account_state,
     parse_account_record_idxdb_object,
     upsert_account_asset_vault,
@@ -411,34 +414,80 @@ impl IdxdbStore {
             .map(|entry| {
                 let key_word = Word::try_from(&entry.vault_key)?;
                 let value_word = Word::try_from(&entry.asset)?;
-                Ok(Asset::from_key_value_words(key_word, value_word)?)
+                Ok(Asset::from_id_and_value_words(key_word, value_word)?)
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
 
         Ok(assets)
     }
 
-    /// Returns a map from slot name to map root for Map-type storage slots.
-    /// When `slot_names` is non-empty, only loads the specified slots.
-    /// Only loads slot metadata — does NOT load map entries.
-    pub(crate) async fn get_storage_map_roots(
+    /// Applies an incremental (non-full-state) account patch: updates the SMT forest, then persists
+    /// the resulting storage-map roots and vault changes atomically.
+    ///
+    /// The patch's values are already absolute, so no account reconstruction is needed. Applying
+    /// the forest update also verifies it: `final_header`'s vault root is recorded on the update
+    /// and checked, so a patch that does not reproduce it fails before anything is written.
+    pub(crate) async fn apply_incremental_account_patch(
         &self,
-        account_id: AccountId,
-        slot_names: Vec<String>,
-    ) -> Result<BTreeMap<StorageSlotName, Word>, StoreError> {
-        let promise = idxdb_get_account_storage(self.db_id(), account_id.to_string(), slot_names);
-        let slots: Vec<AccountStorageIdxdbObject> =
-            await_js(promise, "failed to fetch account storage").await?;
+        final_header: &AccountHeader,
+        patch: &AccountPatch,
+    ) -> Result<(), StoreError> {
+        let account_id = final_header.id();
+        let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
 
-        slots
-            .into_iter()
-            .filter(|s| StorageSlotType::try_from(s.slot_type).ok() == Some(StorageSlotType::Map))
-            .map(|s| {
-                let name = StorageSlotName::new(s.slot_name).map_err(|err| {
-                    StoreError::DatabaseError(format!("invalid storage slot name: {err}"))
+        let write =
+            apply_account_patch(self.db_id(), account_id, final_header, &new_map_roots, patch)
+                .await
+                .map_err(|err| {
+                    StoreError::DatabaseError(format!("failed to apply account patch: {err:?}"))
+                });
+
+        // The forest advanced above. If the write did not land it has to be walked back, or the
+        // account's trees stay ahead of its rows and every later witness read fails on the
+        // mismatch.
+        if write.is_err() {
+            self.rebuild_account_forest(account_id).await?;
+        }
+        write
+    }
+
+    /// Applies an account patch to the SMT forest, returning the new root of each map slot it
+    /// changed — the only thing the store write needs that the patch does not already carry.
+    ///
+    /// Shared with the batch path, which writes once for several transactions instead of per patch.
+    /// Each call advances the forest, so a later patch in a batch sees the earlier ones' results.
+    ///
+    /// The forest must be updated before the store write, because the write needs these roots. A
+    /// caller whose write then fails has to
+    /// [rebuild](crate::IdxdbStore::rebuild_account_forest).
+    pub(crate) fn apply_patch_to_forest(
+        &self,
+        final_header: &AccountHeader,
+        patch: &AccountPatch,
+    ) -> Result<BTreeMap<StorageSlotName, Word>, StoreError> {
+        let account_id = final_header.id();
+        let mut smt_forest = self.smt_forest.write();
+
+        // Patching an untracked account would build partial state from empty trees.
+        if smt_forest.vault_root(account_id).is_none() {
+            return Err(StoreError::AccountDataNotFound(account_id));
+        }
+
+        let mut update = AccountUpdate::new();
+        update.vault_patch(account_id, patch.vault(), final_header.vault_root());
+        update.storage_patch(account_id, patch.storage());
+        smt_forest.apply(update)?;
+
+        // Removed maps have no root: their rows are deleted and their lineage was emptied above.
+        patch
+            .storage()
+            .maps()
+            .filter(|(_, map_patch)| !map_patch.patch_op().is_remove())
+            .map(|(slot_name, _)| {
+                let root = smt_forest.map_root(account_id, slot_name).ok_or_else(|| {
+                    StoreError::DatabaseError(format!("storage map slot {slot_name} is untracked"))
                 })?;
-                let root = Word::try_from(s.slot_value.as_str())?;
-                Ok((name, root))
+                Ok((slot_name.clone(), root))
             })
             .collect()
     }
@@ -479,12 +528,7 @@ impl IdxdbStore {
                 ))
             })?;
 
-        let mut smt_forest = self.smt_forest.write();
-        smt_forest.insert_and_register_account_state(
-            account.id(),
-            account.vault(),
-            account.storage(),
-        )?;
+        self.smt_forest.write().rebuild_account(account)?;
 
         Ok(())
     }
@@ -502,14 +546,7 @@ impl IdxdbStore {
             .await
             .map_err(|_| StoreError::DatabaseError("failed to update account".to_string()))?;
 
-        // Update the SMT forest with the new account state (insert nodes + replace roots
-        // atomically)
-        let mut smt_forest = self.smt_forest.write();
-        smt_forest.insert_and_register_account_state(
-            new_account_state.id(),
-            new_account_state.vault(),
-            new_account_state.storage(),
-        )?;
+        self.smt_forest.write().rebuild_account(new_account_state)?;
 
         Ok(())
     }
@@ -543,7 +580,7 @@ impl IdxdbStore {
     pub(crate) async fn get_account_asset(
         &self,
         account_id: AccountId,
-        vault_key: AssetVaultKey,
+        vault_id: AssetId,
     ) -> Result<Option<(Asset, AssetWitness)>, StoreError> {
         let account_header = self
             .get_account_header(account_id)
@@ -551,13 +588,32 @@ impl IdxdbStore {
             .ok_or(StoreError::AccountDataNotFound(account_id))?
             .0;
 
+        self.ensure_account_in_forest(account_id).await?;
+
         let smt_forest = self.smt_forest.read();
 
-        match smt_forest.get_asset_and_witness(account_header.vault_root(), vault_key) {
+        match smt_forest.get_asset_and_witness(account_id, account_header.vault_root(), vault_id) {
             Ok(result) => Ok(Some(result)),
-            Err(StoreError::MerkleStoreError(MerkleError::UntrackedKey(_))) => Ok(None),
+            Err(
+                StoreError::VaultKeyNotTracked(..)
+                | StoreError::MerkleStoreError(MerkleError::UntrackedKey(_)),
+            ) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Rebuilds an account's forest trees if it has none yet.
+    ///
+    /// The forest is a cache derived from the account tables, so a read for an account it never
+    /// learned about is a miss to fill, not an error. Serving one instead requires the trees, which
+    /// only the tables can supply.
+    async fn ensure_account_in_forest(&self, account_id: AccountId) -> Result<(), StoreError> {
+        // Bound the read guard to this statement: `rebuild_account_forest` takes the write lock.
+        let tracked = self.smt_forest.read().vault_root(account_id).is_some();
+        if tracked {
+            return Ok(());
+        }
+        self.rebuild_account_forest(account_id).await
     }
 
     pub(crate) async fn get_account_map_item(
@@ -587,8 +643,11 @@ impl IdxdbStore {
         }
         let map_root = Word::try_from(slot.slot_value.as_str())?;
 
+        self.ensure_account_in_forest(account_id).await?;
+
         let smt_forest = self.smt_forest.read();
-        let witness = smt_forest.get_storage_map_item_witness(map_root, key)?;
+        let witness =
+            smt_forest.get_storage_map_item_witness(account_id, &slot_name, map_root, key)?;
         let value = witness.get(key).unwrap_or(miden_client::EMPTY_WORD);
 
         Ok((value, witness))
@@ -684,7 +743,7 @@ impl IdxdbStore {
         Ok(())
     }
 
-    pub(crate) async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+    pub(crate) async fn remove_address(&self, address: Address) -> Result<bool, StoreError> {
         remove_account_address(self.db_id(), address).await.map_err(|js_error| {
             StoreError::DatabaseError(format!("failed to remove account address: {js_error:?}"))
         })

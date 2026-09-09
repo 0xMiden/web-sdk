@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use miden_client::Word;
 use miden_client::block::BlockHeader;
-use miden_client::crypto::{Forest, InOrderIndex, MmrPeaks};
+use miden_client::crypto::InOrderIndex;
 use miden_client::note::BlockNumber;
 use miden_client::store::{BlockRelevance, PartialBlockchainFilter, StoreError};
 use miden_client::utils::Deserializable;
@@ -15,23 +15,17 @@ use crate::promise::{await_js, await_js_value, await_ok};
 mod js_bindings;
 use js_bindings::{
     idxdb_get_block_headers,
-    idxdb_get_current_blockchain_peaks,
     idxdb_get_partial_blockchain_nodes,
     idxdb_get_partial_blockchain_nodes_all,
     idxdb_get_partial_blockchain_nodes_up_to_inorder_index,
     idxdb_get_tracked_block_header_numbers,
     idxdb_get_tracked_block_headers,
     idxdb_insert_block_header,
-    idxdb_insert_partial_blockchain_nodes,
     idxdb_prune_irrelevant_blocks,
 };
 
 mod models;
-use models::{
-    BlockHeaderIdxdbObject,
-    PartialBlockchainNodeIdxdbObject,
-    PartialBlockchainPeaksIdxdbObject,
-};
+use models::{BlockHeaderIdxdbObject, PartialBlockchainNodeIdxdbObject};
 
 pub mod utils;
 use utils::{
@@ -46,12 +40,30 @@ impl IdxdbStore {
     pub(crate) async fn insert_block_header(
         &self,
         block_header: &BlockHeader,
+        nodes: &[(InOrderIndex, Word)],
         has_client_notes: bool,
     ) -> Result<(), StoreError> {
         let SerializedBlockHeaderData { block_num, header, has_client_notes } =
             serialize_block_header(block_header, has_client_notes);
 
-        let promise = idxdb_insert_block_header(self.db_id(), block_num, header, has_client_notes);
+        let mut serialized_node_ids = Vec::new();
+        let mut serialized_nodes = Vec::new();
+        for (id, node) in nodes {
+            let SerializedPartialBlockchainNodeData { id, node } =
+                serialize_partial_blockchain_node(*id, *node)?;
+            serialized_node_ids.push(id);
+            serialized_nodes.push(node);
+        }
+
+        // Header + MMR nodes are persisted in one IndexedDB transaction (see `chainData.js`).
+        let promise = idxdb_insert_block_header(
+            self.db_id(),
+            block_num,
+            header,
+            has_client_notes,
+            serialized_node_ids,
+            serialized_nodes,
+        );
         await_ok(promise, "failed to insert block header").await?;
 
         Ok(())
@@ -158,46 +170,6 @@ impl IdxdbStore {
                 process_partial_blockchain_nodes_from_js_value(js_value)
             },
         }
-    }
-
-    pub(crate) async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
-        let promise = idxdb_get_current_blockchain_peaks(self.db_id());
-        let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
-            await_js(promise, "failed to get current blockchain peaks").await?;
-
-        let PartialBlockchainPeaksIdxdbObject { block_num, peaks } = peaks_idxdb;
-
-        if let Some(peaks) = peaks {
-            let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks)?;
-
-            return MmrPeaks::new(Forest::new(block_num as usize)?, mmr_peaks_nodes)
-                .map_err(StoreError::MmrError);
-        }
-
-        Ok(MmrPeaks::new(Forest::empty(), vec![])?)
-    }
-
-    pub(crate) async fn insert_partial_blockchain_nodes(
-        &self,
-        nodes: &[(InOrderIndex, Word)],
-    ) -> Result<(), StoreError> {
-        let mut serialized_node_ids = Vec::new();
-        let mut serialized_nodes = Vec::new();
-        for (id, node) in nodes {
-            let SerializedPartialBlockchainNodeData { id, node } =
-                serialize_partial_blockchain_node(*id, *node)?;
-            serialized_node_ids.push(id);
-            serialized_nodes.push(node);
-        }
-
-        let promise = idxdb_insert_partial_blockchain_nodes(
-            self.db_id(),
-            serialized_node_ids,
-            serialized_nodes,
-        );
-        await_ok(promise, "failed to insert partial blockchain nodes").await?;
-
-        Ok(())
     }
 
     pub(crate) async fn prune_irrelevant_blocks(

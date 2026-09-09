@@ -122,7 +122,7 @@ describe("useMultiSend", () => {
       expect(result.current.result).toEqual({ transactionId: "0xmultisend" });
       expect(result.current.stage).toBe("complete");
       expect(mockSync).toHaveBeenCalled();
-      expect(mockClient.sendPrivateNote).toHaveBeenCalledTimes(2);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(2);
 
       const createP2IDNoteMock = (
         Note as unknown as { createP2IDNote: ReturnType<typeof vi.fn> }
@@ -135,6 +135,18 @@ describe("useMultiSend", () => {
         expect.anything(),
         NoteType.Private,
         expect.anything()
+      );
+
+      // The hook assembles its own request, so it must start from a fee-aware
+      // builder for the sender; a bare `TransactionRequestBuilder` aborts with
+      // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges a fee.
+      expect(
+        mockClient.feeAwareTransactionRequestBuilder
+      ).toHaveBeenCalledTimes(1);
+      const [executingAccount] =
+        mockClient.feeAwareTransactionRequestBuilder.mock.calls[0];
+      expect((executingAccount as { toString(): string }).toString()).toBe(
+        "0xsender"
       );
     });
 
@@ -175,7 +187,7 @@ describe("useMultiSend", () => {
         NoteType.Public,
         expect.anything()
       );
-      expect(mockClient.sendPrivateNote).not.toHaveBeenCalled();
+      expect(mockClient.sendPrivateOutputNote).not.toHaveBeenCalled();
     });
 
     it("should reject concurrent sends with SEND_BUSY", async () => {

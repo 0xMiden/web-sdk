@@ -44,14 +44,12 @@ pub struct SerializedTransactionData {
 
 // ================================================================================================
 
-/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// Converts an `ExecutedTransaction` into a pending `TransactionRecord`.
 /// `submission_height` is the block number at which the transaction was submitted to the network.
-pub async fn insert_proven_transaction_data(
-    db_id: &str,
+pub(crate) fn build_transaction_record(
     executed_transaction: &ExecutedTransaction,
     submission_height: BlockNumber,
-) -> Result<(), StoreError> {
-    // Build transaction record
+) -> TransactionRecord {
     let nullifiers: Vec<Word> = executed_transaction
         .input_notes()
         .iter()
@@ -72,12 +70,22 @@ pub async fn insert_proven_transaction_data(
         creation_timestamp: crate::current_timestamp_u64(),
     };
 
-    let transaction_record = TransactionRecord::new(
+    TransactionRecord::new(
         executed_transaction.id(),
         details,
         executed_transaction.tx_args().tx_script().cloned(),
         TransactionStatus::Pending,
-    );
+    )
+}
+
+/// Converts an `ExecutedTransaction` into a `TransactionRecord` and inserts it into the store.
+/// `submission_height` is the block number at which the transaction was submitted to the network.
+pub async fn insert_proven_transaction_data(
+    db_id: &str,
+    executed_transaction: &ExecutedTransaction,
+    submission_height: BlockNumber,
+) -> Result<(), StoreError> {
+    let transaction_record = build_transaction_record(executed_transaction, submission_height);
 
     upsert_transaction_record(db_id, &transaction_record).await?;
 

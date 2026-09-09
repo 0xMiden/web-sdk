@@ -1,5 +1,5 @@
 import { isHttpClient, TurnkeyActivityError } from "@turnkey/http";
-import type { MidenAccountOpts, MidenClientOpts, TConfig } from "./types";
+import type { MidenAccountOpts, MidenClientOpts, TConfig } from "./types.js";
 import type { MidenClient, AccountStorageMode } from "@miden-sdk/miden-sdk";
 import {
   accountSeedFromStr,

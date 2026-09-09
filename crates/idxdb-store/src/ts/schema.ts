@@ -65,13 +65,17 @@ enum Table {
   InputNotes = "inputNotes",
   OutputNotes = "outputNotes",
   NotesScripts = "notesScripts",
-  StateSync = "stateSync",
+  BlockchainCheckpoint = "blockchainCheckpoint",
   BlockHeaders = "blockHeaders",
   PartialBlockchainNodes = "partialBlockchainNodes",
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
 }
+
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 
 export interface IAccountCode {
   root: string;
@@ -212,21 +216,15 @@ export interface INotesScript {
   serializedNoteScript: Uint8Array;
 }
 
-export interface IStateSync {
+export interface IBlockchainCheckpoint {
   id: number;
   blockNum: number;
+  partialBlockchainPeaks: Uint8Array;
 }
 
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  /** Serialized MMR peaks at this block's forest. Set only on rows that were
-   *  the chain tip when their corresponding sync ran — `applyStateSync`
-   *  writes peaks to the row where `blockNum === state_sync.block_num`.
-   *  Backfilled blocks (`insertBlockHeader` from `get_and_store_authenticated_block`)
-   *  leave this undefined. `getCurrentBlockchainPeaks` reads the row at
-   *  the current `stateSync.blockNum`. */
-  partialBlockchainPeaks?: Uint8Array;
   hasClientNotes: string;
 }
 
@@ -249,6 +247,7 @@ export interface IForeignAccountCode {
 }
 
 export interface ISetting {
+  scope: number;
   key: string;
   value: Uint8Array;
 }
@@ -262,6 +261,7 @@ export interface JsStorageSlot {
   slotName: string;
   slotValue: string;
   slotType: number;
+  patchOperation?: number;
 }
 
 export interface JsStorageMapEntry {
@@ -321,6 +321,7 @@ export const V1_STORES: Record<string, string> = {
     "detailsCommitment",
     "noteId",
     "nullifier",
+    "scriptRoot",
     "stateDiscriminant",
     "[consumedBlockHeight+consumedTxOrder+noteId]"
   ),
@@ -332,7 +333,7 @@ export const V1_STORES: Record<string, string> = {
     "nullifier"
   ),
   [Table.NotesScripts]: indexes("scriptRoot"),
-  [Table.StateSync]: indexes("id"),
+  [Table.BlockchainCheckpoint]: indexes("id"),
   [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
   [Table.PartialBlockchainNodes]: indexes("id"),
   [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -363,11 +364,11 @@ declare module "dexie" {
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
-    stateSync: Table<IStateSync, number>;
+    blockchainCheckpoint: Table<IBlockchainCheckpoint, number>;
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
-    settings: Table<ISetting, string>;
+    settings: Table<ISetting, [number, string]>;
   }
 }
 
@@ -389,12 +390,12 @@ export type MidenDexie = Dexie & {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
 };
 
 export class MidenDatabase {
@@ -416,12 +417,12 @@ export class MidenDatabase {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -511,6 +512,30 @@ export class MidenDatabase {
           .delete();
       });
 
+    // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+    // `detailsCommitment` instead of `noteId`, so the seek in
+    // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+    // carries and needs no lookup of the cursor's own note. Index-only, so
+    // Dexie rebuilds it without an upgrade hook.
+    this.dexie.version(3).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"
+      ),
+    });
+
+    // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+    // cannot change in place, hence the drop and the recreate; the rows it held are cached
+    // values the client re-fetches.
+    this.dexie.version(4).stores({ [Table.Settings]: null });
+    this.dexie.version(5).stores({
+      [Table.Settings]: indexes("[scope+key]", "scope"),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -562,7 +587,9 @@ export class MidenDatabase {
     this.notesScripts = this.dexie.table<INotesScript, string>(
       Table.NotesScripts
     );
-    this.stateSync = this.dexie.table<IStateSync, number>(Table.StateSync);
+    this.blockchainCheckpoint = this.dexie.table<IBlockchainCheckpoint, number>(
+      Table.BlockchainCheckpoint
+    );
     this.blockHeaders = this.dexie.table<IBlockHeader, number>(
       Table.BlockHeaders
     );
@@ -574,12 +601,18 @@ export class MidenDatabase {
     this.foreignAccountCode = this.dexie.table<IForeignAccountCode, string>(
       Table.ForeignAccountCode
     );
-    this.settings = this.dexie.table<ISetting, string>(Table.Settings);
+    this.settings = this.dexie.table<ISetting, [number, string]>(
+      Table.Settings
+    );
 
     this.dexie.on("populate", () => {
-      this.stateSync
-        .put({ id: 1, blockNum: 0 } as IStateSync)
-        /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+      this.blockchainCheckpoint
+        .put({
+          id: 1,
+          blockNum: 0,
+          partialBlockchainPeaks: new Uint8Array(),
+        } as IBlockchainCheckpoint)
+        /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
@@ -647,8 +680,13 @@ export class MidenDatabase {
     await this.persistClientVersion(clientVersion);
   }
 
+  // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+  // user-facing settings API never reaches.
   private async getStoredClientVersion(): Promise<string | null> {
-    const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const record = await this.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     if (!record) {
       return null;
     }
@@ -657,6 +695,7 @@ export class MidenDatabase {
 
   private async persistClientVersion(clientVersion: string): Promise<void> {
     await this.settings.put({
+      scope: SETTING_SCOPE_CLIENT,
       key: CLIENT_VERSION_SETTING_KEY,
       value: textEncoder.encode(clientVersion),
     });

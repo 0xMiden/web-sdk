@@ -32,6 +32,7 @@ import {
   NoteConsumability,
   NoteExecutionHint,
   NoteExportFormat,
+  NoteScriptFee,
   NoteFilter,
   NoteFile,
   NoteFilterTypes,
@@ -98,7 +99,6 @@ declare global {
     AccountHeader: typeof AccountHeader;
     AccountId: typeof AccountId;
     AccountInterface: typeof AccountInterface;
-    AccountStorageDelta: typeof AccountStorageDelta;
     AccountStorageMode: typeof AccountStorageMode;
     AccountStorageRequirements: typeof AccountStorageRequirements;
     AccountType: typeof AccountType;
@@ -126,6 +126,7 @@ declare global {
     NoteConsumability: typeof NoteConsumability;
     NoteExecutionHint: typeof NoteExecutionHint;
     NoteExportFormat: typeof NoteExportFormat;
+    NoteScriptFee: typeof NoteScriptFee;
     NoteFilter: typeof NoteFilter;
     NoteFile: typeof NoteFile;
     NoteFilterTypes: typeof NoteFilterTypes;

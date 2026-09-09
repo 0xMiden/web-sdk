@@ -86,11 +86,10 @@ test-web-client-unit: ## Run web-client unit tests with coverage
 
 # --------------------------------------------------------------------------
 # test: the command CONTRIBUTING.md has always pointed at. Pure TypeScript —
-# the root vitest projects either mock the WASM client (react-sdk) or exercise
-# only plain JS (`crates/web-client/js/__tests__`), so this needs no Rust
-# toolchain and no built `dist/`. Use `make test-coverage` for the gates CI
-# enforces, and `make hydrate-web-client` first if you need `typecheck`/`build`,
-# which do read a built dist.
+# the root vitest projects either mock the WASM client or exercise only plain
+# JS, so this needs no Rust toolchain and no built `dist/`. Use
+# `make test-coverage` for the gates CI enforces, and `make hydrate-web-client`
+# first if you need `typecheck`/`build`, which do read a built dist.
 # --------------------------------------------------------------------------
 .PHONY: test
 test: ## Run the TypeScript unit suites (no Rust toolchain required)
@@ -106,7 +105,7 @@ test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-
 .PHONY: test-web-client-nodejs
 test-web-client-nodejs: ## Run web client tests on Node.js (mock chain, no browser needed)
 	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
-	cd ./crates/web-client && pnpm exec playwright test --project=nodejs --workers=1
+	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test --project=nodejs --workers=1
 
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""

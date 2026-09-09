@@ -115,7 +115,8 @@ test.describe("remote prover transaction tests", () => {
       );
 
       const txScript = `
-        begin
+        @transaction_script
+        pub proc main
           push.0 push.0
           assert_eq
         end

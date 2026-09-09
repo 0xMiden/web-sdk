@@ -20,6 +20,15 @@ test("transport basic", async ({ run }) => {
       sdk.AuthScheme.AuthRpoFalcon512,
       recipientSeed
     );
+    const faucetAccount = await mockClient.newFaucet(
+      sdk.AccountStorageMode.private(),
+      false,
+      "DAG",
+      "DAG",
+      8,
+      sdk.u64(10000000),
+      sdk.AuthScheme.AuthRpoFalcon512
+    );
 
     // Create recipient address
     const recipientAddress = sdk.Address.fromAccountId(
@@ -28,7 +37,9 @@ test("transport basic", async ({ run }) => {
     );
 
     // Create note
-    const noteAssets = new sdk.NoteAssets([]);
+    const noteAssets = new sdk.NoteAssets([
+      new sdk.FungibleAsset(faucetAccount.id(), sdk.u64(1)),
+    ]);
     const note = sdk.Note.createP2IDNote(
       senderAccount.id(),
       recipientAccount.id(),
@@ -44,8 +55,10 @@ test("transport basic", async ({ run }) => {
     );
     const notesBeforeSending = notes.length;
 
-    // Send note
-    await mockClient.sendPrivateNote(note, recipientAddress);
+    // Send note. The note is uncommitted here (never minted on-chain), so this
+    // same-client relay+fetch roundtrip just needs any valid scan-start block; 0
+    // (genesis) always covers it.
+    await mockClient.sendPrivateNote(note, recipientAddress, 0);
 
     // 1 note stored
     await mockClient.fetchPrivateNotes();

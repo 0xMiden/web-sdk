@@ -2,15 +2,15 @@
 # Local-dev mirror of .github/actions/inject-linked-client-pr.
 #
 # Appends a [patch] block to Cargo.toml that retargets miden-client (and
-# miden-client-sqlite-store) at a linked miden-client PR's head branch,
+# miden-client-sqlite-store) at a linked rust-sdk PR's head branch,
 # wrapped in begin/end markers so it can be removed cleanly with --clear.
 # A pre-commit hook (lefthook.yml) blocks committing while the marked
 # block is present, so you can't accidentally ship the patch.
 #
 # Usage:
 #   scripts/dev-with-client-pr.sh                # auto-detect: read 'Client PR: #N' from current branch's PR body
-#   scripts/dev-with-client-pr.sh 1234           # use miden-client#1234
-#   scripts/dev-with-client-pr.sh 0xMiden/miden-client#1234   # explicit cross-repo form
+#   scripts/dev-with-client-pr.sh 1234           # use rust-sdk#1234
+#   scripts/dev-with-client-pr.sh 0xMiden/rust-sdk#1234       # explicit cross-repo form
 #   scripts/dev-with-client-pr.sh --clear        # remove the patch block + restore Cargo.lock
 #
 # Requirements: gh (for PR lookup), cargo, awk.
@@ -113,12 +113,12 @@ fi
 
 # Parse arg into repo + num.
 if printf '%s' "$arg" | grep -qE '^[0-9]+$'; then
-  repo="0xMiden/miden-client"
+  repo="0xMiden/rust-sdk"
   num="$arg"
 else
   repo=$(printf '%s' "$arg" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || true)
   num=$(printf '%s' "$arg" | grep -oE '[0-9]+$')
-  [ -z "$repo" ] && repo="0xMiden/miden-client"
+  [ -z "$repo" ] && repo="0xMiden/rust-sdk"
   [ -z "$num" ] && { echo "Could not parse '$arg' — expected '#N' or 'owner/repo#N'."; exit 1; }
 fi
 

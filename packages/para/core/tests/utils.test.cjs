@@ -159,7 +159,7 @@ test("getUncompressedPublicKeyFromWallet throws when wallet missing in JWT", asy
   delete globalThis.window;
 });
 
-test("evmPkToCommitment hashes compressed bytes with even/odd tagging", async () => {
+test("evmPkToCommitment hashes x and y as sixteen limbs", async () => {
   let capturedFelts;
   const mockSdk = {
     Felt: class Felt {
@@ -199,28 +199,33 @@ test("evmPkToCommitment hashes compressed bytes with even/odd tagging", async ()
     const result = await evmPkToCommitment(uncompressed);
     assert.ok(result.mocked, "should return mock hash result");
     assert.ok(Array.isArray(capturedFelts), "felts captured");
-    assert.strictEqual(capturedFelts.length, 9, "should produce 9 felts");
+    assert.strictEqual(
+      capturedFelts.length,
+      16,
+      "should produce 16 felts: x then y, eight 32-bit limbs each"
+    );
   } finally {
     Module._load = originalLoad;
   }
 });
 
 // ---------------------------------------------------------------------------
-// ECDSA public-key commitment — golden vectors.
+// ECDSA public-key commitment — golden vectors (0.16 line).
 //
-// Generated from @miden-sdk/miden-sdk@0.15.9. For every vector,
+// Generated from @miden-sdk/miden-sdk@0.16.0-rc.4. For every vector,
 //   AuthSecretKey.ecdsaWithRNG(seed).publicKey().toCommitment()
 //     === Poseidon2.hashElements(felts)
 // where `felts` is the preimage this module builds. Both halves are pinned so
 // a drift in either is caught:
 //
-//   * `felts`      — the preimage. 0.16 replaces this 9-felt packing of the
-//                    compressed SEC1 key with 16 felts of qx||qy, so these
-//                    vectors must be regenerated when the SDK moves.
+//   * `felts`      — the preimage. 0.16 commits to the affine point as sixteen
+//                    felts: x then y, each as eight 32-bit limbs in
+//                    little-endian limb order. The 0.15 line hashed nine felts
+//                    packed from the compressed SEC1 encoding, so these vectors
+//                    differ from the ones on `main` by construction.
 //   * hash family  — the protocol commits with Poseidon2. Committing with
 //                    Rpo256 yields a valid-looking Word that is simply wrong
-//                    and only surfaces as an auth rejection at transaction
-//                    time. That was the bug these vectors exist to prevent.
+//                    and only surfaces as an auth rejection at transaction time.
 //
 // Vectors pin the public key rather than the RNG seed: seed -> key derivation
 // is version-dependent, key -> commitment is the thing under test.
@@ -228,48 +233,52 @@ test("evmPkToCommitment hashes compressed bytes with even/odd tagging", async ()
 
 const COMMITMENT_VECTORS = [
   {
-    // y-parity tag 0x03
+    // y-parity tag 0x02
     uncompressed:
-      "0x04985ff69b8df24415caad235e80f919a010d6a52b5d86651bba4f460fcba4b3447d348e92a17ee5c42ebc213d1ed4b403f73a0726c0ac806cb8e4d25ccf50e839",
+      "0x0472629d0d7b4ba577b47a34ba093ff89329118a0e0758c0cf2bf301f3b130556f35d480a34dfbdcdaf47eb71d2433a0c2d11285f7351528151e81fe8cfdba8a48",
     felts: [
-      4133459971, 1156746651, 598592021, 435781726, 2782269600, 1703304491,
-      1179630107, 3013921551, 68,
+      2972734831, 737346035, 123257039, 689015310, 155187347, 3027907770,
+      2068555127, 1919065357, 4256860744, 511835788, 890578965, 3507652087,
+      607363266, 4101945117, 1308351706, 903119011,
     ],
     commitment:
-      "0xc063b413e4013c64374ddd78133bfb033996b968543f0ed58ac2c77c4da33c90",
+      "0xae4ccb80c2ae474eb5d1165e4d32c0779c2f77cdb793df239efc4026b6b904c6",
   },
   {
     // y-parity tag 0x03
     uncompressed:
-      "0x041669edc8c22bde908c19adb63ec95d0e7a9db0219634c0d52b50325d62abeb9ff1d66f40c8c80bde08adbb02d50b1d61a31273c224d295367e97f29012a1a0ed",
+      "0x0420c9a32288e1624a28c120f0a730e9ce29f1c4c864db928763b1c4f089454972a7db6049c8e00874ae3258f73cb37a8accf79ea15c8cebee4dd17624f51ab353",
     felts: [
-      3983087107, 3727409864, 2904132752, 1573469878, 2963110414, 3224671777,
-      844114901, 3953877597, 159,
+      2303019378, 1672594672, 1692111495, 703710408, 2805000654, 683745520,
+      2296472138, 550085410, 4112167763, 1305572900, 1552739310, 3438780065,
+      1018395274, 2922535159, 3370125428, 2816172105,
     ],
     commitment:
-      "0x2ef46fd60857c0eb63d067d8b6d33856b8ee9fd388879af5b9bb03e48fd6f191",
+      "0x205560170f28e96d800b8d39fc2a91fe9153f880ca0347715a7f1d23822dea3a",
+  },
+  {
+    // y-parity tag 0x03
+    uncompressed:
+      "0x046d5c9138a34bc27fdedb102c504072336d28e3e44120ece60118e01ba41a45b5828081d6a9cb2876cee6120f92cff508efc3f67f5ac41d9900bba8c434c252c3",
+    felts: [
+      2753185205, 18407451, 1092676838, 1831396324, 1346400819, 3738898476,
+      2739651199, 1834783032, 885150403, 12298436, 1522802073, 4022597247,
+      2463102216, 3471184399, 2848663670, 2189459926,
+    ],
+    commitment:
+      "0xe35861910160e6c178c503f153c224b1cf2fff2f8a5851f00528f2e007750589",
   },
   {
     // y-parity tag 0x02
     uncompressed:
-      "0x04720e6952c52213f93130865938f38e6e0f9497d7ce653eee7b32883e0cf5f8e5c6d2bf8b04a2847788bacd2071f775b390c0efd3d25d8e51c54ee4fff35a852a",
+      "0x04761748840822b7eb5c93e7d86728f01a5846e06258cf14c9f5b314ede23858df69820dcd53494a6765c2643ea41e8a2225c5a7c5c982e0bd7b4c65af5f8ebab2",
     felts: [
-      1762554370, 321045842, 2251305465, 2398304345, 2543062894, 1046859479,
-      2285009902, 4176809022, 229,
+      3795343583, 4122154221, 1489966281, 1481039970, 1730736154, 1553197016,
+      136493035, 1981237380, 1603189426, 2068604335, 3380797629, 633710533,
+      2753464866, 1707238462, 1397312103, 1770130893,
     ],
     commitment:
-      "0x2074ddd9877ab64a5f15efc7161c86acccc762955d2fc7f846ac1e634fbd42e9",
-  },
-  {
-    // y-parity tag 0x02
-    uncompressed:
-      "0x04f63531e49db17b4d19d6e2cdf4ec386f1a3533aa4a8e48dd406e3f047dd40160f126566cc57b3b94883221f54f4427dae98d8c6f9e1f878d5087ba6d6bba8f32",
-    felts: [
-      825619970, 2075237860, 3805681997, 955053261, 859118191, 1217284778,
-      1064190173, 30702852, 96,
-    ],
-    commitment:
-      "0x8e4275e41ca20c833a89d1edf8ab12bb54b783ae63e3a557b594f753b6801d01",
+      "0xa61503e9a2dcb5621d24e30df81280001c21513544f1008d75d39613ceb9db63",
   },
 ];
 
@@ -350,4 +359,54 @@ test("evmPkToCommitment hashes with Poseidon2 and never Rpo256", async () => {
       "commitments must not be hashed with Rpo256 — the protocol commits with Poseidon2"
     );
   }
+});
+
+const makeTxSummary = ({ outputAssets }) => ({
+  inputNotes: () => ({ notes: () => [] }),
+  outputNotes: () => ({
+    notes: () => [
+      {
+        id: () => ({ toString: () => "0xoutputnote" }),
+        assets: () => outputAssets,
+        metadata: () => ({ noteType: () => 1 }),
+      },
+    ],
+  }),
+});
+
+test("txSummaryToJson reports the assets an output note carries", () => {
+  const { txSummaryToJson } = loadUtils();
+
+  const summary = txSummaryToJson(
+    makeTxSummary({
+      outputAssets: {
+        fungibleAssets: () => [
+          {
+            faucetId: () => ({ toString: () => "0xfaucet" }),
+            amount: () => ({ toString: () => "42" }),
+          },
+        ],
+      },
+    })
+  );
+
+  assert.deepEqual(summary.outputNotes, [
+    {
+      id: "0xoutputnote",
+      assets: [{ assetId: "0xfaucet", amount: "42" }],
+      noteType: "public",
+    },
+  ]);
+});
+
+test("txSummaryToJson refuses to report unknown output assets as none", () => {
+  const { txSummaryToJson } = loadUtils();
+
+  // The signing-confirmation modal renders an empty asset list as "None", so an
+  // absent NoteAssets must abort the summary rather than become `assets: []` —
+  // otherwise a user is asked to approve a transaction whose assets are unknown.
+  assert.throws(
+    () => txSummaryToJson(makeTxSummary({ outputAssets: undefined })),
+    /carries no asset data/
+  );
 });

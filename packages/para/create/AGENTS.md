@@ -20,7 +20,7 @@
 
 ## Build & Publish
 - No build step needed; published assets are the CLI, template config, and docs listed in `files`.
-- Publish from this folder: `npm publish --access public`. Local dry-run: `node ../create/bin/create-miden-para-react.mjs <dir>`.
+- Publish from this folder: `npm publish --access public`. Local dry-run: `node ./packages/create-miden-para-react/bin/create-miden-para-react.mjs <dir>`.
 
 ## Agent Playbooks
 - **Config updates**: edit `template/vite.config.ts` to track Para/Miden bundling rules or polyfill needs; keep it minimal and framework-agnostic.

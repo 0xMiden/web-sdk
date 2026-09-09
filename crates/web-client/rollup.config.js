@@ -3,6 +3,7 @@ import resolve from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
 import copy from "rollup-plugin-copy";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // `wasm-bindgen-rayon`'s `workerHelpers.js` lives at
 //   <out-dir>/snippets/wasm-bindgen-rayon-XXX/src/workerHelpers.js
@@ -162,7 +163,7 @@ const isMt = variant === "mt";
 
 // Toolchain selection. The MT path needs the project-pinned nightly:
 //   - `cfg(target_feature = "atomics")` only flips true on nightly. Stable
-//     1.93 silently emits the +atomics bit but the cfg() check still says
+//     1.96.1 silently emits the +atomics bit but the cfg() check still says
 //     false, so wasm-bindgen-rayon's compile_error! gate fires.
 //   - `-Z build-std` (in mtOnlyCargoArgs below) is nightly-only.
 // MT inherits the date-pinned nightly from rust-toolchain.toml — we leave
@@ -233,6 +234,11 @@ const mtTargetRustflags = [
   "link-arg=--export=__tls_align",
   "-C",
   "link-arg=--export=__tls_base",
+  // rust-lang/rust#156174 (nightly-2026-05-06) removed the implicit __heap_base export, and
+  // wasm-bindgen's threading transform needs it to inject the thread id. Backward-compatible
+  // with older nightlies, so it is safe to carry regardless of the pinned toolchain.
+  "-C",
+  "link-arg=--export=__heap_base",
   "-C",
   "link-arg=--max-memory=4294967296",
   "-C",
@@ -256,6 +262,18 @@ const devMode = process.env.MIDEN_WEB_DEV === "true";
 // without this flag so the canonical artifact is always exercised before
 // release.
 const fastBuild = process.env.MIDEN_FAST_BUILD === "true";
+
+// Production builds strip MASP debug_info sections (~8.5MB of rodata; see
+// tools/strip-masp-debug) via a WASM_OPT_BIN shim, letting the same
+// wasm-opt pass drop the zeroed bytes. Dev/fast builds keep the debug info
+// so VM errors carry assert.err messages and source spans. A pre-existing
+// WASM_OPT_BIN (e.g. CI's native binaryen) is saved for the shim to use.
+if (!devMode && !fastBuild) {
+  process.env.MIDEN_REAL_WASM_OPT = process.env.WASM_OPT_BIN || "wasm-opt";
+  process.env.WASM_OPT_BIN = fileURLToPath(
+    new URL("./scripts/wasm-opt-with-masp-strip.sh", import.meta.url)
+  );
+}
 
 // Arguments to tell cargo to add full debug symbols
 // to the generated .wasm file (dev mode only).
@@ -299,6 +317,15 @@ const wasmOptArgs = [
   "--enable-simd",
   // Preserve the name section through optimization passes.
   "--debuginfo",
+  // Let memory-packing drop zero runs even from the MT build's imported
+  // shared memory, which binaryen won't otherwise assume starts zeroed.
+  // Safe for the SDK's init paths: the primary MT instance creates fresh
+  // spec-zeroed memory; Rayon workers reuse that memory only after its data
+  // segments were initialized, and code never writes to the omitted static
+  // zero ranges. Do not add a public init path for arbitrary pre-populated
+  // memory without revisiting this assumption. Without this flag the MT
+  // binary keeps ~8MB of zeroed-out MASP debug bytes.
+  "--zero-filled-memory",
 ];
 
 // MT-only cargo args. For the MT build we additionally need:

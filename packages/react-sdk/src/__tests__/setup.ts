@@ -11,6 +11,17 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     free: vi.fn(),
   });
 
+  // Local copy of `assertIsRequest` from `__tests__/mocks/miden-sdk.ts`: this is
+  // a hoisted `vi.mock` factory, so it cannot reach module-scope imports.
+  const assertIsRequest = (request: unknown, method: string) => {
+    if (request && typeof (request as { then?: unknown }).then === "function") {
+      throw new Error(
+        `${method}: expected instance of TransactionRequest, got a Promise — ` +
+          `the request constructor's result was not awaited`
+      );
+    }
+  };
+
   const mockClient = {
     getAccounts: vi.fn().mockResolvedValue([]),
     getAccount: vi.fn().mockResolvedValue(null),
@@ -31,15 +42,36 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         })),
       },
     ]),
-    newMintTransactionRequest: vi.fn().mockReturnValue({}),
-    newSendTransactionRequest: vi.fn().mockReturnValue({}),
-    newB2AggTransactionRequest: vi.fn().mockReturnValue({}),
-    newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
-    newSwapTransactionRequest: vi.fn().mockReturnValue({}),
-    submitNewTransaction: vi
-      .fn()
-      .mockResolvedValue({ toHex: vi.fn(() => "0xtx") }),
-    executeTransaction: vi.fn().mockResolvedValue({}),
+    // These are all `async fn` in Rust, so the mocks resolve rather than
+    // return — a hook that drops an `await` must fail here.
+    newMintTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSendTransactionRequest: vi.fn().mockResolvedValue({}),
+    newB2AggTransactionRequest: vi.fn().mockResolvedValue({}),
+    newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSwapTransactionRequest: vi.fn().mockResolvedValue({}),
+    feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
+      const builder = {
+        withOwnOutputNotes: vi.fn(() => builder),
+        withInputNotes: vi.fn(() => builder),
+        withCustomScript: vi.fn(() => builder),
+        build: vi.fn(() => ({})),
+      };
+      return builder;
+    }),
+    // These reject a thenable for the same reason the shared mock does: a
+    // request constructor whose `await` was dropped must fail here rather than
+    // sail through as an opaque argument. See `assertIsRequest` in
+    // `__tests__/mocks/miden-sdk.ts`.
+    submitNewTransaction: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "submitNewTransaction");
+        return { toHex: vi.fn(() => "0xtx") };
+      }
+    ),
+    executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
+      assertIsRequest(request, "executeTransaction");
+      return {};
+    }),
     proveTransaction: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
