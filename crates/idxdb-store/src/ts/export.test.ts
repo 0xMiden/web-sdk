@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
-import { openDatabase, getDatabase } from "./schema.js";
+import { openDatabase, getDatabase, SETTING_SCOPE_USER } from "./schema.js";
 import { exportStore, transformForExport } from "./export.js";
 import { uint8ArrayToBase64 } from "./utils.js";
 
@@ -207,6 +207,7 @@ describe("exportStore", () => {
     });
 
     await db.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "test-key",
       value: new Uint8Array([3, 4]),
     });
@@ -221,7 +222,6 @@ describe("exportStore", () => {
       data: uint8ArrayToBase64(new Uint8Array([1, 2])),
     });
 
-    // settings has the initial clientVersion row + our test-key
     const settingsKeys = parsed.settings.map((s: any) => s.key);
     expect(settingsKeys).toContain("test-key");
   });

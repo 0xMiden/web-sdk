@@ -29,22 +29,31 @@ same summary.
 submitting anything.
 
 ```tsx
-import { useChainAnchor, usePreview } from "@miden-sdk/react";
+import { useChainAnchor, useMiden, usePreview } from "@miden-sdk/react";
 
 function ProposeButton({ multisigId, buildRequest }) {
-  const { captureAnchor, anchoredRequest, isCapturing } = useChainAnchor();
+  const { client } = useMiden();
+  const { captureAnchor, isCapturing } = useChainAnchor();
   const { preview, isPreviewing } = usePreview();
 
   const propose = async () => {
-    const anchor = await captureAnchor({ request: buildRequest });
-    // `anchoredRequest`, not `buildRequest`: see the note below.
+    // Resolve the factory here, once, and pass that one object to both calls.
+    // Don't reach for `anchoredRequest` in this handler: it is state, so it
+    // still holds the previous value — `null` on a first capture. See below.
+    const request = await buildRequest(client);
+    const anchor = await captureAnchor({ request });
     const summary = await preview({
       accountId: multisigId,
-      request: anchoredRequest,
+      request,
       anchor,
     });
 
+    // Ship the request too: a co-signer must re-derive from these exact
+    // bytes. A multisig request's fee conversion info carries a salt drawn
+    // fresh on every build, and the auth procedure uses it as the summary's
+    // replay guard, so a locally rebuilt request yields a different summary.
     await shipToCosigners({
+      request: request.serialize(),
       anchor: anchor.serialize(),
       summary: summary.serialize(),
     });
@@ -57,6 +66,40 @@ function ProposeButton({ multisigId, buildRequest }) {
   );
 }
 ```
+
+## Building the request: paying the fee
+
+These three hooks take the request from you, so paying the verification fee is
+yours too. Since protocol 0.16 the fee is paid inside the account's auth
+procedure, which reads the asset and rate out of the transaction's auth
+argument. Fees always settle in the chain's native fee asset at rate 1/1 and
+miden-client commits that itself — but it will not invent the SALT the
+commitment is computed under, because a multisig reuses that salt as its
+transaction summary's replay guard. A multisig request that declares none fails
+with `FeeConversionInfoRequired`, so this applies squarely to the flow on this
+page.
+
+Ask the client for a builder that already declares one:
+
+```tsx
+import { AccountId } from "@miden-sdk/miden-sdk";
+
+const buildRequest = async (client) =>
+  (await client.feeAwareTransactionRequestBuilder(AccountId.fromHex(multisigId)))
+    .withCustomScript(script)
+    .build();
+```
+
+The argument is the account that **executes** the request — the multisig here,
+not a recipient. On a zero-fee chain the builder comes back untouched, so this is
+a safe drop-in. Requests produced by the `new*TransactionRequest` constructors
+already declare a salt and need nothing extra.
+
+Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`
+occupy the same slot and each setter clears the other, so a request cannot carry
+both — call whichever you actually want last. And because the salt is drawn per
+build, the warning below about resolving a factory exactly once applies here too
+— capture the anchor, then preview and execute against `anchoredRequest`.
 
 ## Verifying and co-signing
 
@@ -133,12 +176,22 @@ function ExecuteButton({ multisigId, request, anchor }) {
 
 :::warning Preview and execute against `anchoredRequest`
 
-A factory resolves to a new `TransactionRequest` on every call, and any builder
-that creates an output note draws a fresh serial number from the client's RNG.
-Passing the factory on to `preview` or `execute` therefore builds a *different*
-transaction from the one the anchor pins — the summary your co-signers verified
-would not match the one submitted, and their signatures would not apply. Reuse
-`anchoredRequest`, or capture from a concrete `TransactionRequest` you hold.
+A factory resolves to a new `TransactionRequest` on every call, and two things
+draw from the client's RNG as it does: any builder that creates an output note
+draws a fresh serial number, and on a fee-charging chain the fee conversion
+info's salt is drawn per build. The second applies to every request, including
+custom-script ones with no output notes. Passing the factory on to `preview` or
+`execute` therefore builds a *different* transaction from the one the anchor pins
+— the summary your co-signers verified would not match the one submitted, and
+their signatures would not apply. Every call that touches the transaction has to
+receive the same object.
+
+Which object depends on when you need it. Inside the handler that captured, use
+the one you resolved yourself, as the example above does: `anchoredRequest` is
+React state, so during that handler it still holds the previous render's value —
+`null` the first time, and the previous request afterwards, which is the failure
+this warning is about. In a later render — showing the summary, then executing on
+a second click — `anchoredRequest` is the value to use, and is what it is for.
 
 :::
 

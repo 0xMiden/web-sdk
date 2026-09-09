@@ -1,0 +1,52 @@
+{
+  "name": "@miden-sdk/miden-wallet-adapter",
+  "version": "0.16.0",
+  "description": "Modular TypeScript wallet adapters and React components for Miden applications.",
+  "type": "module",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "Miden Contributors",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc && pnpm run copy-styles",
+    "clean": "rimraf dist/ node_modules/",
+    "copy-styles": "node -e \"const fs=require('node:fs');const src=require.resolve('@miden-sdk/miden-wallet-adapter-reactui/dist/styles.css');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync(src,'dist/styles.css');console.log('copy-styles: '+src+' -> dist/styles.css')\"",
+    "doc": "echo \"(no docs)\""
+  },
+  "dependencies": {
+    "@miden-sdk/miden-wallet-adapter-base": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-miden": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-react": "workspace:*",
+    "@miden-sdk/miden-wallet-adapter-reactui": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react-dom": "^19.0.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "peerDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/adapter/all"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
+}

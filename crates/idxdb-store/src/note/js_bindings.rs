@@ -82,14 +82,18 @@ extern "C" {
         consumer_account_id: Option<String>,
     ) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = getInputNoteByOffset)]
-    pub fn idxdb_get_input_note_by_offset(
+    // The cursor is passed field by field because `wasm_bindgen` cannot carry a client type
+    // across the boundary. All three are set together or all three are absent.
+    #[wasm_bindgen(js_name = getInputNoteAfter)]
+    pub fn idxdb_get_input_note_after(
         db_id: &str,
         states: Vec<u8>,
         consumer_account_id: String,
         block_start: Option<u32>,
         block_end: Option<u32>,
-        offset: u32,
+        cursor_block_height: Option<u32>,
+        cursor_tx_order: Option<u32>,
+        cursor_details_commitment: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = upsertOutputNote)]

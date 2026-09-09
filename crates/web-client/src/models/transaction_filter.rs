@@ -27,12 +27,6 @@ impl TransactionFilter {
     pub fn uncommitted() -> TransactionFilter {
         TransactionFilter(NativeTransactionFilter::Uncommitted)
     }
-
-    /// Matches transactions that expired before the given block number.
-    #[js_export(js_name = "expiredBefore")]
-    pub fn expired_before(block_num: u32) -> TransactionFilter {
-        TransactionFilter(NativeTransactionFilter::ExpiredBefore(block_num.into()))
-    }
 }
 
 // CONVERSIONS

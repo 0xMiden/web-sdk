@@ -182,6 +182,9 @@ export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
 export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
   "AuthFalcon512RpoMultisigConfig"
 );
+export const AuthGuardedMultisigConfig = /* @__PURE__ */ _reexport(
+  "AuthGuardedMultisigConfig"
+);
 export const AuthSecretKey = /* @__PURE__ */ _reexport("AuthSecretKey");
 export const BasicFungibleFaucetComponent = /* @__PURE__ */ _reexport(
   "BasicFungibleFaucetComponent"
@@ -311,5 +314,8 @@ export const TransactionSummary =
 export const Word = /* @__PURE__ */ _reexport("Word");
 export const createAuthFalcon512RpoMultisig = /* @__PURE__ */ _reexport(
   "createAuthFalcon512RpoMultisig"
+);
+export const createAuthGuardedMultisig = /* @__PURE__ */ _reexport(
+  "createAuthGuardedMultisig"
 );
 // </generated:napi-reexports>

@@ -234,6 +234,11 @@ const mtTargetRustflags = [
   "link-arg=--export=__tls_align",
   "-C",
   "link-arg=--export=__tls_base",
+  // rust-lang/rust#156174 (nightly-2026-05-06) removed the implicit __heap_base export, and
+  // wasm-bindgen's threading transform needs it to inject the thread id. Backward-compatible
+  // with older nightlies, so it is safe to carry regardless of the pinned toolchain.
+  "-C",
+  "link-arg=--export=__heap_base",
   "-C",
   "link-arg=--max-memory=4294967296",
   "-C",

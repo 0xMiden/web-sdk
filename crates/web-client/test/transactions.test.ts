@@ -127,65 +127,6 @@ test.describe("get_transactions tests", () => {
     expect(result.filteredLength).toEqual(1);
     expect(result.filteredTransactionIds).toContain(result.firstTxIdHex);
   });
-
-  test("get_transactions filters expired transactions successfully", async ({
-    run,
-  }) => {
-    const result = await run(async ({ client, sdk, helpers }) => {
-      const { wallet, faucet } = await helpers.setupWalletAndFaucet();
-
-      const { transactionId: committedTransactionId } = await helpers.mockMint(
-        wallet.id(),
-        faucet.id()
-      );
-
-      const { transactionId: uncommittedTransactionId } =
-        await helpers.mockMint(wallet.id(), faucet.id(), { skipSync: true });
-
-      const allTransactions = await client.getTransactions(
-        sdk.TransactionFilter.all()
-      );
-      const allTransactionIds = allTransactions.map((tx) => tx.id().toHex());
-      // Use the committed transaction's blockNum (the one with blockNum > 0)
-      const committedTx = allTransactions.find((tx) => tx.blockNum() > 0);
-      const currentBlockNum = committedTx.blockNum();
-
-      const futureBlockNum = currentBlockNum + 10;
-      const futureExpiredTransactions = await client.getTransactions(
-        sdk.TransactionFilter.expiredBefore(futureBlockNum)
-      );
-      const futureExpiredTransactionIds = futureExpiredTransactions.map((tx) =>
-        tx.id().toHex()
-      );
-
-      // Ensure pastBlockNum doesn't go negative — on mock chain, block numbers
-      // start low (e.g. 1) and negative values overflow to large unsigned ints.
-      const pastBlockNum = Math.max(0, currentBlockNum - 10);
-      const pastExpiredTransactions = await client.getTransactions(
-        sdk.TransactionFilter.expiredBefore(pastBlockNum)
-      );
-      const pastExpiredTransactionIds = pastExpiredTransactions.map((tx) =>
-        tx.id().toHex()
-      );
-
-      return {
-        futureExpiredTransactionIds,
-        pastExpiredTransactionIds,
-        allTransactionIds,
-        committedTransactionId,
-        uncommittedTransactionId,
-      };
-    });
-
-    expect(result.futureExpiredTransactionIds.length).toEqual(1);
-    expect(result.futureExpiredTransactionIds).toContain(
-      result.uncommittedTransactionId
-    );
-    expect(result.pastExpiredTransactionIds.length).toEqual(0);
-    expect(result.allTransactionIds.length).toEqual(2);
-    expect(result.allTransactionIds).toContain(result.committedTransactionId);
-    expect(result.allTransactionIds).toContain(result.uncommittedTransactionId);
-  });
 });
 
 // COMPILE_TX_SCRIPT TESTS

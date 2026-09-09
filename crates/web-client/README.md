@@ -519,6 +519,25 @@ Nothing is persisted until `apply` runs — stopping after `submit()` leaves the
 
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+### Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, paid from inside the account's auth procedure rather than by the kernel. `fee::pay_fee` reads the asset and rate out of the transaction's auth argument, which has to be `hash(CONVERSION_INFO || SALT)` with the preimage in the advice map; a procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+Fees always settle in the chain's own fee asset at rate 1/1, so there is no conversion info to choose — miden-client builds it and commits it for you while preparing the transaction. The one thing it will not invent is the **salt** the commitment is computed under, because every multisig flavour reuses that salt as its transaction summary's replay guard. So single-sig, no-auth and network accounts need nothing at any base fee (the client commits under a fixed default salt, fixed so a signed summary stays reproducible), while a multisig that declares none fails with `FeeConversionInfoRequired` naming the component. A custom auth procedure that reads conversion info is not recognised, gets nothing committed, and hits the VM abort.
+
+Every `new*TransactionRequest` constructor declares a salt where the executing account needs one, and so does every `client.transactions` operation that builds its own request, so the common cases need no changes. The operations that take a finished request from you — `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview` — never do. When you assemble a request from a builder for a multisig, get one that already declares it:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for any account that does not choose its own salt, the builder comes back untouched.
+
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — call `builder.withFeeConversionSalt(salt)`. It is a declaration rather than a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so whichever is called last wins rather than erroring. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+
+One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
+
 ### Chain-Anchored Execution
 
 Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
@@ -526,9 +545,13 @@ Transactions execute against the client's current sync height by default. Since 
 A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
 
 ```typescript
-import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
 
-// Proposer: capture, derive the summary at the anchor, ship both.
+// Proposer: capture, derive the summary at the anchor, ship all three.
 const anchor = await client.transactions.captureAnchor(request);
 const summary = await client.transactions.preview({
   operation: "custom",
@@ -536,15 +559,25 @@ const summary = await client.transactions.preview({
   request,
   anchor,
 });
-await shipToCosigners(anchor.serialize(), summary.serialize());
+await shipToCosigners(
+  request.serialize(),
+  anchor.serialize(),
+  summary.serialize()
+);
 
 // Co-signer: re-derive at the proposer's anchor and compare before signing.
+// Re-derive from the proposer's request bytes, never from a locally rebuilt
+// request — a multisig request's fee conversion info carries a salt drawn fresh
+// on every build, and the auth procedure uses it as the summary's replay guard,
+// so a rebuilt request yields a different summary and the check below fails as
+// if the proposal had been tampered with.
 const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
 const derived = await client.transactions.preview({
   operation: "custom",
   account: multisig,
-  request,
+  request: proposedRequest,
   anchor: received,
 });
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
@@ -681,6 +714,105 @@ client.terminate();
   // ... use client ...
 } // client.terminate() called automatically
 ```
+
+## Observability
+
+The client reports every operation it runs — name, outcome, how long it took — to a callback you register when you construct it:
+
+```typescript
+import { MidenClient, type MidenObservation } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: (o: MidenObservation) => {
+    console.log(o.op, o.outcome, Math.round(o.durationMs));
+  },
+});
+```
+
+`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, and `createDevnet` alike.
+
+**The SDK never transports an observation.** It hands the object to your callback and forgets about it. There is no telemetry dependency in `@miden-sdk/miden-sdk` — not a direct one, not a peer, not an optional one — and the module that delivers observations has no egress primitive in it and imports nothing at all. Both halves are enforced on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module rather than grepping it: it asserts the module reaches for no global object, builds no code at runtime, constructs nothing, and calls nothing but your observer. Where the observations go is entirely your decision, made in your code.
+
+If you'd rather not write that forwarding yourself, two opt-in binding packages do it for a vendor you already run — and they hand data to a client or tracer **you** construct and configure, so they are not a transport the SDK owns either:
+
+| Package | Turns observations into |
+|---|---|
+| [`@miden-sdk/telemetry-sentry`](../../packages/telemetry-sentry) | `captureMessage` calls on a Sentry client you own |
+| [`@miden-sdk/telemetry-otel`](../../packages/telemetry-otel) | spans on an OpenTelemetry tracer you own |
+
+Neither package depends on its vendor, not even as a peer — both are typed against the shape they call, so you keep control of the version, the configuration and the lifecycle.
+
+### What an observation contains
+
+```typescript
+interface MidenObservation {
+  op: string;                             // "syncState", "proveTransaction", …
+  outcome: "ok" | "error";
+  durationMs: number;                     // wall time the caller waited
+  sensitive?: MidenObservationSensitive;  // absent by default — see below
+}
+```
+
+`op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` runs execute → prove → submit → apply, so it reports `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as four separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
+
+`durationMs` is measured with `performance.now()` around the awaited call, so it is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+
+Two properties are worth relying on:
+
+- **Your observer cannot fail an operation.** It is invoked inside a `try`/`catch` that swallows everything it throws. A broken observer degrades to silence, never to a failed transaction.
+- **Your observer cannot slow an operation down or change its shape.** It is called synchronously, after the operation has already settled, on the path that was going to resolve or reject anyway. Nothing is queued, batched, or deferred. Keep the callback cheap — it runs on the caller's critical path.
+
+A mock client (`MidenClient.createMock()`) can neither register an observer nor enable the sensitive channel — `MockOptions` carries neither field, so nothing you pass to `createMock` reaches the sink. It is not silent, though: registration is process-wide (see below), so if a real client registered an observer earlier in the same process, a mock client's operations report to it as well. The three sync methods the mock overrides — `syncState`, `syncChain`, and `syncNoteTransport` — are the exception and emit nothing.
+
+### The sink is process-wide, and there is one of it
+
+Registration is global to the module, not scoped to the client instance. Constructing a second client with an `observer` **replaces** the first one's — both clients then report to the newest callback. If you need to fan out to more than one destination, do it inside your own callback.
+
+There is no public way to unregister: `observer` is a construction-time option, and passing a non-function (including `null`) leaves any previously registered observer in place rather than clearing it. Register the sink you want for the life of the process.
+
+### Sensitive detail — read this before enabling it
+
+By default, the `sensitive` key is **absent from the observation object entirely**. Not `undefined`, not an empty object — absent, so `"sensitive" in observation` is a truthful test of whether the channel is on, and a consumer can distinguish "not enabled" from "enabled but nothing to report".
+
+Passing `observeSensitive: true` at construction turns it on:
+
+```typescript
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observeSensitive: true, // discloses raw error text — read on before setting
+  observer: (o) => myErrorReporter(o),
+});
+```
+
+What that actually exposes:
+
+```typescript
+interface MidenObservationSensitive {
+  errorMessage?: string; // verbatim error message, exactly as thrown
+  errorStack?: string;   // verbatim stack trace
+  accountId?: string;    // declared; not currently populated by the SDK
+}
+```
+
+Be clear-eyed about what "verbatim" means. `errorMessage` is the untouched `error.message` coming out of the client and, below it, the Rust core — it is not classified, redacted, allow-listed, or truncated, and no filter stands between it and your observer. Whatever a failure happens to say about the account, note, or asset it was working on is what you receive, and error text is not a stable interface: a client upgrade can widen it without warning. `errorStack` is the untouched stack. Anything you would be uncomfortable seeing in your telemetry vendor's UI, in its search index, and in its retention window is something you should assume will end up there.
+
+The rest of the shape, so you can plan around it:
+
+- The channel is populated **only on failure**. A successful operation has no `sensitive` key even with the flag on, so this is not a way to see which accounts a user touched — only which ones produced errors.
+- `accountId` is declared in the type but the SDK does not currently populate it. Do not write code that depends on it being present; treat it as reserved. (The OTel binding already reads it defensively, so it will start working if a later version fills it in.)
+- The safe fields never carry any of this. `op` and `outcome` are drawn from a fixed vocabulary and `durationMs` is a number, so an observation with the channel off is fit to send anywhere.
+
+The flag is deliberately hard to switch on by accident:
+
+- **Only the literal boolean `true` enables it.** A truthy `"true"` from an environment variable, a query string, or a JSON round-trip reads as *off*. An ambiguous value is far likelier to be a wiring mistake than a decision to disclose user data, so it is read the safe way.
+- **It is sealed at construction.** The resolved value is written once with `Object.defineProperty` as non-writable and non-configurable, so no later assignment — by your code, by a plugin, or by ours — can turn disclosure on for a client that was built without it. Enabling it has to be a deliberate, greppable act at one call site.
+- **It is per-client, while the observer is global.** If you run one client with the flag and one without, observations from both arrive at the same callback and whether `sensitive` is present depends on which client ran that operation.
+- **Enabling it logs a console warning**, once per process.
+
+Leave it unset in any application with confidentiality obligations to its users. A wallet, for example, must never enable it.
+
+Both binding packages then require the disclosure a *second* time — `includeSensitive: true` — and drop the channel by default even when the SDK supplies it. Leaving either end alone is enough to keep it out of your vendor.
 
 ## License
 

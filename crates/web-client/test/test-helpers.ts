@@ -216,7 +216,10 @@ export async function mockConsume(
   if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
 
   const note = inputNoteRecord.toNote();
-  const consumeRequest = client.newConsumeTransactionRequest([note]);
+  const consumeRequest = await client.newConsumeTransactionRequest(
+    [note],
+    accountId
+  );
   const txId = await client.submitNewTransaction(accountId, consumeRequest);
   await client.proveBlock();
   await client.syncState();
@@ -359,7 +362,10 @@ export async function mockSwap(
   if (!swapNoteRecord) throw new Error(`Swap note ${swapNoteId} not found`);
 
   const swapNote = swapNoteRecord.toNote();
-  const consumeRequest1 = client.newConsumeTransactionRequest([swapNote]);
+  const consumeRequest1 = await client.newConsumeTransactionRequest(
+    [swapNote],
+    accountBId
+  );
   const consumeTxId1 = await client.submitNewTransaction(
     accountBId,
     consumeRequest1
@@ -383,7 +389,10 @@ export async function mockSwap(
     throw new Error(`Payback note ${paybackNoteId} not found`);
 
   const paybackNote = paybackNoteRecord.toNote();
-  const consumeRequest2 = client.newConsumeTransactionRequest([paybackNote]);
+  const consumeRequest2 = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    accountAId
+  );
   await client.submitNewTransaction(accountAId, consumeRequest2);
   await client.proveBlock();
   await client.syncState();
@@ -469,7 +478,7 @@ async function createAndFillPswapNote(
   // 2. Filler consumes (fills) the PSWAP note from its own vault.
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const consumeRequest = client.newPswapConsumeTransactionRequest(
+  const consumeRequest = await client.newPswapConsumeTransactionRequest(
     pswapNoteRecord.toNote(),
     fillerId,
     sdk.u64(fillAmount),
@@ -541,7 +550,10 @@ export async function mockPswapFullFill(
   const paybackNote = consumeOutputNotes[0].intoFull();
   if (!paybackNote)
     throw new Error("Payback note is not available in full form");
-  const paybackConsume = client.newConsumeTransactionRequest([paybackNote]);
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
   await client.submitNewTransaction(creatorId, paybackConsume);
   await client.proveBlock();
   await client.syncState();
@@ -622,7 +634,10 @@ export async function mockPswapPartialFill(
   const paybackNote = paybackOutputNote.intoFull();
   if (!paybackNote)
     throw new Error("Payback note is not available in full form");
-  const paybackConsume = client.newConsumeTransactionRequest([paybackNote]);
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
   await client.submitNewTransaction(creatorId, paybackConsume);
   await client.proveBlock();
   await client.syncState();
@@ -676,7 +691,7 @@ export async function mockPswapCancel(
 
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const cancelRequest = client.newPswapCancelTransactionRequest(
+  const cancelRequest = await client.newPswapCancelTransactionRequest(
     pswapNoteRecord.toNote(),
     creatorId
   );

@@ -176,6 +176,18 @@ describe("useSend", () => {
       expect(mockClient.submitNewTransaction).toHaveBeenCalled();
       expect(mockClient.executeTransaction).not.toHaveBeenCalled();
       expect(mockSync).toHaveBeenCalled();
+
+      // The returnNote path assembles its own request, so it must start from a
+      // fee-aware builder for the sender; a bare `TransactionRequestBuilder`
+      // aborts with ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+      expect(
+        mockClient.feeAwareTransactionRequestBuilder
+      ).toHaveBeenCalledTimes(1);
+      const [executingAccount] =
+        mockClient.feeAwareTransactionRequestBuilder.mock.calls[0];
+      expect((executingAccount as { toString(): string }).toString()).toBe(
+        "0xsender"
+      );
     });
 
     it("should handle different note types", async () => {
@@ -879,6 +891,25 @@ describe("useSend", () => {
       // executeTransaction called (not submitNewTransaction) — attachment path
       expect(mockClient.executeTransaction).toHaveBeenCalled();
       expect(result.current.stage).toBe("complete");
+
+      // The attachment path assembles its own request too, and the fee gate keys
+      // on the *executing* account. Passing the recipient here would classify
+      // the wrong account's auth component, so pin the sender explicitly.
+      expect(
+        mockClient.feeAwareTransactionRequestBuilder
+      ).toHaveBeenCalledTimes(1);
+      const [executingAccount] =
+        mockClient.feeAwareTransactionRequestBuilder.mock.calls[0];
+      expect((executingAccount as { toString(): string }).toString()).toBe(
+        "0x1"
+      );
+      expect((executingAccount as { toString(): string }).toString()).not.toBe(
+        "0x2"
+      );
+
+      // Same account executes, rather than a second allocation of it.
+      const [executedWith] = mockClient.executeTransaction.mock.calls[0];
+      expect(executedWith).toBe(executingAccount);
     });
 
     it("should send private note when fullNote is available (lines 279-291)", async () => {

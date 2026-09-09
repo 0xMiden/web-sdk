@@ -1,0 +1,68 @@
+{
+  "name": "@miden-sdk/turnkey",
+  "version": "0.16.0",
+  "type": "commonjs",
+  "description": "Miden Turnkey Integration SDK",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "build": "rm -rf dist && node scripts/build.mjs && pnpm run build:types",
+    "prepack": "pnpm build",
+    "build:types": "tsc --module es2020 --declarationDir dist/esm --emitDeclarationOnly --declaration && tsc --module commonjs --declarationDir dist/cjs --emitDeclarationOnly --declaration"
+  },
+  "keywords": [
+    "miden",
+    "turnkey",
+    "wallet",
+    "web3",
+    "blockchain"
+  ],
+  "author": "Miden Contributors",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/turnkey/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "esbuild": "^0.24.0",
+    "glob": "^11.0.0",
+    "react": "^19.2.0",
+    "react-test-renderer": "^19.2.0",
+    "typescript": "^5.9.3",
+    "@miden-sdk/miden-sdk": "workspace:*"
+  },
+  "dependencies": {
+    "@turnkey/core": "^1.8.2",
+    "@turnkey/http": "^3.15.0",
+    "@turnkey/sdk-browser": "^5.13.4"
+  },
+  "files": [
+    "dist"
+  ],
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk",
+  "peerDependencies": {
+    "@miden-sdk/miden-sdk": "^0.16.0"
+  }
+}

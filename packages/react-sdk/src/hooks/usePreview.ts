@@ -39,6 +39,19 @@ export interface UsePreviewResult {
  * and `code: "STALE_CLIENT"` if the client is swapped mid-call. Both originate
  * here and are always properties.
  *
+ * The request is yours, so paying protocol 0.16's verification fee is too.
+ * miden-client settles it in the chain's native fee asset at rate 1/1 and
+ * commits that itself, so an ordinary account needs nothing; a multisig reuses
+ * the fee conversion salt as its summary's replay guard, so miden-client will
+ * not invent one and the request rejects with `FeeConversionInfoRequired`.
+ * Build those from `client.feeAwareTransactionRequestBuilder(account)` rather
+ * than `new TransactionRequestBuilder()`.
+ *
+ * Preview the request you will submit, not a rebuild of it. That salt is drawn
+ * fresh on every build, and the multisig auth procedure uses the auth argument
+ * derived from it as the summary's replay guard — so a summary taken over one
+ * build does not authorize another.
+ *
  * Runs the transaction in the VM on the main thread — unlike
  * `useTransaction().execute`, this is not offloaded to the worker (matching the
  * client's unanchored `executeForSummary`), so it blocks the UI for the

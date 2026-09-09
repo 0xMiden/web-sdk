@@ -51,6 +51,8 @@ jobs:
       should_publish_vite: ${{ steps.check_vite.outputs.should_publish }}
       vite_version: ${{ steps.check_vite.outputs.current_version }}
       dist_tag: ${{ steps.event.outputs.dist_tag }}
+      adopted_plan: ${{ steps.plan_adopted.outputs.plan }}
+      adopted_count: ${{ steps.plan_adopted.outputs.count }}
       checkout_ref: ${{ steps.event.outputs.checkout_ref }}
     steps:
       - name: Resolve event-specific config
@@ -94,6 +96,23 @@ jobs:
         id: check_vite
         if: github.event_name == 'release'
         run: ./scripts/check-vite-plugin-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
+
+      # The packages adopted from the wallet-adapter / para / turnkey repos are
+      # gated from scripts/publish-manifest.json rather than one bespoke script
+      # each. Adding a package to that manifest is all a new package needs.
+      - name: Build publish plan for adopted packages
+        id: plan_adopted
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            PLAN=$(./scripts/publish-plan.sh plan release "$GITHUB_SHA")
+          else
+            PLAN=$(./scripts/publish-plan.sh plan pr "${{ github.event.pull_request.base.sha }}")
+          fi
+          echo "plan<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$PLAN" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "count=$(printf '%s' "$PLAN" | jq 'length')" >> "$GITHUB_OUTPUT"
+          printf '%s' "$PLAN" | jq -r '.[] | "will publish \(.name)@\(.version) (level \(.level))"'
 
   build-native-nodejs:
     needs: check-version
@@ -148,7 +167,8 @@ jobs:
       (
         needs.check-version.outputs.should_publish_web == 'true' ||
         needs.check-version.outputs.should_publish_react == 'true' ||
-        needs.check-version.outputs.should_publish_vite == 'true'
+        needs.check-version.outputs.should_publish_vite == 'true' ||
+        needs.check-version.outputs.adopted_count != '0'
       )
     # Must be a github-hosted runner — npm's provenance verifier rejects
     # attestations from "self-hosted" runners (Warp, etc.) with
@@ -213,9 +233,12 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain stable
 
       - name: Install binaryen (wasm-opt)
-        # The shared installer verifies the immutable digest recorded in the
-        # repository before extracting the native binary. WASM_OPT_BIN avoids
-        # resolving to the npm package's ~10x slower JS shim.
+        # The optimizer that produces the PUBLISHED bytes. The shared installer
+        # verifies the immutable digest recorded in the repository before
+        # extracting the native binary, so a release is reproducible, and
+        # WASM_OPT_BIN avoids resolving to the npm package's ~10x slower JS
+        # shim. Keep this in step with bench.yml: if the two disagree, the
+        # proving benchmark stops measuring the optimizer users actually ship.
         run: ./scripts/install-binaryen.sh
 
       # Single workspace install — used for web-client build (when needed),
@@ -309,6 +332,81 @@ jobs:
         if: needs.check-version.outputs.should_publish_vite == 'true'
         run: pnpm --filter @miden-sdk/vite-plugin publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
 
+      # ── Adopted packages (wallet-adapter / para / turnkey) ────────────
+      # Published in dependency-level order so a dependent never lands before
+      # the package it pins. The script counts what it attempted against the
+      # plan length, so a loop that publishes nothing cannot report success.
+
+      # Both dist/ directories the adopted packages compile against are
+      # gitignored, so on a fresh checkout they exist only if a step above
+      # produced them — and every step above is gated on *publishing*, not on
+      # *building*. On a retry of a partially published release (the v0.16.0-rc.5
+      # case) @miden-sdk/miden-sdk and @miden-sdk/react are already on npm, so
+      # should_publish_web and should_publish_react are both false, "Build
+      # web-client" and "Build react-sdk" are both skipped, and every adopted
+      # package that resolves either one's types dies with
+      # `TS2307: Cannot find module '@miden-sdk/miden-sdk'` — which is 9 of the
+      # 11 manifest packages. These two steps supply that build input. They are
+      # purely additive: neither changes any existing step's condition, and
+      # neither runs in a job that publishes the package it provisions.
+
+      - name: Ensure web-client dist exists (hydrate from npm)
+        # ONLY when the client is not being built from source. "Build web-client"
+        # above runs whenever web OR react publishes, and when should_publish_web
+        # is true that directory IS the artifact about to be published —
+        # hydrating over it would push npm's old bytes back to npm instead of the
+        # freshly built WASM. The conditions are mutually exclusive by
+        # construction, and hydrate-web-client.mjs refuses to overwrite a
+        # non-empty dist without --force as a second line of defence.
+        #
+        # The exact-version assertion matters because hydrate falls back to the
+        # newest published client when the tree's version is unpublished. In
+        # release mode `should_publish_web == false` already implies "this exact
+        # version is on npm" (check-web-client-version-release.sh is a registry
+        # probe). The `next`-channel path is weaker: check-web-client-version-pr.sh
+        # returns false whenever crates/web-client/package.json merely did not
+        # change in the PR, which is routinely true of an unreleased rc. Compiling
+        # the adopted packages against a silently different client version and
+        # then publishing them is worse than failing here.
+        if: >
+          needs.check-version.outputs.adopted_count != '0' &&
+          needs.check-version.outputs.should_publish_web != 'true' &&
+          needs.check-version.outputs.should_publish_react != 'true'
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r '.version' crates/web-client/package.json)
+          PUBLISHED=$(npm view "@miden-sdk/miden-sdk@${VERSION}" version 2>/dev/null || echo "")
+          if [ "$VERSION" != "$PUBLISHED" ]; then
+            echo "::error title=Cannot hydrate web-client::@miden-sdk/miden-sdk@${VERSION} is not on npm and is not being built in this run; refusing to compile the adopted packages against a different client version."
+            exit 1
+          fi
+          pnpm run hydrate:web-client
+
+      - name: Ensure react-sdk dist exists (build from source)
+        # `@miden-sdk/react` is a workspace dependency of the adapter/para/turnkey
+        # React packages and its `types` field points at dist/index.d.ts, so its
+        # dist has to exist before they can typecheck. Skipped when
+        # should_publish_react is true — "Build react-sdk" above already produced
+        # it. Built from source rather than hydrated: the ref being released is
+        # the source of the published tarball, there is no hydrate script for this
+        # package, and nothing here publishes it (the publish step above is gated
+        # on should_publish_react, which is false whenever this step runs).
+        #
+        # Ordering: this needs crates/web-client/dist, supplied either by "Build
+        # web-client" above (when should_publish_web is true) or by the hydrate
+        # step immediately above (when it is not).
+        if: >
+          needs.check-version.outputs.adopted_count != '0' &&
+          needs.check-version.outputs.should_publish_react != 'true'
+        run: pnpm --filter @miden-sdk/react run build
+
+      - name: Publish adopted packages
+        if: needs.check-version.outputs.adopted_count != '0'
+        run: |
+          ./scripts/publish-plan.sh publish \
+            '${{ needs.check-version.outputs.adopted_plan }}' \
+            "${{ needs.check-version.outputs.dist_tag }}"
+
       # ── Reporting ─────────────────────────────────────────────────────
 
       - name: Done (web-client)
@@ -344,7 +442,8 @@ jobs:
       needs.check-version.result == 'success' &&
       needs.check-version.outputs.should_publish_web != 'true' &&
       needs.check-version.outputs.should_publish_react != 'true' &&
-      needs.check-version.outputs.should_publish_vite != 'true'
+      needs.check-version.outputs.should_publish_vite != 'true' &&
+      needs.check-version.outputs.adopted_count == '0'
     runs-on: ubuntu-24.04
     steps:
       - name: Skipped publish (all packages)
