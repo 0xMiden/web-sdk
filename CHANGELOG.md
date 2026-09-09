@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][react] `useTransaction`'s `execute()` now reads the transaction ID and any private output notes off `txResult` before calling `applyTransaction`, instead of after. `useSend` and `useMultiSend` already do this and say why in their comments: `applyTransaction` is documented elsewhere in this package as a point past which `txResult`-derived WASM handles should not be relied on. `useTransaction` was the one hook still reading them afterward — `extractFullNotes` swallows its own failures and returns `[]`, so under that documented assumption a private-note send via `execute({ privateNoteTarget })` could silently deliver zero notes instead of surfacing an error. This aligns all three hooks on the same, already-established ordering. (web-sdk#TBD)
+* [FIX][react] `useTransaction`'s `execute()` now reads the transaction ID and any private output notes off `txResult` before calling `applyTransaction`, instead of after. `useSend` and `useMultiSend` already do this and say why in their comments: `applyTransaction` is documented elsewhere in this package as a point past which `txResult`-derived WASM handles should not be relied on. `useTransaction` was the one hook still reading them afterward — `extractFullNotes` swallows its own failures and returns `[]`, so under that documented assumption a private-note send via `execute({ privateNoteTarget })` could silently deliver zero notes instead of surfacing an error. This aligns all three hooks on the same, already-established ordering. (web-sdk#376)
 
 ## 0.16.0 (2026-09-07)
 
