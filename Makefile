@@ -12,23 +12,23 @@ WEB_CLIENT_DIR=crates/web-client
 
 .PHONY: clippy-wasm
 clippy-wasm: rust-client-ts-build ## Run Clippy for the WASM packages (web client and idxdb store)
-	cargo +nightly clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-	cargo +nightly clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
+	cargo clippy --package miden-client-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+	cargo clippy --package miden-idxdb-store --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 .PHONY: fix-wasm
 fix-wasm: ## Run Fix for the WASM packages (web client and idxdb store)
-	cargo +nightly fix --package miden-client-web --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
-	cargo +nightly fix --package miden-idxdb-store --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
+	cargo fix --package miden-client-web --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
+	cargo fix --package miden-idxdb-store --target wasm32-unknown-unknown --allow-staged --allow-dirty --all-targets
 
 .PHONY: format
 format: ## Run format using nightly toolchain
-	cargo +nightly fmt --all
+	cargo fmt --all
 	pnpm --silent exec prettier . --write --log-level silent
 	pnpm --silent exec eslint . --fix
 
 .PHONY: format-check
 format-check: ## Run format using nightly toolchain but only in check mode
-	cargo +nightly fmt --all --check
+	cargo fmt --all --check
 	pnpm --silent exec prettier . --check
 	pnpm --silent exec eslint .
 
@@ -223,8 +223,8 @@ build-wasm: rust-client-ts-build ## Build the WASM packages — ST variant (no a
 
 .PHONY: build-wasm-mt
 build-wasm-mt: rust-client-ts-build ## Build the WASM packages — MT variant (nightly + build-std + atomics)
-	# MT build: nightly cargo with `-Z build-std=std,panic_abort` to
-	# recompile std with `+atomics` enabled. Without build-std the
+	# MT build: the date-pinned nightly from rust-toolchain.toml with
+	# `-Z build-std=std,panic_abort` to recompile std with `+atomics` enabled. Without build-std the
 	# precompiled rust-std-wasm32 from rustup has atomics disabled and
 	# wasm-bindgen-rayon's `compile_error!` gate fires.
 	#
@@ -232,7 +232,7 @@ build-wasm-mt: rust-client-ts-build ## Build the WASM packages — MT variant (n
 	# passed via `--config target.wasm32-unknown-unknown.rustflags=[...]`
 	# so they only apply to this invocation. (See rollup.config.js for
 	# the canonical list — Makefile mirrors it for the sanity-check build.)
-	cargo +nightly build \
+	cargo build \
 		-Z build-std=std,panic_abort \
 		--package miden-client-web --package miden-idxdb-store \
 		--target wasm32-unknown-unknown --locked \

@@ -96,9 +96,9 @@ jobs:
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust with nightly clippy
         run: |
-          rustup update --no-self-update nightly
-          rustup target add --toolchain nightly wasm32-unknown-unknown
-          rustup +nightly component add clippy
+          # Materializes the date-pinned nightly from rust-toolchain.toml, with
+          # the clippy component and the wasm32 target it declares.
+          rustup show
       # `make clippy-wasm` depends on `rust-client-ts-build` which calls
       # `pnpm --filter web_store run build`. Need pnpm + populated install.
       - name: Install pnpm
@@ -150,8 +150,9 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install Rust with rustfmt
         run: |
-          rustup update --no-self-update nightly
-          rustup +nightly component add rustfmt
+          # Materializes the date-pinned nightly from rust-toolchain.toml, with
+          # the rustfmt component it declares.
+          rustup show
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
