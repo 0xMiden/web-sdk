@@ -168,18 +168,26 @@ export function useTransaction(): UseTransactionResult {
           client.submitProvenTransaction(provenTransaction, txResult)
         );
 
+        // Read the transaction ID and any private output notes off txResult
+        // BEFORE applyTransaction, mirroring useSend/useMultiSend: those hooks
+        // explicitly save txId (and the full private note) ahead of apply to
+        // avoid relying on txResult afterward. extractFullNotes swallows its
+        // own failures (returns []), so reading it post-apply would silently
+        // drop private-note delivery instead of surfacing an error.
+        const txId = txResult.id();
+        const fullNotes =
+          options.privateNoteTarget != null ? extractFullNotes(txResult) : [];
+
         // Step 4: Apply
         await runExclusiveSafe(() =>
           client.applyTransaction(txResult, submissionHeight)
         );
 
         // Deliver private notes if requested
-        const txId = txResult.id();
         if (options.privateNoteTarget != null) {
           await waitForTransactionCommit(client, runExclusiveSafe, txId);
 
           const targetAddress = parseAddress(options.privateNoteTarget);
-          const fullNotes = extractFullNotes(txResult);
           for (const note of fullNotes) {
             // Relay via the output-note convenience: it derives the recipient's
             // scan-start block from the note's expected height, so delivery is
