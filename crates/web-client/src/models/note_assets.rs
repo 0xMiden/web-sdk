@@ -3,6 +3,7 @@ use miden_client::asset::Asset as NativeAsset;
 use miden_client::note::NoteAssets as NativeNoteAssets;
 
 use super::fungible_asset::FungibleAsset;
+use crate::platform::{JsErr, from_str_err};
 
 /// An asset container for a note.
 ///
@@ -20,17 +21,21 @@ pub struct NoteAssets(NativeNoteAssets);
 impl NoteAssets {
     /// Creates a new asset list for a note.
     #[js_export(constructor)]
-    pub fn new(assets_array: Option<Vec<FungibleAsset>>) -> NoteAssets {
+    pub fn new(assets_array: Option<Vec<FungibleAsset>>) -> Result<NoteAssets, JsErr> {
         let assets = assets_array.unwrap_or_default();
         let native_assets: Vec<NativeAsset> = assets.into_iter().map(Into::into).collect();
-        NoteAssets(NativeNoteAssets::new(native_assets).unwrap())
+        NativeNoteAssets::new(native_assets)
+            .map(NoteAssets)
+            .map_err(|err| from_str_err(&format!("Failed to create NoteAssets: {err}")))
     }
 
     /// Adds a fungible asset to the collection.
-    pub fn push(&mut self, asset: &FungibleAsset) {
+    pub fn push(&mut self, asset: &FungibleAsset) -> Result<(), JsErr> {
         let mut assets: Vec<miden_client::asset::Asset> = self.0.iter().copied().collect();
         assets.push(asset.into());
-        self.0 = NativeNoteAssets::new(assets).unwrap();
+        self.0 = NativeNoteAssets::new(assets)
+            .map_err(|err| from_str_err(&format!("Failed to update NoteAssets: {err}")))?;
+        Ok(())
     }
 
     /// Returns all fungible assets contained in the note.
