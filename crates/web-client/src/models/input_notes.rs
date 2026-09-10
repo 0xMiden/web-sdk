@@ -3,6 +3,7 @@ use miden_client::transaction::{InputNote as NativeInputNote, InputNotes as Nati
 
 use super::input_note::InputNote;
 use super::word::Word;
+use crate::platform::{JsErr, from_str_err};
 
 /// Input notes for a transaction, empty if the transaction does not consume notes.
 #[derive(Clone)]
@@ -30,8 +31,16 @@ impl InputNotes {
 
     /// Returns the input note at the specified index.
     #[js_export(js_name = "getNote")]
-    pub fn get_note(&self, index: u8) -> InputNote {
-        self.0.get_note(index as usize).into()
+    pub fn get_note(&self, index: u8) -> Result<InputNote, JsErr> {
+        let index = index as usize;
+        let length = self.0.num_notes();
+        if index >= length {
+            return Err(from_str_err(&format!(
+                "InputNotes index out of bounds: tried to access index {index} with length {length}"
+            )));
+        }
+
+        Ok(self.0.get_note(index).into())
     }
 
     /// Returns all input notes as a vector.
