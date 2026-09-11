@@ -78,18 +78,7 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
-    /// Adds input notes whose consumption mode is pinned by the caller, with optional arguments.
-    ///
-    /// Each note is consumed in the mode it carries: one built with `InputNote.authenticated` is
-    /// consumed with its proof, one built with `InputNote.unauthenticated` is consumed as
-    /// unauthenticated even if the executing client's store holds a proof for it. `withInputNotes`
-    /// instead leaves the executing client to infer the mode from its own store, so two clients
-    /// can produce different transaction summaries for the same request. Use this for a request
-    /// that is shared across clients.
-    ///
-    /// To consume an authenticated note the executing client must be able to serve the header of
-    /// the note's creation block, from its store or from the chain anchor the request executes
-    /// against.
+    /// Adds input notes with optional arguments, each consumed in the mode its `InputNote` carries.
     #[js_export(js_name = "withExplicitInputNotes")]
     pub fn with_explicit_input_notes(&mut self, notes: InputNoteAndArgsArray) -> Self {
         let items: Vec<InputNoteAndArgs> = notes.into();

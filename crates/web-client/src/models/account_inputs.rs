@@ -6,10 +6,6 @@ use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// State and inclusion witness of a foreign account, fetched at a specific block.
-///
-/// Produced by `WebClient.getForeignAccountInputs` and consumed by `ForeignAccount.prefetched`.
-/// The witness opens against the account tree of exactly one block, so inputs fetched at block `N`
-/// are only valid for a transaction whose reference block is `N`.
 #[derive(Clone)]
 #[js_export]
 pub struct AccountInputs(NativeAccountInputs);
@@ -23,9 +19,6 @@ impl AccountInputs {
     }
 
     /// Serializes the account inputs into bytes.
-    ///
-    /// Use this to transport prefetched state to another client, which restores it with
-    /// `deserialize` and declares it through `ForeignAccount.prefetched`.
     pub fn serialize(&self) -> JsBytes {
         serialize_to_bytes(&self.0)
     }

@@ -696,20 +696,7 @@ impl WebClient {
         Ok(felt_vec.into())
     }
 
-    /// Fetches the state and inclusion witness of each given foreign account, anchored at
-    /// `blockNum`.
-    ///
-    /// A `ForeignAccount.public` entry is fetched from the network, a `ForeignAccount.private`
-    /// entry contributes its own state and only its inclusion proof is fetched, and a
-    /// `ForeignAccount.prefetched` entry is returned as it was given.
-    ///
-    /// Each witness opens against the account tree of `blockNum` alone, so the results are valid
-    /// only for a transaction whose reference block is exactly `blockNum` — the anchor's block
-    /// under `executeTransactionAt`, or the sync height at execution time otherwise. Do not sync
-    /// between fetching these and executing, or execution fails naming the account and the block.
-    ///
-    /// Only the given accounts are fetched. This does not discover the accounts a transaction
-    /// loads, such as faucets whose asset callbacks it triggers.
+    /// Fetches the state and inclusion witness of each foreign account, anchored at `block_num`.
     #[js_export(js_name = "getForeignAccountInputs")]
     pub async fn get_foreign_account_inputs(
         &self,

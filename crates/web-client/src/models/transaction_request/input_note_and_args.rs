@@ -16,9 +16,6 @@ pub struct InputNoteAndArgs {
 #[js_export]
 impl InputNoteAndArgs {
     /// Creates a new input note/args pair for transaction building.
-    ///
-    /// Build the note with `InputNote.authenticated` or `InputNote.unauthenticated` — that choice
-    /// is what pins the consumption mode.
     #[js_export(constructor)]
     pub fn new(note: &InputNote, args: Option<NoteArgs>) -> InputNoteAndArgs {
         InputNoteAndArgs { note: note.clone(), args }

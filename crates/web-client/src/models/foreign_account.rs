@@ -29,9 +29,6 @@ impl ForeignAccount {
     }
 
     /// Creates a foreign account entry for a private account, whose state the caller supplies.
-    ///
-    /// Only a proof of the account's inclusion is fetched at execution time. The account must be
-    /// private; a public account is rejected — use `public` for those.
     pub fn private(account: &Account) -> Result<ForeignAccount, JsErr> {
         let native_account: NativeAccount = account.into();
         let native_foreign_account = NativeForeignAccount::private(&native_account)
@@ -40,15 +37,8 @@ impl ForeignAccount {
         Ok(ForeignAccount(native_foreign_account))
     }
 
-    /// Creates a foreign account entry from inputs the caller already holds, so nothing is fetched
-    /// for the account at execution time.
-    ///
-    /// Get the inputs from `WebClient.getForeignAccountInputs`. They are pinned to the block they
-    /// were fetched at: the transaction that uses them must have that block as its reference
-    /// block, or execution fails. See `getForeignAccountInputs` for the full constraint.
-    ///
-    /// Storage map keys and vault assets absent from the inputs are still resolved lazily during
-    /// execution.
+    /// Creates a foreign account entry from already fetched inputs, valid only for a transaction
+    /// whose reference block is the block they were fetched at.
     pub fn prefetched(inputs: &AccountInputs) -> ForeignAccount {
         ForeignAccount(NativeForeignAccount::Prefetched(inputs.into()))
     }
