@@ -41,9 +41,9 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.16.0",
-    "@miden-sdk/turnkey": "^0.16.0",
-    "@miden-sdk/react": "^0.16.0",
+    "@miden-sdk/miden-sdk": "^0.16.1",
+    "@miden-sdk/turnkey": "^0.16.1",
+    "@miden-sdk/react": "^0.16.1",
     "@turnkey/core": "^1.8.2",
     "@turnkey/react-wallet-kit": "^1.6.2",
     "@turnkey/sdk-browser": "^5.13.4",

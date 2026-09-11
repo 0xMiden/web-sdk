@@ -1321,6 +1321,9 @@ describe("TransactionsResource", () => {
         "waitFor",
         // Receives the request directly and has no options bag.
         "captureAnchor",
+        // Takes its reference block as a positional argument, and fetches
+        // rather than executes, so there is no options bag and no tip.
+        "foreignAccountInputs",
       ]);
       const { declared, guarded } = analyzeResource(source);
 

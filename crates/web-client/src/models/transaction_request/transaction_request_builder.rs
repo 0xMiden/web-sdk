@@ -8,6 +8,7 @@ use miden_client::note::{
 };
 use miden_client::transaction::{
     ForeignAccount as NativeForeignAccount,
+    InputNote as NativeInputNote,
     NoteArgs as NativeNoteArgs,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionScript as NativeTransactionScript,
@@ -19,6 +20,7 @@ use crate::models::advice_map::AdviceMap;
 use crate::models::foreign_account::ForeignAccount;
 use crate::models::miden_arrays::{
     ForeignAccountArray,
+    InputNoteAndArgsArray,
     NoteAndArgsArray,
     NoteArray,
     NoteDetailsAndTagArray,
@@ -26,6 +28,7 @@ use crate::models::miden_arrays::{
 };
 use crate::models::note_recipient::NoteRecipient;
 use crate::models::transaction_request::TransactionRequest;
+use crate::models::transaction_request::input_note_and_args::InputNoteAndArgs;
 use crate::models::transaction_request::note_and_args::NoteAndArgs;
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::models::transaction_script::TransactionScript;
@@ -72,6 +75,16 @@ impl TransactionRequestBuilder {
         let native_note_and_note_args: Vec<(NativeNote, Option<NativeNoteArgs>)> =
             items.into_iter().map(Into::into).collect();
         self.builder = self.builder.clone().input_notes(native_note_and_note_args);
+        self.clone()
+    }
+
+    /// Adds input notes with optional arguments, each consumed in the mode its `InputNote` carries.
+    #[js_export(js_name = "withExplicitInputNotes")]
+    pub fn with_explicit_input_notes(&mut self, notes: InputNoteAndArgsArray) -> Self {
+        let items: Vec<InputNoteAndArgs> = notes.into();
+        let native_note_and_note_args: Vec<(NativeInputNote, Option<NativeNoteArgs>)> =
+            items.into_iter().map(Into::into).collect();
+        self.builder = self.builder.clone().explicit_input_notes(native_note_and_note_args);
         self.clone()
     }
 

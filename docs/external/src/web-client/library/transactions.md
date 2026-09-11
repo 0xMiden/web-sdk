@@ -162,6 +162,36 @@ Notes on the staged form:
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+## Pinning How Input Notes Are Consumed
+
+`withInputNotes` adds notes and leaves the executing client to decide how each one is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. That is what you want for a request you build and execute yourself. It is not what you want for a request that travels — two clients with different stores produce different transaction summaries for the same request, and a multisig flow comparing summaries then fails for no visible reason.
+
+`withExplicitInputNotes` pins the mode on the request instead. Each note is consumed in the mode its `InputNote` carries, whatever the executing client's store holds:
+
+```typescript
+import {
+  InputNote,
+  InputNoteAndArgs,
+  InputNoteAndArgsArray,
+  TransactionRequestBuilder,
+} from "@miden-sdk/miden-sdk";
+
+const request = new TransactionRequestBuilder()
+  .withExplicitInputNotes(
+    new InputNoteAndArgsArray([
+      // Consumed with its proof.
+      new InputNoteAndArgs(InputNote.authenticated(note, inclusionProof), null),
+      // Consumed as unauthenticated, even if the executing client has a proof for it.
+      new InputNoteAndArgs(InputNote.unauthenticated(otherNote), null),
+    ])
+  )
+  .build();
+```
+
+The second argument of `InputNoteAndArgs` is the note's arguments, or `null` for none — the same value `withInputNotes` takes.
+
+To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
+
 ## Paying Transaction Fees
 
 Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.

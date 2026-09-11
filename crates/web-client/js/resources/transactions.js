@@ -790,6 +790,41 @@ export class TransactionsResource {
     return await this.#inner.chainAnchorForRequest(request);
   }
 
+  /**
+   * Fetch the state and inclusion witness of each foreign account in
+   * `foreignAccounts`, anchored at `blockNum`.
+   *
+   * A `ForeignAccount.public` entry is fetched from the network, a
+   * `ForeignAccount.private` entry contributes its own state and only its
+   * inclusion proof is fetched, and a `ForeignAccount.prefetched` entry is
+   * returned as it was given. Declare the results back through
+   * `ForeignAccount.prefetched` and nothing is fetched for those accounts at
+   * execution time.
+   *
+   * Each witness opens against the account tree of `blockNum` alone, so the
+   * results are valid only for a transaction whose reference block is exactly
+   * `blockNum` — the anchor's block under {@link captureAnchor}, or the sync
+   * height at execution time otherwise. Do not sync between fetching these and
+   * executing; execution fails naming the account and the block.
+   *
+   * @param {ForeignAccount[]} foreignAccounts - Accounts to fetch inputs for.
+   * @param {number} blockNum - Block the witnesses are anchored at.
+   * @returns {Promise<AccountInputs[]>} Inputs, in the order given.
+   */
+  async foreignAccountInputs(foreignAccounts, blockNum) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const accounts = new wasm.ForeignAccountArray(foreignAccounts ?? []);
+    const inputs = await this.#inner.getForeignAccountInputs(
+      accounts,
+      blockNum
+    );
+    // Browser returns the typed AccountInputsArray, Node a plain JS array.
+    return Array.isArray(inputs)
+      ? inputs
+      : Array.from({ length: inputs.length() }, (_, i) => inputs.get(i));
+  }
+
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
     assertAnchorValueUsable(opts);

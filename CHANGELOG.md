@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.1 (TBD)
+
+### Enhancements
+ 
+* [FEATURE][web] Added `ForeignAccount.private(account)`, `ForeignAccount.prefetched(inputs)` and the `AccountInputs` model, which let a caller supply a foreign account's state instead of having it fetched at execution time. Fetch the inputs with `client.transactions.foreignAccountInputs(accounts, blockNum)` ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+* [FEATURE][web] Added `TransactionRequestBuilder.withExplicitInputNotes(notes)` and the `InputNoteAndArgs` model, which pin whether each input note is consumed authenticated or unauthenticated, so every client executing the request produces the same transaction summary ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+
+
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.16.1 (from 0.16.0) ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+
 ## 0.16.0 (2026-09-07)
 
 ### Changes

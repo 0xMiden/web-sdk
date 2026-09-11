@@ -78,3 +78,15 @@ impl From<&NativeInputNote> for InputNote {
         InputNote(native_note.clone())
     }
 }
+
+impl From<InputNote> for NativeInputNote {
+    fn from(input_note: InputNote) -> Self {
+        input_note.0
+    }
+}
+
+impl From<&InputNote> for NativeInputNote {
+    fn from(input_note: &InputNote) -> Self {
+        input_note.0.clone()
+    }
+}

@@ -150,9 +150,23 @@ test.describe("fpi test", () => {
         storageRequirements
       );
 
+      // Fetch the foreign account's state and witness up front and declare them
+      // back as prefetched, so nothing is fetched for the account while the
+      // transaction executes.
+      const prefetchBlock = await intClient.getSyncHeight();
+      const fetchedInputs = await intClient.getForeignAccountInputs(
+        new sdk.ForeignAccountArray([foreignAccount]),
+        prefetchBlock
+      );
+
+      const restoredInputs = sdk.AccountInputs.deserialize(
+        fetchedInputs.get(0).serialize()
+      );
+      const prefetchedAccount = sdk.ForeignAccount.prefetched(restoredInputs);
+
       let txRequest2 = new sdk.TransactionRequestBuilder()
         .withCustomScript(compiledTxScript)
-        .withForeignAccounts(new sdk.ForeignAccountArray([foreignAccount]))
+        .withForeignAccounts(new sdk.ForeignAccountArray([prefetchedAccount]))
         .build();
 
       let txResult2 = await intClient.executeTransaction(
@@ -177,6 +191,9 @@ test.describe("fpi test", () => {
       return {
         skip: false,
         foreignAccountIdStr,
+        prefetchedCount: fetchedInputs.length(),
+        prefetchedAccountIdStr: restoredInputs.accountId().toString(),
+        prefetchBlock,
         proofAccountId: accountProof.accountId().toString(),
         proofBlockNum: accountProof.blockNum(),
         proofCommitmentHex: accountProof.accountCommitment().toHex(),
@@ -191,6 +208,9 @@ test.describe("fpi test", () => {
       test.skip(true, "requires running node");
       return;
     }
+    expect(result.prefetchedCount).toEqual(1);
+    expect(result.prefetchedAccountIdStr).toEqual(result.foreignAccountIdStr);
+    expect(result.prefetchBlock).toBeGreaterThan(0);
     expect(result.proofAccountId).toEqual(result.foreignAccountIdStr);
     expect(result.proofBlockNum).toBeGreaterThan(0);
     expect(result.proofCommitmentHex).toMatch(/^0x[0-9a-fA-F]+$/);

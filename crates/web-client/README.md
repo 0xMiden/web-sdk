@@ -608,6 +608,32 @@ A match, however, does not prove the two parties agree on account state. The sum
 
 See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
 
+### Foreign Accounts
+
+A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Three kinds:
+
+```typescript
+import { ForeignAccount, AccountStorageRequirements } from "@miden-sdk/miden-sdk";
+
+// Public — state and code fetched from the network at execution time.
+ForeignAccount.public(oracleAccountId, new AccountStorageRequirements());
+
+// Private — the caller supplies the state; only an inclusion proof is fetched.
+ForeignAccount.private(account);
+
+// Prefetched — the caller supplies state and witness; nothing is fetched.
+const blockNum = await client.getSyncHeight();
+const inputs = await client.transactions.foreignAccountInputs(
+  [ForeignAccount.public(oracleAccountId, new AccountStorageRequirements())],
+  blockNum
+);
+ForeignAccount.prefetched(inputs[0]);
+```
+
+A witness opens against the account tree of exactly one block, so inputs fetched at block `N` are valid only for a transaction whose reference block is `N` — the anchor's block under chain-anchored execution, or the sync height otherwise. Don't sync between fetching and executing.
+
+Prefetched inputs serialize (`inputs[0].serialize()` / `AccountInputs.deserialize(bytes)`), so one client can fetch them and another can execute against them, and a transaction pinned to an older block can still execute after the node stops serving account state there.
+
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple
