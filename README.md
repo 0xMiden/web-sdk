@@ -4,7 +4,7 @@
 
 **The browser- and JavaScript-native SDK for the [Miden network](https://miden.xyz).**
 
-WASM-powered client, React hooks, and Vite tooling — sign, send, and prove transactions from a tab.
+WASM-powered client, React hooks, and Vite tooling â€” sign, send, and prove transactions from a tab.
 
 [![CI](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xMiden/web-sdk/badges/coverage.json)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml?query=branch%3Amain)
@@ -23,12 +23,12 @@ This repo packages everything you need to interact with Miden from a browser, a 
 
 | Package | Purpose | Install | Docs |
 |---|---|---|---|
-| **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `pnpm add @miden-sdk/miden-sdk` | [Web Client docs ↗](https://docs.miden.xyz/builder/tools/clients/web-client/) |
-| **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `pnpm add @miden-sdk/react` | [React SDK docs ↗](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
-| **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | — |
+| **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation â€” accounts, notes, transactions, proving, RPC. | `pnpm add @miden-sdk/miden-sdk` | [Web Client docs â†—](https://docs.miden.xyz/builder/tools/clients/web-client/) |
+| **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic â€” pluggable with MidenFi, Para, Turnkey. | `pnpm add @miden-sdk/react` | [React SDK docs â†—](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
+| **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | â€” |
 | **`@miden-sdk/telemetry-sentry`** | Opt-in binding that turns SDK observations into `captureMessage` calls on a Sentry client you own. Does not depend on `@sentry/*`. | `pnpm add @miden-sdk/telemetry-sentry` | [README](packages/telemetry-sentry) |
 | **`@miden-sdk/telemetry-otel`** | Opt-in binding that turns SDK observations into spans on an OpenTelemetry tracer you own. Does not depend on `@opentelemetry/*`. | `pnpm add @miden-sdk/telemetry-otel` | [README](packages/telemetry-otel) |
-| **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
+| **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | â€” |
 
 Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) from `0xMiden/rust-sdk`.
 
@@ -36,14 +36,17 @@ Everything is published from this monorepo, in lockstep with the upstream Rust [
 
 ## Documentation
 
-- **[Web Client](https://docs.miden.xyz/builder/tools/clients/web-client/)** — full API reference for `@miden-sdk/miden-sdk`: `MidenClient`, accounts, notes, transactions, sync, prover.
-- **[React SDK](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** — every hook, with prop tables, return shapes, and copy-pasteable examples.
-- **[`miden-client` crate](https://docs.rs/miden-client)** — the upstream Rust client these bind to.
-- **[Network docs](https://docs.miden.xyz)** — protocol, accounts model, note semantics, mainnet/testnet endpoints.
+- **[Web Client](https://docs.miden.xyz/builder/tools/clients/web-client/)** â€” full API reference for `@miden-sdk/miden-sdk`: `MidenClient`, accounts, notes, transactions, sync, prover.
+- **[React SDK](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** â€” every hook, with prop tables, return shapes, and copy-pasteable examples.
+- **[`miden-client` crate](https://docs.rs/miden-client)** â€” the upstream Rust client these bind to.
+- **[Network docs](https://docs.miden.xyz)** â€” protocol, accounts model, note semantics, mainnet/testnet endpoints.
 
 ---
 
 ## Quick start
+
+
+> **IndexedDB note:** If you previously installed a release candidate and pin back to a stable line, clear site data for the app origin if the app still fails to open. As of the fix for [#349](https://github.com/0xMiden/web-sdk/issues/349), opening an older client wipes an on-disk IndexedDB schema that is newer than this build (`VersionError`), and also resets when the stored client semver crosses major/minor.
 
 ### Vanilla JavaScript
 
@@ -87,11 +90,11 @@ function Wallet({ senderId }: { senderId: string }) {
     console.log("Tx:", result.transactionId);
   };
 
-  if (isLoading || !account) return <p>Loading…</p>;
+  if (isLoading || !account) return <p>Loadingâ€¦</p>;
   return (
     <button onClick={handleSend} disabled={sending}>
       {sending ? stage : `Send from ${account.id().toBech32()}`}
-      {error && <span> — {error.message}</span>}
+      {error && <span> â€” {error.message}</span>}
     </button>
   );
 }
@@ -117,38 +120,38 @@ The SDK ships with two parallel entry points with an identical public API. They 
 
 | Specifier | When it loads WASM | Use this when |
 |---|---|---|
-| `@miden-sdk/miden-sdk` | At import (top-level `await`) | Plain browser apps with a synchronous bundler (Vite, CRA, esbuild, Webpack client bundles). After `import` resolves, every wasm-bindgen constructor (`new Felt(…)`, `AccountId.fromHex(…)`, `TransactionProver.newLocalProver()`, etc.) is safe to call synchronously — no `await MidenClient.ready()` needed. |
-| `@miden-sdk/miden-sdk/lazy` | Only when you ask — via `await MidenClient.ready()`, or implicitly the first time you `await` an SDK method that needs WASM | Anywhere top-level `await` is unsafe or you want to control when to pay the WASM-init cost: **server-side rendering** (Next.js, Remix, SvelteKit), **Capacitor WKWebView hosts** (the iOS/Android scheme handler hangs on TLA), and any code path where you want to defer the multi-megabyte WASM download until the user actually performs a crypto-touching action. |
+| `@miden-sdk/miden-sdk` | At import (top-level `await`) | Plain browser apps with a synchronous bundler (Vite, CRA, esbuild, Webpack client bundles). After `import` resolves, every wasm-bindgen constructor (`new Felt(â€¦)`, `AccountId.fromHex(â€¦)`, `TransactionProver.newLocalProver()`, etc.) is safe to call synchronously â€” no `await MidenClient.ready()` needed. |
+| `@miden-sdk/miden-sdk/lazy` | Only when you ask â€” via `await MidenClient.ready()`, or implicitly the first time you `await` an SDK method that needs WASM | Anywhere top-level `await` is unsafe or you want to control when to pay the WASM-init cost: **server-side rendering** (Next.js, Remix, SvelteKit), **Capacitor WKWebView hosts** (the iOS/Android scheme handler hangs on TLA), and any code path where you want to defer the multi-megabyte WASM download until the user actually performs a crypto-touching action. |
 
 ### Using the lazy entry: `await MidenClient.ready()` first
 
-The lazy entry runs no top-level `await`, so **until you await initialization, every wasm-bindgen type is just a stub**. Calling `new Felt(…)` or `AccountId.fromHex(…)` before WASM is ready throws `TypeError: Cannot read properties of undefined`.
+The lazy entry runs no top-level `await`, so **until you await initialization, every wasm-bindgen type is just a stub**. Calling `new Felt(â€¦)` or `AccountId.fromHex(â€¦)` before WASM is ready throws `TypeError: Cannot read properties of undefined`.
 
 The contract is:
 
 ```typescript
 import { MidenClient, AccountId, Felt } from "@miden-sdk/miden-sdk/lazy";
 
-// Stubs — DO NOT touch wasm-bindgen types here:
-//   const id = AccountId.fromHex("0x…"); // ❌ throws
+// Stubs â€” DO NOT touch wasm-bindgen types here:
+//   const id = AccountId.fromHex("0xâ€¦"); // âŒ throws
 
 // Initialize WASM exactly once (idempotent + concurrency-safe):
 await MidenClient.ready();
 
 // Now everything is real and synchronous:
-const id = AccountId.fromHex("0x…"); // ✓
-const felt = new Felt(42n); // ✓
+const id = AccountId.fromHex("0xâ€¦"); // âœ“
+const felt = new Felt(42n); // âœ“
 ```
 
-`MidenClient.ready()` is idempotent: concurrent callers share the same in-flight promise, and post-init callers resolve immediately from cache. Call it from `MidenProvider`, route loaders, button handlers — wherever the first WASM use is guarded.
+`MidenClient.ready()` is idempotent: concurrent callers share the same in-flight promise, and post-init callers resolve immediately from cache. Call it from `MidenProvider`, route loaders, button handlers â€” wherever the first WASM use is guarded.
 
-You only need to call it explicitly when you're constructing wasm-bindgen types yourself. **Async SDK methods** (`client.accounts.create()`, `client.transactions.send()`, `MidenClient.createTestnet()`, etc.) await initialization internally, so importing them and calling them is enough — the first call transparently triggers WASM load.
+You only need to call it explicitly when you're constructing wasm-bindgen types yourself. **Async SDK methods** (`client.accounts.create()`, `client.transactions.send()`, `MidenClient.createTestnet()`, etc.) await initialization internally, so importing them and calling them is enough â€” the first call transparently triggers WASM load.
 
 The same split applies to `@miden-sdk/react`. The choice cascades: if you use `@miden-sdk/react/lazy`, it pulls `@miden-sdk/miden-sdk/lazy` automatically; the eager variant pulls eager.
 
 ### React: gating on `isReady` from `useMiden()`
 
-The React SDK hides the `MidenClient.ready()` plumbing behind `MidenProvider` — you don't call `ready()` yourself. Instead, the provider initializes WASM (lazily on the `/lazy` entry, eagerly on the default), and exposes the readiness state through `useMiden()`:
+The React SDK hides the `MidenClient.ready()` plumbing behind `MidenProvider` â€” you don't call `ready()` yourself. Instead, the provider initializes WASM (lazily on the `/lazy` entry, eagerly on the default), and exposes the readiness state through `useMiden()`:
 
 ```tsx
 import { MidenProvider, useMiden } from "@miden-sdk/react/lazy";
@@ -164,8 +167,8 @@ function App() {
 function Wallet() {
   const { isReady, isInitializing, error } = useMiden();
   if (error) return <div>Failed to load: {error.message}</div>;
-  if (!isReady) return <div>Loading wallet…</div>;
-  // SDK is initialized — safe to call hooks that touch WASM
+  if (!isReady) return <div>Loading walletâ€¦</div>;
+  // SDK is initialized â€” safe to call hooks that touch WASM
   return <Dashboard />;
 }
 ```
@@ -175,11 +178,11 @@ function Wallet() {
 | Field            | Type              | Meaning                                                                |
 | ---------------- | ----------------- | ---------------------------------------------------------------------- |
 | `isInitializing` | `boolean`         | WASM and client are being loaded. Show a loading UI.                   |
-| `isReady`        | `boolean`         | Client is ready. SDK hooks (`useAccount`, `useSend`, …) are safe to use. |
+| `isReady`        | `boolean`         | Client is ready. SDK hooks (`useAccount`, `useSend`, â€¦) are safe to use. |
 | `error`          | `Error \| null`   | Initialization failed (network, WASM load, etc.). Show an error UI.    |
 | `client`         | `WebClient \| null` | The underlying client, populated once `isReady === true`.            |
 
-For zero-glue UI, pass `loadingComponent` and `errorComponent` (or `(err) => ReactNode`) props to `MidenProvider` — the provider renders them in place of children until the SDK is ready, and you can drop the `isReady` check in consumer hooks.
+For zero-glue UI, pass `loadingComponent` and `errorComponent` (or `(err) => ReactNode`) props to `MidenProvider` â€” the provider renders them in place of children until the SDK is ready, and you can drop the `isReady` check in consumer hooks.
 
 The other SDK hooks (`useCreateWallet`, `useSend`, `useNotes`, etc.) all gate on `isReady` internally and return their own `isLoading` / `error` states, so you don't need to chain readiness checks through every component once you've gated at the top.
 
@@ -187,34 +190,34 @@ The other SDK hooks (`useCreateWallet`, `useSend`, `useNotes`, etc.) all gate on
 
 ## Single-threaded vs multi-threaded proving
 
-Orthogonal to eager/lazy, the WASM client ships in two **threading variants**, so there are four entry points in all. The default is **single-threaded (ST)** and loads in any browser context. The **multi-threaded (MT)** build parallelizes proving across hardware threads with `wasm-bindgen-rayon` — **~3–5× faster local proving** on a commodity multi-core laptop — in exchange for a hard hosting requirement.
+Orthogonal to eager/lazy, the WASM client ships in two **threading variants**, so there are four entry points in all. The default is **single-threaded (ST)** and loads in any browser context. The **multi-threaded (MT)** build parallelizes proving across hardware threads with `wasm-bindgen-rayon` â€” **~3â€“5Ã— faster local proving** on a commodity multi-core laptop â€” in exchange for a hard hosting requirement.
 
 | Specifier | Threading | Loads WASM | Hosting requirement |
 |---|---|---|---|
-| `@miden-sdk/miden-sdk` | ST | eager (top-level `await`) | None — works anywhere |
-| `@miden-sdk/miden-sdk/lazy` | ST | lazy (`ready()`) | None — works anywhere |
+| `@miden-sdk/miden-sdk` | ST | eager (top-level `await`) | None â€” works anywhere |
+| `@miden-sdk/miden-sdk/lazy` | ST | lazy (`ready()`) | None â€” works anywhere |
 | `@miden-sdk/miden-sdk/mt` | **MT** | eager (top-level `await`) | Cross-origin isolation |
 | `@miden-sdk/miden-sdk/mt/lazy` | **MT** | lazy (`ready()`) | Cross-origin isolation |
 
-The threading axis composes with eager/lazy — see [Eager vs lazy entry points](#eager-vs-lazy-entry-points) for that dimension.
+The threading axis composes with eager/lazy â€” see [Eager vs lazy entry points](#eager-vs-lazy-entry-points) for that dimension.
 
-**Where the speedup comes from.** MT only accelerates the **local prove** step (Miden's zero-knowledge proof generation) — the single most expensive thing the client does in a tab. On multi-core hardware the proof work fans out across Web Workers instead of running on one thread; the rest of the pipeline (sync, RPC, storage) is unchanged. The ST default runs the same prove on a single thread.
+**Where the speedup comes from.** MT only accelerates the **local prove** step (Miden's zero-knowledge proof generation) â€” the single most expensive thing the client does in a tab. On multi-core hardware the proof work fans out across Web Workers instead of running on one thread; the rest of the pipeline (sync, RPC, storage) is unchanged. The ST default runs the same prove on a single thread.
 
 **Pick MT when:**
 
-- You do **local (non-delegated) proving** and **control your response headers** — including Chrome/Firefox extensions and other hosts whose manifest already sets COOP/COEP.
+- You do **local (non-delegated) proving** and **control your response headers** â€” including Chrome/Firefox extensions and other hosts whose manifest already sets COOP/COEP.
 - Interactive "prove-in-the-tab" UX matters and shaving seconds off each transaction is worth the deployment constraint.
 
 **Pick ST (the default) when:**
 
 - You **don't control the response headers** (a third-party host, or a CDN that won't set them).
-- You prove **exclusively through a delegated / remote prover** — the network round-trip dwarfs any local speedup, so MT buys you nothing.
-- You target **Capacitor / native WebViews** (e.g. the Miden Wallet iOS/Android hosts) — they don't expose cross-origin isolation.
+- You prove **exclusively through a delegated / remote prover** â€” the network round-trip dwarfs any local speedup, so MT buys you nothing.
+- You target **Capacitor / native WebViews** (e.g. the Miden Wallet iOS/Android hosts) â€” they don't expose cross-origin isolation.
 
 **Using MT takes two things:**
 
-1. **Cross-origin isolation.** The page must respond with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` so the browser grants `SharedArrayBuffer`; without them the `/mt` WASM throws at load. `@miden-sdk/vite-plugin` sets these in dev. Note that `require-corp` also gates cross-origin images/fonts/iframes — a real deployment decision, not a free flag.
-2. **Bring up the thread pool once.** Call `await initThreadPool(navigator.hardwareConcurrency)` before your first prove — skip it and rayon spawns zero workers, so the MT build silently runs single-threaded.
+1. **Cross-origin isolation.** The page must respond with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` so the browser grants `SharedArrayBuffer`; without them the `/mt` WASM throws at load. `@miden-sdk/vite-plugin` sets these in dev. Note that `require-corp` also gates cross-origin images/fonts/iframes â€” a real deployment decision, not a free flag.
+2. **Bring up the thread pool once.** Call `await initThreadPool(navigator.hardwareConcurrency)` before your first prove â€” skip it and rayon spawns zero workers, so the MT build silently runs single-threaded.
 
 ```ts
 import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
@@ -271,11 +274,11 @@ flowchart TB
   style Browser fill:#0b1220,stroke:#1e293b,stroke-width:2px,color:#f8fafc
 ```
 
-- **`miden-idxdb-store`** persists everything the client needs to survive a tab reload — accounts, notes, the partial MMR, sync state, key material.
+- **`miden-idxdb-store`** persists everything the client needs to survive a tab reload â€” accounts, notes, the partial MMR, sync state, key material.
 - **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
 - **`@miden-sdk/react`** is a thin layer on top: React hooks that call into the WASM client and a pluggable `SignerContext` so the same code works with MidenFi, Para, Turnkey, or your own signer.
 - **`@miden-sdk/vite-plugin`** smooths over the bundler-side WASM ergonomics (worker-context polyfills, COOP/COEP headers, dedup of the WASM module across imports).
-- **`@miden-sdk/telemetry-sentry`** and **`@miden-sdk/telemetry-otel`** sit *outside* that path. The WASM client reports each operation it runs to a callback you register, and never transports one itself; these two adapt those reports to a Sentry client or an OTel tracer you construct. Neither depends on its vendor, and the core depends on neither — see [Observability](crates/web-client/README.md#observability).
+- **`@miden-sdk/telemetry-sentry`** and **`@miden-sdk/telemetry-otel`** sit *outside* that path. The WASM client reports each operation it runs to a callback you register, and never transports one itself; these two adapt those reports to a Sentry client or an OTel tracer you construct. Neither depends on its vendor, and the core depends on neither â€” see [Observability](crates/web-client/README.md#observability).
 
 ---
 
@@ -283,7 +286,7 @@ flowchart TB
 
 | Example | What it shows | Path |
 |---|---|---|
-| **Wallet** | Full flow — signer choice (MidenFi / Para / Turnkey via `MultiSignerProvider`), account creation, sync, send, consume | [`packages/react-sdk/examples/wallet`](packages/react-sdk/examples/wallet) |
+| **Wallet** | Full flow â€” signer choice (MidenFi / Para / Turnkey via `MultiSignerProvider`), account creation, sync, send, consume | [`packages/react-sdk/examples/wallet`](packages/react-sdk/examples/wallet) |
 
 Run locally:
 
@@ -308,9 +311,9 @@ pnpm dev
 | **Vite** | First-class | `@miden-sdk/vite-plugin` covers WASM dedup, polyfills, COOP/COEP. Tested against Vite 5+. |
 | **Webpack 5** | Supported | Use the module-worker variant; webpack auto-handles the `import.meta.url` worker pattern. |
 | **Next.js (App Router)** | Supported | Mark client components with `"use client"`. SSR will skip WASM init; the lazy entry point is recommended. |
-| **Browser (Chromium ≥ 88)** | Supported | The default (ST) build runs anywhere. The `/mt` build needs cross-origin isolation (COOP/COEP) for `SharedArrayBuffer` — see [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving). |
-| **Browser (Safari ≥ 16.4)** | Supported | The plugin auto-applies the classic-Worker + TLA-free WASM glue needed by WKWebView. |
-| **Browser (Firefox ≥ 108)** | Supported | Same constraints as Chromium. |
+| **Browser (Chromium â‰¥ 88)** | Supported | The default (ST) build runs anywhere. The `/mt` build needs cross-origin isolation (COOP/COEP) for `SharedArrayBuffer` â€” see [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving). |
+| **Browser (Safari â‰¥ 16.4)** | Supported | The plugin auto-applies the classic-Worker + TLA-free WASM glue needed by WKWebView. |
+| **Browser (Firefox â‰¥ 108)** | Supported | Same constraints as Chromium. |
 | **Node.js** | Not yet | Tracked separately; the Rust client has a Node.js binding in flight via napi-rs. |
 
 Two WASM artifacts are published: a **single-threaded** default built on stable Rust that loads anywhere, and a **multi-threaded** `/mt` build (pinned nightly, `+atomics +bulk-memory +mutable-globals +simd128` with shared memory) for `SharedArrayBuffer`-backed threads. Both target `wasm32-unknown-unknown`. See [Single-threaded vs multi-threaded proving](#single-threaded-vs-multi-threaded-proving).
@@ -319,9 +322,9 @@ Two WASM artifacts are published: a **single-threaded** default built on stable 
 
 ## Versioning
 
-Every package in this repo (`@miden-sdk/miden-sdk`, `@miden-sdk/react`, `@miden-sdk/vite-plugin`, `@miden-sdk/telemetry-sentry`, `@miden-sdk/telemetry-otel`, plus the Rust `miden-idxdb-store` crate) ships on the **same major.minor** as the upstream `miden-client` they bind to. Patch versions are independent — a fix in the React hooks does not need a WASM bump.
+Every package in this repo (`@miden-sdk/miden-sdk`, `@miden-sdk/react`, `@miden-sdk/vite-plugin`, `@miden-sdk/telemetry-sentry`, `@miden-sdk/telemetry-otel`, plus the Rust `miden-idxdb-store` crate) ships on the **same major.minor** as the upstream `miden-client` they bind to. Patch versions are independent â€” a fix in the React hooks does not need a WASM bump.
 
-A repo-wide `scripts/check-react-sdk-sync.js` enforces that every package pinning the WASM client — its peer ranges and the example app's dependency — resolves to the exact patch version it was built against, so `npm install` produces a coherent set without surprises. The packages it checks are discovered from the workspace rather than listed in the script, so a new package that builds against the client is covered from the moment it exists instead of when someone remembers to add it.
+A repo-wide `scripts/check-react-sdk-sync.js` enforces that every package pinning the WASM client â€” its peer ranges and the example app's dependency â€” resolves to the exact patch version it was built against, so `npm install` produces a coherent set without surprises. The packages it checks are discovered from the workspace rather than listed in the script, so a new package that builds against the client is covered from the moment it exists instead of when someone remembers to add it.
 
 ---
 
@@ -354,16 +357,16 @@ The CI workflow runs all of the above on every PR; pushes to `main` and `next` a
 
 ```
 web-sdk/
-├── crates/
-│   ├── idxdb-store/       # Rust IndexedDB store (miden-idxdb-store on crates.io)
-│   └── web-client/        # WASM + JS bindings (@miden-sdk/miden-sdk on npm)
-└── packages/
-    ├── react-sdk/         # @miden-sdk/react
-    │   └── examples/
-    │       └── wallet/    # Cross-signer example app
-    ├── telemetry-otel/    # @miden-sdk/telemetry-otel
-    ├── telemetry-sentry/  # @miden-sdk/telemetry-sentry
-    └── vite-plugin/       # @miden-sdk/vite-plugin
+â”œâ”€â”€ crates/
+â”‚   â”œâ”€â”€ idxdb-store/       # Rust IndexedDB store (miden-idxdb-store on crates.io)
+â”‚   â””â”€â”€ web-client/        # WASM + JS bindings (@miden-sdk/miden-sdk on npm)
+â””â”€â”€ packages/
+    â”œâ”€â”€ react-sdk/         # @miden-sdk/react
+    â”‚   â””â”€â”€ examples/
+    â”‚       â””â”€â”€ wallet/    # Cross-signer example app
+    â”œâ”€â”€ telemetry-otel/    # @miden-sdk/telemetry-otel
+    â”œâ”€â”€ telemetry-sentry/  # @miden-sdk/telemetry-sentry
+    â””â”€â”€ vite-plugin/       # @miden-sdk/vite-plugin
 ```
 
 ---
@@ -371,8 +374,8 @@ web-sdk/
 ## Releasing
 
 Two long-lived branches:
-- **`main`** — released to npm under the `latest` tag. Stable.
-- **`next`** — pre-release integration. Released to npm under the `next` tag when a PR carries the `patch release` label.
+- **`main`** â€” released to npm under the `latest` tag. Stable.
+- **`next`** â€” pre-release integration. Released to npm under the `next` tag when a PR carries the `patch release` label.
 
 The publish workflow gates the optimized WASM artifacts at 25 MiB for ST and 35 MiB for MT. These variant-specific limits reject both an optimizer failure and a skipped MASP debug strip before the package reaches npm.
 
@@ -380,13 +383,13 @@ The publish workflow gates the optimized WASM artifacts at 25 MiB for ST and 35 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/rust-sdk` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
+See [CONTRIBUTING.md](CONTRIBUTING.md) â€” covers local setup, the cross-repo workflow with `0xMiden/rust-sdk` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
 
 ---
 
 ## License
 
-[MIT](LICENSE) © Miden contributors
+[MIT](LICENSE) Â© Miden contributors
 
 <div align="center">
   <sub>Built with Rust 1.96.1, wasm-bindgen, and a healthy distrust of top-level await.</sub>
