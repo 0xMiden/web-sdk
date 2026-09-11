@@ -157,6 +157,7 @@ export const AccountDelta = /* @__PURE__ */ _reexport("AccountDelta");
 export const AccountFile = /* @__PURE__ */ _reexport("AccountFile");
 export const AccountHeader = /* @__PURE__ */ _reexport("AccountHeader");
 export const AccountId = /* @__PURE__ */ _reexport("AccountId");
+export const AccountInputs = /* @__PURE__ */ _reexport("AccountInputs");
 export const AccountInterface = /* @__PURE__ */ _reexport("AccountInterface");
 export const AccountPatch = /* @__PURE__ */ _reexport("AccountPatch");
 export const AccountProof = /* @__PURE__ */ _reexport("AccountProof");

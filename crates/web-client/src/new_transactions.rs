@@ -29,11 +29,13 @@ use miden_client::{Client, ClientError, Word as NativeWord};
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
+use crate::models::account_inputs::AccountInputs;
 use crate::models::advice_inputs::AdviceInputs;
 use crate::models::chain_anchor::ChainAnchor;
 use crate::models::eth_address::EthAddress;
 use crate::models::felt::Felt;
-use crate::models::miden_arrays::{FeltArray, ForeignAccountArray};
+use crate::models::foreign_account::ForeignAccount;
+use crate::models::miden_arrays::{AccountInputsArray, FeltArray, ForeignAccountArray};
 use crate::models::note::Note;
 use crate::models::proven_transaction::ProvenTransaction;
 use crate::models::provers::TransactionProver;
@@ -692,6 +694,42 @@ impl WebClient {
 
         let felt_vec: Vec<Felt> = result.iter().map(|f| Felt::from(*f)).collect();
         Ok(felt_vec.into())
+    }
+
+    /// Fetches the state and inclusion witness of each given foreign account, anchored at
+    /// `blockNum`.
+    ///
+    /// A `ForeignAccount.public` entry is fetched from the network, a `ForeignAccount.private`
+    /// entry contributes its own state and only its inclusion proof is fetched, and a
+    /// `ForeignAccount.prefetched` entry is returned as it was given.
+    ///
+    /// Each witness opens against the account tree of `blockNum` alone, so the results are valid
+    /// only for a transaction whose reference block is exactly `blockNum` — the anchor's block
+    /// under `executeTransactionAt`, or the sync height at execution time otherwise. Do not sync
+    /// between fetching these and executing, or execution fails naming the account and the block.
+    ///
+    /// Only the given accounts are fetched. This does not discover the accounts a transaction
+    /// loads, such as faucets whose asset callbacks it triggers.
+    #[js_export(js_name = "getForeignAccountInputs")]
+    pub async fn get_foreign_account_inputs(
+        &self,
+        foreign_accounts: ForeignAccountArray,
+        block_num: u32,
+    ) -> Result<AccountInputsArray, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let foreign_accounts_vec: Vec<ForeignAccount> = foreign_accounts.into();
+        let native_foreign_accounts: Vec<NativeForeignAccount> =
+            foreign_accounts_vec.into_iter().map(Into::into).collect();
+
+        let account_inputs = client
+            .get_foreign_account_inputs(native_foreign_accounts, BlockNumber::from(block_num))
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to get foreign account inputs"))?;
+
+        let inputs_vec: Vec<AccountInputs> = account_inputs.into_iter().map(Into::into).collect();
+        Ok(inputs_vec.into())
     }
 
     /// Generates a transaction proof using either the provided prover or the client's default

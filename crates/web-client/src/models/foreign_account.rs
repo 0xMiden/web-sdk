@@ -1,8 +1,11 @@
 use js_export_macro::js_export;
+use miden_client::account::Account as NativeAccount;
 use miden_client::transaction::ForeignAccount as NativeForeignAccount;
 
 use crate::js_error_with_context;
+use crate::models::account::Account;
 use crate::models::account_id::AccountId;
+use crate::models::account_inputs::AccountInputs;
 use crate::models::account_storage_requirements::AccountStorageRequirements;
 use crate::platform::JsErr;
 
@@ -23,6 +26,31 @@ impl ForeignAccount {
                 .map_err(|e| js_error_with_context(e, "Failed to create public foreign account"));
 
         Ok(ForeignAccount(native_foreign_account?))
+    }
+
+    /// Creates a foreign account entry for a private account, whose state the caller supplies.
+    ///
+    /// Only a proof of the account's inclusion is fetched at execution time. The account must be
+    /// private; a public account is rejected — use `public` for those.
+    pub fn private(account: &Account) -> Result<ForeignAccount, JsErr> {
+        let native_account: NativeAccount = account.into();
+        let native_foreign_account = NativeForeignAccount::private(&native_account)
+            .map_err(|e| js_error_with_context(e, "Failed to create private foreign account"))?;
+
+        Ok(ForeignAccount(native_foreign_account))
+    }
+
+    /// Creates a foreign account entry from inputs the caller already holds, so nothing is fetched
+    /// for the account at execution time.
+    ///
+    /// Get the inputs from `WebClient.getForeignAccountInputs`. They are pinned to the block they
+    /// were fetched at: the transaction that uses them must have that block as its reference
+    /// block, or execution fails. See `getForeignAccountInputs` for the full constraint.
+    ///
+    /// Storage map keys and vault assets absent from the inputs are still resolved lazily during
+    /// execution.
+    pub fn prefetched(inputs: &AccountInputs) -> ForeignAccount {
+        ForeignAccount(NativeForeignAccount::Prefetched(inputs.into()))
     }
 
     /// Returns the required storage slots/keys for this foreign account.
