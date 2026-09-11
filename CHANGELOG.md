@@ -3,18 +3,10 @@
 ## 0.16.1 (TBD)
 
 ### Enhancements
-* [FEATURE][web] `ForeignAccount` gained `private(account)` and `prefetched(inputs)` alongside `public(...)`, and `client.transactions.foreignAccountInputs(foreignAccounts, blockNum)` fetches the state and inclusion witness of a set of foreign accounts at a given block. Declaring those inputs back as `ForeignAccount.prefetched(...)` means nothing is fetched for the account at execution time, so a transaction pinned to an older block still executes after the node stops serving account state there. The inputs are pinned to the block they were fetched at — the transaction's reference block must be exactly that block — and serialize with `AccountInputs.serialize()` / `.deserialize()` for transport between clients. ([#381](https://github.com/0xMiden/web-sdk/pull/381), client [#2524](https://github.com/0xMiden/rust-sdk/issues/2524))
-* [FEATURE][web] `TransactionRequestBuilder.withExplicitInputNotes(notes)` pins the consumption mode of each input note on the request, so every client executing it commits to the same input notes and produces the same transaction summary. `withInputNotes` leaves the mode to the executing client's store. Notes are paired with their arguments through the new `InputNoteAndArgs`, and the mode comes from the `InputNote` itself:
+ 
+ * [FEATURE][web] Added `ForeignAccount.private(account)`, `ForeignAccount.prefetched(inputs)` and the `AccountInputs` model, which let a caller supply a foreign account's state instead of having it fetched at execution time. Fetch the inputs with `client.transactions.foreignAccountInputs(accounts, blockNum)` ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+* [FEATURE][web] Added `TransactionRequestBuilder.withExplicitInputNotes(notes)` and the `InputNoteAndArgs` model, which pin whether each input note is consumed authenticated or unauthenticated, so every client executing the request produces the same transaction summary ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
 
-```js
-new TransactionRequestBuilder().withExplicitInputNotes(
-  new InputNoteAndArgsArray([
-    new InputNoteAndArgs(InputNote.authenticated(note, proof), null),
-    new InputNoteAndArgs(InputNote.unauthenticated(other), null),
-  ])
-);
-```
-([#381](https://github.com/0xMiden/web-sdk/pull/381))
 
 ### Changes
 * [CHANGE][web] Upgraded `miden-client` to 0.16.1 (from 0.16.0). It adds the `ForeignAccount::Prefetched` variant and makes `Client::get_foreign_account_inputs` public, both exposed in the entry above. ([#381](https://github.com/0xMiden/web-sdk/pull/381), client [#2524](https://github.com/0xMiden/rust-sdk/issues/2524))
