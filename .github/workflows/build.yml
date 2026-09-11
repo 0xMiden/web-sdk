@@ -106,6 +106,8 @@ jobs:
   #   workflow_dispatch   changes=skipped, non_docs=''      -> RUNS (first
   #                       clause; the other two would also carry it, since
   #                       'skipped' != 'success' and '' != 'false')
+  #   linked-PR marker    changes=success, non_docs='true'  -> RUNS, whatever
+  #                       the diff (empty and docs-only included)
   #   workflow cancelled  !cancelled() is false             -> SKIPPED
   changes:
     name: Detect relevant changes
@@ -115,10 +117,19 @@ jobs:
     # below run regardless — see the walk-through above.
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      non_docs: ${{ steps.filter.outputs.non_docs }}
+      # A `Client PR:` / `Protocol PR:` marker counts as a code change: it
+      # retargets miden-client at runtime without touching a tracked file.
+      # Without one, the filter's own value passes through untouched, so the
+      # fail-closed reading of '' above still holds.
+      non_docs: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.non_docs }}
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-linked-pr-markers
+        id: linked
       - uses: dorny/paths-filter@v3
         id: filter
         with:
