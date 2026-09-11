@@ -634,27 +634,6 @@ A witness opens against the account tree of exactly one block, so inputs fetched
 
 Prefetched inputs serialize (`inputs[0].serialize()` / `AccountInputs.deserialize(bytes)`), so one client can fetch them and another can execute against them, and a transaction pinned to an older block can still execute after the node stops serving account state there.
 
-See [the foreign accounts guide](../../docs/external/src/web-client/library/foreign-accounts.md) for the full flow.
-
-### Explicit Input Notes
-
-`withInputNotes` leaves the executing client to decide how each note is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. Two clients can therefore produce different transaction summaries for the same request.
-
-`withExplicitInputNotes` pins the mode instead, so every client that executes the request commits to the same input notes:
-
-```typescript
-import { InputNote, InputNoteAndArgs, InputNoteAndArgsArray } from "@miden-sdk/miden-sdk";
-
-const builder = new TransactionRequestBuilder().withExplicitInputNotes(
-  new InputNoteAndArgsArray([
-    new InputNoteAndArgs(InputNote.authenticated(note, inclusionProof), null),
-    new InputNoteAndArgs(InputNote.unauthenticated(otherNote), null),
-  ])
-);
-```
-
-To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the chain anchor the request executes against.
-
 ### Partial-Swap (PSWAP) Orders
 
 A partial-swap note offers one asset for another and can be filled by multiple
