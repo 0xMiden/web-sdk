@@ -117,6 +117,7 @@ const ciShardProjects = process.env.CI
           "test/note_script.test.ts",
           "test/transactions.test.ts",
           "test/chain_anchor.test.ts",
+          "test/foreign_account.test.ts",
           "test/fee_conversion_salt.test.ts",
           "test/direct_call_serialization.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
