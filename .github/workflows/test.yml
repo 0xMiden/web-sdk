@@ -36,11 +36,20 @@ jobs:
   changes:
     name: Detect relevant changes
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      non_docs: ${{ steps.filter.outputs.non_docs }}
-      release_wasm: ${{ steps.filter.outputs.release_wasm }}
+      # A `Client PR:` / `Protocol PR:` marker forces both: the inject actions
+      # rewrite Cargo.toml and Cargo.lock at runtime (Cargo.lock is in
+      # `release_wasm`) without touching a tracked file, so the filter alone
+      # reads an empty or docs-only marker PR as "nothing changed".
+      non_docs: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.non_docs }}
+      release_wasm: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.release_wasm }}
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-linked-pr-markers
+        id: linked
       - uses: dorny/paths-filter@v3
         id: filter
         with:
