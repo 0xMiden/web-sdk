@@ -9,6 +9,7 @@ use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
+pub mod input_note_and_args;
 pub mod note_and_args;
 pub mod note_details_and_tag;
 pub mod note_id_and_args;

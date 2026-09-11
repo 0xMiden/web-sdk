@@ -216,6 +216,7 @@ export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );
 export const InputNote = /* @__PURE__ */ _reexport("InputNote");
+export const InputNoteAndArgs = /* @__PURE__ */ _reexport("InputNoteAndArgs");
 export const InputNoteRecord = /* @__PURE__ */ _reexport("InputNoteRecord");
 export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");

@@ -142,6 +142,7 @@ declare_js_miden_arrays! {
     (crate::models::transaction_script_inputs::TransactionScriptInputPair) -> TransactionScriptInputPairArray,
     (crate::models::felt::Felt) -> FeltArray,
     (crate::models::account_inputs::AccountInputs) -> AccountInputsArray,
+    (crate::models::transaction_request::input_note_and_args::InputNoteAndArgs) -> InputNoteAndArgsArray,
     (crate::models::transaction_request::note_and_args::NoteAndArgs) -> NoteAndArgsArray,
     (crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag) -> NoteDetailsAndTagArray,
     (crate::models::transaction_request::note_id_and_args::NoteIdAndArgs) -> NoteIdAndArgsArray

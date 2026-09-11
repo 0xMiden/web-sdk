@@ -25,6 +25,8 @@ export {
   ExecutedTransaction,
   Felt,
   ForeignAccount,
+  InputNote,
+  InputNoteAndArgs,
   InputNoteRecord,
   NetworkAccountTarget,
   Note,
