@@ -840,7 +840,12 @@ export type WaitStatus = "pending" | "submitted" | "committed";
 export interface WaitOptions {
   /** Wall-clock polling timeout in ms (default: 60_000). Set to 0 to disable timeout and poll indefinitely. */
   timeout?: number;
-  /** Polling interval in ms (default: 5_000). */
+  /**
+   * Polling interval in ms (default: 5_000). When `timeout` is set, the
+   * final wait between iterations is clamped to whatever remains of the
+   * timeout, so the deadline is a hard bound rather than "deadline, rounded
+   * up to the next interval".
+   */
   interval?: number;
   onProgress?: (status: WaitStatus) => void;
 }

@@ -923,7 +923,10 @@ export class TransactionsResource {
    *   milliseconds. This is NOT a block height — it controls how long the
    *   client waits before giving up. Set to 0 to disable the timeout and poll
    *   indefinitely until the transaction is committed or discarded.
-   * @param {number} [opts.interval=5000] - Polling interval in ms.
+   * @param {number} [opts.interval=5000] - Polling interval in ms. When
+   *   `timeout` is set, the final wait between iterations is clamped to
+   *   whatever remains of the timeout, so the deadline is a hard bound rather
+   *   than "deadline, rounded up to the next interval".
    * @param {function} [opts.onProgress] - Called with the current status on
    *   each poll iteration ("pending", "submitted", or "committed").
    */
@@ -978,7 +981,14 @@ export class TransactionsResource {
         opts?.onProgress?.("pending");
       }
 
-      await new Promise((resolve) => setTimeout(resolve, interval));
+      // Bound the idle sleep by whatever remains of the timeout, so a finite
+      // deadline is hard rather than "deadline, rounded up to the next
+      // interval". `timeout: 0` (poll indefinitely) keeps the full interval.
+      const sleepMs =
+        timeout > 0
+          ? Math.max(0, Math.min(interval, timeout - (Date.now() - start)))
+          : interval;
+      await new Promise((resolve) => setTimeout(resolve, sleepMs));
     }
   }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.1 (TBD)
+
+### Fixes
+* [FIX][web] `TransactionsResource.waitFor()` (and `PreparedTransaction.waitForConfirmation()`, which wraps it) no longer sleeps past a finite `timeout`. The idle wait between polls used to run for the full `interval` regardless of how much of the timeout budget remained, so e.g. `waitFor(txId, { timeout: 50, interval: 5000 })` could reject at ~5000ms instead of ~50ms. The idle sleep is now clamped to whatever time remains before the deadline. `timeout: 0` (poll indefinitely) is unaffected. ([web-sdk#384](https://github.com/0xMiden/web-sdk/pull/384))
+
 ## 0.16.0 (2026-09-07)
 
 ### Changes
