@@ -1813,6 +1813,44 @@ describe("TransactionsResource", () => {
       ).rejects.toThrow("Transaction confirmation timed out");
     }, 5000);
 
+    it("clamps the final idle sleep to the remaining timeout instead of overshooting by a full interval", async () => {
+      const { resource } = makeResource({
+        getTransactions: vi.fn().mockResolvedValue([]),
+        syncChain: vi.fn().mockResolvedValue(undefined),
+      });
+      const start = Date.now();
+      await expect(
+        resource.waitFor("0xtxHex", { timeout: 50, interval: 5000 })
+      ).rejects.toThrow("Transaction confirmation timed out after 50ms");
+      // Before the fix, the unconditional `await sleep(interval)` overshot the
+      // 50ms deadline by up to ~5000ms (a full interval). The idle sleep must
+      // now be bounded by the remaining timeout budget instead.
+      expect(Date.now() - start).toBeLessThan(1000);
+    }, 10000);
+
+    it("does not shrink the sleep when timeout is disabled (timeout: 0)", async () => {
+      let pollCount = 0;
+      const { resource } = makeResource({
+        getTransactions: vi.fn().mockImplementation(() => {
+          pollCount++;
+          if (pollCount < 2) return Promise.resolve([]);
+          return Promise.resolve([
+            {
+              transactionStatus: () => ({
+                isCommitted: () => true,
+                isDiscarded: () => false,
+              }),
+            },
+          ]);
+        }),
+        syncChain: vi.fn().mockResolvedValue(undefined),
+      });
+      // With no timeout, the sleep between polls must still be the full
+      // interval — only a finite timeout bounds it.
+      await resource.waitFor("0xtxHex", { timeout: 0, interval: 20 });
+      expect(pollCount).toBe(2);
+    });
+
     it("handles transactionStatus returning undefined (no status method)", async () => {
       let count = 0;
       const { resource } = makeResource({
