@@ -383,7 +383,9 @@ jobs:
           node-version: "20"
           cache: 'pnpm'
       - name: Check React SDK version sync
-        run: node scripts/check-react-sdk-sync.js
+        run: |
+          node --test scripts/check-react-sdk-sync.test.cjs
+          node scripts/check-react-sdk-sync.js
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Run lint
