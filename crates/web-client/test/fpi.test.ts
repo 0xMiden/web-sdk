@@ -158,9 +158,15 @@ test.describe("fpi test", () => {
         new sdk.ForeignAccountArray([foreignAccount]),
         prefetchBlock
       );
+      // Node returns a plain array; the browser returns a typed WASM array.
+      const inputs = Array.isArray(fetchedInputs)
+        ? fetchedInputs
+        : Array.from({ length: fetchedInputs.length() }, (_, i) =>
+            fetchedInputs.get(i)
+          );
 
       const restoredInputs = sdk.AccountInputs.deserialize(
-        fetchedInputs.get(0).serialize()
+        inputs[0].serialize()
       );
       const prefetchedAccount = sdk.ForeignAccount.prefetched(restoredInputs);
 
@@ -191,7 +197,7 @@ test.describe("fpi test", () => {
       return {
         skip: false,
         foreignAccountIdStr,
-        prefetchedCount: fetchedInputs.length(),
+        prefetchedCount: inputs.length,
         prefetchedAccountIdStr: restoredInputs.accountId().toString(),
         prefetchBlock,
         proofAccountId: accountProof.accountId().toString(),
