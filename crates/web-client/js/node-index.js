@@ -142,9 +142,6 @@ export const importStore = /* @__PURE__ */ _reexport("importStore");
 // Array wrappers are JS polyfills, so the native export generator cannot discover them.
 export const AccountInputsArray =
   /* @__PURE__ */ _reexport("AccountInputsArray");
-export const InputNoteAndArgsArray = /* @__PURE__ */ _reexport(
-  "InputNoteAndArgsArray"
-);
 
 // Every other public napi class. GENERATED — do not edit by hand. Run
 // `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports` to regenerate from the
@@ -223,7 +220,6 @@ export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );
 export const InputNote = /* @__PURE__ */ _reexport("InputNote");
-export const InputNoteAndArgs = /* @__PURE__ */ _reexport("InputNoteAndArgs");
 export const InputNoteRecord = /* @__PURE__ */ _reexport("InputNoteRecord");
 export const InputNoteState = /* @__PURE__ */ _reexport("InputNoteState");
 export const InputNotes = /* @__PURE__ */ _reexport("InputNotes");

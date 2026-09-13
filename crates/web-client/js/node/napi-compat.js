@@ -226,7 +226,6 @@ function makeArrayPolyfills() {
     "AccountInputsArray",
     "FeltArray",
     "ForeignAccountArray",
-    "InputNoteAndArgsArray",
     "NoteAndArgsArray",
     "NoteArray",
     "NoteDetailsAndTagArray",

@@ -268,6 +268,63 @@ function makeResource(
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe("TransactionsResource", () => {
+  describe("foreignAccountInputs", () => {
+    it.each(["browser", "node"])(
+      "preserves caller handles and result order on %s",
+      async (platform) => {
+        const foreignAccounts = ["z", "a"].map((id) => ({
+          id,
+          consumed: false,
+          accountId() {
+            if (this.consumed) throw new Error("account handle was consumed");
+            return this.id;
+          },
+        }));
+        class BrowserArray {
+          constructor(items = []) {
+            this.items = items.map((item) => {
+              const copy = { id: item.accountId() };
+              item.consumed = true;
+              return copy;
+            });
+          }
+          push(item) {
+            this.items.push({ id: item.accountId() });
+          }
+        }
+        const getForeignAccountInputs = vi.fn(async (accounts) => {
+          const inputs = (
+            platform === "browser" ? accounts.items : accounts
+          ).map((account) => ({ accountId: () => account.id }));
+          return platform === "browser"
+            ? { length: () => inputs.length, get: (i) => inputs[i] }
+            : inputs;
+        });
+        const { resource } = makeResource(
+          { getForeignAccountInputs },
+          {},
+          { ForeignAccountArray: platform === "browser" ? BrowserArray : Array }
+        );
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const inputs = await resource.foreignAccountInputs(
+            foreignAccounts,
+            42
+          );
+          expect(inputs.map((input) => input.accountId())).toEqual(["z", "a"]);
+          expect(foreignAccounts.map((account) => account.accountId())).toEqual(
+            ["z", "a"]
+          );
+        }
+        expect(getForeignAccountInputs).toHaveBeenCalledTimes(2);
+        expect(getForeignAccountInputs).toHaveBeenLastCalledWith(
+          expect.anything(),
+          42
+        );
+      }
+    );
+  });
+
   describe("send — default path", () => {
     it("builds send request and submits", async () => {
       const { resource, inner } = makeResource();

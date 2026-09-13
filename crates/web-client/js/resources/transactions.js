@@ -814,7 +814,10 @@ export class TransactionsResource {
   async foreignAccountInputs(foreignAccounts, blockNum) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
-    const accounts = new wasm.ForeignAccountArray(foreignAccounts ?? []);
+    // The WASM array constructor consumes its elements; push borrows and clones
+    // each account so callers can reuse their handles after fetching inputs.
+    const accounts = new wasm.ForeignAccountArray();
+    for (const account of foreignAccounts ?? []) accounts.push(account);
     const inputs = await this.#inner.getForeignAccountInputs(
       accounts,
       blockNum

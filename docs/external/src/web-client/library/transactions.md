@@ -166,29 +166,20 @@ Notes on the staged form:
 
 `withInputNotes` adds notes and leaves the executing client to decide how each one is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. That is what you want for a request you build and execute yourself. It is not what you want for a request that travels — two clients with different stores produce different transaction summaries for the same request, and a multisig flow comparing summaries then fails for no visible reason.
 
-`withExplicitInputNotes` pins the mode on the request instead. Each note is consumed in the mode its `InputNote` carries, whatever the executing client's store holds:
+`withExplicitInputNote` pins the mode on the request instead. Each note is consumed in the mode its `InputNote` carries, whatever the executing client's store holds:
 
 ```typescript
-import {
-  InputNote,
-  InputNoteAndArgs,
-  InputNoteAndArgsArray,
-  TransactionRequestBuilder,
-} from "@miden-sdk/miden-sdk";
+import { InputNote, TransactionRequestBuilder } from "@miden-sdk/miden-sdk";
 
 const request = new TransactionRequestBuilder()
-  .withExplicitInputNotes(
-    new InputNoteAndArgsArray([
-      // Consumed with its proof.
-      new InputNoteAndArgs(InputNote.authenticated(note, inclusionProof), null),
-      // Consumed as unauthenticated, even if the executing client has a proof for it.
-      new InputNoteAndArgs(InputNote.unauthenticated(otherNote), null),
-    ])
-  )
+  // Consumed with its proof and optional arguments.
+  .withExplicitInputNote(InputNote.authenticated(note, inclusionProof), args)
+  // Consumed as unauthenticated, even if the executing client has a proof for it.
+  .withExplicitInputNote(InputNote.unauthenticated(otherNote))
   .build();
 ```
 
-The second argument of `InputNoteAndArgs` is the note's arguments, or `null` for none — the same value `withInputNotes` takes.
+Each call adds one note. The optional second argument is the note's arguments, the same value `withInputNotes` takes; omit it or pass `null` for none. The input note remains usable after the call.
 
 To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
 

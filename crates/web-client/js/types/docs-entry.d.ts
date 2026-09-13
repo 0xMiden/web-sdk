@@ -26,7 +26,6 @@ export {
   Felt,
   ForeignAccount,
   InputNote,
-  InputNoteAndArgs,
   InputNoteRecord,
   NetworkAccountTarget,
   Note,

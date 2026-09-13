@@ -18,9 +18,9 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 use crate::js_error_with_context;
 use crate::models::advice_map::AdviceMap;
 use crate::models::foreign_account::ForeignAccount;
+use crate::models::input_note::InputNote;
 use crate::models::miden_arrays::{
     ForeignAccountArray,
-    InputNoteAndArgsArray,
     NoteAndArgsArray,
     NoteArray,
     NoteDetailsAndTagArray,
@@ -28,8 +28,7 @@ use crate::models::miden_arrays::{
 };
 use crate::models::note_recipient::NoteRecipient;
 use crate::models::transaction_request::TransactionRequest;
-use crate::models::transaction_request::input_note_and_args::InputNoteAndArgs;
-use crate::models::transaction_request::note_and_args::NoteAndArgs;
+use crate::models::transaction_request::note_and_args::{NoteAndArgs, NoteArgs};
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::word::Word;
@@ -78,13 +77,13 @@ impl TransactionRequestBuilder {
         self.clone()
     }
 
-    /// Adds input notes with optional arguments, each consumed in the mode its `InputNote` carries.
-    #[js_export(js_name = "withExplicitInputNotes")]
-    pub fn with_explicit_input_notes(&mut self, notes: InputNoteAndArgsArray) -> Self {
-        let items: Vec<InputNoteAndArgs> = notes.into();
-        let native_note_and_note_args: Vec<(NativeInputNote, Option<NativeNoteArgs>)> =
-            items.into_iter().map(Into::into).collect();
-        self.builder = self.builder.clone().explicit_input_notes(native_note_and_note_args);
+    /// Adds an input note with optional arguments, consumed in the mode its `InputNote` carries.
+    /// Repeated calls add more notes. The input note is borrowed and remains usable by the caller.
+    #[js_export(js_name = "withExplicitInputNote")]
+    pub fn with_explicit_input_note(&mut self, note: &InputNote, args: Option<NoteArgs>) -> Self {
+        let native_note: NativeInputNote = note.into();
+        let native_args: Option<NativeNoteArgs> = args.map(Into::into);
+        self.builder = self.builder.clone().explicit_input_notes([(native_note, native_args)]);
         self.clone()
     }
 
