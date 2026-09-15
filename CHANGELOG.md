@@ -5,6 +5,15 @@
 ### Fixes
 
 * [FIX][react] `useTransaction`'s `execute()` now reads the transaction ID and any private output notes off `txResult` before calling `applyTransaction`, instead of after. `useSend` and `useMultiSend` already do this and say why in their comments: `applyTransaction` is documented elsewhere in this package as a point past which `txResult`-derived WASM handles should not be relied on. `useTransaction` was the one hook still reading them afterward — `extractFullNotes` swallows its own failures and returns `[]`, so under that documented assumption a private-note send via `execute({ privateNoteTarget })` could silently deliver zero notes instead of surfacing an error. This aligns all three hooks on the same, already-established ordering. ([web-sdk#376](https://github.com/0xMiden/web-sdk/pull/376))
+### Enhancements
+ 
+* [FEATURE][web] Added `ForeignAccount.private(account)`, `ForeignAccount.prefetched(inputs)` and the `AccountInputs` model, which let a caller supply a foreign account's state instead of having it fetched at execution time. Fetch the inputs with `client.transactions.foreignAccountInputs(accounts, blockNum)` ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+* [FEATURE][web] Added `TransactionRequestBuilder.withExplicitInputNote(note, args?)`, which pins whether each input note is consumed authenticated or unauthenticated, so every client executing the request produces the same transaction summary ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+
+
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.16.1 (from 0.16.0) ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
 
 ## 0.16.0 (2026-09-07)
 

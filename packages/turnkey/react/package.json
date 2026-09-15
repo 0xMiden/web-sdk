@@ -41,7 +41,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.16.0",
+    "@miden-sdk/miden-sdk": "^0.16.1",
     "@miden-sdk/turnkey": "^0.16.0",
     "@miden-sdk/react": "^0.16.0",
     "@turnkey/core": "^1.8.2",

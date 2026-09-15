@@ -40,6 +40,8 @@ import type {
   NetworkAccountTarget,
   AdviceInputs,
   FeltArray,
+  AccountInputs,
+  ForeignAccount,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
 
@@ -1298,6 +1300,41 @@ export interface TransactionsResource {
 
   /** Execute a program (view call) and return the resulting stack output. */
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
+
+  /**
+   * Fetch the state and inclusion witness of each foreign account, anchored at
+   * `blockNum`.
+   *
+   * A {@link ForeignAccount.public} entry is fetched from the network, a
+   * {@link ForeignAccount.private} entry contributes its own state and only its
+   * inclusion proof is fetched, and a {@link ForeignAccount.prefetched} entry is
+   * returned as it was given. Declare the results back through
+   * `ForeignAccount.prefetched` on a later request and nothing is fetched for
+   * those accounts at execution time — which is what lets a transaction pinned
+   * to an older block execute after the node stopped serving account state
+   * there.
+   *
+   * Each witness opens against the account tree of `blockNum` alone, so the
+   * results are valid only for a transaction whose reference block is exactly
+   * `blockNum` — the anchor's block when the request is executed against a
+   * {@link ChainAnchor}, or the sync height at execution time otherwise. Do not
+   * sync between fetching these and executing; execution fails naming the
+   * account and the block.
+   *
+   * Only the given accounts are fetched. This does not discover the accounts a
+   * transaction loads, such as faucets whose asset callbacks it triggers.
+   *
+   * Serialize an entry with `inputs.serialize()` to ship prefetched state to
+   * another client.
+   *
+   * @param foreignAccounts - Accounts to fetch inputs for.
+   * @param blockNum - Block the witnesses are anchored at.
+   * @returns The inputs, in the order given.
+   */
+  foreignAccountInputs(
+    foreignAccounts: ForeignAccount[],
+    blockNum: number
+  ): Promise<AccountInputs[]>;
 
   /**
    * List transactions, optionally filtered by status or IDs.
