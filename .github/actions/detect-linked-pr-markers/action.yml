@@ -1,0 +1,61 @@
+name: Detect linked-PR markers
+description: >
+  Reports whether the current PR's description carries a linked-dependency
+  marker ("Client PR: #N" or "Protocol PR: #N", the syntax the
+  inject-linked-client-pr / inject-linked-protocol-pr actions parse). The
+  `changes` preflights use it to run the full suite on such a PR even when its
+  diff is empty or docs-only: the marker retargets what the workspace compiles
+  against without touching a tracked file, so the path filter alone reads the
+  PR as "nothing changed".
+
+inputs:
+  github-token:
+    description: Token for the gh CLI call (defaults to GITHUB_TOKEN).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  found:
+    description: "true if the PR body carries a Client PR / Protocol PR marker, false otherwise."
+    value: ${{ steps.detect.outputs.found }}
+
+runs:
+  using: composite
+  steps:
+    - id: detect
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        # Fallback only. The payload body is frozen at the triggering event, so
+        # a re-run after the marker was added still carries the old text, while
+        # the inject actions read the live body. This has to agree with them.
+        EVENT_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        set -euo pipefail
+
+        case "$EVENT_NAME" in
+          pull_request|pull_request_target) ;;
+          *) echo "found=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+        esac
+        if [ -z "${PR_NUMBER:-}" ]; then
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if ! body=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""' 2>/dev/null); then
+          echo "::warning title=detect-linked-pr-markers::Could not read PR #${PR_NUMBER}; using the event payload's body."
+          body="${EVENT_BODY:-}"
+        fi
+
+        # The inject actions' own anchored syntax, so a marker that patches the
+        # build is exactly a marker that runs it. A here-string, not a pipe:
+        # `grep -q` exits on the first match, and under pipefail the writer's
+        # SIGPIPE would turn a found marker into a miss.
+        if grep -qiE '^[[:space:]]*(Client|Protocol) PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' <<< "$body"; then
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "::notice title=detect-linked-pr-markers::PR #${PR_NUMBER} links a Client/Protocol PR; running the full suite whatever the diff."
+        else
+          echo "found=false" >> "$GITHUB_OUTPUT"
+        fi

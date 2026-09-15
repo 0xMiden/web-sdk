@@ -63,6 +63,6 @@
   },
   "homepage": "https://github.com/0xMiden/web-sdk",
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.16.0"
+    "@miden-sdk/miden-sdk": "^0.16.1"
   }
 }
