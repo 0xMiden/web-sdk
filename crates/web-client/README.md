@@ -467,10 +467,16 @@ console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 
 // `remaining === 0` therefore means "nothing consumable now", not "no notes".
 // To see block-locked notes too, with their unlock block:
+const walletId = wallet.id().toString();
 const all = await client.notes.listConsumable({ account: wallet });
 for (const record of all) {
-  const status = record.noteConsumability()[0].consumptionStatus();
-  if (!status.isConsumableNow()) {
+  // Match the entry to the account you asked about rather than taking the
+  // first: a record can carry one status per account.
+  const entry = record
+    .noteConsumability()
+    .find((nc) => nc.accountId().toString() === walletId);
+  const status = entry?.consumptionStatus();
+  if (status && !status.isConsumableNow()) {
     console.log(`locked until block ${status.consumableAfterBlock()}`);
   }
 }
