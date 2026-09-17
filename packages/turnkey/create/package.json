@@ -24,7 +24,9 @@
   },
   "files": [
     "bin",
-    "template"
+    "template",
+    "README.md",
+    "AGENTS.md"
   ],
   "bugs": {
     "url": "https://github.com/0xMiden/web-sdk/issues"

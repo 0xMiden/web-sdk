@@ -50,7 +50,9 @@
   "files": [
     "dist",
     "package.json",
-    "docs/INTEGRATIONS.md"
+    "README.md",
+    "AGENTS.md",
+    "skills"
   ],
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",

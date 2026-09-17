@@ -62,7 +62,9 @@
     "@miden-sdk/turnkey": "workspace:*"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "AGENTS.md"
   ],
   "bugs": {
     "url": "https://github.com/0xMiden/web-sdk/issues"

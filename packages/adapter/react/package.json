@@ -10,7 +10,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "AGENTS.md"
   ],
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
