@@ -19,7 +19,7 @@
     "@noble/hashes": "^2.0.1"
   },
   "devDependencies": {
-    "@getpara/web-sdk": "^2.11.0",
+    "@getpara/web-sdk": "^3.18.0",
     "@miden-sdk/miden-sdk": "workspace:*",
     "@types/react": "^19.0.0",
     "esbuild": "^0.24.0",
@@ -32,7 +32,7 @@
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@getpara/web-sdk": "^2.11.0",
+    "@getpara/web-sdk": "^3.18.0",
     "@miden-sdk/miden-sdk": "^0.16.1"
   },
   "exports": {

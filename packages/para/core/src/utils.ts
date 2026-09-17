@@ -1,9 +1,46 @@
-import ParaWeb, { Wallet } from "@getpara/web-sdk";
+import type ParaWeb from "@getpara/web-sdk";
+import type { Wallet } from "@getpara/web-sdk";
 import type { NoteType, TransactionSummary } from "@miden-sdk/miden-sdk";
 import { hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { TxSummaryJson } from "./types.js";
 /** @public */
 export { hexToBytes };
+
+const EVM_WALLET_TYPE = "EVM";
+
+/** True when a Para wallet is an EVM key (the only type Miden signing uses). */
+export const isEvmWallet = (wallet: { type?: string }): boolean =>
+  wallet.type === EVM_WALLET_TYPE;
+
+/**
+ * Prefer Para 3.x `getWalletsByType("EVM")`, which returns full `Wallet`
+ * records including `publicKey`. `useAccount().embedded.wallets` is
+ * `AvailableWallet[]` and omits `publicKey`, so signing would otherwise
+ * always fall through to `issueJwt`.
+ */
+export const resolveEvmWallets = (
+  para: ParaWeb,
+  wallets: Array<Pick<Wallet, "id"> & { type?: string }>
+): Wallet[] => {
+  const listed = wallets.filter(isEvmWallet);
+  if (typeof para.getWalletsByType !== "function") {
+    return listed as Wallet[];
+  }
+  try {
+    const full = para.getWalletsByType(EVM_WALLET_TYPE);
+    if (!Array.isArray(full) || full.length === 0) {
+      return listed as Wallet[];
+    }
+    if (listed.length === 0) {
+      return full;
+    }
+    const ids = new Set(listed.map((wallet) => wallet.id));
+    const matched = full.filter((wallet) => ids.has(wallet.id));
+    return matched.length > 0 ? matched : (listed as Wallet[]);
+  } catch {
+    return listed as Wallet[];
+  }
+};
 
 /**
  * Converts a Para hex signature into the serialized format expected by Miden.

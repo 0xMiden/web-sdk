@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@miden-sdk/miden-sdk": "^0.15.1",
-    "@getpara/evm-wallet-connectors": "^2.2.0",
-    "@getpara/react-sdk-lite": "^2.2.0",
+    "@getpara/evm-wallet-connectors": "^3.18.0",
+    "@getpara/react-sdk-lite": "^3.18.0",
     "@miden-sdk/para": "^0.15.1",
     "@miden-sdk/para-react": "^0.15.1",
     "@miden-sdk/react": "^0.15.1",
@@ -24,7 +24,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.4.0",
-    "viem": "^2.38.5",
+    "viem": "^2.39.0",
     "wagmi": "^2.14.16"
   },
   "devDependencies": {
