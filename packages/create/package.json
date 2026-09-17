@@ -1,0 +1,46 @@
+{
+  "name": "@miden-sdk/create",
+  "version": "0.16.1",
+  "description": "Point your AI coding agent at version-matched Miden guidance. Run `npm create @miden-sdk@latest` in a project using the Miden web SDK.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "miden-skills": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/cli.ts --format cjs --dts --clean",
+    "dev": "tsup src/index.ts src/cli.ts --format cjs --dts --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "miden",
+    "agents",
+    "ai",
+    "skills",
+    "blockchain",
+    "zk"
+  ],
+  "author": "Miden Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xMiden/web-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  }
+}

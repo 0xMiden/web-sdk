@@ -205,6 +205,12 @@ fi
 # on which package's README they happened to open. The markers are already
 # machine-readable, so comparing them costs nothing.
 #
+# Scoped to README.md deliberately. The block is a README convention - it is
+# what a consumer copies off the npm landing page - and other agent docs discuss
+# the markers in prose, which a wider scan would read as a malformed block.
+# @miden-sdk/create renders the same text from src/init.ts; that copy is pinned
+# by its own unit test rather than from here, because it is code, not markup.
+#
 # Run only on a full discovery pass: with explicit package arguments the caller
 # is checking one package, and failing them over an unrelated README is noise.
 if [ $# -eq 0 ]; then
@@ -219,7 +225,7 @@ if [ $# -eq 0 ]; then
     marker_files="$marker_files ${readme#"$repo_root"/}"
     marker_hashes="$marker_hashes$(printf '%s' "$block" | shasum | cut -d' ' -f1)
 "
-  done < <(grep -rl 'BEGIN:miden-agent-rules' --include='*.md' "$repo_root" 2>/dev/null |
+  done < <(grep -rl 'BEGIN:miden-agent-rules' --include='README.md' "$repo_root" 2>/dev/null |
     grep -v node_modules | sort)
 
   distinct=$(printf '%s' "$marker_hashes" | grep -c . || true)
