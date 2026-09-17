@@ -5,54 +5,69 @@ description: Critical pitfalls and safety rules for Miden frontend development. 
 
 # Miden Frontend Pitfalls
 
-## FP1: WASM Initialization Race (CRITICAL)
+## FP1: Readiness Is Per Hook, and `loadingComponent` Is Not a Gate (CRITICAL)
 
-Components that use Miden hooks before MidenProvider finishes WASM initialization get empty data, and `useMidenClient()` throws outright ("Miden client is not ready").
+Three different things happen before WASM is ready, and only one of them is a crash:
+
+- **Query hooks are safe and self-heal.** `useAccounts()` and friends return empty and
+  refetch themselves once readiness flips, because their effects are keyed on `isReady`.
+  Rendering one early is not a bug, and a test asserting "empty forever" asserts something
+  the hook does not do.
+- **Mutation hooks are safe to render** and throw only when you invoke the action.
+- **`useMidenClient()` throws on render** with "Miden client is not ready". This is the
+  only one that breaks a first paint.
+
+**`loadingComponent` does not hold children back.** It renders only while
+`isInitializing` is true, and the store's initial state is `isInitializing: false`, so the
+very first render reaches your children even when you pass one. Treat it as presentation,
+not as a readiness boundary.
 
 ```tsx
-// WRONG - renders empty before WASM is ready
-function App() {
-  const { accounts } = useAccounts(); // returns empty arrays before WASM is ready
-  return <div>{accounts.length}</div>;
-}
-
-// CORRECT - use loadingComponent or check isReady
-<MidenProvider
-  config={{ rpcUrl: "testnet" }}
-  loadingComponent={<p>Loading WASM...</p>}
->
+// WRONG - loadingComponent is not a gate; App still renders on the first pass
+<MidenProvider config={{ rpcUrl: "testnet" }} loadingComponent={<p>Loading…</p>}>
   <App />
 </MidenProvider>
 
-// CORRECT - guard with isReady
+// CORRECT - gate on isReady wherever you need the client
 function App() {
   const { isReady } = useMiden();
-  if (!isReady) return <p>Loading...</p>;
-  return <WalletView />;
+  if (!isReady) return <p>Loading…</p>;
+  return <WalletView />;   // safe to call useMidenClient() below here
 }
 ```
 
-## FP2: Recursive WASM Access Crash (CRITICAL)
+## FP2: Sequences Are Not Atomic (the client already serializes single calls) (HIGH)
 
-The WASM client cannot be re-entered. Concurrent calls crash with "recursive use of an object detected which would lead to unsafe aliasing in rust". This is a wasm-bindgen borrow rule, not a threading limit, so it applies to the MT build too.
+**A single concurrent call is safe.** Every method except the documented `SYNC_METHODS`
+is forwarded through a per-instance promise chain, so two overlapping calls queue rather
+than racing. The source is explicit that an unserialized fallback "panics with 'RefCell
+already borrowed' and poisons the instance", which is precisely why the chain exists. So
+`sync(); await send({...})` does not crash.
+
+What actually breaks is a **sequence you intended to be atomic**. The chain serializes each
+call, not your group of them, so another caller can interleave between your steps and act
+on state you were midway through changing.
 
 ```tsx
-// WRONG - two operations running simultaneously
-const handleClick = async () => {
-  sync();                    // fires async
-  await send({ ... });       // runs concurrently - CRASH
-};
+// FINE - each call queues behind the other, no crash
+sync();
+await send({ ... });
 
-// CORRECT - use runExclusive for sequential execution
-const client = useMidenClient();
+// WRONG - read-then-write with a gap another caller can slip into
+const height = await client.getSyncHeight();
+await doSomethingThatAssumes(height);   // height may be stale by now
+
+// CORRECT - take the lock around the whole sequence
 const { runExclusive } = useMiden();
 await runExclusive(async () => {
-  await client.syncState();
-  // now safe to do next operation
+  const height = await client.getSyncHeight();
+  await doSomethingThatAssumes(height);
 });
 ```
 
-Built-in hooks (useSend, useConsume, etc.) already use runExclusive internally. This pitfall applies when using `useMidenClient()` directly or mixing manual client calls with hook mutations.
+Built-in hooks already wrap their own sequences. Reach for `runExclusive` when you compose
+several raw `useMidenClient()` calls that depend on each other, or mix manual client calls
+with hook mutations.
 
 ## FP3: COOP/COEP Headers - Only for the Multi-Threaded (MT) Build (HIGH)
 
@@ -74,7 +89,7 @@ export default defineConfig({
 });
 ```
 
-Do not rely on the plugin's own default - `@miden-sdk/vite-plugin` defaults `crossOriginIsolation` to `false` (verified false in the executable source across the released tags; note the plugin README incorrectly says the default is `true`). For MT you must pass `true` explicitly. For ST (the default build) leaving it `false` is correct - the example wallet uses bare `midenVitePlugin()` precisely because it is ST, and because `same-origin` COOP would nullify `window.opener` in the Para OAuth popups it pairs with via `paraVitePlugin()`.
+Do not rely on the plugin's own default - `@miden-sdk/vite-plugin` defaults `crossOriginIsolation` to `false`. For MT you must pass `true` explicitly. For ST (the default build) leaving it `false` is correct - the example wallet uses bare `midenVitePlugin()` precisely because it is ST, and because `same-origin` COOP would nullify `window.opener` in the Para OAuth popups it pairs with via `paraVitePlugin()`.
 
 For MT, COOP/COEP must also be set on the production server - the plugin covers only the Vite dev and preview servers, not your real production host. See `vite-wasm-setup` for per-host configs (Nginx, Vercel, Cloudflare).
 
@@ -176,7 +191,7 @@ export default defineConfig({
 |--------|-----------------------|--------------------|---------|
 | `crossOriginIsolation` | `false` | Only when importing the MT variants (`/mt`, `/mt/lazy`) | Emit COOP/COEP headers for SharedArrayBuffer |
 
-For the **default single-threaded build**, leave `crossOriginIsolation` at its `false` default - the ST WASM loads in any browser context and needs no headers. Pass `crossOriginIsolation: true` **only** when you opt into the multi-threaded variants for local proving; without the headers the MT WASM can't construct shared memory and fails to instantiate. (The plugin README still incorrectly documents the default as `true` at 0.16.0; the executable source default in `src/index.ts` is `false`, unchanged across every released tag. Do not trust the README.) The shipped example wallet uses bare `midenVitePlugin()` because it is ST (and because isolation would break the Para OAuth popups it pairs with via `paraVitePlugin()`) - see FP3. For an MT production deployment, set the same COOP/COEP headers at your real production host - the plugin only injects them into the Vite dev and preview servers. See `vite-wasm-setup` for host-specific configs.
+For the **default single-threaded build**, leave `crossOriginIsolation` at its `false` default - the ST WASM loads in any browser context and needs no headers. Pass `crossOriginIsolation: true` **only** when you opt into the multi-threaded variants for local proving; without the headers the MT WASM can't construct shared memory and fails to instantiate. The shipped example wallet uses bare `midenVitePlugin()` because it is ST (and because isolation would break the Para OAuth popups it pairs with via `paraVitePlugin()`) - see FP3. For an MT production deployment, set the same COOP/COEP headers at your real production host - the plugin only injects them into the Vite dev and preview servers. See `vite-wasm-setup` for host-specific configs.
 
 ## FP9: React StrictMode Double-Init (LOW)
 

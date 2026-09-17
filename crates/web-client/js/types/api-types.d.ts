@@ -692,7 +692,13 @@ export interface PswapCreateOptions extends TransactionOptions {
   request: Asset;
   /** Visibility of the PSWAP note itself. */
   type?: NoteVisibility;
-  /** Visibility of the payback note fillers emit to the creator. Defaults to `public`. */
+  /**
+   * Visibility of the payback note fillers emit to the creator.
+   *
+   * Defaults to `type`, NOT to `public`: both `swap` and `pswapCreate` resolve
+   * it as `paybackType ?? type`. Omit it on a private swap and the payback note
+   * is private too.
+   */
   paybackType?: NoteVisibility;
 }
 

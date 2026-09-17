@@ -186,25 +186,45 @@ To inspect the keys the client ended up with, use the keystore resource on the h
 
 ## Using More Than One Signer
 
-`MultiSignerProvider` (exported from `@miden-sdk/react`) lets several signer providers coexist and hands `MidenProvider` whichever one is active. Each child signer registers itself; `useMultiSigner()` exposes the registry:
+`MultiSignerProvider` (exported from `@miden-sdk/react`) lets several signer providers
+coexist and hands `MidenProvider` whichever one is active.
+
+**Registration happens through `<SignerSlot />`, and nothing else.** `SignerSlot` renders
+nothing: it reads its nearest ancestor's `SignerContext` and registers that value into the
+`MultiSignerProvider` registry. So each signer provider is mounted as a **sibling** of
+`MidenProvider`, with a `SignerSlot` inside it. Nesting the providers around
+`MidenProvider` and omitting `SignerSlot` leaves `signers` empty, so the first
+`connectSigner(name)` throws ``Signer "<name>" not found`` - and the nesting also puts the
+innermost provider's own `SignerContext` nearest to `MidenProvider`, bypassing the value
+`MultiSignerProvider` is trying to forward.
 
 ```tsx
-import { MultiSignerProvider, useMultiSigner } from "@miden-sdk/react";
+import {
+  MultiSignerProvider,
+  SignerSlot,
+  useMultiSigner,
+} from "@miden-sdk/react";
 
 <MultiSignerProvider>
   <ParaSignerProvider apiKey="..." environment="PRODUCTION">
-    <TurnkeySignerProvider config={{ defaultOrganizationId: "..." }}>
-      <MidenProvider config={{ rpcUrl: "testnet" }}>
-        <App />
-      </MidenProvider>
-    </TurnkeySignerProvider>
+    <SignerSlot />
   </ParaSignerProvider>
+
+  <TurnkeySignerProvider config={{ defaultOrganizationId: "..." }}>
+    <SignerSlot />
+  </TurnkeySignerProvider>
+
+  <MidenProvider config={{ rpcUrl: "testnet" }}>
+    <App />
+  </MidenProvider>
 </MultiSignerProvider>;
 
 // inside the tree
 const { signers, activeSigner, connectSigner, disconnectSigner } = useMultiSigner();
 await connectSigner("Turnkey"); // switches by `name` and calls that signer's connect()
 ```
+
+`useMultiSigner()` returns `null` outside a `MultiSignerProvider`.
 
 `disconnectSigner()` drops the active signer and reverts to local-keystore mode. A single signer provider does NOT need this wrapper - `MidenFiSignerProvider`, `ParaSignerProvider` and `TurnkeySignerProvider` each provide their own `SignerContext` standalone.
 
@@ -237,7 +257,6 @@ If the signer backs a guarded multisig account (a set of approvers plus a guardi
 import {
   createAuthGuardedMultisig,
   AuthGuardedMultisigConfig,
-  AuthScheme,
 } from "@miden-sdk/miden-sdk";
 
 // approvers and guardian are public key commitments (Word);
@@ -248,7 +267,7 @@ const config = new AuthGuardedMultisigConfig(
   approvers,                       // Word[]
   2,                               // defaultThreshold
   guardian,                        // Word
-  AuthScheme.AuthRpoFalcon512      // or AuthScheme.AuthEcdsaK256Keccak
+  authScheme                       // see the AuthScheme trap below
 );
 
 // Optional: tighten the threshold for specific procedures.
@@ -262,6 +281,21 @@ const accountConfig: SignerAccountConfig = {
   customComponents: [authComponent],
 };
 ```
+
+**The `AuthScheme` trap.** `@miden-sdk/miden-sdk` exports TWO different things under that
+name, and the one you get from the browser entry is not the enum this constructor wants.
+The package's own `AuthScheme` is a frozen string const, `{ Falcon: "falcon", ECDSA:
+"ecdsa" }`, and it **shadows** the wasm-bindgen enum of the same name. So
+`AuthScheme.AuthRpoFalcon512` evaluates to `undefined`, and the constructor fails when it
+tries to convert it.
+
+On Node the wasm class is re-exported under the non-colliding alias `AuthSchemeNative`, so
+`AuthSchemeNative.AuthRpoFalcon512` works there. The browser entry has no such escape
+hatch, which is why the SDK's own browser test harness restores it by hand
+(`window.AuthScheme = wasm.AuthScheme`). In a browser app, obtain the enum from the wasm
+namespace yourself rather than from the package's named export, and verify the value is
+not `undefined` before passing it.
+
 
 **Do not compile equivalent MASM through `AccountComponent.compile` instead.** Doing so links the standards package *dynamically*, which yields a different `auth_tx` procedure root. `AccountComponentInterface::from_procedures` then cannot classify the account, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
 
