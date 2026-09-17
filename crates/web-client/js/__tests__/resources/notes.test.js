@@ -201,7 +201,22 @@ describe("NotesResource", () => {
       noteConsumability: vi.fn().mockReturnValue([
         {
           consumptionStatus: () => ({
+            isConsumableNow: () => afterBlock == null,
             consumableAfterBlock: () => afterBlock,
+          }),
+        },
+      ]),
+    });
+
+    // Never-consumable and unconsumable-conditions statuses report no unlock
+    // block either, so only the status reader tells them from consumable-now.
+    const neverConsumableNote = (record) => ({
+      inputNoteRecord: vi.fn().mockReturnValue(record),
+      noteConsumability: vi.fn().mockReturnValue([
+        {
+          consumptionStatus: () => ({
+            isConsumableNow: () => false,
+            consumableAfterBlock: () => null,
           }),
         },
       ]),
@@ -233,7 +248,10 @@ describe("NotesResource", () => {
       const wasmNow = consumableNote("wasmNow");
       wasmNow.noteConsumability.mockReturnValue([
         {
-          consumptionStatus: () => ({ consumableAfterBlock: () => undefined }),
+          consumptionStatus: () => ({
+            isConsumableNow: () => true,
+            consumableAfterBlock: () => undefined,
+          }),
         },
       ]);
       inner.getConsumableNotes.mockResolvedValue([
@@ -243,6 +261,16 @@ describe("NotesResource", () => {
       const resource = makeResource();
       const result = await resource.listAvailable({ account: "0xacc" });
       expect(result).toEqual(["wasmNow"]);
+    });
+
+    it("excludes a never-consumable note, which reports no unlock block either", async () => {
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("nowRecord"),
+        neverConsumableNote("neverRecord"),
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: "0xacc" });
+      expect(result).toEqual(["nowRecord"]);
     });
 
     it("resolves bech32 account ref", async () => {

@@ -43,23 +43,6 @@ export function resolveAccountRef(ref, wasm) {
  * @param {object} wasm - The WASM module.
  * @returns {Address} The resolved Address.
  */
-/**
- * True when `record` is consumable by the screened account right now.
- *
- * `getConsumableNotes` also returns notes the screener marks `ConsumableAfter`,
- * which unlock at a later block. An absent `consumableAfterBlock()` reads as
- * consumable only because miden-client already drops `NeverConsumable` and
- * `UnconsumableConditions`: JS has no other status reader to tell them apart.
- *
- * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
- * @returns {boolean} True when no consumability entry is block-locked.
- */
-export function isConsumableNow(record) {
-  return record
-    .noteConsumability()
-    .some((nc) => nc.consumptionStatus().consumableAfterBlock() == null);
-}
-
 export function resolveAddress(ref, wasm) {
   if (ref == null) {
     throw new Error("Address reference cannot be null or undefined");
@@ -76,6 +59,24 @@ export function resolveAddress(ref, wasm) {
     return wasm.Address.fromAccountId(accountId, undefined);
   }
   return wasm.Address.fromAccountId(ref, undefined);
+}
+
+/**
+ * True when `record` can be consumed right now by the account it was screened
+ * for, as of the client's last sync.
+ *
+ * Reads each entry's status rather than inferring it: a missing
+ * `consumableAfterBlock()` alone would also match a note that is never
+ * consumable. `getConsumableNotes(accountId)` screens one account, so the
+ * entries belong to it; a record with no entries is not consumable.
+ *
+ * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
+ * @returns {boolean} True when some entry reports a consumable-now status.
+ */
+export function isConsumableNow(record) {
+  return record
+    .noteConsumability()
+    .some((nc) => nc.consumptionStatus().isConsumableNow());
 }
 
 /**

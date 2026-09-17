@@ -753,7 +753,24 @@ describe("TransactionsResource", () => {
       noteConsumability: vi.fn().mockReturnValue([
         {
           consumptionStatus: () => ({
+            isConsumableNow: () => afterBlock == null,
             consumableAfterBlock: () => afterBlock,
+          }),
+        },
+      ]),
+    });
+
+    // A never-consumable status reports no unlock block either, so only the
+    // status reader keeps it out of the request.
+    const neverConsumableNote = (note) => ({
+      inputNoteRecord: vi
+        .fn()
+        .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
+      noteConsumability: vi.fn().mockReturnValue([
+        {
+          consumptionStatus: () => ({
+            isConsumableNow: () => false,
+            consumableAfterBlock: () => null,
           }),
         },
       ]),
@@ -840,6 +857,23 @@ describe("TransactionsResource", () => {
       const result = await resource.consumeAll({ account: "0xaccHex" });
       expect(result).toEqual({ txId: null, consumed: 0, remaining: 0 });
       expect(inner.newConsumeTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("skips a never-consumable note, which reports no unlock block either", async () => {
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([
+            consumableNote("now"),
+            neverConsumableNote("never"),
+          ]),
+      });
+      const result = await resource.consumeAll({ account: "0xaccHex" });
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["now"],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+      expect(result.consumed).toBe(1);
     });
 
     it("respects maxNotes option", async () => {
@@ -1999,7 +2033,10 @@ describe("TransactionsResource", () => {
           .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
         noteConsumability: vi.fn().mockReturnValue([
           {
-            consumptionStatus: () => ({ consumableAfterBlock: () => null }),
+            consumptionStatus: () => ({
+              isConsumableNow: () => true,
+              consumableAfterBlock: () => null,
+            }),
           },
         ]),
       };

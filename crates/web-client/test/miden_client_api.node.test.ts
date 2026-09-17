@@ -526,6 +526,15 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(consumable.length).toBeGreaterThanOrEqual(1);
     const status = consumable[0].noteConsumability()[0].consumptionStatus();
     expect(status.consumableAfterBlock()).toBeUndefined();
+    // What the missing block number cannot tell you on its own: a note that can
+    // never be consumed also reports no block.
+    expect(status.isConsumableNow()).toBe(true);
+    expect(
+      sdk.NoteConsumptionStatus.neverConsumable("x").isConsumableNow()
+    ).toBe(false);
+    expect(
+      sdk.NoteConsumptionStatus.neverConsumable("x").consumableAfterBlock()
+    ).toBeUndefined();
   });
 
   test("terminate prevents resource operations", async ({ sdk }) => {
