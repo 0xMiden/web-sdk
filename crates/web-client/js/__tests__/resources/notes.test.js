@@ -193,49 +193,49 @@ describe("NotesResource", () => {
     });
   });
 
+  // A ConsumableNoteRecord whose consumability for the queried account is
+  // consumable-now (afterBlock null) or block-locked (afterBlock = a height).
+  // The account listAvailable resolves "0xacc"/"0xaccountHex" to; entries are
+  // matched against it.
+  const ACC = "0xacc";
+  const entry = (accountIdHex, afterBlock = null, consumableNow = null) => ({
+    accountId: () => ({ toString: () => accountIdHex }),
+    consumptionStatus: () => ({
+      isConsumableNow: () =>
+        consumableNow == null ? afterBlock == null : consumableNow,
+      consumableAfterBlock: () => afterBlock,
+    }),
+  });
+
+  const consumableNote = (record, afterBlock = null) => ({
+    inputNoteRecord: vi.fn().mockReturnValue(record),
+    noteConsumability: vi.fn().mockReturnValue([
+      {
+        accountId: () => ({ toString: () => ACC }),
+        consumptionStatus: () => ({
+          isConsumableNow: () => afterBlock == null,
+          consumableAfterBlock: () => afterBlock,
+        }),
+      },
+    ]),
+  });
+
+  // Never-consumable and unconsumable-conditions statuses report no unlock
+  // block either, so only the status reader tells them from consumable-now.
+  const neverConsumableNote = (record) => ({
+    inputNoteRecord: vi.fn().mockReturnValue(record),
+    noteConsumability: vi.fn().mockReturnValue([
+      {
+        accountId: () => ({ toString: () => ACC }),
+        consumptionStatus: () => ({
+          isConsumableNow: () => false,
+          consumableAfterBlock: () => null,
+        }),
+      },
+    ]),
+  });
+
   describe("listAvailable", () => {
-    // A ConsumableNoteRecord whose consumability for the queried account is
-    // consumable-now (afterBlock null) or block-locked (afterBlock = a height).
-    // The account listAvailable resolves "0xacc"/"0xaccountHex" to; entries are
-    // matched against it.
-    const ACC = "0xacc";
-    const entry = (accountIdHex, afterBlock = null, consumableNow = null) => ({
-      accountId: () => ({ toString: () => accountIdHex }),
-      consumptionStatus: () => ({
-        isConsumableNow: () =>
-          consumableNow == null ? afterBlock == null : consumableNow,
-        consumableAfterBlock: () => afterBlock,
-      }),
-    });
-
-    const consumableNote = (record, afterBlock = null) => ({
-      inputNoteRecord: vi.fn().mockReturnValue(record),
-      noteConsumability: vi.fn().mockReturnValue([
-        {
-          accountId: () => ({ toString: () => ACC }),
-          consumptionStatus: () => ({
-            isConsumableNow: () => afterBlock == null,
-            consumableAfterBlock: () => afterBlock,
-          }),
-        },
-      ]),
-    });
-
-    // Never-consumable and unconsumable-conditions statuses report no unlock
-    // block either, so only the status reader tells them from consumable-now.
-    const neverConsumableNote = (record) => ({
-      inputNoteRecord: vi.fn().mockReturnValue(record),
-      noteConsumability: vi.fn().mockReturnValue([
-        {
-          accountId: () => ({ toString: () => ACC }),
-          consumptionStatus: () => ({
-            isConsumableNow: () => false,
-            consumableAfterBlock: () => null,
-          }),
-        },
-      ]),
-    });
-
     it("resolves account and returns inputNoteRecord for each consumable-now note", async () => {
       inner.getConsumableNotes.mockResolvedValue([consumableNote("record1")]);
       const resource = makeResource();
@@ -254,28 +254,6 @@ describe("NotesResource", () => {
       const resource = makeResource();
       const result = await resource.listAvailable({ account: ACC });
       expect(result).toEqual(["nowRecord"]);
-    });
-
-    it("treats an undefined consumableAfterBlock (the browser build's None) as consumable now", async () => {
-      // The Node binding returns null for None, the wasm build returns undefined.
-      // Built inline: passing undefined to consumableNote() would take its null default.
-      const wasmNow = consumableNote("wasmNow");
-      wasmNow.noteConsumability.mockReturnValue([
-        {
-          accountId: () => ({ toString: () => ACC }),
-          consumptionStatus: () => ({
-            isConsumableNow: () => true,
-            consumableAfterBlock: () => undefined,
-          }),
-        },
-      ]);
-      inner.getConsumableNotes.mockResolvedValue([
-        wasmNow,
-        consumableNote("lockedRecord", 12345),
-      ]);
-      const resource = makeResource();
-      const result = await resource.listAvailable({ account: ACC });
-      expect(result).toEqual(["wasmNow"]);
     });
 
     it("excludes a never-consumable note, which reports no unlock block either", async () => {
@@ -332,6 +310,24 @@ describe("NotesResource", () => {
       // noteConsumability(), so it must not be mapped to inputNoteRecord().
       expect(result).toEqual([record]);
       expect(record.inputNoteRecord).not.toHaveBeenCalled();
+    });
+
+    it("returns block-locked notes, which listAvailable drops", async () => {
+      // The reason this method exists, and the escape hatch the breaking
+      // listAvailable change points at.
+      const now = consumableNote("nowRecord");
+      const locked = consumableNote("lockedRecord", 12345);
+      inner.getConsumableNotes.mockResolvedValue([now, locked]);
+      const resource = makeResource();
+      expect(await resource.listConsumable({ account: ACC })).toEqual([
+        now,
+        locked,
+      ]);
+      // Same input, opposite contract.
+      inner.getConsumableNotes.mockResolvedValue([now, locked]);
+      expect(await resource.listAvailable({ account: ACC })).toEqual([
+        "nowRecord",
+      ]);
     });
 
     it("passes undefined to getConsumableNotes when account is omitted", async () => {

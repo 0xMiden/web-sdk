@@ -38,20 +38,42 @@ describe("entry parity", () => {
       ),
     ].map(([, name]) => name);
 
-    // Only helpers implemented in this directory: the rest come from the WASM
-    // module, which each entry pulls in its own way.
+    // Only helpers implemented in JS here: the rest come from the WASM module,
+    // which each entry pulls in its own way. Subdirectories count, so a helper
+    // added under resources/ or node/ is not silently exempt.
     const implemented = new Set();
-    for (const file of readdirSync(jsDir)) {
-      if (!file.endsWith(".js") || file.endsWith("index.js")) continue;
-      for (const name of exportedNames(read(file))) implemented.add(name);
-    }
+    const walk = (dir) => {
+      for (const entry of readdirSync(`${jsDir}${dir}`, {
+        withFileTypes: true,
+      })) {
+        const path = `${dir}${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name !== "__tests__" && entry.name !== "workers")
+            walk(`${path}/`);
+          continue;
+        }
+        if (!entry.name.endsWith(".js") || entry.name.endsWith("index.js"))
+          continue;
+        for (const name of exportedNames(read(path))) implemented.add(name);
+      }
+    };
+    walk("");
 
     const browser = exportedNames(read("index.js"));
     const node = exportedNames(read("node-index.js"));
 
+    // Symmetric, so browser-only and node-only are both caught: either entry
+    // exporting a helper obliges the other, since they share one .d.ts.
+    // A helper neither entry exports is a different defect (a declaration no
+    // consumer can import) and is tracked separately in #388.
     const missing = declared
-      .filter((name) => implemented.has(name) && browser.has(name))
-      .filter((name) => !node.has(name));
+      .filter((name) => implemented.has(name))
+      .filter((name) => browser.has(name) || node.has(name))
+      .flatMap((name) => [
+        browser.has(name) ? null : `browser:${name}`,
+        node.has(name) ? null : `node:${name}`,
+      ])
+      .filter(Boolean);
 
     expect(missing).toEqual([]);
   });
