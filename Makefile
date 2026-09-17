@@ -47,6 +47,10 @@ toml-check: ## Runs Format for all TOML files but only in check mode
 typos-check: ## Run typos to check for spelling mistakes
 	@typos --config ./.typos.toml
 
+.PHONY: check-agent-docs
+check-agent-docs: ## Check every published package ships its AGENTS.md and skills/
+	./scripts/check-agent-docs.sh
+
 .PHONY: rust-client-ts-lint
 rust-client-ts-lint:
 	pnpm --filter web_store run lint

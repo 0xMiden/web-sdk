@@ -1,49 +1,52 @@
 # @miden-sdk/para
 
-[![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/0xMiden/miden-para/blob/main/LICENSE)
-[![test](https://github.com/0xMiden/miden-para/actions/workflows/test.yml/badge.svg)](https://github.com/0xMiden/miden-para/actions/workflows/test.yml)
-[![build](https://github.com/0xMiden/miden-para/actions/workflows/build.yml/badge.svg)](https://github.com/0xMiden/miden-para/actions/workflows/build.yml)
+[![LICENSE](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/0xMiden/web-sdk/blob/main/LICENSE.md)
 
-This is the Miden x Para SDK integration. Below, you'll find instructions for local building and linking the library. If you're looking for React integration, see [Miden x Para x React](./packages/use-miden-para-react/README.md) (package `@miden-sdk/para-react`). If you want to scaffold a fresh Vite `react-ts` app with our Vite config baked in, check [create-miden-para-react](./packages/create-miden-para-react/README.md) (package `@miden-sdk/create-para-react`).
+The Miden x Para integration: build a Miden account from a Para-managed EVM
+wallet and sign Miden transactions through Para.
+
+For the React bindings see [`@miden-sdk/para-react`](https://www.npmjs.com/package/@miden-sdk/para-react),
+which is where `ParaSignerProvider` and the hooks live. To scaffold a fresh Vite
+`react-ts` app with the Miden and Para config already wired, use
+[`@miden-sdk/create-para-react`](https://www.npmjs.com/package/@miden-sdk/create-para-react).
+
+## Agent guidance
+
+If you are an AI coding agent, read
+`node_modules/@miden-sdk/para/AGENTS.md` and
+`node_modules/@miden-sdk/para/skills/para-signer/SKILL.md` before writing code
+against this package. They ship in this tarball, so they match the version you
+have installed.
 
 ## Requirements
 
-- **Yarn 1.22.22** (enforced via `packageManager` field)
-- Node.js (compatible with your project)
-- A Para API key. **Production deployments require a Para production API key**; use a non-prod key for local/dev.
-
-This project uses Yarn 1.22.22. The version is locked in `package.json` and will be automatically enforced by modern package managers that support the `packageManager` field.
-
-## Peer Dependencies
-
-`@miden-sdk/para` expects these packages to be provided by the consuming app. Install matching versions alongside this package to avoid duplicate copies:
-
-- `@miden-sdk/miden-sdk@^0.13.0`
-- `@getpara/web-sdk@^3.18.0`
-
-Example install:
-
-```bash
-yarn add @miden-sdk/para @miden-sdk/miden-sdk@^0.16.1 @getpara/web-sdk@^3.18.0
-```
-
-When creating a client with `storageMode` set to `private`, supply an `accountSeed`; the initializer will throw if it is missing so that private accounts remain recoverable.
+- Node.js >= 20.
+- A Para API key. **Production deployments require a Para production API key**;
+  use a non-production key for local and development work.
 
 ## Installation
 
 ```bash
-yarn install
+pnpm add @miden-sdk/para @miden-sdk/miden-sdk @getpara/web-sdk
 ```
 
-## Building
+## Peer dependencies
 
-```bash
-yarn build
-```
+`@miden-sdk/para` expects these to be provided by the consuming app. Install
+matching versions alongside it so no duplicate copy of the SDK is resolved:
 
-## Publishing to npm
+- `@miden-sdk/miden-sdk@^0.16.1`
+- `@getpara/web-sdk@^3.18.0`
 
-1. Update the version in `package.json` (the published package is `@miden-sdk/para`).
-2. Authenticate with npm if needed: `npm login`.
-3. Publish: `npm run publish`. The `prepack` hook rebuilds `dist/` and the `postpack` hook moves the generated tarball into `build/`.
-4. (Optional) Inspect the packed artifact without publishing via `npm pack` and check `build/` for the resulting `miden-sdk-miden-para-<version>.tgz`.
+Para SDK 3.18 is required as of 0.16.1; the 2.x range no longer satisfies the
+peer.
+
+When creating a client with `storageMode` set to `private`, supply an
+`accountSeed`. The initializer throws if it is missing, so that private accounts
+stay recoverable.
+
+## Contributing
+
+This package is developed in the [`0xMiden/web-sdk`](https://github.com/0xMiden/web-sdk)
+monorepo under `packages/para/core`, and is released from it. See that repo's
+`CONTRIBUTING.md` and `AGENTS.md` for the build, test and release flow.

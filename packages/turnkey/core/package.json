@@ -56,7 +56,10 @@
     "@turnkey/sdk-browser": "^5.13.4"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "AGENTS.md",
+    "skills"
   ],
   "bugs": {
     "url": "https://github.com/0xMiden/web-sdk/issues"

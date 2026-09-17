@@ -8,6 +8,7 @@
     "bin",
     "template",
     "README.md",
+    "AGENTS.md",
     "package.json"
   ],
   "engines": {

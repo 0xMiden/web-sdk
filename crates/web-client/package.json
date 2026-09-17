@@ -59,6 +59,9 @@
     "js/standalone.js",
     "js/utils.js",
     "js/resources",
+    "README.md",
+    "AGENTS.md",
+    "skills",
     "../LICENSE.md"
   ],
   "scripts": {

@@ -10,6 +10,37 @@ npm install @miden-sdk/vite-plugin --save-dev
 pnpm add @miden-sdk/vite-plugin --dev
 ```
 
+## For AI coding agents
+
+This package ships `AGENTS.md` and a `skills/vite-wasm-setup/` guide inside the
+tarball, version-matched to the code you installed. Agents do not read
+`node_modules` unprompted, so paste this into your project's root `AGENTS.md`
+or `CLAUDE.md`:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date:
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
+
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
+
+Each guide indexes task-specific skills in that package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
+<!-- END:miden-agent-rules -->
+```
+
 ## Usage
 
 ```typescript
@@ -32,7 +63,7 @@ export default defineConfig({
 midenVitePlugin({
   rpcProxyTarget: "https://rpc.testnet.miden.io", // default
   rpcProxyPath: "/rpc.Api",                        // default
-  crossOriginIsolation: true,                      // default
+  crossOriginIsolation: false,                     // default
   wasmPackages: ["@miden-sdk/miden-sdk"],           // default
 });
 ```
@@ -59,8 +90,8 @@ midenVitePlugin({
 
 ### `crossOriginIsolation`
 - **Type:** `boolean`
-- **Default:** `true`
-- Adds `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers to the dev server. Required for `SharedArrayBuffer` (used by WASM workers).
+- **Default:** `false`
+- Adds `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers to the dev server. Required for `SharedArrayBuffer`, which the multi-threaded build's WASM workers need, so turn it on when you import from `@miden-sdk/miden-sdk/mt`. It is off by default because the headers change how the whole page behaves: once they are set, third-party embeds, images and scripts served without the matching CORS headers stop loading, and the breakage usually shows up far from this config.
 
 ### `rpcProxyTarget`
 - **Type:** `string | false`
