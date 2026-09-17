@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][turnkey] `createAccount` guarded its on-chain hydration path with `storageMode !== AccountStorageMode.private()`. That factory returns a new wasm-backed object on every call, so the comparison was always true and the `accounts.import` attempt ran for private accounts as well, which the guard exists to prevent. It now compares by value. ([#391](https://github.com/0xMiden/web-sdk/pull/391))
+* [FIX][turnkey] `useTurnkeyMiden` never terminated the client it created. The effect's cleanup called `terminate()` on the `client` React state captured when the effect ran, which is `null` on the first pass, and `client` is deliberately not in the dependency array, so every unmount or dependency change leaked a client. The cleanup now terminates the instance that run actually created, including one that finishes after unmount. ([#391](https://github.com/0xMiden/web-sdk/pull/391))
+* [FIX][turnkey] `create-miden-turnkey-react` scaffolded an app that could not install: it wrote `@miden-sdk/turnkey` and `@miden-sdk/turnkey-react` at `^1.15.1`, which no published version satisfies, and `@miden-sdk/miden-sdk` at `^0.15.1`, below the peer range those packages declare. All three now pin `^0.16.2`. ([#391](https://github.com/0xMiden/web-sdk/pull/391))
+* [FIX][repo] The crates release job failed on any release that does not bump the Rust workspace. It derived the crate version from the release tag, but the npm and Cargo versions are decoupled, so `v0.16.2` made it look for crates at `0.16.2`, find none, conclude all four were unpublished and hand `cargo publish` a list the registry refused with "crate miden-idxdb-store@0.16.1 already exists". It now reads each crate's own manifest version. ([#391](https://github.com/0xMiden/web-sdk/pull/391))
+
 ## 0.16.2 (2026-09-18)
 
 ### Enhancements

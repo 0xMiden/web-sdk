@@ -88,27 +88,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="${RELEASE_TAG#v}"
           metadata="$(cargo metadata --no-deps --format-version 1)"
 
+          # Ask each crate for its OWN version rather than deriving one from the
+          # release tag. The two are decoupled: a release that ships only npm
+          # packages leaves the Cargo workspace version alone, so v0.16.2 tagged
+          # a tree whose crates are still 0.16.1. Checking `<crate>@0.16.2` then
+          # found nothing on crates.io, concluded all four crates were
+          # unpublished, and handed `cargo publish` a list it refused with
+          # "crate miden-idxdb-store@0.16.1 already exists" - failing the job on
+          # a release that had nothing to publish at all.
           mapfile -t publishable_crates < <(
-            jq -r '[.packages[] | select(.publish != []) | .name] | sort | .[]' <<< "${metadata}"
+            jq -r '[.packages[] | select(.publish != []) | "\(.name) \(.version)"] | sort | .[]' <<< "${metadata}"
           )
 
           exclude_args=()
           remaining_crates=()
 
-          for crate in "${publishable_crates[@]}"; do
-            if cargo info --quiet --registry crates-io "${crate}@${version}" >/dev/null 2>&1; then
-              echo "${crate} ${version} already exists on crates.io; excluding it."
+          for entry in "${publishable_crates[@]}"; do
+            crate="${entry%% *}"
+            crate_version="${entry##* }"
+            if cargo info --quiet --registry crates-io "${crate}@${crate_version}" >/dev/null 2>&1; then
+              echo "${crate} ${crate_version} already exists on crates.io; excluding it."
               exclude_args+=(--exclude "${crate}")
             else
-              remaining_crates+=("${crate}")
+              remaining_crates+=("${crate} ${crate_version}")
             fi
           done
 
           if [[ "${#remaining_crates[@]}" -eq 0 ]]; then
-            echo "All publishable crates already exist on crates.io for ${version}."
+            echo "Every publishable crate is already on crates.io at its manifest version; nothing to do."
             exit 0
           fi
 
