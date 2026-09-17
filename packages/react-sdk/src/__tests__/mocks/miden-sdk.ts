@@ -124,12 +124,22 @@ export const createMockInputNoteRecord = (
 };
 
 // Mock ConsumableNoteRecord
-export const createMockConsumableNoteRecord = (noteId: string = "0xnote1") => ({
+export const createMockConsumableNoteRecord = (
+  noteId: string = "0xnote1",
+  // The account the record was screened for; hooks keep only entries matching
+  // the account they queried.
+  accountIdHex: string = "0x1234567890abcdef",
+  consumableNow: boolean = true
+) => ({
   inputNoteRecord: vi.fn(() => createMockInputNoteRecord(noteId)),
   noteConsumability: vi.fn(() => [
     {
-      accountId: vi.fn(() => createMockAccountId()),
-      consumableAfterBlock: vi.fn(() => null),
+      accountId: vi.fn(() => createMockAccountId(accountIdHex)),
+      // Mirrors the binding: the status, not the entry, answers consumability.
+      consumptionStatus: vi.fn(() => ({
+        isConsumableNow: vi.fn(() => consumableNow),
+        consumableAfterBlock: vi.fn(() => (consumableNow ? undefined : 12345)),
+      })),
     },
   ]),
   free: vi.fn(),

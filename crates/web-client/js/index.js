@@ -45,6 +45,7 @@ export const Linking = Object.freeze({
   Static: "static",
 });
 
+export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
 export { createP2IDNote, createP2IDENote, buildSwapTag };

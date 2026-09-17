@@ -22,6 +22,7 @@ import type {
   TransactionRecord,
   InputNoteRecord,
   OutputNoteRecord,
+  ConsumableNoteRecord,
   NoteId,
   NoteFile,
   NoteTag,
@@ -845,7 +846,12 @@ export interface WaitOptions {
   onProgress?: (status: WaitStatus) => void;
 }
 
-/** Result of consumeAll — includes count of remaining notes for pagination. */
+/**
+ * Result of consumeAll. `consumed` and `remaining` count only notes consumable
+ * at the last synced block, so `remaining === 0` means nothing is consumable
+ * now, not that the account has no unconsumed notes: block-locked notes appear
+ * in neither count. Use {@link NotesResource.listConsumable} to see those.
+ */
 export interface ConsumeAllResult {
   txId: TransactionId | null;
   consumed: number;
@@ -1099,8 +1105,10 @@ export interface TransactionsResource {
    */
   pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
   /**
-   * Consume all available notes for an account, up to an optional limit.
-   * Returns the count of remaining notes for pagination.
+   * Consume the notes an account can consume right now, up to an optional
+   * limit. Block-locked notes are skipped, the same set
+   * {@link NotesResource.listAvailable} returns. Returns the count of remaining
+   * notes for pagination.
    *
    * @param options - Options including the account and optional max notes limit.
    */
@@ -1399,11 +1407,30 @@ export interface NotesResource {
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
   /**
-   * List notes that are available for consumption by a specific account.
+   * List notes a specific account can consume, as of the client's last sync.
+   *
+   * Excludes block-locked notes (status `consumableAfterBlock`). Consumability
+   * is what miden-client's note screener reports at the last synced block, so
+   * sync first for a current answer. Use {@link NotesResource.listConsumable}
+   * to include block-locked notes, with their consumability metadata.
    *
    * @param options - Options containing the account to check availability for.
    */
   listAvailable(options: { account: AccountRef }): Promise<InputNoteRecord[]>;
+
+  /**
+   * List notes consumable by an account, including block-locked ones, keeping
+   * each note's consumability metadata. `noteConsumability()` holds one status
+   * per account; its `consumableAfterBlock()` is set when the note unlocks at a
+   * later block. Like {@link NotesResource.listAvailable}, it reflects the last
+   * sync.
+   *
+   * @param options - Optional account to check; omit to list notes consumable
+   *   by any tracked account.
+   */
+  listConsumable(options?: {
+    account?: AccountRef;
+  }): Promise<ConsumableNoteRecord[]>;
 
   /**
    * Import a note from a {@link NoteFile}.
@@ -1483,6 +1510,13 @@ export interface CompileComponentOptions {
    * auth transaction kernel invocation or intentionally omits one.
    */
   supportAllTypes?: boolean;
+  /**
+   * Dependency modules the component imports (e.g. auth libraries), linked as
+   * source modules before compilation, the same sequence a raw code builder
+   * would run. There is no `linking` option here. Two entries sharing a
+   * `namespace` cause a link error.
+   */
+  libraries?: Pick<CompileTxScriptLibrary, "namespace" | "code">[];
 }
 
 export interface CompileTxScriptLibrary {
@@ -1798,6 +1832,21 @@ export declare function buildNetworkNote(opts: NetworkNoteOptions): Note;
 export declare function buildSwapTag(
   options: BuildSwapTagOptions
 ): ReturnType<WasmModule["WebClient"]["buildSwapTag"]>;
+
+/**
+ * True when a `ConsumableNoteRecord` can be consumed right now, as of the
+ * client's last sync.
+ *
+ * `getConsumableNotes` also returns notes that unlock at a later block. This is
+ * the rule {@link NotesResource.listAvailable} and
+ * {@link TransactionsResource.consumeAll} apply, exported for code that reads
+ * the low-level client directly. With `accountIdHex`, only that account's
+ * consumability entry counts; without one, any account's entry does.
+ */
+export declare function isConsumableNow(
+  record: ConsumableNoteRecord,
+  accountIdHex?: string
+): boolean;
 
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
 export declare function exportStore(storeName: string): Promise<string>;

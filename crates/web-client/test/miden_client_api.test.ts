@@ -772,10 +772,31 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       await client.sync();
 
       const available = await client.notes.listAvailable({ account: wallet });
-      return { availableCount: available.length };
+
+      // Same contract as the napi test: the status, not a missing block
+      // number, says whether a note is consumable now.
+      const consumable = await client.notes.listConsumable({ account: wallet });
+      const status = consumable[0]?.noteConsumability()[0].consumptionStatus();
+      // Omitting the account lists notes consumable by any tracked account.
+      const allAccounts = await client.notes.listConsumable();
+
+      return {
+        availableCount: available.length,
+        consumableCount: consumable.length,
+        isConsumableNow: status?.isConsumableNow(),
+        afterBlock: status?.consumableAfterBlock() ?? null,
+        neverIsConsumableNow:
+          window.NoteConsumptionStatus.neverConsumable("x").isConsumableNow(),
+        allAccountsCount: allAccounts.length,
+      };
     });
 
     expect(result.availableCount).toBeGreaterThanOrEqual(1);
+    expect(result.consumableCount).toBeGreaterThanOrEqual(1);
+    expect(result.isConsumableNow).toBe(true);
+    expect(result.afterBlock).toBeNull();
+    expect(result.neverIsConsumableNow).toBe(false);
+    expect(result.allAccountsCount).toBeGreaterThanOrEqual(1);
   });
 
   mockTest("terminate prevents resource operations", async ({ page }) => {
