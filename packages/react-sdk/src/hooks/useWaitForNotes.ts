@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useMiden } from "../context/MidenProvider";
+import { isConsumableNow } from "@miden-sdk/miden-sdk";
 import type { ConsumableNoteRecord } from "@miden-sdk/miden-sdk";
 import type { WaitForNotesOptions } from "../types";
 import { parseAccountId } from "../utils/accountParsing";
@@ -38,9 +39,14 @@ export function useWaitForNotes(): UseWaitForNotesResult {
         await runExclusiveSafe(() =>
           (client as unknown as ClientWithNotes).syncState()
         );
-        const consumable = await runExclusiveSafe(() =>
-          (client as unknown as ClientWithNotes).getConsumableNotes(accountId)
-        );
+        const accountIdHex = accountId.toString();
+        const consumable = (
+          await runExclusiveSafe(() =>
+            (client as unknown as ClientWithNotes).getConsumableNotes(accountId)
+          )
+        ).filter((record) => isConsumableNow(record, accountIdHex));
+        // A block-locked note is not something to stop waiting for: it cannot
+        // be consumed yet, and the caller asked for notes it can use.
         if (consumable.length >= minCount) {
           return consumable;
         }

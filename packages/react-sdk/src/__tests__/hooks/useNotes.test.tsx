@@ -70,6 +70,37 @@ describe("useNotes", () => {
       expect(mockClient.getConsumableNotes).toHaveBeenCalled();
     });
 
+    it("excludes block-locked notes from consumableNotes", async () => {
+      // The screener returns notes that unlock at a later block; they are not
+      // consumable now, so the hook must not report them as such.
+      const mockConsumable = [
+        createMockConsumableNoteRecord("0xready", "0xaccount123"),
+        createMockConsumableNoteRecord("0xlocked", "0xaccount123", false),
+      ];
+
+      const mockClient = createMockWebClient({
+        getInputNotes: vi.fn().mockResolvedValue([]),
+        getConsumableNotes: vi.fn().mockResolvedValue(mockConsumable),
+      });
+
+      mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+      act(() => {
+        useMidenStore.getState().setClient(mockClient as any);
+      });
+
+      const { result } = renderHook(() =>
+        useNotes({ accountId: "0xaccount123" })
+      );
+
+      await waitFor(() => {
+        expect(result.current.consumableNotes.length).toBe(1);
+      });
+      const ids = result.current.consumableNotes.map((n) =>
+        n.inputNoteRecord().id()?.toString()
+      );
+      expect(ids).toEqual(["0xready"]);
+    });
+
     it("should refetch notes after sync updates", async () => {
       const mockNotes = [createMockInputNoteRecord("0xnote1")];
       const mockConsumable = [createMockConsumableNoteRecord("0xnote1")];

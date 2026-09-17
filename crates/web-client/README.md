@@ -460,9 +460,20 @@ const txId = await client.transactions.send({
 // Sync state to discover new notes
 await client.sync();
 
-// Consume all available notes for an account
+// Consume the notes this account can consume right now. Notes that unlock at a
+// later block are left alone, and are counted in neither number below.
 const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
+
+// `remaining === 0` therefore means "nothing consumable now", not "no notes".
+// To see block-locked notes too, with their unlock block:
+const all = await client.notes.listConsumable({ account: wallet });
+for (const record of all) {
+  const status = record.noteConsumability()[0].consumptionStatus();
+  if (!status.isConsumableNow()) {
+    console.log(`locked until block ${status.consumableAfterBlock()}`);
+  }
+}
 ```
 
 ### Check Balance

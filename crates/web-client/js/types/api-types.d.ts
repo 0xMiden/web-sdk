@@ -846,7 +846,12 @@ export interface WaitOptions {
   onProgress?: (status: WaitStatus) => void;
 }
 
-/** Result of consumeAll — includes count of remaining notes for pagination. */
+/**
+ * Result of consumeAll. `consumed` and `remaining` count only notes consumable
+ * at the last synced block, so `remaining === 0` means nothing is consumable
+ * now, not that the account has no unconsumed notes: block-locked notes appear
+ * in neither count. Use {@link NotesResource.listConsumable} to see those.
+ */
 export interface ConsumeAllResult {
   txId: TransactionId | null;
   consumed: number;
@@ -1827,6 +1832,21 @@ export declare function buildNetworkNote(opts: NetworkNoteOptions): Note;
 export declare function buildSwapTag(
   options: BuildSwapTagOptions
 ): ReturnType<WasmModule["WebClient"]["buildSwapTag"]>;
+
+/**
+ * True when a `ConsumableNoteRecord` can be consumed right now, as of the
+ * client's last sync.
+ *
+ * `getConsumableNotes` also returns notes that unlock at a later block. This is
+ * the rule {@link NotesResource.listAvailable} and
+ * {@link TransactionsResource.consumeAll} apply, exported for code that reads
+ * the low-level client directly. With `accountIdHex`, only that account's
+ * consumability entry counts; without one, any account's entry does.
+ */
+export declare function isConsumableNow(
+  record: ConsumableNoteRecord,
+  accountIdHex?: string
+): boolean;
 
 /** Exports the entire contents of an IndexedDB store as a JSON string. */
 export declare function exportStore(storeName: string): Promise<string>;

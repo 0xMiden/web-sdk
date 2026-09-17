@@ -3,7 +3,11 @@ import { renderHook, act } from "@testing-library/react";
 import { useSessionAccount } from "../../hooks/useSessionAccount";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { createMockWebClient, createMockAccount } from "../mocks/miden-sdk";
+import {
+  createMockWebClient,
+  createMockAccount,
+  createMockConsumableNoteRecord,
+} from "../mocks/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
   useMiden: vi.fn(),
@@ -100,11 +104,10 @@ describe("useSessionAccount", () => {
       const fundFn = vi.fn().mockResolvedValue(undefined);
 
       // Mock consumable notes to simulate funding arriving
-      const mockConsumableNote = {
-        inputNoteRecord: vi.fn(() => ({
-          toNote: vi.fn(() => ({})),
-        })),
-      };
+      const mockConsumableNote = createMockConsumableNoteRecord(
+        "0xnote1",
+        "0xsession_wallet"
+      );
 
       const mockClient = createMockWebClient({
         newWallet: vi.fn().mockResolvedValue(mockWallet),
@@ -173,11 +176,10 @@ describe("useSessionAccount", () => {
         })),
       });
 
-      const mockConsumableNote = {
-        inputNoteRecord: vi.fn(() => ({
-          toNote: vi.fn(() => ({})),
-        })),
-      };
+      const mockConsumableNote = createMockConsumableNoteRecord(
+        "0xnote1",
+        "0xpersisted"
+      );
 
       const mockClient = createMockWebClient({
         newWallet: vi.fn().mockResolvedValue(mockWallet),

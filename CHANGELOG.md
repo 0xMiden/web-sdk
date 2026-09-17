@@ -6,9 +6,11 @@
 * [FEATURE][web] `compile.component({ code, libraries })` links the modules a component imports (e.g. auth libraries), closing the gap that forced consumers onto the low-level `createCodeBuilder()`. Each `{ namespace, code }` entry is linked as a source module with `linkModule`, the same sequence a raw code builder would run, so a component already deployed that way keeps its code commitment. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 * [FEATURE][web] Added `notes.listConsumable({ account? })`, returning `ConsumableNoteRecord[]` with each note's `noteConsumability()` kept, so callers can tell notes consumable now from block-locked ones (`consumableAfterBlock`). Omit `account` to list for every tracked account. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 * [FEATURE][web] Added `NoteConsumptionStatus.isConsumableNow()`, which answers what `consumableAfterBlock()` cannot: that accessor returns nothing both for a note consumable now and for one that can never be consumed. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
+* [FEATURE][web] Exported `isConsumableNow(record, accountIdHex?)`, the rule `notes.listAvailable` and `transactions.consumeAll` apply, for code that reads the low-level client directly. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 
 ### Changes
 * [BREAKING][behavior][web] `notes.listAvailable({ account })` and `transactions.consumeAll({ account })` no longer return or consume block-locked notes. Both keep only notes the client's note screener reports as consumable by `account` at the last synced block, so `consumeAll` no longer fails a whole transaction on one time-locked note, and its `consumed`/`remaining` counts follow. Use `notes.listConsumable()` to also see block-locked notes. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
+* [BREAKING][behavior][react] `useNotes().consumableNotes` (and `consumableNoteSummaries`), `useWaitForNotes().waitForConsumableNotes` and `useSessionAccount`'s funding poll now apply the same rule: block-locked notes are not reported as consumable, are not waited on as if they were, and are no longer put into a consume transaction that the whole account's funding step would fail on. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 
 ## 0.16.0 (2026-09-07)
 

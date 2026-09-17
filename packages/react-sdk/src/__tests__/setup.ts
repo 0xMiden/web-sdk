@@ -135,6 +135,24 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       AuthRpoFalcon512: 2,
       AuthEcdsaK256Keccak: 1,
     },
+    // The real rule, so hooks are tested filtering rather than plumbing.
+    isConsumableNow: (
+      record: {
+        noteConsumability: () => Array<{
+          accountId: () => { toString: () => string };
+          consumptionStatus: () => { isConsumableNow: () => boolean };
+        }>;
+      },
+      accountIdHex?: string
+    ) =>
+      record
+        .noteConsumability()
+        .some(
+          (nc) =>
+            (accountIdHex == null ||
+              nc.accountId().toString() === accountIdHex) &&
+            nc.consumptionStatus().isConsumableNow()
+        ),
     WebClient,
     WasmWebClient: WebClient,
     AccountId: {

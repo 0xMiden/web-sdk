@@ -272,7 +272,9 @@ describe("CompilerResource", () => {
       expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
     });
 
-    it("links a pre-built Library dynamically", async () => {
+    it("links a pre-built Library dynamically, whatever realm its class came from", async () => {
+      // Recognised by shape, not by class identity: a Library forwarded from
+      // another realm (a worker, a second SDK copy) must still link.
       builder.compileTxScript.mockReturnValue("txResult");
       const prebuiltLib = new FakeLibrary();
       const resource = new CompilerResource(inner, getWasm, client);
@@ -290,6 +292,13 @@ describe("CompilerResource", () => {
       ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
       expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
       expect(builder.compileTxScript).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-object entry", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({ code: "script", libraries: ["oops"] })
+      ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
     });
 
     it("rejects a non-string namespace", async () => {

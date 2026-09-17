@@ -51,9 +51,10 @@ export class CompilerResource {
    */
   async txScript({ code, libraries = [] }) {
     this.#client?.assertNotTerminated();
-    const wasm = await this.#getWasm();
+    // Ensure WASM is initialized (result unused - only #inner needs it)
+    await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
-    linkLibraries(builder, libraries, "compile.txScript", wasm);
+    linkLibraries(builder, libraries, "compile.txScript");
     return builder.compileTxScript(code);
   }
 
@@ -66,9 +67,9 @@ export class CompilerResource {
    */
   async noteScript({ code, libraries = [] }) {
     this.#client?.assertNotTerminated();
-    const wasm = await this.#getWasm();
+    await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
-    linkLibraries(builder, libraries, "compile.noteScript", wasm);
+    linkLibraries(builder, libraries, "compile.noteScript");
     return builder.compileNoteScript(code);
   }
 }
@@ -87,14 +88,17 @@ function assertLibrarySource(lib, i, caller) {
 // compiled code installed by the component. Inline `{ namespace, code, linking? }` entries are
 // built via `buildLibrary`. Linking defaults to dynamic, matching tutorial behavior. Pre-built
 // library objects are also linked dynamically.
-function linkLibraries(builder, libraries, caller, wasm) {
+function linkLibraries(builder, libraries, caller) {
   for (const [i, lib] of libraries.entries()) {
-    // Anything that is not a component entry and not a pre-built `Library` is
-    // meant to be a `{ namespace, code }` source entry, so it is validated
-    // rather than passed to the binding, which cannot say which entry was bad.
-    const isPrebuilt =
-      typeof wasm?.Library === "function" && lib instanceof wasm.Library;
-    if (!(lib && (lib.component || isPrebuilt))) {
+    // An entry carrying `namespace` or `code` is meant to be a source entry, so
+    // it is validated here rather than inside the binding, which cannot say
+    // which entry was bad. Anything else (a pre-built `Library`, from this realm
+    // or another) still falls through to the dynamic link below.
+    if (
+      lib == null ||
+      typeof lib !== "object" ||
+      (!lib.component && ("namespace" in lib || "code" in lib))
+    ) {
       assertLibrarySource(lib, i, caller);
     }
     if (lib && lib.component) {

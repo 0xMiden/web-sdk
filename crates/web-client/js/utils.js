@@ -62,25 +62,24 @@ export function resolveAddress(ref, wasm) {
 }
 
 /**
- * True when `record` can be consumed right now by `accountIdHex`, as of the
- * client's last sync.
+ * True when `record` can be consumed right now, as of the client's last sync.
  *
  * Reads each entry's status rather than inferring it: a missing
  * `consumableAfterBlock()` alone would also match a note that is never
- * consumable. Entries are matched to the account instead of trusting
- * `getConsumableNotes(accountId)` to return only that account's, so a record
- * with no entry for it is not consumable.
+ * consumable. With `accountIdHex`, only that account's entry counts, so a note
+ * locked for it is excluded even when another tracked account could spend it;
+ * without one (a listing that spans accounts), any account's entry counts.
  *
  * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
- * @param {string} accountIdHex - The account the record was screened for.
- * @returns {boolean} True when that account's entry reports a consumable-now status.
+ * @param {string} [accountIdHex] - The account the record was screened for.
+ * @returns {boolean} True when a counted entry reports a consumable-now status.
  */
 export function isConsumableNow(record, accountIdHex) {
   return record
     .noteConsumability()
     .some(
       (nc) =>
-        nc.accountId().toString() === accountIdHex &&
+        (accountIdHex == null || nc.accountId().toString() === accountIdHex) &&
         nc.consumptionStatus().isConsumableNow()
     );
 }
