@@ -341,7 +341,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
     const mockClient = createMockWebClient({
       newWallet,
       getConsumableNotes: vi.fn().mockResolvedValue([consumable]),
-      newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+      newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_priv",
       }),
@@ -467,7 +467,7 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
     const mockClient = createMockWebClient({
       newWallet,
       getConsumableNotes: vi.fn().mockResolvedValue([consumable]),
-      newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+      newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_default",
       }),
@@ -622,7 +622,7 @@ describe("useConsume — prover + length-mismatch branches", () => {
     const mockClient = createMockWebClient({
       submitNewTransactionWithProver: submitWithProver,
       submitNewTransaction: submitWithout,
-      newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+      newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
     });
 
     const fakeProver = { kind: "remote-prover" } as never;

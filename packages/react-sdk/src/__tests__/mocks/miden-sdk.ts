@@ -189,6 +189,7 @@ export const createMockTransactionRequest = () => ({
   expectedFutureNotes: vi.fn(() => []),
   scriptArg: vi.fn(() => undefined),
   authArg: vi.fn(() => undefined),
+  feeConversionSalt: vi.fn(() => undefined),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
@@ -253,6 +254,97 @@ export const createMockFeltArray = (length: number = 16) => ({
   })),
 });
 
+/**
+ * Rejects a thenable where a `TransactionRequest` is expected.
+ *
+ * Every `new*TransactionRequest` binding is `async fn` in Rust, so a caller that
+ * forgets the `await` passes a Promise on to the next WASM call. Real
+ * wasm-bindgen rejects that ("expected instance of TransactionRequest"); a mock
+ * that resolves but accepts anything downstream does not, which let a dropped
+ * `await` in `useConsume` and `useSessionAccount` reach production unnoticed.
+ * Mirror the real failure so the suite can see it.
+ */
+const assertIsRequest = (request: unknown, method: string) => {
+  if (request && typeof (request as { then?: unknown }).then === "function") {
+    throw new Error(
+      `${method}: expected instance of TransactionRequest, got a Promise — ` +
+        `the request constructor's result was not awaited`
+    );
+  }
+};
+
+/**
+ * Every method that takes a `TransactionRequest`, and the argument position the
+ * request sits in.
+ */
+const REQUEST_ARG_POSITION: Record<string, number> = {
+  submitNewTransaction: 1,
+  submitNewTransactionWithProver: 1,
+  executeTransaction: 1,
+  executeTransactionAt: 1,
+  executeForSummary: 1,
+  executeForSummaryAt: 1,
+  chainAnchorForRequest: 0,
+};
+
+/**
+ * Every binding that is `async fn` in Rust and hands back something a later
+ * WASM call consumes, so a caller who drops the `await` passes on a Promise.
+ */
+const ASYNC_IN_RUST = [
+  "newMintTransactionRequest",
+  "newSendTransactionRequest",
+  "newB2AggTransactionRequest",
+  "newConsumeTransactionRequest",
+  "newSwapTransactionRequest",
+  "newPswapCreateTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "buildPswapCancelByOrder",
+  "feeAwareTransactionRequestBuilder",
+];
+
+/**
+ * Re-applies the dropped-`await` guards after overrides are merged in.
+ *
+ * Guarding only the defaults is not enough, because the merge is a spread, and
+ * the two halves fail independently:
+ *
+ * - A test supplying its own `executeTransaction` / `submitNewTransaction`
+ *   replaces the guarded implementation with a permissive one, so a Promise
+ *   reaching it is accepted again.
+ * - A test supplying a *synchronous* constructor mock means a dropped `await`
+ *   never produces a Promise in the first place, so there is nothing for the
+ *   consumer guard to reject. Production returns one; the mock has to as well or
+ *   the test is exercising a different program.
+ *
+ * Wrapping both families post-merge covers whichever implementation won. Each
+ * wrapper is itself a `vi.fn` delegating to that implementation, so assertions
+ * and `mock.calls` on the returned client keep working.
+ */
+const applyRequestGuards = (client: MockWebClientType): MockWebClientType => {
+  const guarded = client as unknown as Record<string, unknown>;
+
+  for (const method of ASYNC_IN_RUST) {
+    const impl = guarded[method];
+    if (typeof impl !== "function") continue;
+    guarded[method] = vi.fn(async (...args: unknown[]) =>
+      (impl as (...a: unknown[]) => unknown)(...args)
+    );
+  }
+
+  for (const [method, argIndex] of Object.entries(REQUEST_ARG_POSITION)) {
+    const impl = guarded[method];
+    if (typeof impl !== "function") continue;
+    guarded[method] = vi.fn(async (...args: unknown[]) => {
+      assertIsRequest(args[argIndex], method);
+      return (impl as (...a: unknown[]) => unknown)(...args);
+    });
+  }
+
+  return client;
+};
+
 // Create a mock WebClient
 export const createMockWebClient = (
   overrides: Partial<MockWebClientType> = {}
@@ -279,35 +371,57 @@ export const createMockWebClient = (
     getInputNote: vi.fn().mockResolvedValue(null),
     getTransactions: vi.fn().mockResolvedValue([createMockTransactionRecord()]),
 
-    // Transaction methods
+    // Transaction methods. Every `new*TransactionRequest` below is an `async fn`
+    // in Rust, so the mocks resolve rather than return. Resolving is not on its
+    // own enough to catch a hook that drops the `await` — a permissive consumer
+    // mock accepts the Promise happily — so the methods that take a request
+    // (`submitNewTransaction*`, `executeTransaction*`, ...) reject a thenable
+    // through `assertIsRequest` below.
     newMintTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newSendTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newB2AggTransactionRequest: vi
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
     newConsumeTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newSwapTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newPswapCreateTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
+    feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
+      const builder = {
+        withOwnOutputNotes: vi.fn(() => builder),
+        withInputNotes: vi.fn(() => builder),
+        withCustomScript: vi.fn(() => builder),
+        build: vi.fn(() => createMockTransactionRequest()),
+      };
+      return builder;
+    }),
     newPswapConsumeTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
+      .mockResolvedValue(createMockTransactionRequest()),
     newPswapCancelTransactionRequest: vi
       .fn()
-      .mockReturnValue(createMockTransactionRequest()),
-    submitNewTransaction: vi.fn().mockResolvedValue(createMockTransactionId()),
-    submitNewTransactionWithProver: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionId()),
+      .mockResolvedValue(createMockTransactionRequest()),
+    submitNewTransaction: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "submitNewTransaction");
+        return createMockTransactionId();
+      }
+    ),
+    submitNewTransactionWithProver: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "submitNewTransactionWithProver");
+        return createMockTransactionId();
+      }
+    ),
 
     // PSWAP lineage tracking
     getPswapLineages: vi.fn().mockResolvedValue([]),
@@ -317,12 +431,16 @@ export const createMockWebClient = (
       .fn()
       .mockResolvedValue(createMockTransactionRequest()),
 
-    executeTransaction: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionResult()),
-    executeTransactionAt: vi
-      .fn()
-      .mockResolvedValue(createMockTransactionResult()),
+    executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
+      assertIsRequest(request, "executeTransaction");
+      return createMockTransactionResult();
+    }),
+    executeTransactionAt: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "executeTransactionAt");
+        return createMockTransactionResult();
+      }
+    ),
     executeForSummary: vi
       .fn()
       .mockResolvedValue(createMockTransactionSummary()),
@@ -374,7 +492,7 @@ export const createMockWebClient = (
     free: vi.fn(),
   };
 
-  return { ...defaultClient, ...overrides };
+  return applyRequestGuards({ ...defaultClient, ...overrides });
 };
 
 type MockWebClientType = {
@@ -397,6 +515,7 @@ type MockWebClientType = {
   newPswapCreateTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapConsumeTransactionRequest: ReturnType<typeof vi.fn>;
   newPswapCancelTransactionRequest: ReturnType<typeof vi.fn>;
+  feeAwareTransactionRequestBuilder: ReturnType<typeof vi.fn>;
   submitNewTransaction: ReturnType<typeof vi.fn>;
   submitNewTransactionWithProver: ReturnType<typeof vi.fn>;
   getPswapLineages: ReturnType<typeof vi.fn>;

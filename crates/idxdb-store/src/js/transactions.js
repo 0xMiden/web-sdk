@@ -3,10 +3,7 @@ import { logWebStoreError, mapOption, uint8ArrayToBase64 } from "./utils.js";
 import { applyAccountPatch, applyFullAccountState } from "./accounts.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 const IDS_FILTER_PREFIX = "Ids:";
-const EXPIRED_BEFORE_FILTER_PREFIX = "ExpiredPending:";
 const STATUS_PENDING_VARIANT = 0;
-const STATUS_COMMITTED_VARIANT = 1;
-const STATUS_DISCARDED_VARIANT = 2;
 export async function getTransactions(dbId, filter) {
     let transactionRecords = [];
     try {
@@ -28,15 +25,6 @@ export async function getTransactions(dbId, filter) {
             else {
                 transactionRecords = [];
             }
-        }
-        else if (filter.startsWith(EXPIRED_BEFORE_FILTER_PREFIX)) {
-            const blockNumString = filter.substring(EXPIRED_BEFORE_FILTER_PREFIX.length);
-            const blockNum = parseInt(blockNumString);
-            transactionRecords = await db.transactions
-                .filter((tx) => tx.blockNum < blockNum &&
-                tx.statusVariant !== STATUS_COMMITTED_VARIANT &&
-                tx.statusVariant !== STATUS_DISCARDED_VARIANT)
-                .toArray();
         }
         else {
             transactionRecords = await db.transactions.toArray();

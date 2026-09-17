@@ -43,6 +43,29 @@ export interface UseTransactionResult {
  * current sync height, so a summary signed at that block reproduces exactly.
  * Capture one with `useChainAnchor`.
  *
+ * Fees: the request is yours to build, so paying the verification fee is yours
+ * too. A request assembled from `new TransactionRequestBuilder()` aborts with
+ * `ERR_FEE_CONVERSION_INFO_MISSING` on a chain that charges one. The factory
+ * form of `request` receives the client, which is where you get a builder that
+ * already carries the chain's fee conversion info:
+ *
+ * ```tsx
+ * await execute({
+ *   accountId,
+ *   request: async (client) =>
+ *     (
+ *       await client.feeAwareTransactionRequestBuilder(
+ *         AccountId.fromHex(accountId)
+ *       )
+ *     )
+ *       .withCustomScript(script)
+ *       .build(),
+ * });
+ * ```
+ *
+ * The `new*TransactionRequest` constructors attach it themselves, so a factory
+ * that delegates to one of those — like the example below — needs nothing extra.
+ *
  * @example
  * ```tsx
  * function CustomTransactionButton({ accountId }: { accountId: string }) {

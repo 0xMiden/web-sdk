@@ -110,6 +110,18 @@ describe("useCreateNetworkNote", () => {
     expect(mockClient.submitNewTransaction).toHaveBeenCalled();
     expect(result.current.stage).toBe("complete");
     expect(mockSync).toHaveBeenCalled();
+
+    // The request must come from a fee-aware builder, for the sender — a bare
+    // `new TransactionRequestBuilder()` aborts with
+    // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges a fee.
+    expect(mockClient.feeAwareTransactionRequestBuilder).toHaveBeenCalledTimes(
+      1
+    );
+    const [executingAccount] =
+      mockClient.feeAwareTransactionRequestBuilder.mock.calls[0];
+    expect((executingAccount as { toString(): string }).toString()).toBe(
+      "0xsender"
+    );
   });
 
   it("builds a note from a provided recipient (no script)", async () => {

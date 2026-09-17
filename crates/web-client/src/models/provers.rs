@@ -7,7 +7,6 @@ use js_export_macro::js_export;
 use miden_client::RemoteTransactionProver;
 use miden_client::transaction::{
     LocalTransactionProver,
-    ProvingOptions,
     TransactionProver as TransactionProverTrait,
 };
 #[cfg(feature = "browser")]
@@ -45,9 +44,34 @@ impl TransactionProver {
     }
 
     /// Creates a prover that uses the local proving backend.
+    ///
+    /// `LocalTransactionProver::default()`, deliberately, and NOT
+    /// `LocalTransactionProver::new(ProvingOptions::default())`. Those name two
+    /// different defaults: the second is the *prover crate's* (still Blake3 in
+    /// miden-prover 0.29.x), while the client builds its own prover from the
+    /// first. They agreed on the 0.15 line, where `LocalTransactionProver`
+    /// derived `Default`, and stopped agreeing here: miden-base `b5a5ea25f`
+    /// (PR #3152, first in miden-tx v0.16.0-alpha.1) gave it a hand-written
+    /// `Default` selecting Poseidon2, so that proving benchmarks would use the
+    /// protocol's native hash rather than Blake3.
+    ///
+    /// Until this delegated, the two disagreed silently and unobservably:
+    /// `proveTransaction(result, newLocalProver())` produced a Blake3 proof while
+    /// `proveTransaction(result, undefined)` produced a Poseidon2 one, and nothing
+    /// in the JS surface exposes `HashFunction` for a caller to notice or override.
+    ///
+    /// Nothing rejects a Blake3 proof: the verifier reads the hash tag out of the
+    /// proof and dispatches, at the same 96-bit level with identical FRI
+    /// parameters. The forward risk is recursion — `miden-verifier`'s recursive
+    /// path accepts only Poseidon2 — but note that is a consequence, not the
+    /// reason the default moved, and the batch prover is itself still on
+    /// `ProvingOptions::default()`.
+    ///
+    /// Spelled this way there is only one source of truth, so the two cannot
+    /// drift apart again whatever the client picks next.
     #[js_export(js_name = "newLocalProver")]
     pub fn new_local_prover() -> TransactionProver {
-        let local_prover = LocalTransactionProver::new(ProvingOptions::default());
+        let local_prover = LocalTransactionProver::default();
         TransactionProver {
             prover: Arc::new(local_prover),
             endpoint: None,

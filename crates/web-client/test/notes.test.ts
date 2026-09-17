@@ -104,7 +104,10 @@ test.describe("get_input_note", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -247,7 +250,10 @@ test.describe("get_input_note", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -386,7 +392,10 @@ test.describe("get_input_note", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -586,7 +595,10 @@ test.describe("get_input_notes", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -935,7 +947,10 @@ test.describe("get_consumable_notes", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(mintedNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        senderWalletId
+      );
       let consumeResult = await intClient.executeTransaction(
         senderWalletId,
         consumeRequest
@@ -1111,7 +1126,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       await intClient.syncState();
       let inputNoteRecord = await intClient.getInputNote(mintedNoteId);
       let note = inputNoteRecord.toNote();
-      let consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      let consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        senderId
+      );
       execResult = await intClient.executeTransaction(senderId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();
       proven = await intClient.proveTransaction(execResult, prover);
@@ -1189,7 +1207,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       }
 
       note = inputNoteRecord.toNote();
-      consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        targetId
+      );
 
       execResult = await intClient.executeTransaction(targetId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();
@@ -1301,7 +1322,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       await intClient.syncState();
       let inputNoteRecord = await intClient.getInputNote(mintedNoteId);
       let note = inputNoteRecord.toNote();
-      let consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      let consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        senderId
+      );
       execResult = await intClient.executeTransaction(senderId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();
       proven = await intClient.proveTransaction(execResult, prover);
@@ -1381,7 +1405,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       }
 
       note = inputNoteRecord.toNote();
-      consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        targetId
+      );
 
       execResult = await intClient.executeTransaction(targetId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();

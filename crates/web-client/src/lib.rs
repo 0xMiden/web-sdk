@@ -362,7 +362,10 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
@@ -408,7 +411,10 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
@@ -500,7 +506,10 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
     #[napi(js_name = "createClient")]

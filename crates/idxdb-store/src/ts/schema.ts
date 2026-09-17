@@ -73,6 +73,10 @@ enum Table {
   Settings = "settings",
 }
 
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
+
 export interface IAccountCode {
   root: string;
   code: Uint8Array;
@@ -243,6 +247,7 @@ export interface IForeignAccountCode {
 }
 
 export interface ISetting {
+  scope: number;
   key: string;
   value: Uint8Array;
 }
@@ -363,7 +368,7 @@ declare module "dexie" {
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
-    settings: Table<ISetting, string>;
+    settings: Table<ISetting, [number, string]>;
   }
 }
 
@@ -390,7 +395,7 @@ export type MidenDexie = Dexie & {
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
 };
 
 export class MidenDatabase {
@@ -417,7 +422,7 @@ export class MidenDatabase {
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -507,6 +512,30 @@ export class MidenDatabase {
           .delete();
       });
 
+    // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+    // `detailsCommitment` instead of `noteId`, so the seek in
+    // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+    // carries and needs no lookup of the cursor's own note. Index-only, so
+    // Dexie rebuilds it without an upgrade hook.
+    this.dexie.version(3).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"
+      ),
+    });
+
+    // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+    // cannot change in place, hence the drop and the recreate; the rows it held are cached
+    // values the client re-fetches.
+    this.dexie.version(4).stores({ [Table.Settings]: null });
+    this.dexie.version(5).stores({
+      [Table.Settings]: indexes("[scope+key]", "scope"),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -572,7 +601,9 @@ export class MidenDatabase {
     this.foreignAccountCode = this.dexie.table<IForeignAccountCode, string>(
       Table.ForeignAccountCode
     );
-    this.settings = this.dexie.table<ISetting, string>(Table.Settings);
+    this.settings = this.dexie.table<ISetting, [number, string]>(
+      Table.Settings
+    );
 
     this.dexie.on("populate", () => {
       this.blockchainCheckpoint
@@ -649,8 +680,13 @@ export class MidenDatabase {
     await this.persistClientVersion(clientVersion);
   }
 
+  // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+  // user-facing settings API never reaches.
   private async getStoredClientVersion(): Promise<string | null> {
-    const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const record = await this.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     if (!record) {
       return null;
     }
@@ -659,6 +695,7 @@ export class MidenDatabase {
 
   private async persistClientVersion(clientVersion: string): Promise<void> {
     await this.settings.put({
+      scope: SETTING_SCOPE_CLIENT,
       key: CLIENT_VERSION_SETTING_KEY,
       value: textEncoder.encode(clientVersion),
     });

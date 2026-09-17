@@ -3,6 +3,14 @@ on:
   push:
     branches: [main, next]
   pull_request:
+  # Manual re-trigger. This workflow carries required status checks, and a
+  # push does not reliably create its workflow runs: this repo has seen a
+  # merge commit land on `main` with *no* push-triggered runs at all while
+  # Actions was otherwise healthy (other branches got full sets in the same
+  # window). Without a dispatch entry the only way to recover the gate on such
+  # a commit is to push an empty one; with it, re-run the ref as it stands:
+  #   gh workflow run build.yml --repo 0xMiden/web-sdk --ref <branch>
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,8 +31,89 @@ jobs:
   # merging. Instead, every downstream job gates on this filter's output and
   # reports `skipped` when there's nothing relevant to build (skipped jobs
   # satisfy required checks).
+  #
+  # ---- Why the downstream `if:` conditions below look the way they do ----
+  #
+  # "A skipped job satisfies a required check" is what makes a docs-only PR
+  # mergeable. Its corollary is dangerous: ANYTHING that makes a downstream job
+  # skip turns this gate green without building a line of code.
+  #
+  # `needs: [changes]` + `if: needs.changes.outputs.non_docs == 'true'` had
+  # exactly that hole. A job whose `if` contains no status-check function is
+  # skipped whenever a `needs` dependency fails — so a `changes` job that died
+  # on a checkout hiccup or a rate-limited/unavailable dorny/paths-filter took
+  # the build jobs to `skipped`, i.e. to "passed". A transient preflight
+  # failure silently converted the gate into a pass.
+  #
+  # The condition on each job below fails CLOSED instead: skip only on positive
+  # evidence that this PR is docs-only; build in every other case.
+  #
+  #   !cancelled()
+  #       A status-check function, which is what lifts the implicit
+  #       skip-when-a-dependency-failed rule and lets the job run anyway. Not
+  #       `always()`: `always()` would also run the job while the whole
+  #       workflow is being cancelled, which fights cancellation and burns
+  #       runner time. `!cancelled()` runs on failure but not on cancellation.
+  #
+  #   needs.changes.result != 'success'
+  #       The preflight did not succeed, so there is no trustworthy verdict
+  #       about what changed. Unknown means build. (This clause is what closes
+  #       the hole; it is also why a `result != 'failure'` formulation would
+  #       NOT work — that one still resolves to false, and false still means
+  #       skipped, and skipped still means passed.)
+  #
+  #   needs.changes.outputs.non_docs != 'false'
+  #       The preflight did not positively say "docs only". Deliberately
+  #       `!= 'false'` and not `== 'true'`: an empty or unexpected output — a
+  #       future paths-filter behaviour change, or a `changes` job that failed
+  #       at a step after the filter ran — reads as unknown, and unknown
+  #       builds. The two clauses are OR'd, so either kind of doubt is enough.
+  #
+  #   github.event_name == 'workflow_dispatch'
+  #       A manual dispatch always builds, and the `changes` job below does not
+  #       even run on one. This is not belt-and-braces; without it the dispatch
+  #       entry at the top of this file was decorative.
+  #
+  #       dorny/paths-filter is given no `base` and no `ref`, so on anything
+  #       that is not a pull_request it takes its git-diff path with
+  #       `base` = repository.default_branch (its documented default) and
+  #       `head` = github.ref. Dispatch the recovery case this workflow's
+  #       workflow_dispatch exists for — `gh workflow run build.yml --ref main`
+  #       — and base and head are both `main`. The action reads that as "the
+  #       ref was pushed to itself" and looks for github.event.before to diff
+  #       against; `before` exists only on push events, so on a dispatch it is
+  #       absent, the action warns and falls back to "changes in the last
+  #       commit". When that commit is a merge commit, `git log -1
+  #       --name-status` reports no files at all, the filter sees an empty file
+  #       set, `non_docs` resolves to 'false', and every job below skips —
+  #       i.e. the manual run you fired *because the push-triggered run never
+  #       appeared* reports all-green having built nothing. Skipping the
+  #       preflight entirely on dispatch is the fix: there is nothing for it to
+  #       usefully compare, and "someone asked for this run by hand" is already
+  #       the answer to "should we build?".
+  #
+  # Walk-through of every case:
+  #   normal code PR      changes=success, non_docs='true'  -> RUNS
+  #   docs-only PR        changes=success, non_docs='false' -> SKIPPED (both
+  #                       clauses false; the deliberate behaviour documented
+  #                       above is preserved bit-for-bit)
+  #   push to main/next   same as a PR: paths-filter diffs against
+  #                       github.event.before (push to the default branch) or
+  #                       against the default branch (push to `next`)
+  #   preflight failed    changes=failure, non_docs=''      -> RUNS, and the
+  #                       required check reports the real build result rather
+  #                       than a free pass
+  #   workflow_dispatch   changes=skipped, non_docs=''      -> RUNS (first
+  #                       clause; the other two would also carry it, since
+  #                       'skipped' != 'success' and '' != 'false')
+  #   workflow cancelled  !cancelled() is false             -> SKIPPED
   changes:
     name: Detect relevant changes
+    # Not on a manual dispatch: paths-filter has nothing meaningful to diff
+    # there and answers "nothing changed" for a merge commit, which would skip
+    # every job below. Skipped is fine for the required check, and the jobs
+    # below run regardless — see the walk-through above.
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     outputs:
       non_docs: ${{ steps.filter.outputs.non_docs }}
@@ -45,7 +134,13 @@ jobs:
   build-wasm:
     name: Build Client for Wasm
     needs: [changes]
-    if: needs.changes.outputs.non_docs == 'true'
+    # Fails closed when the preflight itself fails, and always builds on a
+    # manual dispatch — walk-through above.
+    if: >-
+      !cancelled()
+      && (github.event_name == 'workflow_dispatch'
+      || needs.changes.result != 'success'
+      || needs.changes.outputs.non_docs != 'false')
     runs-on: warp-ubuntu-latest-x64-8x
     permissions:
       contents: read
@@ -67,6 +162,12 @@ jobs:
         uses: ./.github/actions/inject-linked-client-pr
         with:
           comment: "true"
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust toolchain

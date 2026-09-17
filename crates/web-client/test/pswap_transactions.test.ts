@@ -249,7 +249,7 @@ test.describe("pswap transaction tests", () => {
       let message = "";
       try {
         // Fill 50 against a note that only requests 25.
-        const consumeRequest = client.newPswapConsumeTransactionRequest(
+        const consumeRequest = await client.newPswapConsumeTransactionRequest(
           pswapNoteRecord.toNote(),
           filler.id(),
           sdk.u64(50),
@@ -308,7 +308,7 @@ test.describe("pswap transaction tests", () => {
       let message = "";
       try {
         // Fill 0 against a note that requests 25.
-        const consumeRequest = client.newPswapConsumeTransactionRequest(
+        const consumeRequest = await client.newPswapConsumeTransactionRequest(
           pswapNoteRecord.toNote(),
           filler.id(),
           sdk.u64(0),
@@ -366,7 +366,7 @@ test.describe("pswap transaction tests", () => {
       let message = "";
       try {
         // A non-creator account attempts to cancel and reclaim the offer.
-        const cancelRequest = client.newPswapCancelTransactionRequest(
+        const cancelRequest = await client.newPswapCancelTransactionRequest(
           pswapNoteRecord.toNote(),
           stranger.id()
         );
@@ -514,7 +514,7 @@ test.describe("pswap lineage tracking tests", () => {
       // Filler supplies 10 of the 25 requested — a partial fill that leaves a
       // remainder PSWAP note carrying 60 of the offered asset.
       const pswapNoteRecord = await client.getInputNote(tipBefore);
-      const consumeRequest = client.newPswapConsumeTransactionRequest(
+      const consumeRequest = await client.newPswapConsumeTransactionRequest(
         pswapNoteRecord.toNote(),
         filler.id(),
         sdk.u64(10),
@@ -590,7 +590,7 @@ test.describe("pswap lineage tracking tests", () => {
       // Filler supplies the full 25 requested — a complete fill that drains the
       // order. No remainder PSWAP note is emitted, so the lineage goes terminal.
       const pswapNoteRecord = await client.getInputNote(tipBefore);
-      const consumeRequest = client.newPswapConsumeTransactionRequest(
+      const consumeRequest = await client.newPswapConsumeTransactionRequest(
         pswapNoteRecord.toNote(),
         filler.id(),
         sdk.u64(25),
@@ -728,7 +728,7 @@ test.describe("pswap lineage tracking tests", () => {
       //   filler receives 40 of offered A;
       //   remainder PSWAP carries 60 A for 15 B.
       const pswapNoteRecord = await client.getInputNote(tipAtDepth0);
-      const consumeRequest = client.newPswapConsumeTransactionRequest(
+      const consumeRequest = await client.newPswapConsumeTransactionRequest(
         pswapNoteRecord.toNote(),
         filler.id(),
         sdk.u64(10),
@@ -817,7 +817,7 @@ test.describe("pswap lineage tracking tests", () => {
 
       // Full fill — filler pays the entire 25 requested.
       const pswapNoteRecord = await client.getInputNote(tipId);
-      const consumeRequest = client.newPswapConsumeTransactionRequest(
+      const consumeRequest = await client.newPswapConsumeTransactionRequest(
         pswapNoteRecord.toNote(),
         filler.id(),
         sdk.u64(25),

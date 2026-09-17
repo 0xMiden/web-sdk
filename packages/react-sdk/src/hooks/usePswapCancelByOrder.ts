@@ -30,6 +30,15 @@ export interface UsePswapCancelByOrderResult {
  * {@link usePswapCancel}, the creator account and tip note are resolved from
  * the locally tracked lineage, so only the order id is required.
  *
+ * The request is resolved and built inside miden-client, so the SDK never
+ * attaches fee conversion info to it. On a chain that charges a verification
+ * fee the outcome depends on the creator's auth component: a single-sig creator
+ * is rescued by miden-client, which injects native 1:1 conversion info when the
+ * auth argument is empty, and pays normally; a multisig or guarded-multisig
+ * creator fails with `FeeConversionInfoRequired`. Cancel by note with
+ * {@link usePswapCancel} there instead — it commits conversion info against the
+ * creator before submitting.
+ *
  * @example
  * ```tsx
  * function CancelOrderButton({ orderId }: { orderId: string }) {
