@@ -82,6 +82,17 @@ test("CLI scaffolds template and patches package.json in test mode", () => {
     pkg.dependencies["@getpara/evm-wallet-connectors"],
     "Para EVM connectors should be injected"
   );
+  assert.match(
+    pkg.dependencies["@getpara/react-sdk-lite"],
+    /^3\.18|^[\^~]?3\.18/,
+    "Para React SDK lite should be on the 3.18 line"
+  );
+  assert.match(
+    pkg.dependencies["@getpara/evm-wallet-connectors"],
+    /^3\.18|^[\^~]?3\.18/,
+    "Para EVM connectors should be on the 3.18 line"
+  );
+  assert.strictEqual(pkg.resolutions["@getpara/web-sdk"], "3.18.0");
   assert.ok(
     pkg.devDependencies["vite-plugin-node-polyfills"],
     "vite-plugin-node-polyfills should be injected"
@@ -144,11 +155,7 @@ test(
     );
     const targetDir = path.join(tmpRoot, "app");
     const rootTarball = packPackage(repoRoot);
-    const useMidenParaReactDir = path.join(
-      repoRoot,
-      "packages",
-      "use-miden-para-react"
-    );
+    const useMidenParaReactDir = path.resolve(__dirname, "../../react");
     const useMidenParaReactTarball = packPackage(useMidenParaReactDir);
 
     runCli(targetDir, [], {

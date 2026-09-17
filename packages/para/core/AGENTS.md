@@ -46,7 +46,7 @@
 
 ## External Contracts
 
-- Para Web/React SDKs (`@getpara/web-sdk`, `@getpara/react-sdk`) — provide wallet discovery, JWT issuance, and signing.
+- Para Web/React SDKs (`@getpara/web-sdk` ^3.18, `@getpara/react-sdk-lite` ^3.18) — provide wallet discovery, JWT issuance, and signing.
 - Miden SDK (`@miden-sdk/miden-sdk`) — supplies `WebClient`, account builders, Felt/RPO utilities, and transaction helpers.
 - Noble hashes (`@noble/hashes`) — used for keccak hashing + hex conversions during signing.
 

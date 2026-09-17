@@ -11,12 +11,15 @@ export async function createFaucetMintAndConsume(
 ) {
   const { MidenClient } = await import("@miden-sdk/miden-sdk");
   setProgress({ stage: MintAndConsumeStage.CreatingFaucet });
-  const faucetClient = await MidenClient.create({ autoSync: true });
+  const faucetClient = await MidenClient.create({
+    autoSync: true,
+    storeName: "para-example-faucet",
+  });
   const faucet = await faucetClient.accounts.create({
     type: "FungibleFaucet",
     symbol: "MID",
     decimals: 8,
-    maxSupply: 1_000_000_0000_00n,
+    maxSupply: 10_000_000n,
   });
   setProgress((state) => ({
     ...state,
@@ -30,7 +33,7 @@ export async function createFaucetMintAndConsume(
   const mintResult = await faucetClient.transactions.mint({
     account: faucet,
     to: accountId,
-    amount: 1000n * BigInt(1e8),
+    amount: 1000n,
     type: "public",
   });
   console.log("Mint Tx Hash:", mintResult.txId.toHex());

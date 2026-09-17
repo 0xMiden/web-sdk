@@ -124,6 +124,7 @@ test("useParaMiden returns defaults when disconnected", async () => {
     const latest = getLatest();
     assert.strictEqual(latest.client, null);
     assert.strictEqual(latest.accountId, "");
+    assert.strictEqual(latest.error, "");
     assert.deepEqual(latest.evmWallets, []);
   } finally {
     restore();
@@ -175,6 +176,39 @@ test("useParaMiden filters EVM wallets and forwards options", async () => {
     const latest = getLatest();
     assert.strictEqual(latest.client, client);
     assert.strictEqual(latest.accountId, "acc-123");
+  } finally {
+    restore();
+  }
+});
+
+test("useParaMiden surfaces createParaMidenClient failures", async () => {
+  const state = {
+    para: { id: "para" },
+    isConnected: true,
+    wallets: [{ id: "evm-1", type: "EVM" }],
+  };
+  const calls = [];
+  const { useParaMiden, restore } = loadUseParaMiden({
+    ...buildMocks(state, calls, { id: "client" }),
+    "@miden-sdk/para": {
+      createParaMidenClient: async (...args) => {
+        calls.push(args);
+        throw new Error("no evm wallets");
+      },
+    },
+  });
+
+  try {
+    const { getLatest } = await renderHook(useParaMiden, [
+      "https://rpc.testnet.miden.io",
+      "public",
+    ]);
+    await flushPromises();
+    await flushPromises();
+    const latest = getLatest();
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(latest.accountId, "");
+    assert.strictEqual(latest.error, "no evm wallets");
   } finally {
     restore();
   }
