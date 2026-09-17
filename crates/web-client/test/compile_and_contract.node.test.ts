@@ -132,9 +132,8 @@ test.describe("compile.component()", () => {
     // A component's compiled MAST determines the account's code commitment, which
     // is baked into the account ID. `compile.component({ libraries })` must produce
     // a byte-identical component to building it off a raw code builder with
-    // `linkModule` — otherwise enabling library linking would silently change the
-    // commitment and break accounts already created the manual way (e.g. the
-    // OpenZeppelin multisig auth component).
+    // `linkModule`, otherwise enabling library linking would silently change the
+    // commitment and break accounts already created the manual way.
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");
 
@@ -169,7 +168,7 @@ test.describe("compile.component()", () => {
       libraries: [{ namespace: NS, code: COUNTER_CODE }],
     });
 
-    // Raw path: exactly what the multisig client does today.
+    // Raw path: the manual code-builder route.
     const raw = await MidenClient._MockWasmWebClient.createClient();
     const builder = await raw.createCodeBuilder();
     builder.linkModule(NS, COUNTER_CODE);

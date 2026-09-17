@@ -217,7 +217,7 @@ describe("NotesResource", () => {
       expect(result).toEqual(["record1"]);
     });
 
-    it("excludes block-locked (consumableAfter) notes — the honest 'available now' semantics", async () => {
+    it("excludes block-locked (consumableAfter) notes", async () => {
       inner.getConsumableNotes.mockResolvedValue([
         consumableNote("nowRecord"),
         consumableNote("lockedRecord", 12345),
@@ -227,19 +227,22 @@ describe("NotesResource", () => {
       expect(result).toEqual(["nowRecord"]);
     });
 
-    it("keeps consumable-now notes regardless of authorization (afterBlock null ⇒ now)", async () => {
-      // Both `Consumable` and `ConsumableWithAuthorization` report
-      // `consumableAfterBlock() === null`, so both are kept. JS can't tell them
-      // apart (nor from never-consumable) — correctness relies on miden-client
-      // never returning never-consumable notes from getConsumableNotes; see the
-      // LOAD-BEARING UPSTREAM CONTRACT note in notes.js.
+    it("treats an undefined consumableAfterBlock (the browser build's None) as consumable now", async () => {
+      // The Node binding returns null for None, the wasm build returns undefined.
+      // Built inline: passing undefined to consumableNote() would take its null default.
+      const wasmNow = consumableNote("wasmNow");
+      wasmNow.noteConsumability.mockReturnValue([
+        {
+          consumptionStatus: () => ({ consumableAfterBlock: () => undefined }),
+        },
+      ]);
       inner.getConsumableNotes.mockResolvedValue([
-        consumableNote("plainNow"),
-        consumableNote("withAuthNow"),
+        wasmNow,
+        consumableNote("lockedRecord", 12345),
       ]);
       const resource = makeResource();
       const result = await resource.listAvailable({ account: "0xacc" });
-      expect(result).toEqual(["plainNow", "withAuthNow"]);
+      expect(result).toEqual(["wasmNow"]);
     });
 
     it("resolves bech32 account ref", async () => {
@@ -268,7 +271,7 @@ describe("NotesResource", () => {
       const result = await resource.listConsumable({ account: "0xacc" });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       // Unlike listAvailable, the record itself is returned so callers can read
-      // noteConsumability() — it must not be mapped to inputNoteRecord().
+      // noteConsumability(), so it must not be mapped to inputNoteRecord().
       expect(result).toEqual([record]);
       expect(record.inputNoteRecord).not.toHaveBeenCalled();
     });

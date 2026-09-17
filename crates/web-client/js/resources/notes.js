@@ -35,27 +35,11 @@ export class NotesResource {
     return await this.#inner.getOutputNotes(filter);
   }
 
-  // Notes consumable RIGHT NOW by `account`, as `InputNoteRecord[]`.
-  //
-  // `getConsumableNotes()` also returns block-locked notes (status
-  // `consumableAfter`), which are not usable yet — so an API named "available"
-  // must exclude them, otherwise a caller acts on a note the chain will reject.
-  // A record is consumable-now when its consumability has no
-  // `consumableAfterBlock`.
-  //
-  // LOAD-BEARING UPSTREAM CONTRACT: JS `NoteConsumptionStatus` exposes only
-  // `consumableAfterBlock()`, so it cannot distinguish `Consumable` /
-  // `ConsumableWithAuthorization` (now) from `NeverConsumable` /
-  // `UnconsumableConditions` — all four return `null`. This filter is correct
-  // ONLY because miden-client's `NoteScreener::is_relevant` already strips the
-  // never-consumable variants before `getConsumableNotes` returns, so every
-  // record here is `Consumable` | `ConsumableWithAuthorization` | `ConsumableAfter`
-  // and `null` unambiguously means now. If a future miden-client surfaces a
-  // non-consumable status through `getConsumableNotes`, revisit this (and prefer
-  // exposing a real status discriminant on `NoteConsumptionStatus`).
-  //
-  // Callers that need the block-locked notes, or the full per-account
-  // consumability metadata, use `listConsumable()`.
+  // Drops block-locked notes, which the screener marks `ConsumableAfter`. An
+  // absent `consumableAfterBlock()` (undefined in the browser build, null on
+  // Node) reads as consumable only because miden-client already filters out
+  // `NeverConsumable` and `UnconsumableConditions`: JS has no other status
+  // reader to tell them apart.
   async listAvailable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -70,14 +54,6 @@ export class NotesResource {
       .map((c) => c.inputNoteRecord());
   }
 
-  // Full consumability view: every note `getConsumableNotes()` returns —
-  // consumable-now AND block-locked — as `ConsumableNoteRecord[]` with
-  // `noteConsumability()` metadata intact (the status `consumableAfterBlock`).
-  // Unlike `listAvailable` (which keeps only consumable-now and maps each to an
-  // `inputNoteRecord()`), this preserves the metadata so callers can tell now
-  // from `consumableAfterBlock`, and which account each status belongs to.
-  // Omit `account` (or pass null) to list notes consumable by any tracked
-  // account — matching the underlying `getConsumableNotes(account?)`.
   async listConsumable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();

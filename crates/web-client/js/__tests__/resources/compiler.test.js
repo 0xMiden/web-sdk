@@ -157,6 +157,28 @@ describe("CompilerResource", () => {
       );
     });
 
+    it("links libraries before compiling under an explicit namespace", async () => {
+      builder.compileAccountComponentCodeWithPath.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({
+        code: "component code",
+        namespace: "oz::auth::component",
+        libraries: [{ namespace: "oz::auth::guardian", code: "guardian masm" }],
+      });
+      expect(builder.linkModule).toHaveBeenCalledWith(
+        "oz::auth::guardian",
+        "guardian masm"
+      );
+      expect(builder.compileAccountComponentCodeWithPath).toHaveBeenCalledWith(
+        "oz::auth::component",
+        "component code"
+      );
+      expect(builder.linkModule.mock.invocationCallOrder[0]).toBeLessThan(
+        builder.compileAccountComponentCodeWithPath.mock.invocationCallOrder[0]
+      );
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
+    });
+
     it("compiles with no libraries without calling linkModule", async () => {
       builder.compileAccountComponentCode.mockReturnValue("compiled");
       const resource = new CompilerResource(inner, getWasm, client);

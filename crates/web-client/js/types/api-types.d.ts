@@ -1400,22 +1400,23 @@ export interface NotesResource {
   listSent(query?: NoteQuery): Promise<OutputNoteRecord[]>;
 
   /**
-   * List notes consumable **right now** by a specific account.
+   * List notes a specific account can consume, as of the client's last sync.
    *
-   * Excludes block-locked notes (status `consumableAfterBlock`), which are not
-   * yet usable — so every record returned is safe to act on immediately. Use
-   * {@link NotesResource.listConsumable} for the full set (now + block-locked)
-   * with consumability metadata.
+   * Excludes block-locked notes (status `consumableAfterBlock`). Consumability
+   * is what miden-client's note screener reports at the last synced block, so
+   * sync first for a current answer. Use {@link NotesResource.listConsumable}
+   * to include block-locked notes, with their consumability metadata.
    *
    * @param options - Options containing the account to check availability for.
    */
   listAvailable(options: { account: AccountRef }): Promise<InputNoteRecord[]>;
 
   /**
-   * List notes consumable by an account, keeping each note's consumability
-   * metadata. Unlike {@link NotesResource.listAvailable}, the returned records
-   * expose `noteConsumability()`, so callers can distinguish notes consumable
-   * now from block-locked ones (status `consumableAfterBlock`).
+   * List notes consumable by an account, including block-locked ones, keeping
+   * each note's consumability metadata. `noteConsumability()` holds one status
+   * per account; its `consumableAfterBlock()` is set when the note unlocks at a
+   * later block. Like {@link NotesResource.listAvailable}, it reflects the last
+   * sync.
    *
    * @param options - Optional account to check; omit to list notes consumable
    *   by any tracked account.
