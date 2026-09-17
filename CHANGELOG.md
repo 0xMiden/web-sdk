@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX] Corrected the shipped agent skills, several of which carried examples that do not work. `signer-integration`'s `MultiSignerProvider` example omitted `<SignerSlot />`, which is the only thing that registers a signer, so the following `connectSigner(name)` always threw `Signer "<name>" not found`; its guarded-multisig snippet passed `AuthScheme.AuthRpoFalcon512`, which is `undefined` in the browser because the package exports a frozen string const of that name that shadows the WASM enum. `vite-wasm-setup` told every multi-threaded consumer to `await initThreadPool(n)`, but on the default worker-backed path the SDK's Worker initializes its own pool and rayon's pool is per WASM instance, so a main-thread call is inert; it is required only for a direct client created with `useWorker: false`. `web-client-usage` said `_withInnerWebClient` could not race the call chain, where the source requires callers to hold their own mutex. `frontend-pitfalls` FP1 offered `loadingComponent` as a readiness gate (it renders only while `isInitializing` is true, which starts `false`) and FP2 claimed concurrent calls crash, which is what the client's own serialization chain prevents. `react-sdk-patterns` named `useExecuteProgram`'s action `executeProgram` rather than `execute`, said every query hook returns `refetch`, and described `formatNoteSummary`'s sender suffix as unconditional when an empty asset list returns the note id alone. `idxdb-patterns` gave one primary key for four tables that mostly use compound keys. ([#390](https://github.com/0xMiden/web-sdk/pull/390))
+* [FIX][web] `SwapOptions.paybackType` and `PswapCreateOptions.paybackType` documented a default of `public`. Both `swap` and `pswapCreate` resolve `paybackType ?? type`, so omitting it on a private swap produces a private payback note. The JSDoc now says so. ([#390](https://github.com/0xMiden/web-sdk/pull/390))
+
 ## 0.16.2 (2026-09-18)
 
 ### Enhancements

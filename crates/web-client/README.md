@@ -221,18 +221,28 @@ app.use((_, res, next) => {
 
 If you cannot set these headers (CDN, hosting provider that doesn't allow header injection), the COI service-worker shim pattern (`gzuidhof/coi-serviceworker`) lets a small same-origin SW intercept fetches and re-inject the headers on the way back. We don't bundle this with the SDK because installing a service worker into a consumer's app is intrusive — adopt it deliberately if you need it.
 
-### `initThreadPool(n)` — required once for MT
+### `initThreadPool(n)` - only for a direct MT client
 
-Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon. **Consumers must `await` it once before any prove call** (typically at app startup, or just before the first transaction):
+Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon, but on the default
+worker-backed path you do not call it. The SDK runs every prove inside its own Worker, and
+that Worker initializes its own pool: the client forwards `navigator.hardwareConcurrency`
+when the page is cross-origin-isolated, and the Worker calls `initThreadPool` before it
+constructs its `WebClient`. rayon's global pool is per WASM instance, so a pool you bring
+up on the main thread is a different instance from the one that proves, and the call is
+inert rather than wrong.
+
+Call it yourself only for a direct MT client on the current thread (`useWorker: false`, or
+no Worker support), in that client's own realm:
 
 ```ts
 import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
 await MidenClient.ready();
 await initThreadPool(navigator.hardwareConcurrency); // size to physical threads
+const client = await MidenClient.create({ useWorker: false });
 ```
 
-Without this call, the rayon global thread pool spawns zero workers on `wasm32` and every `par_iter(...)` falls through to a sequential loop — i.e. you've shipped multi-threaded WASM that runs single-threaded. The ST entries don't expose `initThreadPool` (no thread pool to bring up).
+The ST entries don't expose `initThreadPool` (no thread pool to bring up).
 
 ### Timing model — eager vs lazy
 
