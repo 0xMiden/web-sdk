@@ -86,6 +86,9 @@ export const Linking = Object.freeze({
 
 export { MidenClient };
 export { createP2IDNote, createP2IDENote, buildSwapTag };
+// Standalone helpers must be re-exported here too: this entry is what the
+// package's "node" condition resolves to, while both entries share one .d.ts.
+export { isConsumableNow } from "./utils.js";
 
 // Internal exports (matching browser entry point)
 export {

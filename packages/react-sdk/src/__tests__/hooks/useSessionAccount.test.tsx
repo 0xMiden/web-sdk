@@ -90,6 +90,51 @@ describe("useSessionAccount", () => {
       );
     });
 
+    it("does not consume a block-locked funding note", async () => {
+      // A note that unlocks at a later block would fail the whole consume
+      // transaction, so the poll must keep waiting rather than submit it.
+      const mockWallet = createMockAccount({
+        id: vi.fn(() => ({
+          toString: vi.fn(() => "0xlocked_wallet"),
+          toHex: vi.fn(() => "0xlocked_wallet"),
+          isFaucet: vi.fn(() => false),
+          isRegularAccount: vi.fn(() => true),
+          free: vi.fn(),
+        })),
+      });
+      const locked = createMockConsumableNoteRecord(
+        "0xlocked",
+        "0xlocked_wallet",
+        false
+      );
+      const mockClient = createMockWebClient({
+        newWallet: vi.fn().mockResolvedValue(mockWallet),
+        getConsumableNotes: vi.fn().mockResolvedValue([locked]),
+        newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
+      });
+
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() =>
+        useSessionAccount({
+          fund: vi.fn().mockResolvedValue(undefined),
+          assetId: "0xfaucet",
+          pollIntervalMs: 1,
+          maxWaitMs: 5,
+        })
+      );
+
+      await act(async () => {
+        await result.current.initialize().catch(() => {});
+      });
+
+      expect(mockClient.newConsumeTransactionRequest).not.toHaveBeenCalled();
+    });
+
     it("should create wallet and call fund callback", async () => {
       const mockWallet = createMockAccount({
         id: vi.fn(() => ({

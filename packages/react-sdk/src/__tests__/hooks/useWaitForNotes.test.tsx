@@ -56,13 +56,20 @@ describe("useWaitForNotes", () => {
 
     const { result } = renderHook(() => useWaitForNotes());
 
+    // The timeout message specifically: any other error (e.g. reading an
+    // AccountId the binding already consumed) would also satisfy a bare throw.
     await expect(
       result.current.waitForConsumableNotes({
         accountId: "0xaccount",
         timeoutMs: 5,
         intervalMs: 1,
       })
-    ).rejects.toThrow();
+    ).rejects.toThrow("Timeout waiting for consumable notes");
+    // One AccountId per poll, since getConsumableNotes takes it by value.
+    const calls = (mockClient.getConsumableNotes as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls[0]?.[0]).not.toBe(calls[1]?.[0]);
   });
 
   it("should resolve when consumable notes are available", async () => {

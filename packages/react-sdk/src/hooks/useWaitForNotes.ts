@@ -31,14 +31,15 @@ export function useWaitForNotes(): UseWaitForNotesResult {
       const timeoutMs = Math.max(0, options.timeoutMs ?? 10_000);
       const intervalMs = Math.max(1, options.intervalMs ?? 1_000);
       const minCount = Math.max(1, options.minCount ?? 1);
-      const accountId = parseAccountId(options.accountId);
-
       let waited = 0;
 
       while (waited < timeoutMs) {
         await runExclusiveSafe(() =>
           (client as unknown as ClientWithNotes).syncState()
         );
+        // getConsumableNotes takes the AccountId by value, so each poll needs
+        // its own: reusing one across iterations reads a freed handle.
+        const accountId = parseAccountId(options.accountId);
         const accountIdHex = accountId.toString();
         const consumable = (
           await runExclusiveSafe(() =>
