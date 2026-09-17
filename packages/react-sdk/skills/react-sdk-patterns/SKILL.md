@@ -75,7 +75,7 @@ The package exports 34 hooks. The ones documented in detail below are the common
 | `usePswapLineages/LineagesFor/Lineage()` | query | tracked PSWAP lineages |
 | `useChainAnchor()` / `usePreview()` | see "Chain-Anchored Execution" | expose `isCapturing` / `isPreviewing`, not `isLoading` |
 | `useCompile()` | compile | `{ component, txScript, noteScript, isReady }` |
-| `useExecuteProgram()` | read-only view call | `executeProgram({ accountId, script, adviceInputs?, foreignAccounts?, skipSync? })` returns `{ stack: bigint[] }` |
+| `useExecuteProgram()` | read-only view call | the action is named **`execute`**, not `executeProgram`: `execute({ accountId, script, adviceInputs?, foreignAccounts?, skipSync? })` returns `{ stack: bigint[] }` |
 | `useSyncControl()` | control | `{ pauseSync, resumeSync }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount |
 | `useExportStore()` / `useImportStore()` | store portability | `isExporting` / `isImporting` |
 | `useExportNote()` / `useImportNote()` | note portability | `exportNote(noteId)` returns `Uint8Array`; `importNote(bytes)` returns the note id |
@@ -83,7 +83,10 @@ The package exports 34 hooks. The ones documented in detail below are the common
 
 ## Query Hooks
 
-Each returns its own result shape plus `isLoading`, `error`, `refetch`.
+Each returns its own result shape plus `isLoading` and `error`. **`refetch` is not
+universal**: `useNoteStream` has none, `useSyncState` exposes `sync` instead, and
+`useAccounts` hardcodes `error: null` and so never reports a fetch failure. Read the
+hook's own `Use*Result` interface before destructuring.
 
 ### useAccounts()
 ```tsx
@@ -527,7 +530,11 @@ import { formatAssetAmount, parseAssetAmount, getNoteSummary, formatNoteSummary,
 formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
 const summary = getNoteSummary(note); // { id, assets, sender }
-formatNoteSummary(summary);           // "1.5 TEST from mtst1..." (the " from <sender>" suffix is appended whenever the summary has a sender)
+formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
+// The " from <sender>" suffix is appended only when the summary HAS assets. With an
+// empty `assets` array the function returns `summary.id` alone, with no asset text and
+// no sender suffix. `getNoteSummary` returns null when a note's id or metadata is not
+// ready yet, so guard before formatting.
 toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to testnet)
 ```
 

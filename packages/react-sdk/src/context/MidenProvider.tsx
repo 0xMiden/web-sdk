@@ -109,9 +109,10 @@ export function MidenProvider({
     resolvedConfig.proverUrls?.testnet,
   ]);
 
-  // Exposed for advanced consumers who need to serialize custom multi-step
-  // operations against the client. Built-in hooks no longer use this since
-  // the WebClient handles concurrency internally via Layers 1-3.
+  // Serializes custom multi-step operations against the client. The WebClient
+  // already serializes each individual call, so this is for sequences that must
+  // not interleave, not for single calls. Built-in hooks DO still use it: most
+  // of src/hooks/ pulls it out of useMiden() and wraps its own multi-call work.
   const runExclusive = useCallback(
     async <T,>(fn: () => Promise<T>): Promise<T> =>
       clientLockRef.current.runExclusive(fn),

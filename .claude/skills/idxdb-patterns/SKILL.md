@@ -164,10 +164,23 @@ Rules:
   represents the absence of a previous value (e.g. `oldSlotValue`,
   `oldAsset`, `oldValue` in the history tables)
 - Use `boolean` for flags, `number` for block heights and slot types
-- The LATEST account-header table keys on `id`; the HISTORICAL
-  account-header table keys on `accountCommitment` (with `id` and
-  `[id+replacedAtNonce]` as secondary indexes). The storage / asset /
-  map-entry / foreign-code tables key on `accountId`. Don't confuse the two.
+- Primary keys differ per table and most of them are COMPOUND. Getting this
+  wrong produces a `get`/`put` that silently misses rather than an error, so
+  read `V1_STORES` plus the later version blocks in `schema.ts` rather than
+  assuming. As of schema v5:
+
+  | Table | Primary key | Secondary indexes |
+  |---|---|---|
+  | `latestAccountHeaders` | `&id` | `accountCommitment` |
+  | `historicalAccountHeaders` | `&accountCommitment` | `id`, `[id+replacedAtNonce]` |
+  | `latestAccountStorage` | `[accountId+slotName]` | `accountId` |
+  | `latestAccountAssets` | `[accountId+vaultKey]` | `accountId` |
+  | `latestStorageMapEntries` | `[accountId+slotName+key]` | `accountId`, `[accountId+slotName]` |
+  | `foreignAccountCode` | `accountId` | none |
+  | `settings` | `[scope+key]` | `scope` |
+
+  Only `foreignAccountCode` keys on `accountId` alone. Pass the tuple for the
+  rest: `db.latestAccountStorage.get([accountId, slotName])`.
 - The asset layer is two-word: `vaultKey` is the `ASSET_KEY` and `asset`
   is the encoded `ASSET_VALUE`. Don't fold them back into a single hex
   string.

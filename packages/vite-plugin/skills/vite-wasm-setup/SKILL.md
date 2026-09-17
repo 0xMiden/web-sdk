@@ -25,15 +25,31 @@ It composes with other Miden plugins: the same example config runs `midenVitePlu
 
 Pass `crossOriginIsolation: true` **only** if you import the **multi-threaded (MT)** WASM variant: `@miden-sdk/miden-sdk/mt` (or `/mt/lazy`) and `@miden-sdk/react/mt` (or `/mt/lazy`). The MT build uses `wasm-bindgen-rayon` and `SharedArrayBuffer` / `WebAssembly.Memory({ shared: true })` for ~3-5x faster local proving, which the browser only constructs when the page is cross-origin-isolated (COOP `same-origin` + COEP `require-corp`). On the default ST imports those headers are unnecessary.
 
-Cross-origin isolation is necessary but not sufficient. Every MT entry re-exports `initThreadPool`, and you must `await` it once before any prove call:
+Cross-origin isolation is what the browser needs. It is not something you then have to
+bootstrap by hand on the default path.
+
+**Do not add a main-thread `initThreadPool` call to a worker-backed client.** With the
+default `useWorker !== false`, the SDK runs every prove inside its own Worker, and that
+Worker brings up its own rayon pool: the client passes `navigator.hardwareConcurrency` to
+it when the page is cross-origin-isolated, and the Worker calls `initThreadPool` before
+constructing its `WebClient`. rayon's global pool is per WASM instance, and the Worker's
+instance is not the page's, so a call you make on the main thread initializes a pool that
+no prove ever runs on. It is not harmful, it is simply inert, which is worse to debug than
+an error.
+
+Call it yourself in exactly one case: a direct MT client on the current thread, which means
+`useWorker: false` or an environment with no Worker support. Then the pool has to come up
+in the same realm as the client.
 
 ```typescript
 import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
-await initThreadPool(navigator.hardwareConcurrency);
+await MidenClient.ready();
+await initThreadPool(navigator.hardwareConcurrency); // same realm as the direct MT client
+const client = await MidenClient.create({ useWorker: false });
 ```
 
-Skip it and the rayon global thread pool spawns zero workers on `wasm32`: every parallel loop falls through to a sequential one, so you ship the larger MT binary, pay the full COOP/COEP cost, and still run single-threaded, with no error to diagnose. The ST entries don't expose `initThreadPool`, because there is no pool to bring up.
+The ST entries don't expose `initThreadPool`, because there is no pool to bring up.
 
 If your app must host third-party iframes, OAuth popups, or other cross-origin resources that don't emit `require-corp`, stay on the default ST imports and leave `crossOriginIsolation: false` (the default). You keep a fully working Miden client and only forgo MT-accelerated local proving on that route. Enabling `crossOriginIsolation: true` also breaks OAuth-popup flows (e.g. Para), because `same-origin` COOP nullifies `window.opener` in popups. If you genuinely need both MT proving and cross-origin resources, embed the latter via `credentialless` COEP as a workaround (see the Gotchas section below).
 
@@ -154,7 +170,7 @@ Standard Vite-compatible tsconfig settings work with Miden. The only actual cons
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | "SharedArrayBuffer is not defined", or "WebAssembly.Memory: shared memory requires crossOriginIsolated" thrown out of `__wbg_init` (MT build only) | Importing `/mt` or `/mt/lazy` on a page where `self.crossOriginIsolated === false` at import time | Set `midenVitePlugin({ crossOriginIsolation: true })` and add the COOP/COEP headers on your production host; or switch back to the default ST imports, which don't need them |
-| MT build is no faster than ST, with no error | `initThreadPool` was never awaited, so the rayon pool has zero workers and every parallel loop runs sequentially | `await initThreadPool(navigator.hardwareConcurrency)` once at startup, before the first prove call |
+| A direct MT client with `useWorker: false` is no faster than ST, with no error | Its current-thread WASM instance has no initialized rayon pool, so every parallel loop runs sequentially | `await initThreadPool(navigator.hardwareConcurrency)` in that client's own realm. Do NOT add this to the default worker-backed path: the Worker initializes its own pool and a main-thread call is inert |
 | Top-level await crashes under SSR or in a Capacitor WKWebView | The eager entry initializes WASM at import | Import the lazy entry (`@miden-sdk/miden-sdk/lazy`, `@miden-sdk/react/lazy`) and `await MidenClient.ready()` |
 | WASM module not found | SDK not configured correctly | Ensure `midenVitePlugin()` is in plugins array |
 | "Top-level await not supported" | Missing plugin setup, or an `optimizeDeps.esbuildOptions.target` you set below `esnext` | Ensure `midenVitePlugin()` is in plugins array; if you set that target yourself, the plugin leaves it alone |

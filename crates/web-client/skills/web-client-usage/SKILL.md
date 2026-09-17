@@ -43,9 +43,21 @@ const summary = await client._withInnerWebClient(async (inner) => {
 });
 ```
 
-The callback runs with the WASM RefCell held, so it cannot race the proxy's
-call chain. It is marked `@internal`: pin the SDK version if you depend on it,
-and re-test the low-level surface on every upgrade.
+**You must hold your own mutex around this.** The call chain serializes the
+callback against external callers, but it does not make the callback atomic.
+While `fn` runs, the client's re-entrancy depth is raised so that calls made
+*by* `fn` run inline instead of queueing - that is what stops `fn` deadlocking
+against itself. The consequence is the trap: if an unrelated task runs during
+one of `fn`'s `await`s and calls into the SDK, it also sees a raised depth,
+also runs inline, and races wasm-bindgen's borrow check. The chain will not
+save you there; only your own mutex around the whole `_withInnerWebClient`
+call will.
+
+Do not let the `inner` reference escape the callback either - it is only valid
+for the duration of `fn`.
+
+It is marked `@internal`: pin the SDK version if you depend on it, and re-test
+the low-level surface on every upgrade.
 
 ## Client Initialization
 
