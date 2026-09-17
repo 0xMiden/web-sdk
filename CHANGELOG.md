@@ -11,7 +11,7 @@
 ### Changes
 
 * [CHANGE][web] Upgraded `miden-client` to 0.16.1 (from 0.16.0) ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
-* [BREAKING][para] `@miden-sdk/para` and `@miden-sdk/para-react` now peer on Para SDK 3.18 (`@getpara/web-sdk` / `@getpara/react-sdk-lite` `^3.18.0`), dropping the 2.x range. Install matching `@getpara/*` 3.18 packages; 2.x no longer satisfies the peer. The `ParaProvider` / `useAccount` / `signMessage` / `issueJwt` surface these packages use is unchanged in 3.18. `createParaMidenClient` and `ParaSignerProvider` resolve EVM wallets through `getWalletsByType("EVM")` when the client exposes it, because Para 3's `useAccount().embedded.wallets` is `AvailableWallet[]` and omits `publicKey`. ([#385](https://github.com/0xMiden/web-sdk/pull/385))
+* [BREAKING][para] `@miden-sdk/para`, `@miden-sdk/para-react`, and `@miden-sdk/create-para-react` are now `0.16.1` and peer on Para SDK 3.18 (`@getpara/web-sdk` / `@getpara/react-sdk-lite` `^3.18.0`), dropping the 2.x range. Install matching `@getpara/*` 3.18 packages; 2.x no longer satisfies the peer. The `ParaProvider` / `useAccount` / `signMessage` / `issueJwt` surface these packages use is unchanged in 3.18. `createParaMidenClient` and `ParaSignerProvider` resolve EVM wallets through `getWalletsByType("EVM")` when the client exposes it, because Para 3's `useAccount().embedded.wallets` is `AvailableWallet[]` and omits `publicKey`. ([#385](https://github.com/0xMiden/web-sdk/pull/385))
 * [FIX][para] `paraVitePlugin` and the para example Vite configs stub Para 3.18's optional `@getpara/aa-*` packages so Vite can prebundle without unused account-abstraction connectors installed. ([#385](https://github.com/0xMiden/web-sdk/pull/385))
 
 ## 0.16.0 (2026-09-07)
