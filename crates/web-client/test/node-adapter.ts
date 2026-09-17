@@ -106,7 +106,7 @@ function initSdk(): any {
     "getMapEntries",
     "getMapItem",
   ]);
-  patchNullToUndefined(rawSdk.NoteConsumability, ["consumableAfterBlock"]);
+  patchNullToUndefined(rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]);
 
   // Patch static methods (snake_case aliases for camelCase)
   if (rawSdk.NoteScript) {

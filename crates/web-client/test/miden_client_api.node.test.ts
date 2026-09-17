@@ -518,6 +518,14 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     const available = await client.notes.listAvailable({ account: wallet });
     expect(available.length).toBeGreaterThanOrEqual(1);
+
+    // A consumable-now status has no unlock block, and both bindings must say
+    // so the same way: the declared type is `number | undefined`, so Node must
+    // not answer null here (napi-compat patches it).
+    const consumable = await client.notes.listConsumable({ account: wallet });
+    expect(consumable.length).toBeGreaterThanOrEqual(1);
+    const status = consumable[0].noteConsumability()[0].consumptionStatus();
+    expect(status.consumableAfterBlock()).toBeUndefined();
   });
 
   test("terminate prevents resource operations", async ({ sdk }) => {

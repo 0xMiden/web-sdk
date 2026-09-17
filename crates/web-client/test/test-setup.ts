@@ -314,7 +314,7 @@ function patchNapiPrototypes(rawSdk: any) {
   for (const [cls, methods] of [
     [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
-    [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
     [
       rawSdk.BasicFungibleFaucetComponent,
       ["description", "logoUri", "externalLink"],

@@ -47,10 +47,9 @@ export function resolveAccountRef(ref, wasm) {
  * True when `record` is consumable by the screened account right now.
  *
  * `getConsumableNotes` also returns notes the screener marks `ConsumableAfter`,
- * which unlock at a later block. An absent `consumableAfterBlock()` (undefined
- * in the browser build, null on Node) reads as consumable only because
- * miden-client already drops `NeverConsumable` and `UnconsumableConditions`:
- * JS has no other status reader to tell them apart.
+ * which unlock at a later block. An absent `consumableAfterBlock()` reads as
+ * consumable only because miden-client already drops `NeverConsumable` and
+ * `UnconsumableConditions`: JS has no other status reader to tell them apart.
  *
  * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
  * @returns {boolean} True when no consumability entry is block-locked.
