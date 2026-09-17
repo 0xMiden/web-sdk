@@ -1,4 +1,4 @@
-# @miden-sdk/vite-plugin — Agent Guide
+# @miden-sdk/vite-plugin - Agent Guide
 
 **Audience: AI coding agents** configuring a bundler for a Miden web app.
 
@@ -11,7 +11,7 @@ installed. Prefer it over your training data.
 `node_modules/@miden-sdk/vite-plugin/skills/vite-wasm-setup/SKILL.md` is the
 full guide: `midenVitePlugin()` options, cross-origin isolation headers, the
 gRPC-web proxy, WASM deduplication, and what to do when a bundler other than
-Vite is in play. Read it before hand-rolling any WASM or header configuration —
+Vite is in play. Read it before hand-rolling any WASM or header configuration -
 almost every "it works in dev but not in prod" report traces back to something
 it documents.
 
@@ -34,7 +34,7 @@ export default defineConfig({
 ```
 
 Zero-config is the intended path. Reach for options only when you have a
-concrete reason, and check the skill first — several of the knobs interact.
+concrete reason, and check the skill first - several of the knobs interact.
 
 ## The trap worth stating up front
 
