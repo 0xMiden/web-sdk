@@ -5,7 +5,7 @@ description: Enforce conventions for the Rust<->JavaScript WASM boundary in the 
 
 # WASM Bridge Patterns (web-client / miden-client-web)
 
-At v0.15 the web client lives in the dedicated **web-sdk** repo
+The web client lives in the dedicated **web-sdk** repo
 (`github.com/0xMiden/web-sdk`), split out of `miden-client`. The Rust<->JS
 boundary crate is `crates/web-client` (cargo package `miden-client-web`).
 Companion workspace crates: `crates/js-export-macro` (the `#[js_export]`
@@ -19,26 +19,33 @@ The crate dual-targets two binding technologies from one Rust source:
 A platform abstraction layer in `crates/web-client/src/platform.rs` provides
 type aliases and helpers so most code is written once. Key aliases:
 
-- `JsErr` — the platform error type (`wasm_bindgen::JsValue` on browser,
+- `JsErr`: the platform error type (`wasm_bindgen::JsValue` on browser,
   `napi::Error` on nodejs). `from_str_err(msg: &str) -> JsErr` builds one from a
-  string.
-- `JsU64` — `u64` on browser, `napi::bindgen_prelude::BigInt` on nodejs; both
+  string, and `from_str_err_with_code(msg: &str, code: &str) -> JsErr` builds one
+  carrying a stable machine-readable `code` (see
+  [Error Handling](#error-handling-across-the-boundary)).
+- `JsU64`: `u64` on browser, `napi::bindgen_prelude::BigInt` on nodejs; both
   surface as a JS `BigInt`. Convert with `js_u64_to_u64` / `u64_to_js_u64`.
-- `JsBytes` — `js_sys::Uint8Array` on browser, `napi::bindgen_prelude::Buffer`
-  on nodejs. Convert with `bytes_to_js` / `js_to_bytes`.
-- `AsyncCell<T>` — interior mutability: `RefCell` on browser, `tokio::sync::Mutex`
-  on nodejs; `.lock().await` yields a `DerefMut` guard.
+- `JsBytes`: `js_sys::Uint8Array` on browser, `napi::bindgen_prelude::Buffer`
+  on nodejs. Convert with `bytes_to_js` / `js_to_bytes` (`js_to_bytes` is
+  platform-agnostic; only `bytes_to_js` splits).
+- `AsyncCell<T>`: interior mutability, `RefCell` on browser,
+  `tokio::sync::Mutex` on nodejs; `.lock().await` yields a `DerefMut` guard.
+- `ClientAuth`: the platform keystore type the inner client is generic over.
+  `WebClient` holds an `AsyncCell<Option<Client<ClientAuth>>>`, so write
+  `Client<ClientAuth>` rather than naming a concrete keystore, and reach the
+  keystore itself through `self.get_keystore().await`.
 
 ## Exposing Rust Methods to JavaScript
 
-### Method Annotation — `#[js_export]`
+### Method Annotation - `#[js_export]`
 
 The public API is exposed with the custom `#[js_export]` proc-macro from the
 `js-export-macro` crate, **not** raw `#[wasm_bindgen]`. `#[js_export]` generates
 the dual `wasm_bindgen` (browser) and `napi` (Node.js) annotations from one
 attribute, forwarding `constructor` / `js_name` / `getter`. When a signature
 contains `JsU64`, the macro splits the impl per platform, replacing `JsU64` with
-`u64` (browser) or `BigInt` (nodejs) — so `JsU64` is resolved by the macro and
+`u64` (browser) or `BigInt` (nodejs), so `JsU64` is resolved by the macro and
 does not need to be imported in the annotated module. Raw `#[wasm_bindgen]` is
 reserved for browser-only members (e.g. synchronous getters that cannot be async).
 
@@ -81,7 +88,7 @@ Rules:
   self.get_mut_inner().await;` then `let client = guard.as_mut().ok_or_else(||
   from_str_err("Client not initialized"))?;`. `get_mut_inner` returns a
   `DerefMut` guard over `Option<Client<ClientAuth>>`.
-- Return `Result<T, JsErr>` — never `Result<T, JsValue>` directly, and never
+- Return `Result<T, JsErr>`, never `Result<T, JsValue>` directly, and never
   panic across the boundary.
 - Use `.map_err(|err| js_error_with_context(err, "context"))` for all fallible
   client calls.
@@ -140,6 +147,19 @@ This:
 4. Node.js path: returns `napi::Error::from_reason(...)` with the help inlined
    into the message.
 
+### Adding a new machine-readable code
+
+`js_error_with_context` only reaches `code_from_error`, which maps typed
+`ClientError` variants. For an error you construct yourself, use
+`from_str_err_with_code(msg, "SOME_CODE")` from `platform.rs` rather than
+`from_str_err` plus a hand-rolled `Reflect::set`: it is the only helper that
+sets a code on both platforms. The browser branch attaches a real `code`
+property; napi's error `code` is its fixed `Status` enum, so the nodejs branch
+prefixes the message as `"<CODE>: <message>"` instead. JS callers branch on the
+code, so treat a published code as API and keep the two branches in step. The
+worker shim's `serializeError` forwards both `code` and `help` across the
+worker boundary.
+
 ### Error Pattern in Every Method
 
 ```rust
@@ -187,7 +207,7 @@ impl Word {
             .expect("length checked above");
         let native_felt_vec: [NativeFelt; 4] = fixed_array_u64
             .iter()
-            .map(|&v| NativeFelt::new(v)) // fallible on the 0.15 surface
+            .map(|&v| NativeFelt::new(v)) // fallible: rejects non-canonical input
             .collect::<Result<Vec<NativeFelt>, _>>()
             .map_err(|err| from_str_err(&format!("invalid field element: {err}")))?
             .try_into()
@@ -274,7 +294,7 @@ pub struct StorageMapEntry {
 
 Rules:
 - Use the dual-platform `#[cfg_attr(feature = "browser", wasm_bindgen(...))]` +
-  `#[cfg_attr(feature = "nodejs", napi(object))]` form — never a bare
+  `#[cfg_attr(feature = "nodejs", napi(object))]` form, never a bare
   `#[wasm_bindgen(getter_with_clone)]`.
 - `getter_with_clone` auto-generates JS getters; `inspectable` improves console
   inspection. `inspectable` can also stand alone (without `getter_with_clone`)
@@ -320,7 +340,7 @@ Rules:
 - Use `await_js::<T>()` when you need to deserialize the result.
 - Use `await_ok()` when you only care about success/failure.
 - Use `serde_wasm_bindgen::from_value()` for deserialization, not `serde_json`.
-  (At v0.15 `Promise` is imported via `wasm_bindgen_futures::js_sys::Promise`.)
+  (`Promise` is imported via `wasm_bindgen_futures::js_sys::Promise`.)
 
 ## Importing JS Functions from Rust
 
@@ -350,12 +370,16 @@ Rules:
 
 ## JS Wrapper Layer
 
-The web-client crate ships **two** JS layers under `crates/web-client/js/`:
+Two **client** layers sit under `crates/web-client/js/`, alongside supporting
+modules that are not themselves a client layer (`asyncLock.js`, `webLock.js`,
+`syncLock.js`, `observability.js`, `storageView.js`, `standalone.js`,
+`eager.js`, `wasm.js`, plus the `workers/` shim and the `node/` napi compat
+layer). The two layers are:
 
-1. **`WebClient`** (`js/index.js`) — the WASM-bound class re-exported as
+1. **`WebClient`** (`js/index.js`): the WASM-bound class re-exported as
    `WasmWebClient` (`export { WebClient as WasmWebClient, MockWebClient as
-   MockWasmWebClient }`). It wraps the `WebClient` Rust struct and adds JS-side
-   concerns:
+   MockWasmWebClient, MockWebClient, withSyncLock }`). It wraps the `WebClient`
+   Rust struct and adds JS-side concerns:
    - `_serializeWasmCall` queue that linearizes WASM calls (the inner client is
      behind a lock, so the JS side must not interleave async calls).
    - `syncState()` is wrapped in the exported `withSyncLock(dbId, methodId, fn)`
@@ -366,13 +390,19 @@ The web-client crate ships **two** JS layers under `crates/web-client/js/`:
    - method-classification sets (`SYNC_METHODS`, `READ_METHODS`,
      `WRITE_METHODS`) consumed by the proxy and enforced by
      `scripts/check-method-classification.js`. (`SYNC_METHODS` is a historical
-     misnomer — it groups methods safe to bind raw.)
-2. **`MidenClient`** (`js/client.js`) — the public, resource-based wrapper that
+     misnomer; it groups methods safe to bind raw.)
+2. **`MidenClient`** (`js/client.js`): the public, resource-based wrapper that
    owns a `WebClient` instance and exposes typed sub-objects: `client.accounts`,
    `client.transactions`, `client.notes`, `client.tags`, `client.settings`,
    `client.compile` (a `CompilerResource`, hence the property is `compile`
-   though the file is `compiler.js`), and `client.keystore`. Each resource lives
-   under `js/resources/<name>.js`.
+   though the file is `compiler.js`), `client.keystore`, and `client.pswap`
+   (`PswapResource`, the partial-swap flows). Each resource lives under
+   `js/resources/<name>.js`.
+
+`MidenClient` is **not** a Proxy and has no passthrough: a WASM method that no
+resource surfaces is reachable only on `WasmWebClient`. `pruneAccountHistory`
+is one such method. Adding a method to `index.js`'s classification sets does
+not make it appear on `MidenClient`.
 
 `index.js` injects the WASM constructor and the `getWasm` initializer into
 `MidenClient` via static fields to break the import cycle:
@@ -398,6 +428,22 @@ const ownOutputs = new wasm.NoteArray();
 ownOutputs.push(note);
 ```
 
+**Adding a new array wrapper takes three coordinated edits**, because on
+Node.js the array wrappers are JS polyfills rather than napi classes, and the
+re-export generator cannot discover them:
+
+1. `crates/web-client/src/models/mod.rs` - a new
+   `(crate::models::foo::Foo) -> FooArray` line in `declare_js_miden_arrays!`
+2. `crates/web-client/js/node/napi-compat.js` - add `"FooArray"` to the
+   `names` list in `makeArrayPolyfills()`
+3. `crates/web-client/js/node-index.js` - a hand-written
+   `export const FooArray = _reexport("FooArray");` in the section above the
+   generated block (`pnpm --filter @miden-sdk/miden-sdk gen:node-reexports`
+   regenerates only the block below it, and CI's `check:node-reexports` keeps
+   that part in lockstep with napi)
+
+Miss step 2 or 3 and the browser build is fine while Node.js fails at import.
+
 ### Adding a method
 
 When extending the SDK, choose the layer based on whether the work is
@@ -411,6 +457,22 @@ When extending the SDK, choose the layer based on whether the work is
 - **JS-side ergonomics** (option-bag normalization, account-ref resolution, type
   coercion): keep the work in the resource module and call the existing WASM
   method.
+
+### Debug metadata is stripped from production builds
+
+Production WASM builds strip the debug metadata of the Miden packages embedded
+in the binary (MASM source spans and `assert.err` message text), which is most
+of why the published binaries are roughly 30% smaller. A failed VM assertion
+therefore reports its error **code** with no human-readable message. The strip
+runs through `scripts/wasm-opt-with-masp-strip.sh`, a `WASM_OPT_BIN` shim wired
+in `rollup.config.js` that runs `strip-masp-debug` over the input and then
+delegates to the real `wasm-opt`.
+
+When you are debugging a VM abort, build with `MIDEN_WEB_DEV=true` (or
+`pnpm --filter @miden-sdk/miden-sdk run build-dev`), which keeps full
+diagnostics. Don't design an error path that depends on assertion message text
+being readable in a released build, and don't write a test that asserts on it
+unless the test builds in dev mode.
 
 Resource methods follow this shape:
 
@@ -427,15 +489,16 @@ async get(ref) {
 
 Rules:
 
-- Always call `this.#client.assertNotTerminated()` at entry — late callbacks on
+- Always call `this.#client.assertNotTerminated()` at entry. Late callbacks on
   a torn-down client otherwise panic with "null pointer passed to rust".
 - Resolve account/note/storage refs through the helpers in
-  `crates/web-client/js/utils.js` (e.g. `resolveAccountRef`,
-  `resolveStorageMode`), imported from a resource as `../utils.js`, so callers
-  can pass any natural form (hex, bech32 address, WASM type). (There is no
-  `utils.js` inside `js/resources/` — that directory holds only the seven
-  resource files: accounts, compiler, keystore, notes, settings, tags,
-  transactions.)
+  `crates/web-client/js/utils.js` (`resolveAccountRef`, `resolveAddress`,
+  `resolveNoteType`, `resolveStorageMode`, `resolveAuthScheme`,
+  `resolveNoteIdHex`, `resolveTransactionIdHex`, `hashSeed`), imported from a
+  resource as `../utils.js`, so callers can pass any natural form (hex, bech32
+  address, WASM type). (There is no `utils.js` inside `js/resources/`: that
+  directory holds only the eight resource files: accounts, compiler, keystore,
+  notes, pswap, settings, tags, transactions.)
 - Return WASM-owned objects (e.g. `Account`, `AccountHeader`) directly when
-  callers will use them again — wrapping them in plain JS DTOs forces another
+  callers will use them again. Wrapping them in plain JS DTOs forces another
   WASM round-trip and breaks identity for code that compares by reference.
