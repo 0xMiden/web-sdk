@@ -121,11 +121,18 @@ test(
     fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
     console.log("Installing example dependencies");
-    const install = spawnSync("yarn", ["install", "--ignore-scripts"], {
-      cwd: tempExample,
-      stdio: "inherit",
-      timeout: 180000,
-    });
+    // Para 3.18 pulls @wallet-standard/base@1.1.1, which declares
+    // engines.node >= 22. Yarn 1 treats that as a hard error. web-sdk CI
+    // and this package's engines are Node 20, so ignore the engine range.
+    const install = spawnSync(
+      "yarn",
+      ["install", "--ignore-scripts", "--ignore-engines"],
+      {
+        cwd: tempExample,
+        stdio: "inherit",
+        timeout: 180000,
+      }
+    );
     if (install.error && install.error.code === "ETIMEDOUT") {
       throw new Error("yarn install timed out after 180s");
     }

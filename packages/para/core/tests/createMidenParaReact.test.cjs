@@ -155,11 +155,7 @@ test(
     );
     const targetDir = path.join(tmpRoot, "app");
     const rootTarball = packPackage(repoRoot);
-    const useMidenParaReactDir = path.join(
-      repoRoot,
-      "packages",
-      "use-miden-para-react"
-    );
+    const useMidenParaReactDir = path.resolve(__dirname, "../../react");
     const useMidenParaReactTarball = packPackage(useMidenParaReactDir);
 
     runCli(targetDir, [], {

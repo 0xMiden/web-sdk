@@ -34,12 +34,13 @@ const templateOptionalConnectorsPath = resolve(
   "src",
   "optional-connectors.ts"
 );
-const repoRoot = resolve(__dirname, "..", "..", "..");
+const repoRoot = resolve(__dirname, "..", "..", "..", "..");
 const localMidenParaPath =
-  process.env.MIDEN_PARA_LOCAL_MIDEN_PARA_PATH ?? repoRoot;
+  process.env.MIDEN_PARA_LOCAL_MIDEN_PARA_PATH ??
+  join(repoRoot, "packages", "para", "core");
 const localUseMidenParaReactPath =
   process.env.MIDEN_PARA_LOCAL_USE_MIDEN_PARA_REACT_PATH ??
-  join(repoRoot, "packages", "use-miden-para-react");
+  join(repoRoot, "packages", "para", "react");
 const useLocalDeps = process.env.MIDEN_PARA_LOCAL_DEPS === "1";
 
 const args = process.argv.slice(2);
