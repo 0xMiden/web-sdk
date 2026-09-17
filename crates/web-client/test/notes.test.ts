@@ -13,7 +13,6 @@ test.describe("get_input_note", () => {
 
       const wallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -45,7 +44,6 @@ test.describe("get_input_note", () => {
       // Setup wallet and faucet
       const wallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -106,7 +104,10 @@ test.describe("get_input_note", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -189,7 +190,6 @@ test.describe("get_input_note", () => {
       // Setup wallet and faucet
       const wallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -250,7 +250,10 @@ test.describe("get_input_note", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -329,7 +332,6 @@ test.describe("get_input_note", () => {
       // Setup wallet and faucet
       const wallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -390,7 +392,10 @@ test.describe("get_input_note", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -530,7 +535,6 @@ test.describe("get_input_notes", () => {
       // Setup wallet and faucet
       const wallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -591,7 +595,10 @@ test.describe("get_input_notes", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(createdNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        walletId
+      );
       const consumeResult = await intClient.executeTransaction(
         walletId,
         consumeRequest
@@ -655,7 +662,6 @@ test.describe("get_consumable_notes", () => {
       // Setup wallet and faucet
       const wallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -763,7 +769,6 @@ test.describe("get_consumable_notes", () => {
       async function mintNote() {
         const wallet = await intClient.newWallet(
           sdk.AccountStorageMode.private(),
-          true,
           sdk.AuthScheme.AuthRpoFalcon512
         );
         const faucet = await intClient.newFaucet(
@@ -885,7 +890,6 @@ test.describe("get_consumable_notes", () => {
       // Setup sender wallet and faucet
       const senderWallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const senderFaucet = await intClient.newFaucet(
@@ -903,7 +907,6 @@ test.describe("get_consumable_notes", () => {
       // Setup target wallet
       const targetWallet = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const targetWalletId = targetWallet.id();
@@ -944,7 +947,10 @@ test.describe("get_consumable_notes", () => {
       await intClient.syncState();
       const inputNoteRecord = await intClient.getInputNote(mintedNoteId);
       const note = inputNoteRecord.toNote();
-      const consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      const consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        senderWalletId
+      );
       let consumeResult = await intClient.executeTransaction(
         senderWalletId,
         consumeRequest
@@ -1064,7 +1070,6 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       // Setup sender
       const sender = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -1082,7 +1087,6 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       // Setup target
       const target = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const targetId = target.id();
@@ -1122,7 +1126,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       await intClient.syncState();
       let inputNoteRecord = await intClient.getInputNote(mintedNoteId);
       let note = inputNoteRecord.toNote();
-      let consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      let consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        senderId
+      );
       execResult = await intClient.executeTransaction(senderId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();
       proven = await intClient.proveTransaction(execResult, prover);
@@ -1200,7 +1207,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       }
 
       note = inputNoteRecord.toNote();
-      consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        targetId
+      );
 
       execResult = await intClient.executeTransaction(targetId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();
@@ -1256,7 +1266,6 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       // Setup sender
       const sender = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await intClient.newFaucet(
@@ -1274,7 +1283,6 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       // Setup target
       const target = await intClient.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const targetId = target.id();
@@ -1314,7 +1322,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       await intClient.syncState();
       let inputNoteRecord = await intClient.getInputNote(mintedNoteId);
       let note = inputNoteRecord.toNote();
-      let consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      let consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        senderId
+      );
       execResult = await intClient.executeTransaction(senderId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();
       proven = await intClient.proveTransaction(execResult, prover);
@@ -1394,7 +1405,10 @@ test.describe("createP2IDNote and createP2IDENote", () => {
       }
 
       note = inputNoteRecord.toNote();
-      consumeRequest = intClient.newConsumeTransactionRequest([note]);
+      consumeRequest = await intClient.newConsumeTransactionRequest(
+        [note],
+        targetId
+      );
 
       execResult = await intClient.executeTransaction(targetId, consumeRequest);
       prover = sdk.TransactionProver.newLocalProver();

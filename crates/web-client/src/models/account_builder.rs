@@ -50,18 +50,23 @@ impl AccountBuilder {
         Ok(AccountBuilder(NativeAccountBuilder::new(seed_array)))
     }
 
-    /// Sets the account type (regular, faucet, etc.).
+    /// Sets the account type, which in protocol 0.15 is the account visibility
+    /// (public or private). Equivalent to [`Self::storage_mode`].
     #[js_export(js_name = "accountType")]
     pub fn account_type(&mut self, account_type: AccountType) -> Self {
         self.0 = self.0.clone().account_type(account_type.into());
         self.clone()
     }
 
-    // TODO: AccountStorageMode as Enum
     /// Sets the storage mode (public/private) for the account.
+    ///
+    /// The 0.15 protocol surface collapsed `AccountStorageMode` and `AccountType` into a
+    /// single 2-way `AccountType` flag: setting the storage mode IS setting the account
+    /// type. Calling both `accountType()` and `storageMode()` on the same builder is the
+    /// last-write-wins on the underlying flag. Method kept for JS-surface back-compat.
     #[js_export(js_name = "storageMode")]
     pub fn storage_mode(&mut self, storage_mode: &AccountStorageMode) -> Self {
-        self.0 = self.0.clone().storage_mode(storage_mode.into());
+        self.0 = self.0.clone().account_type(storage_mode.into());
         self.clone()
     }
 
@@ -75,14 +80,14 @@ impl AccountBuilder {
     /// Adds an authentication component to the account.
     #[js_export(js_name = "withAuthComponent")]
     pub fn with_auth_component(&mut self, account_component: &AccountComponent) -> Self {
-        self.0 = self.0.clone().with_auth_component(account_component);
+        self.0 = self.0.clone().with_component(account_component);
         self.clone()
     }
 
     /// Adds a no-auth component to the account (for public accounts).
     #[js_export(js_name = "withNoAuthComponent")]
     pub fn with_no_auth_component(&mut self) -> Self {
-        self.0 = self.0.clone().with_auth_component(NoAuth);
+        self.0 = self.0.clone().with_component(NoAuth);
         self.clone()
     }
 

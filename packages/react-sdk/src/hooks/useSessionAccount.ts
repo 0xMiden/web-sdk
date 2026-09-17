@@ -59,7 +59,6 @@ export function useSessionAccount(
 
   // Destructure walletOptions primitives so useCallback deps are stable
   const storageMode = options.walletOptions?.storageMode ?? "public";
-  const mutable = options.walletOptions?.mutable ?? DEFAULTS.WALLET_MUTABLE;
   const authScheme = options.walletOptions?.authScheme ?? DEFAULTS.AUTH_SCHEME;
 
   // Store fund in a ref so the callback identity doesn't change when the
@@ -113,11 +112,7 @@ export function useSessionAccount(
 
         const resolvedStorageMode = getStorageMode(storageMode);
 
-        const wallet = await client.newWallet(
-          resolvedStorageMode,
-          mutable,
-          authScheme
-        );
+        const wallet = await client.newWallet(resolvedStorageMode, authScheme);
         ensureAccountBech32(wallet);
         const accounts = await client.getAccounts();
         setAccounts(accounts);
@@ -168,7 +163,6 @@ export function useSessionAccount(
     sync,
     sessionAccountId,
     storageMode,
-    mutable,
     authScheme,
     storagePrefix,
     pollIntervalMs,
@@ -214,7 +208,10 @@ type WaitAndConsumeClient = {
   getConsumableNotes: (
     accountId?: unknown
   ) => Promise<Array<{ inputNoteRecord: () => { toNote: () => unknown } }>>;
-  newConsumeTransactionRequest: (notes: unknown[]) => unknown;
+  newConsumeTransactionRequest: (
+    notes: unknown[],
+    consumingAccountId: unknown
+  ) => Promise<unknown>;
   submitNewTransaction: (
     accountId: unknown,
     request: unknown
@@ -241,8 +238,18 @@ async function waitAndConsume(
     const consumable = await client.getConsumableNotes(accountIdObj);
     if (consumable.length > 0) {
       const notes = consumable.map((c) => c.inputNoteRecord().toNote());
-      const txRequest = client.newConsumeTransactionRequest(notes);
+      // `accountIdObj` was consumed by getConsumableNotes above, which takes it
+      // by value; naming the account here is what lets the request omit fee
+      // conversion info for auth components that cannot read it.
       const freshAccountId = parseAccountId(walletId);
+      const txRequest = await client.newConsumeTransactionRequest(
+        notes,
+        freshAccountId
+      );
+      // Building the request suspends, so re-check before submitting: a
+      // cancellation landing in that window would otherwise still submit, and
+      // the caller's catch discards the outcome once cancelled.
+      if (cancelledRef.current) return;
       await client.submitNewTransaction(freshAccountId, txRequest);
       return;
     }

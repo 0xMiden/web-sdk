@@ -15,7 +15,6 @@ test.describe("getAccountProof vault commitment (browser-only)", () => {
     // Create public wallet and faucet, then fund the wallet so it has assets on-chain
     const walletResult = await createNewWallet(page, {
       storageMode: StorageMode.PUBLIC,
-      mutable: false,
       authSchemeId: 2,
     });
     const faucetResult = await createNewFaucet(page, StorageMode.PUBLIC);

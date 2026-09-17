@@ -12,6 +12,8 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Note Attachments** - Send and read arbitrary data payloads on notes via `useSend()` and `readNoteAttachment()`
 - **Temporal Note Tracking** - `useNoteStream()` tracks when notes first appear, with built-in filtering, handled-note exclusion, and phase snapshots
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
+- **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
+- **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
@@ -117,14 +119,25 @@ function App() {
 }
 ```
 
-## Next.js & SSR
+## Subpaths: Eager / Lazy × ST / MT
 
-The React SDK is Next.js-compatible out of the box: it ships two bundle variants built from a single source tree, and both internally import `@miden-sdk/miden-sdk/lazy` — the lazy entry point that does **not** use a top-level `await`. Nothing initializes WASM at module evaluation, so server-side rendering never hangs.
+The React SDK ships **four** bundle variants built from a single source tree. The two axes are independent:
 
-- Default (`@miden-sdk/react`) — internally consumes the eager SDK. Use this in plain browser apps, Vite, CRA.
-- `@miden-sdk/react/lazy` — internally consumes the lazy SDK. Use this in Next.js (app router or pages), SSR, or inside a Capacitor iOS/Android WKWebView host (the wallet shell uses this).
+- **WASM init timing** — _eager_ awaits at SDK load (TLA); _lazy_ leaves init to `MidenClient.ready()` or first awaiting method.
+- **WASM threading model** — _ST_ (single-threaded) loads anywhere; _MT_ (multi-threaded via `wasm-bindgen-rayon`) parallelizes proving but **requires the page to be cross-origin-isolated**.
 
-Both exports have identical APIs. The choice only affects which `@miden-sdk/miden-sdk` variant your bundler ends up resolving.
+| Subpath                            | SDK variant                       | When to use                                                |
+| ---------------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| `@miden-sdk/react`                 | eager + ST                        | Plain browser apps, Vite, CRA, esbuild — no host control needed. |
+| `@miden-sdk/react/lazy`            | lazy + ST                         | Next.js / SSR, Capacitor (iOS/Android WKWebView).          |
+| `@miden-sdk/react/mt`              | eager + MT                        | dApps with COOP/COEP set; want fast proving and tolerate TLA. |
+| `@miden-sdk/react/mt/lazy`         | lazy + MT                         | dApps with COOP/COEP set, on Next.js or anywhere TLA can't run. |
+
+All four exports have identical APIs. The choice affects which `@miden-sdk/miden-sdk` variant your bundler resolves and therefore the underlying WASM behavior.
+
+### Next.js / SSR
+
+The lazy variants (`/lazy`, `/mt/lazy`) do not run a top-level `await` at module evaluation. Server-side rendering never hangs on WASM init. Use these in any Next.js app or Capacitor host:
 
 ```tsx
 // Next.js: app/providers.tsx
@@ -138,6 +151,50 @@ export function Providers({ children }: { children: React.ReactNode }) {
 ```
 
 `MidenProvider` gates child rendering on `isReady`, so you don't have to await anything manually in components — hooks already fire only after WASM is initialized.
+
+### Multi-threaded proving (`/mt`, `/mt/lazy`)
+
+The MT variants enable `wasm-bindgen-rayon` for ~3–5× faster local proving on commodity laptops. Same API surface as the ST variants. Two extra requirements compared to ST:
+
+**1. The page must be cross-origin-isolated.** Set the host response headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Without those, the browser refuses to construct `WebAssembly.Memory({ shared: true })` and the MT WASM fails to instantiate at SDK load. See the underlying [`@miden-sdk/miden-sdk` README](https://github.com/0xMiden/web-sdk/blob/main/crates/web-client/README.md#setting-cross-origin-isolation-headers) for snippets per host (Vite, Next.js, Express, browser-extension manifests). COEP also blocks cross-origin resources unless they carry CORP / proper CORS — opt in deliberately.
+
+**2. Bring up the rayon thread pool once at startup.** Re-exported as `initThreadPool(n)`. The React SDK does NOT call this for you — consumers must `await` it before the first transaction:
+
+```tsx
+"use client";
+import { useEffect } from "react";
+import { MidenProvider, useMiden } from "@miden-sdk/react/mt/lazy";
+import { initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
+
+function ThreadPoolBoot() {
+  const { isReady } = useMiden();
+  useEffect(() => {
+    if (!isReady) return;
+    void initThreadPool(navigator.hardwareConcurrency);
+  }, [isReady]);
+  return null;
+}
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <MidenProvider config={{ rpcUrl: "testnet" }}>
+      <ThreadPoolBoot />
+      {children}
+    </MidenProvider>
+  );
+}
+```
+
+`initThreadPool` is idempotent — calling it multiple times resolves with the existing pool. Without this call, the rayon global thread pool spawns zero workers on `wasm32` and every `par_iter(...)` falls through to a sequential loop. You'd be shipping multi-threaded WASM that runs single-threaded.
+
+If you can't satisfy the COI requirement (third-party host, CDN that won't set headers), stay on the default `@miden-sdk/react` / `/lazy` subpaths — they ship the ST WASM and load anywhere.
 
 ### Constructing wasm-bindgen types directly in Next.js
 
@@ -685,7 +742,7 @@ function SendForm() {
 
 Create multiple P2ID output notes in a single transaction. This is ideal for
 batched payouts or airdrops; with `noteType: 'private'`, the hook also delivers
-each note to recipients via `sendPrivateNote`.
+each note to recipients via `sendPrivateOutputNote`.
 It builds the request and executes the full pipeline in one go. That means
 fewer chances to handle batching incorrectly or forget private note delivery.
 
@@ -1050,6 +1107,64 @@ function CancelPswapButton({ accountId, note }: Props) {
 }
 ```
 
+#### `usePswapLineages()` / `usePswapLineagesFor()` / `usePswapLineage()`
+
+Read the partial-swap orders this client is tracking. As a PSWAP note is filled
+round by round, the client follows the chain — original note → remainder →
+remainder — and records each step as a **lineage** keyed by a stable `orderId`.
+These query hooks expose that tracked state and refresh after every successful
+sync. They return `{ lineages | lineage, isLoading, error, refetch }`.
+
+```tsx
+import {
+  usePswapLineages,
+  usePswapLineagesFor,
+  usePswapLineage,
+} from '@miden-sdk/react';
+
+// Every lineage tracked by this client
+const { lineages } = usePswapLineages();
+
+// Only the lineages created by one account
+const { lineages: mine } = usePswapLineagesFor('0xmywallet...');
+
+// A single order by its stable id
+const { lineage } = usePswapLineage(orderId);
+
+function OrderRow({ orderId }: { orderId: string }) {
+  const { lineage, isLoading } = usePswapLineage(orderId);
+  if (isLoading) return <span>Loading…</span>;
+  if (!lineage) return <span>Not tracked</span>;
+  return (
+    <span>
+      {lineage.orderId()} — {lineage.remainingOffered().toString()} left,
+      state {lineage.state()}
+    </span>
+  );
+}
+```
+
+#### `usePswapCancelByOrder()`
+
+Cancel a tracked PSWAP by its stable `orderId` and reclaim the unfilled offered
+asset on the lineage's current tip. Unlike `usePswapCancel`, you don't need to
+hold the tip note — the creator account and tip are resolved from the locally
+tracked lineage, so only the order id is required.
+
+```tsx
+import { usePswapCancelByOrder } from '@miden-sdk/react';
+
+function CancelOrderButton({ orderId }: { orderId: string }) {
+  const { pswapCancelByOrder, isLoading, stage } = usePswapCancelByOrder();
+
+  return (
+    <button onClick={() => pswapCancelByOrder({ orderId })} disabled={isLoading}>
+      {isLoading ? stage : 'Cancel order'}
+    </button>
+  );
+}
+```
+
 #### `useTransaction()`
 
 Execute a custom `TransactionRequest` or build one with the client. This is the
@@ -1061,6 +1176,7 @@ yourself.
 Built-in features:
 - **Auto pre-sync** before executing (disable with `skipSync: true`)
 - **Concurrency guard** prevents double-executions while a transaction is in-flight
+- **Anchored execution** via `anchor` — pins the reference block so a summary signed at that block reproduces exactly (see [`useChainAnchor()`](#usechainanchor--usepreview))
 
 ```tsx
 import { useTransaction } from '@miden-sdk/react';
@@ -1093,6 +1209,120 @@ function CustomTransactionButton({ accountId }: { accountId: string }) {
   );
 }
 ```
+
+#### `useChainAnchor()` / `usePreview()`
+
+Capture a reference block, derive the summary pending authorization at it, and
+execute against it later — the pair behind multisig proposals and offline
+co-signing.
+
+Since protocol 0.16 a signed transaction summary binds the reference block
+commitment, so signatures only authorize an execution at that exact block. In a
+flow that collects signatures and executes later, the proposer, co-signers, and
+executor are all at different sync heights — a `ChainAnchor` is what makes them
+agree on one summary.
+
+```tsx
+import { useChainAnchor, usePreview, useTransaction } from '@miden-sdk/react';
+import { ChainAnchor } from '@miden-sdk/miden-sdk';
+
+// Proposer: capture the anchor, derive the summary at it, ship both.
+function Propose({ multisigId, buildRequest }) {
+  const { captureAnchor, anchoredRequest } = useChainAnchor();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        const anchor = await captureAnchor({ request: buildRequest });
+        // anchoredRequest, not buildRequest: a factory resolves to a new
+        // request each call, and the anchor pins only the one it captured.
+        const summary = await preview({
+          accountId: multisigId,
+          request: anchoredRequest,
+          anchor,
+        });
+        await shipToCosigners(anchor.serialize(), summary.serialize());
+      }}
+    >
+      Propose
+    </button>
+  );
+}
+
+// Co-signer: re-derive at the proposer's anchor and compare before signing.
+// Deriving at the local sync height yields a different summary every time.
+function Verify({ multisigId, request, anchorBytes, proposed }) {
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        const anchor = ChainAnchor.deserialize(anchorBytes);
+        const derived = await preview({ accountId: multisigId, request, anchor });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+function Execute({ multisigId, request, anchor }) {
+  const { execute } = useTransaction();
+  return (
+    <button onClick={() => execute({ accountId: multisigId, request, anchor })}>
+      Execute
+    </button>
+  );
+}
+```
+
+`useChainAnchor()` returns
+`{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
+`usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
+`anchoredRequest` is the exact request the anchor was captured for; preview and
+execute against it rather than re-resolving a factory, which would build a
+different transaction than the one the anchor pins.
+`preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
+transaction needs no further signatures — submit it with `useTransaction`
+instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
+call is in flight. Codes originating in the client rather than this package
+(`TRANSACTION_ALREADY_AUTHORIZED`, `INVALID_CHAIN_ANCHOR`) prefix the message on
+Node instead of appearing as a property. An anchor and a summary are both bound to one chain, so
+changing clients clears `anchor`, `summary` and `error`, and a call in flight
+across the swap rejects instead of resolving — with `code: "STALE_CLIENT"` if
+it would otherwise have succeeded. Those rejections never reach `error` state,
+so handle them at the call site.
+
+An anchor validates its own internal consistency on `deserialize`, so it can
+never be malformed — but it can be pinned to the wrong block, or to a block that
+never existed. When it came from an untrusted party, re-derive the summary at
+the received anchor with `usePreview` and compare `toCommitment()` against the
+summary you were asked to sign, and fetch the header for `anchor.blockNum()`
+with `RpcClient.getBlockHeaderByNumber` to confirm the block is real — the
+anchor's own invariants are computable over an invented chain.
+
+A match proves the request, anchor and summary agree with each other. It does
+not prove intent, and it does not cover the transaction script: the commitment
+is built from the account delta, the note commitments, the reference block, the
+expiration delta and the user params, so two requests with identical effects
+share one commitment. Inspect the effects before signing.
+
+An anchor pins chain data, not account state — account records and
+authenticated input notes still come from each participant's local store. If the
+account moved in a way that changes the transaction's effects, the re-derived
+summary will not match even though the anchor is correct. The converse does not
+hold: because the summary binds the *delta* rather than the state it applies to,
+an unrelated nonce bump, arriving assets, or a change to a multisig's signer set
+or threshold leaves the commitment identical and passes verification. Check the
+state you care about directly.
+
+Note that `usePreview` and `useChainAnchor` run their VM execution on the main
+thread — only `useTransaction().execute` is worker-backed.
 
 #### `useCompile()`
 

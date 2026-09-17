@@ -26,11 +26,11 @@ use miden_client::crypto::RandomCoin;
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient};
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
 use miden_client::store::Store;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::{Client, ClientError, DebugMode, ErrorHint, Felt};
+use miden_client::{Client, ClientError, ErrorHint, Felt};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
@@ -38,7 +38,7 @@ use napi_derive::napi;
 use platform::maybe_wrap_send;
 use platform::{AsyncCell, ClientAuth, JsErr, from_str_err};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 #[cfg(feature = "browser")]
 use tracing::Level;
 #[cfg(feature = "browser")]
@@ -59,6 +59,7 @@ pub mod new_transactions;
 pub mod note_transport;
 pub mod notes;
 pub(crate) mod platform;
+pub mod pswap;
 pub mod rpc_client;
 pub mod settings;
 pub mod sync;
@@ -76,6 +77,110 @@ mod web_keystore_callbacks;
 mod web_keystore_db;
 #[cfg(feature = "browser")]
 pub use web_keystore::WebKeyStore;
+
+// The multi-threaded build is meaningful only for the browser WASM target —
+// wasm-bindgen-rayon bootstraps its thread pool over Web Workers, which do
+// not exist under the napi Node.js binding (Node-side parallelism comes from
+// the native tokio/rayon stack instead).
+#[cfg(all(feature = "mt-threads", feature = "nodejs"))]
+compile_error!("feature \"mt-threads\" is browser-only and cannot be combined with \"nodejs\"");
+
+// Re-export wasm-bindgen-rayon's `init_thread_pool` ONLY in the multi-threaded
+// build. JS callers MUST `await initThreadPool(navigator.hardwareConcurrency)`
+// once on the main thread (or inside the worker that owns the WebClient)
+// before any transaction proving runs. Without this call the rayon global
+// thread pool spawns zero threads on wasm32 and every `par_iter(...)` falls
+// through to a sequential loop — i.e. you've shipped multi-threaded WASM
+// that runs single-threaded. In the single-threaded build (no `mt-threads`
+// feature), wasm-bindgen-rayon isn't a dependency, the prover paths use
+// p3-maybe-rayon's sequential fallback, and `initThreadPool` doesn't exist
+// to call.
+#[cfg(feature = "mt-threads")]
+pub use wasm_bindgen_rayon::init_thread_pool;
+
+// MT bring-up diagnostics — gated behind `testing` so they don't ship in
+// production WASM bundles. Useful during initial wiring of a new MT host
+// or when investigating "why is my MT prove not faster" regressions; not
+// needed at runtime by normal consumers. Enable with
+// `--features mt-threads,testing` to surface them on the wasm-bindgen API.
+
+/// How many rayon worker threads are visible from THIS WASM instance's view of
+/// the global rayon pool. Diagnostic only — the value should equal whatever
+/// `initThreadPool(n)` was called with. If it's 1, rayon is in single-threaded
+/// fallback (workers never spawned, or spawned in a different WASM instance).
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "rayonThreadCount")]
+pub fn rayon_thread_count() -> usize {
+    rayon::current_num_threads()
+}
+
+/// Synthetic parallel benchmark: sums 0..n via `par_iter()` on the global
+/// rayon pool. Returns elapsed micros. If the pool is actually multi-threaded,
+/// large `n` should scale ~linearly with thread count. Diagnostic for
+/// confirming whether rayon is dispatching work at all.
+//
+// `cast_precision_loss` is intentional: this is a synthetic FP-mix workload
+// to defeat constant-folding and exercise rayon's dispatch — we don't care
+// about precision, only about CPU work being divided across threads.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "parallelSumBench")]
+#[allow(clippy::cast_precision_loss)]
+pub fn parallel_sum_bench(n: u64) -> u64 {
+    use rayon::prelude::*;
+    // Don't actually need timing on the Rust side — caller times it. We
+    // return the sum to defeat the optimizer. Use an FP-mix workload so
+    // it's not trivially constant-folded.
+    let s: f64 = (0..n).into_par_iter().map(|i| ((i as f64).sqrt() * 1.0001).sin().abs()).sum();
+    s.to_bits()
+}
+
+/// MT diagnostics: report which rayon threads execute a tiny par_iter when
+/// dispatched from a plain synchronous wasm export. `outer` is the calling
+/// thread's pool index (-1 = external), `inside` the distinct pool indexes
+/// that ran chunks.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "mtProbeSync")]
+pub fn mt_probe_sync() -> String {
+    mt_probe_body()
+}
+
+/// Same probe, but exported as an async fn so it runs inside a
+/// wasm-bindgen-futures task — mirroring the context `proveTransaction`
+/// executes in. Divergence between the two reveals whether the futures
+/// context breaks rayon dispatch.
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "mtProbeAsync")]
+pub async fn mt_probe_async() -> String {
+    mt_probe_body()
+}
+
+#[cfg(all(feature = "mt-threads", feature = "testing", feature = "browser"))]
+fn mt_probe_body() -> String {
+    use rayon::prelude::*;
+    let outer = rayon::current_thread_index().map_or(-1, |i| i as i32);
+    let inside: std::collections::BTreeSet<i32> = (0..100_000)
+        .into_par_iter()
+        .map(|i| {
+            // Enough per-item work that rayon actually splits.
+            let _ = core::hint::black_box((i as f64).sqrt().sin());
+            rayon::current_thread_index().map_or(-1, |i| i as i32)
+        })
+        .collect();
+    format!("outer={outer} inside={inside:?}")
+}
+
+/// Single-threaded version of `parallel_sum_bench` for direct comparison.
+/// Same workload, plain `iter()` — bypasses rayon entirely. Needs to live
+/// on the WASM side rather than be reimplemented in JS so the workload is
+/// bit-for-bit identical to `parallel_sum_bench` (same libm, same FP
+/// determinism, same constant-folding resistance).
+#[cfg(all(feature = "testing", feature = "browser"))]
+#[wasm_bindgen(js_name = "sequentialSumBench")]
+#[allow(clippy::cast_precision_loss)]
+pub fn sequential_sum_bench(n: u64) -> u64 {
+    let s: f64 = (0..n).map(|i| ((i as f64).sqrt() * 1.0001).sin().abs()).sum();
+    s.to_bits()
+}
 
 #[cfg(feature = "browser")]
 const BASE_STORE_NAME: &str = "MidenClientDB";
@@ -221,18 +326,49 @@ impl WebClient {
         Ok(keystore_api::WebKeystoreApi::new(ks))
     }
 
+    /// Returns the raw JS value that the most recent sign-callback invocation
+    /// threw, or `null` if the last sign call succeeded (or no call has
+    /// happened yet).
+    ///
+    /// Combined with the serialized-call discipline enforced at the JS
+    /// `WebClient` wrapper, this lets a caller that caught a failed
+    /// `executeTransaction` / `submitNewTransaction` recover the original
+    /// JS error the signing callback threw — preserving any structured
+    /// metadata (e.g. a `reason: 'locked'` property) that the kernel-level
+    /// `auth::request` diagnostic would otherwise have erased.
+    ///
+    /// # Usage (TS)
+    /// ```ts
+    /// try {
+    ///   await client.submitNewTransaction(acc, req);
+    /// } catch (e) {
+    ///   const authErr = client.lastAuthError();
+    ///   if (authErr && authErr.reason === 'locked') {
+    ///     // wait for unlock, then retry
+    ///   }
+    /// }
+    /// ```
+    #[wasm_bindgen(js_name = "lastAuthError")]
+    pub fn last_auth_error(&self) -> JsValue {
+        let guard = self.inner.borrow();
+        match guard.as_ref().and_then(|c| c.authenticator()) {
+            Some(keystore) => keystore.last_sign_error(),
+            None => JsValue::NULL,
+        }
+    }
+
     /// Creates a new `WebClient` instance with the specified configuration.
     ///
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. When enabled,
-    ///   the transaction executor records additional information useful for debugging. Defaults to
-    ///   disabled.
     #[wasm_bindgen(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -240,13 +376,13 @@ impl WebClient {
         node_note_transport_url: Option<String>,
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -264,7 +400,7 @@ impl WebClient {
         );
         let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
@@ -275,15 +411,16 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. Defaults to
-    ///   disabled.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -295,13 +432,13 @@ impl WebClient {
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -320,7 +457,7 @@ impl WebClient {
         let keystore =
             WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
@@ -333,18 +470,12 @@ impl WebClient {
         keystore: WebKeyStore<RandomCoin>,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        debug_mode: Option<bool>,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
             .rng(Box::new(rng))
             .store(store)
-            .authenticator(Arc::new(keystore))
-            .in_debug_mode(if debug_mode.unwrap_or(false) {
-                DebugMode::Enabled
-            } else {
-                DebugMode::Disabled
-            });
+            .authenticator(Arc::new(keystore));
 
         if let Some(transport) = note_transport_client {
             builder = builder.note_transport(transport);
@@ -375,11 +506,12 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. Defaults to
-    ///   disabled.
     #[napi(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -388,13 +520,13 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         db_path: String,
         keystore_path: String,
-        debug_mode: Option<bool>,
     ) -> Result<String, JsErr> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
         })?;
 
-        let rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = if let Some(url) = node_note_transport_url {
             let client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
@@ -414,7 +546,7 @@ impl WebClient {
         let keystore = FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, debug_mode)
+        self.setup_client(rpc_client, store, keystore, rng, note_transport_client)
             .await?;
 
         Ok("Client created successfully".to_string())
@@ -427,19 +559,13 @@ impl WebClient {
         keystore: FilesystemKeyStore,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        debug_mode: Option<bool>,
     ) -> Result<(), JsErr> {
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()
                 .rpc(rpc_client)
                 .rng(Box::new(rng))
                 .store(store)
-                .authenticator(Arc::new(keystore))
-                .in_debug_mode(if debug_mode.unwrap_or(false) {
-                    DebugMode::Enabled
-                } else {
-                    DebugMode::Disabled
-                });
+                .authenticator(Arc::new(keystore));
 
             if let Some(transport) = note_transport_client {
                 builder = builder.note_transport(transport);
@@ -476,10 +602,12 @@ pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
                 return Err(from_str_err("Seed must be exactly 32 bytes"));
             }
         },
-        None => StdRng::from_os_rng(),
+        None => StdRng::from_rng(&mut rand::rng()),
     };
     let coin_seed: [u64; 4] = rng.random();
-    Ok(RandomCoin::new(coin_seed.map(Felt::new).into()))
+    // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
+    // vanishing and `new_unchecked` matches the upstream Rust client's usage.
+    Ok(RandomCoin::new(coin_seed.map(Felt::new_unchecked).into()))
 }
 
 // ERROR HANDLING HELPERS
@@ -497,6 +625,12 @@ where
         let js_error: JsValue = JsError::new(&error_message).into();
         if let Some(help) = help {
             let _ = Reflect::set(&js_error, &JsValue::from_str("help"), &JsValue::from_str(&help));
+        }
+        // Stable, machine-readable code for the ClientError variants JS callers
+        // branch on, so they don't have to match the (changeable) message text.
+        // The worker shim's serializeError forwards both `code` and `help`.
+        if let Some(code) = code_from_error(&err) {
+            let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }
         js_error
     }
@@ -528,4 +662,21 @@ fn hint_from_error(err: &(dyn Error + 'static)) -> Option<String> {
     }
 
     err.source().and_then(hint_from_error)
+}
+
+/// Maps the typed [`ClientError`] variants that JS callers need to distinguish
+/// to stable string codes (exposed as the `code` property on the thrown JS
+/// error). Only the variants consumers branch on are mapped; everything else
+/// returns `None`.
+#[cfg(feature = "browser")]
+fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
+    if let Some(client_error) = err.downcast_ref::<ClientError>() {
+        return match client_error {
+            ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
+            ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            _ => None,
+        };
+    }
+
+    err.source().and_then(code_from_error)
 }

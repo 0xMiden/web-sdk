@@ -63,3 +63,11 @@ impl From<&NoteExecutionHint> for NativeNoteExecutionHint {
         note_execution_hint.0
     }
 }
+
+impl From<NativeNoteExecutionHint> for NoteExecutionHint {
+    fn from(native_note_execution_hint: NativeNoteExecutionHint) -> Self {
+        NoteExecutionHint(native_note_execution_hint)
+    }
+}
+
+impl_napi_from_value!(NoteExecutionHint);

@@ -155,11 +155,9 @@ export function useImportAccount(): UseImportAccountResult {
               return fetchedAccount;
             }
             case "seed": {
-              const mutable = options.mutable ?? DEFAULTS.WALLET_MUTABLE;
               const authScheme = options.authScheme ?? DEFAULTS.AUTH_SCHEME;
               return await client.importPublicAccountFromSeed(
                 options.seed,
-                mutable,
                 authScheme
               );
             }

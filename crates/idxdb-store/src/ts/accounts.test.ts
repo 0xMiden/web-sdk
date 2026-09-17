@@ -14,7 +14,7 @@ import {
   upsertAccountStorage,
   upsertStorageMapEntries,
   upsertVaultAssets,
-  applyTransactionDelta,
+  applyAccountPatch,
   applyFullAccountState,
   upsertAccountRecord,
   insertAccountAddress,
@@ -401,13 +401,30 @@ describe("addresses", () => {
     expect(result).toHaveLength(1);
   });
 
-  it("removes an address", async () => {
+  it("removes an address, reporting that it was tracked", async () => {
     const dbId = await openTestDb();
     const addr = new Uint8Array([0xaa, 0xbb]);
     await insertAccountAddress(dbId, ACC, addr);
-    await removeAccountAddress(dbId, addr);
+    expect(await removeAccountAddress(dbId, addr)).toBe(true);
     const result = await getAccountAddresses(dbId, ACC);
     expect(result).toEqual([]);
+  });
+
+  it("reports false for an address that was never tracked", async () => {
+    const dbId = await openTestDb();
+    // `Store::remove_address` returns this verbatim; callers use it to tell an
+    // untracked address from one they just stopped tracking.
+    expect(await removeAccountAddress(dbId, new Uint8Array([0xde, 0xad]))).toBe(
+      false
+    );
+  });
+
+  it("reports false on a second removal of the same address", async () => {
+    const dbId = await openTestDb();
+    const addr = new Uint8Array([0xaa, 0xbb]);
+    await insertAccountAddress(dbId, ACC, addr);
+    expect(await removeAccountAddress(dbId, addr)).toBe(true);
+    expect(await removeAccountAddress(dbId, addr)).toBe(false);
   });
 });
 
@@ -454,16 +471,16 @@ describe("upsertAccountRecord", () => {
 });
 
 // ============================================================
-// applyTransactionDelta
+// applyAccountPatch
 // ============================================================
-describe("applyTransactionDelta", () => {
+describe("applyAccountPatch", () => {
   const CLIENT_VERSION = "0.0.1";
 
   it("creates initial account state when no prior state exists", async () => {
     const dbId = await openTestDb(CLIENT_VERSION);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -511,7 +528,7 @@ describe("applyTransactionDelta", () => {
     const db = getDatabase(dbId);
 
     // First delta: initial state
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -526,7 +543,7 @@ describe("applyTransactionDelta", () => {
     );
 
     // Second delta: update
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -574,6 +591,124 @@ describe("applyTransactionDelta", () => {
       .equals(ACC)
       .toArray();
     expect(histHeaders.length).toBeGreaterThan(0);
+  });
+
+  it("replaces and removes map slots while preserving rollback history", async () => {
+    const dbId = await openTestDb(CLIENT_VERSION);
+    const db = getDatabase(dbId);
+
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "1",
+      [
+        {
+          slotName: "map1",
+          slotValue: "0xroot1",
+          slotType: 1,
+          patchOperation: 0,
+        },
+      ],
+      [
+        { slotName: "map1", key: "k1", value: "old1" },
+        { slotName: "map1", key: "k2", value: "old2" },
+      ],
+      [],
+      CODE_ROOT,
+      "0xroot1",
+      VAULT_ROOT,
+      false,
+      "0xcommit1"
+    );
+
+    // Create replaces the whole map, including entries omitted by the patch.
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [
+        {
+          slotName: "map1",
+          slotValue: "0xroot2",
+          slotType: 1,
+          patchOperation: 0,
+        },
+      ],
+      [
+        { slotName: "map1", key: "k1", value: "new1" },
+        { slotName: "map1", key: "k3", value: "new3" },
+      ],
+      [],
+      CODE_ROOT,
+      "0xroot2",
+      VAULT_ROOT,
+      false,
+      "0xcommit2"
+    );
+
+    let entries = await db.latestStorageMapEntries
+      .where("[accountId+slotName]")
+      .equals([ACC, "map1"])
+      .sortBy("key");
+    expect(entries.map(({ key, value }) => [key, value])).toEqual([
+      ["k1", "new1"],
+      ["k3", "new3"],
+    ]);
+
+    // Remove drops both the slot metadata and all of its entries.
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "3",
+      [
+        {
+          slotName: "map1",
+          slotValue: "",
+          slotType: 1,
+          patchOperation: 2,
+        },
+      ],
+      [],
+      [],
+      CODE_ROOT,
+      "0xemptyroot",
+      VAULT_ROOT,
+      false,
+      "0xcommit3"
+    );
+
+    expect(
+      await db.latestAccountStorages
+        .where("[accountId+slotName]")
+        .equals([ACC, "map1"])
+        .count()
+    ).toBe(0);
+    expect(
+      await db.latestStorageMapEntries
+        .where("[accountId+slotName]")
+        .equals([ACC, "map1"])
+        .count()
+    ).toBe(0);
+
+    await undoAccountStates(dbId, ["0xcommit3"]);
+    entries = await db.latestStorageMapEntries
+      .where("[accountId+slotName]")
+      .equals([ACC, "map1"])
+      .sortBy("key");
+    expect(entries.map(({ key, value }) => [key, value])).toEqual([
+      ["k1", "new1"],
+      ["k3", "new3"],
+    ]);
+
+    await undoAccountStates(dbId, ["0xcommit2"]);
+    entries = await db.latestStorageMapEntries
+      .where("[accountId+slotName]")
+      .equals([ACC, "map1"])
+      .sortBy("key");
+    expect(entries.map(({ key, value }) => [key, value])).toEqual([
+      ["k1", "old1"],
+      ["k2", "old2"],
+    ]);
   });
 });
 
@@ -812,8 +947,8 @@ describe("pruneAccountHistory", () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
 
-    // Build up history via applyTransactionDelta (nonce 1 → 2 → 3)
-    await applyTransactionDelta(
+    // Build up history via applyAccountPatch (nonce 1 → 2 → 3)
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -826,7 +961,7 @@ describe("pruneAccountHistory", () => {
       false,
       "0xc1"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -839,7 +974,7 @@ describe("pruneAccountHistory", () => {
       false,
       "0xc2"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "3",
@@ -927,7 +1062,7 @@ describe("undoAccountStates", () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -941,7 +1076,7 @@ describe("undoAccountStates", () => {
       COMMITMENT
     );
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -1018,7 +1153,7 @@ describe("undoAccountStates", () => {
     const dbId = await openTestDb(CV);
     const db = getDatabase(dbId);
 
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1031,7 +1166,7 @@ describe("undoAccountStates", () => {
       false,
       "0xc1"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -1081,7 +1216,7 @@ describe("undoAccountStates", () => {
     const db = getDatabase(dbId);
 
     // Apply nonce "1" adding a brand-new slot/map/asset (no prior state)
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1233,9 +1368,9 @@ describe("error paths: unregistered dbId re-throws", () => {
     await expect(lockAccount(BAD_DB, "0xacc")).rejects.toThrow();
   });
 
-  it("applyTransactionDelta rejects on bad dbId", async () => {
+  it("applyAccountPatch rejects on bad dbId", async () => {
     await expect(
-      applyTransactionDelta(
+      applyAccountPatch(
         BAD_DB,
         "0xacc",
         "1",
@@ -1287,7 +1422,7 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
     const db = getDatabase(dbId);
 
     // Build 3 deltas for the same account to exercise the sort comparator at 1119
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "1",
@@ -1300,7 +1435,7 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       false,
       "0xc1"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "2",
@@ -1313,7 +1448,7 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       false,
       "0xc2"
     );
-    await applyTransactionDelta(
+    await applyAccountPatch(
       dbId,
       ACC,
       "3",

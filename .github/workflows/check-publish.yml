@@ -46,6 +46,13 @@ jobs:
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
 
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
+
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
 
@@ -53,6 +60,10 @@ jobs:
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Stable wasm32 std for the ST rollup path. MT keeps nightly via
+          # rust-toolchain.toml. See crates/web-client/rollup.config.js.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
 
       # See test.yml for why these are forwarded explicitly.
       - name: Configure sccache cache backend (v2)
@@ -81,8 +92,7 @@ jobs:
           fi
 
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        run: ./scripts/install-binaryen.sh
 
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1

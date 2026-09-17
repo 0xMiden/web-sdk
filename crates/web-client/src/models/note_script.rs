@@ -40,6 +40,18 @@ impl NoteScript {
         StandardNote::P2ID.script().into()
     }
 
+    /// Returns the Network Account Config script.
+    #[js_export(js_name = "networkAccountConfig")]
+    pub fn network_account_config() -> Self {
+        StandardNote::NETWORK_ACCOUNT_CONFIG.script().into()
+    }
+
+    /// Returns the Fee Sponsorship script.
+    #[js_export(js_name = "feeSponsorship")]
+    pub fn fee_sponsorship() -> Self {
+        StandardNote::FEE_SPONSORSHIP.script().into()
+    }
+
     /// Returns the well-known P2IDE script (P2ID with execution hint).
     pub fn p2ide() -> Self {
         StandardNote::P2IDE.script().into()
@@ -50,7 +62,29 @@ impl NoteScript {
         StandardNote::SWAP.script().into()
     }
 
+    /// Returns the well-known PSWAP script (partial-fill swap).
+    pub fn pswap() -> Self {
+        StandardNote::PSWAP.script().into()
+    }
+
+    /// Returns the well-known MINT script (instructs a network fungible faucet to mint a
+    /// fungible asset — MINT notes are consumable only by network faucets).
+    pub fn mint() -> Self {
+        StandardNote::MINT.script().into()
+    }
+
+    /// Returns the well-known BURN script (instructs a faucet to burn a fungible asset).
+    pub fn burn() -> Self {
+        StandardNote::BURN.script().into()
+    }
+
     /// Returns the MAST root of this script.
+    ///
+    /// The root is the script's MAST commitment — the identifier used on-chain to reference
+    /// the script (e.g. `NoteScript.burn().root().toHex()` gives the standard burn note
+    /// script root). It is fixed for a given protocol / standards-library version, but a
+    /// protocol upgrade that changes the compiled script changes the root, so treat it as
+    /// version-specific rather than a permanent constant.
     pub fn root(&self) -> Word {
         miden_client::Word::from(self.0.root()).into()
     }

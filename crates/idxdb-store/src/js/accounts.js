@@ -29,6 +29,7 @@ export async function getAllAccountHeaders(dbId) {
             locked: record.locked,
             committed: record.committed,
             accountCommitment: record.accountCommitment || "",
+            watched: record.watched ?? false,
         }));
         return resultObject;
     }
@@ -55,6 +56,7 @@ export async function getAccountHeader(dbId, accountId) {
             codeRoot: record.codeRoot,
             accountSeed: seedToBase64(record.accountSeed),
             locked: record.locked,
+            watched: record.watched ?? false,
         };
     }
     catch (error) {
@@ -79,6 +81,7 @@ export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
             codeRoot: record.codeRoot,
             accountSeed: seedToBase64(record.accountSeed),
             locked: record.locked,
+            watched: record.watched ?? false,
         };
     }
     catch (error) {
@@ -256,7 +259,7 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
         logWebStoreError(error, `Error inserting assets`);
     }
 }
-export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -269,7 +272,8 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
         ], async () => {
-            // Apply storage delta: read old → archive → write new
+            const resetMapSlots = new Set();
+            // Apply storage patch: read old → archive → write/delete final state.
             for (const slot of updatedSlots) {
                 const oldSlot = await db.latestAccountStorages
                     .where("[accountId+slotName]")
@@ -282,12 +286,44 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                     oldSlotValue: oldSlot?.slotValue ?? null,
                     slotType: slot.slotType,
                 });
-                await db.latestAccountStorages.put({
-                    accountId,
-                    slotName: slot.slotName,
-                    slotValue: slot.slotValue,
-                    slotType: slot.slotType,
-                });
+                // A created map is a replacement (a remove followed by create can merge to Create),
+                // while a removed map must drop every persisted entry. Archive those entries so account
+                // rollback can restore them.
+                if (slot.slotType === 1 &&
+                    (slot.patchOperation === 0 || slot.patchOperation === 2)) {
+                    resetMapSlots.add(slot.slotName);
+                    const oldMapEntries = await db.latestStorageMapEntries
+                        .where("[accountId+slotName]")
+                        .equals([accountId, slot.slotName])
+                        .toArray();
+                    for (const entry of oldMapEntries) {
+                        await db.historicalStorageMapEntries.put({
+                            accountId,
+                            replacedAtNonce: nonce,
+                            slotName: entry.slotName,
+                            key: entry.key,
+                            oldValue: entry.value,
+                        });
+                    }
+                    await db.latestStorageMapEntries
+                        .where("[accountId+slotName]")
+                        .equals([accountId, slot.slotName])
+                        .delete();
+                }
+                if (slot.patchOperation === 2) {
+                    await db.latestAccountStorages
+                        .where("[accountId+slotName]")
+                        .equals([accountId, slot.slotName])
+                        .delete();
+                }
+                else {
+                    await db.latestAccountStorages.put({
+                        accountId,
+                        slotName: slot.slotName,
+                        slotValue: slot.slotValue,
+                        slotType: slot.slotType,
+                    });
+                }
             }
             // Process map entries: read old → archive → update latest
             for (const entry of changedMapEntries) {
@@ -295,13 +331,30 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                     .where("[accountId+slotName+key]")
                     .equals([accountId, entry.slotName, entry.key])
                     .first();
-                await db.historicalStorageMapEntries.put({
-                    accountId,
-                    replacedAtNonce: nonce,
-                    slotName: entry.slotName,
-                    key: entry.key,
-                    oldValue: oldEntry?.value ?? null,
-                });
+                if (resetMapSlots.has(entry.slotName)) {
+                    const archivedEntry = await db.historicalStorageMapEntries
+                        .where("[accountId+replacedAtNonce+slotName+key]")
+                        .equals([accountId, nonce, entry.slotName, entry.key])
+                        .first();
+                    if (archivedEntry === undefined) {
+                        await db.historicalStorageMapEntries.put({
+                            accountId,
+                            replacedAtNonce: nonce,
+                            slotName: entry.slotName,
+                            key: entry.key,
+                            oldValue: null,
+                        });
+                    }
+                }
+                else {
+                    await db.historicalStorageMapEntries.put({
+                        accountId,
+                        replacedAtNonce: nonce,
+                        slotName: entry.slotName,
+                        key: entry.key,
+                        oldValue: oldEntry?.value ?? null,
+                    });
+                }
                 // "" means removal
                 if (entry.value === "") {
                     await db.latestStorageMapEntries
@@ -362,6 +415,7 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                     accountSeed: oldHeader.accountSeed,
                     accountCommitment: oldHeader.accountCommitment,
                     locked: oldHeader.locked,
+                    watched: oldHeader.watched ?? false,
                 });
             }
             await db.latestAccountHeaders.put({
@@ -374,11 +428,13 @@ export async function applyTransactionDelta(dbId, accountId, nonce, updatedSlots
                 accountSeed: undefined,
                 accountCommitment: commitment,
                 locked: false,
+                watched: oldHeader?.watched ?? false,
             });
         });
     }
     catch (error) {
         logWebStoreError(error, `Error applying transaction delta`);
+        throw error;
     }
 }
 async function archiveAndReplaceStorageSlots(db, accountId, nonce, newSlots) {
@@ -598,6 +654,7 @@ export async function applyFullAccountState(dbId, accountState) {
                     accountSeed: oldHeader.accountSeed,
                     accountCommitment: oldHeader.accountCommitment,
                     locked: oldHeader.locked,
+                    watched: oldHeader.watched ?? false,
                 });
             }
             await db.latestAccountHeaders.put({
@@ -610,14 +667,16 @@ export async function applyFullAccountState(dbId, accountState) {
                 accountSeed,
                 accountCommitment,
                 locked: false,
+                watched: oldHeader?.watched ?? false,
             });
         });
     }
     catch (error) {
         logWebStoreError(error, `Error applying full account state`);
+        throw error;
     }
 }
-export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed) {
+export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot, vaultRoot, nonce, committed, commitment, accountSeed, watched) {
     try {
         const db = getDatabase(dbId);
         const data = {
@@ -630,6 +689,7 @@ export async function upsertAccountRecord(dbId, accountId, codeRoot, storageRoot
             accountSeed,
             accountCommitment: commitment,
             locked: false,
+            watched,
         };
         await db.latestAccountHeaders.put(data);
     }
@@ -650,13 +710,23 @@ export async function insertAccountAddress(dbId, accountId, address) {
         logWebStoreError(error, `Error inserting address with value: ${String(address)} for the account ID ${accountId}`);
     }
 }
+// Reports whether the address was tracked, which the `Store` trait requires of
+// `remove_address`. Dexie's `Collection.delete()` resolves to the number of
+// records it removed, so the answer needs no extra read.
 export async function removeAccountAddress(dbId, address) {
     try {
         const db = getDatabase(dbId);
-        await db.addresses.where("address").equals(address).delete();
+        const deleted = await db.addresses
+            .where("address")
+            .equals(address)
+            .delete();
+        return deleted > 0;
     }
     catch (error) {
         logWebStoreError(error, `Error removing address with value: ${String(address)}`);
+        // Unreachable: logWebStoreError rethrows. Present so the compiler can see
+        // that no path returns undefined.
+        throw error;
     }
 }
 export async function upsertForeignAccountCode(dbId, accountId, code, codeRoot) {

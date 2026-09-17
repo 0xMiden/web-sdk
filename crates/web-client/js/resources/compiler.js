@@ -14,17 +14,18 @@ export class CompilerResource {
    *
    * Dependency modules the component imports (e.g. auth libraries) are linked
    * via `libraries` before compilation. Each entry is statically linked as a
-   * source module with `linkModule`, so the compiled component — and therefore
-   * the account's code commitment — is identical to building it directly off a
-   * `createCodeBuilder()`. This matters: changing the link path would change the
-   * MAST and break accounts already created with the original component. Two
-   * entries sharing a `namespace` cause a link error.
+   * source module with `linkModule`, so the compiled component, and therefore
+   * the account's code commitment, is identical to building it directly off a
+   * `createCodeBuilder()`. Changing the link path would change the MAST and
+   * break accounts already created with the original component. Two entries
+   * sharing a `namespace` cause a link error.
    *
-   * @param {{ code: string, slots?: StorageSlot[], supportAllTypes?: boolean, libraries?: Array<{ namespace: string, code: string }> }} opts
+   * @param {{ code: string, namespace?: string, slots?: StorageSlot[], supportAllTypes?: boolean, libraries?: Array<{ namespace: string, code: string }> }} opts
    * @returns {Promise<AccountComponent>}
    */
   async component({
     code,
+    namespace,
     slots = [],
     supportAllTypes = true,
     libraries = [],
@@ -40,15 +41,18 @@ export class CompilerResource {
       }
       builder.linkModule(lib.namespace, lib.code);
     });
-    const compiled = builder.compileAccountComponentCode(code);
+    const compiled = namespace
+      ? builder.compileAccountComponentCodeWithPath(namespace, code)
+      : builder.compileAccountComponentCode(code);
     const component = wasm.AccountComponent.compile(compiled, slots);
     return supportAllTypes ? component.withSupportsAllTypes() : component;
   }
 
   /**
-   * Compiles a transaction script, optionally linking named libraries inline.
+   * Compiles a transaction script, optionally linking named libraries inline or linking the exact
+   * code installed by an AccountComponent.
    *
-   * @param {{ code: string, libraries?: Array<{ namespace: string, code: string, linking?: "dynamic" | "static" }> }} opts
+   * @param {{ code: string, libraries?: Array<Library | { namespace: string, code: string, linking?: "dynamic" | "static" } | { component: AccountComponent, linking?: "dynamic" | "static" }> }} opts
    * @returns {Promise<TransactionScript>}
    */
   async txScript({ code, libraries = [] }) {
@@ -61,9 +65,10 @@ export class CompilerResource {
   }
 
   /**
-   * Compiles a note script, optionally linking named libraries inline.
+   * Compiles a note script, optionally linking named libraries inline or linking the exact code
+   * installed by an AccountComponent.
    *
-   * @param {{ code: string, libraries?: Array<{ namespace: string, code: string, linking?: "dynamic" | "static" }> }} opts
+   * @param {{ code: string, libraries?: Array<Library | { namespace: string, code: string, linking?: "dynamic" | "static" } | { component: AccountComponent, linking?: "dynamic" | "static" }> }} opts
    * @returns {Promise<NoteScript>}
    */
   async noteScript({ code, libraries = [] }) {
@@ -75,13 +80,20 @@ export class CompilerResource {
   }
 }
 
-// Builds and links each library entry against `builder`. Inline
-// `{ namespace, code, linking? }` entries are built via `buildLibrary` and
-// linked according to `linking` (defaulting to dynamic, matching tutorial
-// behavior). Pre-built library objects are linked dynamically.
+// Builds and links each library entry against `builder`. Account component entries use the exact
+// compiled code installed by the component. Inline `{ namespace, code, linking? }` entries are
+// built via `buildLibrary`. Linking defaults to dynamic, matching tutorial behavior. Pre-built
+// library objects are also linked dynamically.
 function linkLibraries(builder, libraries) {
   for (const lib of libraries) {
-    if (lib && typeof lib.namespace === "string") {
+    if (lib && lib.component) {
+      const componentCode = lib.component.componentCode();
+      if (lib.linking === "static") {
+        builder.linkStaticAccountComponentCode(componentCode);
+      } else {
+        builder.linkDynamicAccountComponentCode(componentCode);
+      }
+    } else if (lib && typeof lib.namespace === "string") {
       const built = builder.buildLibrary(lib.namespace, lib.code);
       if (lib.linking === "static") {
         builder.linkStaticLibrary(built);

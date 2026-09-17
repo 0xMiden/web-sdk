@@ -82,6 +82,57 @@ export async function getOutputNotesFromNullifiers(
   }
 }
 
+export async function getInputNotesFromDetailsCommitments(
+  dbId: string,
+  detailsCommitments: string[]
+) {
+  try {
+    const db = getDatabase(dbId);
+    let notes = await db.inputNotes
+      .where("detailsCommitment")
+      .anyOf(detailsCommitments)
+      .toArray();
+    return await processInputNotes(dbId, notes);
+  } catch (err) {
+    logWebStoreError(err, "Failed to get input notes from details commitments");
+  }
+}
+
+export async function getInputNotesFromScriptRoots(
+  dbId: string,
+  scriptRoots: string[]
+) {
+  try {
+    const db = getDatabase(dbId);
+    let notes = await db.inputNotes
+      .where("scriptRoot")
+      .anyOf(scriptRoots)
+      .toArray();
+    return await processInputNotes(dbId, notes);
+  } catch (err) {
+    logWebStoreError(err, "Failed to get input notes from script roots");
+  }
+}
+
+export async function getOutputNotesFromDetailsCommitments(
+  dbId: string,
+  detailsCommitments: string[]
+) {
+  try {
+    const db = getDatabase(dbId);
+    let notes = await db.outputNotes
+      .where("detailsCommitment")
+      .anyOf(detailsCommitments)
+      .toArray();
+    return await processOutputNotes(notes);
+  } catch (err) {
+    logWebStoreError(
+      err,
+      "Failed to get output notes from details commitments"
+    );
+  }
+}
+
 export async function getOutputNotesFromIds(dbId: string, noteIds: string[]) {
   try {
     const db = getDatabase(dbId);
@@ -99,7 +150,9 @@ export async function getUnspentInputNoteNullifiers(dbId: string) {
       .where("stateDiscriminant")
       .anyOf([2, 4, 5])
       .toArray();
-    return notes.map((note) => note.nullifier);
+    return notes
+      .map((note) => note.nullifier)
+      .filter((nullifier): nullifier is string => nullifier != null);
   } catch (err) {
     logWebStoreError(err, "Failed to get unspent input note nullifiers");
   }
@@ -120,13 +173,15 @@ export async function getNoteScript(dbId: string, scriptRoot: string) {
 
 export async function upsertInputNote(
   dbId: string,
-  noteId: string,
+  detailsCommitment: string,
+  noteId: string | undefined,
   assets: Uint8Array,
+  attachments: Uint8Array,
   serialNumber: Uint8Array,
   inputs: Uint8Array,
   scriptRoot: string,
   serializedNoteScript: Uint8Array,
-  nullifier: string,
+  nullifier: string | undefined,
   serializedCreatedAt: string,
   stateDiscriminant: number,
   state: Uint8Array,
@@ -139,12 +194,15 @@ export async function upsertInputNote(
   const doWork = async (t: Transaction) => {
     try {
       const data = {
-        noteId,
+        detailsCommitment,
+        // noteId/nullifier are only known once the note's metadata is available.
+        noteId: noteId ?? undefined,
         assets,
+        attachments,
         serialNumber,
         inputs,
         scriptRoot,
-        nullifier,
+        nullifier: nullifier ?? undefined,
         state,
         stateDiscriminant,
         serializedCreatedAt,
@@ -165,34 +223,51 @@ export async function upsertInputNote(
       await t.notesScripts.put(noteScriptData);
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
-      logWebStoreError(error, `Error inserting note: ${noteId}`);
+      logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+      throw error;
     }
   };
   if (tx) return doWork(tx);
   return db.dexie.transaction("rw", db.inputNotes, db.notesScripts, doWork);
 }
 
-// Uses the [consumedBlockHeight+consumedTxOrder+noteId] compound index for cursor-based
-// iteration.  When a consumerAccountId is provided the cursor path is used exclusively —
-// only notes that are fully indexed (all three fields present) are returned.  When no
-// consumer is specified a two-pass fallback is used: first the indexed notes (with a tx
-// order), then the unindexed notes (null tx order), appended after so they sort last
-// within the same block as described by the ordering contract.
-export async function getInputNoteByOffset(
+const INPUT_NOTE_CONSUMPTION_INDEX =
+  "[consumedBlockHeight+consumedTxOrder+detailsCommitment]";
+
+// Returns a one-element array so the caller's shape is uniform with the other readers. The
+// cursor is compared as an index key rather than looked up, so it still resolves the right
+// position once its own note is deleted.
+export async function getInputNoteAfter(
   dbId: string,
   states: Uint8Array,
-  consumerAccountId: string | undefined,
+  consumerAccountId: string,
   blockStart: number | undefined,
   blockEnd: number | undefined,
-  offset: number
+  cursorBlockHeight: number | undefined,
+  cursorTxOrder: number | undefined,
+  cursorDetailsCommitment: string | undefined
 ) {
   try {
     const db = getDatabase(dbId);
 
-    // The compound index sorts by consumedBlockHeight, consumedTxOrder, noteId.
-    // Rows without these fields are excluded by the index.
-    const indexed = await db.inputNotes
-      .orderBy("[consumedBlockHeight+consumedTxOrder+noteId]")
+    const hasCursor =
+      cursorBlockHeight != null &&
+      cursorTxOrder != null &&
+      cursorDetailsCommitment != null;
+
+    // With a cursor, `blockStart` is left to the predicate below: the cursor is the tighter
+    // lower bound, and emitting both abandons the row-value seek.
+    const ordered = hasCursor
+      ? db.inputNotes
+          .where(INPUT_NOTE_CONSUMPTION_INDEX)
+          .above([cursorBlockHeight, cursorTxOrder, cursorDetailsCommitment])
+      : blockStart != null
+        ? db.inputNotes
+            .where(INPUT_NOTE_CONSUMPTION_INDEX)
+            .aboveOrEqual([blockStart])
+        : db.inputNotes.orderBy(INPUT_NOTE_CONSUMPTION_INDEX);
+
+    const note = await ordered
       .filter((n: IInputNote) => {
         if (states.length > 0 && !states.includes(n.stateDiscriminant))
           return false;
@@ -202,47 +277,21 @@ export async function getInputNoteByOffset(
         if (blockEnd != null && n.consumedBlockHeight! > blockEnd) return false;
         return true;
       })
-      .toArray();
+      .first();
 
-    // When no consumer is specified, also collect notes that lack a tx order
-    // (they do not appear in the compound index at all) and append them after
-    // the ordered notes so they sort last.
-    let unordered: IInputNote[] = [];
-    if (consumerAccountId == null) {
-      unordered = await db.inputNotes
-        .filter((n: IInputNote) => {
-          if (n.consumedTxOrder != null) return false; // already in indexed set
-          if (states.length > 0 && !states.includes(n.stateDiscriminant))
-            return false;
-          if (n.consumerAccountId !== consumerAccountId) return false;
-          if (
-            blockStart != null &&
-            (n.consumedBlockHeight == null ||
-              n.consumedBlockHeight < blockStart)
-          )
-            return false;
-          if (
-            blockEnd != null &&
-            (n.consumedBlockHeight == null || n.consumedBlockHeight > blockEnd)
-          )
-            return false;
-          return true;
-        })
-        .sortBy("noteId");
-    }
-
-    const all = [...indexed, ...unordered];
-    if (offset >= all.length) return [];
-    return await processInputNotes(dbId, [all[offset]]);
+    if (note == null) return [];
+    return await processInputNotes(dbId, [note]);
   } catch (err) {
-    logWebStoreError(err, "Failed to get input note by offset");
+    logWebStoreError(err, "Failed to get input note after cursor");
   }
 }
 
 export async function upsertOutputNote(
   dbId: string,
+  detailsCommitment: string,
   noteId: string,
   assets: Uint8Array,
+  attachments: Uint8Array,
   recipientDigest: string,
   metadata: Uint8Array,
   nullifier: string | undefined,
@@ -255,8 +304,10 @@ export async function upsertOutputNote(
   const doWork = async (t: Transaction) => {
     try {
       const data = {
+        detailsCommitment,
         noteId,
         assets,
+        attachments,
         recipientDigest,
         metadata,
         nullifier: nullifier ? nullifier : undefined,
@@ -268,7 +319,8 @@ export async function upsertOutputNote(
       await t.outputNotes.put(data);
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
-      logWebStoreError(error, `Error inserting note: ${noteId}`);
+      logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
+      throw error;
     }
   };
   if (tx) return doWork(tx);
@@ -297,6 +349,8 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
 
       const stateBase64 = uint8ArrayToBase64(note.state);
 
+      const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
+
       return {
         assets: assetsBase64,
         serialNumber: serialNumberBase64,
@@ -304,6 +358,7 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
         createdAt: note.serializedCreatedAt,
         serializedNoteScript: serializedNoteScriptBase64,
         state: stateBase64,
+        attachments: attachmentsBase64,
       };
     })
   );
@@ -318,12 +373,15 @@ async function processOutputNotes(notes: IOutputNote[]) {
 
       const stateBase64 = uint8ArrayToBase64(note.state);
 
+      const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
+
       return {
         assets: assetsBase64,
         recipientDigest: note.recipientDigest,
         metadata: metadataBase64,
         expectedHeight: note.expectedHeight,
         state: stateBase64,
+        attachments: attachmentsBase64,
       };
     })
   );

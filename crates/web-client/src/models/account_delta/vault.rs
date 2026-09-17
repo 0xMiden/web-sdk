@@ -2,7 +2,8 @@ use js_export_macro::js_export;
 use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::{
     AccountVaultDelta as NativeAccountVaultDelta,
-    AssetVaultKey,
+    AssetId,
+    FungibleAsset as NativeFungibleAsset,
     FungibleAssetDelta as NativeFungibleAssetDelta,
 };
 
@@ -52,7 +53,7 @@ impl AccountVaultDelta {
             .iter()
             .filter(|&(_, &value)| value > 0)
             .filter_map(|(vault_key, &diff)| {
-                FungibleAsset::new_inner(&vault_key.faucet_id().into(), diff.unsigned_abs()).ok()
+                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
             })
             .collect()
     }
@@ -65,10 +66,18 @@ impl AccountVaultDelta {
             .iter()
             .filter(|&(_, &value)| value < 0)
             .filter_map(|(vault_key, &diff)| {
-                FungibleAsset::new_inner(&vault_key.faucet_id().into(), diff.unsigned_abs()).ok()
+                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
             })
             .collect()
     }
+}
+
+/// Rebuilds a fungible asset from a vault-delta entry, preserving the vault key's callback flag.
+///
+/// The callback flag is part of the asset's vault-key and value encoding, so dropping it would
+/// report an asset that differs from the one the kernel encoded (e.g. for agglayer-minted assets).
+fn fungible_asset_from_delta(asset_id: &AssetId, amount: u64) -> Option<FungibleAsset> {
+    NativeFungibleAsset::new(asset_id.faucet_id(), amount).ok().map(Into::into)
 }
 
 /// A single fungible asset change in the vault delta.
@@ -94,8 +103,8 @@ impl FungibleAssetDeltaItem {
     }
 }
 
-impl From<(&miden_client::asset::AssetVaultKey, &i64)> for FungibleAssetDeltaItem {
-    fn from(native_fungible_asset_delta_item: (&miden_client::asset::AssetVaultKey, &i64)) -> Self {
+impl From<(&miden_client::asset::AssetId, &i64)> for FungibleAssetDeltaItem {
+    fn from(native_fungible_asset_delta_item: (&miden_client::asset::AssetId, &i64)) -> Self {
         Self {
             faucet_id: native_fungible_asset_delta_item.0.faucet_id().into(),
             amount: *native_fungible_asset_delta_item.1,
@@ -127,11 +136,15 @@ impl FungibleAssetDelta {
     }
 
     /// Returns the delta amount for a given faucet, if present.
+    ///
+    /// Matches by faucet id so the delta is found regardless of the asset's
+    /// callback flag.
     pub fn amount(&self, faucet_id: &AccountId) -> Option<i64> {
         let native_faucet_id: NativeAccountId = faucet_id.into();
-        let vault_key = AssetVaultKey::new_fungible(native_faucet_id)
-            .expect("faucet_id should be a fungible faucet");
-        self.0.amount(&vault_key)
+        self.0
+            .iter()
+            .find(|(vault_key, _)| vault_key.faucet_id() == native_faucet_id)
+            .map(|(_, &amount)| amount)
     }
 
     /// Returns the number of distinct fungible assets in the delta.

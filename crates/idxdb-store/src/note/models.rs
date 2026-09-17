@@ -11,6 +11,8 @@ pub struct InputNoteIdxdbObject {
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub assets: Vec<u8>,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub attachments: Vec<u8>,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub serial_number: Vec<u8>,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub inputs: Vec<u8>,
@@ -26,6 +28,8 @@ pub struct InputNoteIdxdbObject {
 pub struct OutputNoteIdxdbObject {
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub assets: Vec<u8>,
+    #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
+    pub attachments: Vec<u8>,
     pub recipient_digest: String,
     #[serde(deserialize_with = "base64_to_vec_u8_required", default)]
     pub metadata: Vec<u8>,

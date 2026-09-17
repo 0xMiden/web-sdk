@@ -1,11 +1,9 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
-use miden_client::account::{
-    Account as NativeAccount,
-    AccountInterfaceExt,
-    AccountType as NativeAccountType,
-};
-use miden_client::transaction::AccountInterface;
+use miden_client::account::component::NetworkAccount;
+use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
+use miden_client::testing::standards::account_interface::get_public_keys_from_account;
+use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
 use crate::models::account_id::AccountId;
@@ -70,22 +68,20 @@ impl Account {
         self.0.code().into()
     }
 
-    /// Returns true if the account is a faucet.
+    // Faucet-ness is encoded in the account's code, so it is derived from the
+    // account's component interface rather than from its `AccountId`.
+
+    /// Returns true if the account exposes a fungible-faucet interface.
     #[js_export(js_name = "isFaucet")]
     pub fn is_faucet(&self) -> bool {
-        self.0.is_faucet()
+        let interface = AccountInterface::from_account(&self.0);
+        interface.components().contains(&AccountComponentInterface::FungibleFaucet)
     }
 
-    /// Returns true if the account is a regular account (immutable or updatable code).
+    /// Returns true if the account is a regular (non-faucet) account.
     #[js_export(js_name = "isRegularAccount")]
     pub fn is_regular_account(&self) -> bool {
-        self.0.is_regular_account()
-    }
-
-    /// Returns true if the account can update its code.
-    #[js_export(js_name = "isUpdatable")]
-    pub fn is_updatable(&self) -> bool {
-        matches!(self.0.account_type(), NativeAccountType::RegularAccountUpdatableCode)
+        !self.is_faucet()
     }
 
     /// Returns true if the account exposes public storage.
@@ -100,16 +96,33 @@ impl Account {
         self.0.is_private()
     }
 
-    /// Returns true if this is a network-owned account.
-    #[js_export(js_name = "isNetwork")]
-    pub fn is_network(&self) -> bool {
-        self.0.is_network()
-    }
-
     /// Returns true if the account has not yet been committed to the chain.
     #[js_export(js_name = "isNew")]
     pub fn is_new(&self) -> bool {
         self.0.is_new()
+    }
+
+    /// Returns true if this is a network account.
+    ///
+    /// A network account is a public account whose storage
+    /// carries the standardized network-account note-script allowlist slot.
+    #[js_export(js_name = "isNetworkAccount")]
+    pub fn is_network_account(&self) -> bool {
+        NetworkAccount::new(self.0.clone()).is_ok()
+    }
+
+    /// Returns the note-script roots this network account is allowed to
+    /// consume, or `undefined` if this is not a network account.
+    #[js_export(js_name = "networkNoteAllowlist")]
+    pub fn network_note_allowlist(&self) -> Option<Vec<Word>> {
+        NetworkAccount::new(self.0.clone()).ok().map(|network_account| {
+            network_account
+                .allowed_notes()
+                .allowed_script_roots()
+                .iter()
+                .map(|root| Word::from(NativeWord::from(*root)))
+                .collect()
+        })
     }
 
     /// Serializes the account into bytes.
@@ -125,15 +138,7 @@ impl Account {
     /// Returns the public key commitments derived from the account's authentication scheme.
     #[js_export(js_name = "getPublicKeyCommitments")]
     pub fn get_public_key_commitments(&self) -> Vec<Word> {
-        let inner_account = &self.0;
-        let mut pks = vec![];
-        let interface: AccountInterface = AccountInterface::from_account(inner_account);
-
-        for auth in interface.auth() {
-            pks.extend(auth.get_public_key_commitments());
-        }
-
-        pks.into_iter().map(NativeWord::from).map(Into::into).collect()
+        get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect()
     }
 }
 

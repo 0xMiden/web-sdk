@@ -4,15 +4,7 @@ permissions:
 on:
   push:
     branches: [main, next]
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
 
 concurrency:
   group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
@@ -23,25 +15,64 @@ env:
   RUST_CACHE_KEY: rust-cache-2026.02.18
   # Pin the miden-client version used for test infrastructure.
   # MUST match the miden-client + miden-protocol versions in Cargo.lock — the
-  # node-builder serves protos using the schema of this ref, and a mismatch
-  # against the client manifests as cryptic 'invalid wire type' decode errors
-  # on the client side (e.g. Digest fields encoded as bytes vs fixed64), or
-  # 'accept header validation failed' if the protocol version differs.
-  # The web-sdk's `next` branch tracks miden-client's `next` (0.15.0 series,
-  # no tagged release yet), so we pin to the exact commit pinned in Cargo.lock
-  # rather than a moving branch ref so cache keys stay stable.
-  MIDEN_CLIENT_REF: b0ac3797f6c3c6aedb13d27d85e428c8bf066484
+  # test node binaries are cargo-installed at the node rev pinned in this
+  # ref's Cargo.lock, and a schema mismatch against the client manifests as
+  # cryptic 'invalid wire type' decode errors on the client side (e.g. Digest
+  # fields encoded as bytes vs fixed64), or 'accept header validation failed'
+  # if the protocol version differs.
+  # Must match the rust-sdk revision the workspace `miden-client` dep resolves
+  # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
+  # built against. A commit sha (not the branch name) keeps cache keys stable.
+  # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
+  # v0.16.0
+  MIDEN_CLIENT_REF: 5478eeb3baf84a24d129b292fbc5ba558740bd46
 
 jobs:
+  # Pre-flight: detect whether any non-docs files changed. See build.yml's
+  # `changes` job for the full rationale — short version: triggering this
+  # workflow on every push/PR (rather than gating with top-level `paths-ignore`)
+  # ensures required checks always report a state, so docs-only PRs aren't
+  # blocked by checks that never run.
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-24.04
+    outputs:
+      non_docs: ${{ steps.filter.outputs.non_docs }}
+      release_wasm: ${{ steps.filter.outputs.release_wasm }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            non_docs:
+              - '!**/*.md'
+              - '!**/*.txt'
+              - '!docs/**'
+            release_wasm:
+              - '.github/workflows/publish-web-sdk.yml'
+              - '.github/workflows/test.yml'
+              - 'Cargo.lock'
+              - 'crates/web-client/rollup.config.js'
+              - 'crates/web-client/scripts/wasm-opt-with-masp-strip.sh'
+              - 'crates/web-client/scripts/verify-release-mt.mjs'
+              - 'rust-toolchain.toml'
+              - 'scripts/install-binaryen.sh'
+              - 'scripts/verify-wasm-size.sh'
+              - 'tools/strip-masp-debug/**'
+
   build-web-client-dist-folder:
     # Uses the `release-fast` cargo profile (LTO off, codegen-units=16) and
     # skips wasm-opt — both via the MIDEN_FAST_BUILD env var. The shipped
     # artifact is built with the canonical full-optimization `release`
-    # profile by the `verify-release-build` job (push to main/next only).
-    # sccache + Swatinem/rust-cache layer together: rust-cache gives a
+    # profile by the `verify-release-build` job (push to main/next, plus PRs
+    # that change the release-WASM toolchain).
+    # sccache + WarpBuilds/rust-cache layer together: rust-cache gives a
     # warm target/ directory, sccache gives finer per-crate caching that
     # survives even when target/ is partially invalidated.
     name: Build Web Client
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     runs-on: warp-ubuntu-latest-x64-8x
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
@@ -58,12 +89,24 @@ jobs:
       # build-wasm job (single comment per PR run); we don't post here.
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Also install stable wasm32 std so the ST rollup build can
+          # use stable Rust (set via RUSTUP_TOOLCHAIN=stable in
+          # crates/web-client/rollup.config.js when MIDEN_BUILD_VARIANT=st).
+          # MT keeps the project-pinned nightly from rust-toolchain.toml.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
 
       # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
       # mozilla-actions/sccache-action used by default. The new GHA cache
@@ -105,10 +148,10 @@ jobs:
           fi
 
       - name: Install binaryen (wasm-opt)
-        # Still needed by the rollup plugin's discovery even when we skip
-        # the actual wasm-opt invocation.
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # Still needed by the rollup plugin's discovery even when we skip the
+        # actual wasm-opt invocation. Pinned rather than apt so every job in
+        # the repo agrees on the optimizer — see the note in bench.yml.
+        run: ./scripts/install-binaryen.sh
 
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
@@ -164,7 +207,8 @@ jobs:
         # gives readable stack traces at a fraction of the cost.
         # MIDEN_FAST_BUILD does the rest (LTO off, codegen-units=16, no
         # wasm-opt). PR CI doesn't ship the artifact — verify-release-build
-        # uses the canonical full profile on push to main/next.
+        # uses the canonical full profile on push to main/next and on PRs
+        # that change the release-WASM toolchain.
         run: MIDEN_FAST_BUILD=true pnpm --filter @miden-sdk/miden-sdk run build
 
       - name: Save cache - dist folder
@@ -185,12 +229,16 @@ jobs:
         run: sccache --show-stats || true
 
   # Verifies the canonical (full-optimization) release build of the WASM
-  # artifact. Runs only on push to main/next so PR CI stays fast — but the
-  # shipped artifact is always exercised before it can land on main.
+  # artifact. Runs on every push to main/next and on PRs that change the
+  # release-WASM toolchain, keeping ordinary PR CI fast while testing build
+  # plumbing before it can merge.
   verify-release-build:
     name: Verify release WASM build
     runs-on: warp-ubuntu-latest-x64-8x
-    if: github.event_name == 'push'
+    needs: [changes]
+    if: |
+      (github.event_name == 'push' && needs.changes.outputs.non_docs == 'true') ||
+      (github.event_name == 'pull_request' && needs.changes.outputs.release_wasm == 'true')
     env:
       # Tell sccache-action to use the GitHub Actions cache backend. The
       # action sets RUSTC_WRAPPER=sccache as a step output on success — we
@@ -206,12 +254,24 @@ jobs:
       # build-wasm job (single comment per PR run); we don't post here.
       - name: Inject linked miden-client PR
         uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust (needed for WASM build)
         run: |
           rustup update --no-self-update
           rustup target add wasm32-unknown-unknown
+          # Also install stable wasm32 std so the ST rollup build can
+          # use stable Rust (set via RUSTUP_TOOLCHAIN=stable in
+          # crates/web-client/rollup.config.js when MIDEN_BUILD_VARIANT=st).
+          # MT keeps the project-pinned nightly from rust-toolchain.toml.
+          rustup install stable --no-self-update
+          rustup target add wasm32-unknown-unknown --toolchain stable
       # GitHub blocked the legacy ACTIONS_CACHE_URL endpoint that
       # mozilla-actions/sccache-action used by default. The new GHA cache
       # service requires ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN, which
@@ -251,8 +311,8 @@ jobs:
             echo "sccache --start-server failed (rc=$rc); running without wrapper"
           fi
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # Keep release verification byte-for-byte aligned with publishing.
+        run: ./scripts/install-binaryen.sh
       - name: Add Rust Cache
         uses: WarpBuilds/rust-cache@9d0cc3090d9c87de74ea67617b246e978735b1a1 # v2.9.1
         with:
@@ -278,6 +338,12 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Build project (full release profile)
         run: pnpm --filter @miden-sdk/miden-sdk run build
+      - name: Verify release WASM sizes
+        run: ./scripts/verify-wasm-size.sh
+      - name: Install Chromium for the MT smoke test
+        run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
+      - name: Smoke-test the optimized MT artifact
+        run: pnpm --filter @miden-sdk/miden-sdk exec node scripts/verify-release-mt.mjs
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -289,7 +355,8 @@ jobs:
   react-sdk-lint:
     name: React SDK lint and typecheck
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -322,7 +389,8 @@ jobs:
   wasm-bindgen-types:
     name: Wasm bindgen types
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -353,7 +421,8 @@ jobs:
   docs-check:
     name: Check that web client documentation is up-to-date
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Check for bypass label
@@ -394,7 +463,8 @@ jobs:
   test-react-sdk:
     name: React SDK tests
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -422,9 +492,113 @@ jobs:
           name: coverage-react-sdk
           path: packages/react-sdk/coverage
 
+  # React 18 regression guard for @miden-sdk/react.
+  #
+  # The package promises `react: ">=18.0.0"` to consumers, but its own
+  # devDependencies pin React 19, so `test-react-sdk` above exercises 19 and
+  # nothing else. Until the React 19 migration the suite ran on 18.3.1, and
+  # that run was the only thing keeping the 18 half of the peer range honest;
+  # afterwards nothing tested 18 at all. A peer range nothing exercises can't
+  # break loudly — it breaks quietly, in a consumer's app, at a version we
+  # published as supported.
+  #
+  # Why a separate job rather than a matrix on `test-react-sdk`: that job
+  # uploads `coverage-react-sdk`, which `coverage-badge` downloads by name,
+  # and upload-artifact@v4 rejects two matrix legs writing the same artifact
+  # name. A matrix would drag the badge pipeline into a change that buys no
+  # extra test signal. Two jobs also fail independently, so a red here reads
+  # unambiguously as "React 18 broke", not "the React SDK tests broke".
+  #
+  # Why pnpm `overrides` in the ROOT package.json rather than a scoped
+  # `pnpm --filter @miden-sdk/react add -D react@18`: the scoped install is
+  # the obvious move and the untrustworthy one — it edits one manifest while
+  # leaving every other requester in the workspace free to resolve 19, and a
+  # peer-resolved or deduped 19 reaching vitest would turn this job into a
+  # green light that re-tested nothing. A root override is applied at
+  # resolution time to every requester, so `react` resolves to one version
+  # workspace-wide no matter who asked for it. The edit is runner-local and
+  # never committed — same shape as ./.github/actions/inject-linked-client-pr
+  # rewriting deps in place.
+  #
+  # 18.3.1 is the terminal React 18 release, so pinning it exactly is both the
+  # top of the 18.x range and reproducible. The @types are ranged inside 18.x
+  # because they get patched often and the declarations are half the point of
+  # the job (`useRef<string>()` compiles under @types/react 18 and not 19 —
+  # that class of divergence is invisible to a runtime-only check).
+  test-react-sdk-react18:
+    name: React SDK tests (React 18)
+    runs-on: ubuntu-24.04
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
+    env:
+      REACT_18: 18.3.1
+      TYPES_REACT_18: ^18.3.0
+    steps:
+      - uses: actions/checkout@v6
+      # vitest aliases @miden-sdk/miden-sdk to a mock and doesn't need the
+      # dist, but `tsc --noEmit` resolves the SDK's generated .d.ts files.
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # Keyed on the committed lockfile, i.e. computed before the override
+          # rewrites anything. That's fine: a pnpm store cache is additive, so
+          # the extra React 18 tarballs this job fetches only ever make the
+          # restored store a superset for whoever hits the key next.
+          cache: 'pnpm'
+      - name: Pin the workspace to React 18
+        run: |
+          pnpm pkg set \
+            "pnpm.overrides.react=${REACT_18}" \
+            "pnpm.overrides.react-dom=${REACT_18}" \
+            "pnpm.overrides.@types/react=${TYPES_REACT_18}" \
+            "pnpm.overrides.@types/react-dom=${TYPES_REACT_18}"
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      # Load-bearing, not decoration. If the override silently fails to apply,
+      # every step below still passes — against React 19 — and this job turns
+      # into a second, slower copy of test-react-sdk wearing a React 18 name.
+      # Resolve from packages/react-sdk so the assertion is about what vitest
+      # and tsc actually load, not about what a manifest claims.
+      - name: Verify React 18 is what actually got installed
+        run: |
+          node -e '
+            const path = require("path");
+            const from = { paths: [path.resolve("packages/react-sdk")] };
+            let bad = 0;
+            for (const p of ["react", "react-dom", "@types/react", "@types/react-dom"]) {
+              const v = require(require.resolve(p + "/package.json", from)).version;
+              const ok = v.split(".")[0] === "18";
+              console.log((ok ? "ok   " : "FAIL ") + p + " = " + v);
+              if (!ok) bad++;
+            }
+            if (bad > 0) {
+              console.error("::error::React 18 override did not take effect for packages/react-sdk; this job would have silently re-tested the version test-react-sdk already covers.");
+              process.exit(1);
+            }
+          '
+      - name: Run typecheck against React 18 type declarations
+        run: pnpm --filter @miden-sdk/react run typecheck
+      # test:unit, not test:coverage. The thresholds and the badge artifact
+      # belong to test-react-sdk; instrumenting a second time would double the
+      # runtime and collide on the artifact name for no additional signal.
+      - name: Run unit tests
+        run: pnpm --filter @miden-sdk/react run test:unit
+
   test-idxdb-store:
     name: idxdb-store unit tests
     runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
@@ -450,6 +624,8 @@ jobs:
   test-vite-plugin:
     name: vite-plugin unit tests
     runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
@@ -472,9 +648,60 @@ jobs:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
 
+  test-bench-scripts:
+    name: benchmark script unit tests
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    # No `if:` on `non_docs`. These tests cover the renderer that runs in the
+    # TRUSTED half of the benchmark pipeline, holding a write token over
+    # fork-controlled JSON, and they were previously reachable only from a step
+    # inside bench.yml — an informational job with its own `paths-ignore` that
+    # never blocks a merge. A break in the sanitizer or the verdict logic could
+    # merge freely. Cheap enough (node --test, no build) to run unconditionally.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run benchmark script unit tests
+        run: make test-bench-scripts
+
+  lint-bench-workflows:
+    name: benchmark workflow lint
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    # Also unconditional, and for the same reason as the job above: much of the
+    # benchmark bot's correctness lives in workflow expressions, where a typo in
+    # an `if:` disables a job silently rather than failing loudly, and one of
+    # those jobs holds a write token over fork-controlled input.
+    #
+    # actionlint is not in taiki-e/install-action's tool list, so it is pinned by
+    # version AND sha256 rather than installed through an action. Keep the version
+    # in step with the `lint-bench-workflows` target in the Makefile.
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          tar="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL --retry 3 -o "$tar" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tar}"
+          echo "${ACTIONLINT_SHA256}  ${tar}" | sha256sum -c -
+          tar -xzf "$tar" actionlint
+          install -m 0755 actionlint /usr/local/bin/actionlint
+          actionlint --version
+      - name: Lint the benchmark workflows
+        run: make lint-bench-workflows
+
   test-web-client-unit:
     name: web-client unit tests
     runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Install pnpm
@@ -500,7 +727,8 @@ jobs:
   test-react-sdk-integration:
     name: React SDK integration tests
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -527,7 +755,8 @@ jobs:
   build-react-sdk:
     name: Build React SDK
     runs-on: ubuntu-24.04
-    needs: [build-web-client-dist-folder]
+    needs: [changes, build-web-client-dist-folder]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Fetch web client dist
@@ -549,70 +778,78 @@ jobs:
       - name: Build React SDK
         run: pnpm --filter @miden-sdk/react run build
 
-  # Build test infrastructure from miden-client repo
-  build-node-builder:
-    name: Build node-builder
+  # Build test infrastructure from rust-sdk. Its
+  # scripts/start-test-node.sh cargo-installs the standalone node executables
+  # (miden-validator, miden-node, miden-ntx-builder, miden-remote-prover) at
+  # the node rev pinned in its Cargo.lock, and builds the gen-genesis fixture
+  # generator from its test-node-genesis crate. This job pre-builds both
+  # pieces so the consumer jobs only download and start them.
+  build-test-node:
+    name: Build test node
     runs-on: warp-ubuntu-latest-x64-8x
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
         with:
-          repository: 0xMiden/miden-client
+          repository: 0xMiden/rust-sdk
           ref: ${{ env.MIDEN_CLIENT_REF }}
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
-      - name: Restore node-builder binary
-        id: cache-node-builder
+      - name: Resolve node revision
+        id: node-rev
+        run: echo "rev=$(./scripts/start-test-node.sh --print-rev)" >> "$GITHUB_OUTPUT"
+      - name: Restore test node binaries
+        id: cache-test-node
         uses: actions/cache@v4
         with:
-          path: target/release/testing-node-builder
-          key: ${{ runner.os }}-node-builder-${{ env.MIDEN_CLIENT_REF }}-${{ hashFiles('Cargo.lock', 'crates/testing/node-builder/**/*') }}
-      - name: Install Rust
-        if: steps.cache-node-builder.outputs.cache-hit != 'true'
-        run: rustup update --no-self-update
-      - name: Build node-builder
-        if: steps.cache-node-builder.outputs.cache-hit != 'true'
-        run: cargo build --release --package node-builder --locked
-      - name: Upload node-builder binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: node-builder-binary
-          path: target/release/testing-node-builder
-
-  build-remote-prover:
-    name: Build remote-prover
-    runs-on: warp-ubuntu-latest-x64-8x
-    # Remote prover tests are slow (~14 min) and rarely affected by typical PR
-    # changes. Skip on PRs unless explicitly opted in via the
-    # 'run-remote-prover' label; always run on push to main/next.
-    if: |
-      github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
-    steps:
-      - name: Checkout miden-client for test infra
-        uses: actions/checkout@v6
-        with:
-          repository: 0xMiden/miden-client
-          ref: ${{ env.MIDEN_CLIENT_REF }}
-      - name: Cleanup large tools for build space
-        uses: ./.github/actions/cleanup-runner
-      - name: Restore remote-prover binary
-        id: cache-remote-prover
+          path: target/test-node/install
+          key: ${{ runner.os }}-test-node-${{ steps.node-rev.outputs.rev }}
+      # Build dir cached per node rev, with no cross-rev fallback: cargo reuses
+      # stale build-script outputs when one target dir serves the same crate
+      # versions from two git revs, which breaks the compile with phantom type
+      # errors. A rev bump therefore compiles from scratch.
+      - name: Restore test node build dir
+        if: steps.cache-test-node.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
-          path: target/release/testing-remote-prover
-          key: ${{ runner.os }}-prover-${{ env.MIDEN_CLIENT_REF }}-${{ hashFiles('Cargo.lock', 'crates/testing/prover/**/*') }}
+          path: target/test-node/build
+          key: ${{ runner.os }}-test-node-build-${{ steps.node-rev.outputs.rev }}
+      # Warm the cache consumed by every job that starts the node:
+      # start-test-node.sh unconditionally runs
+      # `cargo build --release -p test-node-genesis`, so the consumer jobs
+      # restore this target dir to make that build a near-no-op. Cargo does
+      # not mtime-check immutable registry sources, so the heavy dependency
+      # artifacts stay fresh across checkouts; only the small
+      # test-node-genesis crate itself recompiles.
+      - name: Restore gen-genesis build cache
+        id: cache-gen-genesis
+        uses: actions/cache@v4
+        with:
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Install Rust
-        if: steps.cache-remote-prover.outputs.cache-hit != 'true'
+        if: steps.cache-test-node.outputs.cache-hit != 'true' || steps.cache-gen-genesis.outputs.cache-hit != 'true'
         run: rustup update --no-self-update
-      - name: Build remote-prover
-        if: steps.cache-remote-prover.outputs.cache-hit != 'true'
-        run: cargo build --release --package testing-remote-prover --locked
-      - name: Upload remote-prover binary
+      - name: Build node binaries
+        if: steps.cache-test-node.outputs.cache-hit != 'true'
+        run: ./scripts/start-test-node.sh --install-only
+      - name: Build gen-genesis
+        if: steps.cache-gen-genesis.outputs.cache-hit != 'true'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+        run: cargo build --release -p test-node-genesis --bin gen-genesis
+      - name: Upload test node binaries
         uses: actions/upload-artifact@v4
         with:
-          name: remote-prover-binary
-          path: target/release/testing-remote-prover
+          name: test-node-artifact
+          # `.crates.toml` records the installed rev; start-test-node.sh reads
+          # it in the consumer jobs to confirm the downloaded binaries match
+          # the pinned rev (otherwise it would try to cargo-install them from
+          # scratch).
+          include-hidden-files: true
+          path: target/test-node/install
 
   test-web-client-nodejs:
     # Builds miden-client-web with --features nodejs (napi-rs binding) and
@@ -622,11 +859,23 @@ jobs:
     # before the split.
     name: Web client tests (Node.js)
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-node-builder]
+    needs: [build-test-node]
     env:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v6
+      # Auto-patch miden-client dep against any "Client PR: #N" marker in
+      # the PR description. Required for changes that depend on Rust-side
+      # APIs not yet released to crates.io. Sticky comment owned by
+      # build.yml's build-wasm job; we don't post here.
+      - name: Inject linked miden-client PR
+        uses: ./.github/actions/inject-linked-client-pr
+      # And any "Protocol PR: #N" marker. The protocol crates reach this
+      # workspace transitively through miden-client, so they're pinned with a
+      # workspace-wide [patch.crates-io] block rather than a dep rewrite —
+      # which also redirects what the git-pinned miden-client compiles against.
+      - name: Inject linked protocol PR
+        uses: ./.github/actions/inject-linked-protocol-pr
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
       - name: Install Rust
@@ -669,20 +918,37 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Download node-builder binary
+      - name: Checkout miden-client for test node
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/rust-sdk
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+          path: miden-client
+      - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
-          name: node-builder-binary
-          path: ./bin
+          name: test-node-artifact
+          path: miden-client/target/test-node/install
+      - name: Restore test node permissions
+        run: chmod +x miden-client/target/test-node/install/bin/*
+      - name: Restore gen-genesis build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Start test node
-        # `sleep 4 && pgrep` only proves the process is alive, not that
-        # tonic's gRPC dispatcher is serving. The kernel completes TCP
-        # handshakes the moment TcpListener::bind() runs, but the actual
-        # `serve_with_incoming(...)` call happens seconds later — so a
-        # /dev/tcp probe would also race. The real signal is "the server
-        # responded with ANY HTTP status to a real POST" — see
-        # scripts/wait-for-grpc.sh.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
+        # start-test-node.sh builds gen-genesis (near-no-op with the restored
+        # cache), bootstraps a fresh genesis, launches the validator,
+        # sequencer, ntx-builder and tx prover, and only returns once the
+        # node RPC answers on 57291.
+        working-directory: miden-client
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+          # The web-sdk integration tests create accounts without funding them
+          # with the native fee asset, so run the node fee-free. Remove once the
+          # tests draw fee balances from the genesis funder wallets.
+          MIDEN_VERIFICATION_BASE_FEE: "0"
+        run: ./scripts/start-test-node.sh --background
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -695,6 +961,10 @@ jobs:
           BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
           [ -n "$BINARY" ] || { echo "::error::napi binary not found"; exit 1; }
           cp "$BINARY" crates/web-client/miden_client_web.node
+      - name: Check node re-exports are in sync with the napi surface
+        env:
+          MIDEN_MODULE_PATH: ${{ github.workspace }}/crates/web-client/miden_client_web.node
+        run: pnpm --filter @miden-sdk/miden-sdk run check:node-reexports
       - name: Install Playwright (chromium not required, but install pulls deps)
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run nodejs Playwright project
@@ -703,7 +973,7 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk exec playwright test --project=nodejs --workers=1
       - name: Stop test node
         if: always()
-        run: pkill -f testing-node-builder || true
+        run: ./miden-client/scripts/stop-test-node.sh
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -716,7 +986,8 @@ jobs:
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-web-client-dist-folder, build-node-builder]
+    needs: [changes, build-web-client-dist-folder, build-test-node]
+    if: needs.changes.outputs.non_docs == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -748,20 +1019,37 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Download node-builder binary
+      - name: Checkout miden-client for test node
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/rust-sdk
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+          path: miden-client
+      - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
-          name: node-builder-binary
-          path: ./bin
+          name: test-node-artifact
+          path: miden-client/target/test-node/install
+      - name: Restore test node permissions
+        run: chmod +x miden-client/target/test-node/install/bin/*
+      - name: Restore gen-genesis build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Start test node
-        # `sleep 4 && pgrep` only proves the process is alive, not that
-        # tonic's gRPC dispatcher is serving. The kernel completes TCP
-        # handshakes the moment TcpListener::bind() runs, but the actual
-        # `serve_with_incoming(...)` call happens seconds later — so a
-        # /dev/tcp probe would also race. The real signal is "the server
-        # responded with ANY HTTP status to a real POST" — see
-        # scripts/wait-for-grpc.sh.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
+        # start-test-node.sh builds gen-genesis (near-no-op with the restored
+        # cache), bootstraps a fresh genesis, launches the validator,
+        # sequencer, ntx-builder and tx prover, and only returns once the
+        # node RPC answers on 57291.
+        working-directory: miden-client
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+          # The web-sdk integration tests create accounts without funding them
+          # with the native fee asset, so run the node fee-free. Remove once the
+          # tests draw fee balances from the genesis funder wallets.
+          MIDEN_VERIFICATION_BASE_FEE: "0"
+        run: ./scripts/start-test-node.sh --background
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -780,17 +1068,21 @@ jobs:
           if-no-files-found: ignore
       - name: Stop test node
         if: always()
-        run: pkill -f testing-node-builder || true
+        run: ./miden-client/scripts/stop-test-node.sh
 
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-web-client-dist-folder, build-node-builder, build-remote-prover]
-    # Same opt-in rule as build-remote-prover. The job needs the prover binary,
-    # so it can only run when build-remote-prover ran too.
+    needs: [changes, build-web-client-dist-folder, build-test-node]
+    # Remote prover tests are slow (~14 min) and rarely affected by typical PR
+    # changes. Skip on PRs unless explicitly opted in via the
+    # 'run-remote-prover' label; always run on push to main/next.
+    # Also gated on `non_docs` so docs-only changes never trigger this.
     if: |
-      github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
+      needs.changes.outputs.non_docs == 'true' && (
+        github.event_name == 'push' ||
+        contains(github.event.pull_request.labels.*.name, 'run-remote-prover')
+      )
     steps:
       - uses: actions/checkout@v6
       - name: Cleanup large tools for build space
@@ -815,29 +1107,36 @@ jobs:
 
       - name: Configure setuid sandbox
         run: . ./scripts/configure-sandbox.sh
-      - name: Download node-builder binary
+      - name: Checkout miden-client for test node
+        uses: actions/checkout@v6
+        with:
+          repository: 0xMiden/rust-sdk
+          ref: ${{ env.MIDEN_CLIENT_REF }}
+          path: miden-client
+      - name: Download test node binaries
         uses: actions/download-artifact@v4
         with:
-          name: node-builder-binary
-          path: ./bin
-      - name: Download remote-prover binary
-        uses: actions/download-artifact@v4
+          name: test-node-artifact
+          path: miden-client/target/test-node/install
+      - name: Restore test node permissions
+        run: chmod +x miden-client/target/test-node/install/bin/*
+      - name: Restore gen-genesis build cache
+        uses: actions/cache/restore@v4
         with:
-          name: remote-prover-binary
-          path: ./bin
+          path: genesis-target
+          key: ${{ runner.os }}-gen-genesis-${{ env.MIDEN_CLIENT_REF }}
       - name: Start test node
-        # `sleep 4 && pgrep` only proves the process is alive, not that
-        # tonic's gRPC dispatcher is serving. The kernel completes TCP
-        # handshakes the moment TcpListener::bind() runs, but the actual
-        # `serve_with_incoming(...)` call happens seconds later — so a
-        # /dev/tcp probe would also race. The real signal is "the server
-        # responded with ANY HTTP status to a real POST" — see
-        # scripts/wait-for-grpc.sh.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-node-builder 57291
-      - name: Start prover
-        # Same gRPC probe as the node-builder above; remote-prover's
-        # `serve_with_incoming` window has the same race.
-        run: ./scripts/wait-for-grpc.sh ./bin/testing-remote-prover 50051
+        # start-test-node.sh launches the tx prover (miden-remote-prover on
+        # 50051) along with the validator, sequencer and ntx-builder, so no
+        # separate prover build or start step is needed.
+        working-directory: miden-client
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/genesis-target
+          # The web-sdk integration tests create accounts without funding them
+          # with the native fee asset, so run the node fee-free. Remove once the
+          # tests draw fee balances from the genesis funder wallets.
+          MIDEN_VERIFICATION_BASE_FEE: "0"
+        run: ./scripts/start-test-node.sh --background
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
@@ -846,10 +1145,7 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci:remote_prover
       - name: Stop test node
         if: always()
-        run: pkill -f testing-node-builder || true
-      - name: Stop miden-prover
-        if: always()
-        run: pkill -f testing-remote-prover || true
+        run: ./miden-client/scripts/stop-test-node.sh
 
   # Publishes the aggregate Vitest line-coverage % to a JSON file on the
   # `badges` branch so shields.io can render a live badge in README.md.
@@ -857,6 +1153,179 @@ jobs:
   # containing only the endpoint JSON — nothing merges back into main.
   # No external service login required: shields.io reads the JSON directly
   # from raw.githubusercontent.com.
+  # The adopted packages (adapter/*, para/*, turnkey/*) are pnpm workspace
+  # members that, until this job existed, nothing in CI ever compiled:
+  # build.yml's build-wasm builds the Rust client, the jobs above run vitest,
+  # lint.yml runs eslint, and check-publish.yml's publint/attw gates are filtered to
+  # three packages. The first `tsc` over an adopted package therefore ran inside
+  # publish-web-sdk.yml at *release* time — on a tag, after sibling packages had
+  # already been pushed to npm. v0.16.0-rc.5 lost 5 of 11 packages that way, to
+  # type errors that had been sitting on `next` for days.
+  #
+  # This job is that missing compile, moved to where it is cheap to fix. It runs
+  # the same `pnpm --filter <pkg> run build` the release runs, driven by the same
+  # scripts/publish-manifest.json, in the same topological `level` order — so a
+  # green run here is evidence about the release, not a proxy for it.
+  #
+  # It lives in Test rather than Build because it needs crates/web-client/dist, and
+  # this workflow is where that dist is built and uploaded. It previously sat in
+  # Build with the dist faked from the published npm tarball to keep it off the
+  # WASM build's critical path — but that build runs here on every PR regardless,
+  # so the arrangement bought latency rather than compute, and paid for it by
+  # typechecking these packages against a client that was not the one in the tree.
+  # Any PR adding client API failed here for a reason that was not its own.
+  build-adopted-packages:
+    name: Build adopted packages
+    needs: [changes, build-web-client-dist-folder]
+    # Gated like every other job in this workflow.
+    if: needs.changes.outputs.non_docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      # The adopted packages need `@miden-sdk/miden-sdk` only for its *types*, which
+      # resolve to crates/web-client/dist. Take that dist from the artifact this
+      # workflow already builds rather than from the published npm tarball. The tree
+      # is routinely ahead of the published client at the same version number — any
+      # PR that adds client API is — and a hydrated dist then typechecks these
+      # packages against a client that is not the one they ship with, which reads as
+      # a defect in the package. `pnpm run hydrate:web-client` still exists for local
+      # work, where paying for a WASM build to typecheck TypeScript is the wrong trade.
+      - name: Fetch web client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-client-artifacts
+          path: ./crates/web-client/dist
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      # `@miden-sdk/react` is a workspace dep of the adapter/para/turnkey React
+      # packages and its `types` field points at dist/index.d.ts, so its dist has
+      # to exist before they can typecheck against it. This is the same ordering
+      # the release relies on — react-sdk is published before the adopted
+      # packages — made explicit.
+      - name: Build @miden-sdk/react
+        run: pnpm run build:react-sdk
+
+      # Manifest-driven: scripts/publish-manifest.json is the only list. Adding a
+      # package there with "build": true brings it under this job automatically.
+      # The script validates the manifest against the real pnpm workspace first,
+      # because `pnpm --filter` exits 0 both for a name that matches no package
+      # and for a package with no `build` script — either would leave this job
+      # green while building nothing.
+      #
+      # It then asserts each package actually emitted the files its package.json
+      # `exports`/`main`/`types`/`bin` promise. `copyfiles` exits 0 when its glob
+      # matches nothing, which is how packages/adapter/all shipped rc.5 with a
+      # dead "./styles.css" export through a build where every command returned
+      # 0 — an exit-code gate cannot see that, so we check the contract instead.
+      - name: Build adopted packages (manifest level order)
+        run: ./scripts/build-adopted-packages.sh
+
+      # publint over the same manifest list. Until this step, the root
+      # `check:publint` / `check:attw` scripts were filtered to exactly three
+      # packages (@miden-sdk/miden-sdk, @miden-sdk/react, @miden-sdk/vite-plugin),
+      # so eleven published packages had no package-shape gate at all — and two
+      # of them shipped defects in v0.16.0-rc.5 that publint reports in under a
+      # second.
+      #
+      # It lives here rather than in check-publish.yml for two reasons. First,
+      # check-publish.yml carries a workflow-level `paths-ignore` — the exact
+      # pattern the `changes` preflight at the top of this file exists to avoid,
+      # because a required check that never runs on a docs-only PR sits in
+      # "Expected" forever and blocks the merge. Second, check-publish.yml gates
+      # everything behind a full Rust/WASM build on a warp 8x runner, and these
+      # packages need no Rust at all — they need their own dist/, which the step
+      # above just produced. Linting a package.json here reuses that build
+      # instead of paying for a WASM toolchain to do it.
+      #
+      # It runs at publint's default level, which fails on errors only. `--strict`
+      # promotes warnings to errors as well, and is deliberately NOT on yet: it is
+      # red today for 3 of the 11, and every one of those is a real defect to fix
+      # in the package rather than a threshold to argue with —
+      # @miden-sdk/miden-wallet-adapter-base (12 messages), -miden (6) and
+      # -reactui (14), all the same shape: ESM emitted into `.js` files in a
+      # package with no `"type"` field, so Node reads them as CommonJS.
+      #
+      # Those three also declare no `main` and no `exports`, only `module` —
+      # which Node consults for neither `require` nor `import`. On Node 20 and 22
+      # alike `require('@miden-sdk/miden-wallet-adapter-base')` is
+      # MODULE_NOT_FOUND and `import` of it is ERR_MODULE_NOT_FOUND; they are
+      # reachable from bundlers only. That is not hypothetical, it already breaks
+      # a sibling: @miden-sdk/miden-wallet-adapter-react is itself clean, and
+      # loading it under Node dies on `Cannot find package
+      # '@miden-sdk/miden-wallet-adapter-base'` reached from dist/WalletProvider.js.
+      # The repair is the shape adapter/react now has — `"type": "module"`, an
+      # `exports` map, `"files": ["dist"]` — and `--strict` belongs in
+      # check:publint:adopted in the same change that lands it.
+      - name: publint (adopted packages)
+        run: pnpm run check:publint:adopted
+
+      # attw (arethetypeswrong) BLOCKS. It shipped report-only for exactly one
+      # cycle, carrying a list of the five package-shape defects it found on day
+      # one and the instruction to delete `continue-on-error` once that list was
+      # empty. The list is empty, so the escape hatch is gone.
+      #
+      # Four of the five were repaired in the packages. @miden-sdk/para,
+      # @miden-sdk/turnkey and @miden-sdk/turnkey-react now declare `types`
+      # *inside* each of the `import`/`require` conditions and emit a matching
+      # .d.ts per module format, instead of pointing both conditions at one
+      # CommonJS declaration — that was the FalseCJS. @miden-sdk/para-react ships
+      # a vite/package.json subpath shim so its "./vite" export also resolves
+      # under node10, which has no notion of `exports`. The fifth,
+      # @miden-sdk/miden-wallet-adapter-react, had its InternalResolutionError
+      # repaired for real: NodeNext in its tsconfig, so tsc emits (and validates)
+      # the explicit ".js" specifiers that Node's ESM loader and TypeScript's
+      # node16 resolver both require and that the old ESNext/node pair silently
+      # omitted. Its remaining CJSResolvesToESM is answered by the same esm-only
+      # profile packages/adapter/all already carried — see below for why that is
+      # a description of the package rather than a suppression of a defect.
+      # `pnpm run check:attw:adopted` reproduces the gate locally.
+      #
+      # The script skips packages that publish no type declarations at all (the
+      # create-* scaffolders are bin-only), decided from their package.json — not
+      # from a list — so attw is never asked a question it cannot answer. 9 of
+      # the 11 manifest packages are therefore actually checked.
+      #
+      # ---- The two .attw.json files, and why neither is a suppression ----
+      #
+      # Both set `"profile": "esm-only"`, which drops the node10 and node16-cjs
+      # resolutions. That profile is honest only for a package that genuinely
+      # ships no CommonJS, and both of these qualify: `"type": "module"`, an
+      # ESM-only dist, no CJS output anywhere in their build. The complaint it
+      # drops, CJSResolvesToESM, does not read "your types are wrong" — it reads
+      # "CommonJS consumers will need to use a dynamic import", which is a true
+      # and intended statement about an ESM-only package, and is the case attw
+      # documents this profile for.
+      #
+      #   packages/adapter/all/.attw.json additionally carries
+      #   `"excludeEntrypoints": ["styles.css"]`. That one is a tool blind spot
+      #   rather than a judgement call: attw resolves entry points as JS/TS
+      #   modules, so a stylesheet export reports NoResolution on all four
+      #   profiles however correct it is. The export is not going unchecked —
+      #   build-adopted-packages.sh's entry-point verification opens the tarball
+      #   and asserts dist/styles.css is really inside it, which is the check
+      #   that catches the dead "./styles.css" export rc.5 shipped.
+      #
+      #   packages/adapter/react/.attw.json has no exclusions. One note for
+      #   whoever edits that package's exports next: it reaches its ESM entry via
+      #   a `"default"` condition rather than `"import"`, so `require()` of it
+      #   resolves (to an ESM file) instead of failing cleanly at resolution the
+      #   way adapter/all's `import`-only export does. Changing `"default"` to
+      #   `"import"` would put the ESM-only intent in the package.json instead of
+      #   leaving it to the attw profile alone.
+      - name: attw (adopted packages)
+        run: pnpm run check:attw:adopted
+
   coverage-badge:
     name: Publish coverage badge
     needs: [test-react-sdk, test-idxdb-store, test-vite-plugin]

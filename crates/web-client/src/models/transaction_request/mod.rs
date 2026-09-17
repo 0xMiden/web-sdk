@@ -1,7 +1,9 @@
 use js_export_macro::js_export;
 use miden_client::note::Note as NativeNote;
 use miden_client::transaction::TransactionRequest as NativeTransactionRequest;
+use miden_client::vm::AdviceMap as NativeAdviceMap;
 
+use crate::models::advice_map::AdviceMap;
 use crate::models::note::Note;
 use crate::models::word::Word;
 use crate::platform::{JsBytes, JsErr};
@@ -65,9 +67,53 @@ impl TransactionRequest {
     }
 
     /// Returns the authentication argument if present.
+    ///
+    /// A request built by a builder that called neither `withAuthArg` nor `withFeeConversionSalt`
+    /// has none: the client commits fee conversion info into the auth args while preparing the
+    /// transaction, which is after this can observe it.
+    ///
+    /// There is deliberately no setter here. An auth argument can only be set through
+    /// `TransactionRequestBuilder.withAuthArg`, because miden-client keeps it mutually exclusive
+    /// with the fee conversion salt and enforces that on the builder — a setter on a finished
+    /// request would sit outside that exclusion.
     #[js_export(js_name = "authArg")]
     pub fn auth_arg(&self) -> Option<Word> {
         self.0.auth_arg().map(Word::from)
+    }
+
+    /// Returns the fee conversion salt this request declares, if any.
+    ///
+    /// Declared through `TransactionRequestBuilder.withFeeConversionSalt`, and carried through
+    /// serialization, so a request transported to a co-signer still names the salt its summary
+    /// was derived under. `undefined` means none was declared: miden-client then commits the
+    /// chain's native conversion info under its own fixed default salt, which is what every
+    /// account other than a multisig wants.
+    ///
+    /// Mutually exclusive with `authArg` — setting either clears the other on the builder.
+    #[js_export(js_name = "feeConversionSalt")]
+    pub fn fee_conversion_salt(&self) -> Option<Word> {
+        self.0.fee_conversion_salt().map(Word::from)
+    }
+
+    /// Returns a copy of the advice map carried by this request.
+    #[js_export(js_name = "adviceMap")]
+    pub fn advice_map(&self) -> AdviceMap {
+        self.0.advice_map().into()
+    }
+
+    /// Returns a copy of this request with `advice_map` merged into its advice map.
+    ///
+    /// Entries are merged with last-write-wins semantics: a key already present in the request is
+    /// overwritten by the value from `advice_map`. Use this to inject advice (e.g. a signature
+    /// produced by an external signer) after the request has already been built.
+    #[js_export(js_name = "extendAdviceMap")]
+    pub fn extend_advice_map(&self, advice_map: &AdviceMap) -> TransactionRequest {
+        let native_advice_map: NativeAdviceMap = advice_map.into();
+        let mut native_request = self.0.clone();
+        native_request
+            .advice_map_mut()
+            .extend(native_advice_map.iter().map(|(key, value)| (*key, value.clone())));
+        native_request.into()
     }
 }
 

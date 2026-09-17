@@ -84,13 +84,28 @@ test-vite-plugin: ## Run vite-plugin unit tests with coverage
 test-web-client-unit: ## Run web-client unit tests with coverage
 	pnpm --filter @miden-sdk/miden-sdk run test:coverage
 
+# --------------------------------------------------------------------------
+# test: the command CONTRIBUTING.md has always pointed at. Pure TypeScript —
+# the root vitest projects either mock the WASM client or exercise only plain
+# JS, so this needs no Rust toolchain and no built `dist/`. Use
+# `make test-coverage` for the gates CI enforces, and `make hydrate-web-client`
+# first if you need `typecheck`/`build`, which do read a built dist.
+# --------------------------------------------------------------------------
+.PHONY: test
+test: ## Run the TypeScript unit suites (no Rust toolchain required)
+	pnpm test
+
+.PHONY: hydrate-web-client
+hydrate-web-client: ## Populate crates/web-client/dist from the published npm tarball (no Rust build)
+	node scripts/hydrate-web-client.mjs
+
 .PHONY: test-coverage
 test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-unit ## Run all coverage gates
 
 .PHONY: test-web-client-nodejs
 test-web-client-nodejs: ## Run web client tests on Node.js (mock chain, no browser needed)
 	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
-	cd ./crates/web-client && pnpm exec playwright test --project=nodejs --workers=1
+	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test --project=nodejs --workers=1
 
 .PHONY: integration-test-web-client
 SHARD_PARAMETER ?= ""
@@ -116,11 +131,113 @@ integration-test-remote-prover-web-client: ## Run integration tests for the web 
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover --project=chromium
 
+# --- Benchmarking --------------------------------------------------------------------------------
+
+.PHONY: bench-proving
+BENCH_ARGS ?=
+bench-proving: ## Benchmark WASM proving (MT, ECDSA) — needs two built dist/mt dirs
+	# Not part of any CI gate that can block a merge: the `bench.yml` workflow
+	# runs this on every non-draft PR and reports the result as an informational
+	# comment. The noise floor is still provisional — see
+	# docs/benchmarks/calibration.md.
+	#
+	# Compares two builds on one machine, interleaved. Point --base and --head
+	# at saved copies of `crates/web-client/dist/mt` built from the two revisions
+	# you want to compare (build with the FULL release profile — MIDEN_FAST_BUILD
+	# drops LTO and wasm-opt, so its numbers describe a binary nobody ships).
+	#
+	# Relative paths resolve against crates/web-client, which is where
+	# `pnpm --filter ... exec` runs:
+	#
+	#   make bench-proving BENCH_ARGS="--base /tmp/dist-base --head dist/mt"
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs $(BENCH_ARGS)
+
+.PHONY: lint-bench-workflows
+lint-bench-workflows: ## actionlint the two benchmark workflows
+	# Scoped to these two files, not the whole directory, because the other six
+	# workflows carry 17 pre-existing actionlint findings and clearing those is a
+	# separate change. These two are clean and worth keeping that way: the
+	# benchmark bot's correctness lives largely in workflow expressions, where a
+	# typo in an `if:` silently disables a job rather than failing loudly.
+	#
+	# Wired into CI as a merge gate — see the `lint-bench-workflows` job in
+	# test.yml, which pins the same version by sha256 because actionlint is absent
+	# from taiki-e/install-action's tool list (the mechanism this repo uses for
+	# every other CI binary). Keep ACTIONLINT_VERSION here in step with that job,
+	# or a rule added upstream will fail CI while passing locally.
+	actionlint .github/workflows/bench.yml .github/workflows/bench-comment.yml
+
+.PHONY: test-bench-scripts
+test-bench-scripts: ## Unit-test the benchmark renderer, interleave and artifact extraction
+	# Lives outside the vitest projects on purpose: those carry a 95% coverage
+	# threshold scoped to shipped package sources, and CI plumbing has no
+	# business inside that gate.
+	# Explicit path, not a glob — `node --test` only globs from Node 21 and CI
+	# pins Node 20.
+	node --test .github/scripts/render-bench-comment.test.mjs
+	# The interleave the producer measures under. Split out of bench-proving.mjs
+	# because the driver decided the order in one place while the "imbalanced
+	# configuration" warning asserted a parity formula in another, and the two
+	# disagreed silently: the calibrated default ran a fixed positional
+	# asymmetry while the warning reported it as balanced.
+	node --test crates/web-client/scripts/bench-order.test.mjs
+	# The step-budget deadline rule. Split out and swept with a synthetic clock
+	# because three consecutive review rounds found a defect in this arithmetic,
+	# each previous fix having been checked by reasoning about one configuration
+	# while the adjacent one stayed broken.
+	node --test crates/web-client/scripts/bench-budget.test.mjs
+	# The extraction step is the only part of the reporter that handles a
+	# fork-controlled archive, so it lives in a script that can be tested rather
+	# than inline in the workflow where nothing could reach it.
+	bash .github/scripts/extract-bench-artifact.test.sh
+
+.PHONY: bench-proving-calibrate
+bench-proving-calibrate: ## Measure the benchmark's own noise floor (see docs/benchmarks/calibration.md)
+	# Benches one dist against a copy of itself: the true delta is zero, so
+	# whatever this reports is measurement noise. Repeat 20-30x on the target
+	# runner and set the threshold at 3 sigma.
+	rm -rf /tmp/miden-dist-calib
+	cp -R crates/web-client/dist/mt /tmp/miden-dist-calib
+	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-proving.mjs \
+		--base /tmp/miden-dist-calib --head dist/mt --calibrate $(BENCH_ARGS)
+
 # --- Building ------------------------------------------------------------------------------------
 
 .PHONY: build-wasm
-build-wasm: rust-client-ts-build ## Build the WASM packages (web client and idxdb store)
-	cargo build --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
+build-wasm: rust-client-ts-build ## Build the WASM packages — ST variant (no atomics, no rayon)
+	# ST sanity check. No `+atomics`, no wasm-bindgen-rayon dependency,
+	# no MT linker flags. The default `@miden-sdk/miden-sdk` subpath ships
+	# this variant — works in any browser context (no SAB / cross-origin
+	# isolation required).
+	#
+	# `-Z build-std=std,panic_abort` is kept (matches the rollup ST path).
+	# Reason: CI installs rust-src for the project's nightly toolchain via
+	# rust-toolchain.toml, but doesn't install a precompiled rust-std-wasm32
+	# for nightly — so without build-std the ST build trips on "can't find
+	# crate for std". Build-std rebuilds std from rust-src instead. ~30s
+	# slower than precompiled but keeps the build path consistent. To use
+	# stable + precompiled std for ST, CI would need an explicit
+	# `rustup target add wasm32-unknown-unknown --toolchain stable` step
+	# (deferred until there's a reason to drop nightly here).
+	cargo build -Z build-std=std,panic_abort --package miden-client-web --package miden-idxdb-store --target wasm32-unknown-unknown --locked
+
+.PHONY: build-wasm-mt
+build-wasm-mt: rust-client-ts-build ## Build the WASM packages — MT variant (nightly + build-std + atomics)
+	# MT build: nightly cargo with `-Z build-std=std,panic_abort` to
+	# recompile std with `+atomics` enabled. Without build-std the
+	# precompiled rust-std-wasm32 from rustup has atomics disabled and
+	# wasm-bindgen-rayon's `compile_error!` gate fires.
+	#
+	# Target-feature flags + shared-memory linker flags + TLS exports are
+	# passed via `--config target.wasm32-unknown-unknown.rustflags=[...]`
+	# so they only apply to this invocation. (See rollup.config.js for
+	# the canonical list — Makefile mirrors it for the sanity-check build.)
+	cargo +nightly build \
+		-Z build-std=std,panic_abort \
+		--package miden-client-web --package miden-idxdb-store \
+		--target wasm32-unknown-unknown --locked \
+		--features miden-client-web/mt-threads \
+		--config 'target.wasm32-unknown-unknown.rustflags=["-C","target-feature=+atomics,+bulk-memory,+mutable-globals","-C","link-arg=--shared-memory","-C","link-arg=--import-memory","-C","link-arg=--export=__wasm_init_tls","-C","link-arg=--export=__tls_size","-C","link-arg=--export=__tls_align","-C","link-arg=--export=__tls_base","-C","link-arg=--max-memory=4294967296","-C","panic=abort","--cfg","getrandom_backend=\"wasm_js\""]'
 
 .PHONY: rust-client-ts-build
 rust-client-ts-build:

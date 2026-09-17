@@ -11,11 +11,11 @@ To better trace these errors, a build with debug symbols can be generated. This 
     
 ## Building with debug symbols
 
-1. Clone the miden-client repo:
+1. Clone the web-sdk repo:
 ```bash
-git clone git@github.com:0xMiden/miden-client.git
+git clone git@github.com:0xMiden/web-sdk.git
 ```
-2. Build miden-client with debug-symbols:
+2. From the repository root, build the web client with debug symbols:
 ```bash
 make build-web-client-debug
 ```
@@ -31,7 +31,7 @@ the dependency to the JS app we're debugging.
 
 1. Once you have the web client built with debug symbols, we have to use it as a dependency,
 for that we'll use [pnpm link --global](https://pnpm.io/cli/link), 
-run this in your local copy of miden-client:
+run this from the root of your local web-sdk checkout:
 ```
 make link-web-client-dep
 ```

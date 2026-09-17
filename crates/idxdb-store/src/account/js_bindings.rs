@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use miden_client::account::{StorageMap, StorageSlot};
 use miden_client::asset::Asset;
 use miden_client::utils::Serializable;
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
@@ -98,6 +99,7 @@ extern "C" {
         committed: bool,
         commitment: String,
         account_seed: Option<Vec<u8>>,
+        watched: bool,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = insertAccountAddress)]
@@ -125,8 +127,8 @@ extern "C" {
     // TRANSACTIONAL WRITES
     // --------------------------------------------------------------------------------------------
 
-    #[wasm_bindgen(js_name = applyTransactionDelta)]
-    pub fn idxdb_apply_transaction_delta(
+    #[wasm_bindgen(js_name = applyAccountPatch)]
+    pub fn idxdb_apply_account_patch(
         db_id: &str,
         account_id: String,
         nonce: String,
@@ -171,8 +173,12 @@ extern "C" {
 // ================================================================================================
 
 /// An object that contains a serialized vault asset.
-#[wasm_bindgen(getter_with_clone, inspectable)]
-#[derive(Clone)]
+///
+/// `inspectable` is intentionally omitted — see the note on
+/// `JsAccountUpdate` for the full rationale (#2183).
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsVaultAsset {
     /// The vault key associated with the asset.
     #[wasm_bindgen(js_name = "vaultKey")]
@@ -185,7 +191,7 @@ pub struct JsVaultAsset {
 impl JsVaultAsset {
     pub fn from_asset(asset: &Asset) -> Self {
         Self {
-            vault_key: asset.vault_key().to_string(),
+            vault_key: asset.id().to_string(),
             asset: asset.to_value_word().to_hex(),
         }
     }
@@ -195,8 +201,12 @@ impl JsVaultAsset {
 // ================================================================================================
 
 /// A JavaScript representation of a storage slot in an account.
-#[wasm_bindgen(getter_with_clone, inspectable)]
-#[derive(Clone)]
+///
+/// `inspectable` is intentionally omitted — see the note on
+/// `JsAccountUpdate` for the full rationale (#2183).
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsStorageSlot {
     /// The name of the storage slot.
     #[wasm_bindgen(js_name = "slotName")]
@@ -207,6 +217,12 @@ pub struct JsStorageSlot {
     /// The type of the storage slot.
     #[wasm_bindgen(js_name = "slotType")]
     pub slot_type: u8,
+    /// The storage patch operation (create, update, or remove).
+    ///
+    /// Full-state writes do not inspect this field, but incremental writes use it to distinguish
+    /// map replacement/removal from an entry-wise update.
+    #[wasm_bindgen(js_name = "patchOperation")]
+    pub patch_operation: u8,
 }
 
 impl JsStorageSlot {
@@ -215,6 +231,7 @@ impl JsStorageSlot {
             slot_name: slot.name().to_string(),
             slot_value: slot.value().to_hex(),
             slot_type: slot.slot_type().to_bytes()[0],
+            patch_operation: 0,
         }
     }
 }
@@ -223,8 +240,12 @@ impl JsStorageSlot {
 // ================================================================================================
 
 /// A JavaScript representation of a storage map entry in an account.
-#[wasm_bindgen(getter_with_clone, inspectable)]
-#[derive(Clone)]
+///
+/// `inspectable` is intentionally omitted — see the note on
+/// `JsAccountUpdate` for the full rationale (#2183).
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JsStorageMapEntry {
     /// The slot name of the map this entry belongs to.
     #[wasm_bindgen(js_name = "slotName")]

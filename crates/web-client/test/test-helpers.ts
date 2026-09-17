@@ -49,7 +49,6 @@ export async function setupWalletAndFaucet(
 }> {
   const wallet = await client.newWallet(
     sdk.AccountStorageMode.private(),
-    true,
     sdk.AuthScheme.AuthRpoFalcon512
   );
   const faucet = await client.newFaucet(
@@ -68,6 +67,88 @@ export async function setupWalletAndFaucet(
     wallet,
     faucet,
   };
+}
+
+/**
+ * Builds a 2-of-3 multisig account and leaves a note sitting consumable by it.
+ *
+ * Transactions on this account do not self-authorize, which is what makes
+ * `executeForSummary`/`executeForSummaryAt` return a summary rather than
+ * rejecting with `TRANSACTION_ALREADY_AUTHORIZED`. That is the co-signing shape
+ * chain anchors exist to serve.
+ */
+export async function setupMultisigWithConsumableNote(
+  client: any,
+  sdk: any
+): Promise<{ multisigAccountId: any; notes: any[] }> {
+  const walletSeed = new Uint8Array(32);
+  crypto.getRandomValues(walletSeed);
+
+  const approverKeys = [
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+    sdk.AuthSecretKey.rpoFalconWithRNG(),
+  ];
+  const multisigComponent = sdk.createAuthFalcon512RpoMultisig(
+    new sdk.AuthFalcon512RpoMultisigConfig(
+      approverKeys.map((key) => key.publicKey().toCommitment()),
+      2
+    )
+  );
+
+  const built = new sdk.AccountBuilder(walletSeed)
+    .storageMode(sdk.AccountStorageMode.private())
+    .withAuthComponent(multisigComponent)
+    .withBasicWalletComponent()
+    .build();
+
+  const multisigAccountId = built.account.id();
+  await client.newAccount(built.account, false);
+  for (const key of approverKeys) {
+    await client.keystore.insert(multisigAccountId, key);
+  }
+
+  // Fund a regular wallet, then have it send a note to the multisig. Minting
+  // straight to the multisig would leave nothing for it to consume.
+  const { wallet, faucet } = await setupWalletAndFaucet(client, sdk);
+  const { createdNoteId } = await mockMint(
+    client,
+    sdk,
+    wallet.id(),
+    faucet.id()
+  );
+  await mockConsume(client, sdk, wallet.id(), createdNoteId);
+
+  const sendRequest = await client.newSendTransactionRequest(
+    wallet.id(),
+    multisigAccountId,
+    faucet.id(),
+    sdk.NoteType.Public,
+    sdk.u64(100),
+    null,
+    null
+  );
+  const sendTxId = await client.submitNewTransaction(wallet.id(), sendRequest);
+  await client.proveBlock();
+  await client.syncState();
+
+  const [sendTxRecord] = await client.getTransactions(
+    sdk.TransactionFilter.ids([sendTxId])
+  );
+  const notes = await Promise.all(
+    sendTxRecord
+      .outputNotes()
+      .notes()
+      .map(async (note: any) => {
+        const record = await client.getInputNote(note.id().toString());
+        if (!record) {
+          throw new Error(`Note ${note.id().toString()} not found`);
+        }
+        return record.toNote();
+      })
+  );
+
+  return { multisigAccountId, notes };
 }
 
 /**
@@ -135,7 +216,10 @@ export async function mockConsume(
   if (!inputNoteRecord) throw new Error(`Note ${noteId} not found`);
 
   const note = inputNoteRecord.toNote();
-  const consumeRequest = client.newConsumeTransactionRequest([note]);
+  const consumeRequest = await client.newConsumeTransactionRequest(
+    [note],
+    accountId
+  );
   const txId = await client.submitNewTransaction(accountId, consumeRequest);
   await client.proveBlock();
   await client.syncState();
@@ -267,11 +351,8 @@ export async function mockSwap(
   );
 
   const expectedOutputNotes = swapRequest.expectedOutputOwnNotes();
-  const expectedPaybackNoteDetails = swapRequest
-    .expectedFutureNotes()
-    .map((futureNote: any) => futureNote.noteDetails);
 
-  const swapTxId = await client.submitNewTransaction(accountAId, swapRequest);
+  await client.submitNewTransaction(accountAId, swapRequest);
   await client.proveBlock();
   await client.syncState();
 
@@ -281,19 +362,37 @@ export async function mockSwap(
   if (!swapNoteRecord) throw new Error(`Swap note ${swapNoteId} not found`);
 
   const swapNote = swapNoteRecord.toNote();
-  const consumeRequest1 = client.newConsumeTransactionRequest([swapNote]);
-  await client.submitNewTransaction(accountBId, consumeRequest1);
+  const consumeRequest1 = await client.newConsumeTransactionRequest(
+    [swapNote],
+    accountBId
+  );
+  const consumeTxId1 = await client.submitNewTransaction(
+    accountBId,
+    consumeRequest1
+  );
   await client.proveBlock();
   await client.syncState();
 
-  // Consume payback note for account A
-  const paybackNoteId = expectedPaybackNoteDetails[0].id().toString();
+  // Account B's consume of the swap note emits the payback note that account A
+  // consumes. Derive its id from the consume transaction's output notes
+  // (NoteDetails no longer exposes id()).
+  const [consumeTxRecord1] = await client.getTransactions(
+    sdk.TransactionFilter.ids([consumeTxId1])
+  );
+  const paybackNoteId = consumeTxRecord1
+    .outputNotes()
+    .notes()[0]
+    .id()
+    .toString();
   const paybackNoteRecord = await client.getInputNote(paybackNoteId);
   if (!paybackNoteRecord)
     throw new Error(`Payback note ${paybackNoteId} not found`);
 
   const paybackNote = paybackNoteRecord.toNote();
-  const consumeRequest2 = client.newConsumeTransactionRequest([paybackNote]);
+  const consumeRequest2 = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    accountAId
+  );
   await client.submitNewTransaction(accountAId, consumeRequest2);
   await client.proveBlock();
   await client.syncState();
@@ -379,18 +478,21 @@ async function createAndFillPswapNote(
   // 2. Filler consumes (fills) the PSWAP note from its own vault.
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const consumeRequest = client.newPswapConsumeTransactionRequest(
+  const consumeRequest = await client.newPswapConsumeTransactionRequest(
     pswapNoteRecord.toNote(),
     fillerId,
     sdk.u64(fillAmount),
     sdk.u64(0)
   );
+  // Submit the fill but leave the block unproven: the creator consumes the
+  // payback note in the same block (see the callers below). A private payback
+  // note carries a PSWAP attachment that the store cannot reconstruct from chain
+  // data once committed, so it must be consumed as a same-block unauthenticated
+  // note using the full note emitted here.
   const consumeTxId = await client.submitNewTransaction(
     fillerId,
     consumeRequest
   );
-  await client.proveBlock();
-  await client.syncState();
 
   const [consumeTxRecord] = await client.getTransactions(
     sdk.TransactionFilter.ids([consumeTxId])
@@ -441,14 +543,17 @@ export async function mockPswapFullFill(
     );
   }
 
-  // Creator consumes the payback note carrying the requested asset.
-  const paybackNoteId = consumeOutputNotes[0].id().toString();
-  const paybackNoteRecord = await client.getInputNote(paybackNoteId);
-  if (!paybackNoteRecord)
-    throw new Error(`Payback note ${paybackNoteId} not found`);
-  const paybackConsume = client.newConsumeTransactionRequest([
-    paybackNoteRecord.toNote(),
-  ]);
+  // Creator consumes the payback note carrying the requested asset, in the same
+  // block the filler created it, using the full note emitted by the filler's
+  // consume transaction (a private payback note's PSWAP attachment cannot be
+  // rebuilt from the store once committed).
+  const paybackNote = consumeOutputNotes[0].intoFull();
+  if (!paybackNote)
+    throw new Error("Payback note is not available in full form");
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
   await client.submitNewTransaction(creatorId, paybackConsume);
   await client.proveBlock();
   await client.syncState();
@@ -509,26 +614,30 @@ export async function mockPswapPartialFill(
   // The remainder PSWAP note carries the offered asset; the payback note
   // carries the requested asset destined for the creator.
   const offeredFaucetStr = offeredFaucetId.toString();
-  let paybackNoteId: string | undefined;
+  let paybackOutputNote: any;
   let remainderOfferedAmount: string | undefined;
   for (const note of consumeOutputNotes) {
     const asset = note.assets()?.fungibleAssets()[0];
     if (asset && asset.faucetId().toString() === offeredFaucetStr) {
       remainderOfferedAmount = asset.amount().toString();
     } else {
-      paybackNoteId = note.id().toString();
+      paybackOutputNote = note;
     }
   }
 
-  if (!paybackNoteId)
+  if (!paybackOutputNote)
     throw new Error("Payback note not found in consume output");
 
-  const paybackNoteRecord = await client.getInputNote(paybackNoteId);
-  if (!paybackNoteRecord)
-    throw new Error(`Payback note ${paybackNoteId} not found`);
-  const paybackConsume = client.newConsumeTransactionRequest([
-    paybackNoteRecord.toNote(),
-  ]);
+  // Consume the full payback note emitted by the filler's consume transaction,
+  // in the same block it was created; a private payback note's PSWAP attachment
+  // cannot be rebuilt from the store once committed.
+  const paybackNote = paybackOutputNote.intoFull();
+  if (!paybackNote)
+    throw new Error("Payback note is not available in full form");
+  const paybackConsume = await client.newConsumeTransactionRequest(
+    [paybackNote],
+    creatorId
+  );
   await client.submitNewTransaction(creatorId, paybackConsume);
   await client.proveBlock();
   await client.syncState();
@@ -582,7 +691,7 @@ export async function mockPswapCancel(
 
   const pswapNoteRecord = await client.getInputNote(pswapNoteId);
   if (!pswapNoteRecord) throw new Error(`PSWAP note ${pswapNoteId} not found`);
-  const cancelRequest = client.newPswapCancelTransactionRequest(
+  const cancelRequest = await client.newPswapCancelTransactionRequest(
     pswapNoteRecord.toNote(),
     creatorId
   );
@@ -627,7 +736,11 @@ export function parseNetworkId(sdk: any, networkId: string): any {
  * Creates a fresh mock client (separate from the test fixture's client).
  * Useful for tests that need multiple independent clients.
  */
-export async function createFreshMockClient(sdk: any): Promise<any | null> {
+export async function createFreshMockClient(
+  sdk: any,
+  serializedMockChain?: any,
+  serializedNoteTransport?: any
+): Promise<any | null> {
   let rawSdk;
   try {
     rawSdk = loadNodeSdk();
@@ -641,8 +754,8 @@ export async function createFreshMockClient(sdk: any): Promise<any | null> {
     path.join(dir, "store.db"),
     path.join(dir, "keystore"),
     null,
-    null,
-    null
+    serializedMockChain ?? null,
+    serializedNoteTransport ?? null
   );
 
   return wrapNodeClient(rawClient, rawSdk);
@@ -692,7 +805,8 @@ function wrapClass(Cls: any): any {
 
 /**
  * Wraps a raw napi WebClient for MidenClient compatibility.
- * Handles syncState → syncStateImpl, BigInt → Number, null → undefined.
+ * Handles syncState → syncStateImpl (and the new split-sync siblings),
+ * BigInt → Number, null → undefined.
  */
 function wrapClientForMidenClient(
   rawClient: any,
@@ -703,17 +817,20 @@ function wrapClientForMidenClient(
     get(target, prop) {
       if (prop === "syncState")
         return (...args: any[]) => target.syncStateImpl(...args);
-      if (prop === "syncStateWithTimeout") return () => target.syncStateImpl();
+      if (prop === "syncChain")
+        return (...args: any[]) => target.syncChainImpl(...args);
+      if (prop === "syncNoteTransport")
+        return (...args: any[]) => target.syncNoteTransportImpl(...args);
       if (prop === "storeName") return storeName || "mock";
       if (prop === "wasmWebClient") return target;
       if (prop === "proveBlock") return async () => target.proveBlock();
       if (prop === "newWallet") {
-        return (mode: any, mutable: any, authScheme: any, seed?: any) => {
+        return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, mutable, authScheme, normSeed ?? null);
+          return target.newWallet(mode, authScheme, normSeed ?? null);
         };
       }
       if (prop === "newFaucet") {

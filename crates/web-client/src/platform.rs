@@ -26,6 +26,29 @@ pub(crate) fn from_str_err(msg: &str) -> JsErr {
     napi::Error::from_reason(msg)
 }
 
+/// Create an error carrying a stable machine-readable `code` property, so JS
+/// callers can branch on the code instead of matching the (changeable) message
+/// text. The worker shim forwards `code` across the worker boundary.
+#[cfg(feature = "browser")]
+pub(crate) fn from_str_err_with_code(msg: &str, code: &str) -> JsErr {
+    let js_error: wasm_bindgen::JsValue = wasm_bindgen::JsError::new(msg).into();
+    let _ = js_sys::Reflect::set(
+        &js_error,
+        &wasm_bindgen::JsValue::from_str("code"),
+        &wasm_bindgen::JsValue::from_str(code),
+    );
+    js_error
+}
+
+/// Create an error carrying a stable machine-readable `code`. The Node.js
+/// binding's error `code` property is napi's fixed `Status` enum (always
+/// `GenericFailure` here), so the stable code is prefixed onto the message
+/// instead: `"<CODE>: <message>"`.
+#[cfg(feature = "nodejs")]
+pub(crate) fn from_str_err_with_code(msg: &str, code: &str) -> JsErr {
+    napi::Error::from_reason(format!("{code}: {msg}"))
+}
+
 // BYTE TYPES
 // ================================================================================================
 
@@ -123,12 +146,11 @@ pub fn js_u64_to_u64(val: JsU64) -> u64 {
     #[cfg(feature = "nodejs")]
     {
         let (signed, value, lossless) = val.get_u64();
-        if signed || !lossless {
-            panic!(
-                "BigInt value is outside the u64 range (0..2^64); \
-                 got signed={signed}, lossless={lossless}"
-            );
-        }
+        assert!(
+            !signed && lossless,
+            "BigInt value is outside the u64 range (0..2^64); \
+             got signed={signed}, lossless={lossless}"
+        );
         value
     }
 }

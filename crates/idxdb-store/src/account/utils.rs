@@ -5,26 +5,19 @@ use alloc::vec::Vec;
 use miden_client::account::{
     Account,
     AccountCode,
-    AccountDelta,
     AccountHeader,
     AccountId,
+    AccountPatch,
     AccountStorage,
     Address,
-    StorageMap,
     StorageSlotContent,
     StorageSlotName,
     StorageSlotType,
 };
-use miden_client::asset::{
-    Asset,
-    AssetVault,
-    AssetVaultKey,
-    FungibleAsset,
-    NonFungibleDeltaAction,
-};
-use miden_client::store::{AccountSmtForest, AccountStatus, StoreError};
+use miden_client::asset::AssetVault;
+use miden_client::store::{AccountStatus, ClientAccountType, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
-use miden_client::{EMPTY_WORD, Felt, Word};
+use miden_client::{Felt, Word};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
@@ -32,8 +25,8 @@ use super::js_bindings::{
     JsStorageMapEntry,
     JsStorageSlot,
     JsVaultAsset,
+    idxdb_apply_account_patch,
     idxdb_apply_full_account_state,
-    idxdb_apply_transaction_delta,
     idxdb_upsert_account_code,
     idxdb_upsert_account_record,
     idxdb_upsert_account_storage,
@@ -89,7 +82,11 @@ pub async fn upsert_account_asset_vault(
     Ok(())
 }
 
-pub async fn upsert_account_record(db_id: &str, account: &Account) -> Result<(), JsValue> {
+pub async fn upsert_account_record(
+    db_id: &str,
+    account: &Account,
+    client_account_type: ClientAccountType,
+) -> Result<(), JsValue> {
     let account_id_str = account.id().to_string();
     let code_root = account.code().commitment().to_string();
     let storage_root = account.storage().to_commitment().to_string();
@@ -98,6 +95,7 @@ pub async fn upsert_account_record(db_id: &str, account: &Account) -> Result<(),
     let nonce = account.nonce().to_string();
     let account_seed = account.seed().map(|seed| seed.to_bytes());
     let commitment = account.to_commitment().to_string();
+    let watched = matches!(client_account_type, ClientAccountType::Watched);
 
     let promise = idxdb_upsert_account_record(
         db_id,
@@ -109,6 +107,7 @@ pub async fn upsert_account_record(db_id: &str, account: &Account) -> Result<(),
         committed,
         commitment,
         account_seed,
+        watched,
     );
     JsFuture::from(promise).await?;
 
@@ -128,25 +127,31 @@ pub async fn insert_account_address(
     Ok(())
 }
 
-pub async fn remove_account_address(db_id: &str, address: Address) -> Result<(), JsValue> {
+/// Resolves to whether the address was tracked, which `Store::remove_address`
+/// reports to its caller.
+pub async fn remove_account_address(db_id: &str, address: Address) -> Result<bool, JsValue> {
     let serialized_address = address.to_bytes();
     let promise = crate::account::js_bindings::idxdb_remove_account_address(
         db_id,
         serialized_address.clone(),
     );
-    JsFuture::from(promise).await?;
+    let removed = JsFuture::from(promise).await?;
 
-    Ok(())
+    removed
+        .as_bool()
+        .ok_or_else(|| JsValue::from_str("removeAccountAddress did not resolve to a boolean"))
 }
 
 pub fn parse_account_record_idxdb_object(
     account_header_idxdb: AccountRecordIdxdbObject,
-) -> Result<(AccountHeader, AccountStatus), StoreError> {
+) -> Result<(AccountHeader, AccountStatus, ClientAccountType), StoreError> {
     let native_account_id: AccountId = AccountId::from_hex(&account_header_idxdb.id)?;
     let native_nonce: u64 = account_header_idxdb
         .nonce
         .parse::<u64>()
         .map_err(|err| StoreError::ParsingError(err.to_string()))?;
+    let nonce = Felt::new(native_nonce)
+        .map_err(|err| StoreError::ParsingError(format!("invalid account nonce: {err}")))?;
     let account_seed = account_header_idxdb
         .account_seed
         .map(|seed| Word::read_from_bytes(&seed))
@@ -154,7 +159,7 @@ pub fn parse_account_record_idxdb_object(
 
     let account_header = AccountHeader::new(
         native_account_id,
-        Felt::new(native_nonce),
+        nonce,
         Word::try_from(&account_header_idxdb.vault_root)?,
         Word::try_from(&account_header_idxdb.storage_root)?,
         Word::try_from(&account_header_idxdb.code_root)?,
@@ -166,7 +171,13 @@ pub fn parse_account_record_idxdb_object(
         _ => AccountStatus::Tracked,
     };
 
-    Ok((account_header, status))
+    let client_account_type = if account_header_idxdb.watched {
+        ClientAccountType::Watched
+    } else {
+        ClientAccountType::Native
+    };
+
+    Ok((account_header, status, client_account_type))
 }
 
 pub fn parse_account_address_idxdb_object(
@@ -179,124 +190,44 @@ pub fn parse_account_address_idxdb_object(
     Ok((address, native_account_id))
 }
 
-/// Computes updated storage slot roots from the delta using the SMT forest.
+/// Builds the JS-side objects an account-patch write needs: the updated storage slots, the map
+/// entries carried by the patch, and the changed vault assets (updates plus removal markers).
 ///
-/// Value slots are taken directly from the delta. Map slots are computed incrementally
-/// by applying the map delta entries to the old root via the SMT forest.
-pub fn compute_storage_delta(
-    smt_forest: &mut AccountSmtForest,
-    old_map_roots: &BTreeMap<StorageSlotName, Word>,
-    delta: &AccountDelta,
-) -> Result<BTreeMap<StorageSlotName, (Word, StorageSlotType)>, StoreError> {
-    let mut updated_slots: BTreeMap<StorageSlotName, (Word, StorageSlotType)> = delta
+/// `new_map_roots` holds the root the forest computed for each changed map slot. Removed slots are
+/// absent from it: their rows are deleted rather than rewritten, so they have no root. Everything
+/// else is read off `patch`.
+pub fn build_account_patch_payload(
+    new_map_roots: &BTreeMap<StorageSlotName, Word>,
+    patch: &AccountPatch,
+) -> (Vec<JsStorageSlot>, Vec<JsStorageMapEntry>, Vec<JsVaultAsset>) {
+    // A removed map has no root; its empty value tells the JS layer to delete the row.
+    let mut js_slots: Vec<JsStorageSlot> = patch
         .storage()
         .values()
-        .map(|(slot_name, value)| (slot_name.clone(), (*value, StorageSlotType::Value)))
-        .collect();
-
-    let default_map_root = StorageMap::default().root();
-
-    for (slot_name, map_delta) in delta.storage().maps() {
-        let old_root = old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
-        let new_root = smt_forest.update_storage_map_nodes(
-            old_root,
-            map_delta.entries().iter().map(|(key, value)| (*key, *value)),
-        )?;
-        updated_slots.insert(slot_name.clone(), (new_root, StorageSlotType::Map));
-    }
-
-    Ok(updated_slots)
-}
-
-/// Computes the new vault state from old assets and the vault delta.
-///
-/// Returns (`updated_assets`, `removed_vault_keys`) where:
-/// - `updated_assets` contains assets with their new values (for DB insertion and SMT update)
-/// - `removed_vault_keys` contains vault keys for assets removed from the vault
-pub fn compute_vault_delta(
-    old_vault_assets: &[Asset],
-    delta: &AccountDelta,
-) -> Result<(Vec<Asset>, Vec<AssetVaultKey>), StoreError> {
-    let mut updated_assets = Vec::new();
-    let mut removed_vault_keys = Vec::new();
-
-    // Build lookup map from vault key to FungibleAsset
-    let mut fungible_map: BTreeMap<AssetVaultKey, FungibleAsset> = old_vault_assets
-        .iter()
-        .filter_map(|asset| match asset {
-            Asset::Fungible(fa) => Some((fa.vault_key(), *fa)),
-            Asset::NonFungible(_) => None,
-        })
-        .collect();
-
-    // Process fungible deltas
-    for (vault_key, delta_amount) in delta.vault().fungible().iter() {
-        let delta_asset = FungibleAsset::new(vault_key.faucet_id(), delta_amount.unsigned_abs())?;
-
-        let asset = match fungible_map.remove(vault_key) {
-            Some(existing) => {
-                if *delta_amount >= 0 {
-                    existing.add(delta_asset)?
-                } else {
-                    existing.sub(delta_asset)?
-                }
-            },
-            None => delta_asset,
-        };
-
-        if asset.amount() > 0 {
-            updated_assets.push(Asset::Fungible(asset));
-        } else {
-            removed_vault_keys.push(asset.vault_key());
-        }
-    }
-
-    // Process non-fungible deltas
-    for (nft, action) in delta.vault().non_fungible().iter() {
-        match action {
-            NonFungibleDeltaAction::Add => {
-                updated_assets.push(Asset::NonFungible(*nft));
-            },
-            NonFungibleDeltaAction::Remove => {
-                removed_vault_keys.push(nft.vault_key());
-            },
-        }
-    }
-
-    Ok((updated_assets, removed_vault_keys))
-}
-
-/// Applies a transaction's account delta atomically in a single Dexie transaction.
-///
-/// Takes pre-computed values (storage roots from SMT forest, vault changes) instead of
-/// the full Account object. This avoids loading account code and full storage map entries.
-pub async fn apply_transaction_delta(
-    db_id: &str,
-    account_id: AccountId,
-    final_header: &AccountHeader,
-    updated_storage_slots: &BTreeMap<StorageSlotName, (Word, StorageSlotType)>,
-    updated_assets: &[Asset],
-    removed_vault_keys: &[AssetVaultKey],
-    delta: &AccountDelta,
-) -> Result<(), JsValue> {
-    let account_id_str = account_id.to_string();
-    let nonce_str = final_header.nonce().to_string();
-
-    // Build updated slot JS objects from pre-computed storage roots
-    let mut js_slots = Vec::new();
-    for (slot_name, (value, slot_type)) in updated_storage_slots {
-        js_slots.push(JsStorageSlot {
+        .map(|(slot_name, value_patch)| JsStorageSlot {
             slot_name: slot_name.to_string(),
-            slot_value: value.to_hex(),
-            slot_type: *slot_type as u8,
-        });
-    }
+            slot_value: value_patch.value().map_or_else(String::new, |value| value.to_hex()),
+            slot_type: StorageSlotType::Value as u8,
+            patch_operation: value_patch.patch_op().as_u8(),
+        })
+        .chain(patch.storage().maps().map(|(slot_name, map_patch)| JsStorageSlot {
+            slot_name: slot_name.to_string(),
+            slot_value: new_map_roots.get(slot_name).map_or_else(String::new, Word::to_hex),
+            slot_type: StorageSlotType::Map as u8,
+            patch_operation: map_patch.patch_op().as_u8(),
+        }))
+        .collect();
+    js_slots.sort_by(|a, b| a.slot_name.cmp(&b.slot_name));
 
-    // Build changed map entries from delta
+    // Map creation/removal is represented by the slot's patch operation above; individual entries
+    // carry their final values.
     let mut changed_map_entries = Vec::new();
-    for (slot_name, map_delta) in delta.storage().maps() {
-        for (key, value) in map_delta.entries() {
-            let value_str = if *value == EMPTY_WORD {
+    for (slot_name, map_patch) in patch.storage().maps() {
+        let Some(entries) = map_patch.entries() else {
+            continue;
+        };
+        for (key, value) in entries.as_map() {
+            let value_str = if value.is_empty() {
                 String::new()
             } else {
                 value.to_hex()
@@ -310,16 +241,35 @@ pub async fn apply_transaction_delta(
         }
     }
 
-    // Build changed assets: updated assets + removal markers
-    let mut changed_assets: Vec<JsVaultAsset> =
-        updated_assets.iter().map(JsVaultAsset::from_asset).collect();
-
-    for vault_key in removed_vault_keys {
-        changed_assets.push(JsVaultAsset {
-            vault_key: vault_key.to_string(),
+    let changed_assets: Vec<JsVaultAsset> = patch
+        .vault()
+        .updated_assets()
+        .map(|asset| JsVaultAsset::from_asset(&asset))
+        .chain(patch.vault().removed_asset_ids().map(|asset_id| JsVaultAsset {
+            vault_key: asset_id.to_string(),
             asset: String::new(),
-        });
-    }
+        }))
+        .collect();
+
+    (js_slots, changed_map_entries, changed_assets)
+}
+
+/// Applies an account patch atomically in a single Dexie transaction.
+///
+/// Takes the patch plus the map roots the SMT forest computed for it, instead of the full Account
+/// object. This avoids loading account code and full storage map entries.
+pub async fn apply_account_patch(
+    db_id: &str,
+    account_id: AccountId,
+    final_header: &AccountHeader,
+    new_map_roots: &BTreeMap<StorageSlotName, Word>,
+    patch: &AccountPatch,
+) -> Result<(), JsValue> {
+    let account_id_str = account_id.to_string();
+    let nonce_str = final_header.nonce().to_string();
+
+    let (js_slots, changed_map_entries, changed_assets) =
+        build_account_patch_payload(new_map_roots, patch);
 
     // Account record fields from final header
     let code_root = final_header.code_commitment().to_string();
@@ -327,7 +277,7 @@ pub async fn apply_transaction_delta(
     let vault_root = final_header.vault_root().to_string();
     let committed = account_id.is_public();
     let commitment = final_header.to_commitment().to_string();
-    JsFuture::from(idxdb_apply_transaction_delta(
+    JsFuture::from(idxdb_apply_account_patch(
         db_id,
         account_id_str,
         nonce_str,
@@ -343,6 +293,19 @@ pub async fn apply_transaction_delta(
     .await?;
 
     Ok(())
+}
+
+/// Converts a full-state account patch into an [`Account`] and verifies that its commitment
+/// matches the expected final header.
+pub fn account_from_full_state_patch(
+    patch: &AccountPatch,
+    expected_header: &AccountHeader,
+) -> Result<Account, StoreError> {
+    let account = Account::try_from(patch)?;
+    if account.to_commitment() != expected_header.to_commitment() {
+        return Err(StoreError::AccountCommitmentMismatch(account.id()));
+    }
+    Ok(account)
 }
 
 /// Writes the full account state atomically in a single Dexie transaction.

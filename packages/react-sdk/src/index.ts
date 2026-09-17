@@ -29,6 +29,9 @@ export { useNoteStream } from "./hooks/useNoteStream";
 export { useTransactionHistory } from "./hooks/useTransactionHistory";
 export { useSyncState } from "./hooks/useSyncState";
 export { useAssetMetadata } from "./hooks/useAssetMetadata";
+export { usePswapLineages } from "./hooks/usePswapLineages";
+export { usePswapLineagesFor } from "./hooks/usePswapLineagesFor";
+export { usePswapLineage } from "./hooks/usePswapLineage";
 
 // Mutation Hooks
 export { useCreateWallet } from "./hooks/useCreateWallet";
@@ -39,12 +42,17 @@ export { useMultiSend } from "./hooks/useMultiSend";
 export { useWaitForCommit } from "./hooks/useWaitForCommit";
 export { useWaitForNotes } from "./hooks/useWaitForNotes";
 export { useMint } from "./hooks/useMint";
+export { useBridge } from "./hooks/useBridge";
 export { useConsume } from "./hooks/useConsume";
 export { useSwap } from "./hooks/useSwap";
 export { usePswapCreate } from "./hooks/usePswapCreate";
 export { usePswapConsume } from "./hooks/usePswapConsume";
 export { usePswapCancel } from "./hooks/usePswapCancel";
+export { usePswapCancelByOrder } from "./hooks/usePswapCancelByOrder";
+export { useCreateNetworkNote } from "./hooks/useCreateNetworkNote";
 export { useTransaction } from "./hooks/useTransaction";
+export { useChainAnchor } from "./hooks/useChainAnchor";
+export { usePreview } from "./hooks/usePreview";
 export { useExecuteProgram } from "./hooks/useExecuteProgram";
 export { useCompile } from "./hooks/useCompile";
 export { useSessionAccount } from "./hooks/useSessionAccount";
@@ -87,12 +95,20 @@ export type {
   WaitForCommitOptions,
   WaitForNotesOptions,
   MintOptions,
+  BridgeOptions,
+  CreateNetworkNoteOptions,
+  NetworkNoteResult,
   ConsumeOptions,
   SwapOptions,
   PswapCreateOptions,
   PswapConsumeOptions,
   PswapCancelOptions,
+  PswapCancelByOrderOptions,
+  PswapLineagesResult,
+  PswapLineageResult,
   ExecuteTransactionOptions,
+  CaptureAnchorOptions,
+  PreviewTransactionOptions,
   TransactionResult,
   ExecuteProgramOptions,
   ExecuteProgramResult,
@@ -125,9 +141,12 @@ export type {
   TransactionFilter,
   TransactionRecord,
   TransactionRequest,
+  TransactionSummary,
+  ChainAnchor,
   NoteType,
   Note,
   AccountStorageMode,
+  PswapLineageRecord,
 } from "./types";
 
 // Default configuration values
@@ -149,7 +168,7 @@ export {
 export type { NoteAttachmentData } from "./utils/noteAttachment";
 export { bytesToBigInt, bigIntToBytes, concatBytes } from "./utils/bytes";
 export { MidenError, wrapWasmError } from "./utils/errors";
-export type { MidenErrorCode } from "./utils/errors";
+export type { CodedError, MidenErrorCode, WasmErrorCode } from "./utils/errors";
 export { waitForWalletDetection } from "./utils/walletDetection";
 export type { WalletAdapterLike } from "./utils/walletDetection";
 export {
@@ -168,12 +187,17 @@ export type { UseMultiSendResult } from "./hooks/useMultiSend";
 export type { UseWaitForCommitResult } from "./hooks/useWaitForCommit";
 export type { UseWaitForNotesResult } from "./hooks/useWaitForNotes";
 export type { UseMintResult } from "./hooks/useMint";
+export type { UseBridgeResult } from "./hooks/useBridge";
 export type { UseConsumeResult } from "./hooks/useConsume";
 export type { UseSwapResult } from "./hooks/useSwap";
 export type { UsePswapCreateResult } from "./hooks/usePswapCreate";
 export type { UsePswapConsumeResult } from "./hooks/usePswapConsume";
 export type { UsePswapCancelResult } from "./hooks/usePswapCancel";
+export type { UsePswapCancelByOrderResult } from "./hooks/usePswapCancelByOrder";
+export type { UseCreateNetworkNoteResult } from "./hooks/useCreateNetworkNote";
 export type { UseTransactionResult } from "./hooks/useTransaction";
+export type { UseChainAnchorResult } from "./hooks/useChainAnchor";
+export type { UsePreviewResult } from "./hooks/usePreview";
 export type { UseExportStoreResult } from "./hooks/useExportStore";
 export type {
   UseImportStoreResult,
@@ -186,3 +210,6 @@ export type { UseExecuteProgramResult } from "./hooks/useExecuteProgram";
 export type { UseCompileResult } from "./hooks/useCompile";
 export type { UseSyncStateResult } from "./hooks/useSyncState";
 export type { UseTransactionHistoryResult } from "./hooks/useTransactionHistory";
+export type { UsePswapLineagesResult } from "./hooks/usePswapLineages";
+export type { UsePswapLineagesForResult } from "./hooks/usePswapLineagesFor";
+export type { UsePswapLineageResult } from "./hooks/usePswapLineage";

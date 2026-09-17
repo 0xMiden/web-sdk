@@ -6,7 +6,7 @@ import {
 } from "@miden-sdk/miden-sdk";
 import { useAssetMetadataStore, useMidenStore } from "../store/MidenStore";
 import type { AssetMetadata } from "../types";
-import { isFaucetId, parseAccountId } from "../utils/accountParsing";
+import { parseAccountId } from "../utils/accountParsing";
 
 const inflight = new Map<string, Promise<void>>();
 const rpcClients = new Map<string, RpcClient>();
@@ -32,7 +32,6 @@ const fetchAssetMetadata = async (
 ): Promise<AssetMetadata | null> => {
   try {
     const accountId = parseAccountId(assetId);
-    if (!isFaucetId(accountId)) return null;
     const fetched = await rpcClient.getAccountDetails(accountId);
     const account = fetched.account?.();
 

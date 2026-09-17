@@ -14,7 +14,6 @@ test.describe("send transaction tests", () => {
       const { wallet: sender, faucet } = await helpers.setupWalletAndFaucet();
       const target = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -54,7 +53,6 @@ test.describe("send transaction tests", () => {
       const { wallet: sender, faucet } = await helpers.setupWalletAndFaucet();
       const receiver = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -87,7 +85,10 @@ test.describe("send transaction tests", () => {
       // Receiver consumes by note ID
       const inputNote = await client.getInputNote(sentNoteId);
       const note = inputNote.toNote();
-      const consumeRequest = client.newConsumeTransactionRequest([note]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [note],
+        receiver.id()
+      );
       await client.submitNewTransaction(receiver.id(), consumeRequest);
       await client.proveBlock();
       await client.syncState();
@@ -110,10 +111,9 @@ test.describe("send transaction tests", () => {
 
 test.describe("custom transaction tests", () => {
   test("custom transaction completes successfully", async ({ run }) => {
-    await run(async ({ client, sdk }) => {
+    const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
@@ -165,7 +165,7 @@ test.describe("custom transaction tests", () => {
         use miden::protocol::active_account
         use miden::protocol::account_id
         use miden::protocol::active_note
-        use miden::standards::wallets::basic->basic_wallet
+        use miden::standards::wallets::basic as basic_wallet
         use miden::core::mem
         @note_script
         pub proc main
@@ -218,10 +218,10 @@ test.describe("custom transaction tests", () => {
             # => [account_id_suffix, account_id_prefix, target_account_id_suffix, target_account_id_prefix]
 
             # ensure account_id = target_account_id, fails otherwise
-            exec.account_id::is_equal assert.err="P2ID's target account address and transaction address do not match"
+            exec.account_id::eq assert.err="P2ID's target account address and transaction address do not match"
             # => []
 
-            exec.basic_wallet::add_assets_to_account
+            exec.basic_wallet::move_note_assets_to_account
             # => []
         end
       `;
@@ -267,7 +267,8 @@ test.describe("custom transaction tests", () => {
       // Just like in the miden test, you can modify this script to get the execution to fail
       // by modifying the assert (assertedValue = "0" means success)
       const txScript = `
-        begin
+        @transaction_script
+        pub proc main
             push.0 push.0
             # => [0, 0]
             assert_eq
@@ -289,26 +290,37 @@ test.describe("custom transaction tests", () => {
       );
       adviceMap.insert(noteArgsCommitment2, new sdk.FeltArray(makeNoteArgs()));
 
-      const transactionRequest2 = new sdk.TransactionRequestBuilder()
+      // Build the request without an advice map, then attach the advice map to
+      // the already-built request via the request-level extendAdviceMap (issue
+      // #202). This mirrors a signer/guardian flow where advice (e.g. a
+      // signature) only becomes available after the request is constructed.
+      const baseRequest = new sdk.TransactionRequestBuilder()
         .withInputNotes(new sdk.NoteAndArgsArray([noteAndArgs]))
         .withCustomScript(transactionScript)
-        .extendAdviceMap(adviceMap)
         .build();
 
-      // Execute and Submit Transaction
+      // The getter exposes the (here empty) advice map carried by the request.
+      const adviceMapBeforeExtend = baseRequest.adviceMap();
+
+      const transactionRequest2 = baseRequest.extendAdviceMap(adviceMap);
+
+      // Execute and Submit Transaction. Proving consumes the merged advice map:
+      // the note script reads the note args back out of it, so a successful
+      // submission proves extendAdviceMap fed the merged entries to execution.
       await client.submitNewTransaction(wallet.id(), transactionRequest2);
       await client.proveBlock();
       await client.syncState();
 
-      return {};
+      return { adviceMapPresent: adviceMapBeforeExtend != null };
     });
+
+    expect(result.adviceMapPresent).toBe(true);
   });
 
   test("custom transaction fails with invalid assert", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
       const wallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucet = await client.newFaucet(
@@ -349,7 +361,7 @@ test.describe("custom transaction tests", () => {
         use miden::protocol::active_account
         use miden::protocol::account_id
         use miden::protocol::active_note
-        use miden::standards::wallets::basic->basic_wallet
+        use miden::standards::wallets::basic as basic_wallet
         use miden::core::mem
         @note_script
         pub proc main
@@ -368,8 +380,8 @@ test.describe("custom transaction tests", () => {
             eq.2 assert.err="P2ID script expects exactly 2 note storage items"
             dup add.1 mem_load swap mem_load
             exec.active_account::get_id
-            exec.account_id::is_equal assert.err="P2ID's target account address and transaction address do not match"
-            exec.basic_wallet::add_assets_to_account
+            exec.account_id::eq assert.err="P2ID's target account address and transaction address do not match"
+            exec.basic_wallet::move_note_assets_to_account
         end
       `;
 
@@ -404,7 +416,8 @@ test.describe("custom transaction tests", () => {
 
       // Failing tx script: asserts 0 == 1
       const txScript = `
-        begin
+        @transaction_script
+        pub proc main
             push.0 push.1
             # => [0, 1]
             assert_eq
@@ -455,7 +468,6 @@ test.describe("custom transaction with multiple output notes", () => {
       const amount = sdk.u64(10);
       const target = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
@@ -525,7 +537,6 @@ test.describe("custom transaction with multiple output notes", () => {
       const amount = sdk.u64(10);
       const target = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

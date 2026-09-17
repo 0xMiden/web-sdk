@@ -73,7 +73,7 @@ export const mintTransaction = async (
       return {
         transactionId: mintTransactionResult.executedTransaction().id().toHex(),
         numOutputNotesCreated: mintTransactionResult.createdNotes().numNotes(),
-        nonce: mintTransactionResult.accountDelta().nonceDelta().toString(),
+        nonce: mintTransactionResult.accountPatch().finalNonce().toString(),
         createdNoteId: mintTransactionResult
           .createdNotes()
           .notes()[0]
@@ -147,8 +147,8 @@ export const mintPublicTransaction = async (
           .numNotes(),
         nonce: mintTransactionUpdate
           .executedTransaction()
-          .accountDelta()
-          .nonceDelta()
+          .accountPatch()
+          .finalNonce()
           .toString(),
         createdNoteId: mintTransactionUpdate
           .executedTransaction()
@@ -362,9 +362,6 @@ export const swapTransaction = async (
       );
 
       let expectedOutputNotes = swapTransactionRequest.expectedOutputOwnNotes();
-      let expectedPaybackNoteDetails = swapTransactionRequest
-        .expectedFutureNotes()
-        .map((futureNote) => futureNote.noteDetails);
 
       let swapTransactionUpdate =
         await window.helpers.executeAndApplyTransaction(
@@ -386,7 +383,10 @@ export const swapTransaction = async (
       }
 
       let note = inputNoteRecord.toNote();
-      let txRequest1 = client.newConsumeTransactionRequest([note]);
+      let txRequest1 = await client.newConsumeTransactionRequest(
+        [note],
+        accountBId
+      );
 
       let consumeTransaction1Result =
         await window.helpers.executeAndApplyTransaction(
@@ -399,16 +399,25 @@ export const swapTransaction = async (
         consumeTransaction1Result.executedTransaction().id().toHex()
       );
 
-      // Consuming payback note for account A
-
-      noteId = expectedPaybackNoteDetails[0].id().toString();
+      // Consuming payback note for account A. Account B's consume of the swap
+      // note emits the payback note; derive its id from that transaction's
+      // output notes (NoteDetails no longer exposes id()).
+      noteId = consumeTransaction1Result
+        .executedTransaction()
+        .outputNotes()
+        .notes()[0]
+        .id()
+        .toString();
       inputNoteRecord = await client.getInputNote(noteId);
       if (!inputNoteRecord) {
         throw new Error(`Note with ID ${noteId} not found`);
       }
 
       note = inputNoteRecord.toNote();
-      let txRequest2 = client.newConsumeTransactionRequest([note]);
+      let txRequest2 = await client.newConsumeTransactionRequest(
+        [note],
+        accountAId
+      );
 
       let consumeTransaction2Result =
         await window.helpers.executeAndApplyTransaction(
@@ -472,18 +481,14 @@ export interface NewAccountTestResult {
   codeCommitment: string;
   isFaucet: boolean;
   isRegularAccount: boolean;
-  isUpdatable: boolean;
   isPublic: boolean;
   isPrivate: boolean;
-  isNetwork: boolean;
   isIdPublic: boolean;
   isIdPrivate: boolean;
-  isIdNetwork: boolean;
   isNew: boolean;
 }
 interface createNewWalletParams {
   storageMode: StorageMode;
-  mutable: boolean;
   authSchemeId: number;
   clientSeed?: Uint8Array;
   isolatedClient?: boolean;
@@ -495,7 +500,6 @@ export const createNewWallet = async (
   testingPage: Page,
   {
     storageMode,
-    mutable,
     authSchemeId,
     clientSeed,
     isolatedClient,
@@ -509,7 +513,6 @@ export const createNewWallet = async (
   return await testingPage.evaluate(
     async ({
       storageMode,
-      mutable,
       authSchemeId,
       _serializedWalletSeed,
       _serializedClientSeed,
@@ -535,7 +538,6 @@ export const createNewWallet = async (
 
       const newWallet = await client.newWallet(
         accountStorageMode,
-        mutable,
         authSchemeId,
         _walletSeed
       );
@@ -548,19 +550,15 @@ export const createNewWallet = async (
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         isIdPublic: newWallet.id().isPublic(),
         isIdPrivate: newWallet.id().isPrivate(),
-        isIdNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     },
     {
       storageMode: storageMode,
-      mutable: mutable,
       authSchemeId: authSchemeId,
       _serializedClientSeed: serializedClientSeed,
       isolatedClient: isolatedClient,
@@ -607,13 +605,10 @@ export const createNewFaucet = async (
         codeCommitment: newFaucet.code().commitment().toHex(),
         isFaucet: newFaucet.isFaucet(),
         isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         isIdPublic: newFaucet.id().isPublic(),
         isIdPrivate: newFaucet.id().isPrivate(),
-        isIdNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     },
@@ -697,9 +692,8 @@ export const consumeTransaction = async (
       }
 
       const note = inputNoteRecord.toNote();
-      const consumeTransactionRequest = client.newConsumeTransactionRequest([
-        note,
-      ]);
+      const consumeTransactionRequest =
+        await client.newConsumeTransactionRequest([note], targetAccountId);
       const prover =
         _withRemoteProver && window.remoteProverUrl != null
           ? window.remoteProverInstance
@@ -723,8 +717,8 @@ export const consumeTransaction = async (
           .toHex(),
         nonce: consumeTransactionUpdate
           .executedTransaction()
-          .accountDelta()
-          .nonceDelta()
+          .accountPatch()
+          .finalNonce()
           .toString(),
         numConsumedNotes: consumeTransactionUpdate
           .executedTransaction()
@@ -834,8 +828,8 @@ export const mintAndConsumeTransaction = async (
             .numNotes(),
           nonce: mintTransactionUpdate
             .executedTransaction()
-            .accountDelta()
-            .nonceDelta()
+            .accountPatch()
+            .finalNonce()
             .toString(),
           createdNoteId: mintTransactionUpdate
             .executedTransaction()
@@ -851,8 +845,8 @@ export const mintAndConsumeTransaction = async (
             .toHex(),
           nonce: consumeTransactionUpdate
             .executedTransaction()
-            .accountDelta()
-            .nonceDelta()
+            .accountPatch()
+            .finalNonce()
             .toString(),
           numConsumedNotes: consumeTransactionUpdate
             .executedTransaction()
@@ -887,7 +881,6 @@ export const setupWalletAndFaucet = async (
     const client = window.client;
     const account = await client.newWallet(
       window.AccountStorageMode.private(),
-      true,
       window.AuthScheme.AuthRpoFalcon512
     );
     const faucetAccount = await client.newFaucet(

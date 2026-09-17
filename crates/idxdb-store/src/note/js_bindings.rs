@@ -23,6 +23,18 @@ extern "C" {
         nullifiers: Vec<String>,
     ) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getInputNotesFromDetailsCommitments)]
+    pub fn idxdb_get_input_notes_from_details_commitments(
+        db_id: &str,
+        details_commitments: Vec<String>,
+    ) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = getInputNotesFromScriptRoots)]
+    pub fn idxdb_get_input_notes_from_script_roots(
+        db_id: &str,
+        script_roots: Vec<String>,
+    ) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getOutputNotes)]
     pub fn idxdb_get_output_notes(db_id: &str, states: Vec<u8>) -> js_sys::Promise;
 
@@ -33,6 +45,12 @@ extern "C" {
     pub fn idxdb_get_output_notes_from_nullifiers(
         db_id: &str,
         nullifiers: Vec<String>,
+    ) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = getOutputNotesFromDetailsCommitments)]
+    pub fn idxdb_get_output_notes_from_details_commitments(
+        db_id: &str,
+        details_commitments: Vec<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getUnspentInputNoteNullifiers)]
@@ -47,13 +65,15 @@ extern "C" {
     #[wasm_bindgen(js_name = upsertInputNote)]
     pub fn idxdb_upsert_input_note(
         db_id: &str,
-        note_id: String,
+        details_commitment: String,
+        note_id: Option<String>,
         assets: Vec<u8>,
+        attachments: Vec<u8>,
         serial_number: Vec<u8>,
         inputs: Vec<u8>,
         note_script_root: String,
         serialized_note_script: Vec<u8>,
-        nullifier: String,
+        nullifier: Option<String>,
         serialized_created_at: String,
         state_discriminant: u8,
         state: Vec<u8>,
@@ -62,21 +82,27 @@ extern "C" {
         consumer_account_id: Option<String>,
     ) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = getInputNoteByOffset)]
-    pub fn idxdb_get_input_note_by_offset(
+    // The cursor is passed field by field because `wasm_bindgen` cannot carry a client type
+    // across the boundary. All three are set together or all three are absent.
+    #[wasm_bindgen(js_name = getInputNoteAfter)]
+    pub fn idxdb_get_input_note_after(
         db_id: &str,
         states: Vec<u8>,
         consumer_account_id: String,
         block_start: Option<u32>,
         block_end: Option<u32>,
-        offset: u32,
+        cursor_block_height: Option<u32>,
+        cursor_tx_order: Option<u32>,
+        cursor_details_commitment: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = upsertOutputNote)]
     pub fn idxdb_upsert_output_note(
         db_id: &str,
+        details_commitment: String,
         note_id: String,
         assets: Vec<u8>,
+        attachments: Vec<u8>,
         recipient_digest: String,
         metadata: Vec<u8>,
         nullifier: Option<String>,

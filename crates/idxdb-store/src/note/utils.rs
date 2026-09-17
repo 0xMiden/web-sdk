@@ -6,12 +6,14 @@ use miden_client::Word;
 use miden_client::account::AccountId;
 use miden_client::note::{
     NoteAssets,
+    NoteAttachments,
     NoteDetails,
     NoteMetadata,
     NoteRecipient,
     NoteScript,
     NoteStorage,
     NoteUpdateTracker,
+    Nullifier,
 };
 use miden_client::store::{
     InputNoteRecord,
@@ -21,6 +23,7 @@ use miden_client::store::{
     StoreError,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::js_bindings::{
@@ -36,22 +39,32 @@ use crate::promise::await_js_value;
 // ================================================================================================
 
 #[wasm_bindgen(getter_with_clone)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerializedInputNoteData {
+    #[wasm_bindgen(js_name = "detailsCommitment")]
+    pub details_commitment: String,
     #[wasm_bindgen(js_name = "noteId")]
-    pub note_id: String,
+    pub note_id: Option<String>,
     #[wasm_bindgen(js_name = "noteAssets")]
+    #[serde(with = "serde_bytes")]
     pub note_assets: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "serialNumber")]
+    #[serde(with = "serde_bytes")]
     pub serial_number: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub inputs: Vec<u8>,
     #[wasm_bindgen(js_name = "noteScriptRoot")]
     pub note_script_root: String,
     #[wasm_bindgen(js_name = "noteScript")]
+    #[serde(with = "serde_bytes")]
     pub note_script: Vec<u8>,
-    pub nullifier: String,
+    pub nullifier: Option<String>,
     #[wasm_bindgen(js_name = "stateDiscriminant")]
     pub state_discriminant: u8,
+    #[serde(with = "serde_bytes")]
     pub state: Vec<u8>,
     #[wasm_bindgen(js_name = "createdAt")]
     pub created_at: String,
@@ -64,33 +77,45 @@ pub struct SerializedInputNoteData {
 }
 
 #[wasm_bindgen(getter_with_clone)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerializedOutputNoteData {
+    #[wasm_bindgen(js_name = "detailsCommitment")]
+    pub details_commitment: String,
     #[wasm_bindgen(js_name = "noteId")]
     pub note_id: String,
     #[wasm_bindgen(js_name = "noteAssets")]
+    #[serde(with = "serde_bytes")]
     pub note_assets: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub attachments: Vec<u8>,
     #[wasm_bindgen(js_name = "recipientDigest")]
     pub recipient_digest: String,
+    #[serde(with = "serde_bytes")]
     pub metadata: Vec<u8>,
     pub nullifier: Option<String>,
     #[wasm_bindgen(js_name = "expectedHeight")]
     pub expected_height: u32,
     #[wasm_bindgen(js_name = "stateDiscriminant")]
     pub state_discriminant: u8,
+    #[serde(with = "serde_bytes")]
     pub state: Vec<u8>,
 }
 
 // ================================================================================================
 
 pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNoteData {
-    let note_id = note.id().to_hex().clone();
+    let details_commitment = note.details_commitment().to_hex();
+    let note_id = note.id().map(|id| id.to_hex());
     let note_assets = note.assets().to_bytes();
+    let attachments = note.attachments().to_bytes();
 
     let details = note.details();
     let serial_number = details.serial_num().to_bytes();
     let inputs = details.storage().to_bytes();
-    let nullifier = details.nullifier().to_hex();
+    let nullifier = note
+        .metadata()
+        .map(|metadata| Nullifier::from_details_and_metadata(details, metadata).to_hex());
 
     let recipient = details.recipient();
     let note_script: Vec<u8> = recipient.script().to_bytes();
@@ -105,8 +130,10 @@ pub(crate) fn serialize_input_note(note: &InputNoteRecord) -> SerializedInputNot
     let consumer_account_id = note.consumer_account().map(AccountId::to_hex);
 
     SerializedInputNoteData {
+        details_commitment,
         note_id,
         note_assets,
+        attachments,
         serial_number,
         inputs,
         note_script_root,
@@ -126,8 +153,10 @@ pub async fn upsert_input_note_tx(db_id: &str, note: &InputNoteRecord) -> Result
 
     let promise = idxdb_upsert_input_note(
         db_id,
+        serialized_data.details_commitment,
         serialized_data.note_id,
         serialized_data.note_assets,
+        serialized_data.attachments,
         serialized_data.serial_number,
         serialized_data.inputs,
         serialized_data.note_script_root,
@@ -159,8 +188,10 @@ pub async fn upsert_note_script_tx(
 }
 
 pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutputNoteData {
-    let note_id = note.id().to_hex().clone();
+    let details_commitment = note.details_commitment().to_hex();
+    let note_id = note.id().to_hex();
     let note_assets = note.assets().to_bytes();
+    let attachments = note.attachments().to_bytes();
     let recipient_digest = note.recipient_digest().to_hex();
     let metadata = note.metadata().to_bytes();
 
@@ -170,8 +201,10 @@ pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutput
     let state = note.state().to_bytes();
 
     SerializedOutputNoteData {
+        details_commitment,
         note_id,
         note_assets,
+        attachments,
         recipient_digest,
         metadata,
         nullifier,
@@ -186,8 +219,10 @@ pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Resu
 
     let promise = idxdb_upsert_output_note(
         db_id,
+        serialized_data.details_commitment,
         serialized_data.note_id,
         serialized_data.note_assets,
+        serialized_data.attachments,
         serialized_data.recipient_digest,
         serialized_data.metadata,
         serialized_data.nullifier,
@@ -197,6 +232,20 @@ pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Resu
     );
     await_js_value(promise, "failed to upsert output note").await?;
     Ok(())
+}
+
+/// Decodes the serialized `NoteAttachments` bytes persisted on a note row.
+///
+/// A row written by this store always carries a serialized `NoteAttachments`
+/// (empty or not). Empty bytes only occur for a row that predates the
+/// attachments column; the 0.14 -> 0.15 store reset normally drops such rows,
+/// but decode them as an empty `NoteAttachments` rather than erroring so a
+/// stale row never makes a note permanently unreadable.
+fn decode_attachments(bytes: &[u8]) -> Result<NoteAttachments, StoreError> {
+    if bytes.is_empty() {
+        return Ok(NoteAttachments::default());
+    }
+    Ok(NoteAttachments::read_from_bytes(bytes)?)
 }
 
 pub fn parse_input_note_idxdb_object(
@@ -210,6 +259,7 @@ pub fn parse_input_note_idxdb_object(
         serialized_note_script,
         state,
         created_at,
+        attachments,
     } = note_idxdb;
 
     let assets = NoteAssets::read_from_bytes(&assets)?;
@@ -220,13 +270,14 @@ pub fn parse_input_note_idxdb_object(
     let recipient = NoteRecipient::new(serial_number, script, inputs);
 
     let details = NoteDetails::new(assets, recipient);
+    let attachments = decode_attachments(&attachments)?;
 
     let state = InputNoteState::read_from_bytes(&state)?;
     let created_at = created_at
         .parse::<u64>()
         .map_err(|_| StoreError::QueryError("Failed to parse created_at timestamp".to_string()))?;
 
-    Ok(InputNoteRecord::new(details, Some(created_at), state))
+    Ok(InputNoteRecord::new(details, attachments, Some(created_at), state))
 }
 
 pub fn parse_output_note_idxdb_object(
@@ -236,6 +287,7 @@ pub fn parse_output_note_idxdb_object(
     let note_assets = NoteAssets::read_from_bytes(&note_idxdb.assets)?;
     let recipient = Word::try_from(note_idxdb.recipient_digest)?;
     let state = OutputNoteState::read_from_bytes(&note_idxdb.state)?;
+    let attachments = decode_attachments(&note_idxdb.attachments)?;
 
     Ok(OutputNoteRecord::new(
         recipient,
@@ -243,6 +295,7 @@ pub fn parse_output_note_idxdb_object(
         note_metadata,
         state,
         note_idxdb.expected_height.into(),
+        attachments,
     ))
 }
 

@@ -68,11 +68,12 @@ const buildCustomScriptRequestWithExpiration = async (
     const client = window.client;
     const builder = client.createScriptBuilder();
     const txScript = builder.compileTxScript(`
-            use.miden::contracts::auth::basic->auth_tx
-            use.miden::kernels::tx::prologue
-            use.miden::kernels::tx::memory
+            use miden::contracts::auth::basic as auth_tx
+            use miden::kernels::tx::prologue
+            use miden::kernels::tx::memory
 
-            begin
+            @transaction_script
+            pub proc main
                 push.0 push.0
                 assert_eq
             end
@@ -100,12 +101,10 @@ export const discardedTransaction = async (
 
     const senderAccount = await client.newWallet(
       window.AccountStorageMode.private(),
-      true,
       window.AuthScheme.AuthRpoFalcon512
     );
     const targetAccount = await client.newWallet(
       window.AccountStorageMode.private(),
-      false,
       window.AuthScheme.AuthRpoFalcon512
     );
     const faucetAccount = await client.newFaucet(
@@ -150,7 +149,7 @@ export const discardedTransaction = async (
       notes.push(note);
     }
     const senderConsumeTransactionRequest =
-      client.newConsumeTransactionRequest(notes);
+      await client.newConsumeTransactionRequest(notes, senderAccount.id());
     let senderConsumeTransactionUpdate =
       await window.helpers.executeAndApplyTransaction(
         senderAccount.id(),
@@ -212,7 +211,10 @@ export const discardedTransaction = async (
       const note = inputNoteRecord.toNote();
       notes.push(note);
     }
-    let senderTxRequest = client.newConsumeTransactionRequest(notes);
+    let senderTxRequest = await client.newConsumeTransactionRequest(
+      notes,
+      senderAccount.id()
+    );
     let senderTxResult = await window.helpers.executeAndApplyTransaction(
       senderAccount.id(),
       senderTxRequest
@@ -300,12 +302,14 @@ export const counterAccountComponent = async (
         const COUNTER_SLOT = word("${COUNTER_SLOT_NAME}")
 
         # => []
+        @account_procedure
         pub proc get_count
             push.COUNTER_SLOT[0..2] exec.active_account::get_item
             exec.sys::truncate_stack
         end
 
         # => []
+        @account_procedure
         pub proc increment_count
             push.COUNTER_SLOT[0..2] exec.active_account::get_item
             # => [count]
@@ -319,16 +323,7 @@ export const counterAccountComponent = async (
       `;
     const txScriptCode = `
         use external_contract::counter_contract
-        begin
-            call.counter_contract::increment_count
-        end
-      `;
-    // miden-standards 0.14.5+ requires note scripts to use a single public
-    // procedure annotated with @note_script (compileTxScript still accepts
-    // the legacy begin/end form).
-    const noteScriptCode = `
-        use external_contract::counter_contract
-        @note_script
+        @transaction_script
         pub proc main
             call.counter_contract::increment_count
         end
@@ -340,7 +335,10 @@ export const counterAccountComponent = async (
 
     let builder = await client.createCodeBuilder();
 
-    let accountComponentCode = builder.compileAccountComponentCode(accountCode);
+    let accountComponentCode = builder.compileAccountComponentCodeWithPath(
+      "external_contract::counter_contract",
+      accountCode
+    );
     let counterAccountComponent = window.AccountComponent.compile(
       accountComponentCode,
       [emptyStorageSlot]
@@ -350,27 +348,19 @@ export const counterAccountComponent = async (
     crypto.getRandomValues(walletSeed);
 
     let accountBuilderResult = new window.AccountBuilder(walletSeed)
-      .storageMode(window.AccountStorageMode.network())
+      .storageMode(window.AccountStorageMode.public())
       .withNoAuthComponent()
       .withComponent(counterAccountComponent)
       .build();
 
     await client.newAccount(accountBuilderResult.account, false);
 
-    const nativeAccount = await client.newWallet(
-      window.AccountStorageMode.private(),
-      false,
-      window.AuthScheme.AuthRpoFalcon512
-    );
-
     await client.syncState();
 
-    // Deploy counter account
-    let accountComponentLib = builder.buildLibrary(
-      "external_contract::counter_contract",
-      accountCode
+    // Link the exact code installed on the counter account.
+    builder.linkDynamicAccountComponentCode(
+      counterAccountComponent.componentCode()
     );
-    builder.linkDynamicLibrary(accountComponentLib);
     let txScript = builder.compileTxScript(txScriptCode);
 
     let txIncrementRequest = new window.TransactionRequestBuilder()
@@ -385,69 +375,9 @@ export const counterAccountComponent = async (
       txUpdate.executedTransaction().id().toHex()
     );
 
-    // Create transaction with network note
-    let compiledNoteScript = await builder.compileNoteScript(noteScriptCode);
-
-    let noteStorage = new window.NoteStorage(
-      new window.MidenArrays.FeltArray([])
-    );
-
-    const randomInts = Array.from({ length: 4 }, () =>
-      Math.floor(Math.random() * 100000)
-    );
-
-    let serialNum = new window.Word(new BigUint64Array(randomInts.map(BigInt)));
-
-    let noteRecipient = new window.NoteRecipient(
-      serialNum,
-      compiledNoteScript,
-      noteStorage
-    );
-
-    let noteAssets = new window.NoteAssets([]);
-
-    // Create network account target attachment so the node knows to consume this note
-    // with the network account (counter account)
-    let networkTargetAttachment = window.NoteAttachment.newNetworkAccountTarget(
-      accountBuilderResult.account.id(),
-      window.NoteExecutionHint.always()
-    );
-
-    let noteMetadata = new window.NoteMetadata(
-      nativeAccount.id(),
-      window.NoteType.Public,
-      window.NoteTag.withAccountTarget(accountBuilderResult.account.id())
-    ).withAttachment(networkTargetAttachment);
-
-    let note = new window.Note(noteAssets, noteMetadata, noteRecipient);
-
-    let transactionRequest = new window.TransactionRequestBuilder()
-      .withOwnOutputNotes(new window.NoteArray([note]))
-      .build();
-
-    let transactionUpdate = await window.helpers.executeAndApplyTransaction(
-      nativeAccount.id(),
-      transactionRequest
-    );
-    await window.helpers.waitForTransaction(
-      transactionUpdate.executedTransaction().id().toHex()
-    );
-
-    // Wait for the node to consume the network note in subsequent blocks.
-    // Use a retry loop (up to 10 blocks) instead of a fixed wait, since the
-    // node may not have consumed the note within a fixed number of blocks
-    // (especially under CI load with multiple test shards).
-    let finalCounter: string | undefined;
-    let account;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      await window.helpers.waitForBlocks(1);
-
-      account = await client.getAccount(accountBuilderResult.account.id());
-      let counter = account?.storage().getItem(COUNTER_SLOT_NAME)?.toHex();
-      finalCounter = counter?.replace(/^0x/, "").replace(/^0+|0+$/g, "");
-
-      if (finalCounter === "2") break;
-    }
+    const account = await client.getAccount(accountBuilderResult.account.id());
+    const counter = account?.storage().getItem(COUNTER_SLOT_NAME)?.toHex();
+    const finalCounter = counter?.replace(/^0x/, "").replace(/^0+|0+$/g, "");
 
     let code = account?.code();
     let hasCounterComponent = code
@@ -514,7 +444,7 @@ test.describe("counter account component tests", () => {
   }) => {
     let { finalCounter, hasCounterComponent } =
       await counterAccountComponent(page);
-    expect(finalCounter).toEqual("2");
+    expect(finalCounter).toEqual("1");
     expect(hasCounterComponent).toBe(true);
   });
 });

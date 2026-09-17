@@ -28,7 +28,7 @@ impl Signature {
     #[js_export(js_name = "toPreparedSignature")]
     pub fn to_prepared_signature(&self, message: Word) -> Vec<Felt> {
         self.0
-            .to_prepared_signature(message.into())
+            .to_encoded_signature(message.into())
             .into_iter()
             .map(Into::into)
             .collect()

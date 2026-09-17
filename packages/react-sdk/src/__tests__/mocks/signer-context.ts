@@ -13,7 +13,7 @@ import type {
  * Matches the SDK's AccountStorageMode interface.
  */
 const createMockAccountStorageMode = (
-  mode: "private" | "public" | "network" = "public"
+  mode: "private" | "public" = "public"
 ) => ({
   toString: vi.fn(() => mode),
 });

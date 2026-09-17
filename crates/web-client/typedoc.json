@@ -1,5 +1,5 @@
 {
-  "entryPoints": ["./dist/docs-entry.d.ts"],
+  "entryPoints": ["./dist/st/docs-entry.d.ts"],
   "tsconfig": "./tsconfig.docs.json",
   "readme": "none",
   "out": "../../docs/typedoc/web-client",

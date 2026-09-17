@@ -1,6 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::block::BlockHeader as NativeBlockHeader;
 
+use super::account_id::AccountId;
 use super::word::Word;
 
 /// Public header for a block, containing commitments to the chain state and the proof attesting to
@@ -81,7 +82,11 @@ impl BlockHeader {
         self.0.tx_kernel_commitment().into()
     }
 
-    /// Returns the proof commitment.
+    /// Returns the block commitment, not a distinct proof commitment.
+    ///
+    /// The protocol's `BlockHeader` has no `proof_commitment` field — this accessor outlived it
+    /// and is an alias for [`Self::commitment`]. Renaming or removing it would break the public
+    /// API, so it is documented rather than changed here. Prefer `commitment()`.
     #[js_export(js_name = "proofCommitment")]
     pub fn proof_commitment(&self) -> Word {
         self.0.commitment().into()
@@ -90,6 +95,32 @@ impl BlockHeader {
     /// Returns the block timestamp.
     pub fn timestamp(&self) -> u32 {
         self.0.timestamp()
+    }
+
+    /// Returns the account ID of the fungible faucet whose assets are accepted as the native
+    /// asset of the blockchain (i.e. the asset used for paying transaction verification fees).
+    ///
+    /// This is stored on-chain as part of the block's fee parameters, which means consumers can
+    /// discover the native faucet by reading any block header rather than hardcoding it per
+    /// network.
+    #[js_export(js_name = "feeFaucetId")]
+    pub fn fee_faucet_id(&self) -> AccountId {
+        self.0.fee_parameters().fee_faucet_id().into()
+    }
+
+    /// Returns the chain's verification base fee, in the fee asset's smallest unit.
+    ///
+    /// This is a rate, not the amount a transaction pays: the fee charged is the base fee times
+    /// the transaction's log verification cycles, so two transactions on the same chain pay
+    /// different amounts.
+    ///
+    /// Zero means the chain charges nothing. `fee::pay_fee` discards the conversion info unread
+    /// once the computed fee is zero, so a transaction succeeds on such a chain whether or not it
+    /// commits any. Reading this is what lets a caller decide whether the fee wiring is required
+    /// at all, rather than hardcoding the answer per network.
+    #[js_export(js_name = "verificationBaseFee")]
+    pub fn verification_base_fee(&self) -> u32 {
+        self.0.fee_parameters().verification_base_fee()
     }
 }
 

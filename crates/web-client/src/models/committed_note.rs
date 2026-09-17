@@ -1,5 +1,4 @@
 use js_export_macro::js_export;
-use miden_client::note::NoteMetadata as NativeNoteMetadata;
 use miden_client::rpc::domain::note::CommittedNote as NativeCommittedNote;
 
 use super::account_id::AccountId;
@@ -51,24 +50,8 @@ impl CommittedNote {
     }
 
     /// Returns the note metadata.
-    ///
-    /// If only metadata headers are available, the returned metadata contains
-    /// the sender, note type, and tag without attachment payload.
     pub fn metadata(&self) -> NoteMetadata {
-        self.0.metadata().map_or_else(
-            || {
-                NativeNoteMetadata::new(self.0.sender(), self.0.note_type())
-                    .with_tag(self.0.tag())
-                    .into()
-            },
-            Into::into,
-        )
-    }
-
-    /// Returns the full note metadata when the attachment payload is available.
-    #[js_export(js_name = "fullMetadata")]
-    pub fn full_metadata(&self) -> Option<NoteMetadata> {
-        self.0.metadata().map(Into::into)
+        self.0.metadata().into()
     }
 
     /// Returns the inclusion proof for this note.

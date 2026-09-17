@@ -149,6 +149,38 @@ await mint({
 });
 ```
 
+### Bridge Out (AggLayer)
+```tsx
+const { bridge } = useBridge();
+
+// Emits a public B2AGG note that the bridge account consumes, burning the
+// asset so it can be claimed at the destination Ethereum address.
+await bridge({
+  from: senderAccountId,
+  bridgeAccount: bridgeAccountId,
+  assetId: tokenFaucetId,
+  amount: 100n,
+  destinationNetwork: 1, // AggLayer-assigned network id
+  destinationAddress: "0x000000000000000000000000000000000000dEaD",
+});
+```
+
+### Create a Network Note
+```tsx
+const { createNetworkNote } = useCreateNetworkNote();
+
+// Builds a Public custom-script note carrying a NetworkAccountTarget
+// attachment; the targeted network account auto-consumes it on-chain.
+// Provide exactly one of `script` or `recipient`.
+const { txId, note } = await createNetworkNote({
+  accountId: senderAccountId,
+  target: networkAccountId,
+  script: myNoteScript, // or: recipient: myRecipient
+});
+
+note.isNetworkNote(); // true
+```
+
 ### Create Faucet
 ```tsx
 const { createFaucet } = useCreateFaucet();
@@ -222,6 +254,56 @@ const client = useMidenClient();
 // For advanced operations not covered by hooks
 const blockHeader = await client.getBlockHeaderByNumber(100);
 ```
+
+### Pay the Fee on a Hand-Built Request
+
+Fees are settled in the chain's native fee asset at rate 1/1, and miden-client
+commits that conversion info through the transaction's auth args itself. The one
+thing it will not invent is the SALT the info is committed under, because every
+multisig flavour reuses that salt as its transaction summary's replay guard.
+
+So hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
+`useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
+`usePswapCancel`) declare a salt for you where the executing account needs one.
+The hooks that take a request *from you* — `useTransaction`, `usePreview`,
+`useChainAnchor` — cannot. A bare `new TransactionRequestBuilder()` is fine for
+an ordinary account at any base fee; against a multisig on a fee-charging chain
+it fails with `FeeConversionInfoRequired` naming the component. So this matters
+for multisig, and for controlling the salt.
+
+`usePswapCancelByOrder` is the exception in the first group: it resolves the
+order and builds the request inside miden-client, so the SDK never declares
+anything. Same split — ordinary accounts are fine, multisig is not, so cancel by
+note with `usePswapCancel` there.
+
+Ask the client for a builder that already carries it. The factory form of
+`request` hands you the client, so this needs no extra plumbing:
+
+```tsx
+import { AccountId } from "@miden-sdk/miden-sdk";
+import { useTransaction } from "@miden-sdk/react";
+
+const { execute } = useTransaction();
+
+await execute({
+  accountId,
+  request: async (client) =>
+    (
+      await client.feeAwareTransactionRequestBuilder(
+        AccountId.fromHex(accountId)
+      )
+    )
+      .withCustomScript(script)
+      .build(),
+});
+```
+
+The argument is the account that **executes** the request — the one whose auth
+procedure pays — not the recipient. On a zero-fee chain, or for any account that
+does not choose its own salt, the builder comes back untouched, so it is a safe
+drop-in. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
+miden-client has each setter clear the other, so whichever is called last wins
+rather than producing an error.
 
 ### Prevent Race Conditions
 ```tsx
@@ -394,6 +476,9 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useTransactionHistory(...)` | `transactions` | Local transaction log |
 | `useSessionAccount()` | `account` | The signer's connected account |
 | `useWaitForNotes(...)` | resolves when matching notes appear | Pull-style note waiting |
+| `usePswapLineages()` | `lineages` | All tracked PSWAP order lineages |
+| `usePswapLineagesFor(creator)` | `lineages` | Tracked PSWAP lineages for one creator |
+| `usePswapLineage(orderId)` | `lineage` | One tracked PSWAP lineage by stable order id |
 
 ### Mutation (write)
 | Hook | Action | Returns on success |
@@ -407,12 +492,17 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Mutation hooks retu
 | `useSend()` | `send({ from, to, assetId, amount, noteType })` | `SendResult` (with `txId`, `note`) |
 | `useMultiSend()` | `multiSend({ from, recipients })` | `TransactionResult` |
 | `useMint()` | `mint({ faucetId, to, amount })` | `TransactionResult` |
+| `useBridge()` | `bridge({ from, bridgeAccount, assetId, amount, destinationNetwork, destinationAddress })` | `TransactionResult` (emits an AggLayer B2AGG bridge-out note) |
+| `useCreateNetworkNote()` | `createNetworkNote({ accountId, target, script \| recipient, ... })` | `NetworkNoteResult` (`{ txId, note }`; note satisfies `note.isNetworkNote()`) |
 | `useConsume()` | `consume({ accountId, notes })` | `TransactionResult` |
 | `useSwap()` | `swap({ ... })` | `TransactionResult` |
 | `usePswapCreate()` | `pswapCreate({ accountId, offeredFaucetId, offeredAmount, requestedFaucetId, requestedAmount, ... })` | `TransactionResult` (creates partial-swap note) |
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` — `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` — creator only, reclaims unfilled offered asset | `TransactionResult` |
-| `useTransaction()` | `transact({ ... })` | `TransactionResult` (custom tx) |
+| `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` — creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
+| `useTransaction()` | `execute({ ..., anchor? })` | `TransactionResult` (custom tx; `anchor` pins the reference block) |
+| `useChainAnchor()` | `captureAnchor({ request })` | `ChainAnchor` (pins the current reference block for later replay) |
+| `usePreview()` | `preview({ accountId, request, anchor? })` | `TransactionSummary` awaiting authorization; rejects `TRANSACTION_ALREADY_AUTHORIZED` when none is pending |
 | `useExecuteProgram()` | `execute(...)` | program output |
 | `useCompile()` | `compile({ source })` | `{ component, txScript, noteScript }` |
 | `useWaitForCommit()` | `waitForCommit({ txId })` | resolves when committed on-chain |

@@ -1,5 +1,11 @@
 use js_export_macro::js_export;
-use miden_client::note::{NoteDetails as NativeNoteDetails, NoteId as NativeNoteId};
+use miden_client::block::BlockNumber as NativeBlockNumber;
+use miden_client::note::{
+    NoteDetails as NativeNoteDetails,
+    NoteId as NativeNoteId,
+    NoteSyncHint as NativeNoteSyncHint,
+    NoteTag as NativeNoteTag,
+};
 use miden_client::notes::NoteFile as NativeNoteFile;
 use miden_client::{Deserializable, Serializable};
 #[cfg(feature = "nodejs")]
@@ -32,18 +38,25 @@ impl NoteFile {
     pub fn note_type(&self) -> String {
         match &self.inner {
             NativeNoteFile::NoteId(_) => "NoteId".to_owned(),
-            NativeNoteFile::NoteDetails { .. } => "NoteDetails".to_owned(),
-            NativeNoteFile::NoteWithProof(..) => "NoteWithProof".to_owned(),
+            // Preserve the existing JS-facing names even though the native variants were renamed
+            // to `ExpectedNote` and `Committed` in miden-client 0.16.
+            NativeNoteFile::ExpectedNote { .. } => "NoteDetails".to_owned(),
+            NativeNoteFile::Committed { .. } => "NoteWithProof".to_owned(),
         }
     }
 
-    /// Returns the note ID for any `NoteFile` variant.
+    /// Returns the note ID when the file carries one.
+    ///
+    /// Migration note (miden-client PR #2214): `NoteDetails::id()` was
+    /// removed (computing the ID now requires `NoteMetadata`), so the
+    /// `NoteDetails`-only variant cannot synthesize one without extra
+    /// information. Returns `None` in that case.
     #[js_export(js_name = "noteId")]
-    pub fn note_id(&self) -> NoteId {
+    pub fn note_id(&self) -> Option<NoteId> {
         match &self.inner {
-            NativeNoteFile::NoteId(note_id) => (*note_id).into(),
-            NativeNoteFile::NoteDetails { details, .. } => details.id().into(),
-            NativeNoteFile::NoteWithProof(note, _) => note.id().into(),
+            NativeNoteFile::NoteId(note_id) => Some((*note_id).into()),
+            NativeNoteFile::Committed { note, .. } => Some(note.id().into()),
+            NativeNoteFile::ExpectedNote { .. } => None,
         }
     }
 
@@ -51,7 +64,7 @@ impl NoteFile {
     #[js_export(js_name = "noteDetails")]
     pub fn note_details(&self) -> Option<NoteDetails> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { details, .. } => Some(details.into()),
+            NativeNoteFile::ExpectedNote { details, .. } => Some(details.into()),
             _ => None,
         }
     }
@@ -59,7 +72,7 @@ impl NoteFile {
     /// Returns the full note when the file includes it.
     pub fn note(&self) -> Option<Note> {
         match &self.inner {
-            NativeNoteFile::NoteWithProof(note, _) => Some(note.into()),
+            NativeNoteFile::Committed { note, .. } => Some(note.into()),
             _ => None,
         }
     }
@@ -68,7 +81,7 @@ impl NoteFile {
     #[js_export(js_name = "inclusionProof")]
     pub fn inclusion_proof(&self) -> Option<NoteInclusionProof> {
         match &self.inner {
-            NativeNoteFile::NoteWithProof(_, proof) => Some(proof.into()),
+            NativeNoteFile::Committed { proof, .. } => Some(proof.into()),
             _ => None,
         }
     }
@@ -77,7 +90,9 @@ impl NoteFile {
     #[js_export(js_name = "afterBlockNum")]
     pub fn after_block_num(&self) -> Option<u32> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { after_block_num, .. } => Some(after_block_num.as_u32()),
+            NativeNoteFile::ExpectedNote { sync_hint, .. } => {
+                Some(sync_hint.after_block_num().as_u32())
+            },
             _ => None,
         }
     }
@@ -86,17 +101,20 @@ impl NoteFile {
     #[js_export(js_name = "noteTag")]
     pub fn note_tag(&self) -> Option<NoteTag> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { tag, .. } => tag.map(Into::into),
+            NativeNoteFile::ExpectedNote { sync_hint, .. } => Some(sync_hint.tag().into()),
             _ => None,
         }
     }
 
     /// Returns the note nullifier when present.
+    ///
+    /// Migration note (miden-client PR #2214): `NoteDetails::nullifier()`
+    /// was removed (the nullifier moved onto `InputNoteRecord` and is
+    /// optional there), so the `NoteDetails`-only variant returns `None`.
     pub fn nullifier(&self) -> Option<String> {
         match &self.inner {
-            NativeNoteFile::NoteDetails { details, .. } => Some(details.nullifier().to_hex()),
-            NativeNoteFile::NoteWithProof(note, _) => Some(note.nullifier().to_hex()),
-            NativeNoteFile::NoteId(_) => None,
+            NativeNoteFile::Committed { note, .. } => Some(note.nullifier().to_hex()),
+            NativeNoteFile::ExpectedNote { .. } | NativeNoteFile::NoteId(_) => None,
         }
     }
 
@@ -122,13 +140,18 @@ impl NoteFile {
     pub fn from_input_note(note: &InputNote) -> Self {
         if let Some(inclusion_proof) = note.proof() {
             Self {
-                inner: NativeNoteFile::NoteWithProof(note.note().into(), inclusion_proof.into()),
+                inner: NativeNoteFile::Committed {
+                    note: note.note().into(),
+                    proof: inclusion_proof.into(),
+                },
             }
         } else {
-            let assets = note.note().assets();
-            let recipient = note.note().recipient();
+            let native_note = note.note();
+            let assets = native_note.assets();
+            let recipient = native_note.recipient();
+            let tag: NativeNoteTag = native_note.metadata().tag().into();
             let details = NativeNoteDetails::new(assets.into(), recipient.into());
-            Self { inner: details.into() }
+            Self { inner: expected_note(details, tag, 0) }
         }
     }
 
@@ -140,16 +163,35 @@ impl NoteFile {
             Some(recipient) => {
                 let assets = native_note.assets();
                 let details = NativeNoteDetails::new(assets.clone(), recipient.clone());
-                Self { inner: details.into() }
+                Self {
+                    inner: expected_note(details, native_note.metadata().tag(), 0),
+                }
             },
             None => Self { inner: native_note.id().into() },
         }
     }
 
-    /// Creates a `NoteFile` from note details.
+    /// Creates a `NoteFile` from note details using a zero-valued sync hint.
+    ///
+    /// miden-client 0.16 requires every expected note to include a tag and an after-block hint.
+    /// This retains the old one-argument JS API by using block zero and the default tag. Prefer
+    /// [`from_expected_note`](Self::from_expected_note) when the real sync hint is available.
     #[js_export(js_name = fromNoteDetails)]
     pub fn from_note_details(note_details: &NoteDetails) -> Self {
         note_details.into()
+    }
+
+    /// Creates an expected-note file with the sync hint required by miden-client 0.16.
+    #[js_export(js_name = fromExpectedNote)]
+    pub fn from_expected_note(
+        note_details: &NoteDetails,
+        note_tag: &NoteTag,
+        after_block_num: u32,
+    ) -> Self {
+        let details: NativeNoteDetails = note_details.into();
+        Self {
+            inner: expected_note(details, note_tag.into(), after_block_num),
+        }
     }
 
     /// Creates a `NoteFile` from a note ID.
@@ -177,7 +219,9 @@ impl From<NoteFile> for NativeNoteFile {
 impl From<&NoteDetails> for NoteFile {
     fn from(details: &NoteDetails) -> Self {
         let note_details: NativeNoteDetails = details.into();
-        Self { inner: note_details.into() }
+        Self {
+            inner: expected_note(note_details, NativeNoteTag::default(), 0),
+        }
     }
 }
 
@@ -189,3 +233,14 @@ impl From<&NoteId> for NoteFile {
 }
 
 impl_napi_from_value!(NoteFile);
+
+fn expected_note(
+    details: NativeNoteDetails,
+    tag: NativeNoteTag,
+    after_block_num: u32,
+) -> NativeNoteFile {
+    NativeNoteFile::ExpectedNote {
+        details,
+        sync_hint: NativeNoteSyncHint::new(NativeBlockNumber::from(after_block_num), tag),
+    }
+}

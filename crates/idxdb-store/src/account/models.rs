@@ -48,6 +48,8 @@ pub struct AccountRecordIdxdbObject {
     #[serde(deserialize_with = "base64_to_vec_u8_optional", default)]
     pub account_seed: Option<Vec<u8>>,
     pub locked: bool,
+    #[serde(default)]
+    pub watched: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

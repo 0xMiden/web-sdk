@@ -54,19 +54,24 @@ var Table;
     Table["InputNotes"] = "inputNotes";
     Table["OutputNotes"] = "outputNotes";
     Table["NotesScripts"] = "notesScripts";
-    Table["StateSync"] = "stateSync";
+    Table["BlockchainCheckpoint"] = "blockchainCheckpoint";
     Table["BlockHeaders"] = "blockHeaders";
     Table["PartialBlockchainNodes"] = "partialBlockchainNodes";
     Table["Tags"] = "tags";
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
 })(Table || (Table = {}));
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
     return items.join(",");
 }
 /** V1 baseline schema. Extracted as a constant because once migrations are enabled, this must
- *  never be modified — all schema changes should go through new version blocks instead. */
-const V1_STORES = {
+ *  never be modified — all schema changes should go through new version blocks instead.
+ *  Exported for migration tests, which seed a physical v1 database before opening it with the
+ *  current version chain. */
+export const V1_STORES = {
     [Table.AccountCode]: indexes("root"),
     [Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId"),
     [Table.HistoricalAccountStorage]: indexes("[accountId+replacedAtNonce+slotName]", "accountId", "[accountId+replacedAtNonce]"),
@@ -81,10 +86,10 @@ const V1_STORES = {
     [Table.Addresses]: indexes("address", "id"),
     [Table.Transactions]: indexes("id", "statusVariant"),
     [Table.TransactionScripts]: indexes("scriptRoot"),
-    [Table.InputNotes]: indexes("noteId", "nullifier", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
-    [Table.OutputNotes]: indexes("noteId", "recipientDigest", "stateDiscriminant", "nullifier"),
+    [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
+    [Table.OutputNotes]: indexes("detailsCommitment", "noteId", "recipientDigest", "stateDiscriminant", "nullifier"),
     [Table.NotesScripts]: indexes("scriptRoot"),
-    [Table.StateSync]: indexes("id"),
+    [Table.BlockchainCheckpoint]: indexes("id"),
     [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
     [Table.PartialBlockchainNodes]: indexes("id"),
     [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -110,7 +115,7 @@ export class MidenDatabase {
     inputNotes;
     outputNotes;
     notesScripts;
-    stateSync;
+    blockchainCheckpoint;
     blockHeaders;
     partialBlockchainNodes;
     tags;
@@ -120,11 +125,12 @@ export class MidenDatabase {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
         //
-        // NOTE: The migration system is not currently in use. The Miden network
-        // resets on every upgrade, so the database is nuked whenever the client
-        // version changes (see ensureClientVersion). Once the network stabilizes
-        // and data can be preserved across upgrades, the version-change nuke will
-        // be removed and migrations will take over.
+        // NOTE: Migrations coexist with the client-version nuke: the database is
+        // still nuked on major/minor client-version changes (network resets — see
+        // ensureClientVersion), while Dexie version blocks below handle schema and
+        // data fixes for stores that survive patch upgrades. Once the network
+        // stabilizes and data can be preserved across all upgrades, the
+        // version-change nuke will be removed and migrations alone will take over.
         //
         // v1 is the baseline schema. To add a migration:
         //   1. Add a .version(N+1).stores({...}).upgrade(tx => {...}) block below.
@@ -156,12 +162,58 @@ export class MidenDatabase {
         // Note: The `populate` hook (below the version blocks) only fires on
         // first database creation, NOT during upgrades.
         //
-        // To enable migrations (stop nuking the DB on version change):
-        //   1. Remove the nuke logic in ensureClientVersion (close/delete/open).
-        //      Just persist the new version instead.
-        //   2. Freeze V1_STORES — never modify it again.
-        //   3. Add version(2+) blocks below for all schema changes going forward.
+        // Version blocks exist below, so V1_STORES is frozen — never modify it;
+        // add a new version block instead. To retire the nuke entirely (once data
+        // must survive major/minor upgrades), remove the close/delete/open logic
+        // in ensureClientVersion and just persist the new version there.
         this.dexie.version(1).stores(V1_STORES);
+        // v2 (miden-client 0.15.4): prune note tags leaked by output-note
+        // registration. Mirrors sqlite-store migration
+        // `0002_prune_output_note_tags.sql`. Clients built against miden-client
+        // < 0.15.4 registered a `Note`-sourced tag for every output note a
+        // transaction created, but sync cleanup only removes tags of committed
+        // *input* notes — leaking one `tags` row per created note. The client no
+        // longer registers those tags; this upgrade deletes the rows already
+        // leaked. A tag is kept while an inclusion-pending input note
+        // (Expected = 0, Unverified = 1 — the mirror of
+        // `InputNoteRecord::is_inclusion_pending`) still needs it.
+        //
+        // This data-only fix coexists with the version-change nuke above: the
+        // nuke covers major/minor client upgrades (network resets), while this
+        // upgrade runs for stores preserved across patch upgrades.
+        this.dexie
+            .version(2)
+            .stores({})
+            .upgrade(async (tx) => {
+            const outputNoteCommitments = new Set(await tx.outputNotes.toCollection().primaryKeys());
+            if (outputNoteCommitments.size === 0) {
+                return;
+            }
+            const pendingInputNoteCommitments = new Set(await tx.inputNotes
+                .where("stateDiscriminant")
+                .anyOf([0, 1])
+                .primaryKeys());
+            await tx.tags
+                .filter((tag) => !!tag.sourceNoteId &&
+                outputNoteCommitments.has(tag.sourceNoteId) &&
+                !pendingInputNoteCommitments.has(tag.sourceNoteId))
+                .delete();
+        });
+        // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+        // `detailsCommitment` instead of `noteId`, so the seek in
+        // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+        // carries and needs no lookup of the cursor's own note. Index-only, so
+        // Dexie rebuilds it without an upgrade hook.
+        this.dexie.version(3).stores({
+            [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"),
+        });
+        // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+        // cannot change in place, hence the drop and the recreate; the rows it held are cached
+        // values the client re-fetches.
+        this.dexie.version(4).stores({ [Table.Settings]: null });
+        this.dexie.version(5).stores({
+            [Table.Settings]: indexes("[scope+key]", "scope"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -179,16 +231,20 @@ export class MidenDatabase {
         this.inputNotes = this.dexie.table(Table.InputNotes);
         this.outputNotes = this.dexie.table(Table.OutputNotes);
         this.notesScripts = this.dexie.table(Table.NotesScripts);
-        this.stateSync = this.dexie.table(Table.StateSync);
+        this.blockchainCheckpoint = this.dexie.table(Table.BlockchainCheckpoint);
         this.blockHeaders = this.dexie.table(Table.BlockHeaders);
         this.partialBlockchainNodes = this.dexie.table(Table.PartialBlockchainNodes);
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
         this.dexie.on("populate", () => {
-            this.stateSync
-                .put({ id: 1, blockNum: 0 })
-                /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+            this.blockchainCheckpoint
+                .put({
+                id: 1,
+                blockNum: 0,
+                partialBlockchainPeaks: new Uint8Array(),
+            })
+                /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
                 .catch((err) => logWebStoreError(err, "Failed to populate DB"));
         });
     }
@@ -240,8 +296,13 @@ export class MidenDatabase {
         await this.dexie.open();
         await this.persistClientVersion(clientVersion);
     }
+    // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+    // user-facing settings API never reaches.
     async getStoredClientVersion() {
-        const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+        const record = await this.settings.get([
+            SETTING_SCOPE_CLIENT,
+            CLIENT_VERSION_SETTING_KEY,
+        ]);
         if (!record) {
             return null;
         }
@@ -249,6 +310,7 @@ export class MidenDatabase {
     }
     async persistClientVersion(clientVersion) {
         await this.settings.put({
+            scope: SETTING_SCOPE_CLIENT,
             key: CLIENT_VERSION_SETTING_KEY,
             value: textEncoder.encode(clientVersion),
         });

@@ -1,6 +1,9 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
+use miden_client::account::AccountProcedureRoot;
+use miden_client::account::component::ApproverSet;
 use miden_client::auth::{
+    Approver,
     AuthMultisig as NativeAuthMultisig,
     AuthMultisigConfig as NativeAuthMultisigConfig,
     AuthSchemeId as NativeAuthSchemeId,
@@ -53,16 +56,20 @@ impl AuthFalcon512RpoMultisigConfig {
         approvers: Vec<Word>,
         default_threshold: u32,
     ) -> Result<AuthFalcon512RpoMultisigConfig, JsErr> {
-        let native_approvers: Vec<(PublicKeyCommitment, NativeAuthSchemeId)> = approvers
+        let native_approvers: Vec<Approver> = approvers
             .into_iter()
             .map(|word| {
                 let native_word: NativeWord = word.into();
-                (PublicKeyCommitment::from(native_word), NativeAuthSchemeId::Falcon512Poseidon2)
+                Approver::new(
+                    PublicKeyCommitment::from(native_word),
+                    NativeAuthSchemeId::Falcon512Poseidon2,
+                )
             })
             .collect();
 
-        let config = NativeAuthMultisigConfig::new(native_approvers, default_threshold)
+        let approver_set = ApproverSet::new(native_approvers, default_threshold)
             .map_err(|e| js_error_with_context(e, "Invalid multisig config"))?;
+        let config = NativeAuthMultisigConfig::new(approver_set);
 
         Ok(AuthFalcon512RpoMultisigConfig(config))
     }
@@ -77,7 +84,7 @@ impl AuthFalcon512RpoMultisigConfig {
             .into_iter()
             .map(|entry| {
                 let proc_root: NativeWord = entry.proc_root.into();
-                (proc_root, entry.threshold)
+                (AccountProcedureRoot::from_raw(proc_root), entry.threshold)
             })
             .collect();
 
@@ -101,8 +108,8 @@ impl AuthFalcon512RpoMultisigConfig {
         self.0
             .approvers()
             .iter()
-            .map(|(pkc, _)| {
-                let word: NativeWord = (*pkc).into();
+            .map(|approver| {
+                let word: NativeWord = approver.pub_key().into();
                 word.into()
             })
             .collect()
@@ -115,7 +122,7 @@ impl AuthFalcon512RpoMultisigConfig {
             .proc_thresholds()
             .iter()
             .map(|(proc_root, threshold)| ProcedureThreshold {
-                proc_root: (*proc_root).into(),
+                proc_root: proc_root.as_word().into(),
                 threshold: *threshold,
             })
             .collect()

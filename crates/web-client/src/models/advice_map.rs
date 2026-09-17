@@ -21,6 +21,14 @@ impl AdviceMap {
         AdviceMap(NativeAdviceMap::default())
     }
 
+    /// Returns the value stored under `key`, or `undefined` when the key is absent.
+    pub fn get(&self, key: &Word) -> Option<Vec<Felt>> {
+        let native_key: NativeWord = key.into();
+        self.0
+            .get(&native_key)
+            .map(|felts| felts.iter().copied().map(Into::into).collect())
+    }
+
     /// Inserts a value for the given key, returning any previous value.
     pub fn insert(&mut self, key: &Word, value: FeltArray) -> Option<Vec<Felt>> {
         let native_key: NativeWord = key.into();

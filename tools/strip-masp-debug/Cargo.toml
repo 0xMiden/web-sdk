@@ -1,0 +1,17 @@
+[package]
+authors.workspace      = true
+description            = "Strips MASP debug_info sections from Miden packages embedded in a compiled WASM binary"
+edition.workspace      = true
+license.workspace      = true
+name                   = "strip-masp-debug"
+publish                = false
+repository.workspace   = true
+rust-version.workspace = true
+version.workspace      = true
+
+# Being a workspace member keeps these pinned to the exact versions the
+# WASM build embeds (single Cargo.lock), so the package format this tool
+# parses can never drift from the format inside the binary it rewrites.
+[dependencies]
+miden-core         = { default-features = false, features = ["std"], version = "0.29" }
+miden-mast-package = { default-features = false, features = ["std"], version = "0.29" }

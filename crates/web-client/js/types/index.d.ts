@@ -62,6 +62,9 @@ export declare class StorageResult {
   /** Returns all four Felts of the stored Word. Pass-through to Word.toFelts(). */
   toFelts(): Felt[];
 
+  /** Returns all four elements of the stored Word as a BigUint64Array. Pass-through to Word.toU64s(). */
+  toU64s(): BigUint64Array;
+
   /** The first Felt of the stored Word. */
   felt(): Felt | undefined;
 
@@ -141,7 +144,8 @@ export declare class WasmWebClient extends WasmWebClientBase {
     noteTransportUrl?: string,
     seed?: Uint8Array,
     storeName?: string,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -152,11 +156,13 @@ export declare class WasmWebClient extends WasmWebClientBase {
     getKeyCb?: GetKeyCallback,
     insertKeyCb?: InsertKeyCallback,
     signCb?: SignCallback,
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    useWorker?: boolean
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;
-  syncStateWithTimeout(timeoutMs: number): Promise<SyncSummary>;
+  syncChain(): Promise<SyncSummary>;
+  syncNoteTransport(): Promise<void>;
   setSignCb(signCb: SignCallback | null | undefined): void;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   terminate(): void;

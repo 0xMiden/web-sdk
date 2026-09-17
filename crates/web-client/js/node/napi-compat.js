@@ -61,7 +61,8 @@ function wrapClass(Cls) {
  * Wraps a raw napi WebClient to normalize API differences with the browser SDK.
  *
  * - syncState() -> syncStateImpl() (no browser lock coordination needed)
- * - syncStateWithTimeout() -> syncStateImpl() (timeout not applicable)
+ * - syncChain() -> syncChainImpl()
+ * - syncNoteTransport() -> syncNoteTransportImpl()
  * - null -> undefined for Option<T> returns
  * - BigInt/Uint8Array args normalized
  */
@@ -71,8 +72,11 @@ export function wrapClient(rawClient, storeName) {
       if (prop === "syncState") {
         return (...args) => target.syncStateImpl(...args);
       }
-      if (prop === "syncStateWithTimeout") {
-        return (_timeoutMs) => target.syncStateImpl();
+      if (prop === "syncChain") {
+        return () => target.syncChainImpl();
+      }
+      if (prop === "syncNoteTransport") {
+        return () => target.syncNoteTransportImpl();
       }
       if (prop === "storeName") {
         return storeName || "default";
@@ -91,14 +95,29 @@ export function wrapClient(rawClient, storeName) {
       if (prop === "onStateChanged") {
         return () => undefined;
       }
+      // waitForIdle drains the browser SDK's detached `_serializeWasmCall`
+      // chain. The napi binding has no such chain — every call is awaited
+      // directly by its caller and serialized inside Rust — so there is
+      // nothing in flight by the time a caller could invoke this. Resolve
+      // immediately to keep the cross-platform MidenClient surface intact.
+      if (prop === "waitForIdle") {
+        return () => Promise.resolve();
+      }
+      // lastAuthError surfaces the raw value a JS sign callback threw.
+      // The Node binding signs with FilesystemKeyStore (no JS callback can
+      // ever run), so "no sign error" is the semantically correct answer,
+      // not a stub.
+      if (prop === "lastAuthError") {
+        return () => null;
+      }
       if (prop === "newWallet") {
-        return (mode, mutable, authScheme, seed) => {
+        return (mode, authScheme, seed) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
           return target
-            .newWallet(mode, mutable, authScheme, normSeed ?? null)
+            .newWallet(mode, authScheme, normSeed ?? null)
             .then((v) => (v === null ? undefined : v));
         };
       }
@@ -144,8 +163,18 @@ function patchSdkPrototypes(rawSdk) {
 
   // null -> undefined for Option<T> return methods
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
+    [rawSdk.AdviceMap, ["get", "insert"]],
+    // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
+    // local chain, so the "no fee note" reading has to be the same on both bindings.
+    [rawSdk.ExecutedTransaction, ["feeNote"]],
     [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    // `authArg` and `feeConversionSalt` are how a caller checks what a request
+    // declared about paying its fee, so they have to read the same on both
+    // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
+    // `== null` for exactly this reason.
+    [rawSdk.TransactionRequest, ["authArg", "feeConversionSalt", "scriptArg"]],
   ]) {
     if (!cls?.prototype) continue;
     for (const method of methods) {

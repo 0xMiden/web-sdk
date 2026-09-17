@@ -1,7 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::transaction::TransactionStoreUpdate as NativeTransactionStoreUpdate;
 
-use crate::models::account_delta::AccountDelta;
+use crate::models::account_patch::AccountPatch;
 use crate::models::executed_transaction::ExecutedTransaction;
 use crate::models::output_notes::OutputNotes;
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
@@ -34,10 +34,10 @@ impl TransactionStoreUpdate {
         self.0.executed_transaction().output_notes().into()
     }
 
-    /// Returns the account delta applied by the transaction.
-    #[js_export(js_name = "accountDelta")]
-    pub fn account_delta(&self) -> AccountDelta {
-        self.0.executed_transaction().account_delta().into()
+    /// Returns the absolute account patch applied by the transaction.
+    #[js_export(js_name = "accountPatch")]
+    pub fn account_patch(&self) -> AccountPatch {
+        self.0.executed_transaction().account_patch().into()
     }
 
     /// Returns notes expected to be created in follow-up executions.

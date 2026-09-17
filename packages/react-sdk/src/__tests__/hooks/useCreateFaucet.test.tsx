@@ -163,16 +163,7 @@ describe("useCreateFaucet", () => {
         });
       });
 
-      // Test network
-      await act(async () => {
-        await result.current.createFaucet({
-          tokenSymbol: "C",
-          maxSupply: 100n,
-          storageMode: "network",
-        });
-      });
-
-      expect(mockClient.newFaucet).toHaveBeenCalledTimes(3);
+      expect(mockClient.newFaucet).toHaveBeenCalledTimes(2);
     });
 
     it("should refresh accounts list after creation", async () => {

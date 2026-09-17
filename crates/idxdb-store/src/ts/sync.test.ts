@@ -3,6 +3,7 @@ import { openDatabase, getDatabase } from "./schema.js";
 import {
   getNoteTags,
   getSyncHeight,
+  getCurrentBlockchainPeaks,
   addNoteTag,
   removeNoteTag,
   applyStateSync,
@@ -69,12 +70,12 @@ function minimalStateUpdate(
   return {
     blockNum: 5,
     flattenedNewBlockHeaders: emptyFlattenedVec(),
-    partialBlockchainPeaks: new Uint8Array(0),
+    newPeaks: new Uint8Array(0),
     newBlockNums: [],
     blockHasRelevantNotes: new Uint8Array(0),
     serializedNodeIds: [],
     serializedNodes: [],
-    committedNoteIds: [],
+    committedNoteTagSources: [],
     serializedInputNotes: [],
     serializedOutputNotes: [],
     accountUpdates: [],
@@ -115,25 +116,77 @@ describe("sync", () => {
       expect(result).toEqual({ blockNum: 0 });
     });
 
-    it("returns the persisted blockNum after updating stateSync", async () => {
+    it("returns the persisted blockNum after updating blockchainCheckpoint", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
       // Manually bump blockNum to verify getSyncHeight reads it back
-      await db.stateSync.update(1, { blockNum: 42 });
+      await db.blockchainCheckpoint.update(1, { blockNum: 42 });
       const result = await getSyncHeight(dbId);
       expect(result).toEqual({ blockNum: 42 });
     });
 
-    it("returns null when no stateSync record exists (deleted)", async () => {
+    it("returns null when no blockchainCheckpoint record exists (deleted)", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      await db.stateSync.delete(1);
+      await db.blockchainCheckpoint.delete(1);
       const result = await getSyncHeight(dbId);
       expect(result).toBeNull();
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
       await expect(getSyncHeight("never-opened-sync")).rejects.toThrow();
+      expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getCurrentBlockchainPeaks
+  // -------------------------------------------------------------------------
+
+  describe("getCurrentBlockchainPeaks", () => {
+    it("returns blockNum 0 and empty peaks on a fresh DB (populate seeds empty peaks)", async () => {
+      const dbId = await openTestDb();
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 0, peaks: "" });
+    });
+
+    it("returns blockNum 0 and empty peaks when no checkpoint record exists", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await db.blockchainCheckpoint.delete(1);
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 0, peaks: "" });
+    });
+
+    it("reports the on-disk blockNum even when peaks are empty", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      // A checkpoint advanced to height 50 but with no peaks yet must still
+      // report blockNum 50 (not 0) — the on-disk height is real information.
+      await db.blockchainCheckpoint.update(1, {
+        blockNum: 50,
+        partialBlockchainPeaks: new Uint8Array(),
+      });
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 50, peaks: "" });
+    });
+
+    it("round-trips the persisted blockNum and peaks bytes as base64", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      const peaksBytes = new Uint8Array([0x01, 0x02, 0x03]);
+      await db.blockchainCheckpoint.update(1, {
+        blockNum: 42,
+        partialBlockchainPeaks: peaksBytes,
+      });
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 42, peaks: toBase64(peaksBytes) });
+    });
+
+    it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
+      await expect(
+        getCurrentBlockchainPeaks("never-opened-sync")
+      ).rejects.toThrow();
       expect(errorSpy).toHaveBeenCalled();
     });
   });
@@ -166,11 +219,36 @@ describe("sync", () => {
         tag: toBase64(new Uint8Array([0x0a])),
         sourceNoteId: "",
         sourceAccountId: "",
+        sourceSubscriptionKey: "",
       });
       const tags = await getNoteTags(dbId);
       expect(tags).toHaveLength(1);
       expect(tags![0].sourceNoteId).toBeUndefined();
       expect(tags![0].sourceAccountId).toBeUndefined();
+      expect(tags![0].sourceSubscriptionKey).toBeUndefined();
+    });
+
+    it("returns the sourceSubscriptionKey for subscription tags", async () => {
+      const dbId = await openTestDb();
+      await addNoteTag(dbId, new Uint8Array([0x03]), "", "", "0xsubkey");
+      const tags = await getNoteTags(dbId);
+      expect(tags).toHaveLength(1);
+      expect(tags![0].sourceSubscriptionKey).toBe("0xsubkey");
+      expect(tags![0].sourceNoteId).toBeUndefined();
+      expect(tags![0].sourceAccountId).toBeUndefined();
+    });
+
+    it("leaves sourceSubscriptionKey undefined on rows written before the column existed", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await db.tags.add({
+        tag: toBase64(new Uint8Array([0x0b])),
+        sourceNoteId: "",
+        sourceAccountId: "",
+      });
+      const tags = await getNoteTags(dbId);
+      expect(tags).toHaveLength(1);
+      expect(tags![0].sourceSubscriptionKey).toBeUndefined();
     });
 
     it("returns multiple tags in insertion order", async () => {
@@ -213,6 +291,16 @@ describe("sync", () => {
       const stored = await db.tags.toArray();
       expect(stored[0].sourceNoteId).toBe("");
       expect(stored[0].sourceAccountId).toBe("");
+      expect(stored[0].sourceSubscriptionKey).toBe("");
+    });
+
+    it("stores the sourceSubscriptionKey when provided", async () => {
+      const dbId = await openTestDb();
+      await addNoteTag(dbId, new Uint8Array([0x01]), "", "", "0xsubkey");
+
+      const db = getDatabase(dbId);
+      const stored = await db.tags.toArray();
+      expect(stored[0].sourceSubscriptionKey).toBe("0xsubkey");
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
@@ -274,6 +362,56 @@ describe("sync", () => {
         undefined,
         undefined
       );
+      expect(deleted).toBe(1);
+    });
+
+    it("removes only the subscription tag matching the key, leaving a same-tag user row intact", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x06]);
+      await addNoteTag(dbId, tagBytes, "", "");
+      await addNoteTag(dbId, tagBytes, "", "", "0xsub-1");
+
+      const deleted = await removeNoteTag(
+        dbId,
+        tagBytes,
+        undefined,
+        undefined,
+        "0xsub-1"
+      );
+      expect(deleted).toBe(1);
+
+      const db = getDatabase(dbId);
+      const remaining = await db.tags.toArray();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].sourceSubscriptionKey).toBe("");
+    });
+
+    it("returns 0 when the subscription key does not match", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x07]);
+      await addNoteTag(dbId, tagBytes, "", "", "0xsub-1");
+
+      const deleted = await removeNoteTag(
+        dbId,
+        tagBytes,
+        undefined,
+        undefined,
+        "0xsub-other"
+      );
+      expect(deleted).toBe(0);
+    });
+
+    it("removes rows written before the sourceSubscriptionKey column existed", async () => {
+      const dbId = await openTestDb();
+      const tagBytes = new Uint8Array([0x08]);
+      const db = getDatabase(dbId);
+      await db.tags.add({
+        tag: toBase64(tagBytes),
+        sourceNoteId: "",
+        sourceAccountId: "",
+      });
+
+      const deleted = await removeNoteTag(dbId, tagBytes);
       expect(deleted).toBe(1);
     });
 
@@ -413,7 +551,7 @@ describe("sync", () => {
           newBlockNums: [7],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-          partialBlockchainPeaks: peaksBytes,
+          newPeaks: peaksBytes,
         })
       );
 
@@ -422,6 +560,13 @@ describe("sync", () => {
       expect(header).toBeDefined();
       expect(header!.blockNum).toBe(7);
       expect(header!.hasClientNotes).toBe("false");
+
+      // Peaks travel on the blockchainCheckpoint row, not the block header.
+      // Assert they round-trip — this is what proves the write path actually
+      // persists `newPeaks` (and would catch a fixture/field-name drift).
+      const checkpoint = await db.blockchainCheckpoint.get(1);
+      expect(checkpoint!.blockNum).toBe(7);
+      expect(checkpoint!.partialBlockchainPeaks).toEqual(peaksBytes);
     });
 
     it("marks block header hasClientNotes=true when blockHasRelevantNotes[i] === 1", async () => {
@@ -436,7 +581,7 @@ describe("sync", () => {
           newBlockNums: [15],
           blockHasRelevantNotes: new Uint8Array([1]),
           flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-          partialBlockchainPeaks: peaksBytes,
+          newPeaks: peaksBytes,
         })
       );
 
@@ -459,7 +604,7 @@ describe("sync", () => {
           newBlockNums: [5],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(original),
-          partialBlockchainPeaks: peaks,
+          newPeaks: peaks,
         })
       );
 
@@ -471,7 +616,7 @@ describe("sync", () => {
           newBlockNums: [5],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(replacement),
-          partialBlockchainPeaks: peaks,
+          newPeaks: peaks,
         })
       );
 
@@ -511,7 +656,32 @@ describe("sync", () => {
       expect(node!.node).toBe("node-data-42");
     });
 
-    it("overwrites an existing partial blockchain node (bulkPut)", async () => {
+    it("accepts re-writing an existing node with the same value", async () => {
+      const dbId = await openTestDb();
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 2,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+
+      const db = getDatabase(dbId);
+      const node = await db.partialBlockchainNodes.get(10);
+      expect(node!.node).toBe("same-data");
+    });
+
+    it("rejects a conflicting node write and keeps the stored value", async () => {
       const dbId = await openTestDb();
 
       await applyStateSync(
@@ -522,18 +692,53 @@ describe("sync", () => {
           serializedNodes: ["first-data"],
         })
       );
-      await applyStateSync(
-        dbId,
-        minimalStateUpdate({
-          blockNum: 2,
-          serializedNodeIds: ["10"],
-          serializedNodes: ["second-data"],
-        })
-      );
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 2,
+            serializedNodeIds: ["10"],
+            serializedNodes: ["second-data"],
+          })
+        )
+      ).rejects.toThrow("Refusing to overwrite partial blockchain node 10");
 
       const db = getDatabase(dbId);
       const node = await db.partialBlockchainNodes.get(10);
-      expect(node!.node).toBe("second-data");
+      expect(node!.node).toBe("first-data");
+    });
+
+    it("deduplicates identical node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10", "10"],
+          serializedNodes: ["node-data", "node-data"],
+        })
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(1);
+      expect((await db.partialBlockchainNodes.get(10))!.node).toBe("node-data");
+    });
+
+    it("rejects conflicting node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 1,
+            serializedNodeIds: ["10", "10"],
+            serializedNodes: ["first-data", "second-data"],
+          })
+        )
+      ).rejects.toThrow(
+        "Conflicting partial blockchain node 10 within the same write"
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(0);
     });
 
     it("is a no-op when serializedNodeIds is empty", async () => {
@@ -574,7 +779,7 @@ describe("sync", () => {
   // -------------------------------------------------------------------------
 
   describe("applyStateSync — committed note tags (updateCommittedNoteTags)", () => {
-    it("removes tags whose sourceNoteId matches a committedNoteId", async () => {
+    it("removes tags whose sourceNoteId matches a committed note tag source", async () => {
       const dbId = await openTestDb();
       // Add a tag that is associated with note-A
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
@@ -585,7 +790,7 @@ describe("sync", () => {
         dbId,
         minimalStateUpdate({
           blockNum: 1,
-          committedNoteIds: ["note-A"],
+          committedNoteTagSources: ["note-A"],
         })
       );
 
@@ -594,7 +799,7 @@ describe("sync", () => {
       expect(tags![0].sourceNoteId).toBe("note-B");
     });
 
-    it("is a no-op when committedNoteIds is empty", async () => {
+    it("is a no-op when committedNoteTagSources is empty", async () => {
       const dbId = await openTestDb();
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
 
@@ -602,7 +807,7 @@ describe("sync", () => {
         dbId,
         minimalStateUpdate({
           blockNum: 1,
-          committedNoteIds: [],
+          committedNoteTagSources: [],
         })
       );
 
@@ -610,7 +815,7 @@ describe("sync", () => {
       expect(tags).toHaveLength(1);
     });
 
-    it("removes all tags for multiple committedNoteIds", async () => {
+    it("removes all tags for multiple committedNoteTagSources", async () => {
       const dbId = await openTestDb();
       await addNoteTag(dbId, new Uint8Array([0x01]), "note-A", "acct-1");
       await addNoteTag(dbId, new Uint8Array([0x02]), "note-B", "acct-2");
@@ -620,7 +825,7 @@ describe("sync", () => {
         dbId,
         minimalStateUpdate({
           blockNum: 1,
-          committedNoteIds: ["note-A", "note-B"],
+          committedNoteTagSources: ["note-A", "note-B"],
         })
       );
 
@@ -737,8 +942,10 @@ describe("sync", () => {
           blockNum: 5,
           serializedOutputNotes: [
             {
+              detailsCommitment: "commitment-out-1",
               noteId: "out-note-1",
               noteAssets: new Uint8Array([0x01, 0x02]),
+              attachments: new Uint8Array([0x00]),
               recipientDigest: "recipient-digest-abc",
               metadata: new Uint8Array([0x03, 0x04]),
               nullifier: undefined,
@@ -770,8 +977,10 @@ describe("sync", () => {
           blockNum: 5,
           serializedOutputNotes: [
             {
+              detailsCommitment: "commitment-out-a",
               noteId: "out-a",
               noteAssets: new Uint8Array([0x01]),
+              attachments: new Uint8Array([0x00]),
               recipientDigest: "digest-a",
               metadata: new Uint8Array([0x02]),
               nullifier: "null-a",
@@ -780,8 +989,10 @@ describe("sync", () => {
               state: new Uint8Array([0x03]),
             },
             {
+              detailsCommitment: "commitment-out-b",
               noteId: "out-b",
               noteAssets: new Uint8Array([0x04]),
+              attachments: new Uint8Array([0x00]),
               recipientDigest: "digest-b",
               metadata: new Uint8Array([0x05]),
               nullifier: undefined,
@@ -813,8 +1024,10 @@ describe("sync", () => {
           blockNum: 5,
           serializedInputNotes: [
             {
+              detailsCommitment: "commitment-in-1",
               noteId: "in-note-1",
               noteAssets: new Uint8Array([0x0a]),
+              attachments: new Uint8Array([0x00]),
               serialNumber: new Uint8Array([0x0b]),
               inputs: new Uint8Array([0x0c]),
               noteScriptRoot: "script-root-in",

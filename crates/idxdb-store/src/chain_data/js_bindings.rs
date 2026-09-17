@@ -31,9 +31,6 @@ extern "C" {
         max_in_order_index: String,
     ) -> js_sys::Promise;
 
-    #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
-    pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
-
     // INSERTS
     // ================================================================================================
 
@@ -43,12 +40,7 @@ extern "C" {
         block_num: u32,
         header: Vec<u8>,
         has_client_notes: bool,
-    ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = insertPartialBlockchainNodes)]
-    pub fn idxdb_insert_partial_blockchain_nodes(
-        db_id: &str,
-        ids: Vec<String>,
+        node_ids: Vec<String>,
         nodes: Vec<String>,
     ) -> js_sys::Promise;
 

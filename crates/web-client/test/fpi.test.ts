@@ -34,6 +34,7 @@ test.describe("fpi test", () => {
 
             const MAP_SLOT = word("${MAP_SLOT_NAME}")
 
+            @account_procedure
             pub proc get_fpi_map_item
                 # map key
                 push.15.15.15.15
@@ -105,13 +106,13 @@ test.describe("fpi test", () => {
 
       let newAccount = await intClient.newWallet(
         sdk.AccountStorageMode.public(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 
       let txScript = `
             use miden::protocol::tx
-            begin
+            @transaction_script
+            pub proc main
                 # push the hash of the component procedure
                 procref.::miden::testing::fpi_component::get_fpi_map_item
 

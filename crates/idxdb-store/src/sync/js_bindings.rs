@@ -21,6 +21,9 @@ extern "C" {
     #[wasm_bindgen(js_name = getSyncHeight)]
     pub fn idxdb_get_sync_height(db_id: &str) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
+    pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getNoteTags)]
     pub fn idxdb_get_note_tags(db_id: &str) -> js_sys::Promise;
 
@@ -33,6 +36,7 @@ extern "C" {
         tag: Vec<u8>,
         source_note_id: Option<String>,
         source_account_id: Option<String>,
+        source_subscription_key: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyStateSync)]
@@ -46,6 +50,7 @@ extern "C" {
         tag: Vec<u8>,
         source_note_id: Option<String>,
         source_account_id: Option<String>,
+        source_subscription_key: Option<String>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = discardTransactions)]
@@ -72,11 +77,10 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "newBlockNums")]
     pub new_block_nums: Vec<u32>,
 
-    /// Serialized MMR peaks at the new sync height (single set for the whole update).
-    /// Written onto the chain-tip block's `blockHeaders` row (the one whose
-    /// `blockNum` matches `block_num`) and read back by `getCurrentBlockchainPeaks`.
-    #[wasm_bindgen(js_name = "partialBlockchainPeaks")]
-    pub partial_blockchain_peaks: Vec<u8>,
+    /// Serialized MMR peaks at the new sync height. The only peaks persisted by the
+    /// client (peaks for intermediate note blocks are never read, so they are not stored).
+    #[wasm_bindgen(js_name = "newPeaks")]
+    pub new_peaks: Vec<u8>,
 
     /// For each block in this update, stores a boolean (as u8) indicating whether
     /// that block contains notes relevant to this client. Index i corresponds to
@@ -92,9 +96,10 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "serializedNodes")]
     pub serialized_nodes: Vec<String>,
 
-    /// IDs of note tags that should be removed from the client's local state.
-    #[wasm_bindgen(js_name = "committedNoteIds")]
-    pub committed_note_ids: Vec<String>,
+    /// Details-commitment hex of committed notes whose tracking tags
+    /// (`NoteTagSource::Note`) should be removed from the client's local state.
+    #[wasm_bindgen(js_name = "committedNoteTagSources")]
+    pub committed_note_tag_sources: Vec<String>,
 
     /// Input notes for this state update in serialized form.
     #[wasm_bindgen(js_name = "serializedInputNotes")]
@@ -114,7 +119,22 @@ pub struct JsStateSyncUpdate {
 }
 
 /// Represents an update to a single account's state.
-#[wasm_bindgen(getter_with_clone, inspectable)]
+///
+/// `inspectable` is intentionally omitted (see #2183). When `inspectable` is
+/// set on a struct with public fields, wasm-bindgen auto-generates a
+/// `toJSON()` method that reads every field-getter — each of which calls
+/// back into WASM via `__wbg_get_<class>_<field>(this.__wbg_ptr)`. Under
+/// Next.js 16.2 dev-mode the patched `console.*` runs every non-primitive
+/// argument through `safe-stable-stringify`, which invokes `toJSON()`
+/// automatically. If the underlying pointer has been freed (or another
+/// WASM call is in flight) the resulting `"null pointer passed to rust"`
+/// trap propagates out of the user's `console.log` and crashes the
+/// caller. Without `inspectable`, no `toJSON()` is emitted; JSON.stringify
+/// falls back to `{}` (the wasm-bindgen wrapper has no own enumerable
+/// data — it's all behind the `__wbg_ptr`), and the re-entry never
+/// happens. Field access via the named getters still works exactly as
+/// before; only the auto-stringification path is muted.
+#[wasm_bindgen(getter_with_clone)]
 #[derive(Clone)]
 pub struct JsAccountUpdate {
     /// The merkle root of the account's storage trie.

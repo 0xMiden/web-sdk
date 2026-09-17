@@ -75,6 +75,14 @@ impl OutputNoteRecord {
     pub fn is_committed(&self) -> bool {
         self.0.is_committed()
     }
+
+    /// Returns true while the note's on-chain inclusion is still unsettled
+    /// (`ExpectedFull` or `ExpectedPartial`), i.e. while sync is the mechanism
+    /// that can advance this record.
+    #[js_export(js_name = "isInclusionPending")]
+    pub fn is_inclusion_pending(&self) -> bool {
+        self.0.is_inclusion_pending()
+    }
 }
 
 // CONVERSIONS

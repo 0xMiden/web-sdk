@@ -9,18 +9,20 @@ use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 /// `AccountDelta` stores the differences between two account states.
 ///
 /// The differences are represented as follows:
-/// - `storage`: an `AccountStorageDelta` that contains the changes to the account storage.
-/// - `vault`: an `AccountVaultDelta` object that contains the changes to the account vault.
+/// - `storage`: an `AccountStoragePatch` with the absolute final values of changed storage slots
+///   (storage changes have identical semantics in the delta and patch models).
+/// - `vault`: an `AccountVaultDelta` object that contains the relative changes to the account
+///   vault.
 /// - `nonce`: if the nonce of the account has changed, the new nonce is stored here.
 #[derive(Clone)]
 #[js_export]
 pub struct AccountDelta(NativeAccountDelta);
 
-pub mod storage;
 pub mod vault;
 
-use storage::AccountStorageDelta;
 use vault::AccountVaultDelta;
+
+use crate::models::account_patch::storage::AccountStoragePatch;
 
 #[js_export]
 impl AccountDelta {
@@ -45,8 +47,8 @@ impl AccountDelta {
         self.0.is_empty()
     }
 
-    /// Returns the storage delta.
-    pub fn storage(&self) -> AccountStorageDelta {
+    /// Returns the storage patch (storage changes are absolute in both models).
+    pub fn storage(&self) -> AccountStoragePatch {
         self.0.storage().into()
     }
     /// Returns the vault delta.

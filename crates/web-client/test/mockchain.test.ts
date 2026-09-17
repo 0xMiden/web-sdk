@@ -12,7 +12,6 @@ test.describe("mock chain tests", () => {
 
       const account = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const faucetAccount = await client.newFaucet(
@@ -52,9 +51,8 @@ test.describe("mock chain tests", () => {
       const mintedNoteRecord = await client.getInputNote(mintedNoteId);
 
       const mintedNote = mintedNoteRecord.toNote();
-      const consumeTransactionRequest = client.newConsumeTransactionRequest([
-        mintedNote,
-      ]);
+      const consumeTransactionRequest =
+        await client.newConsumeTransactionRequest([mintedNote], account.id());
       await client.submitNewTransaction(
         account.id(),
         consumeTransactionRequest

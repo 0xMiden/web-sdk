@@ -31,8 +31,7 @@ impl Package {
             return Err(from_str_err("Package does not contain a library"));
         }
 
-        let native_library = self.0.mast.clone();
-        Ok((*native_library).clone().into())
+        Ok(self.0.clone().into())
     }
 
     /// Returns the underlying program of a `Package`.

@@ -11,6 +11,17 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     free: vi.fn(),
   });
 
+  // Local copy of `assertIsRequest` from `__tests__/mocks/miden-sdk.ts`: this is
+  // a hoisted `vi.mock` factory, so it cannot reach module-scope imports.
+  const assertIsRequest = (request: unknown, method: string) => {
+    if (request && typeof (request as { then?: unknown }).then === "function") {
+      throw new Error(
+        `${method}: expected instance of TransactionRequest, got a Promise — ` +
+          `the request constructor's result was not awaited`
+      );
+    }
+  };
+
   const mockClient = {
     getAccounts: vi.fn().mockResolvedValue([]),
     getAccount: vi.fn().mockResolvedValue(null),
@@ -31,18 +42,53 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         })),
       },
     ]),
-    newMintTransactionRequest: vi.fn().mockReturnValue({}),
-    newSendTransactionRequest: vi.fn().mockReturnValue({}),
-    newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
-    newSwapTransactionRequest: vi.fn().mockReturnValue({}),
-    submitNewTransaction: vi
-      .fn()
-      .mockResolvedValue({ toString: vi.fn(() => "0xtx") }),
-    executeTransaction: vi.fn().mockResolvedValue({}),
+    // These are all `async fn` in Rust, so the mocks resolve rather than
+    // return — a hook that drops an `await` must fail here.
+    newMintTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSendTransactionRequest: vi.fn().mockResolvedValue({}),
+    newB2AggTransactionRequest: vi.fn().mockResolvedValue({}),
+    newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
+    newSwapTransactionRequest: vi.fn().mockResolvedValue({}),
+    feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
+      const builder = {
+        withOwnOutputNotes: vi.fn(() => builder),
+        withInputNotes: vi.fn(() => builder),
+        withCustomScript: vi.fn(() => builder),
+        build: vi.fn(() => ({})),
+      };
+      return builder;
+    }),
+    // These reject a thenable for the same reason the shared mock does: a
+    // request constructor whose `await` was dropped must fail here rather than
+    // sail through as an opaque argument. See `assertIsRequest` in
+    // `__tests__/mocks/miden-sdk.ts`.
+    submitNewTransaction: vi.fn(
+      async (_accountId: unknown, request: unknown) => {
+        assertIsRequest(request, "submitNewTransaction");
+        return { toHex: vi.fn(() => "0xtx") };
+      }
+    ),
+    executeTransaction: vi.fn(async (_accountId: unknown, request: unknown) => {
+      assertIsRequest(request, "executeTransaction");
+      return {};
+    }),
     proveTransaction: vi.fn().mockResolvedValue({}),
     submitProvenTransaction: vi.fn().mockResolvedValue(0),
     applyTransaction: vi.fn().mockResolvedValue({}),
-    sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+    sendPrivateNote: vi.fn(async (note: unknown, _addr: unknown) => {
+      // Any method call against a moved wasm-bindgen handle crashes with
+      // "null pointer passed to rust"; mirror that here so move-after-use
+      // bugs (e.g. building a NoteArray via Vec<Note> ctor then re-reading
+      // the source notes) are caught in unit tests.
+      if (
+        note &&
+        typeof note === "object" &&
+        (note as { _live?: boolean })._live === false
+      ) {
+        throw new Error("null pointer passed to rust");
+      }
+      return undefined;
+    }),
     exportStore: vi.fn().mockResolvedValue({ tables: {} }),
     forceImportStore: vi.fn().mockResolvedValue(undefined),
     exportNoteFile: vi
@@ -107,6 +153,13 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         })
       ),
     },
+    EthAddress: {
+      fromHex: vi.fn((hex: string) => ({
+        toHex: vi.fn(() => hex),
+        toString: vi.fn(() => hex),
+        free: vi.fn(),
+      })),
+    },
     Endpoint,
     RpcClient,
     BasicFungibleFaucetComponent: {
@@ -116,12 +169,25 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       })),
     },
     NoteId: {
-      fromHex: vi.fn((hex: string) => ({ toString: () => hex })),
+      // Mirror the wasm-bindgen ownership model: a NoteId handle becomes
+      // unusable once the underlying Rust value is moved out of it (e.g.
+      // by the NoteFilter constructor's `Vec<NoteId>` ABI). Reads after
+      // that point throw, matching the real WASM behavior.
+      fromHex: vi.fn((hex: string) => {
+        const handle = {
+          _hex: hex,
+          _live: true,
+          toString() {
+            if (!this._live) throw new Error("invalid NoteId handle");
+            return this._hex;
+          },
+        };
+        return handle;
+      }),
     },
     AccountStorageMode: {
       private: vi.fn(() => ({ type: "private" })),
       public: vi.fn(() => ({ type: "public" })),
-      network: vi.fn(() => ({ type: "network" })),
     },
     NoteType: {
       Private: 2,
@@ -137,7 +203,11 @@ vi.mock("@miden-sdk/miden-sdk", () => {
           noteType: number,
           attachment: unknown
         ) => ({
-          id: vi.fn(() => ({ toString: () => "0xnote" })),
+          _live: true,
+          id() {
+            if (!this._live) throw new Error("invalid Note handle");
+            return { toString: () => "0xnote" };
+          },
           sender,
           receiver,
           assets,
@@ -145,6 +215,88 @@ vi.mock("@miden-sdk/miden-sdk", () => {
           attachment,
         })
       ),
+      withAttachments: vi.fn(
+        (
+          assets: unknown,
+          metadata: unknown,
+          recipient: unknown,
+          attachments: unknown
+        ) => ({
+          _live: true,
+          id() {
+            if (!this._live) throw new Error("invalid Note handle");
+            return { toString: () => "0xnote" };
+          },
+          assets,
+          metadata,
+          recipient,
+          attachments,
+        })
+      ),
+    },
+    // Mock Felt — real WASM `Felt` wraps a field element built from a bigint;
+    // `asInt()` returns it back so tests can assert on the value round-trip.
+    Felt: class Felt {
+      value: bigint;
+      constructor(value: bigint) {
+        this.value = value;
+      }
+      asInt() {
+        return this.value;
+      }
+      free() {}
+    },
+    // Mock FeltArray — thin wrapper mirroring the real wasm-bindgen
+    // `Vec<Felt>` ABI (constructed from an array of `Felt` instances).
+    FeltArray: vi.fn().mockImplementation((elements: unknown[] = []) => ({
+      elements,
+      length: () => elements.length,
+      get: (i: number) => elements[i],
+      free: vi.fn(),
+    })),
+    NetworkAccountTarget: vi
+      .fn()
+      .mockImplementation(
+        (
+          targetId: ReturnType<typeof createMockAccountId>,
+          executionHint?: unknown
+        ) => ({
+          targetId: vi.fn(() => targetId),
+          executionHint: vi.fn(() => executionHint),
+          toAttachment: vi.fn(() => ({ type: "network-account-target" })),
+          free: vi.fn(),
+        })
+      ),
+    NoteMetadata: vi
+      .fn()
+      .mockImplementation(
+        (
+          sender: ReturnType<typeof createMockAccountId>,
+          noteType: number,
+          noteTag: unknown
+        ) => ({
+          sender,
+          noteType,
+          noteTag,
+          free: vi.fn(),
+        })
+      ),
+    NoteStorage: vi.fn().mockImplementation((feltArray: unknown) => ({
+      items: () => feltArray,
+      free: vi.fn(),
+    })),
+    NoteRecipient: {
+      fromScript: vi.fn((script: unknown, storage: unknown) => ({
+        script,
+        storage,
+        free: vi.fn(),
+      })),
+    },
+    NoteTag: {
+      withAccountTarget: vi.fn((accountId: unknown) => ({
+        accountId,
+        asU32: vi.fn(() => 0),
+      })),
     },
     NoteAssets: class NoteAssets {
       assets: unknown[];
@@ -162,11 +314,6 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         this.faucetId = faucetId;
         this.amount = amount;
       }
-    },
-    NoteAttachmentKind: {
-      None: 0,
-      Word: 1,
-      Array: 2,
     },
     NoteAttachmentScheme: {
       none: vi.fn(() => ({ type: "none" })),
@@ -190,18 +337,46 @@ vi.mock("@miden-sdk/miden-sdk", () => {
         ),
       }
     ),
-    NoteAttachment: Object.assign(class NoteAttachment {}, {
-      newWord: vi.fn(
-        (_scheme: unknown, _word: unknown) => new (class NoteAttachment {})()
-      ),
-      newArray: vi.fn(
-        (_scheme: unknown, _words: unknown[]) => new (class NoteAttachment {})()
-      ),
-    }),
+    NoteAttachment: (() => {
+      // Faithful enough to round-trip what `createNoteAttachment` packs in:
+      // it stores the Word(s) it was built from and yields them back via
+      // `toWords()`, so `readNoteAttachment`'s decode path is exercised against
+      // the real Word mock (which implements `toU64s()`).
+      class NoteAttachment {
+        words: unknown[];
+        constructor(words: unknown[] = []) {
+          this.words = words;
+        }
+        toWords() {
+          return this.words;
+        }
+        numWords() {
+          return this.words.length;
+        }
+      }
+      return Object.assign(NoteAttachment, {
+        fromWord: vi.fn(
+          (_scheme: unknown, word: unknown) => new NoteAttachment([word])
+        ),
+        fromWords: vi.fn(
+          (_scheme: unknown, words: unknown[]) => new NoteAttachment(words)
+        ),
+      });
+    })(),
     NoteArray: class NoteArray {
       notes: unknown[];
       constructor(notes?: unknown[]) {
+        // Mirror the wasm-bindgen Vec<Note> ABI: the constructor MOVES each
+        // element out of its JS handle, leaving it unusable. push(&note)
+        // borrows and keeps the handle valid.
         this.notes = notes ?? [];
+        if (notes) {
+          for (const n of notes) {
+            if (n && typeof n === "object") {
+              (n as { _live?: boolean })._live = false;
+            }
+          }
+        }
       }
       push(note: unknown) {
         this.notes.push(note);
@@ -251,9 +426,16 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       constructor(_accounts?: unknown[]) {}
     },
     AccountStorageRequirements: class AccountStorageRequirements {},
-    NoteFilter: vi.fn().mockImplementation(() => ({
-      free: vi.fn(),
-    })),
+    NoteFilter: vi.fn().mockImplementation((_type: unknown, ids?: unknown) => {
+      if (Array.isArray(ids)) {
+        for (const id of ids) {
+          if (id && typeof id === "object") {
+            (id as { _live?: boolean })._live = false;
+          }
+        }
+      }
+      return { free: vi.fn() };
+    }),
     NoteFilterTypes: {
       All: 0,
       Consumed: 1,

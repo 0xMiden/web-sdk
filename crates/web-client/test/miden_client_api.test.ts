@@ -84,13 +84,11 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         return {
           isFaucet: wallet.isFaucet(),
           isRegularAccount: wallet.isRegularAccount(),
-          isUpdatable: wallet.isUpdatable(),
         };
       });
 
       expect(result.isFaucet).toBe(false);
       expect(result.isRegularAccount).toBe(true);
-      expect(result.isUpdatable).toBe(true);
     }
   );
 
@@ -127,7 +125,6 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         window.AccountComponent.createAuthComponentFromSecretKey(secretKey);
 
       const built = new window.AccountBuilder(seed)
-        .accountType(window.AccountType.RegularAccountImmutableCode)
         .storageMode(window.AccountStorageMode.public())
         .withAuthComponent(authComponent)
         .withBasicWalletComponent()
@@ -331,6 +328,107 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
 
       expect(result.txId).toBeDefined();
       expect(result.txId.length).toBeGreaterThan(0);
+    }
+  );
+
+  mockTest(
+    "manual lifecycle: executeRequest → prove → submit → apply",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.AccountType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const lowLevel = await window.MockWasmWebClient.createClient();
+        const mintRequest = await lowLevel.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(500)
+        );
+
+        // Drive the lifecycle stages by hand instead of submit().
+        const executed = await client.transactions.executeRequest(
+          faucet,
+          mintRequest
+        );
+        const txIdHex = executed.id.toHex();
+        const proven = await executed.prove();
+        const submitted = await proven.submit();
+        const blockNumber = submitted.blockNumber;
+        await submitted.apply();
+
+        // apply() must have persisted the transaction into the local store.
+        const records = await client.transactions.list({ ids: [txIdHex] });
+
+        return {
+          txIdHex,
+          blockNumber,
+          listedCount: records.length,
+          listedId: records[0]?.id().toHex(),
+        };
+      });
+
+      expect(result.txIdHex.length).toBeGreaterThan(0);
+      expect(typeof result.blockNumber).toBe("number");
+      expect(result.blockNumber).toBeGreaterThanOrEqual(0);
+      expect(result.listedCount).toBe(1);
+      expect(result.listedId).toBe(result.txIdHex);
+    }
+  );
+
+  mockTest(
+    "chain anchor: captureAnchor pins executeRequest to the anchor block",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.AccountType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const lowLevel = await window.MockWasmWebClient.createClient();
+        const mintRequest = await lowLevel.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(500)
+        );
+
+        const anchor = await client.transactions.captureAnchor(mintRequest);
+        const anchorBlock = anchor.blockNum();
+
+        // Advance past the anchor so the tip no longer matches it. These must
+        // be awaited: the assertion below requires the tip to have actually
+        // moved, and proveBlock bypasses the serializing wrapper.
+        await client.proveBlock();
+        await client.proveBlock();
+        await client.sync();
+        const tip = await client.getSyncHeight();
+
+        const executed = await client.transactions.executeRequest(
+          faucet,
+          mintRequest,
+          { anchor }
+        );
+        const executedBlock = executed.result
+          .executedTransaction()
+          .blockHeader()
+          .blockNum();
+
+        return { anchorBlock, tip, executedBlock };
+      });
+
+      expect(result.tip).toBeGreaterThan(result.anchorBlock);
+      expect(result.executedBlock).toBe(result.anchorBlock);
     }
   );
 
@@ -868,7 +966,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   });
 
   mockTest(
-    "transactions.preview returns a TransactionSummary",
+    "transactions.preview rejects when the transaction is already authorized",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
@@ -880,25 +978,28 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
           maxSupply: 10_000_000n,
         });
 
-        const summary = await client.transactions.preview({
-          operation: "mint",
-          account: faucet,
-          to: wallet,
-          amount: 1000n,
-        });
-
-        return {
-          hasSummary: summary != null,
-          hasOutputNotes: typeof summary.outputNotes === "function",
-          outputNotesCount: summary.outputNotes().numNotes(),
-          hasAccountDelta: typeof summary.accountDelta === "function",
-        };
+        // The faucet's key is in the keystore, so the mint executes
+        // successfully and no pending-authorization summary exists.
+        try {
+          await client.transactions.preview({
+            operation: "mint",
+            account: faucet,
+            to: wallet,
+            amount: 1000n,
+          });
+          return { threw: false, code: null, message: "" };
+        } catch (error) {
+          return {
+            threw: true,
+            code: (error as { code?: string }).code ?? null,
+            message: `${(error as Error).message ?? error}`,
+          };
+        }
       });
 
-      expect(result.hasSummary).toBe(true);
-      expect(result.hasOutputNotes).toBe(true);
-      expect(result.outputNotesCount).toBeGreaterThan(0);
-      expect(result.hasAccountDelta).toBe(true);
+      expect(result.threw).toBe(true);
+      expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
+      expect(result.message).toContain("already fully authorized");
     }
   );
 
@@ -1106,14 +1207,12 @@ nodeTest.describe("MidenClient API - Integration", () => {
 
         return {
           walletIsFaucet: wallet.isFaucet(),
-          walletIsUpdatable: wallet.isUpdatable(),
           faucetIsFaucet: faucet.isFaucet(),
           accountCount: accounts.length,
         };
       });
 
       expect(result.walletIsFaucet).toBe(false);
-      expect(result.walletIsUpdatable).toBe(true);
       expect(result.faucetIsFaucet).toBe(true);
       expect(result.accountCount).toBe(2);
     }

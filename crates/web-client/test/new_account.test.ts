@@ -9,7 +9,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -20,13 +19,10 @@ test.describe("new_wallet tests", () => {
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         idIsPublic: newWallet.id().isPublic(),
         idIsPrivate: newWallet.id().isPrivate(),
-        idIsNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     });
@@ -37,13 +33,10 @@ test.describe("new_wallet tests", () => {
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
     expect(result.isFaucet).toEqual(false);
     expect(result.isRegularAccount).toEqual(true);
-    expect(result.isUpdatable).toEqual(false);
     expect(result.isPublic).toEqual(false);
     expect(result.isPrivate).toEqual(true);
-    expect(result.isNetwork).toEqual(false);
     expect(result.idIsPublic).toEqual(false);
     expect(result.idIsPrivate).toEqual(true);
-    expect(result.idIsNetwork).toEqual(false);
     expect(result.isNew).toEqual(true);
   });
 
@@ -51,7 +44,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.public(),
-        false,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -62,13 +54,10 @@ test.describe("new_wallet tests", () => {
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         idIsPublic: newWallet.id().isPublic(),
         idIsPrivate: newWallet.id().isPrivate(),
-        idIsNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     });
@@ -79,13 +68,10 @@ test.describe("new_wallet tests", () => {
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
     expect(result.isFaucet).toEqual(false);
     expect(result.isRegularAccount).toEqual(true);
-    expect(result.isUpdatable).toEqual(false);
     expect(result.isPublic).toEqual(true);
     expect(result.isPrivate).toEqual(false);
-    expect(result.isNetwork).toEqual(false);
     expect(result.idIsPublic).toEqual(true);
     expect(result.idIsPrivate).toEqual(false);
-    expect(result.idIsNetwork).toEqual(false);
     expect(result.isNew).toEqual(true);
   });
 
@@ -93,7 +79,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -104,13 +89,10 @@ test.describe("new_wallet tests", () => {
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         idIsPublic: newWallet.id().isPublic(),
         idIsPrivate: newWallet.id().isPrivate(),
-        idIsNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     });
@@ -121,13 +103,10 @@ test.describe("new_wallet tests", () => {
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
     expect(result.isFaucet).toEqual(false);
     expect(result.isRegularAccount).toEqual(true);
-    expect(result.isUpdatable).toEqual(true);
     expect(result.isPublic).toEqual(false);
     expect(result.isPrivate).toEqual(true);
-    expect(result.isNetwork).toEqual(false);
     expect(result.idIsPublic).toEqual(false);
     expect(result.idIsPrivate).toEqual(true);
-    expect(result.idIsNetwork).toEqual(false);
     expect(result.isNew).toEqual(true);
   });
 
@@ -135,7 +114,6 @@ test.describe("new_wallet tests", () => {
     const result = await run(async ({ client, sdk }) => {
       const newWallet = await client.newWallet(
         sdk.AccountStorageMode.public(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
       return {
@@ -146,13 +124,10 @@ test.describe("new_wallet tests", () => {
         codeCommitment: newWallet.code().commitment().toHex(),
         isFaucet: newWallet.isFaucet(),
         isRegularAccount: newWallet.isRegularAccount(),
-        isUpdatable: newWallet.isUpdatable(),
         isPublic: newWallet.isPublic(),
         isPrivate: newWallet.isPrivate(),
-        isNetwork: newWallet.isNetwork(),
         idIsPublic: newWallet.id().isPublic(),
         idIsPrivate: newWallet.id().isPrivate(),
-        idIsNetwork: newWallet.id().isNetwork(),
         isNew: newWallet.isNew(),
       };
     });
@@ -163,13 +138,10 @@ test.describe("new_wallet tests", () => {
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
     expect(result.isFaucet).toEqual(false);
     expect(result.isRegularAccount).toEqual(true);
-    expect(result.isUpdatable).toEqual(true);
     expect(result.isPublic).toEqual(true);
     expect(result.isPrivate).toEqual(false);
-    expect(result.isNetwork).toEqual(false);
     expect(result.idIsPublic).toEqual(true);
     expect(result.idIsPrivate).toEqual(false);
-    expect(result.idIsNetwork).toEqual(false);
     expect(result.isNew).toEqual(true);
   });
 });
@@ -196,13 +168,10 @@ test.describe("new_faucet tests", () => {
         codeCommitment: newFaucet.code().commitment().toHex(),
         isFaucet: newFaucet.isFaucet(),
         isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         idIsPublic: newFaucet.id().isPublic(),
         idIsPrivate: newFaucet.id().isPrivate(),
-        idIsNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     });
@@ -213,13 +182,10 @@ test.describe("new_faucet tests", () => {
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
     expect(result.isFaucet).toEqual(true);
     expect(result.isRegularAccount).toEqual(false);
-    expect(result.isUpdatable).toEqual(false);
     expect(result.isPublic).toEqual(false);
     expect(result.isPrivate).toEqual(true);
-    expect(result.isNetwork).toEqual(false);
     expect(result.idIsPublic).toEqual(false);
     expect(result.idIsPrivate).toEqual(true);
-    expect(result.idIsNetwork).toEqual(false);
     expect(result.isNew).toEqual(true);
   });
 
@@ -242,13 +208,10 @@ test.describe("new_faucet tests", () => {
         codeCommitment: newFaucet.code().commitment().toHex(),
         isFaucet: newFaucet.isFaucet(),
         isRegularAccount: newFaucet.isRegularAccount(),
-        isUpdatable: newFaucet.isUpdatable(),
         isPublic: newFaucet.isPublic(),
         isPrivate: newFaucet.isPrivate(),
-        isNetwork: newFaucet.isNetwork(),
         idIsPublic: newFaucet.id().isPublic(),
         idIsPrivate: newFaucet.id().isPrivate(),
-        idIsNetwork: newFaucet.id().isNetwork(),
         isNew: newFaucet.isNew(),
       };
     });
@@ -259,13 +222,10 @@ test.describe("new_faucet tests", () => {
     expect(result.codeCommitment.startsWith("0x")).toBe(true);
     expect(result.isFaucet).toEqual(true);
     expect(result.isRegularAccount).toEqual(false);
-    expect(result.isUpdatable).toEqual(false);
     expect(result.isPublic).toEqual(true);
     expect(result.isPrivate).toEqual(false);
-    expect(result.isNetwork).toEqual(false);
     expect(result.idIsPublic).toEqual(true);
     expect(result.idIsPrivate).toEqual(false);
-    expect(result.idIsNetwork).toEqual(false);
     expect(result.isNew).toEqual(true);
   });
 
@@ -333,7 +293,6 @@ test.describe("AccountStorage.getMapEntries tests", () => {
 
       const account = await client.newWallet(
         sdk.AccountStorageMode.private(),
-        true,
         sdk.AuthScheme.AuthRpoFalcon512
       );
 

@@ -80,6 +80,12 @@ describe("createP2IDNote", () => {
     expect(wasm.NoteAssets).toHaveBeenCalledOnce();
   });
 
+  it("rejects an empty asset array", () => {
+    expect(() =>
+      createP2IDNote({ from: "0xsender", to: "0xrecipient", assets: [] })
+    ).toThrow("P2ID and P2IDE notes require at least one asset");
+  });
+
   it("uses provided attachment data", () => {
     createP2IDNote({
       from: "0xsender",
