@@ -3,7 +3,7 @@
 ## 0.16.1 (TBD)
 
 ### Enhancements
-* [FEATURE][web] `compile.component({ code, libraries })` links the modules a component imports (e.g. auth libraries). Each `{ namespace, code }` entry is statically linked as a source module, so the component, and the account's code commitment, match one compiled off `createCodeBuilder()` with `linkModule`. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
+* [FEATURE][web] `compile.component({ code, libraries })` links the modules a component imports (e.g. auth libraries), closing the gap that forced consumers onto the low-level `createCodeBuilder()`. Each `{ namespace, code }` entry is linked as a source module with `linkModule`, the same sequence a raw code builder would run, so a component already deployed that way keeps its code commitment. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 * [FEATURE][web] Added `notes.listConsumable({ account? })`, returning `ConsumableNoteRecord[]` with each note's `noteConsumability()` kept, so callers can tell notes consumable now from block-locked ones (`consumableAfterBlock`). Omit `account` to list for every tracked account. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 
 ### Changes

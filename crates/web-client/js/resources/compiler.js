@@ -13,11 +13,9 @@ export class CompilerResource {
    * Compiles MASM code + slots into an AccountComponent ready for accounts.create().
    *
    * Dependency modules the component imports (e.g. auth libraries) are linked
-   * via `libraries` before compilation. Each entry is statically linked as a
-   * source module with `linkModule`, so the compiled component, and therefore
-   * the account's code commitment, is identical to building it directly off a
-   * `createCodeBuilder()`. Changing the link path would change the MAST and
-   * break accounts already created with the original component. Two entries
+   * via `libraries` before compilation, as source modules with `linkModule` -
+   * the same sequence a caller would run on a raw `createCodeBuilder()`, so a
+   * component already deployed that way keeps its code commitment. Two entries
    * sharing a `namespace` cause a link error.
    *
    * @param {{ code: string, namespace?: string, slots?: StorageSlot[], supportAllTypes?: boolean, libraries?: Array<{ namespace: string, code: string }> }} opts
