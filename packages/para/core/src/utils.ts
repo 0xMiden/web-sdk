@@ -9,7 +9,7 @@ export { hexToBytes };
 const EVM_WALLET_TYPE = "EVM";
 
 /** True when a Para wallet is an EVM key (the only type Miden signing uses). */
-export const isEvmWallet = (wallet: { type?: string }): boolean =>
+const isEvmWallet = (wallet: { type?: string }): boolean =>
   wallet.type === EVM_WALLET_TYPE;
 
 /**

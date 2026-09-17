@@ -115,10 +115,7 @@ const requireBetaApiKey = () => {
 const dumpPage = async (page, label, extraLogs = []) => {
   try {
     const html = redactQueries(await page.content());
-    const dest = path.join(
-      os.tmpdir(),
-      `para-e2e-${label}-${Date.now()}.html`
-    );
+    const dest = path.join(os.tmpdir(), `para-e2e-${label}-${Date.now()}.html`);
     fs.writeFileSync(dest, html);
     console.log(`Wrote page dump to ${dest}`);
     if (extraLogs.length) {
@@ -131,7 +128,7 @@ const dumpPage = async (page, label, extraLogs = []) => {
         const parsed = new URL(url);
         console.log(`frame ${parsed.origin}${parsed.pathname}`);
       } catch {
-        console.log("frame <unparseable>");
+        console.log("frame <unparsable>");
       }
       try {
         const ids = await frame.$$eval("[data-testid]", (nodes) =>
@@ -597,13 +594,15 @@ test(
         () =>
           Boolean(
             window.__midenParaE2e &&
-              typeof window.__midenParaE2e.signMessage === "function"
+            typeof window.__midenParaE2e.signMessage === "function"
           ),
         { timeout: 15000 }
       );
       const signed = await page.evaluate(async () => {
         const res = await window.__midenParaE2e.signMessage();
-        return Boolean(res && typeof res.signature === "string" && res.signature);
+        return Boolean(
+          res && typeof res.signature === "string" && res.signature
+        );
       });
       assert.equal(
         signed,

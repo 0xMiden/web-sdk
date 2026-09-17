@@ -76,13 +76,6 @@ test("fromHexSig throws on odd-length strings", () => {
   assert.throws(() => fromHexSig("abc"), /Invalid string len/);
 });
 
-test("isEvmWallet matches the EVM wallet type string", () => {
-  const { isEvmWallet } = loadUtils();
-  assert.equal(isEvmWallet({ type: "EVM" }), true);
-  assert.equal(isEvmWallet({ type: "SOLANA" }), false);
-  assert.equal(isEvmWallet({}), false);
-});
-
 test("resolveEvmWallets prefers getWalletsByType full records", () => {
   const { resolveEvmWallets } = loadUtils();
   const listed = [
