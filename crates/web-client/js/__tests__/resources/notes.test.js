@@ -24,8 +24,8 @@ function makeWasm(overrides = {}) {
     },
     NoteExportFormat: { Full: "Full" },
     AccountId: {
-      fromHex: vi.fn((hex) => ({ hex })),
-      fromBech32: vi.fn((b) => ({ bech32: b })),
+      fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
+      fromBech32: vi.fn((b) => ({ bech32: b, toString: () => b })),
     },
     Address: {
       fromBech32: vi.fn((b) => ({ bech32: b })),
@@ -196,10 +196,23 @@ describe("NotesResource", () => {
   describe("listAvailable", () => {
     // A ConsumableNoteRecord whose consumability for the queried account is
     // consumable-now (afterBlock null) or block-locked (afterBlock = a height).
+    // The account listAvailable resolves "0xacc"/"0xaccountHex" to; entries are
+    // matched against it.
+    const ACC = "0xacc";
+    const entry = (accountIdHex, afterBlock = null, consumableNow = null) => ({
+      accountId: () => ({ toString: () => accountIdHex }),
+      consumptionStatus: () => ({
+        isConsumableNow: () =>
+          consumableNow == null ? afterBlock == null : consumableNow,
+        consumableAfterBlock: () => afterBlock,
+      }),
+    });
+
     const consumableNote = (record, afterBlock = null) => ({
       inputNoteRecord: vi.fn().mockReturnValue(record),
       noteConsumability: vi.fn().mockReturnValue([
         {
+          accountId: () => ({ toString: () => ACC }),
           consumptionStatus: () => ({
             isConsumableNow: () => afterBlock == null,
             consumableAfterBlock: () => afterBlock,
@@ -214,6 +227,7 @@ describe("NotesResource", () => {
       inputNoteRecord: vi.fn().mockReturnValue(record),
       noteConsumability: vi.fn().mockReturnValue([
         {
+          accountId: () => ({ toString: () => ACC }),
           consumptionStatus: () => ({
             isConsumableNow: () => false,
             consumableAfterBlock: () => null,
@@ -226,7 +240,7 @@ describe("NotesResource", () => {
       inner.getConsumableNotes.mockResolvedValue([consumableNote("record1")]);
       const resource = makeResource();
       const result = await resource.listAvailable({
-        account: "0xaccountHex",
+        account: ACC,
       });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(result).toEqual(["record1"]);
@@ -238,7 +252,7 @@ describe("NotesResource", () => {
         consumableNote("lockedRecord", 12345),
       ]);
       const resource = makeResource();
-      const result = await resource.listAvailable({ account: "0xacc" });
+      const result = await resource.listAvailable({ account: ACC });
       expect(result).toEqual(["nowRecord"]);
     });
 
@@ -248,6 +262,7 @@ describe("NotesResource", () => {
       const wasmNow = consumableNote("wasmNow");
       wasmNow.noteConsumability.mockReturnValue([
         {
+          accountId: () => ({ toString: () => ACC }),
           consumptionStatus: () => ({
             isConsumableNow: () => true,
             consumableAfterBlock: () => undefined,
@@ -259,7 +274,7 @@ describe("NotesResource", () => {
         consumableNote("lockedRecord", 12345),
       ]);
       const resource = makeResource();
-      const result = await resource.listAvailable({ account: "0xacc" });
+      const result = await resource.listAvailable({ account: ACC });
       expect(result).toEqual(["wasmNow"]);
     });
 
@@ -269,8 +284,23 @@ describe("NotesResource", () => {
         neverConsumableNote("neverRecord"),
       ]);
       const resource = makeResource();
-      const result = await resource.listAvailable({ account: "0xacc" });
+      const result = await resource.listAvailable({ account: ACC });
       expect(result).toEqual(["nowRecord"]);
+    });
+
+    it("reads the queried account's entry, not another account's", async () => {
+      // getConsumableNotes(account) screens one account today, so a record
+      // carrying a second account's status is defensive: the note is locked for
+      // the caller and must not be listed because someone else could spend it.
+      const mixed = {
+        inputNoteRecord: vi.fn().mockReturnValue("mixedRecord"),
+        noteConsumability: vi
+          .fn()
+          .mockReturnValue([entry(ACC, 12345), entry("0xother")]),
+      };
+      inner.getConsumableNotes.mockResolvedValue([mixed]);
+      const resource = makeResource();
+      expect(await resource.listAvailable({ account: ACC })).toEqual([]);
     });
 
     it("resolves bech32 account ref", async () => {
@@ -283,7 +313,7 @@ describe("NotesResource", () => {
     it("returns empty array when no consumable notes", async () => {
       inner.getConsumableNotes.mockResolvedValue([]);
       const resource = makeResource();
-      const result = await resource.listAvailable({ account: "0xacc" });
+      const result = await resource.listAvailable({ account: ACC });
       expect(result).toEqual([]);
     });
   });

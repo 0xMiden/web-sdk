@@ -315,7 +315,7 @@ export class TransactionsResource {
     // applies the same rule).
     const consumable = (
       (await this.#inner.getConsumableNotes(accountId)) ?? []
-    ).filter(isConsumableNow);
+    ).filter((c) => isConsumableNow(c, accountIdHex));
 
     if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };

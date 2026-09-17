@@ -744,6 +744,9 @@ describe("TransactionsResource", () => {
   });
 
   describe("consumeAll", () => {
+    // The account these tests consume for; entries are matched against it.
+    const ACC = "0xaccHex";
+
     // A ConsumableNoteRecord: consumable now, or block-locked when a height is
     // given (the screener's `ConsumableAfter`).
     const consumableNote = (note, afterBlock = null) => ({
@@ -752,6 +755,7 @@ describe("TransactionsResource", () => {
         .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
       noteConsumability: vi.fn().mockReturnValue([
         {
+          accountId: () => ({ toString: () => ACC }),
           consumptionStatus: () => ({
             isConsumableNow: () => afterBlock == null,
             consumableAfterBlock: () => afterBlock,
@@ -768,6 +772,7 @@ describe("TransactionsResource", () => {
         .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
       noteConsumability: vi.fn().mockReturnValue([
         {
+          accountId: () => ({ toString: () => ACC }),
           consumptionStatus: () => ({
             isConsumableNow: () => false,
             consumableAfterBlock: () => null,
@@ -874,6 +879,36 @@ describe("TransactionsResource", () => {
         expect.objectContaining({ hex: "0xaccHex" })
       );
       expect(result.consumed).toBe(1);
+    });
+
+    it("reads the queried account's entry, not another account's", async () => {
+      const mixed = {
+        inputNoteRecord: vi
+          .fn()
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("mixed") }),
+        noteConsumability: vi.fn().mockReturnValue([
+          {
+            accountId: () => ({ toString: () => ACC }),
+            consumptionStatus: () => ({
+              isConsumableNow: () => false,
+              consumableAfterBlock: () => 12345,
+            }),
+          },
+          {
+            accountId: () => ({ toString: () => "0xother" }),
+            consumptionStatus: () => ({
+              isConsumableNow: () => true,
+              consumableAfterBlock: () => null,
+            }),
+          },
+        ]),
+      };
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi.fn().mockResolvedValue([mixed]),
+      });
+      const result = await resource.consumeAll({ account: ACC });
+      expect(result).toEqual({ txId: null, consumed: 0, remaining: 0 });
+      expect(inner.newConsumeTransactionRequest).not.toHaveBeenCalled();
     });
 
     it("respects maxNotes option", async () => {
@@ -2033,6 +2068,7 @@ describe("TransactionsResource", () => {
           .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
         noteConsumability: vi.fn().mockReturnValue([
           {
+            accountId: () => ({ toString: () => "0xaccHex" }),
             consumptionStatus: () => ({
               isConsumableNow: () => true,
               consumableAfterBlock: () => null,

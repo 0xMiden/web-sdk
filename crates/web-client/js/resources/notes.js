@@ -41,8 +41,12 @@ export class NotesResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(opts.account, wasm);
+    // getConsumableNotes takes AccountId by value, so read the hex first.
+    const accountIdHex = accountId.toString();
     const consumable = await this.#inner.getConsumableNotes(accountId);
-    return consumable.filter(isConsumableNow).map((c) => c.inputNoteRecord());
+    return consumable
+      .filter((c) => isConsumableNow(c, accountIdHex))
+      .map((c) => c.inputNoteRecord());
   }
 
   async listConsumable(opts) {
