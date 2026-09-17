@@ -42,18 +42,23 @@ of your project:
 <!-- BEGIN:miden-agent-rules -->
 ## Miden
 
-This project uses the Miden web SDK. Your training data is likely out of date —
+This project uses the Miden web SDK. Your training data is likely out of date:
 Miden is pre-1.0 and its API changes between minor versions.
 
-Before writing or reviewing Miden code, read the version-matched guide for the
-package you are touching:
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
 
-- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — core client
-- `node_modules/@miden-sdk/react/AGENTS.md` — React hooks
-- `node_modules/@miden-sdk/vite-plugin/AGENTS.md` — bundler setup
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
 
-Each one indexes task-specific skills in its package's `skills/` directory.
+Each guide indexes task-specific skills in that package's `skills/` directory.
 Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
 <!-- END:miden-agent-rules -->
 ```
 
@@ -1670,10 +1675,18 @@ function MyFeature() {
 
 For wallets using external key management, wrap your app with a signer provider **above** `MidenProvider`. The signer provider populates a `SignerContext` with a `signCb` and an `accountConfig`; `MidenProvider` picks these up automatically to create the client and initialize the account.
 
+The React bindings ship in their own packages, separate from each integration's core package. Import the provider from the `-react` one:
+
+| Provider | Import from | Core package (not the provider) |
+| --- | --- | --- |
+| Para | `@miden-sdk/para-react` | `@miden-sdk/para` |
+| Turnkey | `@miden-sdk/turnkey-react` | `@miden-sdk/turnkey` |
+| MidenFi wallet | `@miden-sdk/miden-wallet-adapter-react` | `@miden-sdk/miden-wallet-adapter-base` |
+
 ### Para (EVM Wallets)
 
 ```tsx
-import { ParaSignerProvider } from '@miden-sdk/para';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
 
 function App() {
   return (
@@ -1692,13 +1705,17 @@ const { para, wallet, isConnected } = useParaSigner();
 ### Turnkey
 
 ```tsx
-import { TurnkeySignerProvider } from '@miden-sdk/miden-turnkey-react';
+import { TurnkeySignerProvider } from '@miden-sdk/turnkey-react';
 
 function App() {
   return (
-    // Config is optional — defaults to https://api.turnkey.com
-    // and reads VITE_TURNKEY_ORG_ID from environment
-    <TurnkeySignerProvider>
+    // `config` is REQUIRED and must carry `defaultOrganizationId`.
+    // Only `apiBaseUrl` has a default (https://api.turnkey.com).
+    // The provider does NOT read VITE_TURNKEY_ORG_ID or any other env var -
+    // read it yourself and pass it in.
+    <TurnkeySignerProvider
+      config={{ defaultOrganizationId: import.meta.env.VITE_TURNKEY_ORG_ID }}
+    >
       <MidenProvider config={{ rpcUrl: 'testnet' }}>
         <YourApp />
       </MidenProvider>
@@ -1706,7 +1723,7 @@ function App() {
   );
 }
 
-// Or with explicit config:
+// Or with the base URL set explicitly:
 <TurnkeySignerProvider config={{
   apiBaseUrl: 'https://api.turnkey.com',
   defaultOrganizationId: 'your-org-id',
@@ -1719,7 +1736,7 @@ Connect via passkey authentication:
 
 ```tsx
 import { useSigner } from '@miden-sdk/react';
-import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
+import { useTurnkeySigner } from '@miden-sdk/turnkey-react';
 
 const { isConnected, connect, disconnect } = useSigner();
 await connect(); // triggers passkey flow
@@ -1730,7 +1747,7 @@ const { client, account, setAccount } = useTurnkeySigner();
 ### MidenFi Wallet Adapter
 
 ```tsx
-import { MidenFiSignerProvider } from '@miden-sdk/wallet-adapter-react';
+import { MidenFiSignerProvider } from '@miden-sdk/miden-wallet-adapter-react';
 
 function App() {
   return (
@@ -1772,8 +1789,8 @@ import {
   SignerSlot,
   useMultiSigner,
 } from '@miden-sdk/react';
-import { ParaSignerProvider } from '@miden-sdk/use-miden-para-react';
-import { TurnkeySignerProvider } from '@miden-sdk/miden-turnkey-react';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
+import { TurnkeySignerProvider } from '@miden-sdk/turnkey-react';
 import { MidenFiSignerProvider } from '@miden-sdk/miden-wallet-adapter-react';
 
 function App() {
@@ -1782,7 +1799,9 @@ function App() {
       <ParaSignerProvider apiKey="your-api-key" environment="BETA">
         <SignerSlot />
       </ParaSignerProvider>
-      <TurnkeySignerProvider>
+      <TurnkeySignerProvider
+        config={{ defaultOrganizationId: import.meta.env.VITE_TURNKEY_ORG_ID }}
+      >
         <SignerSlot />
       </TurnkeySignerProvider>
       <MidenFiSignerProvider network="testnet">
@@ -1835,7 +1854,7 @@ Signer providers can include custom `AccountComponent` instances in the account 
 Pre-built signer providers (Para, Turnkey, MidenFi) accept `customComponents` as a prop and forward it into `accountConfig`:
 
 ```tsx
-import { ParaSignerProvider } from '@miden-sdk/para';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
 import type { AccountComponent } from '@miden-sdk/miden-sdk';
 
 const dexComponent: AccountComponent = await loadCompiledComponent();

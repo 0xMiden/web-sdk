@@ -111,6 +111,13 @@ if [ -z "$packages" ]; then
   exit 1
 fi
 
+# Counted up front so the tail can assert that every discovered package was
+# actually examined. A `while read` that ends early - a short read, a command
+# inside the loop consuming stdin - would otherwise leave `checked` below
+# `discovered` and still report success, which is the same vacuous-green
+# failure this gate exists to prevent one level down.
+discovered=$(printf '%s\n' "$packages" | grep -c .)
+
 # ── Check each package ───────────────────────────────────────────────────────
 
 while IFS= read -r dir; do
@@ -181,6 +188,11 @@ EOF
 
 if [ "$checked" -eq 0 ]; then
   echo "::error title=Nothing verified::check-agent-docs.sh packed no package successfully; treating that as a failure rather than a pass"
+  exit 1
+fi
+
+if [ "$checked" -ne "$discovered" ]; then
+  echo "::error title=Incomplete run::check-agent-docs.sh discovered $discovered published package(s) but examined only $checked; refusing to report a pass on a partial run"
   exit 1
 fi
 

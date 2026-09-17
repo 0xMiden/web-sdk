@@ -13,7 +13,7 @@ The `@miden-sdk/miden-sdk` is a comprehensive software development toolkit (SDK)
 Whether you're building a wallet, dApp, or other blockchain-integrated application, this SDK provides the core functionality to bridge your frontend with Miden's powerful ZK architecture.
 
 > **Note:** This README provides a high-level overview of the web client SDK.
-> For more detailed documentation, API references, and usage examples, see the documentation [here](../../docs/src/web-client) (TBD).
+> For more detailed documentation, API references, and usage examples, see <https://docs.miden.xyz/builder/tools/clients/web-client/>.
 
 ### SDK Structure and Build Process
 
@@ -37,29 +37,29 @@ This setup allows the SDK to be seamlessly consumed in JavaScript environments, 
 
 ### Stable Version
 
-A non-stable version of the SDK is also maintained, which tracks the `next` branch of the Miden client repository (essentially the development branch). To install the pre-release version, run:
+The stable release tracks the `main` branch and is what most applications want:
 
-```javascript
+```bash
 npm i @miden-sdk/miden-sdk
 ```
 
-Or using Yarn:
+Or with pnpm:
 
-```javascript
+```bash
 pnpm add @miden-sdk/miden-sdk
 ```
 
 ### Pre-release ("next") Version
 
-A non-stable version is also maintained. To install the pre-release version, run:
+A non-stable version is also maintained, tracking the `next` branch of the Miden client repository (essentially the development branch). To install the pre-release version, run:
 
-```javascript
+```bash
 npm i @miden-sdk/miden-sdk@next
 ```
 
-Or with Yarn:
+Or with pnpm:
 
-```javascript
+```bash
 pnpm add @miden-sdk/miden-sdk@next
 ```
 
@@ -70,9 +70,10 @@ pnpm add @miden-sdk/miden-sdk@next
 This package ships agent-facing documentation inside the tarball, so it is
 always version-matched to the code you have installed:
 
-- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — start here
-- `node_modules/@miden-sdk/miden-sdk/skills/` — task-scoped guides (client
-  usage, production pitfalls, signer integration)
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` - start here
+- `node_modules/@miden-sdk/miden-sdk/skills/` - task-scoped guides: client
+  usage, production pitfalls, signer integration, chain-anchored execution
+  (multisig and offline co-signing), and a source map of the SDK itself
 
 Agents do not look inside `node_modules` on their own. To make yours read these
 automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
@@ -82,18 +83,23 @@ of your project:
 <!-- BEGIN:miden-agent-rules -->
 ## Miden
 
-This project uses the Miden web SDK. Your training data is likely out of date —
+This project uses the Miden web SDK. Your training data is likely out of date:
 Miden is pre-1.0 and its API changes between minor versions.
 
-Before writing or reviewing Miden code, read the version-matched guide for the
-package you are touching:
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
 
-- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` — core client
-- `node_modules/@miden-sdk/react/AGENTS.md` — React hooks
-- `node_modules/@miden-sdk/vite-plugin/AGENTS.md` — bundler setup
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
 
-Each one indexes task-specific skills in its package's `skills/` directory.
+Each guide indexes task-specific skills in that package's `skills/` directory.
 Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
 <!-- END:miden-agent-rules -->
 ```
 
@@ -342,8 +348,8 @@ This runs a suite of integration tests to verify the SDK’s functionality in a 
 Follow the steps below to produce the contents that get published to npm (`dist/` plus the license file). All commands are executed from `crates/web-client`.
 
 1. **Install prerequisites**
-   - Install the Rust toolchain version specified in `rust-toolchain.toml`.
-   - Install Node.js ≥18 and Yarn.
+   - Install the Rust toolchain specified in `rust-toolchain.toml`. Both the pinned nightly and stable are needed: the MT variant uses `-Z build-std` and atomics, and the ST variant is built with stable.
+   - Install Node.js >= 20 (see `.nvmrc`) and pnpm 9 (`corepack enable`).
 2. **Install dependencies**
    ```bash
    pnpm install
@@ -355,14 +361,15 @@ Follow the steps below to produce the contents that get published to npm (`dist/
    ```
    The `build` script (see `package.json`) performs the following:
    - Removes the previous `dist/` directory (`rimraf dist`).
-   - Runs `npm run build-rust-client-js`, which builds the `idxdb-store` TypeScript helper that the SDK imports.
-   - Invokes Rollup with `RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\""` so the Rust `getrandom` crate targets browser entropy and so that atomics/bulk-memory WebAssembly features are enabled.
-   - Copies the generated TypeScript declarations from `js/types` into `dist/`.
-   - Executes `node clean.js` to strip paths from the generated `.js` files, leaving only the artifacts needed on npm.
+   - Runs `build-rust-client-js`, which builds the `web_store` TypeScript helper (`crates/idxdb-store/src`) that the SDK imports.
+   - Runs Rollup **twice**, once per threading variant: `build-st` (`MIDEN_BUILD_VARIANT=st`, stable toolchain) produces `dist/st/`, and `build-mt` (`MIDEN_BUILD_VARIANT=mt`, pinned nightly plus `build-std` and atomics) produces `dist/mt/`. Both set `RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\""` so the Rust `getrandom` crate targets browser entropy.
+   - Runs `build-types`, which copies the generated TypeScript declarations from `js/types` into each dist subdirectory and then runs `node clean.js` to strip the `wasm.js` entry stub.
+   - Runs `node ./scripts/post-build.js`.
 4. **Inspect the artifacts**
-   - `dist/index.js` is the ESM entry point referenced by `"main"`/`"browser"`/`"exports"`.
-   - `dist/index.d.ts` and the rest of the `.d.ts` files provide the TypeScript surface.
-   Use `npm pack` if you want to preview the exact tarball that would be published.
+   - `dist/st/eager.js` is the ESM entry point referenced by `"main"`, `"browser"` and `exports["."].import`. `exports["."].node` resolves to `js/node-index.js` instead, so Node gets the napi binding rather than the WASM bundle.
+   - `dist/st/index.d.ts` is the TypeScript surface (`"types"`).
+   - The `/lazy`, `/mt` and `/mt/lazy` subpaths resolve into `dist/st/` and `dist/mt/` the same way. See [Entry Points](#entry-points-eager--lazy--st--mt) below.
+   Use `npm pack --dry-run` if you want to preview the exact file list that would be published.
 
 > Tip: during development you can set `MIDEN_WEB_DEV=true` before running `pnpm build` (or run `npm run build-dev`) to skip the clean step and keep extra debugging metadata in the bundled output. This debugging metadata also includes debug symbols for the generated wasm binary
 
@@ -378,7 +385,7 @@ pnpm check:wasm-types
 
 ## Usage
 
-The following are just a few simple examples to get started. For more details, see the [API Reference](../../docs/typedoc/web-client/README.md).
+The following are just a few simple examples to get started. For more details, see the [API Reference](https://docs.miden.xyz/builder/tools/clients/web-client/).
 
 ### Quick Start
 
@@ -638,7 +645,7 @@ An anchor pins the **reference block and chain data only**. Account state and au
 
 A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
-See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
 
 ### Foreign Accounts
 
@@ -796,8 +803,8 @@ If you'd rather not write that forwarding yourself, two opt-in binding packages 
 
 | Package | Turns observations into |
 |---|---|
-| [`@miden-sdk/telemetry-sentry`](../../packages/telemetry-sentry) | `captureMessage` calls on a Sentry client you own |
-| [`@miden-sdk/telemetry-otel`](../../packages/telemetry-otel) | spans on an OpenTelemetry tracer you own |
+| [`@miden-sdk/telemetry-sentry`](https://github.com/0xMiden/web-sdk/tree/main/packages/telemetry-sentry) | `captureMessage` calls on a Sentry client you own |
+| [`@miden-sdk/telemetry-otel`](https://github.com/0xMiden/web-sdk/tree/main/packages/telemetry-otel) | spans on an OpenTelemetry tracer you own |
 
 Neither package depends on its vendor, not even as a peer — both are typed against the shape they call, so you keep control of the version, the configuration and the lifecycle.
 
