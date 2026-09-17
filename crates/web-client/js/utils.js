@@ -43,6 +43,24 @@ export function resolveAccountRef(ref, wasm) {
  * @param {object} wasm - The WASM module.
  * @returns {Address} The resolved Address.
  */
+/**
+ * True when `record` is consumable by the screened account right now.
+ *
+ * `getConsumableNotes` also returns notes the screener marks `ConsumableAfter`,
+ * which unlock at a later block. An absent `consumableAfterBlock()` (undefined
+ * in the browser build, null on Node) reads as consumable only because
+ * miden-client already drops `NeverConsumable` and `UnconsumableConditions`:
+ * JS has no other status reader to tell them apart.
+ *
+ * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
+ * @returns {boolean} True when no consumability entry is block-locked.
+ */
+export function isConsumableNow(record) {
+  return record
+    .noteConsumability()
+    .some((nc) => nc.consumptionStatus().consumableAfterBlock() == null);
+}
+
 export function resolveAddress(ref, wasm) {
   if (ref == null) {
     throw new Error("Address reference cannot be null or undefined");

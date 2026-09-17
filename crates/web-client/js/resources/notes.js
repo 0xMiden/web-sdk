@@ -1,4 +1,5 @@
 import {
+  isConsumableNow,
   resolveAccountRef,
   resolveAddress,
   resolveNoteIdHex,
@@ -35,23 +36,13 @@ export class NotesResource {
     return await this.#inner.getOutputNotes(filter);
   }
 
-  // Drops block-locked notes, which the screener marks `ConsumableAfter`. An
-  // absent `consumableAfterBlock()` (undefined in the browser build, null on
-  // Node) reads as consumable only because miden-client already filters out
-  // `NeverConsumable` and `UnconsumableConditions`: JS has no other status
-  // reader to tell them apart.
+  // Drops block-locked notes; `listConsumable` returns them.
   async listAvailable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(opts.account, wasm);
     const consumable = await this.#inner.getConsumableNotes(accountId);
-    return consumable
-      .filter((c) =>
-        c
-          .noteConsumability()
-          .some((nc) => nc.consumptionStatus().consumableAfterBlock() == null)
-      )
-      .map((c) => c.inputNoteRecord());
+    return consumable.filter(isConsumableNow).map((c) => c.inputNoteRecord());
   }
 
   async listConsumable(opts) {

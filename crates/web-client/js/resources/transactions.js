@@ -1,4 +1,5 @@
 import {
+  isConsumableNow,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
@@ -309,9 +310,14 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    const consumable = await this.#inner.getConsumableNotes(accountId);
+    // Block-locked notes cannot be consumed yet and would fail the whole
+    // transaction, so they are not "available" here either (notes.listAvailable
+    // applies the same rule).
+    const consumable = (
+      (await this.#inner.getConsumableNotes(accountId)) ?? []
+    ).filter(isConsumableNow);
 
-    if (!consumable || consumable.length === 0) {
+    if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
     }
 

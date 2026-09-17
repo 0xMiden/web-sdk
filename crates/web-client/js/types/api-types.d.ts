@@ -1100,8 +1100,10 @@ export interface TransactionsResource {
    */
   pswapCancel(options: PswapCancelOptions): Promise<TransactionSubmitResult>;
   /**
-   * Consume all available notes for an account, up to an optional limit.
-   * Returns the count of remaining notes for pagination.
+   * Consume the notes an account can consume right now, up to an optional
+   * limit. Block-locked notes are skipped, the same set
+   * {@link NotesResource.listAvailable} returns. Returns the count of remaining
+   * notes for pagination.
    *
    * @param options - Options including the account and optional max notes limit.
    */
@@ -1421,7 +1423,9 @@ export interface NotesResource {
    * @param options - Optional account to check; omit to list notes consumable
    *   by any tracked account.
    */
-  listConsumable(options?: { account?: AccountRef }): Promise<ConsumableNoteRecord[]>;
+  listConsumable(options?: {
+    account?: AccountRef;
+  }): Promise<ConsumableNoteRecord[]>;
 
   /**
    * Import a note from a {@link NoteFile}.

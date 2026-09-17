@@ -744,6 +744,21 @@ describe("TransactionsResource", () => {
   });
 
   describe("consumeAll", () => {
+    // A ConsumableNoteRecord: consumable now, or block-locked when a height is
+    // given (the screener's `ConsumableAfter`).
+    const consumableNote = (note, afterBlock = null) => ({
+      inputNoteRecord: vi
+        .fn()
+        .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
+      noteConsumability: vi.fn().mockReturnValue([
+        {
+          consumptionStatus: () => ({
+            consumableAfterBlock: () => afterBlock,
+          }),
+        },
+      ]),
+    });
+
     it("returns empty result when no consumable notes", async () => {
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([]),
@@ -761,16 +776,8 @@ describe("TransactionsResource", () => {
     });
 
     it("consumes all notes and returns count", async () => {
-      const note1 = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
-      };
-      const note2 = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n2") }),
-      };
+      const note1 = consumableNote("n1");
+      const note2 = consumableNote("n2");
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note1, note2]),
       });
@@ -790,11 +797,7 @@ describe("TransactionsResource", () => {
       // constructor or to submit would be a use-after-free. Both of those take
       // `&AccountId` though, which borrows, so a single replacement serves both
       // — allocating a second wrapper would be waste, not safety.
-      const note = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
-      };
+      const note = consumableNote("n1");
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note]),
       });
@@ -808,12 +811,41 @@ describe("TransactionsResource", () => {
       expect(requestAccountId.toString()).toBe("0xaccHex");
     });
 
-    it("respects maxNotes option", async () => {
-      const notes = Array.from({ length: 5 }, (_, i) => ({
-        inputNoteRecord: vi
+    it("skips block-locked notes, in the request and in the counts", async () => {
+      // A block-locked note cannot be consumed yet and would fail the whole
+      // transaction; notes.listAvailable hides it, so consumeAll must too.
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
           .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue(`n${i}`) }),
-      }));
+          .mockResolvedValue([
+            consumableNote("now"),
+            consumableNote("locked", 12345),
+          ]),
+      });
+      const result = await resource.consumeAll({ account: "0xaccHex" });
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["now"],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+      expect(result.consumed).toBe(1);
+      expect(result.remaining).toBe(0);
+    });
+
+    it("returns an empty result when every consumable note is block-locked", async () => {
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([consumableNote("locked", 999)]),
+      });
+      const result = await resource.consumeAll({ account: "0xaccHex" });
+      expect(result).toEqual({ txId: null, consumed: 0, remaining: 0 });
+      expect(inner.newConsumeTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("respects maxNotes option", async () => {
+      const notes = Array.from({ length: 5 }, (_, i) =>
+        consumableNote(`n${i}`)
+      );
       const { resource } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue(notes),
       });
@@ -826,13 +858,7 @@ describe("TransactionsResource", () => {
     });
 
     it("returns early when maxNotes=0 reduces toConsume to empty", async () => {
-      const notes = [
-        {
-          inputNoteRecord: vi
-            .fn()
-            .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
-        },
-      ];
+      const notes = [consumableNote("n1")];
       const { resource } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue(notes),
       });
@@ -1971,6 +1997,11 @@ describe("TransactionsResource", () => {
         inputNoteRecord: vi
           .fn()
           .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+        noteConsumability: vi.fn().mockReturnValue([
+          {
+            consumptionStatus: () => ({ consumableAfterBlock: () => null }),
+          },
+        ]),
       };
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note1]),
