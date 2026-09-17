@@ -129,7 +129,11 @@ export const createMockConsumableNoteRecord = (noteId: string = "0xnote1") => ({
   noteConsumability: vi.fn(() => [
     {
       accountId: vi.fn(() => createMockAccountId()),
-      consumableAfterBlock: vi.fn(() => null),
+      // Mirrors the binding: the status, not the entry, answers consumability.
+      consumptionStatus: vi.fn(() => ({
+        isConsumableNow: vi.fn(() => true),
+        consumableAfterBlock: vi.fn(() => undefined),
+      })),
     },
   ]),
   free: vi.fn(),

@@ -535,6 +535,10 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(
       sdk.NoteConsumptionStatus.neverConsumable("x").consumableAfterBlock()
     ).toBeUndefined();
+
+    // Omitting the account lists notes consumable by any tracked account.
+    const allAccounts = await client.notes.listConsumable();
+    expect(allAccounts.length).toBeGreaterThanOrEqual(1);
   });
 
   test("terminate prevents resource operations", async ({ sdk }) => {

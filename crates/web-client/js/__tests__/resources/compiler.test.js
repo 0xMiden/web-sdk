@@ -23,11 +23,16 @@ function makeAccountComponent() {
   };
 }
 
+// The binding exports `Library` as a class, which is how a pre-built library is
+// told apart from a malformed `{ namespace, code }` entry.
+class FakeLibrary {}
+
 function makeWasm(builder, component) {
   return {
     AccountComponent: {
       compile: vi.fn().mockReturnValue(component),
     },
+    Library: FakeLibrary,
     createCodeBuilder: vi.fn().mockReturnValue(builder),
   };
 }
@@ -267,13 +272,35 @@ describe("CompilerResource", () => {
       expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
     });
 
-    it("links pre-built library object dynamically when no namespace field", async () => {
+    it("links a pre-built Library dynamically", async () => {
       builder.compileTxScript.mockReturnValue("txResult");
-      const prebuiltLib = { someData: true }; // no .namespace
+      const prebuiltLib = new FakeLibrary();
       const resource = new CompilerResource(inner, getWasm, client);
       await resource.txScript({ code: "code", libraries: [prebuiltLib] });
       expect(builder.buildLibrary).not.toHaveBeenCalled();
       expect(builder.linkDynamicLibrary).toHaveBeenCalledWith(prebuiltLib);
+    });
+
+    it("rejects an entry missing `namespace` instead of treating it as a Library", async () => {
+      // A typo'd or omitted namespace used to fall through to
+      // linkDynamicLibrary and fail inside the binding, with no index.
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({ code: "script", libraries: [{ code: "masm" }] })
+      ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
+      expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
+      expect(builder.compileTxScript).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-string namespace", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({
+          code: "script",
+          libraries: [{ namespace: 42, code: "masm" }],
+        })
+      ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
+      expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
     });
 
     it("links the exact account component code dynamically", async () => {
@@ -330,6 +357,13 @@ describe("CompilerResource", () => {
   });
 
   describe("noteScript", () => {
+    it("rejects a malformed library entry with the noteScript caller name", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.noteScript({ code: "note", libraries: [{ code: "masm" }] })
+      ).rejects.toThrow(/compile\.noteScript: libraries\[0\]/);
+    });
+
     it("compiles and returns noteScript result", async () => {
       builder.compileNoteScript.mockReturnValue("noteScriptResult");
       const resource = new CompilerResource(inner, getWasm, client);
