@@ -23,16 +23,17 @@ function makeAccountComponent() {
   };
 }
 
-// The binding exports `Library` as a class, which is how a pre-built library is
-// told apart from a malformed `{ namespace, code }` entry.
-class FakeLibrary {}
+// A pre-built library is recognised by shape (it carries neither `namespace`
+// nor `code`), not by class identity, so a library built in another realm - a
+// worker, a second SDK copy - still links. This stand-in is deliberately a
+// class the resource has no way to know about.
+class ForeignLibrary {}
 
 function makeWasm(builder, component) {
   return {
     AccountComponent: {
       compile: vi.fn().mockReturnValue(component),
     },
-    Library: FakeLibrary,
     createCodeBuilder: vi.fn().mockReturnValue(builder),
   };
 }
@@ -276,7 +277,7 @@ describe("CompilerResource", () => {
       // Recognised by shape, not by class identity: a Library forwarded from
       // another realm (a worker, a second SDK copy) must still link.
       builder.compileTxScript.mockReturnValue("txResult");
-      const prebuiltLib = new FakeLibrary();
+      const prebuiltLib = new ForeignLibrary();
       const resource = new CompilerResource(inner, getWasm, client);
       await resource.txScript({ code: "code", libraries: [prebuiltLib] });
       expect(builder.buildLibrary).not.toHaveBeenCalled();
