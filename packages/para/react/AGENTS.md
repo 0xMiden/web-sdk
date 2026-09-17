@@ -27,6 +27,6 @@
 - **Release hygiene**: confirm `peerDependencies` stay aligned with upstream (`@miden-sdk/para`, Para SDKs, React). Breaking Para/Miden API changes should trigger a major/minor release here too.
 
 ## External Contracts
-- `@getpara/react-sdk-lite` — supplies `useClient`, `useAccount`, `useWallet`, and Para configuration context. Hook must only run when `useAccount().isConnected` is true.
+- `@getpara/react-sdk-lite` ^3.18 — supplies `useClient`, `useAccount`, `useWallet`, and Para configuration context. Hook must only run when `useAccount().isConnected` is true. `embedded.wallets` is `AvailableWallet[]` (no `publicKey`); `createParaMidenClient` / `resolveEvmWallets` lift those to full `Wallet` records via `getWalletsByType("EVM")`.
 - `@miden-sdk/para` — root SDK; `createParaMidenClient` handles modal UX and signing. Ensure versions stay compatible (`peerDependencies` enforce `^0.13.0`+).
 - `@miden-sdk/miden-sdk` — dynamically imported for runtime helpers like `AccountStorageMode`. Keep it externalized to avoid bundling WASM assets.

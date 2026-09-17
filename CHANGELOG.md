@@ -1,11 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.16.1 (TBD)
 
 ### Enhancements
+ 
+* [FEATURE][web] Added `ForeignAccount.private(account)`, `ForeignAccount.prefetched(inputs)` and the `AccountInputs` model, which let a caller supply a foreign account's state instead of having it fetched at execution time. Fetch the inputs with `client.transactions.foreignAccountInputs(accounts, blockNum)` ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+* [FEATURE][web] Added `TransactionRequestBuilder.withExplicitInputNote(note, args?)`, which pins whether each input note is consumed authenticated or unauthenticated, so every client executing the request produces the same transaction summary ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+* [FEATURE][web][react] Every published package now ships agent-facing documentation inside its tarball: an `AGENTS.md` index plus a `skills/` directory, readable at `node_modules/@miden-sdk/<pkg>/`. Because they ship with the code they are version-matched to the installed release, so an AI agent working in a consumer's repo gets guidance for the version in that repo's lockfile rather than whatever its training data remembers. `@miden-sdk/miden-sdk` also ships its `README.md` for the first time - it previously published neither a readme nor any documentation. Paste the marker block from any package readme into your project's root `AGENTS.md` to point your agent at them. ([#310](https://github.com/0xMiden/web-sdk/pull/310))
 
-* [FEATURE][web][react] Every published package now ships agent-facing documentation inside its tarball: an `AGENTS.md` index plus a `skills/` directory, readable at `node_modules/@miden-sdk/<pkg>/`. Because they ship with the code they are version-matched to the installed release, so an AI agent working in a consumer's repo gets guidance for the version in that repo's lockfile rather than whatever its training data remembers. `@miden-sdk/miden-sdk` also ships its `README.md` for the first time — it previously published neither a readme nor any documentation. Paste the marker block from any package readme into your project's root `AGENTS.md` to point your agent at them. ([#310](https://github.com/0xMiden/web-sdk/pull/310))
+### Changes
+
 * [CHANGE] The skills describing this SDK's own API (`web-client-usage`, `react-sdk-patterns`, `vite-wasm-setup`, `frontend-pitfalls`, `signer-integration`, `testing-patterns`, `frontend-source-guide`) are now canonical in this repo, joined by a new `chain-anchored-execution` skill covering the `ChainAnchor` API added in 0.16.0, having previously been maintained in [`0xMiden/agent-tools`](https://github.com/0xMiden/agent-tools) and copied into [`0xMiden/frontend-template`](https://github.com/0xMiden/frontend-template). Both copies had drifted from each other and from the code, since nothing tied a skill to the API it documented; keeping them beside the source makes an API change and its documentation the same PR. `agent-tools` remains canonical for everything not specific to this SDK. ([#310](https://github.com/0xMiden/web-sdk/pull/310))
+* [CHANGE][web] Upgraded `miden-client` to 0.16.1 (from 0.16.0) ([#383](https://github.com/0xMiden/web-sdk/pull/383)).
+* [BREAKING][para] `@miden-sdk/para`, `@miden-sdk/para-react`, and `@miden-sdk/create-para-react` are now `0.16.1` and peer on Para SDK 3.18 (`@getpara/web-sdk` / `@getpara/react-sdk-lite` `^3.18.0`), dropping the 2.x range. Install matching `@getpara/*` 3.18 packages; 2.x no longer satisfies the peer. The `ParaProvider` / `useAccount` / `signMessage` / `issueJwt` surface these packages use is unchanged in 3.18. `createParaMidenClient` and `ParaSignerProvider` resolve EVM wallets through `getWalletsByType("EVM")` when the client exposes it, because Para 3's `useAccount().embedded.wallets` is `AvailableWallet[]` and omits `publicKey`. ([#385](https://github.com/0xMiden/web-sdk/pull/385))
+* [FIX][para] `paraVitePlugin` and the para example Vite configs stub Para 3.18's optional `@getpara/aa-*` packages so Vite can prebundle without unused account-abstraction connectors installed. ([#385](https://github.com/0xMiden/web-sdk/pull/385))
 
 ## 0.16.0 (2026-09-07)
 

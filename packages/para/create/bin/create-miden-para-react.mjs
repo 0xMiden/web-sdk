@@ -34,12 +34,13 @@ const templateOptionalConnectorsPath = resolve(
   "src",
   "optional-connectors.ts"
 );
-const repoRoot = resolve(__dirname, "..", "..", "..");
+const repoRoot = resolve(__dirname, "..", "..", "..", "..");
 const localMidenParaPath =
-  process.env.MIDEN_PARA_LOCAL_MIDEN_PARA_PATH ?? repoRoot;
+  process.env.MIDEN_PARA_LOCAL_MIDEN_PARA_PATH ??
+  join(repoRoot, "packages", "para", "core");
 const localUseMidenParaReactPath =
   process.env.MIDEN_PARA_LOCAL_USE_MIDEN_PARA_REACT_PATH ??
-  join(repoRoot, "packages", "use-miden-para-react");
+  join(repoRoot, "packages", "para", "react");
 const useLocalDeps = process.env.MIDEN_PARA_LOCAL_DEPS === "1";
 
 const args = process.argv.slice(2);
@@ -283,20 +284,23 @@ function ensureMidenParaDependencies(targetRoot) {
   pkg.scripts = pkg.scripts ?? {};
   const midenParaVersion = useLocalDeps
     ? `file:${localMidenParaPath}`
-    : "0.15.1";
+    : "0.16.1";
   const useMidenParaReactVersion = useLocalDeps
     ? `file:${localUseMidenParaReactPath}`
-    : "^0.15.1";
+    : "^0.16.1";
   // Align with examples/react-signer so Para SDK connector peers are satisfied
   Object.assign(pkg.dependencies, {
     ...pkg.dependencies,
-    "@getpara/react-sdk-lite": "^2.2.0",
-    "@getpara/evm-wallet-connectors": "^2.2.0",
-    "@miden-sdk/miden-sdk": "^0.15.1",
+    "@getpara/react-sdk-lite": "^3.18.0",
+    "@getpara/evm-wallet-connectors": "^3.18.0",
+    "@miden-sdk/miden-sdk": "^0.16.1",
     "@miden-sdk/para": midenParaVersion,
     "@miden-sdk/para-react": useMidenParaReactVersion,
-    "@miden-sdk/react": "^0.15.1",
+    "@miden-sdk/react": "^0.16.0",
     "@tanstack/react-query": "^5.0.0",
+    viem: "^2.39.0",
+    wagmi: "^2.14.16",
+    "@wagmi/core": "^2.16.7",
   });
 
   Object.assign(pkg.devDependencies, {
@@ -311,8 +315,10 @@ function ensureMidenParaDependencies(targetRoot) {
   });
 
   Object.assign(pkg.resolutions, {
-    "@getpara/react-sdk": "2.0.0-alpha.73",
-    "@getpara/web-sdk": "2.0.0-alpha.73",
+    "@getpara/react-sdk": "3.18.0",
+    "@getpara/web-sdk": "3.18.0",
+    "@getpara/react-sdk-lite": "3.18.0",
+    "@getpara/evm-wallet-connectors": "3.18.0",
   });
 
   Object.assign(pkg.scripts, {
