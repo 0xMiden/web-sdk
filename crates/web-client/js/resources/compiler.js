@@ -32,11 +32,7 @@ export class CompilerResource {
     const wasm = await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
     libraries.forEach((lib, i) => {
-      if (typeof lib?.namespace !== "string" || typeof lib?.code !== "string") {
-        throw new TypeError(
-          `compile.component: libraries[${i}] must be { namespace: string, code: string }`
-        );
-      }
+      assertLibrarySource(lib, i, "compile.component");
       builder.linkModule(lib.namespace, lib.code);
     });
     const compiled = namespace
@@ -58,7 +54,7 @@ export class CompilerResource {
     // Ensure WASM is initialized (result unused — only #inner needs it)
     await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
-    linkLibraries(builder, libraries);
+    linkLibraries(builder, libraries, "compile.txScript");
     return builder.compileTxScript(code);
   }
 
@@ -73,8 +69,18 @@ export class CompilerResource {
     this.#client?.assertNotTerminated();
     await this.#getWasm();
     const builder = await this.#inner.createCodeBuilder();
-    linkLibraries(builder, libraries);
+    linkLibraries(builder, libraries, "compile.noteScript");
     return builder.compileNoteScript(code);
+  }
+}
+
+// A `{ namespace, code }` source entry, whichever surface takes it. Checked here
+// so a malformed entry names its index instead of failing inside the binding.
+function assertLibrarySource(lib, i, caller) {
+  if (typeof lib?.namespace !== "string" || typeof lib?.code !== "string") {
+    throw new TypeError(
+      `${caller}: libraries[${i}] must be { namespace: string, code: string }`
+    );
   }
 }
 
@@ -82,8 +88,8 @@ export class CompilerResource {
 // compiled code installed by the component. Inline `{ namespace, code, linking? }` entries are
 // built via `buildLibrary`. Linking defaults to dynamic, matching tutorial behavior. Pre-built
 // library objects are also linked dynamically.
-function linkLibraries(builder, libraries) {
-  for (const lib of libraries) {
+function linkLibraries(builder, libraries, caller) {
+  for (const [i, lib] of libraries.entries()) {
     if (lib && lib.component) {
       const componentCode = lib.component.componentCode();
       if (lib.linking === "static") {
@@ -92,6 +98,7 @@ function linkLibraries(builder, libraries) {
         builder.linkDynamicAccountComponentCode(componentCode);
       }
     } else if (lib && typeof lib.namespace === "string") {
+      assertLibrarySource(lib, i, caller);
       const built = builder.buildLibrary(lib.namespace, lib.code);
       if (lib.linking === "static") {
         builder.linkStaticLibrary(built);

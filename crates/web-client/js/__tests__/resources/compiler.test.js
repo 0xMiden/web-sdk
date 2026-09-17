@@ -215,6 +215,22 @@ describe("CompilerResource", () => {
   });
 
   describe("txScript", () => {
+    it("rejects a library entry missing `code`, naming its index", async () => {
+      // Same validator as compile.component: a malformed entry must not reach
+      // the binding, where it fails with a raw type error instead.
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({
+          code: "script",
+          libraries: [
+            { namespace: "oz::auth", code: "masm" },
+            { namespace: "x" },
+          ],
+        })
+      ).rejects.toThrow(/compile\.txScript: libraries\[1\]/);
+      expect(builder.compileTxScript).not.toHaveBeenCalled();
+    });
+
     it("compiles and returns txScript result", async () => {
       builder.compileTxScript.mockReturnValue("txScriptResult");
       const resource = new CompilerResource(inner, getWasm, client);
