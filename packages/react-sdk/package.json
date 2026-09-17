@@ -1,7 +1,7 @@
 {
   "name": "@miden-sdk/react",
   "version": "0.16.0",
-  "description": "React hooks library for Miden Web Client",
+  "description": "React hooks for the Miden web SDK. Run `npm create @miden-sdk@latest` to point your AI coding agent at version-matched guidance.",
   "type": "module",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",

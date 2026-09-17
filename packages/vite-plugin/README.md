@@ -1,5 +1,25 @@
 # @miden-sdk/vite-plugin
 
+## Start here
+
+```bash
+npm create @miden-sdk@latest
+```
+
+Run that once in your project. Miden is pre-1.0 and its API moves between minor
+versions, so an AI coding agent working from training data will write code for a
+version you are not on. Every `@miden-sdk/*` package ships an `AGENTS.md` and
+task-scoped `skills/` inside its tarball, matched to the exact version in your
+lockfile - this command is what points your agent at them, by writing the
+pointers into your own `AGENTS.md` and `CLAUDE.md`. It is idempotent, so re-run
+it after an upgrade.
+
+Prefer to wire it up by hand? The block to paste is [below](#for-ai-coding-agents).
+
+Starting from nothing rather than adding to an existing app?
+[`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
+scaffolds the whole stack with this already done.
+
 Vite plugin for Miden dApps. Automates WASM deduplication, cross-origin isolation headers, and gRPC-web proxy configuration.
 
 ## Installation
