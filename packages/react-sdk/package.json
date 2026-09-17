@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/react",
-  "version": "0.16.0",
+  "version": "0.16.2",
   "description": "React hooks for the Miden web SDK. Run `npm create @miden-sdk@latest` to point your AI coding agent at version-matched guidance.",
   "type": "module",
   "module": "dist/index.mjs",
@@ -44,7 +44,7 @@
     "test:all": "VITE_CJS_IGNORE_WARNING=1 vitest run && playwright test"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.16.1",
+    "@miden-sdk/miden-sdk": "^0.16.2",
     "@types/react": ">=18.0.0",
     "react": ">=18.0.0"
   },
