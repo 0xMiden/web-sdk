@@ -4,6 +4,11 @@
   "description": "React UI Components for connecting Miden-compatible wallets to your dApp.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "styles.css",
+    "AGENTS.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",

@@ -4,6 +4,13 @@
   "description": "Core infrastructure for connecting Miden-compatible wallets to your dApp.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/__tests__",
+    "!dist/vitest.config.*",
+    "AGENTS.md",
+    "skills"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rimraf dist/ node_modules/",

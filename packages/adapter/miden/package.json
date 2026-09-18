@@ -4,6 +4,12 @@
   "description": "Miden wallet adapter for the Miden Wallet.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/__tests__",
+    "!dist/vitest.config.*",
+    "AGENTS.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",
