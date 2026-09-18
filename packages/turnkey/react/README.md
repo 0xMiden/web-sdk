@@ -13,7 +13,8 @@ yarn add @miden-sdk/turnkey-react
 This package requires the following peer dependencies:
 
 ```bash
-yarn add @miden-sdk/miden-sdk @miden-sdk/turnkey @turnkey/react-wallet-kit react
+yarn add @miden-sdk/miden-sdk @miden-sdk/turnkey @miden-sdk/react \
+  @turnkey/core @turnkey/react-wallet-kit @turnkey/sdk-browser react
 ```
 
 ## Usage
@@ -78,7 +79,7 @@ function MidenComponent() {
 
 ```typescript
 interface UseTurnkeyMidenResult {
-  client: WebClient | null;
+  client: MidenClient | null;
   accountId: string | null;
   turnkey: ClientContextType;
   embeddedWallets: Wallet[];
