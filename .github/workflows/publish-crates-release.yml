@@ -69,13 +69,44 @@ jobs:
       - name: Update Rust toolchain
         run: |
           rustup update --no-self-update
+          # The preflight verifies the WASM crates against wasm32, so the
+          # target has to exist before it runs. Adding it here rather than
+          # inside the preflight keeps a rustup outage a hard failure instead
+          # of hiding behind the preflight's `continue-on-error`.
+          rustup target add wasm32-unknown-unknown
 
       - name: Preflight - publish dry run
         continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish --workspace --dry-run
+          set -uo pipefail
+
+          # No single target verifies the whole workspace, so the dry run is
+          # split in two:
+          #
+          #   * `miden-idxdb-store` implements `miden_client`'s `Store` with
+          #     `#[async_trait(?Send)]`, which is correct for wasm32 and fails
+          #     every method with E0053 on the host. `miden-client-web` depends
+          #     on it. Both must be verified against wasm32.
+          #   * `miden-mobile-prover` is the mirror image: it pulls in tokio's
+          #     net stack, whose `mio` backend has no wasm32 support, so it
+          #     must be verified against the host.
+          #   * `js-export-macro` is `proc-macro = true`, and cargo builds proc
+          #     macros for the host whichever `--target` is in play, so it rides
+          #     along with the wasm32 invocation.
+          #
+          # Both legs run even if the first fails, so one broken crate does not
+          # hide the state of the others.
+          status=0
+
+          cargo publish --workspace --dry-run --locked \
+            --target wasm32-unknown-unknown \
+            --exclude miden-mobile-prover || status=1
+
+          cargo publish --package miden-mobile-prover --dry-run --locked || status=1
+
+          exit "${status}"
 
       - name: Cleanup cargo package artifacts (after dry-run)
         if: always()
