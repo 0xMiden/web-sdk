@@ -3,10 +3,23 @@ name: Deploy wallet example
 on:
   workflow_dispatch:
 
+  # The build half also runs on PRs that touch the example or a package it
+  # imports. Without this the workflow only ever ran by hand, which is how the
+  # example came to import two package names that do not exist. The paths
+  # filter keeps it off every other PR, and the deploy job stays manual, so
+  # this is a build check and not a release path. Don't add it to the required
+  # checks: it installs from the registry and so depends on what is published.
+  pull_request:
+    paths:
+      - ".github/workflows/wallet-pages.yml"
+      - "packages/react-sdk/**"
+      - "packages/adapter/react/**"
+      - "packages/para/react/**"
+      - "packages/turnkey/react/**"
+      - "packages/vite-plugin/**"
+
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   build:
@@ -15,8 +28,9 @@ jobs:
       - uses: actions/checkout@v6
       # The workspace (root) uses pnpm. The example app at
       # packages/react-sdk/examples/wallet is intentionally OUTSIDE the
-      # workspace (its file: deps to sibling miden-* repos would otherwise
-      # bleed into the SDK install graph), so it keeps its own yarn.lock.
+      # workspace: it is an application, not a published package, so it
+      # installs standalone against real published versions and keeps its own
+      # pnpm-lock.yaml.
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
@@ -33,8 +47,9 @@ jobs:
       - name: Install wallet example dependencies (pnpm, ignore-workspace)
         # The example is intentionally OUTSIDE the workspace (not listed in
         # pnpm-workspace.yaml). --ignore-workspace tells pnpm to treat this
-        # subdir as a standalone project so its file: deps to sibling miden-*
-        # repos don't bleed into the SDK install graph.
+        # subdir as a standalone project, so it resolves the @miden-sdk/*
+        # packages from the registry at the versions it pins rather than
+        # linking the working tree.
         working-directory: packages/react-sdk/examples/wallet
         run: pnpm install --no-frozen-lockfile --ignore-workspace
       - name: Build wallet example
@@ -47,6 +62,12 @@ jobs:
 
   deploy:
     needs: build
+    # Publishing stays manual. A PR run is only there to prove the example
+    # still builds.
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      pages: write
+      id-token: write
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
