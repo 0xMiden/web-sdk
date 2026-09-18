@@ -29,12 +29,14 @@ npm install @miden-sdk/para-react @miden-sdk/para @miden-sdk/miden-sdk \
 
 `@miden-sdk/react` is only required for the `ParaSignerProvider` path, and
 `vite-plugin-node-polyfills` is an optional peer used by the Vite plugin below.
-The declared range is `>=0.23.1`, which is the whole constraint: the plugin only
+The declared range is `>=0.23.1 <1.0.0`, which is the whole constraint: the plugin only
 calls `nodePolyfills({ include })`, which every 0.2x release has, but
 `vite-plugin-node-polyfills` below 0.23.1 caps its own `vite` peer at 5, so an
 older one cannot coexist with the Vite 7 this package is built against.
-`^0.24.0` is what the scaffolders install and is a fine default; any later
-release satisfies the peer too.
+`^0.24.0` is what the scaffolders install and is a fine default; any later 0.x
+release satisfies the peer too. The upper bound is there because the plugin
+resolves `nodePolyfills` in a try/catch that reports any failure as "not found",
+so an incompatible future major would degrade silently rather than loudly.
 
 ## Two paths: pick one, not both
 

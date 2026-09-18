@@ -348,7 +348,7 @@ importers:
         specifier: ^18.0.0 || ^19.0.0
         version: 19.2.8
       vite-plugin-node-polyfills:
-        specifier: '>=0.23.1'
+        specifier: '>=0.23.1 <1.0.0'
         version: 0.28.0(rollup@4.60.2)(vite@7.3.6(@types/node@25.9.5)(jiti@2.6.1)(yaml@2.8.3))
     devDependencies:
       '@getpara/react-sdk-lite':
