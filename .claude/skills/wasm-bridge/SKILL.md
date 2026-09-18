@@ -480,9 +480,11 @@ the `node/` napi compat layer). The two layers are:
    Rust struct and adds JS-side concerns:
    - `_serializeWasmCall` queue that linearizes WASM calls (the inner client is
      behind a lock, so the JS side must not interleave async calls).
-   - `syncState()` is wrapped in the exported `withSyncLock(dbId, methodId, fn)`
-     helper (`js/syncLock.js`, Web Locks via `navigator.locks`) to coalesce
-     concurrent syncs and serialize them across tabs:
+   - The sync family - `syncState()`, `syncChain()` and `syncNoteTransport()`,
+     on both `WebClient` and `MockWebClient`, so six call sites - is wrapped in
+     the exported `withSyncLock(dbId, methodId, fn)` helper (`js/syncLock.js`,
+     Web Locks via `navigator.locks`, feature-detected with `hasWebLocks`) to
+     coalesce concurrent syncs and serialize them across tabs:
      `return await withSyncLock(dbId, methodId, async () =>
      this._serializeWasmCall(...))`.
    - method-classification sets (`SYNC_METHODS`, `READ_METHODS`,

@@ -102,6 +102,7 @@ The public client plus the Rust-to-WASM bridge underneath it.
 - **`js/syncLock.js`** - `withSyncLock` (plus `hasWebLocks`), the Web Locks coalescing the sync entry points use. `js/webLock.js` (`withWriteLock`) and `js/asyncLock.js` (`AsyncLock`) are neither published (absent from the package's `files` array) nor imported by any entry module - their only in-tree callers are their own tests under `js/__tests__/`. Read them for the pattern; they are not on the hot path.
 - **`src/`** - the Rust `WebClient` struct, exported to JS as `WasmWebClient`. Marked `@internal` in `js/types/index.d.ts` ("Use MidenClient instead"); `useMidenClient()` from the React SDK returns this low-level client, not `MidenClient`.
 - The standalone `RpcClient` struct (`getBlockHeaderByNumber`, `getNotesById`, `getAccountDetails`, `getAccountProof`, `syncNotes`, `getNetworkNoteStatus`, `getNullifierCommitHeight`, `getNoteScriptByRoot`, `syncStorageMaps`) lives in `src/rpc_client/`, and is exported separately from `@miden-sdk/miden-sdk` - it is NOT reachable through `useMidenClient()`.
+- **`src/models/`** - the Rust side of every JS-visible model type (`AccountId`, `Note`, `TransactionRequest` and the rest; some are directories rather than single files). This is where a method's JS name is actually decided: `#[js_export(js_name = "...")]` on the Rust fn is what both the wasm and napi builds spell. If a name in the TypeScript surface does not match the Rust one, this attribute is why.
 - **`skills/`** - the agent guides shipped with this package, including `web-client-usage` and `chain-anchored-execution`.
 
 **Explore when**: A hook doesn't exist for your operation, understanding what client methods are available, debugging WASM-level errors.
@@ -169,6 +170,13 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | Batch send | `src/hooks/useMultiSend.ts` | feeAwareTransactionRequestBuilder |
 | Store export / import | `src/hooks/useExportStore.ts`, `useImportStore.ts` | Backup and restore |
 | Live note feed | `src/hooks/useNoteStream.ts`, `useSyncControl.ts` | Subscription and sync gating |
+| Prover selection and fallback | `src/utils/prover.ts` | `resolveTransactionProver`, `proveWithFallback` - what a `ProverTarget` / `ProverConfig` resolves to |
+| Structured error handling | `src/utils/errors.ts` | `MidenError`, `MidenErrorCode`, `CodedError`, `WasmErrorCode` - the codes FP17 says to branch on |
+| RPC URL resolution | `src/utils/network.ts` | `resolveRpcUrl` - the shorthand expansion the bech32 HRP inference then reads |
+| Pausing auto-sync | `src/hooks/useSyncControl.ts` | `pauseSync` / `resumeSync` / `isPaused`; manual `sync()` still works while paused |
+| Compiling MASM from the raw client | `crates/web-client/js/resources/compiler.js` | `CompilerResource` - `component`, `txScript`, `noteScript` |
+
+Paths in this table are relative to `packages/react-sdk/` unless they name another package.
 
 ---
 

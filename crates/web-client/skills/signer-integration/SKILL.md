@@ -271,6 +271,14 @@ Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitme
 as an ECDSA key, not Falcon. The `AuthScheme` symbol here is the numeric WASM enum, not the frozen
 string const the package exports - see "The `AuthScheme` trap" under Guarded Multisig below.
 
+**`withAuthComponent` validates nothing.** Its body is `with_component` verbatim
+(`crates/web-client/src/models/account_builder.rs:81-85`), so the name is documentation,
+not a check: passing a non-auth component compiles, builds, and produces an account with
+no auth component, failing later and somewhere else. If you build the component yourself,
+the burden of getting it right is entirely yours. The builder also exposes
+`withNoAuthComponent()` for the deliberately unauthenticated case and
+`buildWithoutSchemaCommitment()` alongside `build()`.
+
 To inspect the keys the client ended up with, use the keystore resource on the high-level client: `client.keystore.getCommitments(accountId)`, `.get(pubKeyCommitment)`, `.getAccountId(pubKeyCommitment)`, `.insert(accountId, secretKey)`, `.remove(pubKeyCommitment)`. (`remove` is not supported on every platform and throws where it is not.)
 
 ## Using More Than One Signer
