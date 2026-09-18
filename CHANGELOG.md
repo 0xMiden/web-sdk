@@ -2,6 +2,10 @@
 
 ## 0.15.10 (TBA)
 
+### Fixes
+
+* [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#388](https://github.com/0xMiden/web-sdk/issues/388)).
+
 ### Enhancements
 * [FEATURE][adapter] `@miden-sdk/miden-wallet-adapter-miden` now exports a conformance suite — `MIDEN_WALLET_METHODS`, `getSurfaceCases`, `getBehaviorCases`, `runConformance` — that a wallet imports and runs against its own providers. The method list is type-locked to the `MidenWallet` interface in both directions, so adding a method without adding a case, or naming a method the interface does not declare, fails to compile. `getSurfaceCases` needs no connection or state, so it is safe to run against runtime-only injected providers; `getBehaviorCases` needs a live one.
 * [FEATURE][repo] `publish-web-sdk.yml` now ships the adopted wallet-adapter, Para and Turnkey packages. They are gated from `scripts/publish-manifest.json` rather than a bespoke script per package, and published in dependency-level order so a dependent never lands before the package it pins. The generalised gate gains a registry probe in `pr` mode, which the per-package scripts lack — without it a partially-failed `next`-channel release could not be retried, because every already-published package would be re-reported as publishable and die on a version conflict, stranding everything after the failure point.
