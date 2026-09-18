@@ -14,6 +14,10 @@
 
 ## 0.16.2 (2026-09-18)
 
+### Fixes
+
+* [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#388](https://github.com/0xMiden/web-sdk/issues/388)).
+
 ### Enhancements
 
 * [FEATURE] New package `@miden-sdk/create`. `npm create @miden-sdk@latest`, run once in a project, is what makes the shipped agent guidance reachable: it writes a marker-delimited block into the project's own `AGENTS.md` naming the guides of the `@miden-sdk/*` packages actually installed, creates `CLAUDE.md` as an `@AGENTS.md` import because Claude Code reads that name instead, syncs those packages' skills into `.claude/skills/`, and adds a `prepare` script so a teammate who clones the repo and installs gets them too. No coding agent reads instruction files out of `node_modules`, so without this the documentation those packages ship is version-matched and invisible. It is idempotent and preserves surrounding content. The `prepare` script lives in the consumer's own manifest rather than as a `postinstall` on the SDK, because pnpm 10 blocks dependency lifecycle scripts by default and pnpm 11 defaults `strictDepBuilds` to true. ([#311](https://github.com/0xMiden/web-sdk/pull/311))
