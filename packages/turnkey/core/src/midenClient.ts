@@ -130,7 +130,10 @@ export async function createAccount(
     .build().account;
   // If the account already exists on-chain (e.g. public), hydrate it instead of
   // recreating a "new" account with zero commitment, which causes submission to fail.
-  if (storageMode !== AccountStorageMode.private()) {
+  // Compare by value, not identity: AccountStorageMode.private() is a factory
+  // that returns a NEW wasm-backed object on every call, so `!==` against it is
+  // always true and the import attempt used to run for private accounts too.
+  if (storageMode.asStr() !== AccountStorageMode.private().asStr()) {
     try {
       await midenClient.accounts.import(account);
     } catch {

@@ -76,9 +76,9 @@ try {
 
   pkg.dependencies = {
     ...pkg.dependencies,
-    "@miden-sdk/miden-sdk": "^0.15.1",
-    "@miden-sdk/turnkey": "^1.15.1",
-    "@miden-sdk/turnkey-react": "^1.15.1",
+    "@miden-sdk/miden-sdk": "^0.16.2",
+    "@miden-sdk/turnkey": "^0.16.2",
+    "@miden-sdk/turnkey-react": "^0.16.2",
     "@turnkey/react-wallet-kit": "^1.6.2",
     buffer: "^6.0.3",
     process: "^0.11.10",
