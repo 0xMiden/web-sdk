@@ -88,7 +88,7 @@ try {
   pkg.devDependencies = {
     ...pkg.devDependencies,
     "@rollup/plugin-inject": "^5.0.5",
-    "vite-plugin-node-polyfills": "^0.22.0",
+    "vite-plugin-node-polyfills": "^0.24.0",
     "vite-plugin-wasm": "^3.3.0",
     "vite-plugin-top-level-await": "^1.4.4",
   };

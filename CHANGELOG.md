@@ -8,6 +8,8 @@
 
 ### Fixes
 
+* [FIX][para] `@miden-sdk/para-react` declared its optional `vite-plugin-node-polyfills` peer as `^0.22.0`, which every scaffolded Para app violated: `create-miden-para-react` and the Para examples install `^0.24.0`, and for a `0.x` version `^0.22.0` excludes `0.24.x`. `npm install` failed the whole tree with `ERESOLVE ... Conflicting peer dependency: vite-plugin-node-polyfills@0.22.0`, which the generated `.npmrc legacy-peer-deps=true` then swallowed. The peer is now `^0.24.0`. The range had to move up rather than widen: `paraVitePlugin` only calls `nodePolyfills({ include })`, which is unchanged across the 0.2x line, but `vite-plugin-node-polyfills` below 0.23.1 caps its own `vite` peer at 5, so a 0.22 install cannot coexist with the Vite 7 these packages target.
+* [FIX][turnkey] `create-miden-turnkey-react` scaffolded the same unresolvable tree from the other side: it wrote `vite: ^6.0.0` alongside `vite-plugin-node-polyfills: ^0.22.0`, whose `vite` peer stops at 5. It now writes `^0.24.0`.
 * [FIX][web] `AccountDetails.storage`, the field `client.accounts.getDetails()` returns, was declared as the raw WASM `AccountStorage`. `Account.prototype.storage()` is patched at load time to return a `StorageView`, so the declaration named a type the value never had: TypeScript accepted `storage.getItem(name)` as returning a `Word` when it returns a `StorageResult`, and rejected `getSlotNames`, `getMapEntries`, `getCommitment` and `.raw`, which the value does have. It is now typed as `StorageView`, with the `valueOf()` overflow throw and the string-returning `toJSON()` documented on the field.
 
 ## 0.16.2 (2026-09-18)
