@@ -9,12 +9,18 @@ on:
   # build check and not a release path. Don't add it to the required checks: it
   # installs from the registry and so depends on what is published.
   #
-  # Only two paths can change this job's result. The example installs its
-  # @miden-sdk/* dependencies from the registry, so editing a package's source
-  # here normally changes nothing it builds - with one exception:
-  # examples/wallet/vite.config.ts aliases `@miden-sdk/react` to
+  # The filter is deliberately narrow rather than complete. The example
+  # installs its @miden-sdk/* dependencies from the registry, so editing a
+  # package's source here normally changes nothing it builds - with one
+  # exception: examples/wallet/vite.config.ts aliases `@miden-sdk/react` to
   # ../../src/index.ts, so packages/react-sdk source IS compiled into this
   # build. packages/react-sdk/** covers both that source and the example.
+  #
+  # Not listed, and knowingly so: the steps below also read pnpm-lock.yaml,
+  # pnpm-workspace.yaml and the root package.json, so a PR touching only those
+  # can break this job without triggering it. That is not worth widening the
+  # filter for - a broken workspace install fails every job in test.yml on the
+  # same PR, so this one would only repeat the signal.
   pull_request:
     paths:
       - ".github/workflows/wallet-pages.yml"
