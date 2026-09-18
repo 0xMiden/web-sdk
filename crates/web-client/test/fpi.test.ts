@@ -177,6 +177,13 @@ test.describe("fpi test", () => {
       return {
         skip: false,
         foreignAccountIdStr,
+        // Pins the JS-facing spelling of ForeignAccount's two accessors. They
+        // carry an explicit js_name, so without these reads nothing in the repo
+        // consumes either name and dropping the attribute would silently
+        // reintroduce the snake_case/camelCase split between the wasm and napi
+        // builds. Dropping it makes the property undefined and this throws.
+        foreignAccountIdFromAccessor: foreignAccount.accountId().toString(),
+        hasStorageSlotRequirements: !!foreignAccount.storageSlotRequirements(),
         proofAccountId: accountProof.accountId().toString(),
         proofBlockNum: accountProof.blockNum(),
         proofCommitmentHex: accountProof.accountCommitment().toHex(),
@@ -192,6 +199,12 @@ test.describe("fpi test", () => {
       return;
     }
     expect(result.proofAccountId).toEqual(result.foreignAccountIdStr);
+    // Asserts on the value, not just that the call returned: an accessor
+    // rewired to the wrong field would still be defined.
+    expect(result.foreignAccountIdFromAccessor).toEqual(
+      result.foreignAccountIdStr
+    );
+    expect(result.hasStorageSlotRequirements).toBe(true);
     expect(result.proofBlockNum).toBeGreaterThan(0);
     expect(result.proofCommitmentHex).toMatch(/^0x[0-9a-fA-F]+$/);
     expect(result.hasAccountHeader).toBe(true);
