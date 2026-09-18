@@ -58,7 +58,7 @@ set -uo pipefail
 # `files` nor `.npmignore`, npm publishes everything in the package directory
 # except its built-in excludes (node_modules, .git, ...). npm-packlist only
 # reads ignore files *inside* the package folder, so this repo's root
-# .gitignore — which lists `packages/adapter/**/dist/` — has no effect on
+# .gitignore, which lists `packages/adapter/**/dist/`, has no effect on
 # packing and dist/ ships either way. What it also shipped was the sources,
 # tsconfig, vitest config, the generated typedoc `docs/` tree and the compiled
 # tests under dist/ (213 KB of it on adapter/base alone).
