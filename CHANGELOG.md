@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+* [FIX][web] `AccountDetails.storage`, the field `client.accounts.getDetails()` returns, was declared as the raw WASM `AccountStorage`. `Account.prototype.storage()` is patched at load time to return a `StorageView`, so the declaration named a type the value never had: TypeScript accepted `storage.getItem(name)` as returning a `Word` when it returns a `StorageResult`, and rejected `getSlotNames`, `getMapEntries`, `getCommitment` and `.raw`, which the value does have. It is now typed as `StorageView`, with the `valueOf()` overflow throw and the string-returning `toJSON()` documented on the field.
+
 ## 0.16.2 (2026-09-18)
 
 ### Enhancements

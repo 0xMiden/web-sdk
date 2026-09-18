@@ -7,7 +7,6 @@ import type {
   AccountId,
   AccountFile,
   AccountCode,
-  AccountStorage,
   AssetVault,
   Word,
   Felt,
@@ -44,6 +43,11 @@ import type {
   ForeignAccount,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
+
+// `Account.prototype.storage()` is patched at WASM load time to return the
+// `StorageView` wrapper declared in `index.d.ts`, so anything that surfaces the
+// result of that call is typed against the wrapper, not the raw WASM class.
+import type { StorageResult, StorageView } from "./index";
 
 // Import the full namespace for the MidenArrayConstructors type
 import type * as WasmExports from "./crates/miden_client_web";
@@ -340,11 +344,46 @@ export interface ContractCreateOptions {
   storage?: StorageMode;
 }
 
+/**
+ * A single account's full on-chain state, as returned by
+ * {@link AccountsResource.getDetails}.
+ */
 export interface AccountDetails {
+  /** The account itself. */
   account: Account;
+  /** The account's asset vault. */
   vault: AssetVault;
-  storage: AccountStorage;
+  /**
+   * The account's storage, wrapped in a {@link StorageView}.
+   *
+   * This is **not** the raw WASM `AccountStorage`: `Account.prototype.storage()`
+   * is patched at WASM load time to return the wrapper, whose `getItem(slotName)`
+   * resolves both Value and StorageMap slots to a {@link StorageResult} rather
+   * than returning a map's commitment root as if it were a value. Reach the raw
+   * `AccountStorage` through `storage.raw` when you need the protocol-level
+   * behavior.
+   *
+   * A `StorageResult` is designed to be used directly, and two of its conversions
+   * are worth knowing before you write against it:
+   *
+   * - `valueOf()` backs arithmetic and `+result`. It returns a JS `number`, and
+   *   throws `RangeError` for felts above `Number.MAX_SAFE_INTEGER` rather than
+   *   silently losing precision. Use `toBigInt()` for exact u64 access.
+   * - `toJSON()` returns a **string**, not a number, so `JSON.stringify` of a
+   *   value holding a large felt round-trips losslessly.
+   *
+   * @example
+   * ```ts
+   * const { storage } = await client.accounts.getDetails(id);
+   * storage.getSlotNames();              // string[]
+   * storage.getItem("balance")?.toBigInt();  // bigint, full u64
+   * storage.getCommitment("owners");     // Word: a map slot's Merkle root
+   * ```
+   */
+  storage: StorageView;
+  /** The account's code, or `null` for an account with no code. */
   code: AccountCode | null;
+  /** Public-key commitments known for this account. */
   keys: Word[];
 }
 
