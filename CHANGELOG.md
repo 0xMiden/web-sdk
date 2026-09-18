@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.3 (TBD)
+
+### Changes
+
+* [CHANGE][adapter] `@miden-sdk/miden-wallet-adapter-{base,miden,reactui}` now declare a `files` array and ship only what a consumer resolves. All three had neither `files` nor `.npmignore`, so npm packed the whole directory: TypeScript sources, `__tests__`, `tsconfig.json`, `vitest.config.ts`, the compiled tests and vitest config under `dist/`, and the generated typedoc `docs/` tree. `base` went from 131 files / 273 KB to 24 / 56 KB, `miden` from 35 / 230 KB to 11 / 44 KB, `reactui` from 77 / 218 KB to 46 / 73 KB. Every documented entry point still resolves, including both `@miden-sdk/miden-wallet-adapter-reactui/styles.css` and `.../reactui/dist/styles.css`. None of the three declares an `exports` map, so a deep import into their sources was legal and now stops resolving; import from the package root, or from `dist/` for the stylesheet ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
+
+### Fixes
+
+* [FIX][para] `@miden-sdk/para-react` declared its optional `vite-plugin-node-polyfills` peer as `^0.22.0`, which every scaffolded Para app violated: `create-miden-para-react` and the Para examples install `^0.24.0`, and for a `0.x` version `^0.22.0` excludes `0.24.x`. `npm install` failed the whole tree with `ERESOLVE ... Conflicting peer dependency: vite-plugin-node-polyfills@0.22.0`, which the generated `.npmrc legacy-peer-deps=true` then swallowed. The peer is now `>=0.23.1 <1.0.0`, which states the actual constraint: `paraVitePlugin` only calls `nodePolyfills({ include })`, which is unchanged across the 0.2x line, but `vite-plugin-node-polyfills` below 0.23.1 caps its own `vite` peer at 5, so a 0.22 install cannot coexist with the Vite 7 these packages target. A caret range would have re-created the same `ERESOLVE` on the plugin's next minor ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
+* [FIX][turnkey] `create-miden-turnkey-react` scaffolded the same unresolvable tree from the other side: it wrote `vite: ^6.0.0` alongside `vite-plugin-node-polyfills: ^0.22.0`, whose `vite` peer stops at 5. It now writes `^0.24.0` ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
+* [FIX][web] `AccountDetails.storage`, the field `client.accounts.getDetails()` returns, was declared as the raw WASM `AccountStorage`. `Account.prototype.storage()` is patched at load time to return a `StorageView`, so the declaration named a type the value never had: TypeScript accepted `storage.getItem(name)` as returning a `Word` when it returns a `StorageResult`, and rejected `getSlotNames`, `getMapEntries`, `getCommitment` and `.raw`, which the value does have. It is now typed as `StorageView`, with the `valueOf()` overflow throw and the string-returning `toJSON()` documented on the field ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
+
 ## 0.16.2 (2026-09-18)
 
 ### Enhancements

@@ -34,17 +34,11 @@ package manager invoked it.
 
 ## Fix these in the generated project
 
-**The dependency versions it writes are stale.** It pins
-`@miden-sdk/turnkey` and `@miden-sdk/turnkey-react` at `^1.15.1`, which no
-published release satisfies, and `@miden-sdk/miden-sdk` at `^0.15.1`, which is
-below the `^0.16.1` peer range those packages declare. Replace all three with
-the current versions before installing: the first two cannot resolve at all, and
-the third only installs because of the `.npmrc` below.
-
 **The `.npmrc` hides peer conflicts rather than fixing them.**
-`legacy-peer-deps=true` is what lets a wrong peer range install quietly. Once
-the versions above are corrected, it is no longer doing anything you want; drop
-it and let the resolver tell you the truth.
+`legacy-peer-deps=true` is what lets a wrong peer range install quietly, so a
+scaffolded project reports a clean install over a tree npm would otherwise
+refuse. Drop it and let the resolver tell you the truth; re-add it only for a
+conflict you have looked at and decided to accept.
 
 **The Vite config is hand-rolled.** It wires `vite-plugin-wasm`,
 `vite-plugin-top-level-await` and `vite-plugin-node-polyfills` by hand, excludes
@@ -62,7 +56,8 @@ Two environment variables, both required by `src/App.tsx`:
 | `VITE_TURNKEY_ORGANIZATION_ID` | `TurnkeyProvider`'s `organizationId` |
 | `VITE_AUTH_PROXY_CONFIG_ID` | `TurnkeyProvider`'s `authProxyConfigId` |
 
-The README also lists `VITE_TURNKEY_API_BASE_URL`. Nothing reads it.
+The README documents the same two, and the CLI writes both into the generated
+`.env.example`. If you add a third, all three places need it.
 
 Miden settings are literals in `src/App.tsx`, not environment variables:
 `https://rpc.testnet.miden.io`, the testnet note transport, the account seed
