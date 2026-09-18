@@ -22,6 +22,7 @@ are doing rather than guessing from the type signatures alone.
 | `skills/frontend-pitfalls/SKILL.md` | Before shipping. WASM initialization, concurrent access, cross-origin isolation, `BigInt` at the WASM boundary. These are the failures that survive code review and break in production. |
 | `skills/signer-integration/SKILL.md` | Wiring an external signer (Para, Turnkey, a wallet adapter) or implementing a custom one. |
 | `skills/chain-anchored-execution/SKILL.md` | Multisig proposals, offline co-signing - anything where one party signs a transaction summary and another executes it. Read before using `captureAnchor`, or when co-signers' summary commitments never match. |
+| `skills/observability/SKILL.md` | Wiring telemetry, tracing or metrics around the client - the `MidenObservation` contract, which operations are and are not observed, the opt-in sensitive channel, and the OpenTelemetry and Sentry bindings. Read it when an observation you expected never arrives, or when observation counts do not match your call counts. |
 | `skills/frontend-source-guide/SKILL.md` | Anything the other skills don't cover - driving `WasmWebClient` directly, or troubleshooting SDK internals. Maps this repository's source so you can read the implementation instead of guessing. |
 
 Building a React app? `@miden-sdk/react` wraps this client in hooks and ships

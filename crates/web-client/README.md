@@ -849,7 +849,7 @@ interface MidenObservation {
 }
 ```
 
-`op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` runs execute → prove → submit → apply, so it reports `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as four separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
+`op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
 `durationMs` is measured with `performance.now()` around the awaited call, so it is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 
