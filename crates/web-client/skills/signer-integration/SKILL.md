@@ -474,13 +474,17 @@ Passing both `recipient` and `script`, or neither, throws
 `CreateNetworkNoteOptions` / `NetworkNoteResult` in `packages/react-sdk/src/types/index.ts:406-431`.
 From the raw client the equivalent is `client.transactions.createNetworkNote(options)`.
 
-> **`buildNetworkNote` is declared but not importable at this pin.** It builds the same note without
-> submitting, lives in `crates/web-client/js/standalone.js:121` and is declared in
-> `js/types/api-types.d.ts:1838` - but neither package entry re-exports it. Both `js/index.js:7-13`
-> and `js/node-index.js:19-25` pull only `createP2IDNote`, `createP2IDENote` and `buildSwapTag` out
-> of `standalone.js`, and `standalone.js` has no subpath in the package's `exports` map. A reader
-> trusting the `.d.ts` gets a runtime failure. Treat the declaration as aspirational until an entry
-> exports it.
+To build a network note without submitting it, import the standalone helper from the package root:
+
+```tsx
+import { buildNetworkNote } from "@miden-sdk/miden-sdk";
+
+const note = buildNetworkNote({
+  account: senderId,
+  target: networkAccountId,
+  script: myNoteScript,
+});
+```
 
 ### Creating the network account
 
