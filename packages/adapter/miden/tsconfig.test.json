@@ -1,0 +1,11 @@
+{
+  // tsconfig.json is the BUILD config: it excludes __tests__ and
+  // vitest.config.ts so they never reach dist. That also removed the only
+  // type-check those files had, because vitest transpiles through esbuild
+  // without checking types. This config type-checks them and emits nothing.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "exclude": ["node_modules", "dist"]
+}

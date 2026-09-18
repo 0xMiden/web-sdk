@@ -75,8 +75,11 @@ jobs:
           # of hiding behind the preflight's `continue-on-error`.
           rustup target add wasm32-unknown-unknown
 
+      # This is the only step that compiles a crate before it is uploaded: the
+      # publish step below passes --no-verify, because a workspace publish
+      # verifies on the host and the wasm32-only crates cannot build there.
+      # So this gates the release - it is deliberately not continue-on-error.
       - name: Preflight - publish dry run
-        continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -132,6 +135,16 @@ jobs:
           mapfile -t publishable_crates < <(
             jq -r '[.packages[] | select(.publish != []) | "\(.name) \(.version)"] | sort | .[]' <<< "${metadata}"
           )
+
+          # Neither errexit nor pipefail observes a process substitution, so a
+          # jq failure or a cargo metadata schema change would leave this array
+          # empty - and an empty array walks straight into the "nothing to do"
+          # exit 0 below, reporting a release that published nothing as success.
+          # This workspace always has publishable members, so empty is a bug.
+          if [[ "${#publishable_crates[@]}" -eq 0 ]]; then
+            echo "::error::cargo metadata yielded no publishable crates; refusing to report success"
+            exit 1
+          fi
 
           exclude_args=()
           remaining_crates=()

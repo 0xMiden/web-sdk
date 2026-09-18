@@ -20,6 +20,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "clean": "rimraf dist/ node_modules/",
     "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown index.ts",
     "test": "vitest run"

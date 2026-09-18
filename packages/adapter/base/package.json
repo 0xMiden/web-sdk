@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "clean": "rimraf dist/ node_modules/",
     "doc": "typedoc --disableSources --tsconfig ./tsconfig.json --plugin typedoc-plugin-markdown --entryPoints index.ts",
     "test": "vitest run"

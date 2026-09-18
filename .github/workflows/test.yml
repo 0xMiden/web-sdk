@@ -494,8 +494,18 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+      # Before running them, assert the aggregate actually covers every suite:
+      # vitest reports nothing for a project it was never told about, so an
+      # unlisted package's tests vanish silently and this job stays green.
+      - name: Check every vitest project is run by something
+        run: node scripts/check-vitest-projects.mjs
       - name: Run the TypeScript unit suites
         run: make test
+      # Packages whose build config excludes tests from emit type-check them
+      # here instead; vitest transpiles through esbuild and checks nothing.
+      # pnpm skips projects with no `typecheck` script, so this needs no list.
+      - name: Type-check files excluded from the build
+        run: pnpm -r run typecheck
 
   test-react-sdk:
     name: React SDK tests

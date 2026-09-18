@@ -9,17 +9,25 @@ on:
   # build check and not a release path. Don't add it to the required checks: it
   # installs from the registry and so depends on what is published.
   #
-  # The paths are deliberately just the example and this file. The example
-  # installs its @miden-sdk/* dependencies from the registry, so a PR editing
-  # any package's source in this repo produces a byte-identical build here -
-  # triggering on those trees would report a green that means nothing.
+  # Only two paths can change this job's result. The example installs its
+  # @miden-sdk/* dependencies from the registry, so editing a package's source
+  # here normally changes nothing it builds - with one exception:
+  # examples/wallet/vite.config.ts aliases `@miden-sdk/react` to
+  # ../../src/index.ts, so packages/react-sdk source IS compiled into this
+  # build. packages/react-sdk/** covers both that source and the example.
   pull_request:
     paths:
       - ".github/workflows/wallet-pages.yml"
-      - "packages/react-sdk/examples/wallet/**"
+      - "packages/react-sdk/**"
 
 permissions:
   contents: read
+
+# Supersede PR builds, never a manual deploy: cancelling one mid-publish would
+# leave the Pages artifact half-uploaded.
+concurrency:
+  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -40,9 +48,15 @@ jobs:
         with:
           node-version: "20"
           cache: 'pnpm'
-      # No workspace install or build step: the example resolves every
-      # @miden-sdk/* dependency from the registry (see --ignore-workspace
-      # below), so nothing built from this tree would ever be linked into it.
+      # Load-bearing despite the standalone install below: vite.config.ts
+      # aliases `@miden-sdk/react` to packages/react-sdk/src/index.ts, and that
+      # source resolves its own imports (react, @tanstack/react-query,
+      # @miden-sdk/miden-sdk) upward through packages/react-sdk/node_modules -
+      # which only this install creates.
+      - name: Install workspace dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Build react sdk
+        run: pnpm --filter @miden-sdk/react run build
       - name: Install wallet example dependencies (pnpm, ignore-workspace)
         # The example is intentionally OUTSIDE the workspace (not listed in
         # pnpm-workspace.yaml). --ignore-workspace tells pnpm to treat this
