@@ -26,6 +26,7 @@ import {
   createP2IDNote,
   createP2IDENote,
   buildSwapTag,
+  buildNetworkNote,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -93,7 +94,7 @@ export const Linking = Object.freeze({
 // ── Re-exports ───────────────────────────────────────────────────────
 
 export { MidenClient };
-export { createP2IDNote, createP2IDENote, buildSwapTag };
+export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
 
 // Internal exports (matching browser entry point)
 export {
