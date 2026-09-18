@@ -44,13 +44,11 @@ impl ForeignAccount {
     }
 
     /// Returns the required storage slots/keys for this foreign account.
-    #[js_export(js_name = "storageSlotRequirements")]
     pub fn storage_slot_requirements(&self) -> AccountStorageRequirements {
         self.0.storage_slot_requirements().into()
     }
 
     /// Returns the ID of the foreign account.
-    #[js_export(js_name = "accountId")]
     pub fn account_id(&self) -> AccountId {
         self.0.account_id().into()
     }
