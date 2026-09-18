@@ -70,12 +70,13 @@ CI (`.github/workflows/test.yml`) runs all of the above on every PR. `main` and 
 
 ## Coverage thresholds
 
-`packages/react-sdk/vitest.config.ts` enforces `lines / functions / statements ≥ 95` and `branches ≥ 94`. Branches sits 1pp lower because v8's instrumentation marks `} finally {` blocks partially-covered even when both paths are exercised; the comment in the config has the detail. Two files are excluded because they need the real WASM binary rather than the jsdom mock:
+`packages/react-sdk/vitest.config.ts` enforces `lines / functions / statements ≥ 95` and `branches ≥ 94`. Branches sits 1pp lower because v8's instrumentation marks `} finally {` blocks partially-covered even when both paths are exercised; the comment in the config has the detail. One file is excluded because it needs the real WASM binary rather than the jsdom mock:
 
 - `src/utils/accountBech32.ts` - `NetworkId`, `Address` and `Account.prototype` come from the real bundle. Covered by the Playwright test at `packages/react-sdk/test/accountBech32.test.ts`.
-- `src/hooks/useAssetMetadata.ts` - `RpcClient`, `Endpoint` and `BasicFungibleFaucetComponent` come from the real bundle. Unit-covered at `packages/react-sdk/src/__tests__/hooks/useAssetMetadata.test.tsx`.
 
-The exclude comments inside `vitest.config.ts` carry the same two paths. If you move a test, fix both places - the config's copy has been wrong before and nothing checks it.
+`src/hooks/useAssetMetadata.ts` used to be excluded alongside it, pointing at a `test/useAssetMetadata.test.ts` that does not exist. It is unit-covered by `packages/react-sdk/src/__tests__/hooks/useAssetMetadata.test.tsx` and is measured normally.
+
+The exclude comment inside `vitest.config.ts` carries the same path. If you move a test, fix both places - the config's copy has been wrong before and nothing checks it.
 
 **Always run `make test-react-sdk` locally before pushing** — CI will block the merge if any threshold dips. Lowering thresholds is not the right fix; either add tests or move the file to the excluded list with justification.
 
