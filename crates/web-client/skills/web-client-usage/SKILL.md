@@ -419,6 +419,15 @@ clears the other, so whichever is called last wins.
 
 ## Transactions
 
+**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`). The
+constructors `unwrap` the protocol's `TooManyAssets` error, so going over the cap from
+JavaScript **traps the WASM instance** rather than rejecting with a catchable error - check
+the length yourself before building a note with many assets. Duplicates are rejected too,
+and the order of assets is unspecified.
+
+Per-asset callbacks are read off `FungibleAsset.callbacks()`. There is no `withCallbacks`
+builder - do not reach for one.
+
 The transactions API is option-bag-based and accepts any account ref
 (`Account`, `AccountHeader`, hex string, `AccountId`).
 
@@ -583,6 +592,15 @@ pass a decimal string or `bigint`, never a `number`), and
 `cancelByOrder({ orderId })`. `cancelByOrder` is the one path that cannot
 declare a fee conversion salt, so cancel a **multisig** creator's order with
 `transactions.pswapCancel` instead.
+
+A `PswapLineageRecord` exposes `orderId()`, `status()`, `creator()`, `offered()`,
+`requested()`, `filled()` and `remaining()`; `status()` is one of `Active`,
+`FullyFilled` or `Reclaimed`. `cancelByOrder` throws **before submitting** in two
+cases - when no lineage exists for the order, and when the lineage is already
+terminal - so a failure there has cost you nothing on chain. Note that its read,
+build and submit are three separate awaits with no lock across them, so a
+concurrent fill can still land between them and the submit then fails on the
+nullified note.
 
 ### Execute (custom scripts)
 

@@ -69,6 +69,49 @@ Built-in hooks already wrap their own sequences. Reach for `runExclusive` when y
 several raw `useMidenClient()` calls that depend on each other, or mix manual client calls
 with hook mutations.
 
+**Build WASM objects inside the lock, and read primitives out before the block ends.** A
+WASM handle is a pointer into the instance, and an exclusive operation running between the
+moment you create one and the moment you use it can leave you holding a stale one.
+`useSend` does both halves of this deliberately: it re-parses `options.to` into an
+`AccountId` inside its exclusive block rather than passing one in, and it copies the
+transaction id to a hex string *before* `applyTransaction`, which consumes the pointer
+inside the result along with any child objects such as `TransactionId`. Carry values
+across the boundary, not handles.
+
+```tsx
+await runExclusive(async () => {
+  const id = AccountId.fromBech32(toAddress);   // build it in here
+  const result = await client.newTransaction(id, request);
+  const txId = result.executedTransaction().id().toHex(); // read it out
+  await client.applyTransaction(result);        // pointer is gone after this
+  return txId;                                  // a string survives; the handle would not
+});
+```
+
+(Inside the SDK's own hooks the helper is `runExclusiveSafe`, which is
+`runExclusive ?? runExclusiveDirect` - it keeps them serialized even with no
+provider-supplied lock. From application code, `runExclusive` from `useMiden()` is the
+one you want.)
+
+**Three layers protect the client, and only the first covers every method.** Knowing
+which one you are relying on tells you what a second browser tab can still do to you:
+
+1. **In-process call chain.** The `WebClient` proxy queues WASM calls on a per-instance
+   promise chain (`_serializeWasmCall`), including methods it does not wrap explicitly.
+   The raw-bound `SYNC_METHODS` are the only exceptions. This is what stops
+   "recursive use of an object detected".
+2. **Web Locks.** Exactly three entry points run under `withSyncLock(dbId, methodId, fn)`:
+   `syncState`, `syncChain` and `syncNoteTransport` - six call sites, since `MockWebClient`
+   extends `WebClient`. It coalesces concurrent calls of the *same* method into one shared
+   promise and serializes *different* methods on the same database, **across tabs**. With
+   no Web Locks API it degrades to an in-process per-database chain. `fetchPrivateNotes`
+   is **not** among them: it has no JS wrapper, so it gets layer 1 only - no Web Lock, no
+   cross-tab coalescing.
+3. **Cross-tab state change.** `client.onStateChanged(cb)` fires when another tab mutates
+   the store, where `BroadcastChannel` exists. `MidenProvider` subscribes and refreshes the
+   Zustand store so the UI re-renders; the client has already synced its own Rust state by
+   then.
+
 ## FP3: COOP/COEP Headers - Only for the Multi-Threaded (MT) Build (HIGH)
 
 COOP/COEP cross-origin-isolation is **not** a universal requirement. The web SDK ships four entry points along two axes (eager/lazy × ST/MT), and the isolation requirement depends entirely on the threading model:
@@ -131,7 +174,7 @@ Bech32-encoded account IDs include the network. A devnet address on testnet poin
 
 ```tsx
 // WRONG - hardcoding a bech32 address used across networks
-const ADMIN = "mtst1qy35..."; // this is network-specific! (mtst testnet, mdev devnet)
+const ADMIN = "mtst1qy35..."; // this is network-specific! (mtst testnet, mdev devnet, mm mainnet)
 
 // CORRECT - use hex format for cross-network compatibility
 const ADMIN = "0x1234567890abcdef";
@@ -157,6 +200,12 @@ Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 
 - `"localhost"` resolves to `http://localhost:57291`, which also contains none of them, so a local node renders testnet-prefixed addresses too.
 
 If you run a custom or local network, do not treat `bech32id()` output as authoritative - key off hex, and render bech32 only where you control the network mapping yourself.
+
+The three real HRPs are `mtst` (testnet), `mdev` (devnet) and `mm` (mainnet); a custom
+network supplies its own through `NetworkId::custom`. **There is no `miden1` prefix** -
+it is the plausible-looking guess an agent reaches for when it has not checked, and
+nothing in the SDK produces it. `packages/react-sdk/test/accountBech32.test.ts` pins all
+three real prefixes.
 
 ## FP6: Auto-Sync Side Effects (MEDIUM)
 
@@ -374,6 +423,15 @@ Two companions to the same boundary:
 
 - **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
 - **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+
+**Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
+SDK's `ProverTarget` / `ProverConfig` has an arm that accepts a `TransactionProver`. The
+raw client takes `proverUrl?: "local" | "devnet" | "testnet" | (string & {})`, and
+`ProverTarget` widens that to `"local" | "localhost" | "devnet" | "testnet" | string |
+{ url, timeoutMs? }`, with `ProverConfig` adding `{ primary, fallback }` around it - every
+arm is a URL or a name, never a handle. So a callback prover cannot be supplied through
+config at all; it has to be passed at the call that proves, which is why the
+`useWorker: false` requirement above is unavoidable rather than a default worth changing.
 
 Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `packages/react-sdk/src/hooks/usePreview.ts`.
 
