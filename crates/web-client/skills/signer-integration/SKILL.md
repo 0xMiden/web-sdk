@@ -1,6 +1,6 @@
 ---
 name: signer-integration
-description: Guide to integrating external signers (Para, Turnkey, MidenFi wallet adapter) and building custom signers for Miden React frontends. Covers provider setup, passkey authentication, unified signer interface, multi-signer registry, custom SignerContext implementation, custom account components, and building guarded-multisig auth components. Use when adding wallet connection, authentication, or external key management to a Miden frontend.
+description: Guide to integrating external signers (Para, Turnkey, MidenFi wallet adapter) and building custom signers for Miden React frontends. Covers provider setup, passkey authentication, unified signer interface, multi-signer registry, custom SignerContext implementation, wallet-extension detection, signer account initialization, custom account components, building guarded-multisig auth components, and network-account / network-note targeting. Use when adding wallet connection, authentication, or external key management to a Miden frontend.
 ---
 
 # Miden Signer Integration
@@ -113,6 +113,29 @@ With `MidenFiSignerProvider` in place, use `useSigner()` from the React SDK to m
 
 > The provider accepts an `accountType` prop, but it is a no-op: account visibility is determined solely by `storageMode` (`private`/`public`), and the provider always imports the account by ID (`importAccountId`), bypassing the builder path entirely. Omit it.
 
+### Wallet-extension detection
+
+`@miden-sdk/react` ships an adapter-agnostic detection primitive, so UI and tests can wait for
+the extension without depending on a wallet-adapter package:
+
+```tsx
+import { waitForWalletDetection } from "@miden-sdk/react";
+import type { WalletAdapterLike } from "@miden-sdk/react";
+
+// WalletAdapterLike is a duck type, nothing more:
+//   { readyState: string;
+//     on(e: "readyStateChange", cb: (state: string) => void): void;
+//     off(e: "readyStateChange", cb: (state: string) => void): void }
+
+await waitForWalletDetection(adapter);        // default timeout: 5000 ms
+await waitForWalletDetection(adapter, 10000); // custom timeout
+```
+
+It resolves immediately when `adapter.readyState === "Installed"`; otherwise it subscribes to
+`readyStateChange` and rejects with `Wallet extension not detected within <n>ms. Is the browser
+extension installed and enabled?`. Use it to show an install prompt instead of blindly calling
+`connect()`. Source: `packages/react-sdk/src/utils/walletDetection.ts:20-57`.
+
 ### Frontend-template-specific MidenFi pattern
 
 The [frontend template](https://github.com/0xMiden/frontend-template) (last verified against web-sdk 0.15; it lives in a separate repository, so re-check its lockfile before trusting the version-specific notes below) deviates from the generic patterns above in three places worth knowing when the wallet extension is the primary signer:
@@ -168,19 +191,85 @@ import { AccountStorageMode } from "@miden-sdk/miden-sdk";
 </SignerContext.Provider>
 ```
 
-**Required fields:**
-- `name` - Display name for the signer
-- `storeName` - Unique string per user (isolates IndexedDB data between users)
-- `accountConfig` - `{ publicKeyCommitment: Uint8Array; storageMode: AccountStorageMode; ... }` (storage mode is an `AccountStorageMode` instance, e.g. `AccountStorageMode.private()`, not a string)
-- `signCb` - Callback that signs transaction data with your key management service
-- `connect` / `disconnect` - Session lifecycle handlers
+**`SignerContextValue` fields** (`packages/react-sdk/src/context/SignerContext.ts:83-102`):
 
-**Optional fields:**
-- `getKeyCb(pubKey) => Promise<Uint8Array>` / `insertKeyCb(pubKey, secretKey)` - only needed if your service can hand back raw secret-key bytes, or must persist a key the SDK generates. Omit both for a sign-only service; `MidenProvider` forwards them verbatim to `createClientWithExternalKeystore`.
-- `accountConfig.accountSeed` - `Uint8Array` seed for a deterministic account ID.
-- `accountConfig.importAccountId` - import an existing account by ID instead of building one. **When set, the `AccountBuilder` path is skipped entirely, which silently makes `customComponents` a no-op.** Use one or the other, never both.
+| Field | Required | Notes |
+|---|---|---|
+| `name` | yes | Display name; also the registry key `MultiSignerProvider` stores the signer under |
+| `storeName` | yes | Unique per user - becomes the `MidenClientDB_<storeName>` IndexedDB name |
+| `isConnected` | yes | `false` blocks client creation on first mount (see the frontend-template note above) |
+| `accountConfig` | yes | `SignerAccountConfig` (below); only meaningful while connected |
+| `signCb` | yes | `(pubKey: Uint8Array, signingInputs: Uint8Array) => Promise<Uint8Array>` |
+| `connect` / `disconnect` | yes | `() => Promise<void>` session lifecycle |
+| `getKeyCb` | no | `(pubKey: Uint8Array) => Promise<Uint8Array>` - hand back a secret key by commitment |
+| `insertKeyCb` | no | `(pubKey: Uint8Array, secretKey: Uint8Array) => void` - persist a key the SDK generated |
+
+Omit both key callbacks for a sign-only service; `MidenProvider` forwards them verbatim to
+`createClientWithExternalKeystore`.
+
+**`SignerAccountConfig` fields** (`packages/react-sdk/src/context/SignerContext.ts:55-76`):
+
+| Field | Required | Notes |
+|---|---|---|
+| `publicKeyCommitment` | yes | `Uint8Array`, deserialized to a `Word` for the auth component |
+| `storageMode` | yes | an `AccountStorageMode` **instance** - `AccountStorageMode.private()` / `.public()`, not a string |
+| `accountSeed` | no | `Uint8Array` for a deterministic account ID; otherwise 32 random bytes |
+| `customComponents` | no | `AccountComponent[]` appended after the basic wallet component |
+| `importAccountId` | no | Skip the builder entirely and import this account ID from chain. **Silently makes `customComponents` a no-op.** Use one or the other, never both |
+| `accountType` | no | **`@deprecated` and ignored** - visibility comes solely from `storageMode`. Omit it |
+
+`signCb` is not handed to the client directly. `MidenProvider` keeps the latest callback in a ref
+and passes a wrapper that reads through it, so reconnecting the *same* identity hot-swaps the
+callback (`store.client.setSignCb(wrappedSignCb)`) instead of rebuilding the client. A wrapped call
+made after disconnect throws `Signer is disconnected. Cannot sign.`
+(`packages/react-sdk/src/context/MidenProvider.tsx:166-212`).
+
+Two hooks additionally hard-block while a signer is mounted but disconnected: `useImportAccount`
+and `useMultiSend` call `assertSignerConnected()` and throw `Signer is disconnected. Reconnect your
+wallet to perform transactions.` (`packages/react-sdk/src/utils/errors.ts:101-107`).
 
 The two shipped providers are the best worked examples of this contract: read `packages/para/react/src/ParaSignerProvider.tsx` or `packages/turnkey/react/src/TurnkeySignerProvider.tsx` end to end before writing your own.
+
+## How the Account Gets Initialized
+
+`MidenProvider` calls `initializeSignerAccount(client, accountConfig)`
+(`packages/react-sdk/src/utils/signerAccount.ts:48-164`) right after creating the
+external-keystore client. There are two paths.
+
+**Fast path - `importAccountId` is set.** The builder is skipped and `client.importAccountById()`
+runs. It tolerates exactly two machine-readable error codes and rethrows everything else
+(`signerAccount.ts:85-89`):
+
+- `ACCOUNT_NOT_FOUND_ON_CHAIN` - a brand-new account not yet registered on-chain. The dApp still
+  renders, but **the account is not tracked locally**, so `useAccount` returns `null` and no
+  transaction can be built against it until a later `importAccountById` succeeds. `syncState()`
+  only refreshes accounts the store already tracks; it never discovers one by ID.
+- `ACCOUNT_ALREADY_TRACKED` - already imported locally; harmless.
+
+**Slow path - build from the commitment** (`signerAccount.ts:105-113`):
+
+```ts
+new AccountBuilder(seed)
+  .withAuthComponent(
+    AccountComponent.createAuthComponentFromCommitment(
+      commitmentWord,
+      AuthScheme.AuthEcdsaK256Keccak  // see the AuthScheme trap below
+    )
+  )
+  .storageMode(config.storageMode)
+  .withBasicWalletComponent()
+  // then .withComponent(c) for each entry in customComponents
+  .build();
+```
+
+For a **public** storage mode it first tries `importAccountById` (the account may already exist
+on-chain). If that succeeds it syncs and returns immediately - `getAccount` and `newAccount` are
+never reached. Only when the import throws does it fall through to checking
+`client.getAccount(accountId)` for a local copy and finally `client.newAccount(account, false)`.
+
+Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitment is registered
+as an ECDSA key, not Falcon. The `AuthScheme` symbol here is the numeric WASM enum, not the frozen
+string const the package exports - see "The `AuthScheme` trap" under Guarded Multisig below.
 
 To inspect the keys the client ended up with, use the keystore resource on the high-level client: `client.keystore.getCommitments(accountId)`, `.get(pubKeyCommitment)`, `.getAccountId(pubKeyCommitment)`, `.insert(accountId, secretKey)`, `.remove(pubKeyCommitment)`. (`remove` is not supported on every platform and throws where it is not.)
 
@@ -226,6 +315,20 @@ await connectSigner("Turnkey"); // switches by `name` and calls that signer's co
 
 `useMultiSigner()` returns `null` outside a `MultiSignerProvider`.
 
+`connectSigner(name)` has three behaviors worth knowing
+(`packages/react-sdk/src/context/MultiSignerProvider.tsx:157-196`):
+
+- an unregistered name throws ``Signer "<name>" not found`` **before** anything becomes active, so
+  the registry is never left pointing at an invalid name;
+- the previously active signer is disconnected **fire-and-forget** - the rejection is only
+  `console.warn`ed, never awaited, so a wedged old signer cannot block the new one;
+- if the new signer's `connect()` rejects, the active name reverts to `null` and the error is
+  rethrown, which puts the app back in local-keystore mode rather than in a half-connected state.
+
+Switching signers changes `storeName`, which makes `MidenProvider` drop its cached in-memory state
+and build a fresh client for the new identity; reconnecting the *same* identity hot-swaps `signCb`
+on the existing client instead.
+
 `disconnectSigner()` drops the active signer and reverts to local-keystore mode. A single signer provider does NOT need this wrapper - `MidenFiSignerProvider`, `ParaSignerProvider` and `TurnkeySignerProvider` each provide their own `SignerContext` standalone.
 
 ## Custom Account Components
@@ -244,6 +347,12 @@ const accountConfig: SignerAccountConfig = {
   customComponents: [myDexComponent],
 };
 ```
+
+Each entry must be a real `AccountComponent` - created via `AccountComponent.compile()`,
+`.fromPackage()` or `.fromLibrary()`. The initializer duck-checks for a `getProcedures` method and
+throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:116-128`):
+
+> Each entry in customComponents must be an AccountComponent instance created via AccountComponent.compile(), AccountComponent.fromPackage(), or AccountComponent.fromLibrary().
 
 `SignerAccountConfig` has an `accountType` field, but it is ignored - account kind and code mutability are not encoded in the account, so visibility comes solely from `storageMode`. Omit it.
 
@@ -298,6 +407,119 @@ not `undefined` before passing it.
 
 
 **Do not compile equivalent MASM through `AccountComponent.compile` instead.** Doing so links the standards package *dynamically*, which yields a different `auth_tx` procedure root. `AccountComponentInterface::from_procedures` then cannot classify the account, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
+
+## Network Accounts and Network Notes
+
+There **is** a network-execution surface, and a signer-backed app can both create the account and
+target it. A network note is a `Public` note carrying a `NetworkAccountTarget` attachment; once it
+lands on-chain the targeted network account auto-consumes it, with no manual `consume` on the
+recipient side.
+
+### Targeting
+
+```tsx
+import { NetworkAccountTarget, NoteExecutionHint } from "@miden-sdk/miden-sdk";
+
+const target = new NetworkAccountTarget(networkAccountId, NoteExecutionHint.always());
+// executionHint is optional and defaults to `always`.
+// The constructor errors if accountId is not a public account.
+
+target.targetId();       // AccountId
+target.executionHint();  // NoteExecutionHint
+const attachment = target.toAttachment();         // NoteAttachment
+NetworkAccountTarget.fromAttachment(attachment);  // decode back; errors if not a target attachment
+```
+
+Source: `crates/web-client/src/models/network_account_target.rs:23-71`.
+
+### Building the note
+
+```tsx
+// Note.withAttachments(noteAssets, noteMetadata, noteRecipient, attachments)
+// Uses the metadata's sender / note type / tag; attachments on the metadata itself are ignored.
+const note = Note.withAttachments(noteAssets, metadata, recipient, [target.toAttachment(), extra]);
+note.attachments();    // NoteAttachment[]
+note.isNetworkNote();  // true - Public plus a valid NetworkAccountTarget attachment
+```
+
+Source: `crates/web-client/src/models/note.rs:212-256`.
+
+From React, `useCreateNetworkNote` builds, funds and submits it in one call:
+
+```tsx
+import { useCreateNetworkNote } from "@miden-sdk/react";
+
+const { createNetworkNote, result, isLoading, stage, error, reset } = useCreateNetworkNote();
+const { txId, note } = await createNetworkNote({
+  accountId: senderId,       // AccountRef - creates, funds and submits the note
+  target: networkAccountId,  // AccountRef
+  script: myNoteScript,      // NoteScript - OR `recipient`, exactly one of the two
+  executionHint,             // optional; defaults to `always`
+  inputs: [1n, 2n],          // optional note storage / inputs (used with `script`)
+  assetId, amount,           // optional single asset to lock into the note
+  attachment: [1n, 2n, 3n],  // optional extra payload appended after the NetworkAccountTarget
+});
+```
+
+Passing both `recipient` and `script`, or neither, throws
+(`packages/react-sdk/src/hooks/useCreateNetworkNote.ts:57-66`); the option and result shapes are
+`CreateNetworkNoteOptions` / `NetworkNoteResult` in `packages/react-sdk/src/types/index.ts:406-431`.
+From the raw client the equivalent is `client.transactions.createNetworkNote(options)`.
+
+> **`buildNetworkNote` is declared but not importable at this pin.** It builds the same note without
+> submitting, lives in `crates/web-client/js/standalone.js:121` and is declared in
+> `js/types/api-types.d.ts:1838` - but neither package entry re-exports it. Both `js/index.js:7-13`
+> and `js/node-index.js:19-25` pull only `createP2IDNote`, `createP2IDENote` and `buildSwapTag` out
+> of `standalone.js`, and `standalone.js` has no subpath in the package's `exports` map. A reader
+> trusting the `.d.ts` gets a runtime failure. Treat the declaration as aspirational until an entry
+> exports it.
+
+### Creating the network account
+
+A network account is a **public** account carrying the network-account auth component, whose
+note-script allowlist is what the node's network-transaction builder inspects:
+
+```tsx
+import { AccountBuilder, AccountComponent, AccountStorageMode, NoteScriptFee } from "@miden-sdk/miden-sdk";
+
+// Returns AccountComponent[] - the auth component plus the components backing
+// its fee policy. Install ALL of them.
+const components = AccountComponent.createNetworkAuthComponents(
+  [new NoteScriptFee(myNoteScript.root(), 0n)],  // NoteScriptFee[] - must be non-empty
+  feeFaucetId,                                   // AccountId - fees are denominated in this faucet's asset
+  allowedTxScriptRoots                           // optional Word[] from TransactionScript.root()
+);
+
+const builder = new AccountBuilder(seed)
+  .storageMode(AccountStorageMode.public())
+  .withComponent(myComponent);
+for (const component of components) builder.withComponent(component);
+const { account } = builder.build();
+```
+
+Four rules bite, all enforced in
+`crates/web-client/src/models/account_component.rs:255-335`:
+
+- The allowlist must be **non-empty**. `createNetworkAuthComponents([], ...)` errors, since such an
+  account could never consume a note.
+- **Install every returned component.** The call returns the auth component *plus* the components
+  backing its fee policy; dropping any of them leaves the account unable to price a consumption.
+- **Every allowlisted script is priced by construction** - each `NoteScriptFee` carries root and
+  amount together. A fee of `0n` is valid; a script root the account does not price at all aborts
+  fee estimation rather than being treated as free.
+- **The canonical expiration transaction script is always allowlisted**, because the node attaches
+  it to every network transaction it executes. Any other transaction script is forbidden unless its
+  root is passed in the optional third argument - and only allowlist a root whose effect is safe
+  for *every* possible input, since a root pins code but not the submitter-controlled arguments or
+  advice inputs.
+
+Reuse the *same* compiled note script for the account allowlist and for the note, so the roots
+match. Targeting a plain wallet instead of a network account fails with `account procedure ... is
+not in the account procedure index map`.
+
+Detect one with `account.isNetworkAccount()`; read the allowed roots with
+`account.networkNoteAllowlist()` (`Word[]`, or `undefined` for a non-network account) -
+`crates/web-client/src/models/account.rs:109-125`.
 
 ## Which Signer to Choose
 

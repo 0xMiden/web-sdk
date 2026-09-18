@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers WASM initialization, concurrent access crashes, COOP/COEP headers, BigInt handling, Bech32 network mismatches, IndexedDB state loss, auto-sync side effects, Vite configuration, React rendering race conditions, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate block hints, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate block hints, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -95,9 +95,13 @@ For MT, COOP/COEP must also be set on the production server - the plugin covers 
 
 **Gotcha (when isolation is on)**: Cross-origin-isolation breaks third-party iframes, external scripts without CORS, and OAuth popups. If a route must host those and cannot satisfy isolation, stay on the default ST subpaths (they need no isolation) or, if you genuinely need MT elsewhere, use `Cross-Origin-Embedder-Policy: credentialless` for weaker isolation that still allows most cross-origin resources, or scope the headers to only the MT routes. Do not enable isolation globally as a convenience.
 
-## FP4: BigInt at the Raw WASM Boundary (HIGH)
+## FP4: BigInt at the Low-Level WASM Boundary (HIGH)
 
-The React SDK hooks (`useSend`, `useCreateFaucet`, `useMultiSend`, …) accept `bigint | number` for amounts and coerce to `bigint` internally - `SendOptions.amount` and `CreateFaucetOptions.maxSupply` are both typed `bigint | number`, and `useCreateFaucet` calls `BigInt(options.maxSupply)` before forwarding. So `number` does NOT fail at the hook layer. `bigint` is required only at the raw WASM client (`@miden-sdk/miden-sdk`) boundary, where amounts are `bigint` with no coercion.
+The React SDK hooks (`useSend`, `useCreateFaucet`, `useMultiSend`, …) accept `bigint | number` for amounts and coerce to `bigint` internally - `SendOptions.amount` and `CreateFaucetOptions.maxSupply` are both typed `bigint | number`, and `useCreateFaucet` calls `BigInt(options.maxSupply)` before forwarding. So `number` does NOT fail at the hook layer.
+
+**Nor does it fail at the high-level `MidenClient` resource API.** `SendOptions.amount` and `MintOptions.amount` on `client.transactions`, `FaucetCreateOptions.maxSupply` on `client.accounts.create`, and the swap / PSWAP amounts are all declared `number | bigint` in `api-types.d.ts`, and the resource impls coerce with `BigInt(...)` before crossing into WASM.
+
+Strict `bigint` applies only at the **low-level request constructors** on `WasmWebClient` - `newSendTransactionRequest`, `newMintTransactionRequest`, `newSwapTransactionRequest`, … - whose Rust signatures take a `JsU64` with no coercion.
 
 ```tsx
 // FINE at the React-SDK hook layer - number is coerced
@@ -108,8 +112,9 @@ await createFaucet({ maxSupply: 1000000, ... });
 await send({ from, to, assetId, amount: 1000n });
 await createFaucet({ maxSupply: BigInt(1000000), ... });
 
-// REQUIRED at the raw WASM client boundary - must be bigint
-// (the low-level @miden-sdk/miden-sdk client does not coerce number)
+// REQUIRED at the low-level WasmWebClient request constructors - bigint only.
+// (sender, target, faucetId, noteType, amount, recallHeight?, timelockHeight?)
+await client.newSendTransactionRequest(fromId, toId, faucetId, noteType, 1000n);
 
 // CORRECT - use parseAssetAmount for user input (decimal string → bigint)
 import { parseAssetAmount } from "@miden-sdk/react";
@@ -144,6 +149,15 @@ AccountId.fromBech32("mtst1...");
 
 Both hex and bech32 formats work in all hooks. Prefer hex for constants, bech32 for display.
 
+**Gotcha: the HRP is inferred from your `rpcUrl` string, not from the chain.** `bech32id()` (and `toBech32AccountId()`) read the *resolved* `rpcUrl` out of the store, lowercase it, and look for substrings in this order: `devnet` or `mdev` -> devnet, `mainnet` -> mainnet, `testnet` or `mtst` -> testnet. **Anything matching none of them falls back to testnet**, as does an unset `rpcUrl`.
+
+`MidenConfig.rpcUrl` resolves only the shorthands `"testnet"`, `"devnet"` and `"localhost"` / `"local"` to concrete URLs and passes any other value through verbatim. So:
+
+- A private or self-hosted RPC endpoint whose hostname contains none of those substrings silently renders `mtst1...` addresses for a network that is not testnet.
+- `"localhost"` resolves to `http://localhost:57291`, which also contains none of them, so a local node renders testnet-prefixed addresses too.
+
+If you run a custom or local network, do not treat `bech32id()` output as authoritative - key off hex, and render bech32 only where you control the network mapping yourself.
+
 ## FP6: Auto-Sync Side Effects (MEDIUM)
 
 Default `autoSyncInterval` is 15000ms (15 seconds). Each sync triggers re-renders in useAccounts, useAccount, useNotes, etc.
@@ -157,17 +171,32 @@ Default `autoSyncInterval` is 15000ms (15 seconds). Each sync triggers re-render
 // SOLUTION 1 - preferred: use stable keys and memoization
 const MemoizedForm = React.memo(SendForm);
 
-// SOLUTION 2 - disable auto-sync for manual control
+// SOLUTION 2 - pause sync for the duration of a sensitive interaction
+const { pauseSync, resumeSync, isPaused } = useSyncControl();
+
+// SOLUTION 3 - last resort: disable auto-sync entirely and drive it yourself
 <MidenProvider config={{ rpcUrl: "testnet", autoSyncInterval: 0 }}>
 ```
 
-## FP7: IndexedDB State Loss (MEDIUM)
+**Prefer `useSyncControl()` over `autoSyncInterval: 0` for transient stability.** It flips a store flag that only the auto-sync interval consults, so **manual `useSyncState().sync()` still works while paused** and you do not have to rebuild your own sync loop. It is also the right lever during long local proving, where a sync would otherwise compete for the WASM queue. `autoSyncInterval: 0` is a construction-time decision you cannot undo without remounting the provider (any value `<= 0` disables the interval).
 
-The client persists accounts, keys, and notes in IndexedDB. Browser "Clear site data", private browsing, or storage pressure can delete everything.
+## FP7: IndexedDB State Loss, Including From Your Own SDK Upgrade (HIGH)
 
-- Warn users that clearing browser data deletes their wallet
-- Consider external signers (Para, Turnkey) for production - keys are server-side
-- Implement account export/backup for local keystore users
+The client persists accounts, keys, notes and transaction history in IndexedDB. There are **two** distinct ways to lose all of it, and the second one is under your control:
+
+1. **The user or the browser deletes it** - "Clear site data", private browsing, storage pressure.
+2. **An SDK version bump deletes it.** On open, `ensureClientVersion` compares the running client version against the one stored in the database. If both parse as semver and the running version's **major or minor is higher** than the stored one, the store is closed, `delete()`d and reopened **empty**. A version that does not parse as semver on either side forces the same reset. Same-major-minor (a patch bump) and downgrades are preserved and handled by Dexie migrations; the major/minor nuke is deliberate, tied to network resets.
+
+**Upgrading the SDK across a minor version destroys every locally-stored account, key and note on every user's device.** Nothing prompts, nothing warns, and the user's wallet is simply gone on next load. This is the single most consequential item on this page: it turns a routine dependency bump into data loss for your whole userbase.
+
+Mitigations:
+
+- **Ship export/import before you ship the bump**, not with it. Users need a build that can back up while their data still exists. The surface is `useExportStore()` / `useImportStore()` in `@miden-sdk/react`, backed by the standalone `exportStore(storeName)` / `importStore(storeName, dump)` from `@miden-sdk/miden-sdk`. Per-object export/import also exists on the high-level client (`accounts.export` / `accounts.import`, `notes.export` / `notes.import`).
+- Warn users that clearing browser data deletes their wallet.
+- Consider external signers (Para, Turnkey, wallet adapters) for production - the key material lives outside the browser store, so only cached chain state is lost.
+- Each signer identity gets its own database (`MidenClientDB_<storeName>`), so `SignerContextValue.storeName` must be unique per user.
+
+Verify before relying on this: `crates/idxdb-store/src/ts/schema.ts`, `ensureClientVersion`.
 
 ## FP8: Vite Configuration Requirements (MEDIUM)
 
@@ -187,9 +216,14 @@ export default defineConfig({
 
 `midenVitePlugin()` handles WASM loading (esnext build target, top-level await), pre-bundling exclusion (`optimizeDeps.exclude`), package deduplication, a gRPC-web RPC proxy, and - when `crossOriginIsolation: true` is passed - emits the COOP `same-origin` + COEP `require-corp` headers the **MT** build requires for `SharedArrayBuffer` on both the dev `server` and the `preview` server.
 
-| Option | Plugin source default | When to set `true` | Purpose |
-|--------|-----------------------|--------------------|---------|
-| `crossOriginIsolation` | `false` | Only when importing the MT variants (`/mt`, `/mt/lazy`) | Emit COOP/COEP headers for SharedArrayBuffer |
+It accepts **four** options, all with source defaults that work for the ST build:
+
+| Option | Source default | Purpose |
+|--------|----------------|---------|
+| `wasmPackages` | `["@miden-sdk/miden-sdk"]` | Packages to alias, dedupe, and exclude from pre-bundling |
+| `crossOriginIsolation` | `false` | Emit COOP `same-origin` + COEP `require-corp` on the dev **and** preview servers. Set `true` only when importing the MT variants (`/mt`, `/mt/lazy`) |
+| `rpcProxyTarget` | `"https://rpc.testnet.miden.io"` | gRPC-web dev-proxy target; `false` disables the proxy. Only applied when `command === "serve"` |
+| `rpcProxyPath` | `"/rpc.Api"` | Path prefix the proxy intercepts |
 
 For the **default single-threaded build**, leave `crossOriginIsolation` at its `false` default - the ST WASM loads in any browser context and needs no headers. Pass `crossOriginIsolation: true` **only** when you opt into the multi-threaded variants for local proving; without the headers the MT WASM can't construct shared memory and fails to instantiate. The shipped example wallet uses bare `midenVitePlugin()` because it is ST (and because isolation would break the Para OAuth popups it pairs with via `paraVitePlugin()`) - see FP3. For an MT production deployment, set the same COOP/COEP headers at your real production host - the plugin only injects them into the Vite dev and preview servers. See `vite-wasm-setup` for host-specific configs.
 
@@ -208,6 +242,23 @@ useEffect(() => {
 // CORRECT - always use MidenProvider
 <MidenProvider config={{ rpcUrl: "testnet" }}>
 ```
+
+If you genuinely need the low-level constructors, these are the current signatures. Note the trailing `observability` bag, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
+
+```ts
+WasmWebClient.createClient(
+  rpcUrl, noteTransportUrl, seed, network,
+  logLevel, useWorker = true, observability
+): Promise<WebClient>
+
+WasmWebClient.createClientWithExternalKeystore(
+  rpcUrl, noteTransportUrl, seed, storeName,
+  getKeyCb, insertKeyCb, signCb,
+  logLevel, useWorker = true, observability
+): Promise<WebClient>
+```
+
+`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser.
 
 ## FP10: outputNotes() Includes the Fee Note (CRITICAL - fails silently)
 
@@ -297,6 +348,70 @@ const { accounts } = useAccounts();
 const faucets = accounts.filter((a) => a.isFaucet());
 ```
 
+## FP16: The Web Worker Shim Silently Downgrades Callback Provers (HIGH - fails silently)
+
+`useWorker` defaults to **`true`**: the client spawns a Web Worker and dispatches WASM calls to it, keeping the main thread responsive. That is the right default in browsers and extensions - but the worker boundary serializes the prover argument via `TransactionProver.serialize()`, and **that format has no encoding for `newCallbackProver(jsFn)`, so it silently downgrades to the local prover.** Your callback never fires, the transaction still proves, and nothing errors.
+
+```tsx
+import { TransactionProver } from "@miden-sdk/miden-sdk";
+
+// WRONG - the worker serializes this prover, loses the callback, proves locally
+const prover = TransactionProver.newCallbackProver(nativeProveFn);
+<MidenProvider config={{ rpcUrl: "testnet" }}>
+
+// CORRECT - opt out of the worker so the prover handle reaches WASM intact
+<MidenProvider config={{ rpcUrl: "testnet", useWorker: false }}>
+```
+
+Set `useWorker: false` when:
+
+- You pass a prover built with `TransactionProver.newCallbackProver(jsFn)` - a native iOS/Android prover behind a Capacitor plugin, or any other JS-side prover bridge.
+- You are embedding in a single-WebView native shell (Capacitor host, Tauri, Electron preload), where the UI thread is not competing with WASM anyway.
+
+`MidenConfig.useWorker` is forwarded to both `createClient` and `createClientWithExternalKeystore`.
+
+Two companions to the same boundary:
+
+- **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
+- **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+
+Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `packages/react-sdk/src/hooks/usePreview.ts`.
+
+## FP17: Branch on `error.code`, Never on Message Text (MEDIUM)
+
+Errors carry machine-readable codes; message strings are not a stable API.
+
+- Assigned by the React SDK (`MidenError`, the closed `MidenErrorCode` union): `WASM_CLASS_MISMATCH`, `WASM_POINTER_CONSUMED`, `WASM_NOT_INITIALIZED`, `WASM_SYNC_REQUIRED`, `SEND_BUSY`, `OPERATION_BUSY`, `STALE_CLIENT`, `UNKNOWN`.
+- Assigned by the Rust client and thrown out of WASM (`WasmErrorCode`): `INVALID_CHAIN_ANCHOR`, `TRANSACTION_ALREADY_AUTHORIZED`. This list is deliberately **not** exhaustive of what the client can emit - `CodedError.code` carries a `(string & {})` arm so codes from a newer client stay assignable. Handle the ones you care about and fall through on the rest.
+
+```tsx
+import type { CodedError } from "@miden-sdk/react";
+
+try {
+  await preview({ ... });
+} catch (e) {
+  const err = e as CodedError;
+  if (err.code === "TRANSACTION_ALREADY_AUTHORIZED") {
+    await execute({ ... }); // nothing to authorize - just submit it
+  }
+}
+```
+
+**Gotcha - on Node the code prefixes the message** (`"INVALID_CHAIN_ANCHOR: …"`) instead of being a property, because the napi bindings cannot attach one. Code written as `err.code === …` works in the browser and silently never matches under Node.
+
+**`WASM_CLASS_MISMATCH` almost always means multiple copies of `@miden-sdk/miden-sdk` are bundled**, not that you passed the wrong type. The code is raised from a raw message matching `_assertClass` or `expected instance of`, which is what an object built by one copy looks like when handed to another. Its own message says so and names the fix: `resolve.dedupe` + `optimizeDeps.exclude` for the package - which `midenVitePlugin()` already does (FP8). Pin `@miden-sdk/miden-sdk` and `@miden-sdk/react` to the same exact version too, rather than to ranges that can drift apart.
+
+## FP18: The Eager Entry Hangs Under Capacitor and SSR (MEDIUM)
+
+The default browser entry (`@miden-sdk/miden-sdk`, `@miden-sdk/react`) awaits WASM at **module top level**, which is why any wasm-bindgen constructor is safe to call on the next line with no readiness gate. That top-level await is a liability in two hosts:
+
+- **Capacitor / WKWebView**: the `capacitor://localhost` scheme handler hangs module evaluation on top-level await indefinitely. Verified empirically - the same TLA in a dApp-browser WKWebView over vanilla HTTPS resolves in under 100 ms, so it is the custom scheme, not WKWebView itself.
+- **Next.js / SSR**: top-level await blocks server-side module evaluation.
+
+Import `@miden-sdk/miden-sdk/lazy` (or `@miden-sdk/react/lazy`) there. Identical API surface, no top-level await; callers await `MidenClient.ready()` before touching wasm-bindgen types. Under `@miden-sdk/react` the provider's `isReady` already is that gate, so a lazy entry costs you nothing extra.
+
+Verify: `crates/web-client/js/eager.js`.
+
 ## Removed or Changed in 0.16 (check these first when upgrading from 0.15)
 
 - `ClientOptions.debugMode` removed; `WasmWebClient.createClient*` no longer take a trailing `debugMode` argument.
@@ -314,18 +429,21 @@ const faucets = accounts.filter((a) => a.isFaucet());
 
 | # | Pitfall | Severity | One-Line Rule |
 |---|---------|----------|---------------|
-| FP1 | WASM init race | CRITICAL | Use loadingComponent or check isReady |
-| FP2 | Recursive WASM | CRITICAL | Use runExclusive() for all direct client access |
+| FP1 | Readiness is per hook | CRITICAL | Query hooks self-heal when `isReady` flips; `useMidenClient()` throws on render, so gate that one. `loadingComponent` is not a gate |
+| FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
-| FP4 | BigInt | HIGH | Hooks accept `bigint \| number` and coerce; prefer bigint, required at the raw WASM boundary |
-| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses |
-| FP6 | Auto-sync | MEDIUM | Set autoSyncInterval: 0 if UI stability matters |
-| FP7 | IndexedDB loss | MEDIUM | Warn users; use external signers for production |
-| FP8 | Vite config | MEDIUM | Bare `midenVitePlugin()` for ST; pass `crossOriginIsolation: true` only for the `/mt` build |
-| FP9 | StrictMode | LOW | Use MidenProvider, not manual client creation |
+| FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
+| FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |
+| FP6 | Auto-sync | MEDIUM | Default 15000ms; prefer `useSyncControl()` over `autoSyncInterval: 0` |
+| FP7 | IndexedDB loss | HIGH | A minor SDK bump wipes the store - ship `useExportStore`/`useImportStore` BEFORE upgrading |
+| FP8 | Vite config | MEDIUM | `midenVitePlugin()` has four options; bare call is right for ST, `crossOriginIsolation: true` only for `/mt` |
+| FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
 | FP12 | `sendPrivate` block hint | HIGH | Pass `scanAfterBlockNum` at or below the commitment block, or prefer `sendPrivateOutput` |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |
+| FP16 | Worker shim | HIGH | `useWorker` defaults `true` and silently downgrades a callback prover - set `false` when you supply one |
+| FP17 | Error handling | MEDIUM | Branch on `error.code`, never message text; `WASM_CLASS_MISMATCH` means two copies of the core |
+| FP18 | Eager entry | MEDIUM | Use `/lazy` under Capacitor and SSR - top-level await hangs there |

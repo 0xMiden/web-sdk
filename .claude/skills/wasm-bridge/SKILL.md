@@ -1,15 +1,23 @@
 ---
 name: wasm-bridge
-description: Enforce conventions for the Rust<->JavaScript WASM boundary in the web-sdk repo (crate miden-client-web at crates/web-client, split out of miden-client). Use when exposing Rust methods to JS via the #[js_export] proc-macro, creating newtype wrappers, handling errors across the boundary with JsErr, bridging JS Promises to Rust Futures, or layering the public MidenClient resource API on top of the WASM-bound WebClient.
+description: Enforce conventions for the Rust<->JavaScript WASM boundary in the web-sdk repo (crate miden-client-web at crates/web-client, split out of miden-client). Use when exposing Rust methods to JS via the #[js_export] proc-macro, creating newtype wrappers, handling errors across the boundary with JsErr, bridging JS Promises to Rust Futures, working on the Web Worker shim or its message vocabulary, or layering the public MidenClient resource API on top of the WASM-bound WebClient.
 ---
 
 # WASM Bridge Patterns (web-client / miden-client-web)
 
 The web client lives in the dedicated **web-sdk** repo
 (`github.com/0xMiden/web-sdk`), split out of `miden-client`. The Rust<->JS
-boundary crate is `crates/web-client` (cargo package `miden-client-web`).
-Companion workspace crates: `crates/js-export-macro` (the `#[js_export]`
-proc-macro) and `crates/idxdb-store` (the IndexedDB store).
+boundary crate is `crates/web-client` (cargo package `miden-client-web`,
+`crate-type = ["cdylib"]`). The whole Rust inventory, with the crate types that
+explain what each one is for:
+
+| Path | Package | `crate-type` | Role |
+|---|---|---|---|
+| `crates/web-client` | `miden-client-web` | `cdylib` | the Rust<->JS boundary; this skill |
+| `crates/idxdb-store` | `miden-idxdb-store` | `cdylib`, `rlib` | the IndexedDB store (`rlib` so web-client can depend on it) |
+| `crates/js-export-macro` | `js-export-macro` | `proc-macro = true` | the `#[js_export]` proc-macro |
+| `crates/mobile-prover` | `miden-mobile-prover` | `cdylib`, `staticlib` | native C-ABI prover for iOS/Android Capacitor plugins (`staticlib` for iOS, `cdylib` for Android) |
+| `tools/strip-masp-debug` | `strip-masp-debug` | binary (default) | strips MASM debug metadata from release WASM |
 
 The crate dual-targets two binding technologies from one Rust source:
 - **browser** (the `browser` feature) via `wasm_bindgen`, error type `JsValue`
@@ -31,6 +39,20 @@ type aliases and helpers so most code is written once. Key aliases:
   platform-agnostic; only `bytes_to_js` splits).
 - `AsyncCell<T>`: interior mutability, `RefCell` on browser,
   `tokio::sync::Mutex` on nodejs; `.lock().await` yields a `DerefMut` guard.
+  The browser branch additionally exposes a **synchronous** shared borrow,
+  `.borrow() -> std::cell::Ref<'_, T>` (`platform.rs:107-111`). It exists for
+  `#[wasm_bindgen(getter)]` members, which cannot be async, and it is sound
+  only because that branch is single-threaded. There is no nodejs equivalent,
+  so a method that needs it is browser-only by construction.
+- `maybe_wrap_send`: a pass-through on browser (`platform.rs:176-180`); on
+  nodejs it wraps the future in an `AssertSend` newtype carrying
+  `unsafe impl<F> Send for AssertSend<F>` so napi's multi-threaded tokio
+  runtime accepts it (`platform.rs:187-202`). The assertion is sound because
+  the concrete types behind the trait objects (`SqliteStore`, `GrpcClient`,
+  `FilesystemKeyStore`) are all `Send + Sync`; only the `dyn Trait` bounds lack
+  `Send`. Box a client future and wrap it with `maybe_wrap_send` before
+  `.await` in any dual-platform method - `new_transactions.rs` does this at
+  every call site.
 - `ClientAuth`: the platform keystore type the inner client is generic over.
   `WebClient` holds an `AsyncCell<Option<Client<ClientAuth>>>`, so write
   `Client<ClientAuth>` rather than naming a concrete keystore, and reach the
@@ -147,18 +169,35 @@ This:
 4. Node.js path: returns `napi::Error::from_reason(...)` with the help inlined
    into the message.
 
+### The named error codes
+
+JS callers branch on a `code`, never on message text, so the vocabulary is a
+public contract. Two primitives produce one, and between them they emit exactly
+four codes today:
+
+| Code | Produced by | Raised when |
+|---|---|---|
+| `ACCOUNT_NOT_FOUND_ON_CHAIN` | `code_from_error` (`lib.rs:672-682`) | `ClientError::AccountNotFoundOnChain` |
+| `ACCOUNT_ALREADY_TRACKED` | `code_from_error` | `ClientError::AccountAlreadyTracked` |
+| `TRANSACTION_ALREADY_AUTHORIZED` | `from_str_err_with_code` | `executeForSummary` / `executeForSummaryAt` produced no summary because the transaction was already fully authorized (`new_transactions.rs:611`, `:649`) |
+| `INVALID_CHAIN_ANCHOR` | `from_str_err_with_code` | `ClientError::ChainAnchorError`, routed through `map_anchor_err` (`new_transactions.rs:910`) |
+
+`code_from_error` recurses through `err.source()`, so a code survives being
+wrapped. It maps typed `ClientError` variants only, and is reachable **only**
+from inside `js_error_with_context`.
+
 ### Adding a new machine-readable code
 
-`js_error_with_context` only reaches `code_from_error`, which maps typed
-`ClientError` variants. For an error you construct yourself, use
-`from_str_err_with_code(msg, "SOME_CODE")` from `platform.rs` rather than
+For an error you construct yourself, use
+`from_str_err_with_code(msg, "SOME_CODE")` from `platform.rs:33-51` rather than
 `from_str_err` plus a hand-rolled `Reflect::set`: it is the only helper that
 sets a code on both platforms. The browser branch attaches a real `code`
-property; napi's error `code` is its fixed `Status` enum, so the nodejs branch
-prefixes the message as `"<CODE>: <message>"` instead. JS callers branch on the
-code, so treat a published code as API and keep the two branches in step. The
-worker shim's `serializeError` forwards both `code` and `help` across the
-worker boundary.
+property; napi's error `code` is its fixed `Status` enum (always
+`GenericFailure` here), so the nodejs branch prefixes the message as
+`"<CODE>: <message>"` instead. Consumers must handle both spellings. Treat a
+published code as API and keep the two branches in step. The worker shim's
+`serializeError` forwards both `code` and `help` across the worker boundary
+(`js/workers/web-client-methods-worker.js:29-42`).
 
 ### Error Pattern in Every Method
 
@@ -233,6 +272,25 @@ Notes:
   `Result<_, JsErr>`; do not paper over failures with `.unwrap()`.
 - `from_hex` takes `String` (not `&str`) and returns `Result<Word, JsErr>`.
 
+### `Felt` on the JS side vs. the Rust side
+
+The Rust `Felt` newtype (`crates/web-client/src/models/felt.rs:10-37`) is
+`Felt(NativeFelt)` with `pub fn new(value: JsU64) -> Result<Felt, JsErr>`,
+`as_int() -> JsU64` and `to_string() -> String`. On the JS side that surfaces
+as a class taking a single **`BigInt`** - not a number, and not an array:
+
+```javascript
+const felt = new Felt(42n);        // BigInt argument; throws on non-canonical values
+const value = felt.asInt();        // BigInt back out
+const felts = word.toFelts();      // Felt[] from a Word
+const word = Word.newFromFelts([f0, f1, f2, f3]);
+```
+
+**Passing a JS `Number` where a `JsU64` is expected is a boundary bug**, not a
+convenience. Every `JsU64` parameter and return is a `BigInt` in JS on both
+platforms, and a `Number` silently loses precision above 2^53 on the browser
+side while failing outright against napi's `BigInt`.
+
 ### Required Conversions and Accessors
 
 Implement the `From` conversions, and put the internal `as_native` accessor in a
@@ -271,6 +329,46 @@ bridges napi-rs v3's missing `FromNapiValue` for `#[napi]` class types.
 
 Provide `fromHex()`-style constructors that return `Result<Self, JsErr>` for
 user-facing types.
+
+### Keeping the JS API stable across an upstream rename
+
+When an upstream Rust API is renamed or its semantics change, keep the JS name
+and adapt inside the wrapper rather than breaking JS callers.
+`crates/web-client/src/models/account_builder.rs` is the model:
+
+- `AccountBuilder::build()` calls upstream `build_with_schema_commitment()`
+  (`account_builder.rs:100-112`), so the default JS `build()` merges the
+  storage-schema-commitment component. `buildWithoutSchemaCommitment()` is
+  exposed for the legacy behaviour (`:115-127`).
+- `withAuthComponent` is a **back-compat shim**: its body is
+  `self.0 = self.0.clone().with_component(account_component)`
+  (`account_builder.rs:80-86`). Upstream removed `with_auth_component` and now
+  identifies the auth component by its `@auth_script` MASM attribute, so
+  forwarding to the plain `with_component` is correct - not a shortcut. Keep
+  the JS method; do not "clean it up" into a direct `with_component` call at
+  the call sites.
+- `accountType()` and `storageMode()` are last-write-wins on the same
+  underlying 2-way flag, because protocol 0.15 collapsed `AccountStorageMode`
+  and `AccountType` into one. `accountType()` is kept purely for JS-surface
+  back-compat (`account_builder.rs:53-72`).
+
+When an upstream type is **added** rather than replaced, wrap both and keep
+them. `models/account_patch/{mod,storage,vault}.rs` wrap `AccountPatch` /
+`AccountStoragePatch` / `AccountVaultPatch` (the absolute post-transaction
+state), while `models/account_delta/` survives because
+`TransactionSummary.accountDelta()` still returns an `AccountDelta`
+(`models/transaction_summary.rs:35-37`). Both directories coexist
+deliberately - do not delete one as "superseded".
+
+> **Only the vault half of `AccountDelta` is relative.** Its doc comment
+> (`models/account_delta/mod.rs:10-16`) is explicit: `storage` is an
+> `AccountStoragePatch` holding the **absolute** final values of changed
+> storage slots ("storage changes have identical semantics in the delta and
+> patch models"), and only `vault` is an `AccountVaultDelta` carrying relative
+> changes. `account_delta/` has no `storage.rs`; it imports
+> `crate::models::account_patch::storage::AccountStoragePatch` directly. Do not
+> describe `AccountDelta` as wholly relative, and do not add a parallel
+> storage-delta type.
 
 ## Data Transfer Objects
 
@@ -373,8 +471,8 @@ Rules:
 Two **client** layers sit under `crates/web-client/js/`, alongside supporting
 modules that are not themselves a client layer (`asyncLock.js`, `webLock.js`,
 `syncLock.js`, `observability.js`, `storageView.js`, `standalone.js`,
-`eager.js`, `wasm.js`, plus the `workers/` shim and the `node/` napi compat
-layer). The two layers are:
+`eager.js`, `wasm.js`, `utils.js`, `constants.js`, plus the `workers/` shim and
+the `node/` napi compat layer). The two layers are:
 
 1. **`WebClient`** (`js/index.js`): the WASM-bound class re-exported as
    `WasmWebClient` (`export { WebClient as WasmWebClient, MockWebClient as
@@ -413,13 +511,20 @@ MidenClient._MockWasmWebClient = MockWebClient;
 MidenClient._getWasmOrThrow = getWasmOrThrow;
 ```
 
-There is **no** `safe-arrays.js` module. The wasm-bindgen array wrappers
-(`NoteArray`, `OutputNoteArray`, `AccountArray`, `ForeignAccountArray`, ...) are
+There is **no** `safe-arrays.js` module. The wasm-bindgen array wrappers are
 generated by the `declare_js_miden_arrays!` macro (defined in
-`crates/web-client/src/miden_array.rs`, invoked in
-`crates/web-client/src/models/mod.rs`), and their constructor **consumes** its
-elements. To keep an element usable afterwards, construct the array empty and
-`push` by reference instead of passing elements to the constructor:
+`crates/web-client/src/miden_array.rs:41`, invoked in
+`crates/web-client/src/models/mod.rs:134-148`), which produces **thirteen**
+types, in this order: `AccountArray`, `AccountIdArray`, `ForeignAccountArray`,
+`NoteRecipientArray`, `NoteArray`, `OutputNoteArray`, `StorageSlotArray`,
+`TransactionScriptInputPairArray`, `FeltArray`, `AccountInputsArray`,
+`NoteAndArgsArray`, `NoteDetailsAndTagArray`, `NoteIdAndArgsArray`. Count them
+from the macro invocation rather than from any list, including this one - the
+set grows.
+
+Their constructor **consumes** its elements. To keep an element usable
+afterwards, construct the array empty and `push` by reference instead of
+passing elements to the constructor:
 
 ```javascript
 // NoteArray constructor consumes its elements; use push(&note) to keep
@@ -443,6 +548,131 @@ re-export generator cannot discover them:
    that part in lockstep with napi)
 
 Miss step 2 or 3 and the browser build is fine while Node.js fails at import.
+
+### Node entry re-exports and name shadowing
+
+`js/node-index.js` is generated by `crates/web-client/scripts/gen-node-reexports.js`
+and CI-checked by `check:node-reexports`. Three names are excluded from
+generation - `const MANUAL = new Set(["WebClient", "AccountType", "AuthScheme"])`
+(`gen-node-reexports.js:36`) - because plain-JS frozen-object enum consts
+shadow the napi classes:
+
+- `WebClient` is re-exported wrapped, as `WasmWebClient`.
+- `AccountType` and `AuthScheme` are shadowed by `Object.freeze({...})` consts,
+  and for `AuthScheme` the napi class is re-exported **by hand** under the
+  non-colliding alias `AuthSchemeNative`
+  (`export const AuthSchemeNative = _reexport("AuthScheme")`,
+  `js/node-index.js:137`).
+
+The browser entry has the same five frozen consts - `AccountType`,
+`AuthScheme`, `NoteVisibility`, `StorageMode`, `Linking`
+(`js/index.js:22-47`) - but exposes **no** `AuthSchemeNative` alias, so a
+browser consumer who needs the numeric enum has to reach into the wasm
+namespace directly.
+
+When you add a JS-side enum const, check whether it collides with a generated
+class name and update the generator's `MANUAL` set.
+
+### The Web Worker shim
+
+A Web Worker is spawned **by default**: the `WebClient` constructor takes
+`useWorker = true` (`js/index.js:434`), and the shim engages whenever
+`this.useWorker && typeof Worker !== "undefined"` (`:450`). The worker runs the
+WASM off the main thread. Two knobs govern it:
+
+- **`WebClient.workerMode`** - a static, default `"auto"`, with values
+  `"auto" | "module" | "classic"` (`js/index.js:360`). `_shouldUseClassicWorker()`
+  (`:368-385`) sniffs `navigator.userAgent`: `Chrome/` or `Chromium/` picks
+  module; `AppleWebKit` without either (Safari desktop and iOS, a Capacitor
+  WKWebView host) picks classic, because module workers cold-start very slowly
+  there; anything else (Firefox, jsdom, node without `navigator`) picks module.
+  `"module"` forces the `.module.js` ES-module worker, which webpack 5 /
+  Next.js consumers need so the asset tracer can see the WASM URL. `"classic"`
+  forces the `.js` classic-script worker. **Set it before the first
+  `WebClient.createClient(...)` call** - it is read at construction.
+- **`ClientOptions.useWorker: false`** - skips the shim entirely and calls the
+  wasm-bindgen `WebClient` on the current thread. **Required for callback
+  provers**: the worker boundary serializes the prover with
+  `TransactionProver.serialize()`, a format that has no encoding for
+  `newCallbackProver(jsFn)` and **silently downgrades it to `"local"`**, so the
+  callback never fires (`js/index.js:410-418`). Native iOS/Android plug-in
+  provers in Capacitor apps, and any other JS-side prover bridge, therefore
+  need `useWorker: false`. It is also the right choice in single-WebView native
+  shells (Capacitor, Tauri, Electron preload).
+
+`lastAuthError()` is likewise meaningful **only** with `useWorker: false`: the
+sign callback fires against the worker's WASM keystore while the accessor reads
+the main-thread instance, which never signed, so under the shim it returns
+`null` (`js/client.js:376-381`). On the Node.js binding it always returns
+`null`. Consumers that need the signal already require `useWorker: false` for
+the callback to be reachable at all.
+
+#### The worker-URL duplication is load-bearing
+
+Both `new Worker(new URL("...", import.meta.url), ...)` call sites in
+`js/index.js:467-483` are spelled out literally, and the duplication is
+deliberate. **Webpack 5's new-worker detector is purely syntactic**: it only
+triggers a proper worker sub-compilation - with asset and chunk tracing into
+the Cargo glue and the sibling WASM - when it sees that exact pattern inline.
+Hoisting either URL into a variable downgrades detection to a plain "copy file
+as asset", and the worker's `await import("./Cargo-*.js")` then 404s because
+webpack never emitted a chunk for it. Do not refactor the duplication away, and
+do not build the URL from a helper.
+
+#### Message vocabulary and the MT init path
+
+The worker entry is `js/workers/web-client-methods-worker.js`; its message
+vocabulary lives in `js/constants.js`, as three frozen objects:
+
+- `WorkerAction`: `INIT`, `INIT_MOCK`, `INIT_THREAD_POOL`, `CALL_METHOD`,
+  `EXECUTE_CALLBACK`.
+- `CallbackType`: `GET_KEY`, `INSERT_KEY`, `SIGN` - the three keystore
+  callbacks the worker hands back to the main thread.
+- `MethodName`: the worker-forwarded methods, each with a `_MOCK` twin where
+  one exists (`CREATE_CLIENT`, `APPLY_TRANSACTION`, `EXECUTE_TRANSACTION`,
+  `EXECUTE_TRANSACTION_AT`, `PROVE_TRANSACTION`, `SUBMIT_NEW_TRANSACTION`,
+  `SUBMIT_NEW_TRANSACTION_WITH_PROVER`, `SYNC_STATE`, `SYNC_CHAIN`,
+  `SYNC_NOTE_TRANSPORT`).
+
+On the MT build, **rayon's thread pool is initialized inside the worker's own
+WASM instance**, not the main thread's. Both the `INIT` and `INIT_MOCK` handlers
+call `await wasm.initThreadPool(numThreads)` when `numThreads > 1` and the
+export exists (`web-client-methods-worker.js:476-482`, `:525-531`). This is not
+redundancy: every prove call runs in the worker, so a pool initialized only in
+main-thread WASM does not parallelize anything - `par_iter()` / `par_chunks()`
+in miden-crypto and p3-maybe-rayon see `rayon::current_num_threads() == 1` and
+fall through to sequential code despite the parallel features being on. If you
+add a new init path, plumb `numThreads` through it too.
+
+### `_withInnerWebClient(fn)` - the `@internal` escape hatch
+
+`MidenClient._withInnerWebClient(fn)` (`js/client.js:102-116`) runs `fn` with
+exclusive access to the proxied JS `WebClient`, so `fn` can reach lower-level
+methods the resource surface does not expose (`executeTransaction`,
+`proveTransaction[WithProver]`, `submitProvenTransaction`, `applyTransaction`,
+`newSendTransactionRequest`, `newConsumeTransactionRequest`, ...). It exists for
+splitting the bundled execute -> prove -> submit -> apply pipeline across
+contexts - an MV3 extension that executes in its service worker, proves in a
+`chrome.offscreen` document where wasm-bindgen-rayon can spawn a real thread
+pool, then submits and applies back in the SW.
+
+The callback runs inside `_serializeWasmCall`, so the WASM borrow is held for
+the duration of `fn` and concurrent SDK calls queue behind it. While `fn` runs,
+the underlying client's `_withInnerLockDepth` counter is bumped so that
+`_serializeWasmCall` invocations made **by** `fn` (or by any proxy-dispatched
+method it calls) run **inline** instead of enqueuing behind the outer slot -
+which is itself awaiting `fn`. Without the counter that is a textbook
+re-entrant-lock deadlock.
+
+> **Safety contract.** Callers MUST hold their own external mutex preventing
+> concurrent access to the same client instance during `fn`. The chain still
+> serializes against external callers - they queue behind the outer slot - but
+> if an external task runs during one of `fn`'s awaits and calls into the SDK,
+> it sees `_withInnerLockDepth > 0` and runs **inline**, racing wasm-bindgen's
+> borrow check. The method is `@internal` and the proxied client's shape is not
+> part of the documented public API, so pin the SDK version if you depend on it.
+> (The consumer-facing statement of this contract lives in the shipped
+> `web-client-usage` skill; the mechanism lives here.)
 
 ### Adding a method
 

@@ -1,6 +1,6 @@
 ---
 name: testing-patterns
-description: Testing conventions, mock shapes, fixtures, and TDD workflow for Miden frontend development. Covers Vitest 3 + testing-library 16 setup, React 18/19 differences, @miden-sdk/react module mocking, mocks that reproduce WASM failure modes, chain-anchored flows, and test patterns for query and mutation hooks. Use when writing, running, or debugging tests for Miden React components.
+description: Testing conventions, mock shapes, fixtures, and TDD workflow for Miden frontend development. Covers Vitest 3 + testing-library 16 setup, React 18/19 differences, @miden-sdk/react module mocking and the useMiden mocking trap, mocks that reproduce WASM failure modes, signer and wallet-detection fixtures, chain-anchored flows, and test patterns for query and mutation hooks. Use when writing, running, or debugging tests for Miden React components.
 ---
 
 # Miden Frontend Testing Patterns
@@ -17,6 +17,18 @@ For real, shipped reference tests, read this package's own suite at `node_module
 | a query-hook test | `src/__tests__/hooks/useAccounts.test.tsx` |
 | provider ready / loading / error | `src/__tests__/context/MidenProvider.test.tsx` |
 | mocking the WASM SDK wholesale | `src/__tests__/setup.ts` |
+| WASM model + client mock factories | `src/__tests__/mocks/miden-sdk.ts` (`createMockWebClient`, `createMockAccount`, `createMockAccountId`, `createMockAccountHeader`, `createMockInputNoteRecord`, `createMockTransactionResult`, `createMockChainAnchor`, `createMockTransactionSummary`, …) |
+| the package-entry stub | `src/__tests__/mocks/miden-sdk-entry.ts` |
+| a `SignerContextValue` fixture | `src/__tests__/mocks/signer-context.ts` (`createMockSignerContext`, `createMockSignerAccountConfig`) |
+
+> **That suite is a source of shapes, not a template you can copy.** It mocks
+> **internal relative paths** (`vi.mock("../../context/MidenProvider", …)`) and resets the
+> Zustand store with `useMidenStore.getState().reset()`. Neither is reachable from a
+> consumer app: `useMidenStore` is not a public export, and the package's `exports` map
+> declares only `.`, `./lazy`, `./mt`, `./mt/lazy` and `./package.json`, so there is no
+> subpath into internal modules. Read it for the mock shapes; mock at the package boundary
+> in your own app. (If you mock at the hook boundary there is no shared store to reset
+> anyway.)
 
 ## Test Stack
 
@@ -67,6 +79,32 @@ it("shows empty state", () => {
 });
 ```
 
+### The `useMiden` trap: mock the hook under test, not its dependency
+
+**Replacing only the public `useMiden` export does nothing to the other hooks.** Every hook
+imports `useMiden` from its own internal module - `import { useMiden } from "../context/MidenProvider"`,
+which 35 files under `src/hooks/` do - not from the package entry point. Mocking the entry
+point rebinds what *your component* sees; the real `useAccounts` still resolves the real
+`useMiden` through the internal path, the real provider hook runs, and with no
+`MidenProvider` mounted it throws `"useMiden must be used within a MidenProvider"`.
+
+```tsx
+// WRONG - useAccounts still runs for real and throws: no provider above it
+vi.mock("@miden-sdk/react", async (orig) => ({
+  ...(await orig<typeof import("@miden-sdk/react")>()),
+  useMiden: vi.fn(() => ({ isReady: true, client: {} })),
+}));
+
+// RIGHT - mock the hook the component actually calls
+vi.mock("@miden-sdk/react", () => ({ useAccounts: vi.fn(), useSend: vi.fn() }));
+```
+
+This is not specific to `useMiden`; it is how ESM module resolution works, and it applies
+to any cross-hook dependency. The rule is: **mock at the boundary your component imports
+from.** If you genuinely want the real hook logic, render inside a real `MidenProvider` and
+mock the WASM boundary instead - `vi.mock("@miden-sdk/miden-sdk", …)` - which is the level
+the SDK's own `setup.ts` mocks.
+
 ### Default mock return values
 
 **Query hooks** return populated data by default:
@@ -84,14 +122,26 @@ it("shows empty state", () => {
 - `useCreateWallet()` - `{ createWallet: vi.fn(), wallet: null, isCreating: false, error: null, reset: vi.fn() }`. `useCreateFaucet` mirrors it with `faucet`; `useImportAccount` with `account` and `isImporting`.
 
 **Hooks that do not follow either shape.** These name their own busy flag, and mocking them by analogy with `useSend` gets the field names wrong:
-- `useChainAnchor()` - `{ captureAnchor: vi.fn(), anchor: null, anchoredRequest: null, isCapturing: false, error: null, reset: vi.fn() }`. Its `error` is a `CodedError` carrying `code: "OPERATION_BUSY" | "INVALID_CHAIN_ANCHOR"`, so a test asserting on a failure mode should set `code`, not just `message`.
+- `useChainAnchor()` - `{ captureAnchor: vi.fn(), anchor: null, anchoredRequest: null, isCapturing: false, error: null, reset: vi.fn() }`. Its `error` is a `CodedError` carrying `code: "OPERATION_BUSY" | "INVALID_CHAIN_ANCHOR" | "STALE_CLIENT"`, so a test asserting on a failure mode should set `code`, not just `message`.
 - `usePreview()` - `{ preview: vi.fn(), summary: null, isPreviewing: false, error: null, reset: vi.fn() }`, same `CodedError`.
 - `useExportStore()` / `useExportNote()` - `isExporting`. `useImportStore()` / `useImportNote()` - `isImporting`.
-- `useSyncControl()` - `{ pauseSync: vi.fn(), resumeSync: vi.fn() }`, no loading or error field at all.
+- `useSyncControl()` - `{ pauseSync: vi.fn(), resumeSync: vi.fn(), isPaused: false }`, no loading or error field at all.
 - `useCompile()` - `{ component, txScript, noteScript, isReady }`.
 - `useExecuteProgram()` - resolves `{ stack: bigint[] }`.
 
+**Query hooks are self-healing, so do not assert "empty forever".** Their fetch bodies
+begin `if (!client || !isReady) return;`, but their effects are **keyed on `isReady`** -
+`useAccounts` runs `if (isReady && accounts.length === 0) refetch()` with deps
+`[isReady, accounts.length, refetch]`, and `useNotes` and `useAccount` follow the same
+shape. A hook rendered before the client is ready returns empty once and then refetches
+itself the moment readiness flips. A test asserting that the list stays empty is asserting
+something the hook does not do; assert the transition instead (`await waitFor(...)`).
+
 ### Simulating transaction stages
+
+`TransactionStage` is exactly `"idle" | "executing" | "proving" | "submitting" | "complete"`.
+Anything else in a fixture is a type error, and there is no `"failed"` or `"error"` stage -
+a failing mutation sets `error`, resets `stage` back to `"idle"`, and rethrows.
 
 ```tsx
 // Show "proving" stage
@@ -232,7 +282,65 @@ The real `WalletContextState` has more keys than the five stubbed here (`select`
 
 For app code that needs the selected signer account for client-side flows (transaction-building hooks, etc.), `useMiden()` exposes `signerAccountId` / `signerConnected` as lower-level provider state - mock those via the `@miden-sdk/react` mock factory.
 
+### The adapter-agnostic seams: `useSigner()` and `waitForWalletDetection`
+
+Everything above is adapter-specific. Two surfaces let you write wallet-connect tests that
+stay valid whichever adapter ships, because both come from `@miden-sdk/react` itself:
+
+- **`useSigner()`** returns `SignerContextValue | null` (`null` in local-keystore mode). A
+  fixture built from only the connection fields will not type-check: the **required**
+  members are `signCb`, `accountConfig`, `storeName`, `name`, `isConnected`, `connect` and
+  `disconnect`, with `getKeyCb` / `insertKeyCb` optional. `src/__tests__/mocks/signer-context.ts`
+  is the shipped example (`createMockSignerContext` returns exactly those seven, with an
+  overrides bag).
+- **`waitForWalletDetection(adapter, timeoutMs = 5000)`** takes a duck-typed
+  `WalletAdapterLike { readyState: string; on/off("readyStateChange", cb) }` with no
+  dependency on any wallet-adapter package, resolves once `readyState === "Installed"`, and
+  rejects on timeout. Both it and the `WalletAdapterLike` type are exported from
+  `@miden-sdk/react`, so a plain object is enough to drive install-pending / installed
+  states without mocking a package at all:
+
+```tsx
+import type { WalletAdapterLike } from "@miden-sdk/react";
+
+const adapter: WalletAdapterLike = {
+  readyState: "NotDetected",
+  on: vi.fn(),
+  off: vi.fn(),
+};
+```
+
+Write wallet-connect UI against `useSigner()` and this duck type where you can, and reach
+for the adapter-package mocks above only for UI that genuinely renders adapter-specific
+state.
+
 If your Vitest run fails resolving `@miden-sdk/miden-wallet-adapter-react` transitively, externalize it in `test.server.deps.external`. `@miden-sdk/react`'s own config takes a different route for the WASM package: it aliases `@miden-sdk/miden-sdk` and `@miden-sdk/miden-sdk/lazy` to a stub module in `vitest.config.ts` and does the real mocking in `setup.ts`. The same technique works for a consumer app that wants WASM out of the way entirely.
+
+## Mock Shapes That Type-Check And Then Lie
+
+These pass against a loosely-typed fixture and diverge from the real API at runtime. Check
+each one before carrying a pre-0.16 fixture forward.
+
+- **`debugMode` does not exist.** `MidenConfig` is exactly
+  `{ rpcUrl?, noteTransportUrl?, autoSyncInterval?, seed?, prover?, proverUrls?, proverTimeoutMs?, useWorker? }`.
+  Drop any `debugMode` field and any trailing `debugMode` argument to `createClient*`.
+  There is no `storeName` field on it either (that lives on `SignerContextValue`).
+- **`ExecutedTransaction` and `TransactionStoreUpdate` expose `accountPatch()`, not
+  `accountDelta()`**, returning the absolute-valued `AccountPatch`. `AccountStorageDelta`
+  is gone. **The mirror image still holds**: `TransactionSummary.accountDelta()` is
+  unchanged and still returns a *relative* `AccountDelta` - do not "fix" that one for
+  consistency, it is deliberate.
+- **`TransactionSummary` carries `userParams()`, not `salt()`**, and the value is **seven**
+  field elements the summary commitment binds. A fixture stubbing a single `salt()` word
+  is wrong on both the name and the width.
+- **`outputNotes()` includes the fee note** on a fee-charging chain, on `TransactionSummary`
+  too - see "Forgetting the fee note" below.
+
+**Pin `@miden-sdk/miden-sdk` and `@miden-sdk/react` to the same exact version.** They link
+against a shared WASM ABI, and two copies of the core in one bundle throw at runtime
+(`WASM_CLASS_MISMATCH`). Range specifiers that let the two drift apart are the usual cause;
+a prerelease needs a range that itself names a prerelease, because npm excludes prereleases
+from plain `"0.16"`, `"^0.16.0"` and `"0.16.x"`.
 
 ## Mocking Classes Called with `new`
 
@@ -390,6 +498,12 @@ Use your project's own runner invocation. `@miden-sdk/react` uses `vitest run`, 
 **Forgetting vi.clearAllMocks()**: Always call it between tests to prevent mock state leaking. `@miden-sdk/react`'s setup does it in `afterEach` alongside `cleanup()`, with `vi.resetModules()` in `beforeEach`; either placement works as long as it is global.
 
 **Not mocking the SDK**: Components importing from `@miden-sdk/react` will fail without `vi.mock()` because the real SDK requires WASM initialization.
+
+**Mocking `useMiden` and expecting a real hook to notice**: `useAccounts` and friends import `useMiden` from an internal module, not from the package entry, so the real provider hook keeps running and throws. Mock the hook under test itself - see "The `useMiden` trap" above.
+
+**Asserting a permanently-empty query hook**: query hooks refetch when `isReady` flips.
+
+**Carrying `debugMode`, `salt()` or `accountDelta()` forward into fixtures**: see "Mock Shapes That Type-Check And Then Lie" above - and remember `TransactionSummary.accountDelta()` is the one that legitimately stayed.
 
 **Using number instead of bigint for result/fixture amounts**: Result and fixture amounts are typed strictly as `bigint` (`AssetBalance.amount`, `NoteAsset.amount`, and `useAccount().getBalance()`), so mock them with bigint literals (`1000n`, not `1000`). Hook input options (`SendOptions.amount`, `MintOptions.amount`, `MultiSendRecipient.amount`, `CreateFaucetOptions.maxSupply`) accept `bigint | number`, but prefer bigint to avoid precision loss. `SendOptions.amount` is also optional, since it is ignored when `sendAll: true`. One option deliberately **refuses** `number`: `PswapCancelByOrderOptions.orderId` is `string | bigint`, because a PSWAP order id is `u64`-shaped and routinely exceeds `Number.MAX_SAFE_INTEGER`.
 

@@ -14,12 +14,14 @@ The schema splits account-related tables into `Latest…` / `Historical…`
 pairs to support account-history pruning (`WasmWebClient.pruneAccountHistory()`
 - it is a WASM method, not part of the `MidenClient` resource surface).
 Always check `crates/idxdb-store/src/ts/schema.ts` for the canonical table
-list before adding rows or filters. The active set includes `AccountAuth`,
-`AccountKeyMapping`, `Addresses`, `Settings`, `ForeignAccountCode`,
-`NotesScripts`, `TransactionScripts`, `BlockchainCheckpoint`,
-`PartialBlockchainNodes`, `LatestStorageMapEntries`,
-`HistoricalStorageMapEntries`, plus the account-storage / asset /
-account-header latest/historical pairs.
+list before adding rows or filters. The full set, in declaration order
+(`schema.ts:50-74`), is: `AccountCode`, `LatestAccountStorage`,
+`HistoricalAccountStorage`, `LatestAccountAssets`, `HistoricalAccountAssets`,
+`LatestStorageMapEntries`, `HistoricalStorageMapEntries`, `AccountAuth`,
+`AccountKeyMapping`, `LatestAccountHeaders`, `HistoricalAccountHeaders`,
+`Addresses`, `Transactions`, `TransactionScripts`, `InputNotes`,
+`OutputNotes`, `NotesScripts`, `BlockchainCheckpoint`, `BlockHeaders`,
+`PartialBlockchainNodes`, `Tags`, `ForeignAccountCode`, `Settings`.
 
 ## Build Workflow
 
@@ -39,6 +41,8 @@ top-level Make target (which runs the package's `build` script through
 
 ```bash
 make rust-client-ts-build   # == pnpm --filter web_store run build
+make rust-client-ts-lint    # == pnpm --filter web_store run lint
+make test-idxdb-store       # == pnpm --filter web_store exec vitest run --coverage
 ```
 
 The underlying package script is `tsc --build --force ./tsconfig.json`
@@ -148,6 +152,13 @@ export interface IBlockchainCheckpoint {
   partialBlockchainPeaks: Uint8Array;
 }
 
+// The block-header row is deliberately narrow (schema.ts:225-229).
+export interface IBlockHeader {
+  blockNum: number;
+  header: Uint8Array;
+  hasClientNotes: string;   // a string, not a boolean
+}
+
 export interface ISetting {
   scope: number;        // SETTING_SCOPE_CLIENT | SETTING_SCOPE_USER
   key: string;
@@ -226,6 +237,17 @@ There is no `stateSync` table. The singleton sync row lives in
 `blockchainCheckpoint` (id `1`) and carries `partialBlockchainPeaks`
 alongside `blockNum`.
 
+**The MMR peaks live on the checkpoint row, not on the tip block header.**
+`IBlockHeader` carries only `{ blockNum, header, hasClientNotes }`, so a sync
+writes the header and the peaks to two different tables inside one transaction
+(`crates/idxdb-store/src/ts/sync.ts`, `applyStateSync`). Read the peaks back
+through the exported `getCurrentBlockchainPeaks(dbId)` in `sync.ts:66-83`
+(bound Rust-side as `#[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]` in
+`crates/idxdb-store/src/sync/js_bindings.rs:24`), which returns
+`{ blockNum, peaks }` with `peaks` base64-encoded - and with `blockNum`
+falling back to `0` and `peaks` to the base64 of an empty array when the row
+is missing or its peaks are empty.
+
 ## Schema Versioning
 
 The Dexie schema is a **version chain**, not a single declaration.
@@ -250,12 +272,31 @@ Every later change is its own `.version(N).stores({...})` block.
 
 Migrations **coexist** with the client-version nuke; the old "migrations are
 not enabled yet, just edit `V1_STORES`" rule is dead. `ensureClientVersion`
-still nukes the DB (close / `delete` / re-open) when the running client
-version is a higher major **or minor** than the stored one, because the Miden
-network resets on those upgrades. Same-major.minor patch bumps and downgrades
-just persist the new version without resetting (see the semver
-`sameMajorMinor` / `!semver.gt(...)` guard). The Dexie version blocks handle
-schema and data fixes for stores that survive those patch upgrades.
+(`schema.ts:638-679`) still nukes the DB (close / `delete` / re-open) when the
+running client version is a higher major **or minor** than the stored one,
+because the Miden network resets on those upgrades. Same-major.minor patch
+bumps and downgrades just persist the new version without resetting (see the
+semver `sameMajorMinor` / `!semver.gt(...)` guard). The Dexie version blocks
+handle schema and data fixes for stores that survive those patch upgrades.
+
+Two edge cases are easy to miss:
+
+- **An empty `clientVersion` skips enforcement entirely.** `openDatabase("x", "")`
+  warns and returns before reading the stored version, so nothing is compared
+  and nothing is persisted.
+- **A semver string that will not parse, on either side, forces a reset.** If
+  `semver.valid()` rejects the stored or the running version, the
+  same-major.minor guard is skipped entirely and the close / delete / re-open
+  path runs.
+
+The version is `CLIENT_VERSION = env!("CARGO_PKG_VERSION")` in
+`crates/idxdb-store/src/lib.rs`, persisted under the exported
+`CLIENT_VERSION_SETTING_KEY = "clientVersion"` in `SETTING_SCOPE_CLIENT`.
+
+**State this consequence up front in any upgrade plan.** Because a *minor*
+client-version bump triggers the reset, shipping an app across a minor SDK
+version destroys every locally-stored account, key and note in the user's
+browser. Dexie version blocks only cover stores that survive patch upgrades.
 
 **`V1_STORES` is frozen. Never modify it.** schema.ts says so at the constant
 and again above `this.dexie.version(1)`. Adding a table or changing an index
@@ -280,7 +321,14 @@ today means:
    `MidenDatabase` so the whole chain runs)
 
 The `populate` hook fires only on first database creation, never during an
-upgrade. It seeds the `blockchainCheckpoint` singleton.
+upgrade. It seeds exactly one row, the `blockchainCheckpoint` singleton
+(`schema.ts:607-619`):
+
+```typescript
+{ id: 1, blockNum: 0, partialBlockchainPeaks: new Uint8Array() }
+```
+
+Nothing else is seeded, so every other table starts empty.
 
 Because v1 is frozen history, `V1_STORES[Table.Settings]` still reads
 `indexes("key")`. That is **not** the live schema. Read the last version
@@ -408,6 +456,53 @@ The MMR peaks travel with `blockNum` in the same row, so skipping the height
 update deliberately skips the peaks update too. A backward-going sync must
 not overwrite newer peaks with older ones. Keep them in one `update()` call.
 
+### Never overwrite MMR authentication nodes
+
+`partialBlockchainNodes` values are **immutable once written**: an index's node
+value is fixed, so a differing later write signals a buggy or malicious sync
+path. **Never call `put` on that table.** Use
+`putPartialBlockchainNodesNoOverwrite(table, data)` from `./utils.js`
+(`crates/idxdb-store/src/ts/utils.ts:52-88`), which:
+
+1. dedups the batch by index up front, throwing
+   `Conflicting partial blockchain node <id> within the same write` when two
+   entries in one batch disagree (identical copies are collapsed, because a
+   repeated index would otherwise make `bulkAdd` throw a key collision);
+2. `bulkGet`s the existing rows;
+3. `bulkAdd`s only the missing indices;
+4. accepts a write whose value **matches** what is stored (no-op);
+5. **throws** when an existing index would receive a different value:
+   `Refusing to overwrite partial blockchain node <id>: stored value differs
+   from the new value`.
+
+Its three callers wrap it in a transaction so the check and the insert are
+atomic and a conflict rolls the whole write back: `chainData.ts:50`,
+`chainData.ts:94` and `sync.ts:436`.
+
+### Columns added after the fact are filtered in JS, not indexed
+
+Rows written before a column existed simply lack the property, and a Dexie
+`where` equality against `""` never matches them. Filter in JS instead. From
+`removeNoteTag` in `sync.ts:107-134`, for `ITag.sourceSubscriptionKey`:
+
+```typescript
+return await db.tags
+  .where({
+    tag: tagBase64,
+    sourceNoteId: sourceNoteId ? sourceNoteId : "",
+    sourceAccountId: sourceAccountId ? sourceAccountId : "",
+  })
+  // Filtered in JS rather than via the `where` clause: rows written before
+  // the column existed lack the property entirely, and a `where` equality
+  // on "" would never match them.
+  .and((record) => (record.sourceSubscriptionKey ?? "") == subscriptionKey)
+  .delete();
+```
+
+Note the asymmetry: the three pre-existing columns are matched through the
+compound `where`, and only the late-added one moves to `.and(...)`. Adding a
+column to an existing table means taking this branch, not widening the index.
+
 ## Error Handling
 
 ### logWebStoreError
@@ -500,7 +595,19 @@ const slots = await db.latestAccountStorages
 
 // Match multiple keys against one index
 const codes = await db.accountCodes.where("root").anyOf(codeRoots).toArray();
+
+// InputNotes carries a `scriptRoot` index, which backs
+// getInputNotesFromScriptRoots (notes.ts:101-114)
+const notes = await db.inputNotes
+  .where("scriptRoot")
+  .anyOf(scriptRoots)
+  .toArray();
 ```
+
+The current (v3) `InputNotes` index string is
+`"detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumedBlockHeight+consumedTxOrder+detailsCommitment]"`.
+The `...+noteId` form survives only in the intentionally frozen v1 baseline
+(`schema.ts:320-327`); v3 replaces it (`schema.ts:521-528`).
 
 For compound indexes, use the **bracket-string** index name and pass the
 key parts as an array to `.equals(...)` (from `applyAccountPatch`):
@@ -540,10 +647,12 @@ For account state, the `latest…` tables hold the current row (keyed by
 / `[accountId+slotName+key]`); the matching `historical…` tables hold the
 value that was replaced, keyed by `[accountId+replacedAtNonce…]` with the
 prior value in `oldSlotValue` / `oldAsset` / `oldValue` (`null` when no
-previous value existed). The write path is **archive-then-replace**: read
-the current latest row, `put` it into historical under the new nonce, then
-`put` the new value into latest (see `applyAccountPatch` /
-`applyFullAccountState`).
+previous value existed). The write path is
+**archive-then-replace-or-delete**: read the current latest row, `put` it into
+historical under the new nonce, then either `put` the new value into latest or
+delete the latest row (see `applyAccountPatch` / `applyFullAccountState`, and
+the delete branches under [Absolute patches](#absolute-patches-not-relative-deltas)
+below).
 
 Undo restores from history back to latest, keyed by the compound nonce
 index; a non-null old value overwrites latest, a `null` old value deletes
@@ -585,10 +694,57 @@ is gone along with the relative delta model). Values arriving from Rust are
   from `latestStorageMapEntries`.
 - `patchOperation === 2` additionally deletes the latest storage-slot row
   instead of writing a new value.
+- **For map entries and vault assets, an empty string means removal.** Both
+  loops archive the old value first, then branch on `entry.value === ""` /
+  `entry.asset === ""` and `.delete()` the latest row instead of `put`-ing it
+  (`accounts.ts:466-503`). The write path is therefore
+  archive-then-replace-**or**-delete, not plain archive-then-replace. Do not
+  "normalize" an empty value away before it reaches the store, and do not skip
+  the archive on the delete branch - the historical row is what an undo
+  restores from.
 - Everything else is a plain archive-then-replace `put`.
 
 Getting this wrong is silent: a missed reset leaves stale map entries that no
 later patch overwrites, because an absolute patch only names the keys it sets.
+
+The full signature (`accounts.ts:339-351`, bound Rust-side as
+`#[wasm_bindgen(js_name = applyAccountPatch)]` in
+`crates/idxdb-store/src/account/js_bindings.rs:130`):
+
+```typescript
+applyAccountPatch(
+  dbId: string,
+  accountId: string,
+  nonce: string,
+  updatedSlots: JsStorageSlot[],
+  changedMapEntries: JsStorageMapEntry[],
+  changedAssets: JsVaultAsset[],
+  codeRoot: string,
+  storageRoot: string,
+  vaultRoot: string,
+  committed: boolean,
+  commitment: string
+)
+```
+
+The three roots plus `committed` and `commitment` are the new header, written
+last in the same transaction after the old header is archived into
+`historicalAccountHeaders`.
+
+### The account forest is not in Dexie
+
+`crates/idxdb-store/src/forest.rs` holds `AccountForest`, a wrapper around an
+in-memory `AccountSmtForest<ForestInMemoryBackend>` plus a monotonic
+`VersionId`. Asset and storage-map **witnesses** are served from it, not from a
+Dexie query. It is in memory because the forest storage `Backend` trait is
+synchronous while every IndexedDB access from WASM goes through a JS promise,
+so it is rebuilt from the account tables on store open. Updates are
+forward-only - there is no staging or rollback, and a store write that fails
+after the forest advanced is recovered by
+`IdxdbStore::rebuild_account_forest` (`crates/idxdb-store/src/lib.rs:150`).
+
+Do not add a table to try to persist it, and do not add a promise-backed path
+for witness reads.
 
 ### Serialization Conventions
 

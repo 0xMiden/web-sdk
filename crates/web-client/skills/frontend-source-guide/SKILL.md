@@ -79,12 +79,12 @@ git clone --depth 1 https://github.com/0xMiden/web-sdk.git ../web-sdk
 
 The primary reference for all frontend development.
 
-- **`src/hooks/`** - All 37 hook implementations. Each file is self-contained. Read these to understand exact parameters, error handling, and stage progression.
+- **`src/hooks/`** - All 37 hook implementations, one file each, all re-exported from `src/index.ts` (10 query hooks + 27 mutation hooks; the file groups them under those two headings). Each file is self-contained. Read these to understand exact parameters, error handling, and stage progression.
 - **`src/context/MidenProvider.tsx`** - Client initialization, sync loop, signer detection, runExclusive lock. Read this to understand initialization order. Note: `useMidenClient()` returns the `WasmWebClient` (aliased `WebClient`).
 - **`src/context/SignerContext.ts`** - External signer interface. Read this when implementing custom signers.
 - **`src/context/MultiSignerProvider.tsx`** - Registry that lets several signer providers coexist and hands `MidenProvider` the active one (`useMultiSigner()`).
 - **`src/store/MidenStore.ts`** - Zustand store structure. Read this to understand cached state and what triggers re-renders.
-- **`src/utils/`** - Utility implementations (amounts, notes, accountBech32, runExclusive, accountParsing).
+- **`src/utils/`** - 17 utility modules: `accountBech32`, `accountId`, `accountParsing`, `amounts`, `asyncLock`, `bytes`, `errors`, `network`, `noteAttachment`, `noteFilters`, `notes`, `prover`, `runExclusive`, `signerAccount`, `storage`, `transactions`, `walletDetection`.
 - **`src/types/index.ts`** - All TypeScript interfaces. The single source of truth for option types, result types, and configuration.
 - **`packages/react-sdk/examples/wallet/`** - Complete working wallet app. The most reliable reference for how to set up MidenProvider, create accounts, display balances, claim notes, and send tokens. Caveat: its `vite.config.ts` and `src/main.tsx` still import the pre-0.16 package name `@miden-sdk/use-miden-para-react`; the package is now `@miden-sdk/para-react` (`packages/para/react/`). Copy the Miden patterns, not the Para import paths.
 
@@ -97,6 +97,9 @@ The public client plus the Rust-to-WASM bridge underneath it.
 - **`js/client.js`** - the `MidenClient` class, the recommended public entry point. Eight resource namespaces: `accounts`, `transactions`, `notes`, `tags`, `settings`, `compile`, `keystore`, `pswap`.
 - **`js/resources/<area>.js`** - the implementation of each resource. Read these for behavior: locking, atomicity, polling semantics.
 - **`js/types/api-types.d.ts`** - the single source of truth for the public TypeScript surface, with full JSDoc on every method and option field. Read this FIRST when asking "what can the client do".
+- **`js/index.js`** - the JS `WebClient` wrapper exported as `WasmWebClient`, its method-classification sets, the forwarding `Proxy`, and the WASM call-serialization chain.
+- **`js/eager.js`** - the default browser entry. Its header comment is the authoritative answer to "why does importing this await WASM at module top level, and when do I import `/lazy` instead": Capacitor WKWebView hosts (TLA hangs module evaluation indefinitely there), Next.js / SSR (TLA blocks server-side module evaluation), and framework adapters that run their own readiness state machine. See also the entry-point matrix in `crates/web-client/README.md`.
+- **`js/syncLock.js`** - `withSyncLock` (plus `hasWebLocks`), the Web Locks coalescing the sync entry points use. `js/webLock.js` (`withWriteLock`) and `js/asyncLock.js` (`AsyncLock`) are neither published (absent from the package's `files` array) nor imported by any entry module - their only in-tree callers are their own tests under `js/__tests__/`. Read them for the pattern; they are not on the hot path.
 - **`src/`** - the Rust `WebClient` struct, exported to JS as `WasmWebClient`. Marked `@internal` in `js/types/index.d.ts` ("Use MidenClient instead"); `useMidenClient()` from the React SDK returns this low-level client, not `MidenClient`.
 - The standalone `RpcClient` struct (`getBlockHeaderByNumber`, `getNotesById`, `getAccountDetails`, `getAccountProof`, `syncNotes`, `getNetworkNoteStatus`, `getNullifierCommitHeight`, `getNoteScriptByRoot`, `syncStorageMaps`) lives in `src/rpc_client/`, and is exported separately from `@miden-sdk/miden-sdk` - it is NOT reachable through `useMidenClient()`.
 - **`skills/`** - the agent guides shipped with this package, including `web-client-usage` and `chain-anchored-execution`.
@@ -106,6 +109,9 @@ The public client plus the Rust-to-WASM bridge underneath it.
 ### `crates/idxdb-store/` - IndexedDB Persistence
 
 The browser storage layer for accounts, keys, notes, and transaction history.
+
+- **`src/ts/schema.ts`** - the Dexie schema, its version chain, and `ensureClientVersion`: the routine that closes, `delete`s and re-opens the database whenever the running client version is a higher **major or minor** than the stored one. That is why a minor SDK bump wipes a user's locally-stored accounts, keys and notes. See `frontend-pitfalls` FP7 and the `idxdb-patterns` skill.
+- **`src/ts/`** - per-table logic: `accounts.ts`, `auth.ts`, `chainData.ts`, `notes.ts`, `settings.ts`, `sync.ts`, `transactions.ts`, plus `export.ts` / `import.ts` for store dumps.
 
 **Explore when**: Debugging data persistence issues, understanding what's stored in IndexedDB, investigating storage isolation for external signers.
 
@@ -169,20 +175,19 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 ## Common Advanced Patterns
 
 ### Custom Hooks Wrapping WasmWebClient
-For operations not covered by built-in hooks, create custom hooks that use `useMidenClient()` and `runExclusive`. `useMidenClient()` returns the `WebClient` (WasmWebClient), so only call methods that exist on it - e.g. `getSyncHeight()`:
+For operations not covered by built-in hooks, create custom hooks over `useMidenClient()`. It returns the `WebClient` (WasmWebClient), so only call methods that exist on it - `crates/web-client/js/index.js` lists many of them in its `SYNC_METHODS` / `WRITE_METHODS` / `READ_METHODS` sets, but **those sets are not exhaustive**. `crates/web-client/scripts/check-method-classification.js` also accepts a method defined as an explicit wrapper on the JS `WebClient` class, which is how `newWallet`, `newFaucet`, `newAccountWithSecretKey`, `submitNewTransaction`, `submitNewTransactionWithProver`, `executeTransaction`, `executeTransactionAt`, `proveTransaction`, `applyTransaction`, `syncState`, `syncNoteTransport`, `syncChain` and `terminate` are reachable while appearing in none of the three sets. A name can also be both - `newAccount` is in `WRITE_METHODS` and has a class wrapper - so read the sets before concluding a method is absent from them. Check the class body too.
+
+Wrap **multi-call sequences** in `runExclusive` so nothing interleaves between your calls (see `frontend-pitfalls` FP2). A lone call to a forwarded async method needs no wrapper: it already serializes itself through the client proxy's `_serializeWasmCall` chain. The six `SYNC_METHODS` in `js/index.js` are the exception - the proxy binds them raw and they never join that chain. Two of them take a shared WASM borrow, `lastAuthError()` and the `keystore` getter, so those still need your own lock if any other client call may be in flight.
+
 ```tsx
 function useSyncHeight() {
   const client = useMidenClient();
-  const { runExclusive } = useMiden();
   const [height, setHeight] = useState<number | null>(null);
   useEffect(() => {
-    // Note: runExclusive() may be simplified in a future SDK version.
-    // Check SDK changelog when upgrading.
-    runExclusive(async () => {
-      const h = await client.getSyncHeight();
-      setHeight(h);
-    });
-  }, []);
+    // getSyncHeight is a single forwarded read, serialized by the client
+    // proxy - no runExclusive needed.
+    client.getSyncHeight().then(setHeight);
+  }, [client]);
   return height;
 }
 ```
@@ -191,13 +196,16 @@ Some operations are NOT on the `WebClient` returned by `useMidenClient()` - for 
 ```tsx
 import { RpcClient, Endpoint } from "@miden-sdk/miden-sdk";
 
+// Endpoint: new Endpoint(url), or the Endpoint.testnet() / Endpoint.devnet() /
+// Endpoint.localhost() factories (crates/web-client/src/models/endpoint.rs:20-43).
+const rpc = new RpcClient(Endpoint.testnet());
+
 // signature: getBlockHeaderByNumber(blockNum?: number, includeMmrProof?: boolean)
-const rpc = new RpcClient(endpoint);              // endpoint: Endpoint
 const header = await rpc.getBlockHeaderByNumber(blockNumber, false);
 ```
 
 ### Multi-Step Workflows
-Compose hooks for complex flows (mint → wait for commit → sync → consume):
+Compose hooks for complex flows (mint → wait for commit → wait for notes → consume). `waitForConsumableNotes` resolves to `ConsumableNoteRecord[]`, which is **not** one of the four shapes `ConsumeOptions.notes` accepts (`string | NoteId | InputNoteRecord | Note`), so unwrap each record with `.inputNoteRecord()` first:
 ```tsx
 const { mint } = useMint();
 const { waitForCommit } = useWaitForCommit();
@@ -206,11 +214,16 @@ const { consume } = useConsume();
 
 const mintAndConsume = async () => {
   const { transactionId } = await mint({ targetAccountId, faucetId, amount });
-  await waitForCommit(transactionId);
-  await waitForConsumableNotes({ accountId: targetAccountId });
-  await consume({ accountId: targetAccountId, notes: [...] });
+  await waitForCommit(transactionId);                      // default 10s timeout, 1s poll
+  const records = await waitForConsumableNotes({ accountId: targetAccountId });
+  await consume({
+    accountId: targetAccountId,
+    notes: records.map((r) => r.inputNoteRecord()),
+  });
 };
 ```
+
+Both wait hooks default to `timeoutMs: 10000` and `intervalMs: 1000`; `waitForConsumableNotes` also takes `minCount` (default `1`). Raise the timeout for slow networks rather than looping the hook yourself.
 
 ### Custom Signer Implementation
 Implement the SignerContextValue interface, wrap MidenProvider in your provider. Reference `packages/react-sdk/src/context/SignerContext.ts` for the exact interface contract. The `storeName` field must be unique per user to ensure IndexedDB isolation.
