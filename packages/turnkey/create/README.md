@@ -53,6 +53,7 @@ After creating your project:
 3. Edit `.env` with your Turnkey credentials:
    ```
    VITE_TURNKEY_ORGANIZATION_ID=your-organization-id
+   VITE_AUTH_PROXY_CONFIG_ID=your-auth-proxy-config-id
    ```
 
 4. (Optional) Customize Miden settings in `src/App.tsx`:
@@ -75,6 +76,7 @@ After creating your project:
 | Variable | Description |
 |----------|-------------|
 | `VITE_TURNKEY_ORGANIZATION_ID` | Your Turnkey organization ID |
+| `VITE_AUTH_PROXY_CONFIG_ID` | Your Turnkey auth proxy config ID |
 
 ## Miden Configuration
 

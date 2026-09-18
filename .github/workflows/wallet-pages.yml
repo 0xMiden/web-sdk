@@ -3,20 +3,20 @@ name: Deploy wallet example
 on:
   workflow_dispatch:
 
-  # The build half also runs on PRs that touch the example or a package it
-  # imports. Without this the workflow only ever ran by hand, which is how the
-  # example came to import two package names that do not exist. The paths
-  # filter keeps it off every other PR, and the deploy job stays manual, so
-  # this is a build check and not a release path. Don't add it to the required
-  # checks: it installs from the registry and so depends on what is published.
+  # The build half also runs on PRs that touch the example. Without this the
+  # workflow only ever ran by hand, which is how the example came to import two
+  # package names that do not exist. The deploy job stays manual, so this is a
+  # build check and not a release path. Don't add it to the required checks: it
+  # installs from the registry and so depends on what is published.
+  #
+  # The paths are deliberately just the example and this file. The example
+  # installs its @miden-sdk/* dependencies from the registry, so a PR editing
+  # any package's source in this repo produces a byte-identical build here -
+  # triggering on those trees would report a green that means nothing.
   pull_request:
     paths:
       - ".github/workflows/wallet-pages.yml"
-      - "packages/react-sdk/**"
-      - "packages/adapter/react/**"
-      - "packages/para/react/**"
-      - "packages/turnkey/react/**"
-      - "packages/vite-plugin/**"
+      - "packages/react-sdk/examples/wallet/**"
 
 permissions:
   contents: read
@@ -40,10 +40,9 @@ jobs:
         with:
           node-version: "20"
           cache: 'pnpm'
-      - name: Install workspace dependencies
-        run: pnpm install --no-frozen-lockfile
-      - name: Build react sdk
-        run: pnpm --filter @miden-sdk/react run build
+      # No workspace install or build step: the example resolves every
+      # @miden-sdk/* dependency from the registry (see --ignore-workspace
+      # below), so nothing built from this tree would ever be linked into it.
       - name: Install wallet example dependencies (pnpm, ignore-workspace)
         # The example is intentionally OUTSIDE the workspace (not listed in
         # pnpm-workspace.yaml). --ignore-workspace tells pnpm to treat this

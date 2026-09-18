@@ -56,7 +56,8 @@ Two environment variables, both required by `src/App.tsx`:
 | `VITE_TURNKEY_ORGANIZATION_ID` | `TurnkeyProvider`'s `organizationId` |
 | `VITE_AUTH_PROXY_CONFIG_ID` | `TurnkeyProvider`'s `authProxyConfigId` |
 
-The README also lists `VITE_TURNKEY_API_BASE_URL`. Nothing reads it.
+The README documents the same two, and the CLI writes both into the generated
+`.env.example`. If you add a third, all three places need it.
 
 Miden settings are literals in `src/App.tsx`, not environment variables:
 `https://rpc.testnet.miden.io`, the testnet note transport, the account seed

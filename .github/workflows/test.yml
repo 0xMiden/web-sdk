@@ -471,6 +471,32 @@ jobs:
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
         run: git diff --exit-code docs/typedoc/web-client
 
+  test-typescript:
+    # `make test` is step 2 of CONTRIBUTING.md and the one command every
+    # contributor runs, but no job ran it. The suites it covers that the
+    # targeted jobs below do not - telemetry and wallet-adapter - were therefore
+    # gated by nothing, and did go red on main unnoticed. It needs no Rust
+    # toolchain and no built dist, so it does not wait on the WASM build.
+    name: TypeScript unit suites
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Run the TypeScript unit suites
+        run: make test
+
   test-react-sdk:
     name: React SDK tests
     runs-on: ubuntu-24.04

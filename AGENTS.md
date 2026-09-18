@@ -242,7 +242,9 @@ and nothing else. Don't grow them a guide or a `skills/` directory.
   every code review, and is simply absent from the tarball the consumer installs.
 - A package with **no** `files` array and no `.npmignore` publishes everything
   except npm's built-in excludes, so a guide dropped in ships automatically.
-  Today that is `packages/adapter/{base,miden,reactui}` only.
+  No published package relies on that any more - every one of them declares a
+  `files` array, and `scripts/check-agent-docs.sh` fails the build if a guide
+  or a skill is missing from the tarball it produces.
 
 This is not hypothetical. All three `packages/para/*` packages carried an
 `AGENTS.md` inherited from their upstream repo, none of the three listed it in
@@ -262,11 +264,10 @@ this file - a hand-kept list across nineteen packages drifts, and this one did:
 find . -name SKILL.md -not -path './node_modules/*'
 ```
 
-Packages that ship a `skills/` directory today: `@miden-sdk/miden-sdk`
-(`crates/web-client/`), `@miden-sdk/react` (`packages/react-sdk/`) and
-`@miden-sdk/vite-plugin` (`packages/vite-plugin/`). Every other published
-package ships an `AGENTS.md` alone; add a `skills/` directory only when the
-guidance is genuinely task-scoped and too long for the index.
+Run that command rather than trusting a list here - an enumeration in this file
+is exactly what drifted before. Every published package ships an `AGENTS.md`;
+add a `skills/` directory to one only when the guidance is genuinely
+task-scoped and too long for the index.
 
 **This repo is canonical for any skill that documents our own API.** These
 skills previously lived in [`0xMiden/agent-tools`](https://github.com/0xMiden/agent-tools)
