@@ -136,9 +136,11 @@ transaction debug mode.
 `durationMs`. The SDK never transports an observation and has no telemetry
 dependency; a throwing observer can never fail an operation. `op` names the
 wrapped client method, not the high-level call, so one `transactions.send(...)`
-reports four observations (`executeTransaction`, `proveTransaction`,
-`submitProvenTransaction`, `applyTransaction`). Registration is process-wide:
-a second client constructed with an `observer` replaces the first one's.
+reports five observations (`newSendTransactionRequest`, `executeTransaction`,
+`proveTransaction`, `submitProvenTransaction`, `applyTransaction`) - the request
+is built through the client too. Registration is process-wide: a second client
+constructed with an `observer` replaces the first one's. `skills/observability/`
+has the full contract, the exclusions and the two shipped bindings.
 
 ```typescript
 const client = await MidenClient.create({
