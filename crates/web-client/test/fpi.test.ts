@@ -150,6 +150,18 @@ test.describe("fpi test", () => {
         storageRequirements
       );
 
+      // Pins the JS-facing spelling of ForeignAccount's two accessors, which
+      // carry an explicit js_name; without a reader, dropping the attribute
+      // would silently reintroduce the snake_case/camelCase split between the
+      // wasm and napi builds. Read here, not at the end: ForeignAccountArray
+      // below takes ownership of this handle, and touching it afterwards is
+      // "null pointer passed to rust".
+      const foreignAccountIdFromAccessor = foreignAccount
+        .accountId()
+        .toString();
+      const hasStorageSlotRequirements =
+        !!foreignAccount.storageSlotRequirements();
+
       let txRequest2 = new sdk.TransactionRequestBuilder()
         .withCustomScript(compiledTxScript)
         .withForeignAccounts(new sdk.ForeignAccountArray([foreignAccount]))
@@ -177,13 +189,8 @@ test.describe("fpi test", () => {
       return {
         skip: false,
         foreignAccountIdStr,
-        // Pins the JS-facing spelling of ForeignAccount's two accessors. They
-        // carry an explicit js_name, so without these reads nothing in the repo
-        // consumes either name and dropping the attribute would silently
-        // reintroduce the snake_case/camelCase split between the wasm and napi
-        // builds. Dropping it makes the property undefined and this throws.
-        foreignAccountIdFromAccessor: foreignAccount.accountId().toString(),
-        hasStorageSlotRequirements: !!foreignAccount.storageSlotRequirements(),
+        foreignAccountIdFromAccessor,
+        hasStorageSlotRequirements,
         proofAccountId: accountProof.accountId().toString(),
         proofBlockNum: accountProof.blockNum(),
         proofCommitmentHex: accountProof.accountCommitment().toHex(),
