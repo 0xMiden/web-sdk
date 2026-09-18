@@ -4,6 +4,10 @@
   "description": "Miden wallet adapter for the Miden Wallet.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "AGENTS.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0xMiden/web-sdk.git",
@@ -16,6 +20,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "clean": "rimraf dist/ node_modules/",
     "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown index.ts",
     "test": "vitest run"

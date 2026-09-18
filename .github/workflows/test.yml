@@ -471,6 +471,37 @@ jobs:
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
         run: git diff --exit-code docs/typedoc/web-client
 
+  test-typescript:
+    # `make test` is step 2 of CONTRIBUTING.md and the one command every
+    # contributor runs, but no job ran it. The suites it covers that the
+    # targeted jobs below do not - telemetry and wallet-adapter - were therefore
+    # gated by nothing, and did go red on main unnoticed. It needs no Rust
+    # toolchain and no built dist, so it does not wait on the WASM build.
+    name: TypeScript unit suites
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      # Before running them, assert the aggregate actually covers every suite:
+      # vitest reports nothing for a project it was never told about, so an
+      # unlisted package's tests vanish silently and this job stays green.
+      - name: Check every vitest project is run by something
+        run: node scripts/check-vitest-projects.mjs
+      - name: Run the TypeScript unit suites
+        run: make test
+
   test-react-sdk:
     name: React SDK tests
     runs-on: ubuntu-24.04
@@ -1226,6 +1257,16 @@ jobs:
       # packages — made explicit.
       - name: Build @miden-sdk/react
         run: pnpm run build:react-sdk
+
+      # Every `typecheck` script in the workspace, run here rather than in the
+      # TypeScript unit suites job because most of them resolve
+      # `@miden-sdk/miden-sdk` types out of crates/web-client/dist - which only
+      # this job has. pnpm skips projects without the script, so this needs no
+      # list. It covers the adapter packages whose build config excludes tests
+      # from emit (vitest transpiles through esbuild and checks nothing), and
+      # the telemetry, create and vite-plugin scripts that no job ran before.
+      - name: Type-check every package
+        run: pnpm -r run typecheck
 
       # Manifest-driven: scripts/publish-manifest.json is the only list. Adding a
       # package there with "build": true brings it under this job automatically.

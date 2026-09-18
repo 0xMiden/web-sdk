@@ -70,12 +70,13 @@ CI (`.github/workflows/test.yml`) runs all of the above on every PR. `main` and 
 
 ## Coverage thresholds
 
-`packages/react-sdk/vitest.config.ts` enforces `lines / functions / statements ≥ 95` and `branches ≥ 94`. Branches sits 1pp lower because v8's instrumentation marks `} finally {` blocks partially-covered even when both paths are exercised; the comment in the config has the detail. Two files are excluded because they need the real WASM binary rather than the jsdom mock:
+`packages/react-sdk/vitest.config.ts` enforces `lines / functions / statements ≥ 95` and `branches ≥ 94`. Branches sits 1pp lower because v8's instrumentation marks `} finally {` blocks partially-covered even when both paths are exercised; the comment in the config has the detail. One file is excluded because it needs the real WASM binary rather than the jsdom mock:
 
 - `src/utils/accountBech32.ts` - `NetworkId`, `Address` and `Account.prototype` come from the real bundle. Covered by the Playwright test at `packages/react-sdk/test/accountBech32.test.ts`.
-- `src/hooks/useAssetMetadata.ts` - `RpcClient`, `Endpoint` and `BasicFungibleFaucetComponent` come from the real bundle. Unit-covered at `packages/react-sdk/src/__tests__/hooks/useAssetMetadata.test.tsx`.
 
-The exclude comments inside `vitest.config.ts` carry the same two paths. If you move a test, fix both places - the config's copy has been wrong before and nothing checks it.
+`src/hooks/useAssetMetadata.ts` used to be excluded alongside it, pointing at a `test/useAssetMetadata.test.ts` that does not exist. It is unit-covered by `packages/react-sdk/src/__tests__/hooks/useAssetMetadata.test.tsx` and is measured normally.
+
+The exclude comment inside `vitest.config.ts` carries the same path. If you move a test, fix both places - the config's copy has been wrong before and nothing checks it.
 
 **Always run `make test-react-sdk` locally before pushing** — CI will block the merge if any threshold dips. Lowering thresholds is not the right fix; either add tests or move the file to the excluded list with justification.
 
@@ -241,7 +242,9 @@ and nothing else. Don't grow them a guide or a `skills/` directory.
   every code review, and is simply absent from the tarball the consumer installs.
 - A package with **no** `files` array and no `.npmignore` publishes everything
   except npm's built-in excludes, so a guide dropped in ships automatically.
-  Today that is `packages/adapter/{base,miden,reactui}` only.
+  No published package relies on that any more - every one of them declares a
+  `files` array, and `scripts/check-agent-docs.sh` fails the build if a guide
+  or a skill is missing from the tarball it produces.
 
 This is not hypothetical. All three `packages/para/*` packages carried an
 `AGENTS.md` inherited from their upstream repo, none of the three listed it in
@@ -261,11 +264,10 @@ this file - a hand-kept list across nineteen packages drifts, and this one did:
 find . -name SKILL.md -not -path './node_modules/*'
 ```
 
-Packages that ship a `skills/` directory today: `@miden-sdk/miden-sdk`
-(`crates/web-client/`), `@miden-sdk/react` (`packages/react-sdk/`) and
-`@miden-sdk/vite-plugin` (`packages/vite-plugin/`). Every other published
-package ships an `AGENTS.md` alone; add a `skills/` directory only when the
-guidance is genuinely task-scoped and too long for the index.
+Run that command rather than trusting a list here - an enumeration in this file
+is exactly what drifted before. Every published package ships an `AGENTS.md`;
+add a `skills/` directory to one only when the guidance is genuinely
+task-scoped and too long for the index.
 
 **This repo is canonical for any skill that documents our own API.** These
 skills previously lived in [`0xMiden/agent-tools`](https://github.com/0xMiden/agent-tools)

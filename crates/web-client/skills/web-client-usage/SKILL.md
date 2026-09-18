@@ -698,8 +698,12 @@ await client.accounts.removeAddress(ref, address);
 ```
 
 `getDetails(ref)` returns `{ account, vault, storage, code, keys }` - the full
-`Account`, its `AssetVault`, `AccountStorage`, `AccountCode | null`, and the key
-commitments (`Word[]`); there is no `status` field. It throws if the account is
+`Account`, its `AssetVault`, a `StorageView`, `AccountCode | null`, and the key
+commitments (`Word[]`); there is no `status` field. `storage` is **not** the raw
+WASM `AccountStorage`: `Account.prototype.storage()` is patched at load time to
+return a `StorageView`, whose `getItem(name)` resolves both Value and StorageMap
+slots to a `StorageResult`. Reach the protocol-level `AccountStorage` through
+`storage.raw` if you need it. It throws if the account is
 not tracked.
 
 For a single asset balance without loading the full vault, prefer

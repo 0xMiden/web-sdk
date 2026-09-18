@@ -4,8 +4,14 @@
   "description": "Core infrastructure for connecting Miden-compatible wallets to your dApp.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "AGENTS.md",
+    "skills"
+  ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "clean": "rimraf dist/ node_modules/",
     "doc": "typedoc --disableSources --tsconfig ./tsconfig.json --plugin typedoc-plugin-markdown --entryPoints index.ts",
     "test": "vitest run"
