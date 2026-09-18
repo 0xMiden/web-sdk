@@ -443,6 +443,18 @@ describe("cli", () => {
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
+    // cli.ts gates its progress output on `process.env.CI === "true"`, and every
+    // CI runner sets CI=true. Without pinning it here these tests assert on
+    // whatever the ambient environment happens to be: the "nothing to sync"
+    // case passed on a laptop and failed in Actions. Tests that care about the
+    // CI path stub it to "true" themselves.
+    vi.stubEnv("CI", "");
+  });
+
+  afterEach(() => {
+    // Not inline at the end of the CI test: a failure there would leak CI=true
+    // into every test that ran after it.
+    vi.unstubAllEnvs();
   });
 
   it("prints usage for --help", () => {
@@ -481,7 +493,6 @@ describe("cli", () => {
     main(["sync"], root);
 
     expect(console.log).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
   });
 
   it("initializes the project when called with no arguments", () => {
