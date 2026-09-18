@@ -372,7 +372,7 @@ Set `useWorker: false` when:
 
 Two companions to the same boundary:
 
-- **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback.
+- **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
 - **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
 
 Verify: `crates/web-client/js/index.js`, `crates/web-client/js/client.js`, `packages/react-sdk/src/hooks/usePreview.ts`.
@@ -430,7 +430,7 @@ Verify: `crates/web-client/js/eager.js`.
 | # | Pitfall | Severity | One-Line Rule |
 |---|---------|----------|---------------|
 | FP1 | Readiness is per hook | CRITICAL | Query hooks self-heal when `isReady` flips; `useMidenClient()` throws on render, so gate that one. `loadingComponent` is not a gate |
-| FP2 | Sequences are not atomic | HIGH | Single calls already serialize; wrap multi-call sequences in `runExclusive()` |
+| FP2 | Sequences are not atomic | HIGH | Forwarded async calls serialize themselves (raw-bound `SYNC_METHODS` do not); wrap multi-call sequences in `runExclusive()` |
 | FP3 | COOP/COEP | HIGH | Default ST build needs no headers; required ONLY for the `/mt` build |
 | FP4 | BigInt | HIGH | Hooks and the high-level `MidenClient` coerce `number`; strict `bigint` only at the low-level request constructors |
 | FP5 | Bech32 mismatch | HIGH | Match network in rpcUrl and addresses; the HRP is inferred from the `rpcUrl` string and falls back to testnet |

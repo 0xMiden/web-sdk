@@ -604,7 +604,7 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `useNotes(filter?)` | `notes`, `consumableNotes`, `noteSummaries`, `consumableNoteSummaries` | Input notes + UI summaries |
 | `useNoteStream(filter?)` | streaming variant of `useNotes` | Auto-updates as notes arrive |
 | `useSyncState()` | `syncHeight`, `isSyncing`, `lastSyncTime`, `sync()` | Sync status + manual trigger |
-| `useSyncControl()` | `pause()`, `resume()`, `isPaused` | Pause/resume the auto-sync timer |
+| `useSyncControl()` | `pauseSync()`, `resumeSync()`, `isPaused` | Pause/resume the auto-sync timer |
 | `useAssetMetadata(ids?)` | `assetMetadata: Map<string, AssetMetadata>` | Token info. Takes a `string[]`, never a bare string |
 | `useTransactionHistory(options?)` | `records`, `record`, `status` | Local transaction log. `record` / `status` are set when you pass a single id |
 | `useSessionAccount()` | `account` | The signer's connected account |
