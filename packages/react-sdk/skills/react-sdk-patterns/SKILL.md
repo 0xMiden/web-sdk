@@ -1,6 +1,6 @@
 ---
 name: react-sdk-patterns
-description: Complete guide to building Miden frontends with @miden-sdk/react hooks. Covers MidenProvider and MultiSignerProvider setup, query hooks, transaction hooks, PSWAP hooks, chain-anchored execution (useChainAnchor / usePreview), store and note import/export, transaction stages, signer integration, and utility functions. Use when writing, editing, or reviewing Miden React frontend code.
+description: Complete guide to building Miden frontends with @miden-sdk/react hooks. Covers MidenProvider and MultiSignerProvider setup, query hooks, transaction hooks, private-note delivery, PSWAP hooks, chain-anchored execution (useChainAnchor / usePreview), session accounts, store and note import/export, transaction stages, signer integration, the coded error surface, and utility functions. Use when writing, editing, or reviewing Miden React frontend code.
 ---
 
 # Miden React SDK Patterns
@@ -63,9 +63,11 @@ import { MidenProvider } from "@miden-sdk/react";
 
 `MidenConfig` has no `observer` / `observeSensitive` field. Those are `ClientOptions` on the standalone `MidenClient` from `@miden-sdk/miden-sdk`; passing them to `MidenProvider` does nothing. Do not invent them here.
 
+There is also **no `storeName` config field**. `storeName` lives on `SignerContextValue`, and when a signer is connected `MidenProvider` derives the IndexedDB name from it as `` `MidenClientDB_${signer.storeName}` ``. That is why `SignerContextValue.storeName` must be unique per user - it is the database isolation boundary.
+
 ## Hook Inventory
 
-The package exports 34 hooks. The ones documented in detail below are the common path; these exist too and follow the same conventions:
+The package exports 37 hooks from `src/hooks/`, plus the context accessors `useMiden`, `useMidenClient`, `useSigner` and `useMultiSigner`. The ones documented in detail below are the common path; these exist too and follow the same conventions:
 
 | Hook | Kind | Notes |
 |------|------|-------|
@@ -76,7 +78,7 @@ The package exports 34 hooks. The ones documented in detail below are the common
 | `useChainAnchor()` / `usePreview()` | see "Chain-Anchored Execution" | expose `isCapturing` / `isPreviewing`, not `isLoading` |
 | `useCompile()` | compile | `{ component, txScript, noteScript, isReady }` |
 | `useExecuteProgram()` | read-only view call | the action is named **`execute`**, not `executeProgram`: `execute({ accountId, script, adviceInputs?, foreignAccounts?, skipSync? })` returns `{ stack: bigint[] }` |
-| `useSyncControl()` | control | `{ pauseSync, resumeSync }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount |
+| `useSyncControl()` | control | `{ pauseSync, resumeSync, isPaused }`. Use this instead of `autoSyncInterval: 0` when you need to stop auto-sync after mount; manual `useSyncState().sync()` still works while paused |
 | `useExportStore()` / `useImportStore()` | store portability | `isExporting` / `isImporting` |
 | `useExportNote()` / `useImportNote()` | note portability | `exportNote(noteId)` returns `Uint8Array`; `importNote(bytes)` returns the note id |
 | `MultiSignerProvider` / `SignerSlot` / `useMultiSigner` | signer | see "Signer Integration" |
@@ -170,7 +172,17 @@ Pass an array even for a single asset - the hook calls `.filter` on its argument
 ```tsx
 const { records, record, status, isLoading, error, refetch } = useTransactionHistory({ id: txId });
 // status: "pending" | "committed" | "discarded" | null
+// Options: { id?, ids?, filter?, refreshOnSync? }
+//   id      - string | TransactionId. Populates `record` and `status`.
+//   ids     - Array<string | TransactionId>. `record` and `status` are populated only
+//             when exactly one id was supplied; with several they stay null.
+//   filter  - a raw TransactionFilter. It OVERRIDES id/ids entirely: when `filter`
+//             is set the hook queries with it and applies no local id narrowing.
+//   refreshOnSync - re-fetch after every provider sync. Default: true
+//                   (only `refreshOnSync: false` turns it off).
 ```
+
+A note on `ids`: the hook uses `TransactionFilter.ids(...)` only when every entry is a real `TransactionId`. A list containing any hex string falls back to `TransactionFilter.all()` plus a local hex comparison, so it fetches everything and filters in JS.
 
 ## Mutation Hooks
 
@@ -232,6 +244,8 @@ const account = await importAccount({
 });
 ```
 
+This hook calls `assertSignerConnected()` before doing anything else. With a signer provider mounted but **disconnected** it throws `"Signer is disconnected. Reconnect your wallet to perform transactions."` It is a no-op in local-keystore mode (`signerConnected === null`) and when the signer is connected. `useImportAccount` and `useMultiSend` are the **only two** hooks that make this check - do not assume the other mutation hooks guard it for you.
+
 ### useSend()
 ```tsx
 const { send, result, isLoading, stage, error, reset } = useSend();
@@ -253,6 +267,10 @@ await send({
 
 `amount` is optional in the type (it is ignored when `sendAll: true`) and accepts `bigint | number`, but pass `bigint` - a `number` silently loses precision above `Number.MAX_SAFE_INTEGER`.
 
+**Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
+
+**Private notes need an explicit delivery push, and the hook does it for you.** For `noteType: "private"` `useSend` waits for the transaction to commit and then calls `client.sendPrivateOutputNote(noteId, recipientAddress)` to hand the note details to the recipient over the note-transport layer. The same push happens in `useMultiSend` (once per private recipient, after one shared commit wait) and in `useTransaction` when `privateNoteTarget` is set. Without it a private note is **never delivered** - the recipient has no way to learn it exists. A public note needs no such push. If you hand-roll a private send through `useTransaction`, either pass `privateNoteTarget` or make the `sendPrivateOutputNote` call yourself.
+
 ### useMultiSend()
 ```tsx
 const { sendMany, result, isLoading, stage, error, reset } = useMultiSend();
@@ -265,8 +283,11 @@ await sendMany({
     { to: recipient3, amount: 200n, attachment: [1n, 2n, 3n] },    // per-recipient attachment
   ],
   noteType: "private",     // default for all recipients
+  skipSync: false,         // optional
 });
 ```
+
+Resolves to `{ transactionId }`, not `{ txId, note }`. Like `useImportAccount`, it calls `assertSignerConnected()` first and throws on a mounted-but-disconnected signer.
 
 ### useMint()
 ```tsx
@@ -357,9 +378,9 @@ const { initialize, sessionAccountId, isReady, step, error, reset } = useSession
     // Called after session wallet is created - fund it here
     await send({ from: mainWallet, to: sessionId, assetId: faucetId, amount: 100n });
   },
-  assetId: faucetId,              // optional: for note filtering
+  assetId: faucetId,              // optional, RESERVED: the hook body never reads it
   walletOptions: {                // optional: session wallet creation options
-    storageMode: "private",                   // "private" | "public"
+    storageMode: "public",                    // "private" | "public". Default: "public"
     authScheme: 2,                            // 2 = Falcon (web-sdk#223)
   },
   pollIntervalMs: 3000,           // optional: funding detection interval. Default: 3000
@@ -369,6 +390,12 @@ const { initialize, sessionAccountId, isReady, step, error, reset } = useSession
 // Steps: "idle" -> "creating" -> "funding" -> "consuming" -> "ready"
 // Call initialize() to start the flow. isReady becomes true when fully funded.
 ```
+
+Three things that surprise people here:
+
+- **The session wallet defaults to `storageMode: "public"`**, unlike `useCreateWallet`'s `"private"`. If you want a private session wallet, say so explicitly.
+- **`assetId` is reserved and never read.** It is typed and documented as "reserved for future filtering of consumable notes"; the hook body does not consult it. Passing it does nothing, and omitting it changes nothing.
+- **The hook persists across reloads.** It writes `${storagePrefix}:accountId` and `${storagePrefix}:ready` to `localStorage`, restores both on mount, and `reset()` removes both. So a session survives a refresh, and clearing it means calling `reset()` rather than dropping your own state.
 
 ## Chain-Anchored Execution
 
@@ -392,7 +419,7 @@ await execute({ accountId, request: anchoredRequest ?? txRequest, anchor: captur
 **The trap: never re-invoke a request factory once an anchor exists.** A factory resolves to a new object per call, and two draws from the client's RNG make that object differ every time: any builder minting an output note takes a fresh serial number, and on a fee-charging chain the fee conversion info takes a fresh salt, which reaches even a request with no output notes. A second call therefore yields a transaction the anchor does not pin and the co-signers did not approve. Preview and execute against `anchoredRequest`, the exact request the anchor was captured for. Note `anchoredRequest` is state: inside the handler that just captured, it still holds the previous render's value (`null` on a first capture), so use the object you resolved yourself there and `anchoredRequest` on a later interaction.
 
 Other rules the hook enforces or documents:
-- `captureAnchor` rejects with `code: "OPERATION_BUSY"` if a capture is already running, and `code: "INVALID_CHAIN_ANCHOR"` if a sync lands mid-capture - retry that one. `INVALID_CHAIN_ANCHOR` comes from the client, so on Node it prefixes the message instead of appearing as a property.
+- `captureAnchor` rejects with one of **three** codes: `"OPERATION_BUSY"` if a capture is already running, `"INVALID_CHAIN_ANCHOR"` if a sync lands mid-capture (retry that one), and `"STALE_CLIENT"` if the provider swapped the client while the capture was in flight - a network or signer change, where recapturing on the new chain is the only correct move, not a retry. `INVALID_CHAIN_ANCHOR` comes from the client, so on Node it prefixes the message instead of appearing as a property; the other two are `MidenError`s from this package and always carry `code`.
 - Capturing runs on the main thread and walks the chain in WASM, so it blocks the UI briefly and queues other client calls behind it.
 - The caller owns the anchor. Neither `reset()` nor a client swap frees it. An anchor carries a partial blockchain, so call `anchor.free()` when done in a flow that captures repeatedly.
 - **`ChainAnchor` is re-exported type-only by `@miden-sdk/react`.** To rebuild one from bytes, import the class itself from `@miden-sdk/miden-sdk`:
@@ -500,16 +527,32 @@ When an app offers a choice of signers, mount each provider around a `SignerSlot
 
 ```tsx
 import { MidenProvider, MultiSignerProvider, SignerSlot } from "@miden-sdk/react";
+import { WalletAdapterNetwork } from "@miden-sdk/miden-wallet-adapter-base";
 
 <MultiSignerProvider>
   <ParaSignerProvider apiKey={...} environment="BETA"><SignerSlot /></ParaSignerProvider>
   <TurnkeySignerProvider><SignerSlot /></TurnkeySignerProvider>
-  <MidenFiSignerProvider network="testnet" autoConnect={false}><SignerSlot /></MidenFiSignerProvider>
+  <MidenFiSignerProvider network={WalletAdapterNetwork.Testnet} autoConnect={false}>
+    <SignerSlot />
+  </MidenFiSignerProvider>
   <MidenProvider config={{ rpcUrl: "testnet", prover: "testnet" }}>
     <App />
   </MidenProvider>
 </MultiSignerProvider>
 ```
+
+`MidenFiSignerProvider`'s `network` prop is the **`WalletAdapterNetwork` enum** from `@miden-sdk/miden-wallet-adapter-base` (`Devnet | Testnet | Localnet`), not a raw string. It is a TypeScript string enum, so `network="testnet"` does not type-check even though the member's value is `"testnet"`.
+
+```tsx
+const { signers, activeSigner, connectSigner, disconnectSigner } = useMultiSigner() ?? {};
+await connectSigner("Turnkey");   // switches the active signer and calls its connect()
+await disconnectSigner();         // reverts to local-keystore mode
+```
+
+Two mechanics worth knowing:
+
+- **`useMultiSigner()` returns `null` outside a `MultiSignerProvider`**, not a throw and not an empty object. Guard it (`?? {}` above) or you will read properties of null in a component that can render outside the provider.
+- **`SignerSlot` renders nothing.** It returns `null`, reads its nearest ancestor `SignerContext` via `useSigner()`, and registers that value into the `MultiSignerProvider` registry (unregistering on unmount). It is a registration primitive, not a UI element, so its placement matters only for which provider is its ancestor. `MultiSignerProvider` forwards only the *active* signer down to `MidenProvider`, so before a user picks one the app runs in local-keystore mode.
 
 ### useSigner() - Unified Interface
 Returns `SignerContextValue | null` - `null` in local-keystore mode (no signer provider mounted). Guard before destructuring.
@@ -522,23 +565,53 @@ const { isConnected, connect, disconnect, name } = signer;
 ### Custom Signer
 Implement `SignerContextValue` interface via `SignerContext.Provider`. Requires: `name`, `storeName` (unique per user for DB isolation), `accountConfig`, `signCb`, `isConnected`, `connect`, `disconnect`. Optional: `getKeyCb` and `insertKeyCb`, for an external keystore that also retrieves and persists secret keys. `SignerAccountConfig.accountType` is `@deprecated` and ignored as of protocol 0.15 - omit it. See `frontend-source-guide` skill for source references.
 
+## Error Surface
+
+```tsx
+import { MidenError, wrapWasmError } from "@miden-sdk/react";
+import type { CodedError, MidenErrorCode, WasmErrorCode } from "@miden-sdk/react";
+```
+
+- `MidenErrorCode` is the **closed** union assigned by this package: `"WASM_CLASS_MISMATCH" | "WASM_POINTER_CONSUMED" | "WASM_NOT_INITIALIZED" | "WASM_SYNC_REQUIRED" | "SEND_BUSY" | "OPERATION_BUSY" | "STALE_CLIENT" | "UNKNOWN"`. Every `MidenError` carries one, defaulting to `"UNKNOWN"`.
+- `WasmErrorCode` is the union assigned by the Rust client and thrown out of WASM: `"INVALID_CHAIN_ANCHOR" | "TRANSACTION_ALREADY_AUTHORIZED"`. These are not `MidenError`s.
+- `CodedError = Error & { readonly code?: MidenErrorCode | WasmErrorCode | (string & {}) }`. The **`(string & {})` arm is open on purpose**: a code from a newer client stays assignable while the known ones keep autocomplete. So `switch` on `code`, but always leave a default branch - the union is not exhaustive of what you can receive.
+
+Branch on `code`, never on message text; the strings are not a stable API. `wrapWasmError(e)` is the helper that turns a raw WASM throw into a `MidenError` by pattern-matching the message, which is how `_assertClass` / `expected instance of` becomes `WASM_CLASS_MISMATCH` and `null pointer` becomes `WASM_POINTER_CONSUMED`.
+
+**On Node, client-assigned codes arrive as a `"CODE: "` prefix on the message rather than as a property**, because the napi bindings cannot attach one. Code that does `err.code === "INVALID_CHAIN_ANCHOR"` works in the browser and silently never matches under Node; check the message prefix as well if you support both.
+
 ## Utility Functions
 
 ```tsx
-import { formatAssetAmount, parseAssetAmount, getNoteSummary, formatNoteSummary, toBech32AccountId } from "@miden-sdk/react";
+import {
+  formatAssetAmount, parseAssetAmount,
+  getNoteSummary, formatNoteSummary,
+  toBech32AccountId, installAccountBech32, ensureAccountBech32,
+  normalizeAccountId, accountIdsEqual,
+  readNoteAttachment, createNoteAttachment,
+  bytesToBigInt, bigIntToBytes, concatBytes,
+  waitForWalletDetection,
+  migrateStorage, clearMidenStorage, createMidenStorage,
+  MidenError, wrapWasmError,
+  DEFAULTS,
+} from "@miden-sdk/react";
 
 formatAssetAmount(1000000n, 8)       // "0.01"
 parseAssetAmount("0.01", 8)           // 1000000n
-const summary = getNoteSummary(note); // { id, assets, sender }
+const summary = getNoteSummary(note); // { id, assets, sender } | null
 formatNoteSummary(summary);           // "1.5 TEST from mtst1..."
-// The " from <sender>" suffix is appended only when the summary HAS assets. With an
-// empty `assets` array the function returns `summary.id` alone, with no asset text and
-// no sender suffix. `getNoteSummary` returns null when a note's id or metadata is not
-// ready yet, so guard before formatting.
 toBech32AccountId("0x1234...");       // "mtst1..." (testnet HRP; defaults to testnet)
 ```
 
-The HRP is inferred from the configured `rpcUrl` and defaults to testnet: mainnet=`mm`, testnet=`mtst` (default), devnet=`mdev` - there is no `miden` HRP.
+`getNoteSummary(note, getAssetMetadata?)` takes a `ConsumableNoteRecord | InputNoteRecord` and returns `NoteSummary | null` - **`null`** when the note's id is missing or anything in the read throws, i.e. for a note whose id or metadata is not ready yet. Guard before formatting.
+
+`formatNoteSummary(summary, formatAsset?)`: with an **empty `assets` array it returns `summary.id` alone** - no asset text and **no sender suffix**, regardless of whether `sender` is set. Otherwise it joins the assets with `" + "` and appends `" from <sender>"` only when a sender is present. Pass `formatAsset` to override the default `"<amount> <symbol-or-assetId>"` rendering.
+
+`DEFAULTS` is a **value** export, not a type: `{ RPC_URL: undefined, AUTO_SYNC_INTERVAL: 15000, STORAGE_MODE: "private", AUTH_SCHEME: AuthScheme.AuthRpoFalcon512, NOTE_TYPE: "private", FAUCET_DECIMALS: 8 }`. Note `AUTH_SCHEME` reads as `undefined` at runtime in a browser build, for the shadowing reason in web-sdk#223 above - which is exactly why the create hooks hang when you omit `authScheme`.
+
+`waitForWalletDetection(adapter, timeoutMs = 5000)` resolves once the adapter's `readyState` reaches `"Installed"` and otherwise rejects with `"Wallet extension not detected within <n>ms."` Its `WalletAdapterLike` argument is a duck type (`{ readyState: string; on/off("readyStateChange", cb) }`) with no dependency on any wallet-adapter package, so it works against any adapter and against a plain fake object.
+
+The HRP is inferred from the configured `rpcUrl` and defaults to testnet: mainnet=`mm`, testnet=`mtst` (default), devnet=`mdev` - there is no `miden` HRP. See `frontend-pitfalls` FP5 for the trap in that inference.
 
 ## Direct Client Access
 
@@ -553,10 +626,22 @@ await runExclusive(async () => {
 });
 ```
 
+**The built-in hooks route their own client calls through `runExclusive` too.** 22 files under `src/hooks/` pull it out of `useMiden()` and wrap their multi-call work, using the pattern `const runExclusiveSafe = runExclusive ?? runExclusiveDirect;` so they still serialize when no provider-supplied lock is available: `useSend`, `useMint`, `useConsume`, `useSwap`, `useBridge`, `useTransaction`, `usePreview`, `useChainAnchor`, `useCreateWallet`, `useCreateFaucet`, `useExecuteProgram`, `useCreateNetworkNote`, `useMultiSend`, `useWaitForNotes`, the four export/import hooks and all four PSWAP transaction hooks. Use it for your own multi-step sequences for the same reason they do - the client serializes each individual call, not your group of them (see `frontend-pitfalls` FP2).
+
+## Non-Surface: Do Not Invent These
+
+- **No dedicated React fee hook or provider option.** For a custom request, obtain the underlying client and call its `feeAwareTransactionRequestBuilder(accountId)` instance method.
+- **No `AccountDelta` / `AccountPatch` re-export.** The only summary-shaped re-export is `TransactionSummary` (used by `usePreview`).
+- **No protocol `AssetId` / `AssetClass` / `AssetVaultKey` type.** Every `assetId` in this package is a faucet (token) account reference - `asset.faucetId().toString()`. Do not "fix" these names to protocol ones.
+- **No `mutable` wallet option and no `storageMode: "network"`.** `CreateWalletOptions` is exactly `{ storageMode?, authScheme?, initSeed? }`.
+
+> **The package's own `README.md` and `ReactSDK.Arena.Findings.md` are stale - do not treat them as authoritative.** The README still documents `authScheme: 0`, a `mutable: true` wallet option and `storageMode: 'network'`, none of which exist in `src/types/index.ts`. The Arena findings file is a proposal document and describes an API that was never shipped in that shape. `src/types/index.ts` plus the hook bodies are the source of truth, and the package's `AGENTS.md` (which ships alongside this skill) is kept current.
+
 ## Type Imports
 
 ```tsx
-import { AuthScheme } from "@miden-sdk/react"; // value (friendly string const { Falcon, ECDSA }), not just a type
+import { AuthScheme, DEFAULTS, MidenError } from "@miden-sdk/react"; // values, not just types
+// AuthScheme is the friendly string const { Falcon, ECDSA } at runtime - see web-sdk#223.
 
 import type {
   MidenConfig, RpcUrlConfig, ProverConfig, ProverTarget, ProverUrls,
@@ -578,8 +663,12 @@ import type {
   TransactionRecord, TransactionRequest, TransactionSummary, ChainAnchor,
   NoteType, AccountStorageMode, PswapLineageRecord,
   SignerContextValue, SignCallback, SignerAccountConfig,
+  MultiSignerContextValue, WalletAdapterLike,
+  CodedError, MidenErrorCode, WasmErrorCode,
 } from "@miden-sdk/react";
 ```
+
+Every hook also exports its own result type from the package root, all suffixed `…Result` (`UseSendResult`, `UseCreateWalletResult`, `UseChainAnchorResult`, and so on) - with two exceptions that use `…Return`: `UseNoteStreamReturn` and `UseSessionAccountReturn`.
 
 `TransactionSummary` and `ChainAnchor` are re-exported **as types only**. If you need the runtime class (e.g. `ChainAnchor.deserialize`), import it from `@miden-sdk/miden-sdk`.
 

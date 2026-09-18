@@ -19,6 +19,8 @@ export default defineConfig({
 
 **Vite 5 or 6.** `@miden-sdk/vite-plugin` declares `peerDependencies.vite: "^5.0.0 || ^6.0.0"`. A fresh `npm create vite` scaffold is on Vite 7 and will not satisfy that peer, so pin Vite to 6 for now, and read the plugin's own `peerDependencies` before assuming a newer major works.
 
+`midenVitePlugin` is exported both as a named export and as the default export, so `import midenVitePlugin from "@miden-sdk/vite-plugin"` works too. It declares `enforce: "pre"`, so its `config` hook runs ahead of other plugins'.
+
 `midenVitePlugin()` works with no options for the common case: the default `@miden-sdk/miden-sdk` / `@miden-sdk/react` imports ship **single-threaded (ST)** WASM that loads in any browser context, so the default client runs with no cross-origin isolation. The plugin's `crossOriginIsolation` option defaults to `false` for the same reason, and the in-repo example wallet app (`packages/react-sdk/examples/wallet/vite.config.ts` in `0xMiden/web-sdk`) calls `midenVitePlugin()` bare. Don't reach for `crossOriginIsolation: true` unless you have actually opted into the multi-threaded build (see below).
 
 It composes with other Miden plugins: the same example config runs `midenVitePlugin()` alongside `paraVitePlugin()` from `@miden-sdk/para-react/vite` when the Para signer is in play.
@@ -61,9 +63,9 @@ Use the eager entry for an ordinary Vite browser bundle, where top-level await i
 
 ## What midenVitePlugin() Handles
 
-`@miden-sdk/vite-plugin` abstracts Miden-specific Vite configuration. It does **not** register a `.wasm` module loader, because Vite's built-in handling does the actual `.wasm` import. What the plugin sets up:
+`@miden-sdk/vite-plugin` abstracts Miden-specific Vite configuration. It implements only the `config` and `configResolved` hooks, and it does **not** register a `.wasm` module loader, because Vite's built-in handling does the actual `.wasm` import. What the plugin sets up:
 
-- **WASM and React dedup / single copy** - `resolve.alias` (exact-match regex, so subpath imports like `/lazy` still resolve through the package's `exports` map), `resolve.dedupe` and `resolve.preserveSymlinks` force a single resolved copy of `@miden-sdk/miden-sdk` **and** of `react`, `react-dom`, `react/jsx-runtime` and `@miden-sdk/react` (avoids WASM class-identity issues across symlinked/monorepo setups). The dedupe list is re-applied in `configResolved`, after every other plugin's `config()` hook, so another plugin can't clobber it
+- **WASM and React dedup / single copy** - `resolve.alias` (exact-match regex, so subpath imports like `/lazy` still resolve through the package's `exports` map), `resolve.dedupe` and `resolve.preserveSymlinks` force a single resolved copy of `@miden-sdk/miden-sdk` **and** of `react`, `react-dom`, `react/jsx-runtime` and `@miden-sdk/react` (avoids WASM class-identity issues across symlinked/monorepo setups). The alias replacement is resolved with `require.resolve` on the package's `package.json`, rather than joined onto `<root>/node_modules`, so it stays correct under pnpm and Yarn Plug'n'Play; a bare `node_modules` path is only the fallback when that throws. The dedupe list is re-applied in `configResolved`, after every other plugin's `config()` hook, so another plugin can't clobber it
 - **optimizeDeps.exclude** - Excludes `@miden-sdk/miden-sdk` from pre-bundling (pre-bundling corrupts the WASM binary)
 - **Top-level await** - Sets `build.target: "esnext"` for the production build, and `optimizeDeps.esbuildOptions.target: "esnext"` for dev pre-bundling when you haven't set one. Both are needed: the WASM SDK's initialization uses top-level `await`, and dev and build compile it through different pipelines
 - **ES-module workers** - Sets `worker.format: "es"` and `worker.rollupOptions.output.format: "es"`, required for the WASM SDK's module workers
@@ -102,6 +104,8 @@ Notes:
 ## Production Deployment Headers
 
 These headers apply **only if you ship the MT WASM variant** (`/mt` or `/mt/lazy`). The default ST build needs none of this, so skip the whole section if you're on the default imports. If you are on MT, the COOP/COEP headers must be set on the production server: `midenVitePlugin({ crossOriginIsolation: true })` only emits them on the Vite dev server (`vite`) and the Vite preview server (`vite preview`), and does not touch your real production host. Configure the headers separately on nginx/Vercel/Cloudflare/etc.
+
+The maintained host reference is the "Setting cross-origin isolation headers" section of `crates/web-client/README.md` in [`0xMiden/web-sdk`](https://github.com/0xMiden/web-sdk) (shipped as the `@miden-sdk/miden-sdk` npm README). It covers forms this skill does not list: Next.js (`next.config.mjs` `headers()`), Express / generic Node (`res.setHeader`), and MV3 browser-extension manifests (`"cross_origin_opener_policy": { "value": "same-origin" }`). Check it before hand-rolling a host config.
 
 ### Nginx
 ```nginx
@@ -148,6 +152,8 @@ Cross-Origin-Embedder-Policy: credentialless
 
 Note: `credentialless` provides weaker isolation but allows most cross-origin resources.
 
+If you cannot set the headers at all - a CDN or hosting provider that allows no header injection - the documented escape hatch is the COI service-worker shim pattern (`gzuidhof/coi-serviceworker`): a small same-origin service worker intercepts fetches and re-injects the headers on the way back. The SDK deliberately does not bundle it, because installing a service worker into a consumer's app is intrusive. Adopt it as a conscious decision, not a default.
+
 ## TypeScript Compatibility
 
 Standard Vite-compatible tsconfig settings work with Miden. The only actual constraint is ES2020+ for `bigint` support:
@@ -178,3 +184,4 @@ Standard Vite-compatible tsconfig settings work with Miden. The only actual cons
 | Build succeeds but WASM fails at runtime | Wrong MIME type | Serve .wasm as application/wasm |
 | "recursive use of an object" | Concurrent WASM access | Use runExclusive() from useMiden() |
 | Double initialization in dev | React StrictMode | Use MidenProvider (handles this internally) |
+| A failed VM assertion reports only an error code, with no message | Production builds strip the MASM debug metadata (source spans, `assert.err` message text) out of the Miden packages embedded in the WASM binary - that strip is what takes the ST build from 27.4 MB to 18.8 MB | Reproduce against a dev build, which keeps full diagnostics: `MIDEN_WEB_DEV=true` when building `@miden-sdk/miden-sdk` (the `build-dev` script, and what `make integration-test-web-client` uses) |
