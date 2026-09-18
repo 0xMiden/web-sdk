@@ -39,11 +39,11 @@ test("foreign account inputs preserve descending account order, including prefet
     ]);
     return {
       expected: accounts.map((account) => account.id().toString()),
+      // `accountId` is the one spelling on both builds. Accepting a
+      // snake_case fallback here is what let the WASM and Node surfaces
+      // drift apart unnoticed, so the assertion pins the camelCase name.
       callerIds: foreignAccounts.map((account) =>
-        (account.account_id
-          ? account.account_id()
-          : account.accountId()
-        ).toString()
+        account.accountId().toString()
       ),
       fetched: inputs.map((input) => input.accountId().toString()),
       repeated: repeated.map((input) => input.accountId().toString()),

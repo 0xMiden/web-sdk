@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changes
+
+* [BREAKING][web] `ForeignAccount.account_id()` and `ForeignAccount.storage_slot_requirements()` are now `accountId()` and `storageSlotRequirements()`. Both accessors carried no `js_name`, so the WASM build exposed them under their Rust spelling while the Node build exposed the camelCase names `napi` derives by default - the same object answered to a different name depending on which build you loaded. They now carry the camelCase spelling on both, matching `AccountInputs.accountId()` and the rest of the surface. If you call either from a browser build, rename the call; a Node caller is unaffected.
+
 ### Fixes
 
 * [FIX][web] `AccountDetails.storage`, the field `client.accounts.getDetails()` returns, was declared as the raw WASM `AccountStorage`. `Account.prototype.storage()` is patched at load time to return a `StorageView`, so the declaration named a type the value never had: TypeScript accepted `storage.getItem(name)` as returning a `Word` when it returns a `StorageResult`, and rejected `getSlotNames`, `getMapEntries`, `getCommitment` and `.raw`, which the value does have. It is now typed as `StorageView`, with the `valueOf()` overflow throw and the string-returning `toJSON()` documented on the field.
