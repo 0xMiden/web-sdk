@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0 (TBD)
+
+### Changes
+
+* [BREAKING][web] `ForeignAccount.account_id()` and `ForeignAccount.storage_slot_requirements()` are now `accountId()` and `storageSlotRequirements()` on the WASM build. They had no `js_name`, so the WASM build exposed them in snake_case while napi camelCased them by default, leaving the same two accessors with different names depending on which build a consumer loaded. The camelCase spelling matches what Node already exposed and the rest of the JS surface, so only WASM callers change.
+
 ## 0.16.0 (2026-09-07)
 
 ### Changes
