@@ -50,6 +50,7 @@ Everything is published from this monorepo, in lockstep with the upstream Rust [
 > 2. **Upgrade** — when Dexie recreates a newer schema and the previous settings rows are gone, `clientVersion` is missing/`null` while account headers still exist; that path also resets the store so a fresh sync can proceed.
 >
 > Both paths delete the store, and the store holds account authentication keys. Export anything you want to keep with `client.accounts.export(accountId)` before pinning back to an older line — an account cannot be recovered from a wiped store.
+> Export does not cover pending incoming notes (committed to you on chain but not yet consumed). After a wipe those notes are still public and unconsumed, but the client will not see them again via `tags` + `sync()` alone; they must be re-requested, typically with `notes.import(NoteFile.fromNoteId(id))` when the app still has the note id.
 > If the app still fails after an automatic reset, clear site data for the origin once and reopen.
 
 
