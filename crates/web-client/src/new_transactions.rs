@@ -1071,27 +1071,13 @@ async fn fee_aware_builder_with(
         return Ok(builder);
     }
 
-    // Draw only when the caller pinned nothing. Drawing and discarding would advance the client
-    // RNG, and `seed` documents that stream as reproducible, so a pinned build would shift every
-    // later draw relative to a defaulted one.
-    let salt = match overrides.salt {
-        Some(salt) => salt,
-        None => client.rng().draw_word(),
-    };
-
     // A multisig account reads three words out of its auth args - the block the summary binds and
     // its approval expiration, the salt, and the fee conversion info - while miden-client's own
     // `fee_conversion_salt` path commits the two-word fee pair that a fixed-salt component reads.
     // Handing a multisig the shorter preimage makes its auth procedure abort while piping it
     // ("advice stack read failed"), so build the multisig shape here and set it as the auth arg;
     // miden-client leaves a request that already carries one alone.
-    let auth_args = multisig_auth_args(
-        client,
-        salt,
-        overrides.approval_expiration_delta,
-        overrides.bound_block_num,
-    )
-    .await?;
+    let auth_args = multisig_auth_args(client, overrides).await?;
     let commitment = auth_args.to_commitment();
     builder = builder
         .auth_arg(commitment)
@@ -1110,9 +1096,7 @@ async fn fee_aware_builder_with(
 /// The approval does not expire unless `approval_expiration_delta` asks for one.
 async fn multisig_auth_args(
     client: &mut Client<crate::ClientAuth>,
-    salt: NativeWord,
-    approval_expiration_delta: Option<u32>,
-    bound_block_num: Option<BlockNumber>,
+    overrides: MultisigAuthOverrides,
 ) -> Result<MultisigAuthArgs, JsErr> {
     // One read, not two. `get_latest_block_header` itself begins with a sync-height read, so
     // taking the bound block from a separate `get_sync_height` call read it twice and let a sync
@@ -1122,7 +1106,7 @@ async fn multisig_auth_args(
     let header = client.get_latest_block_header().await.map_err(|err| {
         js_error_with_context(err, "failed to read the latest block header for the auth args")
     })?;
-    let bound_block_num = bound_block_num.unwrap_or_else(|| header.block_num());
+    let bound_block_num = overrides.bound_block_num.unwrap_or_else(|| header.block_num());
     let protocol_config = client
         .get_protocol_config(header.protocol_config_commitment())
         .await
@@ -1130,23 +1114,49 @@ async fn multisig_auth_args(
             js_error_with_context(err, "failed to read the registered protocol configuration")
         })?;
 
+    // Validate the expiration BEFORE drawing, so no fallible step sits between the draw and the
+    // return. `with_approval_expiration_delta` is fallible too - it rejects a delta that carries
+    // the expiration past the maximum block number - so its bound is checked here rather than
+    // relying on the setter, which can only run once the args exist and therefore once the salt
+    // has been drawn.
+    let expiration = match overrides.approval_expiration_delta {
+        // Zero would mean "expired at the block it was approved at", which the kernel rejects
+        // rather than reading as no expiration; refuse it where the caller can see why.
+        Some(0) => {
+            return Err(from_str_err(concat!(
+                "approvalExpirationDelta must be at least 1 block; ",
+                "omit it for an approval that does not expire",
+            )));
+        },
+        Some(delta) => {
+            let delta = NonZeroU32::new(delta).expect("zero is rejected above");
+            bound_block_num.as_u32().checked_add(delta.get()).ok_or_else(|| {
+                from_str_err(
+                    "approvalExpirationDelta carries the expiration past the maximum block number",
+                )
+            })?;
+            Some(delta)
+        },
+        None => None,
+    };
+
+    // Everything that can fail has run. Draw only now, and only when the caller pinned nothing:
+    // drawing and discarding would advance the client RNG, and `seed` documents that stream as
+    // reproducible, so a build that errored would shift every later draw relative to one that
+    // did not.
+    let salt = match overrides.salt {
+        Some(salt) => salt,
+        None => client.rng().draw_word(),
+    };
+
     let auth_args = MultisigAuthArgs::new(bound_block_num, salt).with_conversion_info(
         FeeConversionInfo::one_to_one(protocol_config.fee_asset_id().faucet_id()),
     );
 
-    match approval_expiration_delta {
-        // Zero would mean "expired at the block it was approved at", which the kernel rejects
-        // rather than reading as no expiration; refuse it where the caller can see why.
-        Some(0) => Err(from_str_err(concat!(
-            "approvalExpirationDelta must be at least 1 block; ",
-            "omit it for an approval that does not expire",
-        ))),
-        Some(delta) => {
-            let delta = NonZeroU32::new(delta).expect("zero is rejected above");
-            auth_args.with_approval_expiration_delta(delta).map_err(|err| {
-                js_error_with_context(err, "failed to set the multisig approval expiration")
-            })
-        },
+    match expiration {
+        Some(delta) => auth_args.with_approval_expiration_delta(delta).map_err(|err| {
+            js_error_with_context(err, "failed to set the multisig approval expiration")
+        }),
         None => Ok(auth_args),
     }
 }
