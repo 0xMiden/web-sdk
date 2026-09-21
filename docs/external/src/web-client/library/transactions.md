@@ -224,7 +224,7 @@ const builder = await client.feeAwareTransactionRequestBuilder(wallet);
 const request = builder.withCustomScript(script).build();
 ```
 
-`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: on a zero-fee chain, or for any account that does not choose its own salt, it returns an untouched builder.
+`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig it returns an untouched builder. A zero base fee is not a second condition — since 0.17 a multisig resolves its auth args whatever the chain charges.
 
 To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's request bytes — declare it directly:
 
@@ -244,6 +244,8 @@ const request = (
   .withCustomScript(script)
   .build();
 ```
+
+Each call **consumes** the `Word` you pass: it is moved across the WASM boundary, so a second call needs a freshly built one. Reusing a spent handle is not an error - it arrives as "no salt given" and one is drawn for you, which is the divergence pinning the salt exists to prevent.
 
 The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
 

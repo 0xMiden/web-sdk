@@ -110,8 +110,24 @@ hydrate-web-client: ## Populate crates/web-client/dist from the published npm ta
 .PHONY: test-coverage
 test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-unit ## Run all coverage gates
 
+# Every Playwright suite that runs against a local node needs the chain's fee faucet: since 0.17
+# a client cannot execute or screen notes without one, and the fixtures now fail loudly rather
+# than skipping silently. The node mints a fresh one at each genesis and prints it to its
+# bootstrap log, which is the same extraction CI performs. Override TEST_NODE_BOOTSTRAP_LOG for a
+# node started elsewhere, or export TEST_MIDEN_FEE_FAUCET_ID yourself to skip the lookup.
+TEST_NODE_BOOTSTRAP_LOG ?= ../miden-client/target/test-node/data/logs/bootstrap.log
+export TEST_MIDEN_FEE_FAUCET_ID ?= $(shell sed -n 's/^Native faucet account id: //p' $(TEST_NODE_BOOTSTRAP_LOG) 2>/dev/null | tail -1)
+
+.PHONY: require-fee-faucet
+require-fee-faucet:
+	@test -n "$(TEST_MIDEN_FEE_FAUCET_ID)" || { \
+		echo "TEST_MIDEN_FEE_FAUCET_ID is unset and no faucet id was found in $(TEST_NODE_BOOTSTRAP_LOG)."; \
+		echo "Start the test node, point TEST_NODE_BOOTSTRAP_LOG at its bootstrap log, or export the id."; \
+		exit 1; \
+	}
+
 .PHONY: test-web-client-nodejs
-test-web-client-nodejs: ## Run web client tests on Node.js (mock chain, no browser needed)
+test-web-client-nodejs: require-fee-faucet ## Run web client tests on Node.js (mock chain, no browser needed)
 	cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
 	cd ./crates/web-client && SKIP_WEB_SERVER=1 pnpm exec playwright test --project=nodejs --workers=1
 
@@ -123,19 +139,19 @@ SHARD_PARAMETER ?= ""
 # `pnpm run script -- --project=X` appends to the LAST command in the chain,
 # making playwright see `-- --project=X` and treat `--project=X` as a
 # positional file regex. Splitting the steps in Make keeps args clean.
-integration-test-web-client: ## Run integration tests for the web client (with a chromium browser)
+integration-test-web-client: require-fee-faucet ## Run integration tests for the web client (with a chromium browser)
 	pnpm install --no-frozen-lockfile
 	cross-env MIDEN_WEB_DEV=true pnpm --filter @miden-sdk/miden-sdk run build
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test:clean --project=chromium $(SHARD_PARAMETER)
 
 .PHONY: integration-test-web-client-webkit
-integration-test-web-client-webkit: ## Run web client tests (webkit)
+integration-test-web-client-webkit: require-fee-faucet ## Run web client tests (webkit)
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test --project=webkit
 
 .PHONY: integration-test-remote-prover-web-client
-integration-test-remote-prover-web-client: ## Run integration tests for the web client with remote prover
+integration-test-remote-prover-web-client: require-fee-faucet ## Run integration tests for the web client with remote prover
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test:remote_prover --project=chromium
 

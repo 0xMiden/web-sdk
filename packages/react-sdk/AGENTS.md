@@ -421,7 +421,7 @@ charges. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
 miden-client has each setter clear the other, so whichever is called last wins
 rather than producing an error. Never call either on a builder this method
 returned for a multisig - it already carries the three-word auth args, and
-either setter discards them. Pass `feeConversionSalt` in the options instead.
+either setter discards them. Pass `feeConversionSalt` in the options instead, building a fresh `Word` per call - the parameter is moved across the WASM boundary, so a reused handle arrives as "no salt given" and one is drawn.
 
 ### Prevent Race Conditions
 ```tsx

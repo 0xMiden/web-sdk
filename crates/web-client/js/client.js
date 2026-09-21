@@ -490,6 +490,8 @@ export class MidenClient {
    *   signatures this many blocks after the block the summary binds. Omit it
    *   for an approval that never expires; at least 1.
    * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
+   *   Consumed by the call: build a fresh `Word` per call, since a spent handle
+   *   arrives as "no salt given" rather than as an error.
    * @param {number} [options.boundBlockNum] - The block the summary binds.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
    */

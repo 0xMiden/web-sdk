@@ -41,7 +41,7 @@ function normBytes(val) {
  *
  * Matches the browser interface:
  *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId)
- *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign)
+ *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, logLevel, useWorker, observability, feeFaucetId)
  *   WasmWebClient.buildSwapTag(...)
  *
  * @param {object} rawSdk - The raw napi SDK module.

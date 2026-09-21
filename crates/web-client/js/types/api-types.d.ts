@@ -1708,7 +1708,14 @@ export interface MultisigAuthOptions {
    * least 1; omitted, the approval does not expire.
    */
   approvalExpirationDelta?: number;
-  /** The salt the summary binds. Omitted, one is drawn fresh per build. */
+  /**
+   * The salt the summary binds. Omitted, one is drawn fresh per build.
+   *
+   * Consumed by the call: the `Word` is moved across the WASM boundary, so a
+   * second call needs a freshly constructed one. Passing a spent handle is not
+   * an error - it arrives as if no salt were given and one is drawn, which is
+   * the divergence pinning the salt exists to prevent.
+   */
   feeConversionSalt?: Word;
   /** The block the summary binds. Omitted, the store's sync height. */
   boundBlockNum?: number;

@@ -103,6 +103,8 @@ build, the warning below about resolving a factory exactly once applies here too
 — capture the anchor, then preview and execute against `anchoredRequest`. A
 co-signer rebuilding the proposal instead of receiving its bytes passes
 `feeConversionSalt` and `boundBlockNum`, or the two summaries cannot match.
+Each call consumes the `Word`, so a second build needs a freshly constructed
+one; a spent handle arrives as "no salt given" and one is drawn instead.
 
 ## Verifying and co-signing
 
