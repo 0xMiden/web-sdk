@@ -15,7 +15,7 @@ test.describe("network note tests", () => {
   test("custom-script note carries a NetworkAccountTarget and it survives submit", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
       await client.syncState();
 
       // The note script is reused for the allowlist root and the note itself.
@@ -50,18 +50,25 @@ test.describe("network note tests", () => {
       const networkAccountBuilder = new sdk.AccountBuilder(seed).storageMode(
         sdk.AccountStorageMode.public()
       );
+      // Needed to deploy: see the comment on the mint-and-consume below. The
+      // P2ID note that gives the deploy its effect calls `receive_asset` on the
+      // target, which only the wallet component exposes.
+      networkAccountBuilder.withBasicWalletComponent();
       for (const component of networkAuth) {
         networkAccountBuilder.withComponent(component);
       }
       const networkAccount = networkAccountBuilder.build().account;
       await client.newAccount(networkAccount, false);
 
-      // Scriptless deploy: the network auth component bumps the nonce itself, so
-      // an empty transaction commits the account on-chain.
-      await client.submitNewTransaction(
-        networkAccount.id(),
-        new sdk.TransactionRequestBuilder().build()
-      );
+      // Deploy by consuming a note, not by an empty transaction: since 0.17 the
+      // network auth component asserts the transaction had an effect before fee
+      // payment (`ERR_NETWORK_ACCOUNT_TRANSACTION_HAS_NO_EFFECT` - an input note,
+      // an output note, or a changed account state), and a scriptless deploy has
+      // none. A minted P2ID note is the cheapest effect the account's own
+      // allowlist already permits: `allowedNotes` above carries that script root.
+      await helpers.mockMintAndConsume(networkAccount.id(), feeFaucet.id(), {
+        publicNote: true,
+      });
       await client.proveBlock();
       await client.syncState();
 
