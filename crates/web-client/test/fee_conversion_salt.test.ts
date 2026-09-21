@@ -134,9 +134,9 @@ test.describe("multisig auth args", () => {
     expect(result.withExpiry).not.toBe(result.withoutExpiry);
     // Zero is refused where the caller can see why, not silently read as "never".
     expect(result.zeroError).toContain("approvalExpirationDelta");
-    // And the message is the one intended, with no whitespace artefact: this is
-    // the guard for a literal that three reviewers read as malformed and that
-    // really was, because the tooling that wrote it ate the line continuation.
+    // The message is assembled from string literals concatenated across source
+    // lines. A stray run of spaces at a join would survive silently into what
+    // the caller sees, so assert there is none.
     expect(result.zeroError).not.toMatch(/ {2,}/);
   });
 });

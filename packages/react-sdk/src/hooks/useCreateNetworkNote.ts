@@ -128,6 +128,9 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
           // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
           // `estimate_note_fee` on the target, so declare it as a foreign
           // account rather than relying on the client resolving it lazily.
+          // That pricing call also caps this transaction at 20 blocks from its
+          // reference block; on an expiry rejection the caller must sync before
+          // retrying, since neither this hook nor the resource syncs first.
           // `client.transactions.createNetworkNote` does the same; this hook
           // builds its request itself, so it owns the declaration.
           const targetAccounts = new ForeignAccountArray();

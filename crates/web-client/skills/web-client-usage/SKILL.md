@@ -428,7 +428,7 @@ What happens if you skip it:
   with `TransactionRequestBuilder.withAuthArg` plus `extendAdviceMap`.
 
 `withAuthArg` and `withFeeConversionSalt` are mutually exclusive - each setter
-clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead.
+clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead - and build a fresh `Word` for every call, because the parameter is moved across the WASM boundary and a spent handle arrives as "no salt given".
 
 ## Transactions
 

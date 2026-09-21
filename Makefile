@@ -116,7 +116,14 @@ test-coverage: test-react-sdk test-idxdb-store test-vite-plugin test-web-client-
 # bootstrap log, which is the same extraction CI performs. Override TEST_NODE_BOOTSTRAP_LOG for a
 # node started elsewhere, or export TEST_MIDEN_FEE_FAUCET_ID yourself to skip the lookup.
 TEST_NODE_BOOTSTRAP_LOG ?= ../miden-client/target/test-node/data/logs/bootstrap.log
-export TEST_MIDEN_FEE_FAUCET_ID ?= $(shell sed -n 's/^Native faucet account id: //p' $(TEST_NODE_BOOTSTRAP_LOG) 2>/dev/null | tail -1)
+ifndef TEST_MIDEN_FEE_FAUCET_ID
+# `:=` inside the guard, not a bare `?=`: an exported recursive variable is re-expanded while
+# make builds the environment for every recipe line of every target, which would re-run this
+# lookup across the whole build. An env or command-line value still wins, because the guard
+# short-circuits before this runs.
+TEST_MIDEN_FEE_FAUCET_ID := $(shell sed -n 's/^Native faucet account id: //p' $(TEST_NODE_BOOTSTRAP_LOG) 2>/dev/null | tail -1)
+endif
+export TEST_MIDEN_FEE_FAUCET_ID
 
 .PHONY: require-fee-faucet
 require-fee-faucet:

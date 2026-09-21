@@ -1101,8 +1101,10 @@ async fn multisig_auth_args(
     // One read, not two. `get_latest_block_header` itself begins with a sync-height read, so
     // taking the bound block from a separate `get_sync_height` call read it twice and let a sync
     // landing in between bind the summary to one block while reading the fee asset from another.
-    // The fee asset comes from the protocol configuration the reference block commits to, which
-    // is the same one execution resolves; reading both off this header keeps them in step.
+    // The fee asset comes from the protocol configuration the latest header commits to, which is
+    // the one execution resolves. When the caller pins an older bound block the two are read from
+    // different blocks; that cannot differ today, because a client registers exactly one
+    // configuration and the node serves none, but this is the assumption it rests on.
     let header = client.get_latest_block_header().await.map_err(|err| {
         js_error_with_context(err, "failed to read the latest block header for the auth args")
     })?;
@@ -1115,10 +1117,8 @@ async fn multisig_auth_args(
         })?;
 
     // Validate the expiration BEFORE drawing, so no fallible step sits between the draw and the
-    // return. `with_approval_expiration_delta` is fallible too - it rejects a delta that carries
-    // the expiration past the maximum block number - so its bound is checked here rather than
-    // relying on the setter, which can only run once the args exist and therefore once the salt
-    // has been drawn.
+    // return. `with_approval_expiration_delta` is fallible, and it can only run on an args value,
+    // which needs a salt - so it is exercised here against a throwaway one.
     let expiration = match overrides.approval_expiration_delta {
         // Zero would mean "expired at the block it was approved at", which the kernel rejects
         // rather than reading as no expiration; refuse it where the caller can see why.
@@ -1130,11 +1130,14 @@ async fn multisig_auth_args(
         },
         Some(delta) => {
             let delta = NonZeroU32::new(delta).expect("zero is rejected above");
-            bound_block_num.as_u32().checked_add(delta.get()).ok_or_else(|| {
-                from_str_err(
-                    "approvalExpirationDelta carries the expiration past the maximum block number",
-                )
-            })?;
+            // Validate through the upstream setter rather than re-deriving its bound here: a
+            // throwaway args value proves the real call below cannot fail for this input, and
+            // nothing local has to stay in step with what upstream rejects.
+            MultisigAuthArgs::new(bound_block_num, NativeWord::default())
+                .with_approval_expiration_delta(delta)
+                .map_err(|err| {
+                    js_error_with_context(err, "failed to set the multisig approval expiration")
+                })?;
             Some(delta)
         },
         None => None,
