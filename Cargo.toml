@@ -45,8 +45,13 @@ idxdb-store     = { default-features = false, package = "miden-idxdb-store", pat
 js-export-macro = { path = "crates/js-export-macro", version = "0.16" }
 
 # Client crates
+# `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
+# the `SequentialCommit` trait, which `miden-client` does not re-export but which the multisig auth
+# args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
+# copy of the protocol types, so bump the three together.
 miden-client              = { default-features = false, version = "0.17.0-rc.1" }
 miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.1" }
+miden-protocol            = { default-features = false, version = "0.17.0-rc.5" }
 
 # External dependencies
 async-trait = { version = "0.1" }

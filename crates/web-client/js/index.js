@@ -448,7 +448,11 @@ class WebClient {
     this.insertKeyCb = insertKeyCb;
     this.signCb = signCb;
     this.logLevel = logLevel;
-    this.feeFaucetId = feeFaucetId;
+    // Stored under a private name on purpose: `createClientProxy` forwards only
+    // properties MISSING from this instance (`prop in target` wins), so an own
+    // property called `feeFaucetId` would shadow the WASM accessor of that name
+    // and `client.feeFaucetId()` would return this string instead of calling it.
+    this._feeFaucetId = feeFaucetId;
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -787,7 +791,7 @@ class WebClient {
         !!this.signCb,
         this.logLevel,
         numThreads,
-        this.feeFaucetId,
+        this._feeFaucetId,
       ],
     });
   }

@@ -1,6 +1,8 @@
 use alloc::collections::BTreeMap;
+use core::num::NonZeroU32;
 
 use js_export_macro::js_export;
+use miden_client::account::standards::auth::{FeeConversionInfo, MultisigAuthArgs};
 use miden_client::account::{AccountComponentInterfaceExt, AccountId as NativeAccountId};
 use miden_client::agglayer::B2AggNote;
 use miden_client::asset::{AssetAmount, FungibleAsset};
@@ -26,6 +28,7 @@ use miden_client::transaction::{
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
 };
 use miden_client::{Client, ClientError, Word as NativeWord};
+use miden_protocol::crypto::SequentialCommit;
 
 use crate::models::NoteType;
 use crate::models::account_id::AccountId;
@@ -833,19 +836,39 @@ impl WebClient {
     ///
     /// For every other account this returns an untouched builder, so it is a safe drop-in: fees
     /// are settled in the chain's native fee asset at rate 1/1 and miden-client commits that
-    /// itself, under a fixed default salt, without anything being declared here. It is also a
-    /// no-op on a zero-fee chain.
+    /// itself, under a fixed default salt, without anything being declared here.
+    ///
+    /// `approval_expiration_delta`, when given, expires the approvers' signatures `delta` blocks
+    /// after the block the summary binds: the transaction must then be included by
+    /// `bound_block + delta` or it can no longer be executed. It is bound by the summary, so
+    /// neither the executing party nor a relay can shorten or extend it. Left out, the approval
+    /// never expires, which is the default. It is ignored for an account that is not a multisig,
+    /// since no other auth component reads it.
     #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
     pub async fn fee_aware_transaction_request_builder(
         &self,
         account_id: &AccountId,
+        approval_expiration_delta: Option<u32>,
     ) -> Result<TransactionRequestBuilder, JsErr> {
+        let approval_expiration_delta = match approval_expiration_delta {
+            // Zero would mean "expired at the block it was approved at", which the kernel rejects
+            // rather than treating as no expiration; refuse it here where the caller can see why.
+            Some(0) => {
+                return Err(from_str_err(
+                    "approvalExpirationDelta must be at least 1 block; omit it for an approval                      that does not expire",
+                ));
+            },
+            Some(delta) => NonZeroU32::new(delta),
+            None => None,
+        };
+
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| {
             from_str_err("Client not initialized while creating a transaction request builder")
         })?;
 
-        let builder = fee_aware_builder(client, account_id.into()).await?;
+        let builder =
+            fee_aware_builder_with(client, account_id.into(), approval_expiration_delta).await?;
         Ok(TransactionRequestBuilder::from_native(builder))
     }
 }
@@ -1038,9 +1061,73 @@ async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
+    fee_aware_builder_with(client, executing_account_id, None).await
+}
+
+/// `fee_aware_builder` with an approval expiration for the multisig case, which only
+/// `feeAwareTransactionRequestBuilder` exposes; every convenience constructor passes `None`.
+async fn fee_aware_builder_with(
+    client: &mut Client<crate::ClientAuth>,
+    executing_account_id: NativeAccountId,
+    approval_expiration_delta: Option<NonZeroU32>,
+) -> Result<NativeTransactionRequestBuilder, JsErr> {
     let mut builder = NativeTransactionRequestBuilder::new();
-    if let Some(salt) = caller_chosen_fee_conversion_salt(client, executing_account_id).await? {
-        builder = builder.fee_conversion_salt(salt);
-    }
+    let Some(salt) = caller_chosen_fee_conversion_salt(client, executing_account_id).await? else {
+        return Ok(builder);
+    };
+
+    // A multisig account reads three words out of its auth args - the block the summary binds and
+    // its approval expiration, the salt, and the fee conversion info - while miden-client's own
+    // `fee_conversion_salt` path commits the two-word fee pair that a fixed-salt component reads.
+    // Handing a multisig the shorter preimage makes its auth procedure abort while piping it
+    // ("advice stack read failed"), so build the multisig shape here and set it as the auth arg;
+    // miden-client leaves a request that already carries one alone.
+    let auth_args = multisig_auth_args(client, salt, approval_expiration_delta).await?;
+    let commitment = auth_args.to_commitment();
+    builder = builder
+        .auth_arg(commitment)
+        .extend_advice_map([(commitment, auth_args.to_elements())]);
     Ok(builder)
+}
+
+/// The multisig auth args for a request built now: bound to the store's sync height, carrying the
+/// caller's salt and the chain's fee conversion info.
+///
+/// The bound block is what the approvers sign over, and the kernel requires it at or before the
+/// transaction's reference block. A request executed against a [`ChainAnchor`] therefore has to be
+/// built and anchored at the same sync height - capture the anchor for the request as soon as it
+/// is built, before the chain advances.
+///
+/// The approval does not expire unless `approval_expiration_delta` asks for one.
+async fn multisig_auth_args(
+    client: &mut Client<crate::ClientAuth>,
+    salt: NativeWord,
+    approval_expiration_delta: Option<NonZeroU32>,
+) -> Result<MultisigAuthArgs, JsErr> {
+    let bound_block_num = client.get_sync_height().await.map_err(|err| {
+        js_error_with_context(err, "failed to read the sync height for the multisig auth args")
+    })?;
+
+    // The fee asset comes from the protocol configuration the reference block commits to, which
+    // is the same one execution resolves; reading it from the header keeps the two in step.
+    let header = client.get_latest_block_header().await.map_err(|err| {
+        js_error_with_context(err, "failed to read the latest block header for the auth args")
+    })?;
+    let protocol_config = client
+        .get_protocol_config(header.protocol_config_commitment())
+        .await
+        .map_err(|err| {
+            js_error_with_context(err, "failed to read the registered protocol configuration")
+        })?;
+
+    let auth_args = MultisigAuthArgs::new(bound_block_num, salt).with_conversion_info(
+        FeeConversionInfo::one_to_one(protocol_config.fee_asset_id().faucet_id()),
+    );
+
+    match approval_expiration_delta {
+        Some(delta) => auth_args.with_approval_expiration_delta(delta).map_err(|err| {
+            js_error_with_context(err, "failed to set the multisig approval expiration")
+        }),
+        None => Ok(auth_args),
+    }
 }
