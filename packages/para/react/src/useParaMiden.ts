@@ -17,6 +17,7 @@ import {
  * Returns:
  * - client: MidenClient instance backed by the active Para session (or null while loading)
  * - accountId: Miden account id derived for the selected EVM wallet
+ * - error: message if client setup failed after Para connected
  * - para: Para client instance from context
  * - evmWallets: filtered list of Para wallets with type === 'EVM'
  * - nodeUrl: Miden node endpoint used for the client
@@ -35,6 +36,7 @@ export function useParaMiden(
   const { isConnected, embedded } = useAccount();
   const clientRef = useRef<MidenClient | null>(null);
   const [accountId, setAccountId] = useState<string>("");
+  const [error, setError] = useState<string>("");
 
   const evmWallets = useMemo(
     () => embedded.wallets?.filter((wallet) => wallet.type === "EVM"),
@@ -54,25 +56,33 @@ export function useParaMiden(
         return;
       }
 
-      const { client: midenParaClient, accountId: aId } =
-        await createParaMidenClient(
-          para,
-          evmWallets as Wallet[],
-          {
-            ...opts,
-            endpoint: nodeUrl,
-            storageMode,
-          },
-          showSigningModal,
-          customSignConfirmStep
-        );
+      try {
+        const { client: midenParaClient, accountId: aId } =
+          await createParaMidenClient(
+            para,
+            evmWallets as Wallet[],
+            {
+              ...opts,
+              endpoint: nodeUrl,
+              storageMode,
+            },
+            showSigningModal,
+            customSignConfirmStep
+          );
 
-      if (cancelled) {
-        return;
+        if (cancelled) {
+          return;
+        }
+
+        clientRef.current = midenParaClient;
+        setAccountId(aId);
+        setError("");
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setError(err instanceof Error ? err.message : String(err));
       }
-
-      clientRef.current = midenParaClient;
-      setAccountId(aId);
     }
 
     setupClient();
@@ -92,6 +102,7 @@ export function useParaMiden(
   return {
     client: clientRef.current,
     accountId,
+    error,
     para,
     evmWallets,
     nodeUrl,

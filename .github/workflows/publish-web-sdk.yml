@@ -17,15 +17,21 @@
 # Branching:
 # - `release: published` → publishes to the `latest` dist-tag, gated by
 #   the `check-*-version-release.sh` scripts.
+# - `workflow_dispatch` → same `latest` path as a GitHub Release, but
+#   checks out the dispatched ref (typically `main`) instead of a tag.
+#   Use this to publish adopted packages whose versions are not on npm
+#   yet without cutting a new web-client tag.
 # - `pull_request: closed` (against next, with the `patch release` label)
 #   → publishes to the `next` dist-tag, gated by `check-*-version-pr.sh`.
-# - The vite-plugin ships only on release events (no -pr.sh script for it).
+# - The vite-plugin ships on `latest` events (release and dispatch; no
+#   -pr.sh script for it).
 
 name: Publish Web SDK
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
   pull_request:
     branches:
       - next
@@ -40,6 +46,7 @@ jobs:
   check-version:
     if: |
       github.event_name == 'release' ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
        contains(github.event.pull_request.labels.*.name, 'patch release'))
     runs-on: ubuntu-24.04
@@ -62,10 +69,17 @@ jobs:
             echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
             echo "checkout_ref=refs/tags/${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
             echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "version_mode=release" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "checkout_ref=${{ github.ref }}" >> "$GITHUB_OUTPUT"
+            echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "version_mode=release" >> "$GITHUB_OUTPUT"
           else
             echo "dist_tag=next" >> "$GITHUB_OUTPUT"
             echo "checkout_ref=next" >> "$GITHUB_OUTPUT"
             echo "version_check_arg=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "version_mode=pr" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check out code
@@ -77,7 +91,7 @@ jobs:
       - name: Check web-client version bump
         id: check_web
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "${{ steps.event.outputs.version_mode }}" = "release" ]; then
             ./scripts/check-web-client-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
           else
             ./scripts/check-web-client-version-pr.sh "${{ steps.event.outputs.version_check_arg }}"
@@ -86,15 +100,15 @@ jobs:
       - name: Check react-sdk version bump
         id: check_react
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "${{ steps.event.outputs.version_mode }}" = "release" ]; then
             ./scripts/check-react-sdk-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
           else
             ./scripts/check-react-sdk-version-pr.sh "${{ steps.event.outputs.version_check_arg }}"
           fi
 
-      - name: Check vite-plugin version bump (release only)
+      - name: Check vite-plugin version bump (latest only)
         id: check_vite
-        if: github.event_name == 'release'
+        if: steps.event.outputs.version_mode == 'release'
         run: ./scripts/check-vite-plugin-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
 
       # The packages adopted from the wallet-adapter / para / turnkey repos are
@@ -103,7 +117,7 @@ jobs:
       - name: Build publish plan for adopted packages
         id: plan_adopted
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "${{ steps.event.outputs.version_mode }}" = "release" ]; then
             PLAN=$(./scripts/publish-plan.sh plan release "$GITHUB_SHA")
           else
             PLAN=$(./scripts/publish-plan.sh plan pr "${{ github.event.pull_request.base.sha }}")

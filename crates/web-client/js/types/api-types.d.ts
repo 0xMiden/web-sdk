@@ -7,7 +7,6 @@ import type {
   AccountId,
   AccountFile,
   AccountCode,
-  AccountStorage,
   AssetVault,
   Word,
   Felt,
@@ -40,8 +39,15 @@ import type {
   NetworkAccountTarget,
   AdviceInputs,
   FeltArray,
+  AccountInputs,
+  ForeignAccount,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
+
+// `Account.prototype.storage()` is patched at WASM load time to return the
+// `StorageView` wrapper declared in `index.d.ts`, so anything that surfaces the
+// result of that call is typed against the wrapper, not the raw WASM class.
+import type { StorageResult, StorageView } from "./index";
 
 // Import the full namespace for the MidenArrayConstructors type
 import type * as WasmExports from "./crates/miden_client_web";
@@ -338,11 +344,46 @@ export interface ContractCreateOptions {
   storage?: StorageMode;
 }
 
+/**
+ * A single account's full on-chain state, as returned by
+ * {@link AccountsResource.getDetails}.
+ */
 export interface AccountDetails {
+  /** The account itself. */
   account: Account;
+  /** The account's asset vault. */
   vault: AssetVault;
-  storage: AccountStorage;
+  /**
+   * The account's storage, wrapped in a {@link StorageView}.
+   *
+   * This is **not** the raw WASM `AccountStorage`: `Account.prototype.storage()`
+   * is patched at WASM load time to return the wrapper, whose `getItem(slotName)`
+   * resolves both Value and StorageMap slots to a {@link StorageResult} rather
+   * than returning a map's commitment root as if it were a value. Reach the raw
+   * `AccountStorage` through `storage.raw` when you need the protocol-level
+   * behavior.
+   *
+   * A `StorageResult` is designed to be used directly, and two of its conversions
+   * are worth knowing before you write against it:
+   *
+   * - `valueOf()` backs arithmetic and `+result`. It returns a JS `number`, and
+   *   throws `RangeError` for felts above `Number.MAX_SAFE_INTEGER` rather than
+   *   silently losing precision. Use `toBigInt()` for exact u64 access.
+   * - `toJSON()` returns a **string**, not a number, so `JSON.stringify` of a
+   *   value holding a large felt round-trips losslessly.
+   *
+   * @example
+   * ```ts
+   * const { storage } = await client.accounts.getDetails(id);
+   * storage.getSlotNames();              // string[]
+   * storage.getItem("balance")?.toBigInt();  // bigint, full u64
+   * storage.getCommitment("owners");     // Word: a map slot's Merkle root
+   * ```
+   */
+  storage: StorageView;
+  /** The account's code, or `null` for an account with no code. */
   code: AccountCode | null;
+  /** Public-key commitments known for this account. */
   keys: Word[];
 }
 
@@ -690,7 +731,13 @@ export interface PswapCreateOptions extends TransactionOptions {
   request: Asset;
   /** Visibility of the PSWAP note itself. */
   type?: NoteVisibility;
-  /** Visibility of the payback note fillers emit to the creator. Defaults to `public`. */
+  /**
+   * Visibility of the payback note fillers emit to the creator.
+   *
+   * Defaults to `type`, NOT to `public`: both `swap` and `pswapCreate` resolve
+   * it as `paybackType ?? type`. Omit it on a private swap and the payback note
+   * is private too.
+   */
   paybackType?: NoteVisibility;
 }
 
@@ -1298,6 +1345,41 @@ export interface TransactionsResource {
 
   /** Execute a program (view call) and return the resulting stack output. */
   executeProgram(options: ExecuteProgramOptions): Promise<FeltArray>;
+
+  /**
+   * Fetch the state and inclusion witness of each foreign account, anchored at
+   * `blockNum`.
+   *
+   * A {@link ForeignAccount.public} entry is fetched from the network, a
+   * {@link ForeignAccount.private} entry contributes its own state and only its
+   * inclusion proof is fetched, and a {@link ForeignAccount.prefetched} entry is
+   * returned as it was given. Declare the results back through
+   * `ForeignAccount.prefetched` on a later request and nothing is fetched for
+   * those accounts at execution time — which is what lets a transaction pinned
+   * to an older block execute after the node stopped serving account state
+   * there.
+   *
+   * Each witness opens against the account tree of `blockNum` alone, so the
+   * results are valid only for a transaction whose reference block is exactly
+   * `blockNum` — the anchor's block when the request is executed against a
+   * {@link ChainAnchor}, or the sync height at execution time otherwise. Do not
+   * sync between fetching these and executing; execution fails naming the
+   * account and the block.
+   *
+   * Only the given accounts are fetched. This does not discover the accounts a
+   * transaction loads, such as faucets whose asset callbacks it triggers.
+   *
+   * Serialize an entry with `inputs.serialize()` to ship prefetched state to
+   * another client.
+   *
+   * @param foreignAccounts - Accounts to fetch inputs for.
+   * @param blockNum - Block the witnesses are anchored at.
+   * @returns The inputs, in the order given.
+   */
+  foreignAccountInputs(
+    foreignAccounts: ForeignAccount[],
+    blockNum: number
+  ): Promise<AccountInputs[]>;
 
   /**
    * List transactions, optionally filtered by status or IDs.

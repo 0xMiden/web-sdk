@@ -97,17 +97,6 @@ if (!versionMatch) {
 
 const major = Number(versionMatch[1]);
 const minor = Number(versionMatch[2]);
-const patch = Number(versionMatch[3]);
-const prerelease = versionMatch[4] || "";
-// Pin the peer range to the exact patch version, not the major.minor.0
-// baseline. The 0.14.x line publishes on every PR-merge (not at fixed
-// release points), so consumers should always see the latest patch — the
-// .0 baseline would silently allow publishing react-sdk against a stale
-// peer.
-const expectedRange = prerelease
-  ? `^${major}.${minor}.${patch}${prerelease}`
-  : `^${major}.${minor}.${patch}`;
-
 /**
  * Every package that pins a first-party package, in reporting order.
  *
@@ -115,9 +104,9 @@ const expectedRange = prerelease
  * the core as a peer (the consumer installs it), while the example app is a
  * real application and depends on it outright.
  *
- * `pins` is which package names to verify. Workspace packages pin only the
- * core; the example app pins whatever `@miden-sdk/*` it uses, all of which
- * ship on one version, so they are all checked rather than just the core.
+ * `pins` is which package names to verify. Workspace packages pin the core
+ * and any siblings they use; the example app pins its first-party dependencies.
+ * Each range follows the referenced package's own version.
  *
  * `checkVersion` is false for the example app: it is not published, so its own
  * version is unrelated to the SDK line.
@@ -199,18 +188,18 @@ manifests.sort((a, b) =>
   relFromRoot(a.dirPath).localeCompare(relFromRoot(b.dirPath))
 );
 
-// Every package published from this workspace. A consumer that pins a sibling
-// — `@miden-sdk/para-react` pinning `@miden-sdk/para`, say — has to track the
-// same version line as the core does, and checking only the `@miden-sdk/miden-sdk`
-// pin let those go stale silently: at 0.16.0-rc.5 three packages still pinned
-// siblings at `^0.16.0-rc.4` and this check passed. `^0.16.0-rc.4` does resolve
-// rc.5 under semver so nothing broke, but drift that resolves by luck is exactly
-// what this check exists to catch.
-const firstParty = new Set([CORE]);
+// Patch releases can differ between packages. Compare each pin against the
+// referenced package's manifest, so a core patch bump cannot make consumers
+// require a sibling version that will never be published.
+const firstPartyVersions = new Map([[CORE, webClientVersion]]);
 for (const { manifestPath } of manifests) {
   const pkg = readJson(manifestPath);
-  if (pkg.name && !pkg.private) firstParty.add(pkg.name);
+  if (pkg.name && !pkg.private) firstPartyVersions.set(pkg.name, pkg.version);
 }
+const expectedRangeFor = (name) => {
+  const version = firstPartyVersions.get(name);
+  return version ? `^${version}` : undefined;
+};
 
 for (const { dirPath, manifestPath } of manifests) {
   const pkg = readJson(manifestPath);
@@ -227,7 +216,7 @@ for (const { dirPath, manifestPath } of manifests) {
   // The core is always required. Siblings are checked only where the consumer
   // actually pins one, so this never invents a pin a package does not declare.
   const siblings = Object.keys(pkg[field] || {}).filter(
-    (name) => name !== CORE && firstParty.has(name)
+    (name) => name !== CORE && firstPartyVersions.has(name)
   );
   consumers.push({
     dir: relFromRoot(dirPath),
@@ -336,8 +325,7 @@ consumers.push({
   pkg: walletExamplePkg,
   field: "dependencies",
   // Every first-party package the example depends on, not just the core. They
-  // all ship on one version, so a stale `@miden-sdk/react` here resolves a
-  // published React SDK against a core it was never built against.
+  // each follow their own version, including patch releases.
   //
   // The core is unioned in rather than merely discovered, so that dropping it
   // from the manifest is reported as missing instead of quietly shrinking the
@@ -363,6 +351,13 @@ for (const consumer of consumers) {
 
   for (const pin of consumer.pins) {
     const actualRange = ranges[pin];
+    const expectedRange = expectedRangeFor(pin);
+    if (!expectedRange) {
+      errors.push(
+        `No workspace version found for ${pin} in ${consumer.label}.`
+      );
+      continue;
+    }
     if (!actualRange) {
       errors.push(
         `Missing ${consumer.field} entry for ${pin} in ${consumer.label}.`
@@ -371,7 +366,7 @@ for (const consumer of consumers) {
       errors.push(
         `${consumer.label} ${consumer.field} range for ${pin} ` +
           `("${actualRange}") does not match expected "${expectedRange}" ` +
-          `for web-client ${webClientVersion}.`
+          `for ${pin} ${firstPartyVersions.get(pin)}.`
       );
     }
   }
@@ -404,6 +399,8 @@ if (errors.length > 0) {
       const ranges = consumer.pkg[consumer.field] || {};
       let touched = false;
       for (const pin of consumer.pins) {
+        const expectedRange = expectedRangeFor(pin);
+        if (!expectedRange) continue;
         if (ranges[pin] === expectedRange) continue;
         ranges[pin] = expectedRange;
         touched = true;
@@ -416,8 +413,7 @@ if (errors.length > 0) {
 
     if (fixed.length > 0) {
       console.log(
-        `Updated to "${expectedRange}" based on web-client ` +
-          `${webClientVersion}: ${fixed.join(", ")}.`
+        `Updated ranges to their referenced workspace versions: ${fixed.join(", ")}.`
       );
     }
 
@@ -438,5 +434,6 @@ if (errors.length > 0) {
 
 console.log(
   `${consumers.length} packages pin web-client ${webClientVersion} ` +
-    `(${expectedRange}): ${consumers.map((c) => c.label).join(", ")}.`
+    `(${expectedRangeFor(CORE)}) and their siblings at their own versions: ` +
+    `${consumers.map((c) => c.label).join(", ")}.`
 );

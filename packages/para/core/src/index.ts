@@ -2,6 +2,7 @@ export * from "./midenClient.js";
 export {
   evmPkToCommitment,
   getUncompressedPublicKeyFromWallet,
+  resolveEvmWallets,
 } from "./utils.js";
 export type {
   MidenAccountOpts,

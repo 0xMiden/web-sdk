@@ -45,7 +45,15 @@ toml-check: ## Runs Format for all TOML files but only in check mode
 
 .PHONY: typos-check
 typos-check: ## Run typos to check for spelling mistakes
-	@typos --config ./.typos.toml
+# --hidden is load-bearing: typos skips hidden directories by default, so
+# without it this gate silently never sees .claude/skills/, where the
+# contributor-facing skills live. Verified by planting a typo there and
+# watching the gate pass.
+	@typos --config ./.typos.toml --hidden
+
+.PHONY: check-agent-docs
+check-agent-docs: ## Check every published package ships its AGENTS.md and skills/
+	./scripts/check-agent-docs.sh
 
 .PHONY: rust-client-ts-lint
 rust-client-ts-lint:

@@ -8,9 +8,9 @@ This monorepo contains the following packages:
 
 | Package | Description |
 |---------|-------------|
-| [`@miden-sdk/turnkey`](/) | Core SDK for Miden + Turnkey integration |
-| [`@miden-sdk/turnkey-react`](/packages/use-miden-turnkey-react) | React hook for easy integration |
-| [`@miden-sdk/create-turnkey-react`](/packages/create-miden-turnkey-react) | CLI to scaffold new projects |
+| [`@miden-sdk/turnkey`](/packages/turnkey/core) | Core SDK for Miden + Turnkey integration |
+| [`@miden-sdk/turnkey-react`](/packages/turnkey/react) | React hook for easy integration |
+| [`@miden-sdk/create-turnkey-react`](/packages/turnkey/create) | CLI to scaffold new projects |
 
 ## Quick Start
 
@@ -78,7 +78,6 @@ const { client, accountId } = await createMidenTurnkeyClient(
     endpoint: "https://rpc.miden.io",
     noteTransportUrl: "https://transport.miden.io",
     accountSeed: "my-seed",
-    type: AccountType.RegularAccountImmutableCode,
     storageMode: AccountStorageMode.public(),
   }
 );
@@ -93,10 +92,10 @@ yarn add @miden-sdk/turnkey
 ```
 
 **Peer Dependencies:**
-- `@miden-sdk/miden-sdk@^0.13.0`
-- `@turnkey/core@^1.8.2`
-- `@turnkey/http@^3.15.0`
-- `@turnkey/sdk-browser@^5.13.4`
+- `@miden-sdk/miden-sdk@^0.16.2`
+
+`@turnkey/core`, `@turnkey/http` and `@turnkey/sdk-browser` are regular
+dependencies of this package, so you do not install them yourself.
 
 ### React Hook
 
@@ -105,50 +104,51 @@ yarn add @miden-sdk/turnkey-react
 ```
 
 **Peer Dependencies:**
-- `@miden-sdk/turnkey@^1.0.0`
-- `@miden-sdk/miden-sdk@^0.13.0`
+- `@miden-sdk/turnkey@^0.16.2`
+- `@miden-sdk/miden-sdk@^0.16.2`
+- `@miden-sdk/react@^0.16.2`
+- `@turnkey/core@^1.8.2`
 - `@turnkey/react-wallet-kit@^1.6.2`
+- `@turnkey/sdk-browser@^5.13.4`
 - `react@^18.0.0 || ^19.0.0`
 
 ## Development
 
 ### Prerequisites
 
-- Node.js 18+
-- Yarn 1.22.22
+- Node.js 20+
+- pnpm 9+
 
 ### Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/0xPolygonMiden/miden-turnkey.git
-cd miden-turnkey
+git clone https://github.com/0xMiden/web-sdk.git
+cd web-sdk
 
 # Install dependencies
-yarn install
+pnpm install
 
 # Build all packages
-yarn build
+pnpm -r build
 ```
 
 ### Building Individual Packages
 
 ```bash
-# Root package
-yarn build
+# Core package
+pnpm --filter @miden-sdk/turnkey run build
 
 # React hook package
-cd packages/use-miden-turnkey-react
-yarn install
-yarn build
+pnpm --filter @miden-sdk/turnkey-react run build
 ```
 
 ### Running the Example
 
 ```bash
-cd examples/react
-yarn install
-yarn dev
+cd packages/turnkey/core/examples/react
+pnpm install
+pnpm dev
 ```
 
 ## API Reference
@@ -166,27 +166,27 @@ Creates a Miden client with Turnkey signing integration.
 - `opts` - Miden options
   - `endpoint` - Miden node RPC URL
   - `noteTransportUrl` - Note transport service URL
-  - `seed` - Client seed
+  - `seed` - Client seed (`Uint8Array`)
   - `accountSeed` - Account derivation seed
-  - `type` - Account type (RegularAccountImmutableCode, etc.)
-  - `storageMode` - Storage mode (public or private)
+  - `storageMode` - Storage mode (`AccountStorageMode.public()` or
+    `AccountStorageMode.private()`). Required; every other option is optional.
 
 #### Returns
 
 ```typescript
-{
-  client: WebClient;
+Promise<{
+  client: MidenClient;
   accountId: string;
-}
+}>
 ```
 
 ### `useTurnkeyMiden(nodeUrl, storageMode?, opts?)`
 
-React hook for Miden + Turnkey integration. See [@miden-sdk/turnkey-react README](/packages/use-miden-turnkey-react/README.md).
+React hook for Miden + Turnkey integration. See [@miden-sdk/turnkey-react README](/packages/turnkey/react/README.md).
 
 ## Examples
 
-See the [examples/react](/examples/react) directory for a complete Next.js example application.
+See the [examples/react](/packages/turnkey/core/examples/react) directory for a complete Next.js example application.
 
 ## License
 

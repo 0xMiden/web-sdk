@@ -4,15 +4,7 @@ permissions:
 on:
   push:
     branches: [main, next]
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "**.txt"
-      - "docs/**"
 
 concurrency:
   group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
@@ -23,7 +15,38 @@ env:
   RUST_CACHE_KEY: rust-cache-2026.02.18
 
 jobs:
+  # Docs-only changes are skipped by a job-level preflight rather than a
+  # workflow-level `paths-ignore`, because a trigger filter cannot see the PR
+  # description: a PR that links a Client/Protocol PR must run this check even
+  # when its diff is docs-only or empty. Same preflight and fail-closed gate as
+  # build.yml's `changes` job; the walk-through of every case lives there.
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      non_docs: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.non_docs }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-linked-pr-markers
+        id: linked
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            non_docs:
+              - '!**/*.md'
+              - '!**/*.txt'
+              - '!docs/**'
+
   check-publish:
+    needs: [changes]
+    if: >-
+      !cancelled()
+      && (needs.changes.result != 'success'
+      || needs.changes.outputs.non_docs != 'false')
     # Runs publint + arethetypeswrong (attw) against the three published
     # packages: @miden-sdk/miden-sdk (WASM web-client), @miden-sdk/react,
     # @miden-sdk/vite-plugin. Each tool runs against the actual `pnpm pack`
