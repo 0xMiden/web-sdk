@@ -59,12 +59,15 @@ impl WebClient {
         );
         let keystore = WebKeyStore::new_with_callbacks(rng, store_name, None, None, None);
 
+        // The mock chain is its own source of protocol configuration: it commits to one no
+        // network serves, so the client has to be given that one rather than a network's.
         self.setup_client(
             mock_rpc_api.clone(),
             store,
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
+            Some(mock_rpc_api.protocol_config()),
         )
         .await?;
 
@@ -120,12 +123,15 @@ impl WebClient {
         let keystore = miden_client::keystore::FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
+        // The mock chain is its own source of protocol configuration: it commits to one no
+        // network serves, so the client has to be given that one rather than a network's.
         self.setup_client(
             mock_rpc_api.clone(),
             store,
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
+            Some(mock_rpc_api.protocol_config()),
         )
         .await?;
 

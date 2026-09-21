@@ -152,7 +152,6 @@ const READ_METHODS = new Set([
   "getAccountVault",
   "getAccounts",
   "getConsumableNotes",
-  "getForeignAccountInputs",
   "getInputNote",
   "getInputNotes",
   "getOutputNote",
@@ -432,7 +431,8 @@ class WebClient {
     signCb,
     logLevel,
     useWorker = true,
-    observability
+    observability,
+    feeFaucetId
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -442,6 +442,7 @@ class WebClient {
     this.insertKeyCb = insertKeyCb;
     this.signCb = signCb;
     this.logLevel = logLevel;
+    this.feeFaucetId = feeFaucetId;
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -780,6 +781,7 @@ class WebClient {
         !!this.signCb,
         this.logLevel,
         numThreads,
+        this.feeFaucetId,
       ],
     });
   }
@@ -814,6 +816,10 @@ class WebClient {
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
+   * @param {string | undefined} feeFaucetId - Fee faucet of the chain, as a bech32 address or a
+   *   hex account ID. Required for a network the SDK knows no fee faucet for: since 0.17 the fee
+   *   asset lives in the protocol configuration rather than the block header, and a client
+   *   without one cannot execute.
    */
   static async createClient(
     rpcUrl,
@@ -822,7 +828,8 @@ class WebClient {
     network,
     logLevel,
     useWorker = true,
-    observability
+    observability,
+    feeFaucetId
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -835,7 +842,8 @@ class WebClient {
       undefined,
       logLevel,
       useWorker,
-      observability
+      observability,
+      feeFaucetId
     );
 
     // Set up logging on the main thread before creating the client.
@@ -846,7 +854,13 @@ class WebClient {
 
     // Wait for the underlying wasmWebClient to be initialized.
     const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, network);
+    await wasmWebClient.createClient(
+      rpcUrl,
+      noteTransportUrl,
+      seed,
+      network,
+      feeFaucetId
+    );
 
     // Wait for the worker to be ready
     await instance.ready;
@@ -883,7 +897,8 @@ class WebClient {
     signCb,
     logLevel,
     useWorker = true,
-    observability
+    observability,
+    feeFaucetId
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -896,7 +911,8 @@ class WebClient {
       signCb,
       logLevel,
       useWorker,
-      observability
+      observability,
+      feeFaucetId
     );
 
     // Set up logging on the main thread before creating the client.
@@ -912,6 +928,7 @@ class WebClient {
       noteTransportUrl,
       seed,
       storeName,
+      feeFaucetId,
       getKeyCb,
       insertKeyCb,
       signCb

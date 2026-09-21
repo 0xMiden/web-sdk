@@ -679,7 +679,7 @@ See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/e
 
 ### Foreign Accounts
 
-A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Three kinds:
+A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Two kinds:
 
 ```typescript
 import { ForeignAccount, AccountStorageRequirements } from "@miden-sdk/miden-sdk";
@@ -689,19 +689,9 @@ ForeignAccount.public(oracleAccountId, new AccountStorageRequirements());
 
 // Private — the caller supplies the state; only an inclusion proof is fetched.
 ForeignAccount.private(account);
-
-// Prefetched — the caller supplies state and witness; nothing is fetched.
-const blockNum = await client.getSyncHeight();
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(oracleAccountId, new AccountStorageRequirements())],
-  blockNum
-);
-ForeignAccount.prefetched(inputs[0]);
 ```
 
-A witness opens against the account tree of exactly one block, so inputs fetched at block `N` are valid only for a transaction whose reference block is `N` — the anchor's block under chain-anchored execution, or the sync height otherwise. Don't sync between fetching and executing.
-
-Prefetched inputs serialize (`inputs[0].serialize()` / `AccountInputs.deserialize(bytes)`), so one client can fetch them and another can execute against them, and a transaction pinned to an older block can still execute after the node stops serving account state there.
+A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
 ### Partial-Swap (PSWAP) Orders
 

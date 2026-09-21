@@ -303,9 +303,34 @@ describe("MidenClient.create forwards the observability options", () => {
       observeSensitive: true,
     });
     expect(calls.createClient).toHaveLength(1);
-    const observability = calls.createClient[0].at(-1);
+    // `feeFaucetId` is the factory's last positional argument, so the
+    // observability bag is the one before it.
+    const observability = calls.createClient[0].at(-2);
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
+  });
+
+  it("passes feeFaucetId to createClient as its last argument", async () => {
+    const calls = captureFactory();
+    await MidenClient.create({
+      rpcUrl: "testnet",
+      feeFaucetId: "0x1234567890abcdef",
+    });
+    expect(calls.createClient).toHaveLength(1);
+    expect(calls.createClient[0].at(-1)).toBe("0x1234567890abcdef");
+  });
+
+  it("passes feeFaucetId to the external-keystore factory as its last argument", async () => {
+    const calls = captureFactory();
+    await MidenClient.create({
+      rpcUrl: "testnet",
+      keystore: { getKey: () => {}, insertKey: () => {}, sign: () => {} },
+      feeFaucetId: "0x1234567890abcdef",
+    });
+    expect(calls.createClientWithExternalKeystore).toHaveLength(1);
+    expect(calls.createClientWithExternalKeystore[0].at(-1)).toBe(
+      "0x1234567890abcdef"
+    );
   });
 
   it("passes the observability options to the external-keystore factory", async () => {
@@ -318,7 +343,7 @@ describe("MidenClient.create forwards the observability options", () => {
       observeSensitive: true,
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
-    const observability = calls.createClientWithExternalKeystore[0].at(-1);
+    const observability = calls.createClientWithExternalKeystore[0].at(-2);
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
   });

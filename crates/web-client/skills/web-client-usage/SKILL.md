@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `foreignAccountInputs` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -627,8 +627,8 @@ await client.transactions.execute({
 The resource maps both the bare-ref form and the `{ id, storage }` wrapper
 through `ForeignAccount.public(...)`, which rejects a non-public account id with
 `InvalidForeignAccountId`. The wrapper supplies storage requirements; it does
-not make the account private. For a private foreign account, or for prefetched
-state, build the request yourself (see below) and submit it with
+not make the account private. For a private foreign account, build the request
+yourself (see below) and submit it with
 `transactions.submit`. The same applies to `transactions.executeProgram`.
 
 ### Execute a program (read-only view call)
@@ -649,35 +649,27 @@ computes.
 
 ### Foreign accounts (FPI)
 
-`ForeignAccount` has three constructors:
+`ForeignAccount` has two constructors:
 
 - `ForeignAccount.public(accountId, storageRequirements)` - state is fetched
   from the network at execution time.
 - `ForeignAccount.private(account)` - you supply the account's state; only its
   inclusion proof is fetched.
-- `ForeignAccount.prefetched(accountInputs)` - nothing is fetched at all.
 
-Fetch the inputs up front with
-`client.transactions.foreignAccountInputs(accounts, blockNum)`, which returns
-an `AccountInputs[]` in the order given. Each witness opens against the account
-tree of `blockNum` alone, so the results are valid only for a transaction whose
-reference block is exactly `blockNum` (the anchor's block when executing against
-a `ChainAnchor`, the sync height otherwise). Do not sync between fetching and
-executing. `AccountInputs.serialize()` / `AccountInputs.deserialize(bytes)`
-ships prefetched state to another client.
+The account's state and witness are read against the transaction's reference
+block, and the vault entries and storage-map keys the foreign code touches are
+resolved during execution as per-asset and per-key witnesses rather than up
+front. Pin the transaction to a block the node still serves account state for;
+prefetching the state to execute against an older block is no longer possible
+(`foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17).
 
 ```typescript
 const foreign = ForeignAccount.public(foreignAccountId, storageRequirements);
-const blockNum = await client.getSyncHeight();
-const [inputs] = await client.transactions.foreignAccountInputs(
-  [foreign],
-  blockNum
-);
 
 const builder = await client.feeAwareTransactionRequestBuilder(account);
 const request = builder
   .withCustomScript(script)
-  .withForeignAccounts(new ForeignAccountArray([ForeignAccount.prefetched(inputs)]))
+  .withForeignAccounts(new ForeignAccountArray([foreign]))
   .build();
 await client.transactions.submit(account, request);
 ```
@@ -1131,7 +1123,7 @@ while (true) {
    rejects with `TRANSACTION_ALREADY_AUTHORIZED` unless authorization is pending.
 8. **Passing a private account id in `execute({ foreignAccounts })`.** Every
    entry becomes a public foreign account; build the request yourself with
-   `ForeignAccount.private` / `.prefetched`.
+   `ForeignAccount.private`.
 9. **`transactions.list({ expiredBefore })`.** The filter was removed and the
    query now throws. Use `{ status: "uncommitted" }`.
 10. **Passing a low-level `AccountId`-only WASM method a raw string** - resource

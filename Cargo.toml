@@ -45,8 +45,8 @@ idxdb-store     = { default-features = false, package = "miden-idxdb-store", pat
 js-export-macro = { path = "crates/js-export-macro", version = "0.16" }
 
 # Client crates
-miden-client              = { default-features = false, version = "0.16.1" }
-miden-client-sqlite-store = { default-features = false, version = "0.16.1" }
+miden-client              = { default-features = false, version = "0.17.0-rc.1" }
+miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.1" }
 
 # External dependencies
 async-trait = { version = "0.1" }

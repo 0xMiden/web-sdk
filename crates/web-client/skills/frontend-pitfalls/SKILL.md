@@ -361,22 +361,21 @@ await client.notes.sendPrivateOutput({ noteId, to });
 
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 
-## FP13: Foreign-Account Inputs Are Pinned to One Block (HIGH)
+## FP13: Foreign-Account State Is Read at the Reference Block (HIGH)
 
-`client.transactions.foreignAccountInputs(accounts, blockNum)` (0.16.1) fetches each foreign account's state and inclusion witness so you can supply it instead of having it fetched at execution time. Each witness opens against the account tree of `blockNum` alone.
+A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**Do not sync between fetching these and executing.** The results are valid only for a transaction whose reference block is exactly `blockNum` - the anchor's block when executing against a `ChainAnchor`, or the sync height at execution time otherwise. Execution fails naming the account and the block. With auto-sync on a 15 s timer (FP6), a fetch-then-execute gap is easy to open by accident; capture a `ChainAnchor` or disable auto-sync across the window.
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution.
 
 ```tsx
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(id, storageRequirements)],
-  anchor.blockNum() // a method, not a property
-);
-// re-declare them so nothing is fetched at execution time
-const accounts = inputs.map((i) => ForeignAccount.prefetched(i));
+const foreign = ForeignAccount.public(id, storageRequirements);
+const request = builder
+  .withCustomScript(script)
+  .withForeignAccounts(new ForeignAccountArray([foreign]))
+  .build();
 ```
 
-Second trap: **only the accounts you name are fetched.** This does not discover the accounts a transaction loads on its own, such as faucets whose asset callbacks it triggers. Each returned `AccountInputs` entry serializes on its own (`entry.serialize()`), which is how you ship prefetched state to another client.
+Second trap: **only the accounts you name are declared.** This does not discover the accounts a transaction loads on its own, such as faucets whose asset callbacks it triggers.
 
 ## FP14: transactions.preview Rejects When Already Authorized (MEDIUM)
 

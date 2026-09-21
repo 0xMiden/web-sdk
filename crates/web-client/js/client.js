@@ -164,7 +164,8 @@ export class MidenClient {
         options.keystore.sign,
         undefined,
         useWorker,
-        options
+        options,
+        options?.feeFaucetId
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -174,7 +175,8 @@ export class MidenClient {
         options?.storeName,
         undefined,
         useWorker,
-        options
+        options,
+        options?.feeFaucetId
       );
     }
 
@@ -401,6 +403,21 @@ export class MidenClient {
 
   async [Symbol.asyncDispose]() {
     this.terminate();
+  }
+
+  /**
+   * Returns the faucet of the fee asset this client executes against.
+   *
+   * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
+   * protocol configuration rather than the block header, so it is the
+   * configuration the client registered at creation that names it - the
+   * `feeFaucetId` option, or, for a mock client, the mock chain's own.
+   *
+   * @returns {Promise<AccountId>} The fee faucet's account ID.
+   */
+  async feeFaucetId() {
+    this.assertNotTerminated();
+    return await this.#inner.feeFaucetId();
   }
 
   /**

@@ -115,7 +115,6 @@ declare global {
     FeltArray: typeof FeltArray;
     ForeignAccount: typeof ForeignAccount;
     FungibleAsset: typeof FungibleAsset;
-    FungibleAssetDelta: typeof FungibleAssetDelta;
     InputNoteRecord: typeof InputNoteRecord;
     Library: typeof Library;
     NetworkId: typeof NetworkId;

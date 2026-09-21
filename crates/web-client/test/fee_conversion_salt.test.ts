@@ -41,7 +41,9 @@ test.describe("fee conversion salt", () => {
       const anchor = await client.chainAnchorForRequest(request);
       const header = anchor.blockHeader();
 
-      const feeFaucetId = header.feeFaucetId();
+      // Since 0.17 the fee asset lives in the protocol configuration, not in the
+      // header, so the client reports it rather than the block.
+      const feeFaucetId = await client.feeFaucetId();
 
       return {
         baseFee: header.verificationBaseFee(),
@@ -51,11 +53,10 @@ test.describe("fee conversion salt", () => {
         feeFaucetRoundTrips:
           sdk.AccountId.fromHex(feeFaucetId.toString()).toString() ===
           feeFaucetId.toString(),
-        // Reading the header twice must agree — a fee faucet that changes
-        // between reads would mean we are not reading the header's own field.
+        // Reading it twice must agree — a fee faucet that changes between reads
+        // would mean we are not reading the registered configuration's own field.
         feeFaucetIsStable:
-          anchor.blockHeader().feeFaucetId().toString() ===
-          feeFaucetId.toString(),
+          (await client.feeFaucetId()).toString() === feeFaucetId.toString(),
       };
     });
 

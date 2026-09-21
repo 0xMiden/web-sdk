@@ -223,7 +223,6 @@ function makeArrayPolyfills() {
   const names = [
     "AccountArray",
     "AccountIdArray",
-    "AccountInputsArray",
     "FeltArray",
     "ForeignAccountArray",
     "NoteAndArgsArray",
