@@ -226,9 +226,29 @@ export class TransactionsResource {
     // `note` valid so we can return it to the caller.
     const ownOutputs = new wasm.NoteArray();
     ownOutputs.push(note);
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+    // `estimate_note_fee` on the target, so the emitting transaction reads
+    // foreign state. Declaring the account pins that state at the reference
+    // block instead of leaving the client to resolve it lazily, which it can
+    // only do for a public account it can reach.
+    //
+    // Pricing also caps this transaction at 20 blocks: `estimate_note_fee`
+    // applies the standards' default expiration delta, and an expiration can
+    // only be lowered, so it must be included within 20 blocks of its
+    // reference block or the node rejects it as expired.
+    const targetAccounts = new wasm.ForeignAccountArray();
+    targetAccounts.push(
+      wasm.ForeignAccount.public(
+        target.targetId(),
+        new wasm.AccountStorageRequirements()
+      )
+    );
     const builder =
       await this.#inner.feeAwareTransactionRequestBuilder(senderId);
-    const request = builder.withOwnOutputNotes(ownOutputs).build();
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(targetAccounts)
+      .build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       senderId,
@@ -788,44 +808,6 @@ export class TransactionsResource {
       );
     }
     return await this.#inner.chainAnchorForRequest(request);
-  }
-
-  /**
-   * Fetch the state and inclusion witness of each foreign account in
-   * `foreignAccounts`, anchored at `blockNum`.
-   *
-   * A `ForeignAccount.public` entry is fetched from the network, a
-   * `ForeignAccount.private` entry contributes its own state and only its
-   * inclusion proof is fetched, and a `ForeignAccount.prefetched` entry is
-   * returned as it was given. Declare the results back through
-   * `ForeignAccount.prefetched` and nothing is fetched for those accounts at
-   * execution time.
-   *
-   * Each witness opens against the account tree of `blockNum` alone, so the
-   * results are valid only for a transaction whose reference block is exactly
-   * `blockNum` — the anchor's block under {@link captureAnchor}, or the sync
-   * height at execution time otherwise. Do not sync between fetching these and
-   * executing; execution fails naming the account and the block.
-   *
-   * @param {ForeignAccount[]} foreignAccounts - Accounts to fetch inputs for.
-   * @param {number} blockNum - Block the witnesses are anchored at.
-   * @returns {Promise<AccountInputs[]>} Inputs, in the order given.
-   */
-  async foreignAccountInputs(foreignAccounts, blockNum) {
-    this.#client.assertNotTerminated();
-    const wasm = await this.#getWasm();
-    // The WASM array constructor consumes its elements; push borrows and clones
-    // each account so callers can reuse their handles after fetching inputs.
-    const accounts = new wasm.ForeignAccountArray();
-    for (const account of foreignAccounts ?? []) accounts.push(account);
-    const inputs = await this.#inner.getForeignAccountInputs(
-      accounts,
-      blockNum
-    );
-    // Browser returns the typed AccountInputsArray, Node a plain JS array.
-    return Array.isArray(inputs)
-      ? inputs
-      : Array.from({ length: inputs.length() }, (_, i) => inputs.get(i));
   }
 
   async submit(account, request, opts) {

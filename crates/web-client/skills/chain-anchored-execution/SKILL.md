@@ -1,13 +1,13 @@
 ---
 name: chain-anchored-execution
-description: Rules for using ChainAnchor to pin transaction execution to a specific block, required whenever a signature is collected over a transaction summary by one party and the transaction is executed later or by another party, as in multisig proposals and offline co-signing. Use when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or foreignAccountInputs, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
+description: Rules for using ChainAnchor to pin transaction execution to a specific block, required whenever a signature is collected over a transaction summary by one party and the transaction is executed later or by another party, as in multisig proposals and offline co-signing. Use when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or withForeignAccounts, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
 ---
 
 # Chain-Anchored Execution
 
 **Availability:** `@miden-sdk/miden-sdk` and `@miden-sdk/react` from `0.16.0-rc.3`,
 and in every release since. `withExplicitInputNote` (R3) and foreign-account
-prefetching (R4) arrived in `0.16.1`.
+prefetching, removed again in `0.17.0` (R4), arrived in `0.16.1`.
 This skill ships inside the package, so if you are reading it from
 `node_modules/@miden-sdk/miden-sdk/skills/`, the installed version has these
 surfaces. If a symbol is missing anyway, you are on a build older than the release
@@ -120,48 +120,37 @@ from its own store or from the anchor the request executes against.
 
 Available from `0.16.1`.
 
-### R4 - Prefetch foreign-account inputs at the anchor's block, and do not sync after
+### R4 - A foreign account forces a recent anchor
 
 A transaction that calls into a foreign account fetches that account's state at
 execution time, from the node, at the reference block. An anchored flow executes at
-an older block, and a node stops serving account state past a limited window, so a
-proposal that sat awaiting signatures fails at execution, naming the account and
-the block.
+an older block, and a node stops serving account state past a limited window (50
+blocks at the time of writing), so a proposal that sat awaiting signatures fails at
+execution, naming the account and the block.
 
-Fetch the state once, at the anchor's block, and ship it with the proposal:
+Until 0.16 the state could be fetched at the anchor's block and shipped with the
+proposal. 0.17 removed that path along with the upstream types behind it -
+`foreignAccountInputs`, `ForeignAccount.prefetched` and `AccountInputs` are gone,
+and a foreign account's vault entries and storage-map keys are resolved during
+execution instead. So for a request that calls into a foreign account, the anchor
+must stay inside the node's account-history window: capture it close to execution,
+and re-capture rather than reuse one that has aged out.
 
 ```ts
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(targetId, storageRequirements)],
-  anchor.blockNum() // exactly the anchor's block, not the sync height
-);
-ship(inputs.map((i) => i.serialize()));
-
-// Executor: nothing is fetched for these accounts at execution time.
 const request = builder
-  .withForeignAccounts([
-    ForeignAccount.prefetched(AccountInputs.deserialize(bytes)),
-  ])
+  .withForeignAccounts([ForeignAccount.public(targetId, storageRequirements)])
   .build();
+const anchor = await client.transactions.captureAnchor(request);
+// collect signatures, then execute promptly against `anchor`
 ```
 
-Three things to get right:
+Two things to get right:
 
-- **`blockNum` must be the anchor's block.** Each witness opens against the account
-  tree of that block alone. Passing the sync height produces inputs valid only for
-  an unanchored execution.
-- **Do not sync between fetching and executing.** Execution fails naming the
-  account and the block.
-- **Only the accounts you name are fetched.** This does not discover accounts the
+- **Only the accounts you name are declared.** This does not discover accounts the
   transaction loads on its own, such as a faucet whose asset callback it triggers.
-
-`ForeignAccount.public(id, requirements)` is fetched from the network,
-`ForeignAccount.private(account)` contributes its own state and fetches only an
-inclusion proof, and `ForeignAccount.prefetched(inputs)` is returned untouched.
-`AccountInputs.serialize()` / `.deserialize()` are the transport, and
-`inputs.accountId()` reads back which account an entry describes.
-
-Available from `0.16.1`.
+- **`ForeignAccount.public(id, requirements)` is fetched from the network** and
+  `ForeignAccount.private(account)` contributes its own state and fetches only an
+  inclusion proof.
 
 ### R5 - Validate an anchor that arrives from an untrusted party
 
@@ -217,7 +206,7 @@ triggering control while `isCapturing` / `isPreviewing` is true.
 ### R9 - Import the class, not the type, to deserialize in React
 
 `@miden-sdk/react` re-exports `ChainAnchor` and `TransactionRequest` as **types
-only**, and does not re-export `InputNote`, `ForeignAccount` or `AccountInputs` at
+only**, and does not re-export `InputNote` or `ForeignAccount` at
 all. Calling a static such as `ChainAnchor.deserialize(bytes)` or
 `TransactionRequest.deserialize(bytes)` requires importing the class from
 `@miden-sdk/miden-sdk` directly.
@@ -236,7 +225,7 @@ Map an observed symptom to its cause before proposing a fix.
 | `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or use `withAuthArg` plus `extendAdviceMap` |
 | `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArg` |
 | `preview` fails to find the account on the co-signer | Verification runs a real execution, so the account must already be in that participant's store. `accounts.getOrImport` for a public account; a private one needs its state transferred out of band (R2) |
-| Anchored execution fails naming a foreign account and a block | Foreign-account state was fetched at the wrong block, or a sync landed between fetching and executing. Refetch at `anchor.blockNum()` and execute without syncing (R4) |
+| Anchored execution fails naming a foreign account and a block | The anchor is older than the node's account-history window. Capture it closer to execution and re-capture an aged one (R4) |
 | `INVALID_CHAIN_ANCHOR` | A sync landed mid-capture and left the anchor inconsistent. **Retry**, since this is transient rather than a bug to work around |
 | `OPERATION_BUSY` | A capture or preview is already running. Await the previous one |
 | `STALE_CLIENT` | The client was swapped mid-call. Recapture on the new chain |
@@ -300,7 +289,6 @@ that tolerates both shapes.
 
 ```ts
 captureAnchor(request: TransactionRequest): Promise<ChainAnchor>
-foreignAccountInputs(accounts: ForeignAccount[], blockNum: number): Promise<AccountInputs[]>
 
 preview({ operation: "custom", account, request, anchor? })
 executeRequest(account, request, { anchor? })
@@ -310,8 +298,9 @@ submit(account, request, { anchor?, ...txOptions })
 `client.feeAwareTransactionRequestBuilder(account)` returns a
 `TransactionRequestBuilder` that already declares a fee conversion salt where the
 executing account needs one. It is a safe drop-in for `new
-TransactionRequestBuilder()`: on a zero-fee chain, or for an account that does not
-choose its own salt, the builder comes back untouched.
+TransactionRequestBuilder()`: for an account that is not a multisig the builder
+comes back untouched. A zero base fee is not a second condition: since 0.17 a
+multisig resolves its auth args whatever the chain charges.
 
 ### `ChainAnchor`
 
@@ -321,7 +310,7 @@ choose its own salt, the builder comes back untouched.
 | `ChainAnchor.deserialize(bytes)` | `ChainAnchor` | Static; rebuild on the receiving side |
 | `blockNum()` | `u32` | Number of the anchored reference block |
 | `commitment()` | `Word` | Commitment of the anchored reference block |
-| `blockHeader()` | `BlockHeader` | The anchored reference block header, which also carries `verificationBaseFee()` and `feeFaucetId()` |
+| `blockHeader()` | `BlockHeader` | The anchored reference block header, which also carries `verificationBaseFee()` and `protocolConfigCommitment()`. The fee faucet moved into the protocol configuration in 0.17; read it with `client.feeFaucetId()` |
 | `free()` | void | Release the partial blockchain it carries |
 
 ### `TransactionSummary`
@@ -341,16 +330,13 @@ choose its own salt, the builder comes back untouched.
 ```ts
 new TransactionRequestBuilder()
   .withExplicitInputNote(inputNote, args?)   // pins authenticated vs unauthenticated
-  .withForeignAccounts([foreignAccount])     // prefetched entries skip execution-time fetches
+  .withForeignAccounts([foreignAccount])     // declared foreign accounts, read at the reference block
 
 InputNote.authenticated(note, inclusionProof)
 InputNote.unauthenticated(note)
 
 ForeignAccount.public(id, storageRequirements)
 ForeignAccount.private(account)
-ForeignAccount.prefetched(accountInputs)
-
-AccountInputs.deserialize(bytes) // instance: serialize(), accountId()
 ```
 
 ### React

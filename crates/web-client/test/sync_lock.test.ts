@@ -1,6 +1,10 @@
 // @ts-nocheck
 import { expect } from "@playwright/test";
-import test, { getRpcUrl, RUN_ID } from "./playwright.global.setup";
+import test, {
+  getFeeFaucetId,
+  getRpcUrl,
+  RUN_ID,
+} from "./playwright.global.setup";
 import { BrowserContext, Page } from "@playwright/test";
 
 test.describe("Sync Lock Tests", () => {
@@ -146,12 +150,7 @@ test.describe("Sync Lock Tests", () => {
       const result = await page.evaluate(async () => {
         // Create two clients pointing to the same store
         const client1 = window.client;
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName // Same store name as client1
-        );
+        const client2 = await window.helpers.createClient(window.storeName);
 
         // Fire concurrent syncs from both clients
         const syncPromises = [client1.syncState(), client2.syncState()];
@@ -178,18 +177,8 @@ test.describe("Sync Lock Tests", () => {
     }) => {
       const result = await page.evaluate(async () => {
         const client1 = window.client;
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName
-        );
-        const client3 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName
-        );
+        const client2 = await window.helpers.createClient(window.storeName);
+        const client3 = await window.helpers.createClient(window.storeName);
 
         // Fire many concurrent syncs
         const syncPromises = [
@@ -220,18 +209,8 @@ test.describe("Sync Lock Tests", () => {
     }) => {
       const result = await page.evaluate(async () => {
         const client1 = window.client; // Uses window.storeName
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          "SyncLockTestStore1"
-        );
-        const client3 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          "SyncLockTestStore2"
-        );
+        const client2 = await window.helpers.createClient("SyncLockTestStore1");
+        const client3 = await window.helpers.createClient("SyncLockTestStore2");
 
         // Fire concurrent syncs to different stores
         const syncPromises = [
@@ -393,7 +372,7 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
       const setupPage = async (page: Page) => {
         await page.goto("http://localhost:8080");
         await page.evaluate(
-          async ({ rpcUrl, storeName }) => {
+          async ({ rpcUrl, storeName, feeFaucetId }) => {
             const sdkExports = await import("./index.js");
             for (const [key, value] of Object.entries(sdkExports)) {
               window[key] = value;
@@ -401,15 +380,26 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
 
             window.rpcUrl = rpcUrl;
             // Both pages use the same store name for cross-tab coordination
+            // These pages set themselves up from a bare goto, so the global
+            // fixture never ran on them and window.helpers does not exist here;
+            // this is the one place the positional list is spelled out twice.
             const client = await window.WasmWebClient.createClient(
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.client = client;
           },
-          { rpcUrl, storeName: crossTabStoreName }
+          {
+            rpcUrl,
+            storeName: crossTabStoreName,
+            feeFaucetId: getFeeFaucetId(),
+          }
         );
       };
 
@@ -462,22 +452,29 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
       const setupPage = async (page: Page) => {
         await page.goto("http://localhost:8080");
         await page.evaluate(
-          async ({ rpcUrl, storeName }) => {
+          async ({ rpcUrl, storeName, feeFaucetId }) => {
             const sdkExports = await import("./index.js");
             for (const [key, value] of Object.entries(sdkExports)) {
               window[key] = value;
             }
 
             window.rpcUrl = rpcUrl;
+            // These pages set themselves up from a bare goto, so the global
+            // fixture never ran on them and window.helpers does not exist here;
+            // this is the one place the positional list is spelled out twice.
             const client = await window.WasmWebClient.createClient(
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.client = client;
           },
-          { rpcUrl, storeName: rapidStoreName }
+          { rpcUrl, storeName: rapidStoreName, feeFaucetId: getFeeFaucetId() }
         );
       };
 

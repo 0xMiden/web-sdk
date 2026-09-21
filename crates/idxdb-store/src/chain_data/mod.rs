@@ -159,7 +159,12 @@ impl IdxdbStore {
                     return Ok(BTreeMap::new());
                 }
 
-                let max_in_order_index = forest.rightmost_in_order_index().inner().to_string();
+                // `rightmost_in_order_index` is `None` only for an empty forest, which the
+                // check above already returned for.
+                let Some(rightmost) = forest.rightmost_in_order_index() else {
+                    return Ok(BTreeMap::new());
+                };
+                let max_in_order_index = rightmost.inner().to_string();
                 let promise = idxdb_get_partial_blockchain_nodes_up_to_inorder_index(
                     self.db_id(),
                     max_in_order_index,

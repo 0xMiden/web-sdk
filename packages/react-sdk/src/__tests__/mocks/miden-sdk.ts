@@ -398,6 +398,7 @@ export const createMockWebClient = (
     feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
       const builder = {
         withOwnOutputNotes: vi.fn(() => builder),
+        withForeignAccounts: vi.fn(() => builder),
         withInputNotes: vi.fn(() => builder),
         withCustomScript: vi.fn(() => builder),
         build: vi.fn(() => createMockTransactionRequest()),

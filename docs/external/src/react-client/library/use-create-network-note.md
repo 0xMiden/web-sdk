@@ -59,6 +59,18 @@ confirm classification.
 | `assetId` / `amount` | `AccountRef` / `bigint \| number` | Optional single asset to lock into the note. |
 | `attachment` | `bigint[] \| Uint8Array \| number[]` | Extra attachment payload appended after the required `NetworkAccountTarget`. |
 
+## The 20-block window
+
+Pricing the note calls `estimate_note_fee` on the target account, and that
+procedure applies the standards' default expiration delta, so the transaction
+this hook submits must be included within **20 blocks** of its reference block —
+about a minute at a three-second block interval. An expiration can only be
+lowered, never raised, so nothing can widen it.
+
+If a slow prove makes the node reject the submission as expired, sync and then
+call `createNetworkNote` again. Calling it again on its own is not enough: the
+hook does not sync, so it would rebuild against the same reference block.
+
 ## See also
 
 - [Network notes](../../web-client/library/network-notes.md) — the underlying `MidenClient` resource method and concept overview.

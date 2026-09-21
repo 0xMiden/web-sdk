@@ -12,6 +12,7 @@ import type {
 import type {
   GetKeyCallback,
   InsertKeyCallback,
+  MidenObservation,
   SignCallback,
 } from "./api-types";
 
@@ -137,6 +138,15 @@ export declare function wordToBigInt(word: Word): bigint;
 // Internal exports (not public API — for tests and advanced usage)
 // ════════════════════════════════════════════════════════════════
 
+/**
+ * @internal Observability fields `MidenClient.create` forwards to the low-level
+ * factories. Mirrors the pair on {@link ClientOptions}; both are construction-only.
+ */
+export interface ClientObservabilityOptions {
+  observer?: (observation: MidenObservation) => void;
+  observeSensitive?: boolean;
+}
+
 /** @internal Low-level WebClient wrapper. Use MidenClient instead. */
 export declare class WasmWebClient extends WasmWebClientBase {
   static createClient(
@@ -145,7 +155,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     seed?: Uint8Array,
     storeName?: string,
     logLevel?: LogLevel,
-    useWorker?: boolean
+    useWorker?: boolean,
+    observability?: ClientObservabilityOptions,
+    feeFaucetId?: string
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -157,7 +169,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     insertKeyCb?: InsertKeyCallback,
     signCb?: SignCallback,
     logLevel?: LogLevel,
-    useWorker?: boolean
+    useWorker?: boolean,
+    observability?: ClientObservabilityOptions,
+    feeFaucetId?: string
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;

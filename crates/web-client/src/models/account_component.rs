@@ -23,7 +23,7 @@ use miden_client::auth::{
     AuthSingleSig as NativeSingleSig,
     PublicKeyCommitment,
 };
-use miden_client::note::{FeeSponsorshipNote, NetworkAccountConfigNote, NoteScriptRoot};
+use miden_client::note::NoteScriptRoot;
 use miden_client::transaction::{ExpirationTransactionScript, TransactionScriptRoot};
 use miden_client::vm::Package as NativePackage;
 
@@ -274,7 +274,12 @@ impl AccountComponent {
     /// fee the account charges to consume notes running it, so every allowlisted script is
     /// priced by construction. A fee of zero is valid; a script root the account does not price
     /// at all aborts fee estimation rather than being treated as free. Fees are denominated in
-    /// the fungible asset issued by `feeFaucetId`.
+    /// the fungible asset issued by `feeFaucetId`, which must be the chain's own fee faucet -
+    /// `client.feeFaucetId()`. The node's network-transaction builder refuses to execute for a
+    /// network account whose fee asset differs from the chain's protocol configuration, and the
+    /// client is not told: notes sent to such an account are simply never consumed. The fee
+    /// asset is fixed when the account is built, so an account built with another faucet has to
+    /// be rebuilt.
     ///
     /// Returns the auth component together with the components backing its fee policy. Every one
     /// of them must be installed on the account: pass each to `AccountBuilder.withComponent`.
@@ -291,12 +296,15 @@ impl AccountComponent {
         let mut note_roots: BTreeSet<NoteScriptRoot> = BTreeSet::new();
         let mut fee_policy = BasicConstantFeePolicy::new();
 
-        // `AuthNetworkAccount::new` allowlists the config and fee-sponsorship note scripts on top
-        // of the caller's roots. The caller cannot name those two, so price both at zero here to
-        // keep fee estimation from aborting on them.
-        fee_policy = fee_policy
-            .with_fee(NetworkAccountConfigNote::script_root(), AssetAmount::ZERO)
-            .with_fee(FeeSponsorshipNote::script_root(), AssetAmount::ZERO);
+        // `AuthNetworkAccount::new` allowlists its own default note scripts on top of the
+        // caller's roots, and an allowlisted root with no fee entry aborts fee estimation. The
+        // caller cannot name those defaults, so price every one of them at zero - derived from
+        // upstream rather than restated, because the list grows: 0.17 added the P2ID root to it,
+        // which a hard-coded pair would have left allowlisted and unpriced on every account this
+        // builds.
+        for root in AuthNetworkAccount::default_allowed_note_scripts() {
+            fee_policy = fee_policy.with_fee(root, AssetAmount::ZERO);
+        }
 
         for entry in &allowed_note_script_fees {
             let root = NoteScriptRoot::from_raw(NativeWord::from(&entry.script_root));

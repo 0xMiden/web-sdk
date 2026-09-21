@@ -428,17 +428,20 @@ export default [
         verbose: true,
         extraArgs: {
           cargo: [...baseCargoArgs],
-          // Skip wasm-opt entirely in fast mode — it's the post-link
-          // optimization pass and accounts for ~1-2 min on its own. Empty
-          // args array tells the plugin to bypass it. dev mode keeps -O0
-          // for the same reason.
+          // `extraArgs.wasmOpt` only ADDS flags; whether the pass runs at all is
+          // `optimize.wasmOpt` below. An empty array here therefore did not bypass
+          // wasm-opt in fast mode - it ran it bare, with no `--strip-dwarf`, over a
+          // module that still carried its DWARF, which the runner OOM-killed once
+          // the 0.17 module grew (`wasm-opt failed ... error code: null`).
           wasmOpt: fastBuild ? [] : wasmOptArgs,
           wasmBindgen: ["--keep-debug"],
         },
         experimental: {
           typescriptDeclarationDir: `${distDir}/crates`,
         },
-        optimize: { release: true, rustc: !devMode },
+        // Fast mode skips the post-link optimization pass outright: it is 1-2
+        // minutes of the build and PR CI does not ship the artifact.
+        optimize: { release: true, rustc: !devMode, wasmOpt: !fastBuild },
       }),
       resolve(),
       commonjs(),

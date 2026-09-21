@@ -15,7 +15,7 @@ test.describe("network note tests", () => {
   test("custom-script note carries a NetworkAccountTarget and it survives submit", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
       await client.syncState();
 
       // The note script is reused for the allowlist root and the note itself.
@@ -25,7 +25,9 @@ test.describe("network note tests", () => {
       // calling `estimate_note_fee` on the target, so the target must be a real
       // network account — a plain wallet does not expose that procedure — and it
       // must be committed on-chain at the transaction's reference block.
-      const feeFaucet = await client.newFaucet(
+      // This faucet only mints the note that deploys the account; the account's
+      // own fee faucet is the chain's, below.
+      const faucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
         false,
         "FEE",
@@ -40,9 +42,11 @@ test.describe("network note tests", () => {
         new sdk.NoteScriptFee(p2idScript.root(), sdk.u64(0)),
       ];
       // Yields the auth component plus the components backing its fee policy.
+      // The fee faucet must be the chain's: a 0.17 node never serves a network
+      // account whose fee asset differs from its protocol configuration's.
       const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
         allowedNotes,
-        feeFaucet.id()
+        await client.feeFaucetId()
       );
 
       const seed = new Uint8Array(32);
@@ -56,12 +60,15 @@ test.describe("network note tests", () => {
       const networkAccount = networkAccountBuilder.build().account;
       await client.newAccount(networkAccount, false);
 
-      // Scriptless deploy: the network auth component bumps the nonce itself, so
-      // an empty transaction commits the account on-chain.
-      await client.submitNewTransaction(
-        networkAccount.id(),
-        new sdk.TransactionRequestBuilder().build()
-      );
+      // Deploy by consuming a note, not by an empty transaction: since 0.17 the
+      // network auth component asserts the transaction had an effect before fee
+      // payment (`ERR_NETWORK_ACCOUNT_TRANSACTION_HAS_NO_EFFECT` - an input note,
+      // an output note, or a changed account state), and a scriptless deploy has
+      // none. A minted P2ID note is the cheapest effect the account's own
+      // allowlist already permits: `allowedNotes` above carries that script root.
+      await helpers.mockMintAndConsume(networkAccount.id(), faucet.id(), {
+        publicNote: true,
+      });
       await client.proveBlock();
       await client.syncState();
 
@@ -103,11 +110,25 @@ test.describe("network note tests", () => {
       const builtIsNetworkNote = note.isNetworkNote();
       const builtAttachmentCount = note.attachments().length;
 
-      // Submit as an own output note.
+      // Submit as an own output note, declaring the target as a foreign
+      // account. Since 0.17 the kernel prices a NetworkAccountTarget note by
+      // calling `estimate_note_fee` on the target; this client happens to hold
+      // that account locally, so it would resolve either way, but a consumer
+      // whose client does not must declare it, and this gate should exercise
+      // the shape they need. `client.transactions.createNetworkNote` does it
+      // for you.
       const ownOutputs = new sdk.NoteArray();
       ownOutputs.push(note);
+      const targetAccounts = new sdk.ForeignAccountArray();
+      targetAccounts.push(
+        sdk.ForeignAccount.public(
+          networkAccount.id(),
+          new sdk.AccountStorageRequirements()
+        )
+      );
       const request = new sdk.TransactionRequestBuilder()
         .withOwnOutputNotes(ownOutputs)
+        .withForeignAccounts(targetAccounts)
         .build();
       const txId = await client.submitNewTransaction(sender.id(), request);
       await client.proveBlock();

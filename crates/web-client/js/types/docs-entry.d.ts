@@ -11,7 +11,6 @@ export {
   AccountFile,
   AccountHeader,
   AccountId,
-  AccountInputs,
   AccountPatch,
   AccountStorage,
   AccountStoragePatch,

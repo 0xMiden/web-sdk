@@ -27,6 +27,120 @@ import { test, expect } from "./test-setup";
 // header actually reports rather than the zero the mock chain happens to use,
 // so the file stays correct if the mock chain is ever changed to charge.
 
+test.describe("multisig auth args", () => {
+  // The auth args are what the approvers sign over, so every value the SDK
+  // injects into them has to be pinnable by a caller who is REPRODUCING a
+  // proposal rather than receiving one. These run against the mock chain: the
+  // assertions are about the request the builder produces, not execution.
+  test("the same salt and bound block reproduce the same auth arg", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      // A fresh Word per call, every call: the salt parameter is OWNED, so
+      // wasm-bindgen moves the handle and a second call passes a consumed one,
+      // which arrives as `None` and silently draws a salt instead. Reusing one
+      // Word here made this very test measure nothing after its first call.
+      const salt = () => new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+
+      // `run` hands the callback the RAW client, not MidenClient, so this is the
+      // positional export: (account, approvalExpirationDelta, feeConversionSalt,
+      // boundBlockNum). MidenClient's options object fails loudly in napi here
+      // and is silently coerced to Some(0) in wasm.
+      const authArgAt = async (block) =>
+        (
+          await client.feeAwareTransactionRequestBuilder(
+            multisigAccountId,
+            undefined,
+            salt(),
+            block
+          )
+        )
+          .build()
+          .authArg()
+          ?.toHex();
+
+      const defaulted = async () =>
+        (await client.feeAwareTransactionRequestBuilder(multisigAccountId))
+          .build()
+          .authArg()
+          ?.toHex();
+
+      return {
+        pinnedA: await authArgAt(1),
+        pinnedB: await authArgAt(1),
+        otherBlock: await authArgAt(2),
+        defaultedA: await defaulted(),
+        defaultedB: await defaulted(),
+      };
+    });
+
+    // Two parties who agree on both values derive the same summary.
+    expect(result.pinnedA).toBeTruthy();
+    expect(result.pinnedA).toBe(result.pinnedB);
+    // Two who agree on neither cannot: the salt is drawn fresh per build. This
+    // is the assertion that makes the pinning above non-vacuous.
+    expect(result.defaultedA).not.toBe(result.defaultedB);
+    expect(result.defaultedA).not.toBe(result.pinnedA);
+    // And the bound block is really pinned, not merely passed: the equality
+    // above would hold even if the override were ignored, because this closure
+    // produces no blocks, so the default bound block is the same for both
+    // builds. Varying it alone is what makes that impossible.
+    expect(result.otherBlock).not.toBe(result.pinnedA);
+  });
+
+  test("the approval expiration is off by default and rejects zero", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      // Fresh per call, for the reason given in the previous test: reusing one
+      // made `withExpiry !== withoutExpiry` pass because the salts differed,
+      // not because the delta reached the preimage.
+      const salt = () => new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const authArgFor = async (delta) =>
+        (
+          await client.feeAwareTransactionRequestBuilder(
+            multisigAccountId,
+            delta,
+            salt(),
+            1
+          )
+        )
+          .build()
+          .authArg()
+          ?.toHex();
+
+      let zeroError = null;
+      try {
+        await authArgFor(0);
+      } catch (err) {
+        zeroError = String(err?.message ?? err);
+      }
+
+      return {
+        withoutExpiry: await authArgFor(undefined),
+        withExpiry: await authArgFor(100),
+        zeroError,
+      };
+    });
+
+    // A delta is part of the signed preimage, so setting one must change the
+    // commitment. Equal values would mean the option never reached the kernel.
+    expect(result.withoutExpiry).toBeTruthy();
+    expect(result.withExpiry).toBeTruthy();
+    expect(result.withExpiry).not.toBe(result.withoutExpiry);
+    // Zero is refused where the caller can see why, not silently read as "never".
+    expect(result.zeroError).toContain("approvalExpirationDelta");
+    // The message is assembled from string literals concatenated across source
+    // lines. A stray run of spaces at a join would survive silently into what
+    // the caller sees, so assert there is none.
+    expect(result.zeroError).not.toMatch(/ {2,}/);
+  });
+});
+
 test.describe("fee conversion salt", () => {
   test("block headers expose the chain's fee parameters", async ({ run }) => {
     const result = await run(async ({ client, sdk, helpers }) => {
@@ -41,7 +155,9 @@ test.describe("fee conversion salt", () => {
       const anchor = await client.chainAnchorForRequest(request);
       const header = anchor.blockHeader();
 
-      const feeFaucetId = header.feeFaucetId();
+      // Since 0.17 the fee asset lives in the protocol configuration, not in the
+      // header, so the client reports it rather than the block.
+      const feeFaucetId = await client.feeFaucetId();
 
       return {
         baseFee: header.verificationBaseFee(),
@@ -51,11 +167,10 @@ test.describe("fee conversion salt", () => {
         feeFaucetRoundTrips:
           sdk.AccountId.fromHex(feeFaucetId.toString()).toString() ===
           feeFaucetId.toString(),
-        // Reading the header twice must agree — a fee faucet that changes
-        // between reads would mean we are not reading the header's own field.
-        feeFaucetIsStable:
-          anchor.blockHeader().feeFaucetId().toString() ===
-          feeFaucetId.toString(),
+        // Pinning the value to the faucet the client was configured with needs
+        // an input the test chose, which the mock chain does not give it; that
+        // assertion lives in miden_client_api.test.ts against a client created
+        // with a known faucet.
       };
     });
 
@@ -65,7 +180,6 @@ test.describe("fee conversion salt", () => {
     expect(result.baseFee).toBeGreaterThanOrEqual(0);
     expect(result.baseFee).toBeLessThanOrEqual(0xffffffff);
     expect(result.feeFaucetRoundTrips).toBe(true);
-    expect(result.feeFaucetIsStable).toBe(true);
   });
 
   test("withFeeConversionSalt declares the salt and survives serialization", async ({
@@ -226,11 +340,12 @@ test.describe("fee conversion salt", () => {
   test("convenience constructors leave the fee to miden-client on this account", async ({
     run,
   }) => {
-    // The constructors declare a salt only where the executing account must
-    // choose its own — the multisig flavours — and only on a chain that charges.
-    // `setupWalletAndFaucet` yields a single-sig wallet on the zero-fee mock
-    // chain, so both gates are shut and the request must come back byte-identical
-    // to one from a bare builder: no salt, and no auth arg. miden-client commits
+    // The constructors declare nothing unless the executing account must choose
+    // its own salt — the multisig flavours. `setupWalletAndFaucet` yields a
+    // single-sig wallet, so the request must come back byte-identical to one
+    // from a bare builder: no salt, and no auth arg. The mock chain's zero base
+    // fee is not what makes that true; since 0.17 a multisig would carry auth
+    // args here too. miden-client commits
     // the native conversion info itself under its fixed default salt, which is
     // exactly what a single-sig account wants and what keeps its signed summary
     // reproducible.

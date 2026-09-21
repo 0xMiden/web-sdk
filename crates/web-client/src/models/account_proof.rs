@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
 use miden_client::account::StorageSlotName;
-use miden_client::asset::{AccountStorageHeader, Asset as NativeAsset};
+use miden_client::asset::AccountStorageHeader;
 use miden_client::block::BlockNumber;
 use miden_client::rpc::domain::account::{
     AccountProof as NativeAccountProof,
@@ -179,10 +179,8 @@ impl AccountProof {
         self.inner.vault_details().map(|d| {
             d.assets
                 .iter()
-                .filter_map(|asset| match asset {
-                    NativeAsset::Fungible(f) => Some((*f).into()),
-                    NativeAsset::NonFungible(_) => None,
-                })
+                .filter(|asset| asset.is_fungible())
+                .map(|asset| asset.unwrap_fungible().into())
                 .collect()
         })
     }

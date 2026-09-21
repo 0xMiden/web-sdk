@@ -1169,6 +1169,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_create_test",
       });
 
@@ -1185,12 +1186,71 @@ nodeTest.describe("MidenClient API - Integration", () => {
     expect(result.syncHeight).toBeGreaterThanOrEqual(0);
   });
 
+  // Pins the accessor to its input. Reading it twice and comparing cannot fail;
+  // comparing it to the faucet the client was created with fails the moment it
+  // reports any other valid id.
+  nodeTest(
+    "feeFaucetId reports the faucet the client was created with",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
+          storeName: "miden_client_api_fee_faucet_test",
+        });
+
+        // The configured id is whatever the harness was given - bech32 from a
+        // node's bootstrap log, hex from an override - so normalize both sides
+        // through the SDK's own parsers before comparing.
+        const canonical = (id) => {
+          try {
+            return window.AccountId.fromBech32(id).toString();
+          } catch {
+            return window.AccountId.fromHex(id).toString();
+          }
+        };
+
+        return {
+          configured: canonical(window.feeFaucetId),
+          reported: (await client.feeFaucetId()).toString(),
+        };
+      });
+
+      expect(result.configured).toBe(result.reported);
+    }
+  );
+
+  // The tripwire for every quickstart that now has to pass `feeFaucetId`: while
+  // KNOWN_FEE_FAUCETS is empty a client without one must fail, and fail naming
+  // the option. When a 0.17 network publishes its genesis and the table gains an
+  // entry, this test fails - and the docs that call the option mandatory are
+  // what has to change with it.
+  nodeTest(
+    "creating a client without a fee faucet fails and names the option",
+    async ({ page }) => {
+      const message = await page.evaluate(async () => {
+        try {
+          await window.MidenClient.create({
+            rpcUrl: window.rpcUrl,
+            storeName: "miden_client_api_no_fee_faucet_test",
+          });
+          return null;
+        } catch (err) {
+          return String(err?.message ?? err);
+        }
+      });
+
+      expect(message).toContain("feeFaucetId");
+    }
+  );
+
   nodeTest(
     "accounts.create wallet and faucet via integration",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
           storeName: "miden_client_api_accounts_test",
         });
         await client.sync();
@@ -1225,6 +1285,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
           storeName: "miden_client_api_send_test",
         });
         await client.sync();
@@ -1289,6 +1350,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_txlist_test",
       });
       await client.sync();
@@ -1337,6 +1399,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_notes_test",
       });
       await client.sync();

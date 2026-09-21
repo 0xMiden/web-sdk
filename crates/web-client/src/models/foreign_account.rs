@@ -5,7 +5,6 @@ use miden_client::transaction::ForeignAccount as NativeForeignAccount;
 use crate::js_error_with_context;
 use crate::models::account::Account;
 use crate::models::account_id::AccountId;
-use crate::models::account_inputs::AccountInputs;
 use crate::models::account_storage_requirements::AccountStorageRequirements;
 use crate::platform::JsErr;
 
@@ -35,12 +34,6 @@ impl ForeignAccount {
             .map_err(|e| js_error_with_context(e, "Failed to create private foreign account"))?;
 
         Ok(ForeignAccount(native_foreign_account))
-    }
-
-    /// Creates a foreign account entry from already fetched inputs, valid only for a transaction
-    /// whose reference block is the block they were fetched at.
-    pub fn prefetched(inputs: &AccountInputs) -> ForeignAccount {
-        ForeignAccount(NativeForeignAccount::Prefetched(inputs.into()))
     }
 
     /// Returns the required storage slots/keys for this foreign account.

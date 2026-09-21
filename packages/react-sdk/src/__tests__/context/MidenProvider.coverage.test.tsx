@@ -7,6 +7,8 @@ import {
   useMidenClient,
 } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
+import { SignerContext } from "../../context/SignerContext";
+import { createMockSignerContext } from "../mocks/signer-context";
 
 // Coverage-targeted tests for branches that the main MidenProvider.test.tsx
 // doesn't exercise (custom loading/error UI, init failure path, useMidenClient
@@ -15,6 +17,69 @@ import { useMidenStore } from "../../store/MidenStore";
 beforeEach(() => {
   useMidenStore.getState().reset();
   vi.clearAllMocks();
+});
+
+describe("MidenProvider — fee faucet", () => {
+  it("passes config.feeFaucetId to createClient as its last argument", async () => {
+    // A 0.17 client cannot execute or screen notes without a protocol
+    // configuration, and this is the only thing the provider is given to build
+    // one from, so a dropped argument leaves every consumer of the provider
+    // unable to transact.
+    render(
+      <MidenProvider
+        config={{
+          rpcUrl: "https://rpc.testnet.miden.io",
+          feeFaucetId: "0x1234567890abcdef",
+        }}
+      >
+        <div data-testid="children">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
+    });
+    // Length plus absolute index, not a position from the end: passing the
+    // value last makes `args[args.length - 1]` true by construction, so
+    // deleting an earlier placeholder would shift every later argument one slot
+    // left and still satisfy it.
+    const args = vi.mocked(WebClient.createClient).mock.calls[0];
+    expect(args).toHaveLength(8);
+    expect(args[7]).toBe("0x1234567890abcdef");
+  });
+
+  // The branch every signer provider takes, and the harder of the two: eleven
+  // positional arguments with `undefined` placeholders, which is exactly what
+  // rots. The createClient case above cannot catch a regression here.
+  it("passes config.feeFaucetId to the external-keystore factory as its last argument", async () => {
+    const signer = createMockSignerContext({
+      isConnected: true,
+      storeName: "signer_fee_faucet",
+    });
+
+    render(
+      <SignerContext.Provider value={signer}>
+        <MidenProvider
+          config={{
+            rpcUrl: "https://rpc.testnet.miden.io",
+            feeFaucetId: "0xfeedfacecafebeef",
+          }}
+        >
+          <div data-testid="children">ready</div>
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(WebClient.createClientWithExternalKeystore)
+      ).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
+      .calls[0];
+    expect(args).toHaveLength(11);
+    expect(args[10]).toBe("0xfeedfacecafebeef");
+  });
 });
 
 describe("MidenProvider — custom loading + error rendering", () => {

@@ -265,8 +265,14 @@ import { MidenClient, AccountId, Felt } from "@miden-sdk/miden-sdk";
 const id = AccountId.fromHex("0x…"); // sync, WASM is already initialized
 const felt = new Felt(42n); // sync
 
-const client = await MidenClient.createTestnet();
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
 ```
+
+Every non-mock constructor needs `feeFaucetId`. Since 0.17 the chain's fee asset
+lives in a protocol configuration the node does not serve over RPC, and the SDK
+carries a per-network default for no network yet, so a client created without it
+fails with an error naming the option. Snippets below leave it out where the
+point they make is something else.
 
 ### Lazy usage (`/lazy`)
 
@@ -601,9 +607,11 @@ const builder = await client.feeAwareTransactionRequestBuilder(wallet);
 const request = builder.withCustomScript(script).build();
 ```
 
-The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for any account that does not choose its own salt, the builder comes back untouched.
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig the builder comes back untouched. A zero base fee is not a second condition: since 0.17 a multisig resolves its auth args whatever the chain charges, so a multisig gets them on a fee-free chain too.
 
-To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — call `builder.withFeeConversionSalt(salt)`. It is a declaration rather than a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so whichever is called last wins rather than erroring. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
+
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 
@@ -679,7 +687,7 @@ See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/e
 
 ### Foreign Accounts
 
-A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Three kinds:
+A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Two kinds:
 
 ```typescript
 import { ForeignAccount, AccountStorageRequirements } from "@miden-sdk/miden-sdk";
@@ -689,19 +697,9 @@ ForeignAccount.public(oracleAccountId, new AccountStorageRequirements());
 
 // Private — the caller supplies the state; only an inclusion proof is fetched.
 ForeignAccount.private(account);
-
-// Prefetched — the caller supplies state and witness; nothing is fetched.
-const blockNum = await client.getSyncHeight();
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(oracleAccountId, new AccountStorageRequirements())],
-  blockNum
-);
-ForeignAccount.prefetched(inputs[0]);
 ```
 
-A witness opens against the account tree of exactly one block, so inputs fetched at block `N` are valid only for a transaction whose reference block is `N` — the anchor's block under chain-anchored execution, or the sync height otherwise. Don't sync between fetching and executing.
-
-Prefetched inputs serialize (`inputs[0].serialize()` / `AccountInputs.deserialize(bytes)`), so one client can fetch them and another can execute against them, and a transaction pinned to an older block can still execute after the node stops serving account state there.
+A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
 ### Partial-Swap (PSWAP) Orders
 
@@ -779,7 +777,11 @@ To create the receiving account, build a **public** account carrying the network
 
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
-// fungible asset of `feeFaucetId`. Zero is a valid price.
+// chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
+// own: the node never runs network transactions for an account whose fee asset
+// differs from the chain's protocol configuration, and says nothing to the
+// client - the account's notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
   feeFaucetId
@@ -794,7 +796,7 @@ for (const component of components) builder.withComponent(component);
 const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

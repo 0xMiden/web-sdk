@@ -9,9 +9,11 @@ repository.workspace   = true
 rust-version.workspace = true
 version.workspace      = true
 
-# Being a workspace member keeps these pinned to the exact versions the
-# WASM build embeds (single Cargo.lock), so the package format this tool
-# parses can never drift from the format inside the binary it rewrites.
+# These must name the VM version the WASM build embeds. Workspace membership alone does not
+# keep them there: a requirement of "0.29" against a client on 0.33 simply resolves a second,
+# older copy, and the tool then parses a format the binary no longer contains - it strips
+# nothing, exits 1, wasm-opt is skipped, and the artifact ships at several times its budget.
+# Bump these with `miden-client`.
 [dependencies]
-miden-core         = { default-features = false, features = ["std"], version = "0.29" }
-miden-mast-package = { default-features = false, features = ["std"], version = "0.29" }
+miden-core         = { default-features = false, features = ["std"], version = "0.33" }
+miden-mast-package = { default-features = false, features = ["std"], version = "0.33" }

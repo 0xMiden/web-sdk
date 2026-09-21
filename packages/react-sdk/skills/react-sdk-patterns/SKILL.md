@@ -725,8 +725,7 @@ For compile-from-source, call `await client.createCodeBuilder()` (returns `Promi
 
 Some `@miden-sdk/miden-sdk` 0.16.1 additions have **no** `@miden-sdk/react` hook or type. To use them, build the `TransactionRequest` yourself against `useMidenClient()` and hand it to `useTransaction().execute({ accountId, request })`:
 
-- `ForeignAccount.private(account)` and `ForeignAccount.prefetched(inputs)`, plus the `AccountInputs` model. `useExecuteProgram()`'s `foreignAccounts` option only builds `ForeignAccount.public(id, storage)`, so a private or prefetched foreign account has to go the manual route.
-- `client.transactions.foreignAccountInputs(accounts, blockNum)`, which fetches the inputs to feed `prefetched`.
+- `ForeignAccount.private(account)`. `useExecuteProgram()`'s `foreignAccounts` option only builds `ForeignAccount.public(id, storage)`, so a private foreign account has to go the manual route.
 - `TransactionRequestBuilder.withExplicitInputNote(note, args?)`, which pins whether each input note is consumed authenticated or unauthenticated so every client executing the request produces the same transaction summary. This matters most in chain-anchored flows, where co-signers must reproduce the summary exactly.
 
 ## Account Import then Sync then Read Storage Flow
