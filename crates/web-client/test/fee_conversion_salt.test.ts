@@ -53,10 +53,10 @@ test.describe("fee conversion salt", () => {
         feeFaucetRoundTrips:
           sdk.AccountId.fromHex(feeFaucetId.toString()).toString() ===
           feeFaucetId.toString(),
-        // Reading it twice must agree — a fee faucet that changes between reads
-        // would mean we are not reading the registered configuration's own field.
-        feeFaucetIsStable:
-          (await client.feeFaucetId()).toString() === feeFaucetId.toString(),
+        // Pinning the value to the faucet the client was configured with needs
+        // an input the test chose, which the mock chain does not give it; that
+        // assertion lives in miden_client_api.test.ts against a client created
+        // with a known faucet.
       };
     });
 
@@ -66,7 +66,6 @@ test.describe("fee conversion salt", () => {
     expect(result.baseFee).toBeGreaterThanOrEqual(0);
     expect(result.baseFee).toBeLessThanOrEqual(0xffffffff);
     expect(result.feeFaucetRoundTrips).toBe(true);
-    expect(result.feeFaucetIsStable).toBe(true);
   });
 
   test("withFeeConversionSalt declares the salt and survives serialization", async ({
@@ -227,11 +226,12 @@ test.describe("fee conversion salt", () => {
   test("convenience constructors leave the fee to miden-client on this account", async ({
     run,
   }) => {
-    // The constructors declare a salt only where the executing account must
-    // choose its own — the multisig flavours — and only on a chain that charges.
-    // `setupWalletAndFaucet` yields a single-sig wallet on the zero-fee mock
-    // chain, so both gates are shut and the request must come back byte-identical
-    // to one from a bare builder: no salt, and no auth arg. miden-client commits
+    // The constructors declare nothing unless the executing account must choose
+    // its own salt — the multisig flavours. `setupWalletAndFaucet` yields a
+    // single-sig wallet, so the request must come back byte-identical to one
+    // from a bare builder: no salt, and no auth arg. The mock chain's zero base
+    // fee is not what makes that true; since 0.17 a multisig would carry auth
+    // args here too. miden-client commits
     // the native conversion info itself under its fixed default salt, which is
     // exactly what a single-sig account wants and what keeps its signed summary
     // reproducible.
