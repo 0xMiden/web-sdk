@@ -1002,7 +1002,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
         norm(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
-        false
+        process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, storeName);
     },

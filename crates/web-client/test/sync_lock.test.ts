@@ -1,6 +1,10 @@
 // @ts-nocheck
 import { expect } from "@playwright/test";
-import test, { getRpcUrl, RUN_ID } from "./playwright.global.setup";
+import test, {
+  getFeeFaucetId,
+  getRpcUrl,
+  RUN_ID,
+} from "./playwright.global.setup";
 import { BrowserContext, Page } from "@playwright/test";
 
 test.describe("Sync Lock Tests", () => {
@@ -150,7 +154,11 @@ test.describe("Sync Lock Tests", () => {
           window.rpcUrl,
           undefined,
           undefined,
-          window.storeName // Same store name as client1
+          window.storeName, // Same store name as client1
+          undefined, // logLevel
+          undefined, // useWorker, defaulted
+          undefined, // observability
+          window.feeFaucetId
         );
 
         // Fire concurrent syncs from both clients
@@ -182,13 +190,21 @@ test.describe("Sync Lock Tests", () => {
           window.rpcUrl,
           undefined,
           undefined,
-          window.storeName
+          window.storeName,
+          undefined, // logLevel
+          undefined, // useWorker, defaulted
+          undefined, // observability
+          window.feeFaucetId
         );
         const client3 = await window.WasmWebClient.createClient(
           window.rpcUrl,
           undefined,
           undefined,
-          window.storeName
+          window.storeName,
+          undefined, // logLevel
+          undefined, // useWorker, defaulted
+          undefined, // observability
+          window.feeFaucetId
         );
 
         // Fire many concurrent syncs
@@ -224,13 +240,21 @@ test.describe("Sync Lock Tests", () => {
           window.rpcUrl,
           undefined,
           undefined,
-          "SyncLockTestStore1"
+          "SyncLockTestStore1",
+          undefined, // logLevel
+          undefined, // useWorker, defaulted
+          undefined, // observability
+          window.feeFaucetId
         );
         const client3 = await window.WasmWebClient.createClient(
           window.rpcUrl,
           undefined,
           undefined,
-          "SyncLockTestStore2"
+          "SyncLockTestStore2",
+          undefined, // logLevel
+          undefined, // useWorker, defaulted
+          undefined, // observability
+          window.feeFaucetId
         );
 
         // Fire concurrent syncs to different stores
@@ -393,7 +417,7 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
       const setupPage = async (page: Page) => {
         await page.goto("http://localhost:8080");
         await page.evaluate(
-          async ({ rpcUrl, storeName }) => {
+          async ({ rpcUrl, storeName, feeFaucetId }) => {
             const sdkExports = await import("./index.js");
             for (const [key, value] of Object.entries(sdkExports)) {
               window[key] = value;
@@ -405,11 +429,19 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.client = client;
           },
-          { rpcUrl, storeName: crossTabStoreName }
+          {
+            rpcUrl,
+            storeName: crossTabStoreName,
+            feeFaucetId: getFeeFaucetId(),
+          }
         );
       };
 
@@ -462,7 +494,7 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
       const setupPage = async (page: Page) => {
         await page.goto("http://localhost:8080");
         await page.evaluate(
-          async ({ rpcUrl, storeName }) => {
+          async ({ rpcUrl, storeName, feeFaucetId }) => {
             const sdkExports = await import("./index.js");
             for (const [key, value] of Object.entries(sdkExports)) {
               window[key] = value;
@@ -473,11 +505,15 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.client = client;
           },
-          { rpcUrl, storeName: rapidStoreName }
+          { rpcUrl, storeName: rapidStoreName, feeFaucetId: getFeeFaucetId() }
         );
       };
 

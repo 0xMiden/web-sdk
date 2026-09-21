@@ -126,7 +126,7 @@ export async function createNodeIntegrationClient(
     null,
     path.join(tmpDir, `${storeName}.db`),
     path.join(tmpDir, "keystore"),
-    false
+    process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
   );
 
   const client = wrapNodeClient(rawClient, rawSdk);
@@ -1148,7 +1148,11 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
               window.rpcUrl,
               undefined,
               undefined,
-              uniqueName
+              uniqueName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              window.feeFaucetId
             );
             return { client };
           } catch {

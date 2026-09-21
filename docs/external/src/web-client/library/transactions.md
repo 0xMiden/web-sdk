@@ -195,14 +195,14 @@ So how much of this you have to think about depends on the account:
 - **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
 - **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
 
-Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor, which also names the fee asset the chain prices in:
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header:
 
 ```typescript
 const anchor = await client.transactions.captureAnchor(request);
 const header = anchor.blockHeader();
 
 const chargesFees = header.verificationBaseFee() > 0;
-const feeFaucet = header.feeFaucetId();
+const feeFaucet = await client.feeFaucetId();
 ```
 
 On a chain that charges nothing, requests are byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry.

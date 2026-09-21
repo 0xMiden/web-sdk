@@ -190,6 +190,15 @@ declare global {
       ) => Promise<void>;
       waitForBlocks: (amountOfBlocks: number) => Promise<void>;
       refreshClient: (initSeed?: Uint8Array) => Promise<void>;
+      // Build another client against the node under test. Keeps the wrapper's
+      // positional list, and the fee faucet it ends with, in one place.
+      createClient: (storeName?: string, seed?: Uint8Array) => Promise<any>;
+      createClientWithKeystore: (
+        getKeyCb?: unknown,
+        insertKeyCb?: unknown,
+        signCb?: unknown,
+        storeName?: string
+      ) => Promise<any>;
       parseNetworkId: (networkId: string) => NetworkId;
       generateKeyWithScheme: (signatureScheme: string) => AuthSecretKey;
     };

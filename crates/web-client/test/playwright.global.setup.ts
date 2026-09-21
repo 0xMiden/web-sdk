@@ -151,6 +151,9 @@ export const test = base.extend<{ forEachTest: void }>({
               undefined,
               undefined,
               storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
               feeFaucetId
             );
             window.rpcUrl = rpcUrl;
@@ -161,6 +164,42 @@ export const test = base.extend<{ forEachTest: void }>({
 
             // Create a namespace for helper functions
             window.helpers = window.helpers || {};
+
+            // One place that knows the wrapper's positional list, so a test that
+            // wants a second client against the same node cannot silently drop
+            // the fee faucet - without it the client cannot execute or screen
+            // notes, and the failure surfaces far from the call.
+            window.helpers.createClient = (clientStoreName, seed) =>
+              window.WasmWebClient.createClient(
+                window.rpcUrl,
+                undefined,
+                seed,
+                clientStoreName,
+                undefined, // logLevel
+                undefined, // useWorker, defaulted
+                undefined, // observability
+                window.feeFaucetId
+              );
+
+            window.helpers.createClientWithKeystore = (
+              getKeyCb,
+              insertKeyCb,
+              signCb,
+              clientStoreName
+            ) =>
+              window.WasmWebClient.createClientWithExternalKeystore(
+                window.rpcUrl,
+                undefined,
+                undefined,
+                clientStoreName,
+                getKeyCb,
+                insertKeyCb,
+                signCb,
+                undefined, // logLevel
+                undefined, // useWorker, defaulted
+                undefined, // observability
+                window.feeFaucetId
+              );
 
             // Add the remote prover url to window
             window.remoteProverUrl = proverUrl;
@@ -251,6 +290,9 @@ export const test = base.extend<{ forEachTest: void }>({
                 undefined,
                 initSeed,
                 window.storeName,
+                undefined, // logLevel
+                undefined, // useWorker, defaulted
+                undefined, // observability
                 window.feeFaucetId
               );
               window.client = client;

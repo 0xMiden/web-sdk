@@ -420,6 +420,11 @@ class WebClient {
    *   the process-wide observation sink; `observeSensitive` decides, for this
    *   client and for its whole lifetime, whether observations carry the
    *   high-fidelity `sensitive` channel. Both are construction-only.
+   * @param {string | undefined} [feeFaucetId] - Faucet of the chain's fee asset,
+   *   as a bech32 address or a hex account ID. Since 0.17 the fee asset lives in
+   *   the protocol configuration rather than the block header, and a client that
+   *   cannot build one can neither execute nor screen notes, so this is required
+   *   for a network the SDK knows no fee faucet for.
    */
   constructor(
     rpcUrl,
