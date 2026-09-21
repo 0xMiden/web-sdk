@@ -121,6 +121,12 @@ export class MidenClient {
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
    * (RPC, prover, note transport, autoSync).
    *
+   * **Requires `feeFaucetId` today.** Since 0.17 the chain's fee asset lives in a
+   * protocol configuration the node does not serve, so the client has to be told
+   * which faucet mints it. The SDK carries a per-network default for no network
+   * yet, so every non-mock client must name one or creation fails with an error
+   * saying so.
+   *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
@@ -201,12 +207,16 @@ export class MidenClient {
    * Defaults: rpcUrl "testnet", proverUrl "testnet", noteTransportUrl "testnet", autoSync true.
    * All defaults can be overridden via options.
    *
+   * **Requires `feeFaucetId` today.** Since 0.17 the chain's fee asset lives in a
+   * protocol configuration the node does not serve, so the client has to be told
+   * which faucet mints it. The SDK carries a per-network default for no network
+   * yet, so every non-mock client must name one or creation fails with an error
+   * saying so.
+   *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized testnet client.
    */
   static async createTestnet(options) {
-    // Since 0.17 a client also needs the chain's fee faucet, which the SDK knows
-    // for no network yet, so pass `feeFaucetId` in `options` until it does.
     return MidenClient.create({
       rpcUrl: "testnet",
       proverUrl: "testnet",
@@ -221,6 +231,12 @@ export class MidenClient {
    *
    * Defaults: rpcUrl "devnet", proverUrl "devnet", noteTransportUrl "devnet", autoSync true.
    * All defaults can be overridden via options.
+   *
+   * **Requires `feeFaucetId` today.** Since 0.17 the chain's fee asset lives in a
+   * protocol configuration the node does not serve, so the client has to be told
+   * which faucet mints it. The SDK carries a per-network default for no network
+   * yet, so every non-mock client must name one or creation fails with an error
+   * saying so.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized devnet client.
@@ -446,20 +462,25 @@ export class MidenClient {
    * fails with `FeeConversionInfoRequired`.
    *
    * The argument is the account that **executes** the request — the one whose
-   * auth procedure pays — not the recipient or a note's sender. On a zero-fee
-   * chain, or for an account that does not choose its own salt, the builder
-   * comes back untouched, so this is a safe drop-in. `withAuthArg` and
+   * auth procedure pays — not the recipient or a note's sender. For an account
+   * that is not a multisig the builder comes back untouched, so this is a safe
+   * drop-in; a zero base fee is not a second condition, since 0.17 a multisig
+   * resolves its auth args whatever the chain charges. `withAuthArg` and
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
    * @param {AccountRef} account - The executing account.
+   * @param {number} [approvalExpirationDelta] - Expires the approvers'
+   *   signatures this many blocks after the block the summary binds. Omit it
+   *   for an approval that never expires; at least 1, multisig accounts only.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
    */
-  async feeAwareTransactionRequestBuilder(account) {
+  async feeAwareTransactionRequestBuilder(account, approvalExpirationDelta) {
     this.assertNotTerminated();
     const wasm = await this.#getWasm();
     return await this.#inner.feeAwareTransactionRequestBuilder(
-      resolveAccountRef(account, wasm)
+      resolveAccountRef(account, wasm),
+      approvalExpirationDelta
     );
   }
 

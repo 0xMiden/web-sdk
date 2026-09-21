@@ -1687,11 +1687,27 @@ export interface KeystoreResource {
 // ════════════════════════════════════════════════════════════════
 
 export declare class MidenClient {
-  /** Creates and initializes a new MidenClient. */
+  /**
+   * Creates and initializes a new MidenClient.
+   *
+   * Every non-mock client must name the chain's fee faucet in
+   * {@link ClientOptions.feeFaucetId} while the SDK carries a default for no
+   * network; without it creation fails with an error saying so.
+   */
   static create(options?: ClientOptions): Promise<MidenClient>;
-  /** Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync). */
+  /**
+   * Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync).
+   *
+   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
+   * cover the endpoints, not the chain's fee asset.
+   */
   static createTestnet(options?: ClientOptions): Promise<MidenClient>;
-  /** Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync). */
+  /**
+   * Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync).
+   *
+   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
+   * cover the endpoints, not the chain's fee asset.
+   */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
   static createMock(options?: MockOptions): Promise<MidenClient>;
@@ -1804,26 +1820,37 @@ export declare class MidenClient {
    * `account` is the account that **executes** the request — the one whose
    * auth procedure pays the fee — not the recipient or a note's sender.
    *
-   * Safe as a drop-in: a salt is declared only when the chain charges a fee
-   * *and* the executing account is one that must choose its own. For every
-   * other account — and on any zero-fee chain — the builder comes back
-   * untouched and the request is byte-identical to one built from a bare
-   * builder.
+   * Safe as a drop-in: the executing account's auth component decides on its
+   * own, at any base fee. For every account that is not a multisig the builder
+   * comes back untouched and the request is byte-identical to one built from a
+   * bare builder. A zero base fee is not a second condition: since 0.17 a
+   * multisig auth procedure resolves its auth args whatever the chain charges,
+   * so a multisig gets them on a fee-free chain too.
    *
-   * Calling `withAuthArg` on the result clears the declared salt, and vice
+   * Calling `withAuthArg` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
    * @param account - The account that will execute the request.
+   * @param approvalExpirationDelta - Optional. Expires the approvers'
+   *   signatures this many blocks after the block the summary binds: the
+   *   transaction must be included by then. The delta is bound by the summary,
+   *   so the executing party can neither shorten nor extend it. Omit it (the
+   *   default) for an approval that never expires; it must be at least 1, and
+   *   it is ignored for an account that is not a multisig.
    *
    * @example
    * ```js
    * const builder = await client.feeAwareTransactionRequestBuilder(wallet);
    * const request = builder.withCustomScript(script).build();
+   *
+   * // An approval the co-signers have ~100 blocks to act on.
+   * const urgent = await client.feeAwareTransactionRequestBuilder(multisig, 100);
    * ```
    */
   feeAwareTransactionRequestBuilder(
-    account: AccountRef
+    account: AccountRef,
+    approvalExpirationDelta?: number
   ): Promise<TransactionRequestBuilder>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */
