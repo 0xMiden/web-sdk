@@ -179,6 +179,7 @@ mod tests {
 
     use miden_core::mast::{BasicBlockNodeBuilder, DenseMastForestBuilder, MastNodeExt};
     use miden_core::operations::Operation;
+    use miden_mast_package::debug_info::PackageDebugInfoBuilder;
     use miden_mast_package::{
         Dependency,
         PackageExport,
@@ -188,8 +189,6 @@ mod tests {
         TargetType,
         Version,
     };
-
-    use miden_mast_package::debug_info::PackageDebugInfoBuilder;
 
     use super::*;
 
