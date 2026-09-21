@@ -93,9 +93,12 @@ const networkCounterTransaction = async (
     // asserts the transaction consumed a note, created one, or changed account
     // state BEFORE it pays the fee, so an empty transaction aborts with
     // `network account transactions must have an effect before fee payment`.
-    // This account carries a counter and no wallet, so there is no note it can
-    // receive; bumping its own counter is the effect available to it, and the
-    // script is allowlisted below so the auth component admits it.
+    // Bumping its own counter is the effect used here, and the script is
+    // allowlisted below so the auth component admits it. (Consuming a note would
+    // also work - `createNetworkAuthComponents` installs BasicWallet itself and
+    // 0.17 allowlists the P2ID root by default - but that costs a mint and a
+    // second transaction, and this route also exercises the tx-script
+    // allowlist.)
     const deployScript = builder.compileTxScript(`
         use external_contract::counter_contract
         @transaction_script
@@ -198,19 +201,11 @@ const networkCounterTransaction = async (
       [target.toAttachment()]
     );
 
-    const ownOutputs = new window.NoteArray();
-    ownOutputs.push(note);
     // Since 0.17 the kernel prices a NetworkAccountTarget note through a
     // procedure call on the target account, so the emitting transaction declares
     // it as a foreign account. This request is built by hand rather than through
     // `transactions.createNetworkNote`, which declares it for you.
-    const targetAccounts = new window.ForeignAccountArray();
-    targetAccounts.push(
-      window.ForeignAccount.public(
-        built.account.id(),
-        new window.AccountStorageRequirements()
-      )
-    );
+    //
     // Pricing the note calls `estimate_note_fee` on the target, which applies
     // the standards' default expiration delta: this transaction must be
     // included within 20 blocks of its reference block, and an expiration can
@@ -219,11 +214,26 @@ const networkCounterTransaction = async (
     // expired. Re-execute against a fresh reference block, which is what a
     // consumer has to do; it is not a blanket retry, and any other failure
     // still fails the test on the first attempt.
-    const emitRequest = () =>
-      new window.TransactionRequestBuilder()
-        .withOwnOutputNotes(ownOutputs)
-        .withForeignAccounts(targetAccounts)
+    // Fresh arrays per attempt: both builder methods take their array BY VALUE,
+    // so wasm-bindgen moves the handle and a second build would hit a consumed
+    // one. `push` borrows and clones, so the note and the foreign account can
+    // be reused. Without this the retry below could never retry - it would
+    // throw `null pointer passed to rust` instead.
+    const emitRequest = () => {
+      const notes = new window.NoteArray();
+      notes.push(note);
+      const accounts = new window.ForeignAccountArray();
+      accounts.push(
+        window.ForeignAccount.public(
+          built.account.id(),
+          new window.AccountStorageRequirements()
+        )
+      );
+      return new window.TransactionRequestBuilder()
+        .withOwnOutputNotes(notes)
+        .withForeignAccounts(accounts)
         .build();
+    };
 
     let emitTx;
     for (let attempt = 0; ; attempt++) {
@@ -293,15 +303,17 @@ test.describe("network transaction tests", () => {
       senderAllowlist,
     } = await networkCounterTransaction(page);
     // Readback: the built account identifies as a network account and its
-    // allowlist holds the note-script root it was created with, plus the two
-    // roots the protocol allowlists itself (the network-account config note and
-    // the fee-sponsorship note). The allowlist is a set ordered by root value
-    // rather than insertion, so assert membership and size instead of contents.
-    // The size is load-bearing: a longer allowlist means the account would
-    // auto-consume note scripts it was never meant to.
+    // allowlist holds the note-script root it was created with, plus the three
+    // roots the protocol allowlists itself - the network-account config note,
+    // the fee-sponsorship note, and, since 0.17, P2ID. The allowlist is a set
+    // ordered by root value rather than insertion, so assert membership and size
+    // instead of contents. The size is load-bearing: a longer allowlist means
+    // the account would auto-consume note scripts it was never meant to, which
+    // is exactly what the P2ID default does - upstream marks it a stopgap until
+    // a dedicated DEPLOY note script lands.
     expect(isNetworkAccount).toBe(true);
     expect(allowlist).toContain(allowlistedNoteRoot);
-    expect(allowlist).toHaveLength(3);
+    expect(allowlist).toHaveLength(4);
     // A plain wallet is not a network account.
     expect(senderIsNetworkAccount).toBe(false);
     expect(senderAllowlist).toBeUndefined();

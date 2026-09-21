@@ -38,7 +38,11 @@ test.describe("multisig auth args", () => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
-      const salt = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
+      // A fresh Word per call, every call: the salt parameter is OWNED, so
+      // wasm-bindgen moves the handle and a second call passes a consumed one,
+      // which arrives as `None` and silently draws a salt instead. Reusing one
+      // Word here made this very test measure nothing after its first call.
+      const salt = () => new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
 
       // `run` hands the callback the RAW client, not MidenClient, so this is the
       // positional export: (account, approvalExpirationDelta, feeConversionSalt,
@@ -49,7 +53,7 @@ test.describe("multisig auth args", () => {
           await client.feeAwareTransactionRequestBuilder(
             multisigAccountId,
             undefined,
-            salt,
+            salt(),
             block
           )
         )
@@ -92,13 +96,16 @@ test.describe("multisig auth args", () => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
-      const salt = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      // Fresh per call, for the reason given in the previous test: reusing one
+      // made `withExpiry !== withoutExpiry` pass because the salts differed,
+      // not because the delta reached the preimage.
+      const salt = () => new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
       const authArgFor = async (delta) =>
         (
           await client.feeAwareTransactionRequestBuilder(
             multisigAccountId,
             delta,
-            salt,
+            salt(),
             1
           )
         )

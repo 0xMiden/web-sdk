@@ -50,10 +50,6 @@ test.describe("network note tests", () => {
       const networkAccountBuilder = new sdk.AccountBuilder(seed).storageMode(
         sdk.AccountStorageMode.public()
       );
-      // Needed to deploy: see the comment on the mint-and-consume below. The
-      // P2ID note that gives the deploy its effect calls `receive_asset` on the
-      // target, which only the wallet component exposes.
-      networkAccountBuilder.withBasicWalletComponent();
       for (const component of networkAuth) {
         networkAccountBuilder.withComponent(component);
       }
