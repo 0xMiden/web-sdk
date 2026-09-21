@@ -48,6 +48,7 @@ use crate::models::transaction_result::TransactionResult;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::transaction_store_update::TransactionStoreUpdate;
 use crate::models::transaction_summary::TransactionSummary;
+use crate::models::word::Word;
 use crate::platform::{
     JsBytes,
     JsErr,
@@ -838,37 +839,39 @@ impl WebClient {
     /// are settled in the chain's native fee asset at rate 1/1 and miden-client commits that
     /// itself, under a fixed default salt, without anything being declared here.
     ///
-    /// `approval_expiration_delta`, when given, expires the approvers' signatures `delta` blocks
-    /// after the block the summary binds: the transaction must then be included by
-    /// `bound_block + delta` or it can no longer be executed. It is bound by the summary, so
-    /// neither the executing party nor a relay can shorten or extend it. Left out, the approval
-    /// never expires, which is the default. It is ignored for an account that is not a multisig,
-    /// since no other auth component reads it.
+    /// Three optional values let a caller pin what the approvers sign over, all multisig-only
+    /// and all defaulted when left out.
+    ///
+    /// `approval_expiration_delta` expires the approvers' signatures `delta` blocks after the
+    /// block the summary binds: the transaction must then be included by `bound_block + delta`
+    /// or it can no longer be executed. It is bound by the summary, so neither the executing
+    /// party nor a relay can shorten or extend it. Left out, the approval never expires.
+    ///
+    /// `fee_conversion_salt` and `bound_block_num` are what a co-signer needs to REPRODUCE a
+    /// proposal rather than receive it. Left out, the salt is drawn fresh and the block is the
+    /// store's sync height, which is right for the party creating the proposal and wrong for
+    /// anyone rebuilding it: both are bound by the summary, so two parties who disagree on
+    /// either can never derive the same one. A co-signer who has the proposer's serialized
+    /// request does not need these - it carries the auth argument and its advice-map preimage.
     #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
     pub async fn fee_aware_transaction_request_builder(
         &self,
         account_id: &AccountId,
         approval_expiration_delta: Option<u32>,
+        fee_conversion_salt: Option<Word>,
+        bound_block_num: Option<u32>,
     ) -> Result<TransactionRequestBuilder, JsErr> {
-        let approval_expiration_delta = match approval_expiration_delta {
-            // Zero would mean "expired at the block it was approved at", which the kernel rejects
-            // rather than treating as no expiration; refuse it here where the caller can see why.
-            Some(0) => {
-                return Err(from_str_err(
-                    "approvalExpirationDelta must be at least 1 block; omit it for an approval                      that does not expire",
-                ));
-            },
-            Some(delta) => NonZeroU32::new(delta),
-            None => None,
-        };
-
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| {
             from_str_err("Client not initialized while creating a transaction request builder")
         })?;
 
-        let builder =
-            fee_aware_builder_with(client, account_id.into(), approval_expiration_delta).await?;
+        let overrides = MultisigAuthOverrides {
+            approval_expiration_delta,
+            salt: fee_conversion_salt.as_ref().map(NativeWord::from),
+            bound_block_num: bound_block_num.map(BlockNumber::from),
+        };
+        let builder = fee_aware_builder_with(client, account_id.into(), overrides).await?;
         Ok(TransactionRequestBuilder::from_native(builder))
     }
 }
@@ -1061,20 +1064,32 @@ async fn fee_aware_builder(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
-    fee_aware_builder_with(client, executing_account_id, None).await
+    fee_aware_builder_with(client, executing_account_id, MultisigAuthOverrides::default()).await
 }
 
-/// `fee_aware_builder` with an approval expiration for the multisig case, which only
-/// `feeAwareTransactionRequestBuilder` exposes; every convenience constructor passes `None`.
+/// What a caller may pin in a multisig's auth args instead of taking the SDK's default. Every
+/// convenience constructor passes the default; only `feeAwareTransactionRequestBuilder` exposes
+/// these, and every field is ignored for an account that is not a multisig.
+#[derive(Default)]
+struct MultisigAuthOverrides {
+    approval_expiration_delta: Option<u32>,
+    salt: Option<NativeWord>,
+    bound_block_num: Option<BlockNumber>,
+}
+
+/// `fee_aware_builder` with the caller's multisig overrides applied.
 async fn fee_aware_builder_with(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
-    approval_expiration_delta: Option<NonZeroU32>,
+    overrides: MultisigAuthOverrides,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
     let mut builder = NativeTransactionRequestBuilder::new();
-    let Some(salt) = caller_chosen_fee_conversion_salt(client, executing_account_id).await? else {
+    let Some(default_salt) =
+        caller_chosen_fee_conversion_salt(client, executing_account_id).await?
+    else {
         return Ok(builder);
     };
+    let salt = overrides.salt.unwrap_or(default_salt);
 
     // A multisig account reads three words out of its auth args - the block the summary binds and
     // its approval expiration, the salt, and the fee conversion info - while miden-client's own
@@ -1082,7 +1097,13 @@ async fn fee_aware_builder_with(
     // Handing a multisig the shorter preimage makes its auth procedure abort while piping it
     // ("advice stack read failed"), so build the multisig shape here and set it as the auth arg;
     // miden-client leaves a request that already carries one alone.
-    let auth_args = multisig_auth_args(client, salt, approval_expiration_delta).await?;
+    let auth_args = multisig_auth_args(
+        client,
+        salt,
+        overrides.approval_expiration_delta,
+        overrides.bound_block_num,
+    )
+    .await?;
     let commitment = auth_args.to_commitment();
     builder = builder
         .auth_arg(commitment)
@@ -1102,17 +1123,18 @@ async fn fee_aware_builder_with(
 async fn multisig_auth_args(
     client: &mut Client<crate::ClientAuth>,
     salt: NativeWord,
-    approval_expiration_delta: Option<NonZeroU32>,
+    approval_expiration_delta: Option<u32>,
+    bound_block_num: Option<BlockNumber>,
 ) -> Result<MultisigAuthArgs, JsErr> {
-    let bound_block_num = client.get_sync_height().await.map_err(|err| {
-        js_error_with_context(err, "failed to read the sync height for the multisig auth args")
-    })?;
-
+    // One read, not two. `get_latest_block_header` itself begins with a sync-height read, so
+    // taking the bound block from a separate `get_sync_height` call read it twice and let a sync
+    // landing in between bind the summary to one block while reading the fee asset from another.
     // The fee asset comes from the protocol configuration the reference block commits to, which
-    // is the same one execution resolves; reading it from the header keeps the two in step.
+    // is the same one execution resolves; reading both off this header keeps them in step.
     let header = client.get_latest_block_header().await.map_err(|err| {
         js_error_with_context(err, "failed to read the latest block header for the auth args")
     })?;
+    let bound_block_num = bound_block_num.unwrap_or_else(|| header.block_num());
     let protocol_config = client
         .get_protocol_config(header.protocol_config_commitment())
         .await
@@ -1125,9 +1147,18 @@ async fn multisig_auth_args(
     );
 
     match approval_expiration_delta {
-        Some(delta) => auth_args.with_approval_expiration_delta(delta).map_err(|err| {
-            js_error_with_context(err, "failed to set the multisig approval expiration")
-        }),
+        // Zero would mean "expired at the block it was approved at", which the kernel rejects
+        // rather than reading as no expiration; refuse it where the caller can see why.
+        Some(0) => Err(from_str_err(concat!(
+            "approvalExpirationDelta must be at least 1 block; ",
+            "omit it for an approval that does not expire",
+        ))),
+        Some(delta) => {
+            let delta = NonZeroU32::new(delta).expect("zero is rejected above");
+            auth_args.with_approval_expiration_delta(delta).map_err(|err| {
+                js_error_with_context(err, "failed to set the multisig approval expiration")
+            })
+        },
         None => Ok(auth_args),
     }
 }
