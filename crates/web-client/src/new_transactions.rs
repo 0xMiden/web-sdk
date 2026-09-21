@@ -991,6 +991,14 @@ async fn standard_auth_components(
 /// conversion info at all, and declaring a salt against it is refused upstream with
 /// `FeeConversionInfoUnsupported`, so those answer `false` too.
 ///
+/// A zero base fee used to be a second gate, on the grounds that miden-client skips the whole
+/// fee-conversion path when the chain charges nothing and no salt is declared. 0.17 made that
+/// wrong for the components this selects: a multisig auth procedure resolves its `AUTH_ARGS`
+/// unconditionally - it takes the block the summary binds and the summary salt from them, and
+/// only skips *creating* the fee note when the base fee is zero. Declaring nothing on a fee-free
+/// chain therefore left the account with no auth args at all, and the component aborted piping a
+/// preimage that was never written ("advice stack read failed").
+///
 /// Answers `false` when the account is not in the store, so the account-not-found error surfaces
 /// on its own rather than being preempted by a fee decision about an account nothing knows
 /// anything about.
@@ -1019,30 +1027,6 @@ async fn requires_caller_chosen_salt(
     }))
 }
 
-/// A fresh fee conversion salt for `executing_account_id`, or `None` where the caller should
-/// declare none.
-///
-/// One gate: the executing account's auth component, for the reasons in
-/// `requires_caller_chosen_salt`.
-///
-/// A zero base fee used to be a second gate, on the grounds that miden-client skips the whole
-/// fee-conversion path when the chain charges nothing and no salt is declared. 0.17 made that
-/// wrong for the components this function selects: a multisig auth procedure now resolves its
-/// `AUTH_ARGS` unconditionally - it takes the block the summary binds and the summary salt from
-/// them, and only skips *creating* the fee note when the base fee is zero. Declaring no salt on a
-/// fee-free chain therefore left the account with no auth args at all, and the component aborted
-/// piping a preimage that was never written ("advice stack read failed"), which is what every
-/// summary-producing test hit on the fee-free CI chain and on the mock chain.
-async fn caller_chosen_fee_conversion_salt(
-    client: &mut Client<crate::ClientAuth>,
-    executing_account_id: NativeAccountId,
-) -> Result<Option<NativeWord>, JsErr> {
-    if !requires_caller_chosen_salt(client, executing_account_id).await? {
-        return Ok(None);
-    }
-
-    Ok(Some(client.rng().draw_word()))
-}
 
 /// A request builder already carrying a fee conversion salt where the executing account needs one.
 ///
@@ -1084,12 +1068,17 @@ async fn fee_aware_builder_with(
     overrides: MultisigAuthOverrides,
 ) -> Result<NativeTransactionRequestBuilder, JsErr> {
     let mut builder = NativeTransactionRequestBuilder::new();
-    let Some(default_salt) =
-        caller_chosen_fee_conversion_salt(client, executing_account_id).await?
-    else {
+    if !requires_caller_chosen_salt(client, executing_account_id).await? {
         return Ok(builder);
+    }
+
+    // Draw only when the caller pinned nothing. Drawing and discarding would advance the client
+    // RNG, and `seed` documents that stream as reproducible, so a pinned build would shift every
+    // later draw relative to a defaulted one.
+    let salt = match overrides.salt {
+        Some(salt) => salt,
+        None => client.rng().draw_word(),
     };
-    let salt = overrides.salt.unwrap_or(default_salt);
 
     // A multisig account reads three words out of its auth args - the block the summary binds and
     // its approval expiration, the salt, and the fee conversion info - while miden-client's own

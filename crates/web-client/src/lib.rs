@@ -529,7 +529,7 @@ impl WebClient {
             builder = builder.note_transport(transport);
         }
 
-        *self.fee_faucet.lock().await = Some(protocol_config.fee_asset_id().faucet_id());
+        let fee_faucet = protocol_config.fee_asset_id().faucet_id();
         builder = builder.protocol_config(protocol_config);
 
         let mut client = builder
@@ -542,6 +542,9 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
+        // Published together with `inner`, so a creation that fails leaves neither set: the
+        // accessor reports the faucet of a client that exists, or nothing.
+        *self.fee_faucet.lock().await = Some(fee_faucet);
         *self.inner.lock().await = Some(client);
 
         Ok(())
