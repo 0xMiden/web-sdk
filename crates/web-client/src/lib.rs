@@ -279,7 +279,7 @@ impl WebClient {
         }
     }
 
-    /// Returns the faucet of the fee asset this client executes against.
+    /// Returns the fee faucet of the protocol configuration this client registered at creation.
     ///
     /// Before 0.17 any block header carried it, so a consumer could discover the chain's native
     /// asset by reading one. The header no longer does: the fee asset lives in the protocol
