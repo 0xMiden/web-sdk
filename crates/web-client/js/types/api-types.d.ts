@@ -1686,6 +1686,27 @@ export interface KeystoreResource {
 // MidenClient
 // ════════════════════════════════════════════════════════════════
 
+/**
+ * Multisig-only overrides for {@link MidenClient.feeAwareTransactionRequestBuilder}.
+ *
+ * Each field pins a value the approvers sign over. Omit them all for the party
+ * creating a proposal; supply them to reproduce one without transporting the
+ * proposer's serialized request.
+ */
+export interface MultisigAuthOptions {
+  /**
+   * Expires the approvers' signatures this many blocks after the block the
+   * summary binds: the transaction must be included by then. Bound by the
+   * summary, so the executing party can neither shorten nor extend it. At
+   * least 1; omitted, the approval does not expire.
+   */
+  approvalExpirationDelta?: number;
+  /** The salt the summary binds. Omitted, one is drawn fresh per build. */
+  feeConversionSalt?: Word;
+  /** The block the summary binds. Omitted, the store's sync height. */
+  boundBlockNum?: number;
+}
+
 export declare class MidenClient {
   /**
    * Creates and initializes a new MidenClient.
@@ -1773,7 +1794,8 @@ export declare class MidenClient {
   terminate(): void;
 
   /**
-   * Returns the faucet of the fee asset this client executes against.
+   * Returns the fee faucet of the protocol configuration this client
+   * registered at creation.
    *
    * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
    * protocol configuration rather than the block header, so this reports the
@@ -1831,13 +1853,14 @@ export declare class MidenClient {
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
+   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * returns for a multisig. The two setters clear each other, so either one
+   * discards the three-word auth args this already set and the transaction
+   * aborts in the auth procedure. Pass `feeConversionSalt` in `options`.
+   *
    * @param account - The account that will execute the request.
-   * @param approvalExpirationDelta - Optional. Expires the approvers'
-   *   signatures this many blocks after the block the summary binds: the
-   *   transaction must be included by then. The delta is bound by the summary,
-   *   so the executing party can neither shorten nor extend it. Omit it (the
-   *   default) for an approval that never expires; it must be at least 1, and
-   *   it is ignored for an account that is not a multisig.
+   * @param options - Multisig-only overrides; every field is defaulted when
+   *   omitted and ignored for an account that is not a multisig.
    *
    * @example
    * ```js
@@ -1845,12 +1868,21 @@ export declare class MidenClient {
    * const request = builder.withCustomScript(script).build();
    *
    * // An approval the co-signers have ~100 blocks to act on.
-   * const urgent = await client.feeAwareTransactionRequestBuilder(multisig, 100);
+   * const urgent = await client.feeAwareTransactionRequestBuilder(multisig, {
+   *   approvalExpirationDelta: 100,
+   * });
+   *
+   * // A co-signer rebuilding the proposal rather than receiving its bytes
+   * // pins both summary-binding values, or the summaries cannot match.
+   * const rebuilt = await client.feeAwareTransactionRequestBuilder(multisig, {
+   *   feeConversionSalt: agreedSalt,
+   *   boundBlockNum: agreedBlock,
+   * });
    * ```
    */
   feeAwareTransactionRequestBuilder(
     account: AccountRef,
-    approvalExpirationDelta?: number
+    options?: MultisigAuthOptions
   ): Promise<TransactionRequestBuilder>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */

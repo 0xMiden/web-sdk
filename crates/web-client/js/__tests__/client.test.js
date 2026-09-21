@@ -53,6 +53,8 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xabc");
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "fromHex", hex: "0xabc" }),
+      undefined,
+      undefined,
       undefined
     );
   });
@@ -62,6 +64,8 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mtst1qabc");
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "fromBech32", bech32: "mtst1qabc" }),
+      undefined,
+      undefined,
       undefined
     );
   });
@@ -73,6 +77,8 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(account.id).toHaveBeenCalled();
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       id,
+      undefined,
+      undefined,
       undefined
     );
   });
@@ -83,6 +89,8 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       accountId,
+      undefined,
+      undefined,
       undefined
     );
   });
@@ -94,15 +102,35 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
   });
 
-  // The approval expiration is the only caller-facing multisig knob, and it is
-  // off unless asked for: the cases above pin the `undefined` that means "never
-  // expires", this one pins that a delta reaches the WASM boundary unchanged.
+  // Every multisig override is off unless asked for: the cases above pin the
+  // `undefined`s that mean "SDK default", these pin that each option reaches the
+  // WASM boundary unchanged, in its own positional slot.
   it("forwards an approval expiration delta", async () => {
     const accountId = { kind: "accountId" };
-    await client.feeAwareTransactionRequestBuilder(accountId, 100);
+    await client.feeAwareTransactionRequestBuilder(accountId, {
+      approvalExpirationDelta: 100,
+    });
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
       accountId,
-      100
+      100,
+      undefined,
+      undefined
+    );
+  });
+
+  // The two a co-signer needs to reproduce a proposal rather than receive it.
+  it("forwards the salt and bound block a co-signer must agree on", async () => {
+    const accountId = { kind: "accountId" };
+    const salt = { kind: "word" };
+    await client.feeAwareTransactionRequestBuilder(accountId, {
+      feeConversionSalt: salt,
+      boundBlockNum: 42,
+    });
+    expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+      accountId,
+      undefined,
+      salt,
+      42
     );
   });
 

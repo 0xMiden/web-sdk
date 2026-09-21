@@ -196,7 +196,11 @@ impl TransactionRequestBuilder {
     /// Declaring a salt against an account whose auth component does not read the auth args as
     /// conversion info is refused with `FeeConversionInfoUnsupported`.
     ///
-    /// Mutually exclusive with `withAuthArg` — see the note there.
+    /// Mutually exclusive with `withAuthArg` — see the note there. That makes this setter
+    /// destructive on a builder returned by `feeAwareTransactionRequestBuilder` for a multisig:
+    /// that builder already carries the component's three-word auth args, and clearing them
+    /// leaves the auth procedure piping a preimage that was never written. Pass
+    /// `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead.
     #[js_export(js_name = "withFeeConversionSalt")]
     pub fn with_fee_conversion_salt(&mut self, salt: &Word) -> Self {
         let native_salt: NativeWord = salt.into();

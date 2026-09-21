@@ -419,7 +419,9 @@ back untouched, so it is a safe drop-in; a zero base fee is not a second
 condition, since 0.17 a multisig resolves its auth args whatever the chain
 charges. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
 miden-client has each setter clear the other, so whichever is called last wins
-rather than producing an error.
+rather than producing an error. Never call either on a builder this method
+returned for a multisig - it already carries the three-word auth args, and
+either setter discards them. Pass `feeConversionSalt` in the options instead.
 
 ### Prevent Race Conditions
 ```tsx

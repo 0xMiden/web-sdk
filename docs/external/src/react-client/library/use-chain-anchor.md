@@ -98,9 +98,11 @@ already declare a salt and need nothing extra.
 
 Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`
 occupy the same slot and each setter clears the other, so a request cannot carry
-both — call whichever you actually want last. And because the salt is drawn per
+both. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead. And because the salt and the bound block are chosen per
 build, the warning below about resolving a factory exactly once applies here too
-— capture the anchor, then preview and execute against `anchoredRequest`.
+— capture the anchor, then preview and execute against `anchoredRequest`. A
+co-signer rebuilding the proposal instead of receiving its bytes passes
+`feeConversionSalt` and `boundBlockNum`, or the two summaries cannot match.
 
 ## Verifying and co-signing
 

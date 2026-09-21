@@ -424,7 +424,8 @@ export class MidenClient {
   }
 
   /**
-   * Returns the faucet of the fee asset this client executes against.
+   * Returns the fee faucet of the protocol configuration this client
+   * registered at creation.
    *
    * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
    * protocol configuration rather than the block header, so it is the
@@ -469,18 +470,37 @@ export class MidenClient {
    * `withFeeConversionSalt` are mutually exclusive: each clears the other, so
    * whichever is called last wins.
    *
+   * Three options let a caller pin what the approvers sign over. All are
+   * multisig-only and all are defaulted when omitted.
+   *
+   * `feeConversionSalt` and `boundBlockNum` are what a co-signer needs to
+   * REPRODUCE a proposal rather than receive one. Left out, the salt is drawn
+   * fresh and the block is the store's sync height: right for the party
+   * creating the proposal, wrong for anyone rebuilding it, since both are bound
+   * by the summary. A co-signer holding the proposer's serialized request needs
+   * neither - it carries the auth argument and its advice-map preimage.
+   *
+   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * returns for a multisig: the two setters clear each other, so either one
+   * discards the auth args this already set. Pass `feeConversionSalt` here.
+   *
    * @param {AccountRef} account - The executing account.
-   * @param {number} [approvalExpirationDelta] - Expires the approvers'
+   * @param {object} [options] - Multisig-only overrides.
+   * @param {number} [options.approvalExpirationDelta] - Expires the approvers'
    *   signatures this many blocks after the block the summary binds. Omit it
-   *   for an approval that never expires; at least 1, multisig accounts only.
+   *   for an approval that never expires; at least 1.
+   * @param {Word} [options.feeConversionSalt] - The salt the summary binds.
+   * @param {number} [options.boundBlockNum] - The block the summary binds.
    * @returns {Promise<TransactionRequestBuilder>} A fee-aware builder.
    */
-  async feeAwareTransactionRequestBuilder(account, approvalExpirationDelta) {
+  async feeAwareTransactionRequestBuilder(account, options) {
     this.assertNotTerminated();
     const wasm = await this.#getWasm();
     return await this.#inner.feeAwareTransactionRequestBuilder(
       resolveAccountRef(account, wasm),
-      approvalExpirationDelta
+      options?.approvalExpirationDelta,
+      options?.feeConversionSalt,
+      options?.boundBlockNum
     );
   }
 

@@ -231,18 +231,23 @@ To set the salt yourself — which co-signers must do when they need to agree on
 ```typescript
 import { TransactionRequestBuilder, Word } from "@miden-sdk/miden-sdk";
 
-// Co-signers must all derive the same summary, so they must agree on this.
+// Co-signers must all derive the same summary, so they must agree on both the
+// salt and the block it binds.
 const salt = new Word([1n, 2n, 3n, 4n]);
 
-const request = new TransactionRequestBuilder()
-  .withFeeConversionSalt(salt)
+const request = (
+  await client.feeAwareTransactionRequestBuilder(multisig, {
+    feeConversionSalt: salt,
+    boundBlockNum: agreedBlock,
+  })
+)
   .withCustomScript(script)
   .build();
 ```
 
 The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
 
-`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error.
+`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
 
 ### Custom auth procedures
 

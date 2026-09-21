@@ -27,6 +27,104 @@ import { test, expect } from "./test-setup";
 // header actually reports rather than the zero the mock chain happens to use,
 // so the file stays correct if the mock chain is ever changed to charge.
 
+test.describe("multisig auth args", () => {
+  // The auth args are what the approvers sign over, so every value the SDK
+  // injects into them has to be pinnable by a caller who is REPRODUCING a
+  // proposal rather than receiving one. These run against the mock chain: the
+  // assertions are about the request the builder produces, not execution.
+  test("the same salt and bound block reproduce the same auth arg", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      const salt = new sdk.Word([1n, 2n, 3n, 4n]);
+
+      const pinned = async () =>
+        (
+          await client.feeAwareTransactionRequestBuilder(multisigAccountId, {
+            feeConversionSalt: salt,
+            boundBlockNum: 1,
+          })
+        )
+          .build()
+          .authArg()
+          ?.toHex();
+
+      const defaulted = async () =>
+        (await client.feeAwareTransactionRequestBuilder(multisigAccountId))
+          .build()
+          .authArg()
+          ?.toHex();
+
+      return {
+        pinnedA: await pinned(),
+        pinnedB: await pinned(),
+        defaultedA: await defaulted(),
+        defaultedB: await defaulted(),
+      };
+    });
+
+    // Two parties who agree on both values derive the same summary.
+    expect(result.pinnedA).toBeTruthy();
+    expect(result.pinnedA).toBe(result.pinnedB);
+    // Two who agree on neither cannot: the salt is drawn fresh per build. This
+    // is the assertion that makes the pinning above non-vacuous.
+    expect(result.defaultedA).not.toBe(result.defaultedB);
+    expect(result.defaultedA).not.toBe(result.pinnedA);
+  });
+
+  test("the approval expiration is off by default and rejects zero", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      const salt = new sdk.Word([5n, 6n, 7n, 8n]);
+      const common = { feeConversionSalt: salt, boundBlockNum: 1 };
+
+      const authArgFor = async (options) =>
+        (
+          await client.feeAwareTransactionRequestBuilder(
+            multisigAccountId,
+            options
+          )
+        )
+          .build()
+          .authArg()
+          ?.toHex();
+
+      let zeroError = null;
+      try {
+        await authArgFor({ ...common, approvalExpirationDelta: 0 });
+      } catch (err) {
+        zeroError = String(err?.message ?? err);
+      }
+
+      return {
+        withoutExpiry: await authArgFor(common),
+        withExpiry: await authArgFor({
+          ...common,
+          approvalExpirationDelta: 100,
+        }),
+        zeroError,
+      };
+    });
+
+    // A delta is part of the signed preimage, so setting one must change the
+    // commitment. Equal values would mean the option never reached the kernel.
+    expect(result.withoutExpiry).toBeTruthy();
+    expect(result.withExpiry).toBeTruthy();
+    expect(result.withExpiry).not.toBe(result.withoutExpiry);
+    // Zero is refused where the caller can see why, not silently read as "never".
+    expect(result.zeroError).toContain("approvalExpirationDelta");
+    // And the message is the one intended, with no whitespace artefact: this is
+    // the guard for a literal that three reviewers read as malformed and that
+    // really was, because the tooling that wrote it ate the line continuation.
+    expect(result.zeroError).not.toMatch(/ {2,}/);
+  });
+});
+
 test.describe("fee conversion salt", () => {
   test("block headers expose the chain's fee parameters", async ({ run }) => {
     const result = await run(async ({ client, sdk, helpers }) => {
