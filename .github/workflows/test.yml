@@ -1125,6 +1125,18 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run web client tests
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci --project=${{ matrix.project }}
+      # A network transaction that the builder declines is not an error anywhere the test can
+      # see: the note simply stays unconsumed. Its own log is the only place that says why.
+      - name: Dump node logs on failure
+        if: failure()
+        working-directory: miden-client
+        run: |
+          for svc in ntx-builder node validator; do
+            f="target/test-node/data/logs/$svc.log"
+            echo "::group::$svc.log (last 200 lines)"
+            if [ -f "$f" ]; then tail -n 200 "$f"; else echo "(no $f)"; fi
+            echo "::endgroup::"
+          done
       - name: Upload Playwright JSON report
         if: always()
         uses: actions/upload-artifact@v4
