@@ -38,14 +38,20 @@ test.describe("multisig auth args", () => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
-      const salt = new sdk.Word([1n, 2n, 3n, 4n]);
+      const salt = new sdk.Word(sdk.u64Array([1, 2, 3, 4]));
 
-      const pinned = async () =>
+      // `run` hands the callback the RAW client, not MidenClient, so this is the
+      // positional export: (account, approvalExpirationDelta, feeConversionSalt,
+      // boundBlockNum). MidenClient's options object fails loudly in napi here
+      // and is silently coerced to Some(0) in wasm.
+      const authArgAt = async (block) =>
         (
-          await client.feeAwareTransactionRequestBuilder(multisigAccountId, {
-            feeConversionSalt: salt,
-            boundBlockNum: 1,
-          })
+          await client.feeAwareTransactionRequestBuilder(
+            multisigAccountId,
+            undefined,
+            salt,
+            block
+          )
         )
           .build()
           .authArg()
@@ -58,8 +64,9 @@ test.describe("multisig auth args", () => {
           ?.toHex();
 
       return {
-        pinnedA: await pinned(),
-        pinnedB: await pinned(),
+        pinnedA: await authArgAt(1),
+        pinnedB: await authArgAt(1),
+        otherBlock: await authArgAt(2),
         defaultedA: await defaulted(),
         defaultedB: await defaulted(),
       };
@@ -72,6 +79,11 @@ test.describe("multisig auth args", () => {
     // is the assertion that makes the pinning above non-vacuous.
     expect(result.defaultedA).not.toBe(result.defaultedB);
     expect(result.defaultedA).not.toBe(result.pinnedA);
+    // And the bound block is really pinned, not merely passed: the equality
+    // above would hold even if the override were ignored, because this closure
+    // produces no blocks, so the default bound block is the same for both
+    // builds. Varying it alone is what makes that impossible.
+    expect(result.otherBlock).not.toBe(result.pinnedA);
   });
 
   test("the approval expiration is off by default and rejects zero", async ({
@@ -80,14 +92,14 @@ test.describe("multisig auth args", () => {
     const result = await run(async ({ client, sdk, helpers }) => {
       const { multisigAccountId } =
         await helpers.setupMultisigWithConsumableNote();
-      const salt = new sdk.Word([5n, 6n, 7n, 8n]);
-      const common = { feeConversionSalt: salt, boundBlockNum: 1 };
-
-      const authArgFor = async (options) =>
+      const salt = new sdk.Word(sdk.u64Array([5, 6, 7, 8]));
+      const authArgFor = async (delta) =>
         (
           await client.feeAwareTransactionRequestBuilder(
             multisigAccountId,
-            options
+            delta,
+            salt,
+            1
           )
         )
           .build()
@@ -96,17 +108,14 @@ test.describe("multisig auth args", () => {
 
       let zeroError = null;
       try {
-        await authArgFor({ ...common, approvalExpirationDelta: 0 });
+        await authArgFor(0);
       } catch (err) {
         zeroError = String(err?.message ?? err);
       }
 
       return {
-        withoutExpiry: await authArgFor(common),
-        withExpiry: await authArgFor({
-          ...common,
-          approvalExpirationDelta: 100,
-        }),
+        withoutExpiry: await authArgFor(undefined),
+        withExpiry: await authArgFor(100),
         zeroError,
       };
     });
