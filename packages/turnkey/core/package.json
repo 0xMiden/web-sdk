@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/turnkey",
-  "version": "0.16.0",
+  "version": "0.17.0-rc.1",
   "type": "commonjs",
   "description": "Miden Turnkey Integration SDK",
   "main": "./dist/cjs/index.js",
@@ -56,13 +56,16 @@
     "@turnkey/sdk-browser": "^5.13.4"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "AGENTS.md",
+    "skills"
   ],
   "bugs": {
     "url": "https://github.com/0xMiden/web-sdk/issues"
   },
   "homepage": "https://github.com/0xMiden/web-sdk",
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.16.0"
+    "@miden-sdk/miden-sdk": "^0.17.0-rc.1"
   }
 }

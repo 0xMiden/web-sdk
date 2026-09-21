@@ -572,8 +572,12 @@ describe("the published surface resolves", () => {
     expect(manifest.exports?.["./package.json"]).toBe("./package.json");
   });
 
-  it("publishes the build output and the README, and nothing else", () => {
-    expect(manifest.files).toEqual(["dist", "README.md"]);
+  it("publishes the build output, the README and the agent guide, and nothing else", () => {
+    // AGENTS.md is load-bearing in this list: npm packs README unconditionally
+    // but gives AGENTS.md no such privilege, so dropping it here would silently
+    // stop shipping the guide. scripts/check-agent-docs.sh asserts the same
+    // thing against a real `npm pack` file list.
+    expect(manifest.files).toEqual(["dist", "README.md", "AGENTS.md"]);
   });
 
   it("can build the files it promises to publish", () => {

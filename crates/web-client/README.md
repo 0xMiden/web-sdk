@@ -1,5 +1,25 @@
 # @miden-sdk/miden-sdk
 
+## Start here
+
+```bash
+npm create @miden-sdk@latest
+```
+
+Run that once in your project. Miden is pre-1.0 and its API moves between minor
+versions, so an AI coding agent working from training data will write code for a
+version you are not on. Every `@miden-sdk/*` package ships an `AGENTS.md` and
+task-scoped `skills/` inside its tarball, matched to the exact version in your
+lockfile - this command is what points your agent at them, by writing the
+pointers into your own `AGENTS.md` and `CLAUDE.md`. It is idempotent, so re-run
+it after an upgrade.
+
+Prefer to wire it up by hand? The block to paste is [below](#for-ai-coding-agents).
+
+Starting from nothing rather than adding to an existing app?
+[`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
+scaffolds the whole stack with this already done.
+
 ## Overview
 
 The `@miden-sdk/miden-sdk` is a comprehensive software development toolkit (SDK) for interacting with the Miden blockchain and virtual machine from within a web application. It provides developers with everything needed to:
@@ -13,7 +33,7 @@ The `@miden-sdk/miden-sdk` is a comprehensive software development toolkit (SDK)
 Whether you're building a wallet, dApp, or other blockchain-integrated application, this SDK provides the core functionality to bridge your frontend with Miden's powerful ZK architecture.
 
 > **Note:** This README provides a high-level overview of the web client SDK.
-> For more detailed documentation, API references, and usage examples, see the documentation [here](../../docs/src/web-client) (TBD).
+> For more detailed documentation, API references, and usage examples, see <https://docs.miden.xyz/builder/tools/clients/web-client/>.
 
 ### SDK Structure and Build Process
 
@@ -37,33 +57,71 @@ This setup allows the SDK to be seamlessly consumed in JavaScript environments, 
 
 ### Stable Version
 
-A non-stable version of the SDK is also maintained, which tracks the `next` branch of the Miden client repository (essentially the development branch). To install the pre-release version, run:
+The stable release tracks the `main` branch and is what most applications want:
 
-```javascript
+```bash
 npm i @miden-sdk/miden-sdk
 ```
 
-Or using Yarn:
+Or with pnpm:
 
-```javascript
+```bash
 pnpm add @miden-sdk/miden-sdk
 ```
 
 ### Pre-release ("next") Version
 
-A non-stable version is also maintained. To install the pre-release version, run:
+A non-stable version is also maintained, tracking the `next` branch of the Miden client repository (essentially the development branch). To install the pre-release version, run:
 
-```javascript
+```bash
 npm i @miden-sdk/miden-sdk@next
 ```
 
-Or with Yarn:
+Or with pnpm:
 
-```javascript
+```bash
 pnpm add @miden-sdk/miden-sdk@next
 ```
 
 > **Note:** The `next` version of the SDK must be used in conjunction with a locally running Miden node built from the `next` branch of the `miden-node` repository. This is necessary because the public testnet runs the stable `main` branch, which may not be compatible with the latest development features in `next`. Instructions to run a local node can be found [here](https://github.com/0xMiden/miden-node/tree/next) on the `next` branch of the `miden-node` repository. Additionally, if you plan to leverage delegated proving in your application, you may need to run a local prover (see [Remote prover instructions](https://github.com/0xMiden/miden-node/tree/next/bin/remote-prover)).
+
+## For AI coding agents
+
+This package ships agent-facing documentation inside the tarball, so it is
+always version-matched to the code you have installed:
+
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` - start here
+- `node_modules/@miden-sdk/miden-sdk/skills/` - task-scoped guides: client
+  usage, production pitfalls, signer integration, chain-anchored execution
+  (multisig and offline co-signing), and a source map of the SDK itself
+
+Agents do not look inside `node_modules` on their own. To make yours read these
+automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
+of your project:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date:
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
+
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
+
+Each guide indexes task-specific skills in that package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
+<!-- END:miden-agent-rules -->
+```
 
 ## Entry Points: Eager / Lazy × ST / MT
 
@@ -163,18 +221,28 @@ app.use((_, res, next) => {
 
 If you cannot set these headers (CDN, hosting provider that doesn't allow header injection), the COI service-worker shim pattern (`gzuidhof/coi-serviceworker`) lets a small same-origin SW intercept fetches and re-inject the headers on the way back. We don't bundle this with the SDK because installing a service worker into a consumer's app is intrusive — adopt it deliberately if you need it.
 
-### `initThreadPool(n)` — required once for MT
+### `initThreadPool(n)` - only for a direct MT client
 
-Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon. **Consumers must `await` it once before any prove call** (typically at app startup, or just before the first transaction):
+Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon, but on the default
+worker-backed path you do not call it. The SDK runs every prove inside its own Worker, and
+that Worker initializes its own pool: the client forwards `navigator.hardwareConcurrency`
+when the page is cross-origin-isolated, and the Worker calls `initThreadPool` before it
+constructs its `WebClient`. rayon's global pool is per WASM instance, so a pool you bring
+up on the main thread is a different instance from the one that proves, and the call is
+inert rather than wrong.
+
+Call it yourself only for a direct MT client on the current thread (`useWorker: false`, or
+no Worker support), in that client's own realm:
 
 ```ts
 import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
 await MidenClient.ready();
 await initThreadPool(navigator.hardwareConcurrency); // size to physical threads
+const client = await MidenClient.create({ useWorker: false });
 ```
 
-Without this call, the rayon global thread pool spawns zero workers on `wasm32` and every `par_iter(...)` falls through to a sequential loop — i.e. you've shipped multi-threaded WASM that runs single-threaded. The ST entries don't expose `initThreadPool` (no thread pool to bring up).
+The ST entries don't expose `initThreadPool` (no thread pool to bring up).
 
 ### Timing model — eager vs lazy
 
@@ -197,8 +265,14 @@ import { MidenClient, AccountId, Felt } from "@miden-sdk/miden-sdk";
 const id = AccountId.fromHex("0x…"); // sync, WASM is already initialized
 const felt = new Felt(42n); // sync
 
-const client = await MidenClient.createTestnet();
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
 ```
+
+Every non-mock constructor needs `feeFaucetId`. Since 0.17 the chain's fee asset
+lives in a protocol configuration the node does not serve over RPC, and the SDK
+carries a per-network default for no network yet, so a client created without it
+fails with an error naming the option. Snippets below leave it out where the
+point they make is something else.
 
 ### Lazy usage (`/lazy`)
 
@@ -310,8 +384,8 @@ This runs a suite of integration tests to verify the SDK’s functionality in a 
 Follow the steps below to produce the contents that get published to npm (`dist/` plus the license file). All commands are executed from `crates/web-client`.
 
 1. **Install prerequisites**
-   - Install the Rust toolchain version specified in `rust-toolchain.toml`.
-   - Install Node.js ≥18 and Yarn.
+   - Install the Rust toolchain specified in `rust-toolchain.toml`. Both the pinned nightly and stable are needed: the MT variant uses `-Z build-std` and atomics, and the ST variant is built with stable.
+   - Install Node.js >= 20 (see `.nvmrc`) and pnpm 9 (`corepack enable`).
 2. **Install dependencies**
    ```bash
    pnpm install
@@ -323,14 +397,15 @@ Follow the steps below to produce the contents that get published to npm (`dist/
    ```
    The `build` script (see `package.json`) performs the following:
    - Removes the previous `dist/` directory (`rimraf dist`).
-   - Runs `npm run build-rust-client-js`, which builds the `idxdb-store` TypeScript helper that the SDK imports.
-   - Invokes Rollup with `RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\""` so the Rust `getrandom` crate targets browser entropy and so that atomics/bulk-memory WebAssembly features are enabled.
-   - Copies the generated TypeScript declarations from `js/types` into `dist/`.
-   - Executes `node clean.js` to strip paths from the generated `.js` files, leaving only the artifacts needed on npm.
+   - Runs `build-rust-client-js`, which builds the `web_store` TypeScript helper (`crates/idxdb-store/src`) that the SDK imports.
+   - Runs Rollup **twice**, once per threading variant: `build-st` (`MIDEN_BUILD_VARIANT=st`, stable toolchain) produces `dist/st/`, and `build-mt` (`MIDEN_BUILD_VARIANT=mt`, pinned nightly plus `build-std` and atomics) produces `dist/mt/`. Both set `RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\""` so the Rust `getrandom` crate targets browser entropy.
+   - Runs `build-types`, which copies the generated TypeScript declarations from `js/types` into each dist subdirectory and then runs `node clean.js` to strip the `wasm.js` entry stub.
+   - Runs `node ./scripts/post-build.js`.
 4. **Inspect the artifacts**
-   - `dist/index.js` is the ESM entry point referenced by `"main"`/`"browser"`/`"exports"`.
-   - `dist/index.d.ts` and the rest of the `.d.ts` files provide the TypeScript surface.
-   Use `npm pack` if you want to preview the exact tarball that would be published.
+   - `dist/st/eager.js` is the ESM entry point referenced by `"main"`, `"browser"` and `exports["."].import`. `exports["."].node` resolves to `js/node-index.js` instead, so Node gets the napi binding rather than the WASM bundle.
+   - `dist/st/index.d.ts` is the TypeScript surface (`"types"`).
+   - The `/lazy`, `/mt` and `/mt/lazy` subpaths resolve into `dist/st/` and `dist/mt/` the same way. See [Entry Points](#entry-points-eager--lazy--st--mt) below.
+   Use `npm pack --dry-run` if you want to preview the exact file list that would be published.
 
 > Tip: during development you can set `MIDEN_WEB_DEV=true` before running `pnpm build` (or run `npm run build-dev`) to skip the clean step and keep extra debugging metadata in the bundled output. This debugging metadata also includes debug symbols for the generated wasm binary
 
@@ -346,7 +421,7 @@ pnpm check:wasm-types
 
 ## Usage
 
-The following are just a few simple examples to get started. For more details, see the [API Reference](../../docs/typedoc/web-client/README.md).
+The following are just a few simple examples to get started. For more details, see the [API Reference](https://docs.miden.xyz/builder/tools/clients/web-client/).
 
 ### Quick Start
 
@@ -549,9 +624,11 @@ const builder = await client.feeAwareTransactionRequestBuilder(wallet);
 const request = builder.withCustomScript(script).build();
 ```
 
-The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for any account that does not choose its own salt, the builder comes back untouched.
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig the builder comes back untouched. A zero base fee is not a second condition: since 0.17 a multisig resolves its auth args whatever the chain charges, so a multisig gets them on a fee-free chain too.
 
-To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — call `builder.withFeeConversionSalt(salt)`. It is a declaration rather than a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so whichever is called last wins rather than erroring. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
+
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 
@@ -623,7 +700,23 @@ An anchor pins the **reference block and chain data only**. Account state and au
 
 A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 
-See [the transactions guide](../../docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+
+### Foreign Accounts
+
+A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Two kinds:
+
+```typescript
+import { ForeignAccount, AccountStorageRequirements } from "@miden-sdk/miden-sdk";
+
+// Public — state and code fetched from the network at execution time.
+ForeignAccount.public(oracleAccountId, new AccountStorageRequirements());
+
+// Private — the caller supplies the state; only an inclusion proof is fetched.
+ForeignAccount.private(account);
+```
+
+A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
 ### Partial-Swap (PSWAP) Orders
 
@@ -701,7 +794,11 @@ To create the receiving account, build a **public** account carrying the network
 
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
-// fungible asset of `feeFaucetId`. Zero is a valid price.
+// chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
+// own: the node never runs network transactions for an account whose fee asset
+// differs from the chain's protocol configuration, and says nothing to the
+// client - the account's notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
   feeFaucetId
@@ -716,7 +813,7 @@ for (const component of components) builder.withComponent(component);
 const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 
@@ -755,8 +852,8 @@ If you'd rather not write that forwarding yourself, two opt-in binding packages 
 
 | Package | Turns observations into |
 |---|---|
-| [`@miden-sdk/telemetry-sentry`](../../packages/telemetry-sentry) | `captureMessage` calls on a Sentry client you own |
-| [`@miden-sdk/telemetry-otel`](../../packages/telemetry-otel) | spans on an OpenTelemetry tracer you own |
+| [`@miden-sdk/telemetry-sentry`](https://github.com/0xMiden/web-sdk/tree/main/packages/telemetry-sentry) | `captureMessage` calls on a Sentry client you own |
+| [`@miden-sdk/telemetry-otel`](https://github.com/0xMiden/web-sdk/tree/main/packages/telemetry-otel) | spans on an OpenTelemetry tracer you own |
 
 Neither package depends on its vendor, not even as a peer — both are typed against the shape they call, so you keep control of the version, the configuration and the lifecycle.
 
@@ -771,7 +868,7 @@ interface MidenObservation {
 }
 ```
 
-`op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` runs execute → prove → submit → apply, so it reports `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as four separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
+`op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
 
 `durationMs` is measured with `performance.now()` around the awaited call, so it is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
 

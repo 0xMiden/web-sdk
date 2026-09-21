@@ -76,6 +76,34 @@ test("fromHexSig throws on odd-length strings", () => {
   assert.throws(() => fromHexSig("abc"), /Invalid string len/);
 });
 
+test("resolveEvmWallets prefers getWalletsByType full records", () => {
+  const { resolveEvmWallets } = loadUtils();
+  const listed = [
+    { id: "evm-1", type: "EVM" },
+    { id: "sol-1", type: "SOLANA" },
+  ];
+  const para = {
+    getWalletsByType: (type) => {
+      assert.equal(type, "EVM");
+      return [{ id: "evm-1", type: "EVM", publicKey: "0xpk", signer: "s" }];
+    },
+  };
+  const resolved = resolveEvmWallets(para, listed);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].publicKey, "0xpk");
+});
+
+test("resolveEvmWallets falls back to the listed EVM wallets", () => {
+  const { resolveEvmWallets } = loadUtils();
+  const listed = [
+    { id: "evm-1", type: "EVM" },
+    { id: "sol-1", type: "SOLANA" },
+  ];
+  const resolved = resolveEvmWallets({}, listed);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].id, "evm-1");
+});
+
 test("hexToBytes converts hex strings to byte arrays", () => {
   const { hexToBytes } = loadUtils();
   const bytes = hexToBytes("0aff");

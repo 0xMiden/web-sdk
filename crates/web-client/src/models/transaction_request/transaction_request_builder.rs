@@ -8,6 +8,7 @@ use miden_client::note::{
 };
 use miden_client::transaction::{
     ForeignAccount as NativeForeignAccount,
+    InputNote as NativeInputNote,
     NoteArgs as NativeNoteArgs,
     TransactionRequestBuilder as NativeTransactionRequestBuilder,
     TransactionScript as NativeTransactionScript,
@@ -17,6 +18,7 @@ use miden_client::vm::AdviceMap as NativeAdviceMap;
 use crate::js_error_with_context;
 use crate::models::advice_map::AdviceMap;
 use crate::models::foreign_account::ForeignAccount;
+use crate::models::input_note::InputNote;
 use crate::models::miden_arrays::{
     ForeignAccountArray,
     NoteAndArgsArray,
@@ -26,7 +28,7 @@ use crate::models::miden_arrays::{
 };
 use crate::models::note_recipient::NoteRecipient;
 use crate::models::transaction_request::TransactionRequest;
-use crate::models::transaction_request::note_and_args::NoteAndArgs;
+use crate::models::transaction_request::note_and_args::{NoteAndArgs, NoteArgs};
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
 use crate::models::transaction_script::TransactionScript;
 use crate::models::word::Word;
@@ -72,6 +74,16 @@ impl TransactionRequestBuilder {
         let native_note_and_note_args: Vec<(NativeNote, Option<NativeNoteArgs>)> =
             items.into_iter().map(Into::into).collect();
         self.builder = self.builder.clone().input_notes(native_note_and_note_args);
+        self.clone()
+    }
+
+    /// Adds an input note with optional arguments, consumed in the mode its `InputNote` carries.
+    /// Repeated calls add more notes. The input note is borrowed and remains usable by the caller.
+    #[js_export(js_name = "withExplicitInputNote")]
+    pub fn with_explicit_input_note(&mut self, note: &InputNote, args: Option<NoteArgs>) -> Self {
+        let native_note: NativeInputNote = note.into();
+        let native_args: Option<NativeNoteArgs> = args.map(Into::into);
+        self.builder = self.builder.clone().explicit_input_notes([(native_note, native_args)]);
         self.clone()
     }
 
@@ -154,6 +166,12 @@ impl TransactionRequestBuilder {
     /// miden-client rather than reported as an error: each setter clears the other, so whichever
     /// is called last wins and the request can never carry both.
     ///
+    /// That symmetry makes this setter destructive in the same place its twin is: on a builder
+    /// returned by `feeAwareTransactionRequestBuilder` for a multisig account, which already
+    /// carries the component's three-word auth args. Calling this discards them and the auth
+    /// procedure aborts piping a preimage that was never written. Pass `feeConversionSalt` to
+    /// `feeAwareTransactionRequestBuilder` instead.
+    ///
     /// Setting this opts the request out of the client's fee-conversion machinery entirely. The
     /// client commits conversion info only when the request carries no auth argument of its own,
     /// so a caller that sets one is taking responsibility for the fee: on a fee-charging chain
@@ -184,7 +202,11 @@ impl TransactionRequestBuilder {
     /// Declaring a salt against an account whose auth component does not read the auth args as
     /// conversion info is refused with `FeeConversionInfoUnsupported`.
     ///
-    /// Mutually exclusive with `withAuthArg` — see the note there.
+    /// Mutually exclusive with `withAuthArg` — see the note there. That makes this setter
+    /// destructive on a builder returned by `feeAwareTransactionRequestBuilder` for a multisig:
+    /// that builder already carries the component's three-word auth args, and clearing them
+    /// leaves the auth procedure piping a preimage that was never written. Pass
+    /// `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead.
     #[js_export(js_name = "withFeeConversionSalt")]
     pub fn with_fee_conversion_salt(&mut self, salt: &Word) -> Self {
         let native_salt: NativeWord = salt.into();

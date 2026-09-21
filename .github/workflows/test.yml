@@ -24,8 +24,8 @@ env:
   # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
   # built against. A commit sha (not the branch name) keeps cache keys stable.
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
-  # v0.16.0
-  MIDEN_CLIENT_REF: 5478eeb3baf84a24d129b292fbc5ba558740bd46
+  # v0.17.0-rc.1
+  MIDEN_CLIENT_REF: 2fb20aca0869034dd26aa35473dbfb14fa017083
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -36,11 +36,20 @@ jobs:
   changes:
     name: Detect relevant changes
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      non_docs: ${{ steps.filter.outputs.non_docs }}
-      release_wasm: ${{ steps.filter.outputs.release_wasm }}
+      # A `Client PR:` / `Protocol PR:` marker forces both: the inject actions
+      # rewrite Cargo.toml and Cargo.lock at runtime (Cargo.lock is in
+      # `release_wasm`) without touching a tracked file, so the filter alone
+      # reads an empty or docs-only marker PR as "nothing changed".
+      non_docs: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.non_docs }}
+      release_wasm: ${{ steps.linked.outputs.found == 'true' && 'true' || steps.filter.outputs.release_wasm }}
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-linked-pr-markers
+        id: linked
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -374,7 +383,9 @@ jobs:
           node-version: "20"
           cache: 'pnpm'
       - name: Check React SDK version sync
-        run: node scripts/check-react-sdk-sync.js
+        run: |
+          node --test scripts/check-react-sdk-sync.test.cjs
+          node scripts/check-react-sdk-sync.js
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Run lint
@@ -459,6 +470,37 @@ jobs:
       - name: Verify Documentation is Up-to-date
         if: github.event_name == 'push' || steps.bypass.outputs.skip != 'true'
         run: git diff --exit-code docs/typedoc/web-client
+
+  test-typescript:
+    # `make test` is step 2 of CONTRIBUTING.md and the one command every
+    # contributor runs, but no job ran it. The suites it covers that the
+    # targeted jobs below do not - telemetry and wallet-adapter - were therefore
+    # gated by nothing, and did go red on main unnoticed. It needs no Rust
+    # toolchain and no built dist, so it does not wait on the WASM build.
+    name: TypeScript unit suites
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.non_docs == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      # Before running them, assert the aggregate actually covers every suite:
+      # vitest reports nothing for a project it was never told about, so an
+      # unlisted package's tests vanish silently and this job stays green.
+      - name: Check every vitest project is run by something
+        run: node scripts/check-vitest-projects.mjs
+      - name: Run the TypeScript unit suites
+        run: make test
 
   test-react-sdk:
     name: React SDK tests
@@ -949,6 +991,18 @@ jobs:
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -1050,6 +1104,18 @@ jobs:
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -1059,6 +1125,21 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run web client tests
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci --project=${{ matrix.project }}
+      # A network transaction that the builder declines is not an error anywhere the test can
+      # see: the note simply stays unconsumed. Its own log is the only place that says why.
+      - name: Dump node logs on failure
+        if: failure()
+        run: |
+          # Locate the logs rather than assuming a path: a previous attempt
+          # guessed one and reported three missing files, which says nothing.
+          echo "::group::log files found"
+          find . -path ./node_modules -prune -o -name '*.log' -path '*test-node*' -print 2>/dev/null | head -40
+          echo "::endgroup::"
+          find . -path ./node_modules -prune -o -name '*.log' -path '*test-node*' -print 2>/dev/null | while read -r f; do
+            echo "::group::$f (last 200 lines)"
+            tail -n 200 "$f"
+            echo "::endgroup::"
+          done
       - name: Upload Playwright JSON report
         if: always()
         uses: actions/upload-artifact@v4
@@ -1137,6 +1218,18 @@ jobs:
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers
@@ -1215,6 +1308,16 @@ jobs:
       # packages — made explicit.
       - name: Build @miden-sdk/react
         run: pnpm run build:react-sdk
+
+      # Every `typecheck` script in the workspace, run here rather than in the
+      # TypeScript unit suites job because most of them resolve
+      # `@miden-sdk/miden-sdk` types out of crates/web-client/dist - which only
+      # this job has. pnpm skips projects without the script, so this needs no
+      # list. It covers the adapter packages whose build config excludes tests
+      # from emit (vitest transpiles through esbuild and checks nothing), and
+      # the telemetry, create and vite-plugin scripts that no job ran before.
+      - name: Type-check every package
+        run: pnpm -r run typecheck
 
       # Manifest-driven: scripts/publish-manifest.json is the only list. Adding a
       # package there with "build": true brings it under this job automatically.

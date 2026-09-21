@@ -15,7 +15,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.98.1"
-version      = "0.16.0"
+version      = "0.17.0-rc.1"
 
 [profile.dev]
 codegen-units = 16
@@ -41,12 +41,17 @@ codegen-units = 16
 [workspace.dependencies]
 # Workspace crates. The versions are required when publishing path dependencies and must track
 # `workspace.package.version`.
-idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.16" }
-js-export-macro = { path = "crates/js-export-macro", version = "0.16" }
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.17.0-rc.1" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.17.0-rc.1" }
 
 # Client crates
-miden-client              = { default-features = false, version = "0.16" }
-miden-client-sqlite-store = { default-features = false, version = "0.16" }
+# `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
+# the `SequentialCommit` trait, which `miden-client` does not re-export but which the multisig auth
+# args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
+# copy of the protocol types, so bump the three together.
+miden-client              = { default-features = false, version = "0.17.0-rc.1" }
+miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.1" }
+miden-protocol            = { default-features = false, version = "0.17.0-rc.5" }
 
 # External dependencies
 async-trait = { version = "0.1" }
@@ -54,7 +59,7 @@ chrono      = { version = "0.4" }
 hex         = { version = "0.4" }
 miette      = { features = ["fancy"], version = "7.6" }
 # napi-rs powers the Node.js binding of the web-client crate. Matches the
-# version pin in miden-client 0.16.0.
+# version pin in miden-client 0.16.1.
 napi        = { default-features = false, features = ["async", "napi8"], version = "3" }
 napi-build  = { version = "2" }
 napi-derive = { default-features = false, version = "3" }

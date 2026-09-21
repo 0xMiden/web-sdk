@@ -52,6 +52,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
       const builder = {
         withOwnOutputNotes: vi.fn(() => builder),
+        withForeignAccounts: vi.fn(() => builder),
         withInputNotes: vi.fn(() => builder),
         withCustomScript: vi.fn(() => builder),
         build: vi.fn(() => ({})),
@@ -416,6 +417,7 @@ vi.mock("@miden-sdk/miden-sdk", () => {
     },
     TransactionRequestBuilder: class TransactionRequestBuilder {
       withOwnOutputNotes = vi.fn(() => this);
+      withForeignAccounts = vi.fn(() => this);
       withInputNotes = vi.fn(() => this);
       build = vi.fn(() => ({}));
     },
@@ -441,7 +443,15 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       ),
     }),
     ForeignAccountArray: class ForeignAccountArray {
-      constructor(_accounts?: unknown[]) {}
+      // Records pushes: a test asserting a target was declared needs to read
+      // back what went in, not just that the array was constructed.
+      pushed: unknown[] = [];
+      constructor(accounts?: unknown[]) {
+        if (Array.isArray(accounts)) this.pushed = [...accounts];
+      }
+      push(account: unknown) {
+        this.pushed.push(account);
+      }
     },
     AccountStorageRequirements: class AccountStorageRequirements {},
     NoteFilter: vi.fn().mockImplementation((_type: unknown, ids?: unknown) => {

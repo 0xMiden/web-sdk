@@ -13,7 +13,7 @@ custom consumption script:
 ```typescript
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
-const client = await MidenClient.create();
+const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
 const req = await client.transactions.createNetworkNote({
   account: senderId,
@@ -30,6 +30,8 @@ console.log(req.note.isNetworkNote()); // true
 returns `{ txId, note, result }`. Provide exactly one of `script` or
 `recipient` — passing both, or neither, throws. Notes are always Public — the
 attachment, not the tag, is what a network account matches on.
+
+Pricing the note calls `estimate_note_fee` on the target, and that procedure applies the standards' default expiration delta, so the emitting transaction must be included within **20 blocks** of its reference block - about a minute at a three-second block interval. An expiration can only be lowered, never raised, so this cannot be widened: if proving is slow enough that the node rejects the submission as expired, re-execute against a fresh reference block and submit again.
 
 ## Targeting a network account
 
@@ -118,14 +120,19 @@ import {
   AccountComponent,
   AccountStorageMode,
   NoteScriptFee,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 
 // Reuse the same compiled note script when building the network note, so
 // the allowlisted root matches.
 //
 // Each allowed script carries the fee charged to consume it, denominated in
-// the fungible asset of `feeFaucetId`. A zero price is valid.
+// the chain's fee asset. A zero price is valid.
+//
+// The fee faucet must be the chain's own. The node refuses to run network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and nothing reports it to the client: the account's
+// notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(noteScript.root(), 0n)],
   feeFaucetId
@@ -141,16 +148,19 @@ const { account } = builder.build();
 
 await client.accounts.insert({ account });
 
-// The auth component bumps the nonce itself, so a scriptless transaction
-// commits the account on-chain. The bare builder is right here even on a
-// fee-charging chain: the network-account auth component pays the fee from the
-// chain's native conversion info rather than the transaction's auth args, so
-// there is nothing to attach. See "Which accounts read conversion info" in the
-// transactions guide.
-await client.transactions.submit(
-  account.id(),
-  new TransactionRequestBuilder().build()
-);
+// Deploying needs an effect. Since 0.17 the auth component asserts the
+// transaction consumed an input note, created an output note, or changed the
+// account state BEFORE it pays the fee, so an empty transaction aborts with
+// `network account transactions must have an effect before fee payment`.
+// Consuming a note whose script the account allowlists is the cheapest one.
+//
+// The bare builder is still right here on the fee side: the network-account
+// auth component pays from the chain's native conversion info rather than the
+// transaction's auth args, so there is nothing to attach. See "Which accounts
+// read conversion info" in the transactions guide.
+// `allowlistedNoteId` is a note already sent to the account whose script root
+// is in the allowlist above.
+await client.transactions.consume(account.id(), [allowlistedNoteId]);
 ```
 
 The allowlist must be non-empty (`createNetworkAuthComponents([], ...)` throws).

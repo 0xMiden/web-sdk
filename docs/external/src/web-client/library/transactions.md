@@ -13,7 +13,7 @@ This guide demonstrates how to send, batch, and retrieve transactions using the 
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-    const client = await MidenClient.create();
+    const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
     // List all transactions
     const allTransactions = await client.transactions.list();
@@ -53,7 +53,7 @@ try {
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-    const client = await MidenClient.create();
+    const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
     // Get uncommitted transactions
     const uncommitted = await client.transactions.list({ status: "uncommitted" });
@@ -162,6 +162,27 @@ Notes on the staged form:
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+## Pinning How Input Notes Are Consumed
+
+`withInputNotes` adds notes and leaves the executing client to decide how each one is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. That is what you want for a request you build and execute yourself. It is not what you want for a request that travels — two clients with different stores produce different transaction summaries for the same request, and a multisig flow comparing summaries then fails for no visible reason.
+
+`withExplicitInputNote` pins the mode on the request instead. Each note is consumed in the mode its `InputNote` carries, whatever the executing client's store holds:
+
+```typescript
+import { InputNote, TransactionRequestBuilder } from "@miden-sdk/miden-sdk";
+
+const request = new TransactionRequestBuilder()
+  // Consumed with its proof and optional arguments.
+  .withExplicitInputNote(InputNote.authenticated(note, inclusionProof), args)
+  // Consumed as unauthenticated, even if the executing client has a proof for it.
+  .withExplicitInputNote(InputNote.unauthenticated(otherNote))
+  .build();
+```
+
+Each call adds one note. The optional second argument is the note's arguments, the same value `withInputNotes` takes; omit it or pass `null` for none. The input note remains usable after the call.
+
+To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
+
 ## Paying Transaction Fees
 
 Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
@@ -174,17 +195,17 @@ So how much of this you have to think about depends on the account:
 - **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
 - **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
 
-Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor, which also names the fee asset the chain prices in:
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header:
 
 ```typescript
 const anchor = await client.transactions.captureAnchor(request);
 const header = anchor.blockHeader();
 
 const chargesFees = header.verificationBaseFee() > 0;
-const feeFaucet = header.feeFaucetId();
+const feeFaucet = await client.feeFaucetId();
 ```
 
-On a chain that charges nothing, requests are byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry.
+On a chain that charges nothing, a request for an account that is not a multisig is byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry. A multisig is the exception at any base fee: since 0.17 its auth procedure resolves its auth args unconditionally, so the request carries them even on a fee-free chain.
 
 ### The convenience constructors handle it
 
@@ -203,25 +224,32 @@ const builder = await client.feeAwareTransactionRequestBuilder(wallet);
 const request = builder.withCustomScript(script).build();
 ```
 
-`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: on a zero-fee chain, or for any account that does not choose its own salt, it returns an untouched builder.
+`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig it returns an untouched builder. A zero base fee is not a second condition — since 0.17 a multisig resolves its auth args whatever the chain charges.
 
 To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's request bytes — declare it directly:
 
 ```typescript
 import { TransactionRequestBuilder, Word } from "@miden-sdk/miden-sdk";
 
-// Co-signers must all derive the same summary, so they must agree on this.
+// Co-signers must all derive the same summary, so they must agree on both the
+// salt and the block it binds.
 const salt = new Word([1n, 2n, 3n, 4n]);
 
-const request = new TransactionRequestBuilder()
-  .withFeeConversionSalt(salt)
+const request = (
+  await client.feeAwareTransactionRequestBuilder(multisig, {
+    feeConversionSalt: salt,
+    boundBlockNum: agreedBlock,
+  })
+)
   .withCustomScript(script)
   .build();
 ```
 
+Each call **consumes** the `Word` you pass: it is moved across the WASM boundary, so a second call needs a freshly built one. Reusing a spent handle is not an error - it arrives as "no salt given" and one is drawn for you, which is the divergence pinning the salt exists to prevent.
+
 The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
 
-`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error.
+`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
 
 ### Custom auth procedures
 

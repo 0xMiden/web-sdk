@@ -7,7 +7,6 @@ import type {
   AccountId,
   AccountFile,
   AccountCode,
-  AccountStorage,
   AssetVault,
   Word,
   Felt,
@@ -41,8 +40,14 @@ import type {
   NetworkAccountTarget,
   AdviceInputs,
   FeltArray,
+  ForeignAccount,
   PswapLineageRecord,
 } from "./crates/miden_client_web";
+
+// `Account.prototype.storage()` is patched at WASM load time to return the
+// `StorageView` wrapper declared in `index.d.ts`, so anything that surfaces the
+// result of that call is typed against the wrapper, not the raw WASM class.
+import type { StorageResult, StorageView } from "./index";
 
 // Import the full namespace for the MidenArrayConstructors type
 import type * as WasmExports from "./crates/miden_client_web";
@@ -227,6 +232,16 @@ export interface ClientOptions {
   seed?: string | Uint8Array;
   /** Store isolation key. */
   storeName?: string;
+  /**
+   * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
+   *
+   * Required for a network the SDK knows no fee faucet for. Miden 0.17 moved the fee asset out of
+   * the block header and into the protocol configuration, which a node does not serve over RPC
+   * yet: execution and note screening both resolve the configuration the reference block commits
+   * to, so a client that cannot build one cannot execute at all. Read it back with
+   * `client.feeFaucetId()`, which replaces the `BlockHeader.feeFaucetId()` of earlier versions.
+   */
+  feeFaucetId?: string;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
   /** External keystore callbacks. */
@@ -339,11 +354,46 @@ export interface ContractCreateOptions {
   storage?: StorageMode;
 }
 
+/**
+ * A single account's full on-chain state, as returned by
+ * {@link AccountsResource.getDetails}.
+ */
 export interface AccountDetails {
+  /** The account itself. */
   account: Account;
+  /** The account's asset vault. */
   vault: AssetVault;
-  storage: AccountStorage;
+  /**
+   * The account's storage, wrapped in a {@link StorageView}.
+   *
+   * This is **not** the raw WASM `AccountStorage`: `Account.prototype.storage()`
+   * is patched at WASM load time to return the wrapper, whose `getItem(slotName)`
+   * resolves both Value and StorageMap slots to a {@link StorageResult} rather
+   * than returning a map's commitment root as if it were a value. Reach the raw
+   * `AccountStorage` through `storage.raw` when you need the protocol-level
+   * behavior.
+   *
+   * A `StorageResult` is designed to be used directly, and two of its conversions
+   * are worth knowing before you write against it:
+   *
+   * - `valueOf()` backs arithmetic and `+result`. It returns a JS `number`, and
+   *   throws `RangeError` for felts above `Number.MAX_SAFE_INTEGER` rather than
+   *   silently losing precision. Use `toBigInt()` for exact u64 access.
+   * - `toJSON()` returns a **string**, not a number, so `JSON.stringify` of a
+   *   value holding a large felt round-trips losslessly.
+   *
+   * @example
+   * ```ts
+   * const { storage } = await client.accounts.getDetails(id);
+   * storage.getSlotNames();              // string[]
+   * storage.getItem("balance")?.toBigInt();  // bigint, full u64
+   * storage.getCommitment("owners");     // Word: a map slot's Merkle root
+   * ```
+   */
+  storage: StorageView;
+  /** The account's code, or `null` for an account with no code. */
   code: AccountCode | null;
+  /** Public-key commitments known for this account. */
   keys: Word[];
 }
 
@@ -691,7 +741,13 @@ export interface PswapCreateOptions extends TransactionOptions {
   request: Asset;
   /** Visibility of the PSWAP note itself. */
   type?: NoteVisibility;
-  /** Visibility of the payback note fillers emit to the creator. Defaults to `public`. */
+  /**
+   * Visibility of the payback note fillers emit to the creator.
+   *
+   * Defaults to `type`, NOT to `public`: both `swap` and `pswapCreate` resolve
+   * it as `paybackType ?? type`. Omit it on a private swap and the payback note
+   * is private too.
+   */
   paybackType?: NoteVisibility;
 }
 
@@ -1056,6 +1112,15 @@ export interface TransactionsResource {
    * attachment, submits it as an own output note, and (optionally) waits for
    * confirmation. The submitted note satisfies `Note.isNetworkNote()`, so a
    * public network account will auto-consume it.
+   *
+   * Pricing the note calls `estimate_note_fee` on the target, which applies the
+   * standards' default expiration delta: the transaction must be included
+   * within 20 blocks of its reference block, about a minute at a three-second
+   * block interval. An expiration can only be lowered, never raised, so this
+   * cannot be widened. If a slow prove makes the node reject the submission as
+   * expired, `sync()` first and then call this again: the method does not sync,
+   * so calling it again on its own rebuilds against the same reference block
+   * and expires the same way.
    */
   createNetworkNote(options: NetworkNoteOptions): Promise<NetworkNoteResult>;
   /**
@@ -1664,12 +1729,56 @@ export interface KeystoreResource {
 // MidenClient
 // ════════════════════════════════════════════════════════════════
 
+/**
+ * Multisig-only overrides for {@link MidenClient.feeAwareTransactionRequestBuilder}.
+ *
+ * Each field pins a value the approvers sign over. Omit them all for the party
+ * creating a proposal; supply them to reproduce one without transporting the
+ * proposer's serialized request.
+ */
+export interface MultisigAuthOptions {
+  /**
+   * Expires the approvers' signatures this many blocks after the block the
+   * summary binds: the transaction must be included by then. Bound by the
+   * summary, so the executing party can neither shorten nor extend it. At
+   * least 1; omitted, the approval does not expire.
+   */
+  approvalExpirationDelta?: number;
+  /**
+   * The salt the summary binds. Omitted, one is drawn fresh per build.
+   *
+   * Consumed by the call: the `Word` is moved across the WASM boundary, so a
+   * second call needs a freshly constructed one. Passing a spent handle is not
+   * an error - it arrives as if no salt were given and one is drawn, which is
+   * the divergence pinning the salt exists to prevent.
+   */
+  feeConversionSalt?: Word;
+  /** The block the summary binds. Omitted, the store's sync height. */
+  boundBlockNum?: number;
+}
+
 export declare class MidenClient {
-  /** Creates and initializes a new MidenClient. */
+  /**
+   * Creates and initializes a new MidenClient.
+   *
+   * Every non-mock client must name the chain's fee faucet in
+   * {@link ClientOptions.feeFaucetId} while the SDK carries a default for no
+   * network; without it creation fails with an error saying so.
+   */
   static create(options?: ClientOptions): Promise<MidenClient>;
-  /** Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync). */
+  /**
+   * Creates a client preconfigured for testnet (rpc, prover, note transport, autoSync).
+   *
+   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
+   * cover the endpoints, not the chain's fee asset.
+   */
   static createTestnet(options?: ClientOptions): Promise<MidenClient>;
-  /** Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync). */
+  /**
+   * Creates a client preconfigured for devnet (rpc, prover, note transport, autoSync).
+   *
+   * Still needs {@link ClientOptions.feeFaucetId}: the preconfigured defaults
+   * cover the endpoints, not the chain's fee asset.
+   */
   static createDevnet(options?: ClientOptions): Promise<MidenClient>;
   /** Creates a mock client for testing. */
   static createMock(options?: MockOptions): Promise<MidenClient>;
@@ -1734,6 +1843,17 @@ export declare class MidenClient {
   /** Terminates the underlying Web Worker. After this, all method calls throw. */
   terminate(): void;
 
+  /**
+   * Returns the fee faucet of the protocol configuration this client
+   * registered at creation.
+   *
+   * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
+   * protocol configuration rather than the block header, so this reports the
+   * configuration the client registered at creation - the `feeFaucetId` option,
+   * or, for a mock client, the mock chain's own.
+   */
+  feeFaucetId(): Promise<AccountId>;
+
   /** Returns the identifier of the underlying store (e.g. IndexedDB database name, file path). */
   storeIdentifier(): Promise<string>;
 
@@ -1772,26 +1892,47 @@ export declare class MidenClient {
    * `account` is the account that **executes** the request — the one whose
    * auth procedure pays the fee — not the recipient or a note's sender.
    *
-   * Safe as a drop-in: a salt is declared only when the chain charges a fee
-   * *and* the executing account is one that must choose its own. For every
-   * other account — and on any zero-fee chain — the builder comes back
-   * untouched and the request is byte-identical to one built from a bare
-   * builder.
+   * Safe as a drop-in: the executing account's auth component decides on its
+   * own, at any base fee. For every account that is not a multisig the builder
+   * comes back untouched and the request is byte-identical to one built from a
+   * bare builder. A zero base fee is not a second condition: since 0.17 a
+   * multisig auth procedure resolves its auth args whatever the chain charges,
+   * so a multisig gets them on a fee-free chain too.
    *
-   * Calling `withAuthArg` on the result clears the declared salt, and vice
+   * Calling `withAuthArg` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is
    * called last wins rather than producing an error.
    *
+   * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
+   * returns for a multisig. The two setters clear each other, so either one
+   * discards the three-word auth args this already set and the transaction
+   * aborts in the auth procedure. Pass `feeConversionSalt` in `options`.
+   *
    * @param account - The account that will execute the request.
+   * @param options - Multisig-only overrides; every field is defaulted when
+   *   omitted and ignored for an account that is not a multisig.
    *
    * @example
    * ```js
    * const builder = await client.feeAwareTransactionRequestBuilder(wallet);
    * const request = builder.withCustomScript(script).build();
+   *
+   * // An approval the co-signers have ~100 blocks to act on.
+   * const urgent = await client.feeAwareTransactionRequestBuilder(multisig, {
+   *   approvalExpirationDelta: 100,
+   * });
+   *
+   * // A co-signer rebuilding the proposal rather than receiving its bytes
+   * // pins both summary-binding values, or the summaries cannot match.
+   * const rebuilt = await client.feeAwareTransactionRequestBuilder(multisig, {
+   *   feeConversionSalt: agreedSalt,
+   *   boundBlockNum: agreedBlock,
+   * });
    * ```
    */
   feeAwareTransactionRequestBuilder(
-    account: AccountRef
+    account: AccountRef,
+    options?: MultisigAuthOptions
   ): Promise<TransactionRequestBuilder>;
 
   /** Advances the mock chain by one block. Only available on mock clients. */

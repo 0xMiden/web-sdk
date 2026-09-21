@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-wallet-adapter-react",
-  "version": "0.16.0",
+  "version": "0.17.0-rc.1",
   "description": "Core react infrastructure for connecting Miden-compatible wallets to your dApp.",
   "exports": {
     ".": {
@@ -10,7 +10,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "AGENTS.md"
   ],
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -45,10 +46,10 @@
     "vitest": "^1.0.0"
   },
   "peerDependencies": {
-    "@miden-sdk/react": "^0.16.0",
+    "@miden-sdk/react": "^0.17.0-rc.1",
     "@types/react": "^18.0.0 || ^19.0.0",
     "react": "^18.0.0 || ^19.0.0",
-    "@miden-sdk/miden-sdk": "^0.16.0"
+    "@miden-sdk/miden-sdk": "^0.17.0-rc.1"
   },
   "peerDependenciesMeta": {
     "@miden-sdk/react": {

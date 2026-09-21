@@ -25,12 +25,11 @@ import {
 } from "@miden-sdk/react";
 
 import {
-  signCb as createSignCb,
-  type CustomSignConfirmStep,
-} from "@miden-sdk/para";
-import {
   evmPkToCommitment,
   getUncompressedPublicKeyFromWallet,
+  resolveEvmWallets,
+  signCb as createSignCb,
+  type CustomSignConfirmStep,
 } from "@miden-sdk/para";
 
 // Re-export Para hooks for convenience
@@ -56,17 +55,18 @@ export type ParaEnvironment =
  * Handles the mapping safely for both ESM and CJS environments.
  */
 function getEnvironmentValue(env: ParaEnvironment): Environment {
-  // Handle aliases
+  // Para 3.x Environment includes DEVELOPMENT/PRODUCTION aliases; older
+  // mocks (and 2.x) do not, so map those before looking up.
   const normalizedEnv =
     env === "DEVELOPMENT" ? "BETA" : env === "PRODUCTION" ? "PROD" : env;
 
-  // Try accessing the enum - Environment may be undefined in some test environments
   if (Environment && typeof Environment === "object") {
+    const direct = Environment[env as keyof typeof Environment];
+    if (direct !== undefined) return direct;
     const value = Environment[normalizedEnv as keyof typeof Environment];
     if (value !== undefined) return value;
   }
 
-  // Fallback: return the string directly (Para SDK may accept string values)
   return normalizedEnv as unknown as Environment;
 }
 
@@ -275,7 +275,11 @@ function ParaSignerProviderInner({
       try {
         // Connected - build full context with signing capability
         const p = paraRef.current;
-        const publicKey = await getUncompressedPublicKeyFromWallet(p, wallet);
+        const signingWallet = resolveEvmWallets(p, [wallet])[0] ?? wallet;
+        const publicKey = await getUncompressedPublicKeyFromWallet(
+          p,
+          signingWallet
+        );
         if (!publicKey) throw new Error("Failed to get public key from wallet");
         const commitment = await evmPkToCommitment(publicKey);
 
@@ -284,7 +288,7 @@ function ParaSignerProviderInner({
 
         const signCallback = createSignCb(
           p,
-          wallet,
+          signingWallet,
           showSigningModalRef.current,
           customSignConfirmStepRef.current
         );

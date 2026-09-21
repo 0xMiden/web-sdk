@@ -24,6 +24,8 @@ export {
   EthAddress,
   ExecutedTransaction,
   Felt,
+  ForeignAccount,
+  InputNote,
   InputNoteRecord,
   NetworkAccountTarget,
   Note,

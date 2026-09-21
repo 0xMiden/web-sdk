@@ -361,7 +361,8 @@ export const WasmWebClient = {
     rpcUrl?: string,
     noteTransportUrl?: any,
     seed?: any,
-    storeName?: string
+    storeName?: string,
+    feeFaucetId?: string
   ) => {
     const dir = tmpTestDir();
     const client = new sdk.WebClient();
@@ -375,7 +376,7 @@ export const WasmWebClient = {
       normSeed ?? null,
       path.join(dir, `${storeName || "store"}.db`),
       path.join(dir, "keystore"),
-      false
+      feeFaucetId ?? null
     );
     return wrapClient(client, storeName);
   },

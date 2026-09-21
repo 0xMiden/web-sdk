@@ -91,15 +91,20 @@ const buildRequest = async (client) =>
 ```
 
 The argument is the account that **executes** the request — the multisig here,
-not a recipient. On a zero-fee chain the builder comes back untouched, so this is
-a safe drop-in. Requests produced by the `new*TransactionRequest` constructors
+not a recipient. For an account that is not a multisig the builder comes back
+untouched, so this is a safe drop-in; a zero base fee is not a second condition,
+since 0.17 a multisig resolves its auth args whatever the chain charges. Requests produced by the `new*TransactionRequest` constructors
 already declare a salt and need nothing extra.
 
 Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`
 occupy the same slot and each setter clears the other, so a request cannot carry
-both — call whichever you actually want last. And because the salt is drawn per
+both. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead. And because the salt and the bound block are chosen per
 build, the warning below about resolving a factory exactly once applies here too
-— capture the anchor, then preview and execute against `anchoredRequest`.
+— capture the anchor, then preview and execute against `anchoredRequest`. A
+co-signer rebuilding the proposal instead of receiving its bytes passes
+`feeConversionSalt` and `boundBlockNum`, or the two summaries cannot match.
+Each call consumes the `Word`, so a second build needs a freshly constructed
+one; a spent handle arrives as "no salt given" and one is drawn instead.
 
 ## Verifying and co-signing
 

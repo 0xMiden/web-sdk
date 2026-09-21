@@ -2,6 +2,12 @@
   "comment": "Publish manifest for the packages adopted from the wallet-adapter, para and turnkey repos. `level` is the topological publish order derived from first-party sibling dependencies: everything at level N is published before level N+1, so a dependent never lands before the package it pins. Regenerate with scripts/build-publish-manifest.mjs.",
   "packages": [
     {
+      "name": "@miden-sdk/create",
+      "path": "packages/create",
+      "level": 0,
+      "build": true
+    },
+    {
       "name": "@miden-sdk/create-para-react",
       "path": "packages/para/create",
       "level": 0,
@@ -22,6 +28,18 @@
     {
       "name": "@miden-sdk/para",
       "path": "packages/para/core",
+      "level": 0,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/telemetry-otel",
+      "path": "packages/telemetry-otel",
+      "level": 0,
+      "build": true
+    },
+    {
+      "name": "@miden-sdk/telemetry-sentry",
+      "path": "packages/telemetry-sentry",
       "level": 0,
       "build": true
     },

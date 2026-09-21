@@ -227,9 +227,29 @@ export class TransactionsResource {
     // `note` valid so we can return it to the caller.
     const ownOutputs = new wasm.NoteArray();
     ownOutputs.push(note);
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+    // `estimate_note_fee` on the target, so the emitting transaction reads
+    // foreign state. Declaring the account pins that state at the reference
+    // block instead of leaving the client to resolve it lazily, which it can
+    // only do for a public account it can reach.
+    //
+    // Pricing also caps this transaction at 20 blocks: `estimate_note_fee`
+    // applies the standards' default expiration delta, and an expiration can
+    // only be lowered, so it must be included within 20 blocks of its
+    // reference block or the node rejects it as expired.
+    const targetAccounts = new wasm.ForeignAccountArray();
+    targetAccounts.push(
+      wasm.ForeignAccount.public(
+        target.targetId(),
+        new wasm.AccountStorageRequirements()
+      )
+    );
     const builder =
       await this.#inner.feeAwareTransactionRequestBuilder(senderId);
-    const request = builder.withOwnOutputNotes(ownOutputs).build();
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(targetAccounts)
+      .build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       senderId,

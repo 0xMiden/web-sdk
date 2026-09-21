@@ -1,7 +1,7 @@
 {
   "name": "@miden-sdk/vite-plugin",
-  "version": "0.16.0",
-  "description": "Vite plugin for Miden dApps — WASM dedup, COOP/COEP headers, and gRPC-web proxy",
+  "version": "0.17.0-rc.1",
+  "description": "Vite plugin for Miden dApps: WASM dedup, COOP/COEP headers and a gRPC-web proxy. Run `npm create @miden-sdk@latest` to set up agent guidance.",
   "type": "commonjs",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -20,7 +20,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "AGENTS.md",
+    "skills"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",

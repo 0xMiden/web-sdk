@@ -95,6 +95,7 @@ const createMocks = (state = {}) => {
       getUncompressedPublicKeyFromWallet: async (para, wallet) => {
         return new Uint8Array(65).fill(0x04);
       },
+      resolveEvmWallets: (_para, wallets) => wallets,
       evmPkToCommitment: async (publicKey) => {
         return {
           serialize: () => new Uint8Array(32).fill(0x42),

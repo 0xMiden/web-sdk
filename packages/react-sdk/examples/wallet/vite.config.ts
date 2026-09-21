@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { midenVitePlugin } from "@miden-sdk/vite-plugin";
-import { paraVitePlugin } from "@miden-sdk/use-miden-para-react/vite";
+import { paraVitePlugin } from "@miden-sdk/para-react/vite";
 import path from "path";
 
 export default defineConfig({

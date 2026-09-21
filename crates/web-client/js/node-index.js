@@ -142,6 +142,8 @@ export const Rpo = /* @__PURE__ */ _reexport("Rpo");
 export const exportStore = /* @__PURE__ */ _reexport("exportStore");
 export const importStore = /* @__PURE__ */ _reexport("importStore");
 
+// Array wrappers are JS polyfills, so the native export generator cannot discover them.
+
 // Every other public napi class. GENERATED — do not edit by hand. Run
 // `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports` to regenerate from the
 // native module; CI's `check:node-reexports` keeps it in lockstep with napi.
@@ -209,11 +211,6 @@ export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
 export const FetchedNote = /* @__PURE__ */ _reexport("FetchedNote");
 export const ForeignAccount = /* @__PURE__ */ _reexport("ForeignAccount");
 export const FungibleAsset = /* @__PURE__ */ _reexport("FungibleAsset");
-export const FungibleAssetDelta =
-  /* @__PURE__ */ _reexport("FungibleAssetDelta");
-export const FungibleAssetDeltaItem = /* @__PURE__ */ _reexport(
-  "FungibleAssetDeltaItem"
-);
 export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );
