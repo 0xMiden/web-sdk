@@ -106,6 +106,14 @@ export interface MidenConfig {
   rpcUrl?: RpcUrlConfig;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
+  /**
+   * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
+   *
+   * Required for a network the SDK knows no fee faucet for. Since 0.17 the fee asset lives in
+   * the protocol configuration rather than the block header, and a client that cannot build one
+   * can neither execute nor screen notes.
+   */
+  feeFaucetId?: string;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */

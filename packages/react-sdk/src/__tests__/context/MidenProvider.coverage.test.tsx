@@ -17,6 +17,31 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("MidenProvider — fee faucet", () => {
+  it("passes config.feeFaucetId to createClient as its last argument", async () => {
+    // A 0.17 client cannot execute or screen notes without a protocol
+    // configuration, and this is the only thing the provider is given to build
+    // one from, so a dropped argument leaves every consumer of the provider
+    // unable to transact.
+    render(
+      <MidenProvider
+        config={{
+          rpcUrl: "https://rpc.testnet.miden.io",
+          feeFaucetId: "0x1234567890abcdef",
+        }}
+      >
+        <div data-testid="children">ready</div>
+      </MidenProvider>
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
+    });
+    const args = vi.mocked(WebClient.createClient).mock.calls[0];
+    expect(args.at(-1)).toBe("0x1234567890abcdef");
+  });
+});
+
 describe("MidenProvider — custom loading + error rendering", () => {
   it("renders the loadingComponent ReactNode while initializing", async () => {
     // Make createClient hang so isInitializing stays true long enough to

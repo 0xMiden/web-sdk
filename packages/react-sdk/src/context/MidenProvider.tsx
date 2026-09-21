@@ -265,7 +265,9 @@ export function MidenProvider({
               signerContext.insertKeyCb,
               wrappedSignCb,
               undefined,
-              resolvedConfig.useWorker
+              resolvedConfig.useWorker,
+              undefined,
+              resolvedConfig.feeFaucetId
             );
 
             if (cancelled) return;
@@ -291,7 +293,9 @@ export function MidenProvider({
               seed,
               undefined,
               undefined,
-              resolvedConfig.useWorker
+              resolvedConfig.useWorker,
+              undefined,
+              resolvedConfig.feeFaucetId
             );
             if (cancelled) return;
           }
