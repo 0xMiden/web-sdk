@@ -177,6 +177,9 @@ declare global {
     createClient: () => Promise<void>;
 
     rpcUrl: string;
+    // The chain's fee faucet, so `refreshClient` can rebuild a client that can
+    // still execute. Undefined when the SDK already knows one for the network.
+    feeFaucetId: string | undefined;
 
     // Add the helpers namespace
     helpers: {

@@ -991,6 +991,18 @@ jobs:
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -1092,6 +1104,18 @@ jobs:
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -1179,6 +1203,18 @@ jobs:
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
         run: ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers

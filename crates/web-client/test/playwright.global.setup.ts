@@ -26,6 +26,16 @@ export function isLocalhost(): boolean {
   return !network || network === "localhost";
 }
 
+// Fee faucet of the chain under test. Since 0.17 the fee asset lives in the
+// protocol configuration rather than the block header, so a client cannot execute
+// until it is told which faucet issues it, and a local node mints a fresh one at
+// each genesis. `scripts/start-test-node.sh` reports it as
+// "Native faucet account id:" in its bootstrap log; CI reads that line into this
+// variable. Left unset, the SDK falls back to what it knows for the network.
+export function getFeeFaucetId(): string | undefined {
+  return process.env.TEST_MIDEN_FEE_FAUCET_ID || undefined;
+}
+
 // Determine RPC URL from environment or default to localhost
 export function getRpcUrl(): string {
   if (process.env.TEST_MIDEN_RPC_URL) {
@@ -102,7 +112,8 @@ export const test = base.extend<{ forEachTest: void }>({
           rpcUrl,
           undefined,
           undefined,
-          storeName
+          storeName,
+          getFeeFaucetId()
         );
         setClient(client);
       } else {
@@ -124,7 +135,7 @@ export const test = base.extend<{ forEachTest: void }>({
         await page.goto("http://localhost:8080");
 
         await page.evaluate(
-          async ({ rpcUrl, proverUrl, storeName }) => {
+          async ({ rpcUrl, proverUrl, storeName, feeFaucetId }) => {
             // Import the sdk classes and attach them
             // to the window object for testing
             const sdkExports = await import("./index.js");
@@ -139,9 +150,11 @@ export const test = base.extend<{ forEachTest: void }>({
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              feeFaucetId
             );
             window.rpcUrl = rpcUrl;
+            window.feeFaucetId = feeFaucetId;
             window.storeName = storeName;
 
             window.client = client;
@@ -237,7 +250,8 @@ export const test = base.extend<{ forEachTest: void }>({
                 rpcUrl,
                 undefined,
                 initSeed,
-                window.storeName
+                window.storeName,
+                window.feeFaucetId
               );
               window.client = client;
               await window.client.syncState();
@@ -266,6 +280,7 @@ export const test = base.extend<{ forEachTest: void }>({
             rpcUrl: getRpcUrl(),
             proverUrl: getProverUrl() ?? null,
             storeName,
+            feeFaucetId: getFeeFaucetId(),
           }
         );
       }
