@@ -135,7 +135,13 @@ export const test = base.extend<{ forEachTest: void }>({
         await page.goto("http://localhost:8080");
 
         await page.evaluate(
-          async ({ rpcUrl, proverUrl, storeName, feeFaucetId }) => {
+          async ({
+            rpcUrl,
+            proverUrl,
+            localTxProverUrl,
+            storeName,
+            feeFaucetId,
+          }) => {
             // Import the sdk classes and attach them
             // to the window object for testing
             const sdkExports = await import("./index.js");
@@ -201,6 +207,13 @@ export const test = base.extend<{ forEachTest: void }>({
                 window.feeFaucetId
               );
 
+            // The test node runs a prover beside its RPC. Expose its URL
+            // unconditionally, separately from `remoteProverUrl`: a test that
+            // needs to prove remotely can then do so without setting
+            // TEST_MIDEN_PROVER_URL, which would flip `fullyParallel` for every
+            // project in the run (playwright.config.ts).
+            window.localTxProverUrl = localTxProverUrl;
+
             // Add the remote prover url to window
             window.remoteProverUrl = proverUrl;
             if (window.remoteProverUrl) {
@@ -248,14 +261,20 @@ export const test = base.extend<{ forEachTest: void }>({
                 transactionRequest
               );
 
-              const useRemoteProver =
-                prover != null && window.remoteProverUrl != null;
-              const proverToUse = useRemoteProver
-                ? window.TransactionProver.newRemoteProver(
-                    window.remoteProverUrl,
-                    BigInt(120_000)
-                  )
-                : window.TransactionProver.newLocalProver();
+              // A caller that hands over a prover gets that prover. The older
+              // shape rebuilt one from `window.remoteProverUrl` and ignored the
+              // argument, so a test could not prove remotely unless the whole
+              // run was configured for it - and configuring the run flips
+              // Playwright's `fullyParallel` for every project, which is far
+              // more than one test should cost.
+              const proverToUse =
+                prover ??
+                (window.remoteProverUrl != null
+                  ? window.TransactionProver.newRemoteProver(
+                      window.remoteProverUrl,
+                      BigInt(120_000)
+                    )
+                  : window.TransactionProver.newLocalProver());
 
               const proven = await client.proveTransaction(result, proverToUse);
               const submissionHeight = await client.submitProvenTransaction(
@@ -321,6 +340,7 @@ export const test = base.extend<{ forEachTest: void }>({
           {
             rpcUrl: getRpcUrl(),
             proverUrl: getProverUrl() ?? null,
+            localTxProverUrl: `http://localhost:${REMOTE_TX_PROVER_PORT}`,
             storeName,
             feeFaucetId: getFeeFaucetId(),
           }

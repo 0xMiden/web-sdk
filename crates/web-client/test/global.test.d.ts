@@ -91,6 +91,8 @@ declare global {
     MockWasmWebClient: typeof MockWasmWebClient;
     remoteProverUrl?: string;
     remoteProverInstance: TransactionProver;
+    /** The test node's own prover, exposed whether or not the run opted into one. */
+    localTxProverUrl: string;
     Account: typeof Account;
     AccountFile: typeof AccountFile;
     AccountBuilder: typeof AccountBuilder;

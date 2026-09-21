@@ -240,7 +240,17 @@ const networkCounterTransaction = async (
       try {
         emitTx = await window.helpers.executeAndApplyTransaction(
           sender.id(),
-          emitRequest()
+          emitRequest(),
+          // Prove this one remotely. A local WASM prove on a CI runner takes
+          // longer than the 20-block window the pricing call imposes, so it
+          // expires however many times it is retried; the node runs a prover
+          // beside its RPC. Done per call rather than by configuring the run,
+          // because TEST_MIDEN_PROVER_URL also flips Playwright's
+          // `fullyParallel` for every project.
+          window.TransactionProver.newRemoteProver(
+            window.localTxProverUrl,
+            BigInt(120_000)
+          )
         );
         break;
       } catch (err) {
