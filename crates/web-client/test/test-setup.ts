@@ -26,7 +26,12 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { getRpcUrl, getProverUrl, RUN_ID } from "./playwright.global.setup";
+import {
+  getRpcUrl,
+  getProverUrl,
+  getFeeFaucetId,
+  RUN_ID,
+} from "./playwright.global.setup";
 
 const require = createRequire(import.meta.url);
 
@@ -441,11 +446,14 @@ async function getRunBrowser(projectName: string): Promise<any> {
 async function setupBrowserPage(page: any, testInfo: TestInfo) {
   const rpcUrl = getRpcUrl();
   const storeName = generateStoreName(testInfo);
+  // Every non-mock client this page builds needs it, and the page cannot read
+  // the environment itself - it has to travel through the evaluate payload.
+  const feeFaucetId = getFeeFaucetId();
 
   await page.goto("http://localhost:8080");
 
   await page.evaluate(
-    async ({ rpcUrl, storeName }) => {
+    async ({ rpcUrl, storeName, feeFaucetId }) => {
       // Import all SDK exports and attach to window
       const sdkExports = await import("./index.js");
       for (const [key, value] of Object.entries(sdkExports)) {
@@ -469,6 +477,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
       }
       window.client = client;
       window.rpcUrl = rpcUrl;
+      window.feeFaucetId = feeFaucetId;
       window.storeName = storeName;
 
       // ── Register helpers on window ──────────────────────────────
@@ -1142,6 +1151,18 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
         },
 
         createIntegrationClient: async () => {
+          // `null` from here means "no node reachable", and callers turn that
+          // into test.skip. A misconfigured fixture must not be able to borrow
+          // that meaning: without a fee faucet the client cannot be built at
+          // all, and swallowing that once turned 12 integration tests into
+          // silent skips while their shards still reported success.
+          if (!window.feeFaucetId) {
+            throw new Error(
+              "integration fixture is missing window.feeFaucetId - set it in " +
+                "setupBrowserPage from getFeeFaucetId(); a client without one " +
+                "cannot execute or screen notes on any 0.17 network"
+            );
+          }
           try {
             const uniqueName = `int_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const client = await window.WasmWebClient.createClient(
@@ -1155,7 +1176,12 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
               window.feeFaucetId
             );
             return { client };
-          } catch {
+          } catch (err) {
+            // Keep the skip, but leave a trace: a future cause other than an
+            // unreachable node is otherwise invisible in the run output.
+            console.debug(
+              `integration client unavailable: ${err?.message ?? err}`
+            );
             return null;
           }
         },
@@ -1166,7 +1192,7 @@ async function setupBrowserPage(page: any, testInfo: TestInfo) {
         getRpcUrl: () => window.rpcUrl,
       };
     },
-    { rpcUrl, storeName }
+    { rpcUrl, storeName, feeFaucetId }
   );
 }
 
