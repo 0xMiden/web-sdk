@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/create-turnkey-react",
-  "version": "0.16.2",
+  "version": "0.17.0-rc.1",
   "description": "CLI to scaffold a React + Vite app with Miden Turnkey integration",
   "type": "module",
   "bin": "./bin/create-miden-turnkey-react.mjs",
