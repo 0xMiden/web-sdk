@@ -22,6 +22,7 @@ option across.
 ```ts
 const client = await MidenClient.create({
   rpcUrl: "testnet",
+  feeFaucetId: FEE_FAUCET,
   observer: createOtelObserver({ tracer: trace.getTracer("my-app") }),
 });
 ```

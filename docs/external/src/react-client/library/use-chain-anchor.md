@@ -91,8 +91,9 @@ const buildRequest = async (client) =>
 ```
 
 The argument is the account that **executes** the request — the multisig here,
-not a recipient. On a zero-fee chain the builder comes back untouched, so this is
-a safe drop-in. Requests produced by the `new*TransactionRequest` constructors
+not a recipient. For an account that is not a multisig the builder comes back
+untouched, so this is a safe drop-in; a zero base fee is not a second condition,
+since 0.17 a multisig resolves its auth args whatever the chain charges. Requests produced by the `new*TransactionRequest` constructors
 already declare a salt and need nothing extra.
 
 Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`

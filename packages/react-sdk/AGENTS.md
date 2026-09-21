@@ -28,12 +28,19 @@ import { MidenProvider } from "@miden-sdk/react";
 
 function App() {
   return (
-    <MidenProvider config={{ rpcUrl: "testnet" }}>
+    <MidenProvider config={{ rpcUrl: "testnet", feeFaucetId: FEE_FAUCET }}>
       <YourApp />
     </MidenProvider>
   );
 }
 ```
+
+`feeFaucetId` is required today. Since 0.17 the chain's fee asset lives in a
+protocol configuration the node does not serve over RPC, and the SDK carries a
+per-network default for no network yet, so a provider without it fails at client
+init. It is the faucet the chain mints its fee asset from - ask whoever runs the
+network, or read it from the genesis of a local node. Other snippets in this file
+leave it out to keep the point they make legible; every real provider needs it.
 
 ## Configuration
 
@@ -41,6 +48,7 @@ function App() {
 <MidenProvider
   config={{
     rpcUrl: "testnet",          // "devnet" | "testnet" | "localhost" | "local" | custom URL
+    feeFaucetId: FEE_FAUCET,    // REQUIRED: the chain's fee faucet, bech32 or hex
     prover: "testnet",          // "local" | "localhost" | "devnet" | "testnet" | URL
                                 //   | { url, timeoutMs }
                                 //   | { primary, fallback, disableFallback?, onFallback? }
@@ -406,9 +414,10 @@ await execute({
 ```
 
 The argument is the account that **executes** the request - the one whose auth
-procedure pays - not the recipient. On a zero-fee chain, or for any account that
-does not choose its own salt, the builder comes back untouched, so it is a safe
-drop-in. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
+procedure pays - not the recipient. For any account that is not a multisig the builder comes
+back untouched, so it is a safe drop-in; a zero base fee is not a second
+condition, since 0.17 a multisig resolves its auth args whatever the chain
+charges. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive:
 miden-client has each setter clear the other, so whichever is called last wins
 rather than producing an error.
 

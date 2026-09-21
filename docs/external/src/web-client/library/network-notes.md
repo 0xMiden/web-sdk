@@ -13,7 +13,7 @@ custom consumption script:
 ```typescript
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
-const client = await MidenClient.create();
+const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
 const req = await client.transactions.createNetworkNote({
   account: senderId,

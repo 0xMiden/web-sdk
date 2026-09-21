@@ -67,11 +67,19 @@ the low-level surface on every upgrade.
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 // Testnet - autoSync on, testnet RPC + prover + note transport
-const client = await MidenClient.createTestnet();
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
 
 // Devnet equivalent
-const client = await MidenClient.createDevnet();
+const client = await MidenClient.createDevnet({ feeFaucetId: FEE_FAUCET });
 ```
+
+`feeFaucetId` is not optional today, on any constructor but `createMock`. Since
+0.17 the chain's fee asset lives in a protocol configuration the node does not
+serve over RPC, and the SDK carries a per-network default for no network yet, so
+a client created without it fails with an error naming the option. It is the
+faucet the chain mints its fee asset from: ask whoever runs the network, or read
+it from a local node's genesis. Snippets below leave it out to keep their own
+point legible.
 
 Both accept the same `ClientOptions` for overrides:
 
@@ -88,6 +96,7 @@ const client = await MidenClient.createTestnet({
 ```typescript
 const client = await MidenClient.create({
   rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
+  feeFaucetId: FEE_FAUCET, // required - the chain's fee faucet, bech32 or hex
   noteTransportUrl: "https://transport.miden.io",
   storeName: "my-store",
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
@@ -404,9 +413,11 @@ await client.transactions.submit(wallet, request);
 ```
 
 `account` is the account that **executes** the request, not the recipient. The
-method is a safe drop-in: on a zero-fee chain, or for a single-sig, no-auth or
-network account, the builder comes back untouched and the request is
-byte-identical to one from a bare builder.
+method is a safe drop-in: for a single-sig, no-auth or network account the
+builder comes back untouched and the request is byte-identical to one from a
+bare builder. A zero base fee is not a second condition: since 0.17 a multisig
+resolves its auth args whatever the chain charges, so a multisig gets them on a
+fee-free chain too.
 
 What happens if you skip it:
 

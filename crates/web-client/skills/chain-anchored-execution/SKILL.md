@@ -298,8 +298,9 @@ submit(account, request, { anchor?, ...txOptions })
 `client.feeAwareTransactionRequestBuilder(account)` returns a
 `TransactionRequestBuilder` that already declares a fee conversion salt where the
 executing account needs one. It is a safe drop-in for `new
-TransactionRequestBuilder()`: on a zero-fee chain, or for an account that does not
-choose its own salt, the builder comes back untouched.
+TransactionRequestBuilder()`: for an account that is not a multisig the builder
+comes back untouched. A zero base fee is not a second condition: since 0.17 a
+multisig resolves its auth args whatever the chain charges.
 
 ### `ChainAnchor`
 

@@ -265,8 +265,14 @@ import { MidenClient, AccountId, Felt } from "@miden-sdk/miden-sdk";
 const id = AccountId.fromHex("0x…"); // sync, WASM is already initialized
 const felt = new Felt(42n); // sync
 
-const client = await MidenClient.createTestnet();
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
 ```
+
+Every non-mock constructor needs `feeFaucetId`. Since 0.17 the chain's fee asset
+lives in a protocol configuration the node does not serve over RPC, and the SDK
+carries a per-network default for no network yet, so a client created without it
+fails with an error naming the option. Snippets below leave it out where the
+point they make is something else.
 
 ### Lazy usage (`/lazy`)
 
@@ -601,7 +607,7 @@ const builder = await client.feeAwareTransactionRequestBuilder(wallet);
 const request = builder.withCustomScript(script).build();
 ```
 
-The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: on a chain whose `BlockHeader.verificationBaseFee()` is zero, or for any account that does not choose its own salt, the builder comes back untouched.
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig the builder comes back untouched. A zero base fee is not a second condition: since 0.17 a multisig resolves its auth args whatever the chain charges, so a multisig gets them on a fee-free chain too.
 
 To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — call `builder.withFeeConversionSalt(salt)`. It is a declaration rather than a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so whichever is called last wins rather than erroring. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
 

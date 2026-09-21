@@ -13,7 +13,7 @@ This guide demonstrates how to send, batch, and retrieve transactions using the 
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-    const client = await MidenClient.create();
+    const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
     // List all transactions
     const allTransactions = await client.transactions.list();
@@ -53,7 +53,7 @@ try {
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-    const client = await MidenClient.create();
+    const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
     // Get uncommitted transactions
     const uncommitted = await client.transactions.list({ status: "uncommitted" });
@@ -205,7 +205,7 @@ const chargesFees = header.verificationBaseFee() > 0;
 const feeFaucet = await client.feeFaucetId();
 ```
 
-On a chain that charges nothing, requests are byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry.
+On a chain that charges nothing, a request for an account that is not a multisig is byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry. A multisig is the exception at any base fee: since 0.17 its auth procedure resolves its auth args unconditionally, so the request carries them even on a fee-free chain.
 
 ### The convenience constructors handle it
 
