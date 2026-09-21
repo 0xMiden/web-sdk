@@ -39,10 +39,13 @@ describe("MidenProvider — fee faucet", () => {
     await waitFor(() => {
       expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
     });
-    // Index rather than `at(-1)`: the mock's call type is a fixed-length tuple, and
-    // this package's lib target has no Array.prototype.at on one.
+    // Length plus absolute index, not a position from the end: passing the
+    // value last makes `args[args.length - 1]` true by construction, so
+    // deleting an earlier placeholder would shift every later argument one slot
+    // left and still satisfy it.
     const args = vi.mocked(WebClient.createClient).mock.calls[0];
-    expect(args[args.length - 1]).toBe("0x1234567890abcdef");
+    expect(args).toHaveLength(8);
+    expect(args[7]).toBe("0x1234567890abcdef");
   });
 
   // The branch every signer provider takes, and the harder of the two: eleven
@@ -74,7 +77,8 @@ describe("MidenProvider — fee faucet", () => {
     });
     const args = vi.mocked(WebClient.createClientWithExternalKeystore).mock
       .calls[0];
-    expect(args[args.length - 1]).toBe("0xfeedfacecafebeef");
+    expect(args).toHaveLength(11);
+    expect(args[10]).toBe("0xfeedfacecafebeef");
   });
 });
 
