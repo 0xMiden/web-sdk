@@ -122,6 +122,16 @@ describe("useCreateNetworkNote", () => {
     expect((executingAccount as { toString(): string }).toString()).toBe(
       "0xsender"
     );
+
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+    // `estimate_note_fee` on the target, so the emitting transaction declares
+    // it as a foreign account. Asserting the call alone would pass on an empty
+    // array, so read back what was pushed.
+    const builder =
+      await mockClient.feeAwareTransactionRequestBuilder.mock.results[0].value;
+    expect(builder.withForeignAccounts).toHaveBeenCalledTimes(1);
+    const [declared] = builder.withForeignAccounts.mock.calls[0];
+    expect((declared as { pushed: unknown[] }).pushed).toHaveLength(1);
   });
 
   it("builds a note from a provided recipient (no script)", async () => {

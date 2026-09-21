@@ -1,8 +1,11 @@
 import { useCallback, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import {
+  AccountStorageRequirements,
   Felt,
   FeltArray,
+  ForeignAccount,
+  ForeignAccountArray,
   FungibleAsset,
   Note,
   NoteArray,
@@ -122,9 +125,25 @@ export function useCreateNetworkNote(): UseCreateNetworkNoteResult {
           // The sender executes this transaction, so its auth procedure is what
           // pays the fee; a bare builder would abort with
           // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+          // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+          // `estimate_note_fee` on the target, so declare it as a foreign
+          // account rather than relying on the client resolving it lazily.
+          // `client.transactions.createNetworkNote` does the same; this hook
+          // builds its request itself, so it owns the declaration.
+          const targetAccounts = new ForeignAccountArray();
+          targetAccounts.push(
+            ForeignAccount.public(
+              target.targetId(),
+              new AccountStorageRequirements()
+            )
+          );
+
           const builder =
             await client.feeAwareTransactionRequestBuilder(senderId);
-          const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
+          const txRequest = builder
+            .withOwnOutputNotes(ownOutputs)
+            .withForeignAccounts(targetAccounts)
+            .build();
 
           // Reuse `senderId` (NoteMetadata only borrows it) rather than
           // re-parsing the same account id for submission.
