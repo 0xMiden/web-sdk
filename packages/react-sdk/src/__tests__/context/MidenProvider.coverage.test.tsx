@@ -37,8 +37,10 @@ describe("MidenProvider — fee faucet", () => {
     await waitFor(() => {
       expect(vi.mocked(WebClient.createClient)).toHaveBeenCalled();
     });
+    // Index rather than `at(-1)`: the mock's call type is a fixed-length tuple, and
+    // this package's lib target has no Array.prototype.at on one.
     const args = vi.mocked(WebClient.createClient).mock.calls[0];
-    expect(args.at(-1)).toBe("0x1234567890abcdef");
+    expect(args[args.length - 1]).toBe("0x1234567890abcdef");
   });
 });
 

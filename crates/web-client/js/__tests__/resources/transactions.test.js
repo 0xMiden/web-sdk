@@ -97,6 +97,8 @@ function makeNoteArray() {
   };
 }
 
+let lastBuilder = null;
+
 function makeTxRequestBuilder() {
   const self = {
     withOwnOutputNotes: vi.fn().mockReturnThis(),
@@ -144,7 +146,13 @@ function makeWasm(overrides = {}) {
     ForeignAccount: {
       public: vi.fn().mockReturnValue("foreignAcc"),
     },
-    ForeignAccountArray: vi.fn().mockReturnValue("foreignAccArray"),
+    // The real array is push-based and consumes what it is given, so the double
+    // records pushes: createNetworkNote has to declare the target network account,
+    // and a returned string would hide whether it did.
+    ForeignAccountArray: vi.fn().mockImplementation(function () {
+      const pushed = [];
+      return { pushed, push: (account) => pushed.push(account) };
+    }),
     AccountStorageRequirements: vi.fn().mockReturnValue("storageReqs"),
     AdviceInputs: vi.fn().mockReturnValue("adviceInputs"),
     NetworkAccountTarget: vi.fn().mockImplementation(() => networkTarget),
@@ -212,9 +220,12 @@ function makeInner(overrides = {}) {
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
-    feeAwareTransactionRequestBuilder: vi
-      .fn()
-      .mockImplementation(async () => makeTxRequestBuilder()),
+    // Keep the builder the resource actually used, so a test can assert what was
+    // declared on it rather than only that one was asked for.
+    feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
+      lastBuilder = makeTxRequestBuilder();
+      return lastBuilder;
+    }),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     newPswapCreateTransactionRequest: vi
       .fn()
@@ -434,6 +445,18 @@ describe("TransactionsResource", () => {
         expect.anything(),
         undefined
       );
+      // Since 0.17 the kernel prices the note through a procedure call on the
+      // target, so the emitting request has to declare it as a foreign account.
+      // Without this the transaction aborts inside the kernel naming no account,
+      // which is a long way from this call site.
+      // `new AccountStorageRequirements()` returns the constructed double, not the
+      // mock's return value, so only the account is matched exactly here.
+      expect(wasm.ForeignAccount.public).toHaveBeenCalledWith(
+        "targetIdObj",
+        expect.anything()
+      );
+      const declared = lastBuilder.withForeignAccounts.mock.calls[0][0];
+      expect(declared.pushed).toEqual(["foreignAcc"]);
       expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
         "targetIdObj"
       );

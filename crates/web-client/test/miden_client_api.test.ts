@@ -1169,6 +1169,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_create_test",
       });
 
@@ -1191,6 +1192,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
           storeName: "miden_client_api_accounts_test",
         });
         await client.sync();
@@ -1225,6 +1227,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
           storeName: "miden_client_api_send_test",
         });
         await client.sync();
@@ -1289,6 +1292,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_txlist_test",
       });
       await client.sync();
@@ -1337,6 +1341,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_notes_test",
       });
       await client.sync();

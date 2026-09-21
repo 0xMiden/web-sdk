@@ -180,10 +180,22 @@ const networkCounterTransaction = async (
 
     const ownOutputs = new window.NoteArray();
     ownOutputs.push(note);
+    // Since 0.17 the kernel prices a NetworkAccountTarget note through a
+    // procedure call on the target account, so the emitting transaction declares
+    // it as a foreign account. This request is built by hand rather than through
+    // `transactions.createNetworkNote`, which declares it for you.
+    const targetAccounts = new window.ForeignAccountArray();
+    targetAccounts.push(
+      window.ForeignAccount.public(
+        built.account.id(),
+        new window.AccountStorageRequirements()
+      )
+    );
     const emitTx = await window.helpers.executeAndApplyTransaction(
       sender.id(),
       new window.TransactionRequestBuilder()
         .withOwnOutputNotes(ownOutputs)
+        .withForeignAccounts(targetAccounts)
         .build()
     );
     await window.helpers.waitForTransaction(

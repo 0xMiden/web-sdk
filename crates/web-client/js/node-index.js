@@ -208,11 +208,6 @@ export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
 export const FetchedNote = /* @__PURE__ */ _reexport("FetchedNote");
 export const ForeignAccount = /* @__PURE__ */ _reexport("ForeignAccount");
 export const FungibleAsset = /* @__PURE__ */ _reexport("FungibleAsset");
-export const FungibleAssetDelta =
-  /* @__PURE__ */ _reexport("FungibleAssetDelta");
-export const FungibleAssetDeltaItem = /* @__PURE__ */ _reexport(
-  "FungibleAssetDeltaItem"
-);
 export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );

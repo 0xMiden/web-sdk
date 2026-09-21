@@ -226,9 +226,23 @@ export class TransactionsResource {
     // `note` valid so we can return it to the caller.
     const ownOutputs = new wasm.NoteArray();
     ownOutputs.push(note);
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by invoking a
+    // procedure on the target account, so the emitting transaction has to declare
+    // that account as a foreign account - on a fee-free chain too. Without it the
+    // transaction aborts inside the kernel on an assertion, naming no account.
+    const targetAccounts = new wasm.ForeignAccountArray();
+    targetAccounts.push(
+      wasm.ForeignAccount.public(
+        target.targetId(),
+        new wasm.AccountStorageRequirements()
+      )
+    );
     const builder =
       await this.#inner.feeAwareTransactionRequestBuilder(senderId);
-    const request = builder.withOwnOutputNotes(ownOutputs).build();
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(targetAccounts)
+      .build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       senderId,

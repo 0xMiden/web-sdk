@@ -996,36 +996,21 @@ async fn requires_caller_chosen_salt(
 /// A fresh fee conversion salt for `executing_account_id`, or `None` where the caller should
 /// declare none.
 ///
-/// Two gates, both of which keep a request byte-identical to what it would have been when nothing
-/// needs declaring. A zero base fee is the first: miden-client skips the whole fee-conversion path
-/// when the chain charges nothing AND no salt is declared, so declaring one there would start
-/// committing conversion info on chains that do not want it. The second is the executing account's
-/// auth component, for the reasons in `requires_caller_chosen_salt`.
+/// One gate: the executing account's auth component, for the reasons in
+/// `requires_caller_chosen_salt`.
 ///
-/// Reads the fee parameters from the store's sync height, while execution reads them from the
-/// reference block — the same block only on the unanchored path, since `prepare_transaction` takes
-/// the reference header from the anchor when one is supplied. So a request built at a sync height
-/// whose base fee is zero and then executed against an anchor whose base fee is not carries no
-/// salt, and a multisig account fails with `FeeConversionInfoRequired` at execute time — after the
-/// summary has already gone out to co-signers. Build the request and take the anchor at the same
-/// sync height.
+/// A zero base fee used to be a second gate, on the grounds that miden-client skips the whole
+/// fee-conversion path when the chain charges nothing and no salt is declared. 0.17 made that
+/// wrong for the components this function selects: a multisig auth procedure now resolves its
+/// AUTH_ARGS unconditionally - it takes the block the summary binds and the summary salt from
+/// them, and only skips *creating* the fee note when the base fee is zero. Declaring no salt on a
+/// fee-free chain therefore left the account with no auth args at all, and the component aborted
+/// piping a preimage that was never written ("advice stack read failed"), which is what every
+/// summary-producing test hit on the fee-free CI chain and on the mock chain.
 async fn caller_chosen_fee_conversion_salt(
     client: &mut Client<crate::ClientAuth>,
     executing_account_id: NativeAccountId,
 ) -> Result<Option<NativeWord>, JsErr> {
-    let header = client.get_latest_block_header().await.map_err(|err| {
-        js_error_with_context(
-            err,
-            &format!(
-                "failed to read fee parameters from the latest block header while preparing a \
-                 request for account {executing_account_id}"
-            ),
-        )
-    })?;
-    if header.fee_parameters().verification_base_fee() == 0 {
-        return Ok(None);
-    }
-
     if !requires_caller_chosen_salt(client, executing_account_id).await? {
         return Ok(None);
     }
