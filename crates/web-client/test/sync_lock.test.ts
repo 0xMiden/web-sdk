@@ -150,16 +150,7 @@ test.describe("Sync Lock Tests", () => {
       const result = await page.evaluate(async () => {
         // Create two clients pointing to the same store
         const client1 = window.client;
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName, // Same store name as client1
-          undefined, // logLevel
-          undefined, // useWorker, defaulted
-          undefined, // observability
-          window.feeFaucetId
-        );
+        const client2 = await window.helpers.createClient(window.storeName);
 
         // Fire concurrent syncs from both clients
         const syncPromises = [client1.syncState(), client2.syncState()];
@@ -186,26 +177,8 @@ test.describe("Sync Lock Tests", () => {
     }) => {
       const result = await page.evaluate(async () => {
         const client1 = window.client;
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName,
-          undefined, // logLevel
-          undefined, // useWorker, defaulted
-          undefined, // observability
-          window.feeFaucetId
-        );
-        const client3 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          window.storeName,
-          undefined, // logLevel
-          undefined, // useWorker, defaulted
-          undefined, // observability
-          window.feeFaucetId
-        );
+        const client2 = await window.helpers.createClient(window.storeName);
+        const client3 = await window.helpers.createClient(window.storeName);
 
         // Fire many concurrent syncs
         const syncPromises = [
@@ -236,26 +209,8 @@ test.describe("Sync Lock Tests", () => {
     }) => {
       const result = await page.evaluate(async () => {
         const client1 = window.client; // Uses window.storeName
-        const client2 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          "SyncLockTestStore1",
-          undefined, // logLevel
-          undefined, // useWorker, defaulted
-          undefined, // observability
-          window.feeFaucetId
-        );
-        const client3 = await window.WasmWebClient.createClient(
-          window.rpcUrl,
-          undefined,
-          undefined,
-          "SyncLockTestStore2",
-          undefined, // logLevel
-          undefined, // useWorker, defaulted
-          undefined, // observability
-          window.feeFaucetId
-        );
+        const client2 = await window.helpers.createClient("SyncLockTestStore1");
+        const client3 = await window.helpers.createClient("SyncLockTestStore2");
 
         // Fire concurrent syncs to different stores
         const syncPromises = [
@@ -425,6 +380,9 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
 
             window.rpcUrl = rpcUrl;
             // Both pages use the same store name for cross-tab coordination
+            // These pages set themselves up from a bare goto, so the global
+            // fixture never ran on them and window.helpers does not exist here;
+            // this is the one place the positional list is spelled out twice.
             const client = await window.WasmWebClient.createClient(
               rpcUrl,
               undefined,
@@ -501,6 +459,9 @@ test.describe("Cross-Tab Sync Lock Tests", () => {
             }
 
             window.rpcUrl = rpcUrl;
+            // These pages set themselves up from a bare goto, so the global
+            // fixture never ran on them and window.helpers does not exist here;
+            // this is the one place the positional list is spelled out twice.
             const client = await window.WasmWebClient.createClient(
               rpcUrl,
               undefined,
