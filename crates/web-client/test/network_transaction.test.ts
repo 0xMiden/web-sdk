@@ -264,14 +264,20 @@ const networkCounterTransaction = async (
     );
 
     // The node's network-transaction builder consumes the note in a subsequent
-    // block and bumps the counter again. Poll until it does or the window elapses.
+    // block and bumps the counter again. Poll until it does or the window
+    // elapses. Record the blocks spanned: when this times out the assertion can
+    // only say "1 !== 2", which does not distinguish a builder that never acted
+    // from a window that was too short, and the page's console is not forwarded
+    // to the run log.
+    const pollStartBlock = await client.getSyncHeight();
     let finalCounter = deployedCounter;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 40; i++) {
       await window.helpers.waitForBlocks(1);
       await client.syncState();
       finalCounter = await readCounter();
       if (finalCounter === "2") break;
     }
+    const pollEndBlock = await client.getSyncHeight();
 
     // The deployed network account's code carries the counter component.
     const finalAccount = await client.getAccount(built.account.id());
@@ -285,6 +291,8 @@ const networkCounterTransaction = async (
     return {
       deployedCounter,
       finalCounter,
+      pollStartBlock,
+      pollEndBlock,
       hasCounterComponent,
       isNetworkAccount,
       allowlist,
@@ -305,6 +313,8 @@ test.describe("network transaction tests", () => {
     const {
       deployedCounter,
       finalCounter,
+      pollStartBlock,
+      pollEndBlock,
       hasCounterComponent,
       isNetworkAccount,
       allowlist,
@@ -329,8 +339,12 @@ test.describe("network transaction tests", () => {
     expect(senderAllowlist).toBeUndefined();
     // The deploy ran the allowlisted counter bump, so it reads 1.
     expect(deployedCounter).toEqual("1");
-    // The node's network transaction consumed the note and bumped it again.
-    expect(finalCounter).toEqual("2");
+    // The node's network transaction consumed the note and bumped it again. The
+    // block span is in the message so a timeout says how long the builder had.
+    expect(
+      finalCounter,
+      `counter after polling blocks ${pollStartBlock}..${pollEndBlock}`
+    ).toEqual("2");
     // The network account's on-chain code carries the counter component.
     expect(hasCounterComponent).toBe(true);
   });
