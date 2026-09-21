@@ -113,20 +113,19 @@ const networkCounterTransaction = async (
     // matching notes to it.
     //
     // Each allowed note script carries the fee the account charges to consume it,
-    // denominated in the asset of a fee faucet. This test node charges no
+    // denominated in the chain's fee asset. This test node charges no
     // verification fee, so the note is priced at zero.
-    const feeFaucet = await client.newFaucet(
-      window.AccountStorageMode.tryFromStr("public"),
-      false,
-      "FEE",
-      "FEE",
-      8,
-      BigInt(10000000),
-      2
-    );
+    //
+    // The fee faucet has to be the CHAIN'S, not one minted here. Since 0.17 the
+    // node's network-transaction builder checks a network account's fee asset
+    // against the protocol configuration and refuses to execute for it
+    // otherwise - "network account fee asset does not match the protocol
+    // configuration". Nothing on the client side reports that: the note is
+    // simply never consumed.
+    const feeFaucetId = await client.feeFaucetId();
     const networkAuth = window.AccountComponent.createNetworkAuthComponents(
       [new window.NoteScriptFee(noteScript.root(), BigInt(0))],
-      feeFaucet.id(),
+      feeFaucetId,
       // Any transaction script but the canonical expiration one is refused
       // unless it is named here.
       [deployScript.root()]

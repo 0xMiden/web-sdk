@@ -274,7 +274,12 @@ impl AccountComponent {
     /// fee the account charges to consume notes running it, so every allowlisted script is
     /// priced by construction. A fee of zero is valid; a script root the account does not price
     /// at all aborts fee estimation rather than being treated as free. Fees are denominated in
-    /// the fungible asset issued by `feeFaucetId`.
+    /// the fungible asset issued by `feeFaucetId`, which must be the chain's own fee faucet -
+    /// `client.feeFaucetId()`. The node's network-transaction builder refuses to execute for a
+    /// network account whose fee asset differs from the chain's protocol configuration, and the
+    /// client is not told: notes sent to such an account are simply never consumed. The fee
+    /// asset is fixed when the account is built, so an account built with another faucet has to
+    /// be rebuilt.
     ///
     /// Returns the auth component together with the components backing its fee policy. Every one
     /// of them must be installed on the account: pass each to `AccountBuilder.withComponent`.

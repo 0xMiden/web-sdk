@@ -126,7 +126,13 @@ import {
 // the allowlisted root matches.
 //
 // Each allowed script carries the fee charged to consume it, denominated in
-// the fungible asset of `feeFaucetId`. A zero price is valid.
+// the chain's fee asset. A zero price is valid.
+//
+// The fee faucet must be the chain's own. The node refuses to run network
+// transactions for an account whose fee asset differs from the chain's
+// protocol configuration, and nothing reports it to the client: the account's
+// notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(noteScript.root(), 0n)],
   feeFaucetId

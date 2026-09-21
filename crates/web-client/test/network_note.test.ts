@@ -25,7 +25,9 @@ test.describe("network note tests", () => {
       // calling `estimate_note_fee` on the target, so the target must be a real
       // network account — a plain wallet does not expose that procedure — and it
       // must be committed on-chain at the transaction's reference block.
-      const feeFaucet = await client.newFaucet(
+      // This faucet only mints the note that deploys the account; the account's
+      // own fee faucet is the chain's, below.
+      const faucet = await client.newFaucet(
         sdk.AccountStorageMode.public(),
         false,
         "FEE",
@@ -40,9 +42,11 @@ test.describe("network note tests", () => {
         new sdk.NoteScriptFee(p2idScript.root(), sdk.u64(0)),
       ];
       // Yields the auth component plus the components backing its fee policy.
+      // The fee faucet must be the chain's: a 0.17 node never serves a network
+      // account whose fee asset differs from its protocol configuration's.
       const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
         allowedNotes,
-        feeFaucet.id()
+        await client.feeFaucetId()
       );
 
       const seed = new Uint8Array(32);
@@ -62,7 +66,7 @@ test.describe("network note tests", () => {
       // an output note, or a changed account state), and a scriptless deploy has
       // none. A minted P2ID note is the cheapest effect the account's own
       // allowlist already permits: `allowedNotes` above carries that script root.
-      await helpers.mockMintAndConsume(networkAccount.id(), feeFaucet.id(), {
+      await helpers.mockMintAndConsume(networkAccount.id(), faucet.id(), {
         publicNote: true,
       });
       await client.proveBlock();

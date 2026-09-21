@@ -374,10 +374,14 @@ declines to attach fee conversion info to one it cannot classify:
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
-  consume notes running it (zero is valid). It returns an **array**; add every
-  element to the builder:
+  consume notes running it (zero is valid). `feeFaucetId` must be the chain's
+  own fee faucet, `client.feeFaucetId()`: the node never runs network
+  transactions for an account whose fee asset differs from the chain's protocol
+  configuration, and the client is not told - the notes just sit unconsumed.
+  It returns an **array**; add every element to the builder:
 
   ```typescript
+  const feeFaucetId = await client.feeFaucetId();
   const components = AccountComponent.createNetworkAuthComponents(
     [new NoteScriptFee(noteScript.root(), 0n)],
     feeFaucetId
@@ -543,8 +547,10 @@ Passing both, or neither, throws a descriptive error naming the two fields.
 
 `target` must genuinely be a network account: one built from
 `AccountComponent.createNetworkAuthComponents(...)` (see "Standard auth
-components"), already committed on-chain at the transaction's reference block,
-whose allowlist prices the note's script root. The note is priced by calling
+components") with the chain's fee faucet, already committed on-chain at the
+transaction's reference block, whose allowlist prices the note's script root.
+The fee faucet requirement fails silently: the note is emitted, and the node
+simply never consumes it. The note is priced by calling
 `estimate_note_fee` on the target even on a chain that charges no fees, so
 targeting a plain wallet fails with
 `account procedure ... is not in the account procedure index map`, and targeting

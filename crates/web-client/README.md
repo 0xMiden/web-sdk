@@ -777,7 +777,11 @@ To create the receiving account, build a **public** account carrying the network
 
 ```typescript
 // Each allowed note script carries the fee charged to consume it, in the
-// fungible asset of `feeFaucetId`. Zero is a valid price.
+// chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
+// own: the node never runs network transactions for an account whose fee asset
+// differs from the chain's protocol configuration, and says nothing to the
+// client - the account's notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
 const components = AccountComponent.createNetworkAuthComponents(
   [new NoteScriptFee(myNoteScript.root(), 0n)],
   feeFaucetId
