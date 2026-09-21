@@ -790,7 +790,7 @@ for (const component of components) builder.withComponent(component);
 const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). The component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 

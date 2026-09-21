@@ -89,6 +89,21 @@ const networkCounterTransaction = async (
     builder.linkDynamicAccountComponentCode(counterComponent.componentCode());
     const noteScript = await builder.compileNoteScript(noteScriptCode);
 
+    // The deploy needs an effect: since 0.17 the network-account auth component
+    // asserts the transaction consumed a note, created one, or changed account
+    // state BEFORE it pays the fee, so an empty transaction aborts with
+    // `network account transactions must have an effect before fee payment`.
+    // This account carries a counter and no wallet, so there is no note it can
+    // receive; bumping its own counter is the effect available to it, and the
+    // script is allowlisted below so the auth component admits it.
+    const deployScript = builder.compileTxScript(`
+        use external_contract::counter_contract
+        @transaction_script
+        pub proc main
+            call.counter_contract::increment_count
+        end
+      `);
+
     // A network account is a Public account carrying the network-account auth
     // component. Its note-script allowlist is the standardized storage slot the
     // node inspects to identify the account as a network account and route
@@ -108,7 +123,10 @@ const networkCounterTransaction = async (
     );
     const networkAuth = window.AccountComponent.createNetworkAuthComponents(
       [new window.NoteScriptFee(noteScript.root(), BigInt(0))],
-      feeFaucet.id()
+      feeFaucet.id(),
+      // Any transaction script but the canonical expiration one is refused
+      // unless it is named here.
+      [deployScript.root()]
     );
 
     const seed = new Uint8Array(32);
@@ -132,12 +150,14 @@ const networkCounterTransaction = async (
       ?.map((root) => root.toHex());
     const allowlistedNoteRoot = noteScript.root().toHex();
 
-    // Scriptless deploy: the network-account auth component forbids tx scripts
-    // and bumps the nonce on its own, so an empty transaction is enough to commit
-    // the account on-chain. The counter is 0 after deployment.
+    // Deploy with the allowlisted counter bump, which both commits the account
+    // on-chain and gives the transaction the effect 0.17 requires. The counter
+    // therefore reads 1 after deployment, not 0.
     const deployTx = await window.helpers.executeAndApplyTransaction(
       built.account.id(),
-      new window.TransactionRequestBuilder().build()
+      new window.TransactionRequestBuilder()
+        .withCustomScript(deployScript)
+        .build()
     );
     await window.helpers.waitForTransaction(
       deployTx.executedTransaction().id().toHex()
@@ -203,13 +223,13 @@ const networkCounterTransaction = async (
     );
 
     // The node's network-transaction builder consumes the note in a subsequent
-    // block and bumps the counter to 1. Poll until it does or the window elapses.
+    // block and bumps the counter again. Poll until it does or the window elapses.
     let finalCounter = deployedCounter;
     for (let i = 0; i < 15; i++) {
       await window.helpers.waitForBlocks(1);
       await client.syncState();
       finalCounter = await readCounter();
-      if (finalCounter === "1") break;
+      if (finalCounter === "2") break;
     }
 
     // The deployed network account's code carries the counter component.
@@ -264,11 +284,10 @@ test.describe("network transaction tests", () => {
     // A plain wallet is not a network account.
     expect(senderIsNetworkAccount).toBe(false);
     expect(senderAllowlist).toBeUndefined();
-    // The scriptless deploy leaves the counter at 0 (empty once normalized) —
-    // a network account cannot run a deploy script.
-    expect(deployedCounter).toBeFalsy();
-    // The node's network transaction consumed the note and bumped it to 1.
-    expect(finalCounter).toEqual("1");
+    // The deploy ran the allowlisted counter bump, so it reads 1.
+    expect(deployedCounter).toEqual("1");
+    // The node's network transaction consumed the note and bumped it again.
+    expect(finalCounter).toEqual("2");
     // The network account's on-chain code carries the counter component.
     expect(hasCounterComponent).toBe(true);
   });

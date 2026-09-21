@@ -118,7 +118,6 @@ import {
   AccountComponent,
   AccountStorageMode,
   NoteScriptFee,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 
 // Reuse the same compiled note script when building the network note, so
@@ -141,16 +140,19 @@ const { account } = builder.build();
 
 await client.accounts.insert({ account });
 
-// The auth component bumps the nonce itself, so a scriptless transaction
-// commits the account on-chain. The bare builder is right here even on a
-// fee-charging chain: the network-account auth component pays the fee from the
-// chain's native conversion info rather than the transaction's auth args, so
-// there is nothing to attach. See "Which accounts read conversion info" in the
-// transactions guide.
-await client.transactions.submit(
-  account.id(),
-  new TransactionRequestBuilder().build()
-);
+// Deploying needs an effect. Since 0.17 the auth component asserts the
+// transaction consumed an input note, created an output note, or changed the
+// account state BEFORE it pays the fee, so an empty transaction aborts with
+// `network account transactions must have an effect before fee payment`.
+// Consuming a note whose script the account allowlists is the cheapest one.
+//
+// The bare builder is still right here on the fee side: the network-account
+// auth component pays from the chain's native conversion info rather than the
+// transaction's auth args, so there is nothing to attach. See "Which accounts
+// read conversion info" in the transactions guide.
+// `allowlistedNoteId` is a note already sent to the account whose script root
+// is in the allowlist above.
+await client.transactions.consume(account.id(), [allowlistedNoteId]);
 ```
 
 The allowlist must be non-empty (`createNetworkAuthComponents([], ...)` throws).
