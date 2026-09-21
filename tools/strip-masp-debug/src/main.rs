@@ -276,6 +276,15 @@ mod tests {
         let second = package_with_debug("second", 20_000);
         let first_commitment = first.dependency_commitment();
         let second_commitment = second.dependency_commitment();
+        // The strip's safety check is "this commitment is unchanged", which only means anything
+        // if the commitment can tell two packages apart. Both fixtures are dependency-free, so a
+        // value derived from the dependency list alone would be constant here and every
+        // assertion below would hold on a strip that mangled the MAST.
+        assert_ne!(
+            first_commitment, second_commitment,
+            "dependency_commitment does not discriminate between two different packages, so it \
+             cannot serve as the strip's identity check"
+        );
         let first_bytes = first.to_bytes();
         let second_bytes = second.to_bytes();
         // The length the tool pads back up to: a round-trip through the reader keeps every

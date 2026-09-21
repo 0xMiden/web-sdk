@@ -211,13 +211,34 @@ const networkCounterTransaction = async (
         new window.AccountStorageRequirements()
       )
     );
-    const emitTx = await window.helpers.executeAndApplyTransaction(
-      sender.id(),
+    // Pricing the note calls `estimate_note_fee` on the target, which applies
+    // the standards' default expiration delta: this transaction must be
+    // included within 20 blocks of its reference block, and an expiration can
+    // only be lowered, so nothing here can widen it. A local WASM prove on a
+    // CI runner can exceed that, and the node then rejects the submission as
+    // expired. Re-execute against a fresh reference block, which is what a
+    // consumer has to do; it is not a blanket retry, and any other failure
+    // still fails the test on the first attempt.
+    const emitRequest = () =>
       new window.TransactionRequestBuilder()
         .withOwnOutputNotes(ownOutputs)
         .withForeignAccounts(targetAccounts)
-        .build()
-    );
+        .build();
+
+    let emitTx;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        emitTx = await window.helpers.executeAndApplyTransaction(
+          sender.id(),
+          emitRequest()
+        );
+        break;
+      } catch (err) {
+        const message = String(err?.message ?? err);
+        if (attempt >= 2 || !message.includes("transaction expired")) throw err;
+        await client.syncState();
+      }
+    }
     await window.helpers.waitForTransaction(
       emitTx.executedTransaction().id().toHex()
     );

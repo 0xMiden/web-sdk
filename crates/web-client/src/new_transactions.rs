@@ -1027,7 +1027,6 @@ async fn requires_caller_chosen_salt(
     }))
 }
 
-
 /// A request builder already carrying a fee conversion salt where the executing account needs one.
 ///
 /// Every convenience constructor that already holds the client starts from this rather than
