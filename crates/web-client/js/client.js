@@ -205,6 +205,8 @@ export class MidenClient {
    * @returns {Promise<MidenClient>} A fully initialized testnet client.
    */
   static async createTestnet(options) {
+    // Since 0.17 a client also needs the chain's fee faucet, which the SDK knows
+    // for no network yet, so pass `feeFaucetId` in `options` until it does.
     return MidenClient.create({
       rpcUrl: "testnet",
       proverUrl: "testnet",

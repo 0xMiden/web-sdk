@@ -8,8 +8,8 @@ use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 /// `AccountVaultDelta` stores the difference between the initial and final account vault states.
 ///
 /// The difference is a set of whole assets added to or removed from the vault, keyed by asset ID.
-/// A fungible balance that both grew and shrank within one transaction appears once, as the net
-/// asset the kernel encoded.
+/// An asset appears at most once, on one side or the other: a delta carrying the same asset ID
+/// twice is rejected when it is built.
 #[derive(Clone)]
 #[js_export]
 pub struct AccountVaultDelta(NativeAccountVaultDelta);
