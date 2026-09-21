@@ -1284,17 +1284,39 @@ class WebClient {
   }
 
   /**
-   * Terminates the underlying Web Worker used by this WebClient instance.
+   * Terminates the underlying Web Worker used by this WebClient instance,
+   * or frees the in-realm wasm client when `useWorker` was false.
    *
    * Call this method when you're done using a WebClient to free up browser
-   * resources. Each WebClient instance uses a dedicated Web Worker for
-   * computationally intensive operations. Terminating releases that thread.
+   * resources. With a worker, terminating releases that thread. With an
+   * in-realm client, the wasm-bindgen object is freed and its IndexedDB
+   * connection is closed when the idxdb store module has registered a closer.
    *
    * After calling terminate(), the WebClient should not be used.
    */
   terminate() {
     if (this.worker) {
       this.worker.terminate();
+      this.worker = null;
+    }
+
+    if (this.wasmWebClient) {
+      try {
+        this.wasmWebClient.free();
+      } catch {
+        // Already freed by FinalizationRegistry or a prior terminate().
+      }
+      this.wasmWebClient = null;
+      this.wasmWebClientPromise = null;
+    }
+
+    const closeIdxdb = globalThis.__midenCloseIdxdb;
+    if (typeof closeIdxdb === "function" && this.storeName) {
+      try {
+        closeIdxdb(this.storeName);
+      } catch {
+        // Best-effort: store may already be closed or never opened.
+      }
     }
   }
 }
