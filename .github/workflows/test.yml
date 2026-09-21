@@ -1129,12 +1129,15 @@ jobs:
       # see: the note simply stays unconsumed. Its own log is the only place that says why.
       - name: Dump node logs on failure
         if: failure()
-        working-directory: miden-client
         run: |
-          for svc in ntx-builder node validator; do
-            f="target/test-node/data/logs/$svc.log"
-            echo "::group::$svc.log (last 200 lines)"
-            if [ -f "$f" ]; then tail -n 200 "$f"; else echo "(no $f)"; fi
+          # Locate the logs rather than assuming a path: a previous attempt
+          # guessed one and reported three missing files, which says nothing.
+          echo "::group::log files found"
+          find . -path ./node_modules -prune -o -name '*.log' -path '*test-node*' -print 2>/dev/null | head -40
+          echo "::endgroup::"
+          find . -path ./node_modules -prune -o -name '*.log' -path '*test-node*' -print 2>/dev/null | while read -r f; do
+            echo "::group::$f (last 200 lines)"
+            tail -n 200 "$f"
             echo "::endgroup::"
           done
       - name: Upload Playwright JSON report
