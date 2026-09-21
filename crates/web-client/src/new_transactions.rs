@@ -1002,7 +1002,7 @@ async fn requires_caller_chosen_salt(
 /// A zero base fee used to be a second gate, on the grounds that miden-client skips the whole
 /// fee-conversion path when the chain charges nothing and no salt is declared. 0.17 made that
 /// wrong for the components this function selects: a multisig auth procedure now resolves its
-/// AUTH_ARGS unconditionally - it takes the block the summary binds and the summary salt from
+/// `AUTH_ARGS` unconditionally - it takes the block the summary binds and the summary salt from
 /// them, and only skips *creating* the fee note when the base fee is zero. Declaring no salt on a
 /// fee-free chain therefore left the account with no auth args at all, and the component aborted
 /// piping a preimage that was never written ("advice stack read failed"), which is what every
