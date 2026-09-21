@@ -60,41 +60,6 @@ use crate::platform::{
 use crate::utils::deserialize_from_bytes;
 use crate::{WebClient, js_error_with_context};
 
-// Not exported: `js_export` only accepts public functions, and this is internal plumbing.
-impl WebClient {
-    /// Registers any note scripts the request declares for the node's NTX script registry.
-    ///
-    /// miden-client does this inside its own submit methods; this crate builds the
-    /// execute/prove/submit pipeline itself, so without this call a declared script would sit on
-    /// the request and never reach the node - and a network note whose script the registry does
-    /// not know is silently never consumed.
-    async fn register_expected_ntx_scripts(
-        &self,
-        account_id: &AccountId,
-        transaction_request: &TransactionRequest,
-        prover: Option<TransactionProver>,
-    ) -> Result<(), JsErr> {
-        let native_request: NativeTransactionRequest = transaction_request.into();
-        let scripts = native_request.expected_ntx_scripts().to_vec();
-        if scripts.is_empty() {
-            return Ok(());
-        }
-
-        let mut guard = self.get_mut_inner().await;
-        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
-        let prover_arc = match prover {
-            Some(custom_prover) => custom_prover.get_prover(),
-            None => client.prover(),
-        };
-
-        let fut =
-            Box::pin(client.ensure_ntx_scripts_registered(account_id.into(), &scripts, prover_arc));
-        maybe_wrap_send(fut)
-            .await
-            .map_err(|err| js_error_with_context(err, "failed to register network note scripts"))
-    }
-}
-
 #[js_export]
 impl WebClient {
     #[js_export(js_name = "newMintTransactionRequest")]
@@ -438,15 +403,12 @@ impl WebClient {
     /// If the transaction utilizes foreign account data, there is a chance that the client doesn't
     /// have the required block header in the local database. In these scenarios, a sync to
     /// the chain tip is performed, and the required block header is retrieved.
-
     #[js_export(js_name = "submitNewTransaction")]
     pub async fn submit_new_transaction(
         &self,
         account_id: &AccountId,
         transaction_request: &TransactionRequest,
     ) -> Result<TransactionId, JsErr> {
-        self.register_expected_ntx_scripts(account_id, transaction_request, None)
-            .await?;
         let transaction_result = self.execute_transaction(account_id, transaction_request).await?;
 
         let tx_id = transaction_result.id();
@@ -473,8 +435,6 @@ impl WebClient {
         transaction_request: &TransactionRequest,
         prover: &TransactionProver,
     ) -> Result<TransactionId, JsErr> {
-        self.register_expected_ntx_scripts(account_id, transaction_request, Some(prover.clone()))
-            .await?;
         let transaction_result = self.execute_transaction(account_id, transaction_request).await?;
 
         let tx_id = transaction_result.id();

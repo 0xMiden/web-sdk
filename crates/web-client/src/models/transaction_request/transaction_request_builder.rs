@@ -4,7 +4,6 @@ use miden_client::note::{
     Note as NativeNote,
     NoteDetails as NativeNoteDetails,
     NoteRecipient as NativeNoteRecipient,
-    NoteScript as NativeNoteScript,
     NoteTag as NativeNoteTag,
 };
 use miden_client::transaction::{
@@ -26,10 +25,8 @@ use crate::models::miden_arrays::{
     NoteArray,
     NoteDetailsAndTagArray,
     NoteRecipientArray,
-    NoteScriptArray,
 };
 use crate::models::note_recipient::NoteRecipient;
-use crate::models::note_script::NoteScript;
 use crate::models::transaction_request::TransactionRequest;
 use crate::models::transaction_request::note_and_args::{NoteAndArgs, NoteArgs};
 use crate::models::transaction_request::note_details_and_tag::NoteDetailsAndTag;
@@ -95,25 +92,6 @@ impl TransactionRequestBuilder {
     pub fn with_own_output_notes(&mut self, notes: NoteArray) -> Self {
         let native_notes: Vec<NativeNote> = notes.into();
         self.builder = self.builder.clone().own_output_notes(native_notes);
-        self.clone()
-    }
-
-    /// Declares note scripts the node's network-transaction builder needs in its script registry.
-    ///
-    /// A transaction that emits a public note destined for a network account is only half the
-    /// story: the node has to execute that note's script to consume it, and it will only do so
-    /// for a script its registry knows. A missing one is not reported - the network transaction
-    /// silently never happens, and the note sits unconsumed.
-    ///
-    /// Declaring the scripts here makes the client check each against the node before executing,
-    /// and register any it does not have by submitting a public note carrying the script first.
-    /// Standard scripts need no declaration; the builder resolves those itself.
-    #[js_export(js_name = "withExpectedNtxScripts")]
-    pub fn with_expected_ntx_scripts(&mut self, scripts: NoteScriptArray) -> Self {
-        let scripts: Vec<NoteScript> = scripts.into();
-        let native_scripts: Vec<NativeNoteScript> =
-            scripts.iter().map(NativeNoteScript::from).collect();
-        self.builder = self.builder.clone().expected_ntx_scripts(native_scripts);
         self.clone()
     }
 

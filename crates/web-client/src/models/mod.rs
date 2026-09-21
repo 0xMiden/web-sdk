@@ -136,7 +136,6 @@ declare_js_miden_arrays! {
     (crate::models::foreign_account::ForeignAccount) -> ForeignAccountArray,
     (crate::models::note_recipient::NoteRecipient) -> NoteRecipientArray,
     (crate::models::note::Note) -> NoteArray,
-    (crate::models::note_script::NoteScript) -> NoteScriptArray,
     (crate::models::output_note::OutputNote) -> OutputNoteArray,
     (crate::models::storage_slot::StorageSlot) -> StorageSlotArray,
     (crate::models::transaction_script_inputs::TransactionScriptInputPair) -> TransactionScriptInputPairArray,

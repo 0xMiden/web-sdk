@@ -105,7 +105,6 @@ function makeTxRequestBuilder() {
     withInputNotes: vi.fn().mockReturnThis(),
     withCustomScript: vi.fn().mockReturnThis(),
     withForeignAccounts: vi.fn().mockReturnThis(),
-    withExpectedNtxScripts: vi.fn().mockReturnThis(),
     build: vi.fn().mockReturnValue("txRequest"),
   };
   return self;
@@ -153,10 +152,6 @@ function makeWasm(overrides = {}) {
     ForeignAccountArray: vi.fn().mockImplementation(function () {
       const pushed = [];
       return { pushed, push: (account) => pushed.push(account) };
-    }),
-    NoteScriptArray: vi.fn().mockImplementation(function () {
-      const pushed = [];
-      return { pushed, push: (script) => pushed.push(script) };
     }),
     AccountStorageRequirements: vi.fn().mockReturnValue("storageReqs"),
     AdviceInputs: vi.fn().mockReturnValue("adviceInputs"),
@@ -462,13 +457,6 @@ describe("TransactionsResource", () => {
       );
       const declared = lastBuilder.withForeignAccounts.mock.calls[0][0];
       expect(declared.pushed).toEqual(["foreignAcc"]);
-      // The node only consumes a note whose script its registry knows, and a
-      // caller-supplied script is not one it can resolve itself. Undeclared,
-      // the network transaction silently never happens.
-      expect(lastBuilder.withExpectedNtxScripts).toHaveBeenCalledTimes(1);
-      expect(
-        lastBuilder.withExpectedNtxScripts.mock.calls[0][0].pushed
-      ).toEqual(["myScript"]);
       expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
         "targetIdObj"
       );

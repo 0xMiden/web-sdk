@@ -229,39 +229,24 @@ const networkCounterTransaction = async (
           new window.AccountStorageRequirements()
         )
       );
-      return (
-        new window.TransactionRequestBuilder()
-          .withOwnOutputNotes(notes)
-          .withForeignAccounts(accounts)
-          // The node executes this note's script to consume it, and only does so
-          // for a script its registry knows. This one is compiled here, so it is
-          // not a standard script the builder can resolve itself: without the
-          // declaration the network transaction silently never happens and the
-          // counter never moves.
-          .withExpectedNtxScripts(
-            (() => {
-              const scripts = new window.NoteScriptArray();
-              scripts.push(noteScript);
-              return scripts;
-            })()
-          )
-          .build()
-      );
+      return new window.TransactionRequestBuilder()
+        .withOwnOutputNotes(notes)
+        .withForeignAccounts(accounts)
+        .build();
     };
 
-    // Submit through the client's own path, not a hand-rolled
-    // execute/prove/submit: registering the declared NTX scripts happens there,
-    // so a manual pipeline leaves the declaration inert and the node still will
-    // not consume the note.
-    let emitTxId;
+    let emitTx;
     for (let attempt = 0; ; attempt++) {
       try {
-        emitTxId = await client.submitNewTransactionWithProver(
+        emitTx = await window.helpers.executeAndApplyTransaction(
           sender.id(),
           emitRequest(),
-          // Prove remotely: a local WASM prove on a CI runner takes longer than
-          // the 20-block window the pricing call imposes, so it expires however
-          // many times it is retried. The node runs a prover beside its RPC.
+          // Prove this one remotely. A local WASM prove on a CI runner takes
+          // longer than the 20-block window the pricing call imposes, so it
+          // expires however many times it is retried; the node runs a prover
+          // beside its RPC. Done per call rather than by configuring the run,
+          // because TEST_MIDEN_PROVER_URL also flips Playwright's
+          // `fullyParallel` for every project.
           window.TransactionProver.newRemoteProver(
             window.localTxProverUrl,
             BigInt(120_000)
@@ -274,7 +259,9 @@ const networkCounterTransaction = async (
         await client.syncState();
       }
     }
-    await window.helpers.waitForTransaction(emitTxId.toHex());
+    await window.helpers.waitForTransaction(
+      emitTx.executedTransaction().id().toHex()
+    );
 
     // The node's network-transaction builder consumes the note in a subsequent
     // block and bumps the counter again. Poll until it does or the window
