@@ -1106,6 +1106,13 @@ export interface TransactionsResource {
    * attachment, submits it as an own output note, and (optionally) waits for
    * confirmation. The submitted note satisfies `Note.isNetworkNote()`, so a
    * public network account will auto-consume it.
+   *
+   * Pricing the note calls `estimate_note_fee` on the target, which applies the
+   * standards' default expiration delta: the transaction must be included
+   * within 20 blocks of its reference block, about a minute at a three-second
+   * block interval. An expiration can only be lowered, never raised, so this
+   * cannot be widened. If a slow prove makes the node reject the submission as
+   * expired, call this again - it re-executes against a fresh reference block.
    */
   createNetworkNote(options: NetworkNoteOptions): Promise<NetworkNoteResult>;
   /**

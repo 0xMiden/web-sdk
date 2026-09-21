@@ -446,9 +446,9 @@ describe("TransactionsResource", () => {
         undefined
       );
       // Since 0.17 the kernel prices the note through a procedure call on the
-      // target, so the emitting request has to declare it as a foreign account.
-      // Without this the transaction aborts inside the kernel naming no account,
-      // which is a long way from this call site.
+      // target, so the emitting request declares it as a foreign account, which
+      // pins that state at the reference block rather than depending on the
+      // client resolving the account lazily.
       // `new AccountStorageRequirements()` returns the constructed double, not the
       // mock's return value, so only the account is matched exactly here.
       expect(wasm.ForeignAccount.public).toHaveBeenCalledWith(

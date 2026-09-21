@@ -550,6 +550,14 @@ targeting a plain wallet fails with
 `account procedure ... is not in the account procedure index map`, and targeting
 an account that has not been committed yet fails to resolve the account at all.
 
+That pricing call also caps the transaction: `estimate_note_fee` applies the
+standards' default expiration delta, so the emitting transaction must be
+included within **20 blocks** of its reference block, roughly a minute at a
+three-second block interval. An expiration can only be lowered, never raised,
+so neither the SDK nor the caller can widen it. If proving is slow enough that
+the node rejects the submission as expired, re-execute against a fresh
+reference block and submit again.
+
 ### Consume
 
 ```typescript

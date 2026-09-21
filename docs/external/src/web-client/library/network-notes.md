@@ -31,6 +31,8 @@ returns `{ txId, note, result }`. Provide exactly one of `script` or
 `recipient` — passing both, or neither, throws. Notes are always Public — the
 attachment, not the tag, is what a network account matches on.
 
+Pricing the note calls `estimate_note_fee` on the target, and that procedure applies the standards' default expiration delta, so the emitting transaction must be included within **20 blocks** of its reference block - about a minute at a three-second block interval. An expiration can only be lowered, never raised, so this cannot be widened: if proving is slow enough that the node rejects the submission as expired, re-execute against a fresh reference block and submit again.
+
 ## Targeting a network account
 
 `target` accepts an account reference (hex/bech32 id or `AccountId`), or a
