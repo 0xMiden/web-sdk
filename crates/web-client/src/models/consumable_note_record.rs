@@ -46,6 +46,20 @@ impl NoteConsumptionStatus {
         Self(NativeNoteConsumptionStatus::UnconsumableConditions)
     }
 
+    /// Returns true when the note can be consumed as of the screened block, i.e. the status is
+    /// `Consumable` or `ConsumableWithAuthorization`.
+    ///
+    /// `consumableAfterBlock()` alone cannot answer this: it returns `None` for a note that is
+    /// never consumable just as it does for one that is consumable now.
+    #[js_export(js_name = "isConsumableNow")]
+    pub fn is_consumable_now(&self) -> bool {
+        matches!(
+            self.0,
+            NativeNoteConsumptionStatus::Consumable
+                | NativeNoteConsumptionStatus::ConsumableWithAuthorization
+        )
+    }
+
     /// Returns the block number at which the note can be consumed.
     /// Returns None if the note is already consumable or never possible
     #[js_export(js_name = "consumableAfterBlock")]

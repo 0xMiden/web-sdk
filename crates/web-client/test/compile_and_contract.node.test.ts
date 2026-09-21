@@ -125,6 +125,37 @@ test.describe("compile.component()", () => {
     expect(compA.getProcedureHash("get_count")).not.toBeNull();
     expect(compB.getProcedureHash("get_count")).not.toBeNull();
   });
+
+  test("links a dependency module the component imports", async ({ sdk }) => {
+    // Without linking, this component does not compile: it exec's a procedure
+    // from another module. The link path itself is pinned by the unit test
+    // (compiler.test.js), which asserts linkModule is used and buildLibrary is
+    // not; every link path produces the same procedure digest, so a digest
+    // comparison here could not tell them apart.
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+
+    const NS = "external_contract::counter_contract";
+    const componentCode = `
+      use external_contract::counter_contract
+      use miden::core::sys
+
+      @account_procedure
+      pub proc wrapped_increment
+        exec.counter_contract::increment_count
+        exec.sys::truncate_stack
+      end
+    `;
+
+    const client = await MidenClient.createMock();
+    const component = await client.compile.component({
+      code: componentCode,
+      slots: [sdk.StorageSlot.emptyValue(COUNTER_SLOT_NAME)],
+      libraries: [{ namespace: NS, code: COUNTER_CODE }],
+    });
+
+    expect(component.getProcedureHash("wrapped_increment")).not.toBeNull();
+  });
 });
 
 // ════════════════════════════════════════════════════════════════

@@ -30,6 +30,7 @@ import {
   Note,
   NoteAssets,
   NoteConsumability,
+  NoteConsumptionStatus,
   NoteExecutionHint,
   NoteExportFormat,
   NoteScriptFee,
@@ -125,6 +126,7 @@ declare global {
     NoteAndArgsArray: typeof NoteAndArgsArray;
     NoteAssets: typeof NoteAssets;
     NoteConsumability: typeof NoteConsumability;
+    NoteConsumptionStatus: typeof NoteConsumptionStatus;
     NoteExecutionHint: typeof NoteExecutionHint;
     NoteExportFormat: typeof NoteExportFormat;
     NoteScriptFee: typeof NoteScriptFee;
