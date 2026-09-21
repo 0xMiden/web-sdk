@@ -126,3 +126,7 @@ impl From<&NoteScript> for NativeNoteScript {
         note_script.0.clone()
     }
 }
+
+// Needed for `NoteScriptArray`: the array wrapper converts through `Vec<NoteScript>`, which
+// requires the element type to come back from a napi value by clone rather than by reference.
+impl_napi_from_value!(NoteScript);

@@ -245,10 +245,22 @@ export class TransactionsResource {
     );
     const builder =
       await this.#inner.feeAwareTransactionRequestBuilder(senderId);
-    const request = builder
+    let request = builder
       .withOwnOutputNotes(ownOutputs)
-      .withForeignAccounts(targetAccounts)
-      .build();
+      .withForeignAccounts(targetAccounts);
+    // The node executes this note's script to consume it, and only does so for
+    // a script its registry knows. A caller-supplied script is not one the
+    // builder can resolve itself, so declare it: the client then registers it
+    // before this transaction. Without that the network transaction silently
+    // never happens and the note sits unconsumed. A `recipient` carries its own
+    // script, which the caller may equally have compiled, so declare that too.
+    const ntxScript = opts.script ?? recipient?.script?.();
+    if (ntxScript) {
+      const ntxScripts = new wasm.NoteScriptArray();
+      ntxScripts.push(ntxScript);
+      request = request.withExpectedNtxScripts(ntxScripts);
+    }
+    request = request.build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       senderId,

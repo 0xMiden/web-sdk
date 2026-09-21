@@ -229,10 +229,24 @@ const networkCounterTransaction = async (
           new window.AccountStorageRequirements()
         )
       );
-      return new window.TransactionRequestBuilder()
-        .withOwnOutputNotes(notes)
-        .withForeignAccounts(accounts)
-        .build();
+      return (
+        new window.TransactionRequestBuilder()
+          .withOwnOutputNotes(notes)
+          .withForeignAccounts(accounts)
+          // The node executes this note's script to consume it, and only does so
+          // for a script its registry knows. This one is compiled here, so it is
+          // not a standard script the builder can resolve itself: without the
+          // declaration the network transaction silently never happens and the
+          // counter never moves.
+          .withExpectedNtxScripts(
+            (() => {
+              const scripts = new window.NoteScriptArray();
+              scripts.push(noteScript);
+              return scripts;
+            })()
+          )
+          .build()
+      );
     };
 
     let emitTx;
