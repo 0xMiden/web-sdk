@@ -15,7 +15,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.98.1"
-version      = "0.16.1"
+version      = "0.17.0-rc.1"
 
 [profile.dev]
 codegen-units = 16
@@ -41,8 +41,8 @@ codegen-units = 16
 [workspace.dependencies]
 # Workspace crates. The versions are required when publishing path dependencies and must track
 # `workspace.package.version`.
-idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.16" }
-js-export-macro = { path = "crates/js-export-macro", version = "0.16" }
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.17.0-rc.1" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.17.0-rc.1" }
 
 # Client crates
 # `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for

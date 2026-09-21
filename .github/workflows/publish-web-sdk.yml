@@ -66,7 +66,14 @@ jobs:
         id: event
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
-            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            # A pre-release must not take `latest`: it is the version every fresh
+            # `npm install` resolves to, and an rc client is rejected outright by a
+            # node on the stable line it does not match.
+            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+              echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+            else
+              echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            fi
             echo "checkout_ref=refs/tags/${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
             echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             echo "version_mode=release" >> "$GITHUB_OUTPUT"
