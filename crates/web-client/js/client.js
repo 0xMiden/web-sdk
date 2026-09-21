@@ -388,7 +388,9 @@ export class MidenClient {
   }
 
   /**
-   * Terminates the underlying Web Worker. After this, all method calls will throw.
+   * Terminates the underlying client: stops the Web Worker when present, or
+   * frees the in-realm wasm client and closes its IndexedDB store. After this,
+   * all method calls will throw.
    */
   terminate() {
     this.#terminated = true;
