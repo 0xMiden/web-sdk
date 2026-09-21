@@ -249,18 +249,19 @@ const networkCounterTransaction = async (
       );
     };
 
-    let emitTx;
+    // Submit through the client's own path, not a hand-rolled
+    // execute/prove/submit: registering the declared NTX scripts happens there,
+    // so a manual pipeline leaves the declaration inert and the node still will
+    // not consume the note.
+    let emitTxId;
     for (let attempt = 0; ; attempt++) {
       try {
-        emitTx = await window.helpers.executeAndApplyTransaction(
+        emitTxId = await client.submitNewTransactionWithProver(
           sender.id(),
           emitRequest(),
-          // Prove this one remotely. A local WASM prove on a CI runner takes
-          // longer than the 20-block window the pricing call imposes, so it
-          // expires however many times it is retried; the node runs a prover
-          // beside its RPC. Done per call rather than by configuring the run,
-          // because TEST_MIDEN_PROVER_URL also flips Playwright's
-          // `fullyParallel` for every project.
+          // Prove remotely: a local WASM prove on a CI runner takes longer than
+          // the 20-block window the pricing call imposes, so it expires however
+          // many times it is retried. The node runs a prover beside its RPC.
           window.TransactionProver.newRemoteProver(
             window.localTxProverUrl,
             BigInt(120_000)
@@ -273,9 +274,7 @@ const networkCounterTransaction = async (
         await client.syncState();
       }
     }
-    await window.helpers.waitForTransaction(
-      emitTx.executedTransaction().id().toHex()
-    );
+    await window.helpers.waitForTransaction(emitTxId.toHex());
 
     // The node's network-transaction builder consumes the note in a subsequent
     // block and bumps the counter again. Poll until it does or the window
