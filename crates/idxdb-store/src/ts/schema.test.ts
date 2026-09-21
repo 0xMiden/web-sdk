@@ -1,7 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import Dexie from "dexie";
 import {
   openDatabase,
+  closeDatabase,
   getDatabase,
   MidenDatabase,
   CLIENT_VERSION_SETTING_KEY,
@@ -163,6 +164,21 @@ describe("openDatabase", () => {
     const record = await db.settings.get(CLIENT_VERSION_SETTING_KEY);
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
+  });
+  it("closes the previous Dexie connection when reopening the same network", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = getDatabase(name);
+    openMidenDbs.push(first);
+    const closeSpy = vi.spyOn(first.dexie, "close");
+
+    await openDatabase(name, "1.0.0");
+    const second = getDatabase(name);
+    openMidenDbs.push(second);
+
+    expect(closeSpy).toHaveBeenCalled();
+    expect(second).not.toBe(first);
+    closeDatabase(name);
   });
 });
 
