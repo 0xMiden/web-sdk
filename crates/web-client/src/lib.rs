@@ -432,7 +432,7 @@ impl WebClient {
             keystore,
             rng,
             note_transport_client,
-            Some(protocol_config),
+            protocol_config,
         )
         .await?;
 
@@ -502,7 +502,7 @@ impl WebClient {
             keystore,
             rng,
             note_transport_client,
-            Some(protocol_config),
+            protocol_config,
         )
         .await?;
 
@@ -517,7 +517,7 @@ impl WebClient {
         keystore: WebKeyStore<RandomCoin>,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        protocol_config: Option<ProtocolConfig>,
+        protocol_config: ProtocolConfig,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
@@ -529,12 +529,8 @@ impl WebClient {
             builder = builder.note_transport(transport);
         }
 
-        *self.fee_faucet.lock().await =
-            protocol_config.as_ref().map(|config| config.fee_asset_id().faucet_id());
-
-        if let Some(config) = protocol_config {
-            builder = builder.protocol_config(config);
-        }
+        *self.fee_faucet.lock().await = Some(protocol_config.fee_asset_id().faucet_id());
+        builder = builder.protocol_config(protocol_config);
 
         let mut client = builder
             .build()
@@ -607,15 +603,8 @@ impl WebClient {
 
         let protocol_config = resolve_protocol_config(&endpoint, fee_faucet_id)?;
 
-        self.setup_client(
-            rpc_client,
-            store,
-            keystore,
-            rng,
-            note_transport_client,
-            Some(protocol_config),
-        )
-        .await?;
+        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, protocol_config)
+            .await?;
 
         Ok("Client created successfully".to_string())
     }
@@ -628,22 +617,19 @@ impl WebClient {
         keystore: FilesystemKeyStore,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        protocol_config: Option<ProtocolConfig>,
+        protocol_config: ProtocolConfig,
     ) -> Result<(), JsErr> {
-        let fee_faucet = protocol_config.as_ref().map(|config| config.fee_asset_id().faucet_id());
+        let fee_faucet = protocol_config.fee_asset_id().faucet_id();
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()
                 .rpc(rpc_client)
                 .rng(Box::new(rng))
                 .store(store)
-                .authenticator(Arc::new(keystore));
+                .authenticator(Arc::new(keystore))
+                .protocol_config(protocol_config);
 
             if let Some(transport) = note_transport_client {
                 builder = builder.note_transport(transport);
-            }
-
-            if let Some(config) = protocol_config {
-                builder = builder.protocol_config(config);
             }
 
             let mut client = builder
@@ -660,7 +646,7 @@ impl WebClient {
         })
         .await?;
 
-        *self.fee_faucet.lock().await = fee_faucet;
+        *self.fee_faucet.lock().await = Some(fee_faucet);
         *self.inner.lock().await = Some(client);
 
         Ok(())

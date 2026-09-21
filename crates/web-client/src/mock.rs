@@ -67,7 +67,7 @@ impl WebClient {
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            Some(mock_rpc_api.protocol_config()),
+            mock_rpc_api.protocol_config(),
         )
         .await?;
 
@@ -131,7 +131,7 @@ impl WebClient {
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            Some(mock_rpc_api.protocol_config()),
+            mock_rpc_api.protocol_config(),
         )
         .await?;
 
