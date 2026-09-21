@@ -16,6 +16,7 @@ packages:
   - 'packages/telemetry-otel'
   - 'packages/telemetry-sentry'
   - 'packages/vite-plugin'
+  - 'packages/create'
   - 'packages/adapter/base'
   - 'packages/adapter/react'
   - 'packages/adapter/miden'

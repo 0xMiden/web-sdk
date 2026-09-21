@@ -31,6 +31,11 @@ coverage/
 # descended into, so with only the `/**` line `git add -A` stages nothing.
 # Re-ignores use `**/` (not `*/`) to reach the second level, e.g.
 # packages/para/core/examples/react/dist/.
+!packages/create/
+!packages/create/**
+packages/create/dist/
+packages/create/coverage/
+packages/create/node_modules/
 !packages/adapter/
 !packages/adapter/**
 packages/adapter/**/dist/

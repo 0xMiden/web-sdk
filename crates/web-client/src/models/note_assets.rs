@@ -6,8 +6,13 @@ use super::fungible_asset::FungibleAsset;
 
 /// An asset container for a note.
 ///
-/// A note must contain at least 1 asset and can contain up to 256 assets. No duplicates are
-/// allowed, but the order of assets is unspecified.
+/// A note must contain at least 1 asset and can contain up to `MAX_ASSETS_PER_NOTE` = 16 assets
+/// (`miden_protocol::constants`). No duplicates are allowed, but the order of assets is
+/// unspecified.
+///
+/// Note for JS callers: the constructors below `unwrap` the protocol's `TooManyAssets` error, so
+/// exceeding the cap from JavaScript traps the WASM instance rather than surfacing a catchable
+/// error. Check the length before constructing.
 ///
 /// All the assets in a note can be reduced to a single commitment which is computed by sequentially
 /// hashing the assets. Note that the same list of assets can result in two different commitments if
