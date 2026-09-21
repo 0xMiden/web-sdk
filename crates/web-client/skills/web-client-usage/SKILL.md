@@ -1024,13 +1024,20 @@ from; use the same namespace when linking that component into a script.
 
 `libraries` entries take three forms:
 
-- `{ namespace, code, linking? }` - built and linked inline.
+- `{ namespace, code, linking? }` - built and linked inline. `code` is a
+  library, not a program: it exports `pub proc`s and has no `begin ... end`
+  block. With one, compilation fails with `found an executable entrypoint in a
+  package declared with non-executable type`.
 - `{ component, linking? }` - links the **exact** code an `AccountComponent`
   installed. Use this when a script calls procedures installed on an account, so
   procedure identities match.
 - a pre-built `Library` object, linked dynamically.
 
-`linking` is `"dynamic"` (default) or `"static"`.
+`linking` is `"dynamic"` (default) or `"static"`. Dynamic is for procedures that
+are installed on an account, as in the custom-script example above. A helper
+library whose procedures are not installed on any account has to be `"static"`,
+which copies its code into the script. With `"dynamic"` such a script still
+compiles, then fails at execution with `procedure with root digest 0x...`.
 
 ### MASM shape
 
