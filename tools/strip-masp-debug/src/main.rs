@@ -80,12 +80,14 @@ fn strip_file(path: &Path) -> Result<(usize, usize), String> {
         let orig_len = cursor.position() as usize;
         search_from = off + orig_len;
 
-        let original_digest = pkg.digest();
+        let original_commitment = pkg.dependency_commitment();
         let stripped = pkg
             .without_debug_info()
             .map_err(|e| format!("package at byte offset {off} failed to strip: {e}"))?;
-        if stripped.digest() != original_digest {
-            return Err(format!("package at byte offset {off} changed digest while stripping"));
+        if stripped.dependency_commitment() != original_commitment {
+            return Err(format!(
+                "package at byte offset {off} changed its dependency commitment while stripping"
+            ));
         }
         let lean_len = stripped.to_bytes().len();
         if lean_len >= orig_len {
@@ -101,8 +103,10 @@ fn strip_file(path: &Path) -> Result<(usize, usize), String> {
         // embedded packages, and describe the same code.
         let reparsed = Package::read_from_bytes_trusted(&padded)
             .map_err(|e| format!("stripped package failed to re-parse: {e}"))?;
-        if reparsed.digest() != original_digest {
-            return Err(format!("package at byte offset {off} failed digest verification"));
+        if reparsed.dependency_commitment() != original_commitment {
+            return Err(format!(
+                "package at byte offset {off} failed dependency-commitment verification"
+            ));
         }
 
         data[off..off + orig_len].copy_from_slice(&padded);
@@ -185,6 +189,8 @@ mod tests {
         Version,
     };
 
+    use miden_mast_package::debug_info::PackageDebugInfoBuilder;
+
     use super::*;
 
     static NEXT_TEMP_FILE: AtomicUsize = AtomicUsize::new(0);
@@ -238,11 +244,30 @@ mod tests {
         .expect("test package should be valid")
     }
 
+    /// Builds a package carrying a `debug_info` section of roughly `debug_len` bytes.
+    ///
+    /// The section has to be a real encoding, not filler: reading a package validates its debug
+    /// section, so junk bytes make the package unreadable and the tool skips it rather than
+    /// stripping it. The size comes from interned strings, which is what a real package's debug
+    /// info is mostly made of, in chunks because a single debug string is capped at 4 KiB. They
+    /// differ from each other because the builder interns by value.
     fn package_with_debug(name: &str, debug_len: usize) -> Package {
+        const CHUNK: usize = 1024;
+
         let mut package = empty_package(name);
+        let mut builder = PackageDebugInfoBuilder::default();
+        let mut written = 0usize;
+        let mut chunk_index = 0usize;
+        while written < debug_len {
+            let len = CHUNK.min(debug_len - written);
+            builder.add_string(format!("{chunk_index:04}{}", "d".repeat(len.saturating_sub(4))));
+            written += len;
+            chunk_index += 1;
+        }
+        let debug_info = *builder.build();
         package
             .sections
-            .push(Section::new(SectionId::DEBUG_INFO, vec![0x5a; debug_len]));
+            .push(Section::new(SectionId::DEBUG_INFO, debug_info.to_bytes()));
         package
     }
 
@@ -250,12 +275,14 @@ mod tests {
     fn strips_multiple_packages_and_preserves_layout_and_digests() {
         let first = package_with_debug("first", 200);
         let second = package_with_debug("second", 20_000);
-        let first_digest = first.digest();
-        let second_digest = second.digest();
+        let first_commitment = first.dependency_commitment();
+        let second_commitment = second.dependency_commitment();
         let first_bytes = first.to_bytes();
         let second_bytes = second.to_bytes();
-        let first_lean_len = Package::read_from_bytes(&first_bytes).unwrap().to_bytes().len();
-        let second_lean_len = Package::read_from_bytes(&second_bytes).unwrap().to_bytes().len();
+        // The length the tool pads back up to: a round-trip through the reader keeps every
+        // section, so the stripped length has to be asked for explicitly.
+        let first_lean_len = first.clone().without_debug_info().unwrap().to_bytes().len();
+        let second_lean_len = second.clone().without_debug_info().unwrap().to_bytes().len();
 
         let prefix = b"false MASP match before package: MASP-not-a-package";
         let separator = b"separator MASP-still-not-a-package";
@@ -286,9 +313,10 @@ mod tests {
         )
         .unwrap();
 
-        for (reparsed, digest) in [(reparsed_first, first_digest), (reparsed_second, second_digest)]
+        for (reparsed, commitment) in
+            [(reparsed_first, first_commitment), (reparsed_second, second_commitment)]
         {
-            assert_eq!(reparsed.digest(), digest);
+            assert_eq!(reparsed.dependency_commitment(), commitment);
             assert!(!reparsed.sections.iter().any(|section| section.id.is_debug()));
             // The padding id may gain trailing '-' bytes when a package's length lands on a
             // varint-framing gap (see pad_to_len), so match the prefix, not the exact string.
@@ -313,13 +341,17 @@ mod tests {
         let deficits = (100usize..=300).chain(16_380..=16_420);
         for extra in deficits {
             let package = empty_package("padding");
-            let digest = package.digest();
+            let commitment = package.dependency_commitment();
             let target = package.to_bytes().len() + extra;
             let padded = pad_to_len(package, target)
                 .unwrap_or_else(|| panic!("padding should converge for deficit +{extra}"));
             assert_eq!(padded.len(), target, "wrong length at deficit +{extra}");
             let reparsed = Package::read_from_bytes_trusted(&padded).unwrap();
-            assert_eq!(reparsed.digest(), digest, "padding changed the digest at deficit +{extra}");
+            assert_eq!(
+                reparsed.dependency_commitment(),
+                commitment,
+                "padding changed the commitment at deficit +{extra}"
+            );
             assert!(
                 reparsed.sections.iter().any(|s| s.id.as_str().starts_with(PAD_SECTION_ID)),
                 "padding section missing at deficit +{extra}"
