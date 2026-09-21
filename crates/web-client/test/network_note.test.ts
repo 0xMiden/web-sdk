@@ -110,11 +110,25 @@ test.describe("network note tests", () => {
       const builtIsNetworkNote = note.isNetworkNote();
       const builtAttachmentCount = note.attachments().length;
 
-      // Submit as an own output note.
+      // Submit as an own output note, declaring the target as a foreign
+      // account. Since 0.17 the kernel prices a NetworkAccountTarget note by
+      // calling `estimate_note_fee` on the target; this client happens to hold
+      // that account locally, so it would resolve either way, but a consumer
+      // whose client does not must declare it, and this gate should exercise
+      // the shape they need. `client.transactions.createNetworkNote` does it
+      // for you.
       const ownOutputs = new sdk.NoteArray();
       ownOutputs.push(note);
+      const targetAccounts = new sdk.ForeignAccountArray();
+      targetAccounts.push(
+        sdk.ForeignAccount.public(
+          networkAccount.id(),
+          new sdk.AccountStorageRequirements()
+        )
+      );
       const request = new sdk.TransactionRequestBuilder()
         .withOwnOutputNotes(ownOutputs)
+        .withForeignAccounts(targetAccounts)
         .build();
       const txId = await client.submitNewTransaction(sender.id(), request);
       await client.proveBlock();

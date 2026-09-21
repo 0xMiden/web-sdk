@@ -166,6 +166,12 @@ impl TransactionRequestBuilder {
     /// miden-client rather than reported as an error: each setter clears the other, so whichever
     /// is called last wins and the request can never carry both.
     ///
+    /// That symmetry makes this setter destructive in the same place its twin is: on a builder
+    /// returned by `feeAwareTransactionRequestBuilder` for a multisig account, which already
+    /// carries the component's three-word auth args. Calling this discards them and the auth
+    /// procedure aborts piping a preimage that was never written. Pass `feeConversionSalt` to
+    /// `feeAwareTransactionRequestBuilder` instead.
+    ///
     /// Setting this opts the request out of the client's fee-conversion machinery entirely. The
     /// client commits conversion info only when the request carries no auth argument of its own,
     /// so a caller that sets one is taking responsibility for the fee: on a fee-charging chain
