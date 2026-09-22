@@ -1,10 +1,10 @@
 use js_export_macro::js_export;
 use miden_client::account::AccountFile as NativeAccountFile;
 
+use crate::js_error_with_context;
 use crate::models::account::Account;
 use crate::models::account_id::AccountId;
-use crate::platform::{JsBytes, JsErr};
-use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
+use crate::platform::{JsBytes, JsErr, bytes_to_js, js_to_bytes};
 
 #[derive(Debug, Clone)]
 #[js_export]
@@ -15,28 +15,33 @@ impl AccountFile {
     /// Returns the account ID.
     #[js_export(js_name = "accountId")]
     pub fn account_id(&self) -> AccountId {
-        self.0.account.id().into()
+        self.0.account().id().into()
     }
 
     /// Returns the account data.
     pub fn account(&self) -> Account {
-        self.0.account.clone().into()
+        self.0.account().clone().into()
     }
 
     /// Returns the number of auth secret keys included.
     #[js_export(js_name = "authSecretKeyCount")]
     pub fn auth_secret_key_count(&self) -> usize {
-        self.0.auth_secret_keys.len()
+        self.0.auth_secret_keys().len()
     }
 
-    /// Serializes the `AccountFile` into a byte array
+    /// Encodes this file as protobuf account-file bytes.
+    ///
+    /// Bytes written by web-sdk 0.17.0-rc.1 used the old `Serializable` codec and do not decode.
     pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
+        bytes_to_js(&self.0.to_bytes())
     }
 
-    /// Deserializes a byte array into an `AccountFile`
+    /// Decodes protobuf account-file bytes.
+    ///
+    /// Rejects bytes produced by web-sdk 0.17.0-rc.1.
     pub fn deserialize(bytes: JsBytes) -> Result<AccountFile, JsErr> {
-        let native_account_file: NativeAccountFile = deserialize_from_bytes(&bytes)?;
+        let native_account_file = NativeAccountFile::try_from_bytes(&js_to_bytes(&bytes))
+            .map_err(|err| js_error_with_context(err, "account file deserialization failed"))?;
         Ok(Self(native_account_file))
     }
 }
