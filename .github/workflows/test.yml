@@ -1031,7 +1031,9 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
@@ -1146,7 +1148,9 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
@@ -1262,7 +1266,9 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
