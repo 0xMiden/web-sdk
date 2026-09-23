@@ -3,8 +3,8 @@ import { AccountsResource } from "../../resources/accounts.js";
 
 function makeWasm(overrides = {}) {
   const accountTypeEnum = {
-    RegularAccountImmutableCode: 0,
-    RegularAccountUpdatableCode: 1,
+    Private: 0,
+    Public: 1,
   };
   const fakeBuilderInstance = {
     accountType: vi.fn().mockReturnThis(),

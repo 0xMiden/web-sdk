@@ -57,9 +57,9 @@ ensureInitialized();
 
 // ── Enum constants (matching browser entry point) ────────────────────
 
-export const AccountType = Object.freeze({
-  FungibleFaucet: "FungibleFaucet",
-  NonFungibleFaucet: "NonFungibleFaucet",
+export const FaucetType = Object.freeze({
+  FungibleFaucet: 0,
+  NonFungibleFaucet: 1,
 });
 
 export const AuthScheme = Object.freeze({
@@ -176,6 +176,7 @@ export const AccountStoragePatch = /* @__PURE__ */ _reexport(
 export const AccountStorageRequirements = /* @__PURE__ */ _reexport(
   "AccountStorageRequirements"
 );
+export const AccountType = /* @__PURE__ */ _reexport("AccountType");
 export const AccountVaultDelta = /* @__PURE__ */ _reexport("AccountVaultDelta");
 export const AccountVaultPatch = /* @__PURE__ */ _reexport("AccountVaultPatch");
 export const Address = /* @__PURE__ */ _reexport("Address");

@@ -18,6 +18,10 @@
 * [BREAKING][behavior][react] `useNotes().consumableNotes` (and `consumableNoteSummaries`), `useWaitForNotes().waitForConsumableNotes` and `useSessionAccount`'s funding poll now apply the same rule: block-locked notes are not reported as consumable, are not waited on as if they were, and are no longer put into a consume transaction that the whole account's funding step would fail on. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 ## 0.17.0-rc.1 (2026-09-21)
 
+### Breaking
+
+* [BREAKING][web] Rename the faucet selectors to `FaucetType.FungibleFaucet` and `FaucetType.NonFungibleFaucet`, with numeric values in both browser and Node.js. `AccountType.Private` and `AccountType.Public` now expose the native visibility enum accepted by `AccountBuilder.accountType()`. Replace existing `AccountType.*Faucet` references with `FaucetType.*Faucet` ([#361](https://github.com/0xMiden/web-sdk/issues/361)).
+
 ### Changes
 
 * [CHANGE][web] Upgraded `miden-client` to 0.17.0-rc.1 (from 0.16.1), which adopts protocol 0.17.0-rc.5 and VM 0.33. Requires a node on the matching protocol - a 0.16 node rejects a 0.17 client at the accept header, before any request is served - and a new client database. The entries below are the parts of that upgrade a JS consumer has to act on ([client 0.17.0-rc.1](https://github.com/0xMiden/rust-sdk/releases/tag/v0.17.0-rc.1)) ([#406](https://github.com/0xMiden/web-sdk/pull/406)).

@@ -144,27 +144,27 @@ export declare const Linking: {
 /** Union of valid Linking string values. */
 export type Linking = "dynamic" | "static";
 
-/**
- * Union of all values in the AccountType const.
- */
-export type AccountType = (typeof AccountType)[keyof typeof AccountType];
+/** Union of the faucet-kind selectors accepted by `accounts.create({ type })`. */
+export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
 
 /**
- * Faucet-kind selectors for `accounts.create({ type })`.
+ * Faucet-kind selectors for `accounts.create({ type })`, identical on browser and Node.
  *
- * These are NOT the low-level WASM `AccountType` enum. As of protocol 0.15 that
- * enum encodes only account visibility (`Private` / `Public`), which the
- * low-level builder sets via `AccountBuilder.storageMode()`. Wallets and
- * contracts are not selected by a `type` value: a wallet is the default, and a
- * contract is any `accounts.create()` call that passes `components`.
+ * Use the native `AccountType.Private` / `AccountType.Public` enum with
+ * `AccountBuilder.accountType()` to select visibility. Wallets are the default
+ * when `type` is omitted; contracts are selected by passing `components`.
  */
-export declare const AccountType: {
+export declare const FaucetType: {
   readonly FungibleFaucet: 0;
+  /** Reserved selector; creation currently rejects with "Non-fungible faucets are not supported yet". */
   readonly NonFungibleFaucet: 1;
 };
 
-/** Union of valid AccountType numeric values. */
-export type AccountTypeValue = 0 | 1;
+/** Union of valid FaucetType numeric values. */
+export type FaucetTypeValue = FaucetType;
+
+/** @deprecated Use FaucetTypeValue for faucet-kind selectors. */
+export type AccountTypeValue = FaucetTypeValue;
 
 // ════════════════════════════════════════════════════════════════
 // Observability
@@ -331,8 +331,8 @@ export interface WalletCreateOptions {
 }
 
 export interface FaucetCreateOptions {
-  /** Use `AccountType.FungibleFaucet` or `AccountType.NonFungibleFaucet`. */
-  type: AccountTypeValue;
+  /** Use `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet`. */
+  type: FaucetTypeValue;
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
   symbol: string;

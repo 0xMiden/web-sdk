@@ -425,7 +425,7 @@ The following are just a few simple examples to get started. For more details, s
 ### Quick Start
 
 ```typescript
-import { MidenClient, AccountType } from "@miden-sdk/miden-sdk";
+import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
 // 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
 const client = await MidenClient.createDevnet();
@@ -433,7 +433,7 @@ const client = await MidenClient.createDevnet();
 // 2. Create a wallet and a token (faucet account)
 const wallet = await client.accounts.create();
 const dagToken = await client.accounts.create({
-  type: AccountType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
+  type: FaucetType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
 });
 
 // 3. Mint tokens
@@ -459,20 +459,41 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Account Visibility and Faucet Types
+
+`AccountType.Private` and `AccountType.Public` are the native visibility enum
+accepted by `AccountBuilder.accountType()` in both browser and Node.js:
+
+```typescript
+import { AccountBuilder, AccountType } from "@miden-sdk/miden-sdk";
+
+const builder = new AccountBuilder(new Uint8Array(32))
+  .accountType(AccountType.Public);
+```
+
+For `client.accounts.create()`, select visibility with `storage: "public"` or
+`"private"`, and faucet kind with `FaucetType.FungibleFaucet` or
+`FaucetType.NonFungibleFaucet`. Migrate previous `AccountType.*Faucet` uses to
+`FaucetType.*Faucet`; both faucet selectors are numeric in browser and Node.js.
+Omit `type` to create a wallet, or pass `components` to create a contract.
+
+`FaucetType.NonFungibleFaucet` is reserved: account creation currently rejects
+it with "Non-fungible faucets are not supported yet". Only fungible faucet
+creation is supported.
+
 ### Create a New Wallet
 
 ```typescript
-import { MidenClient, AccountType, AuthScheme } from "@miden-sdk/miden-sdk";
+import { MidenClient, AuthScheme } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create();
 
-// Default wallet (private storage, mutable, Falcon auth)
+// Default wallet (private storage, Falcon auth)
 const wallet = await client.accounts.create();
 
 // Wallet with options
 const wallet2 = await client.accounts.create({
   storage: "public",
-  type: AccountType.ImmutableWallet,
   auth: AuthScheme.ECDSA,
   seed: "deterministic"
 });
@@ -480,7 +501,6 @@ const wallet2 = await client.accounts.create({
 console.log(wallet.id().toString()); // account id as hex
 console.log(wallet.isPublic()); // false
 console.log(wallet.isPrivate()); // true
-console.log(wallet.isFaucet()); // false
 ```
 
 ### Register on an Allowlisted Network
@@ -506,14 +526,13 @@ await client.transactions.consumeAll({ account: wallet });
 
 ```typescript
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   symbol: "DAG",
   decimals: 8,
   maxSupply: 10_000_000n
 });
 
 console.log(faucet.id().toString());
-console.log(faucet.isFaucet()); // true
 ```
 
 ### Read Faucet Metadata

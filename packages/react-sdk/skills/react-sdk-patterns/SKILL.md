@@ -906,7 +906,7 @@ Common app-developer types:
 | `Address` | `@miden-sdk/miden-sdk` | bech32 wrapper; `Address.fromBech32(...)` |
 | `Note`, `InputNoteRecord`, `ConsumableNoteRecord` | `@miden-sdk/react` | re-exported from `@miden-sdk/miden-sdk`. Input notes are received; for output-note types and private-note flows see `web-client-usage`. |
 | `NoteVisibility` (constants + string-union) | `@miden-sdk/miden-sdk` | `const NoteVisibility = { Public: 'public', Private: 'private' }` plus `type NoteVisibility = 'public' \| 'private'` (`api-types.d.ts`). NOT an enum. Coexists with the raw WASM `NoteType` enum (`miden_client_web.d.ts`), which is what you use when building notes from the WASM classes directly. |
-| `AccountType`, `AuthScheme`, `StorageMode` | `@miden-sdk/miden-sdk` | enums; see `web-client-usage` "Visibility & Account Types". |
+| `AccountType`, `FaucetType`, `AuthScheme`, `StorageMode` | `@miden-sdk/miden-sdk` | enums; see `web-client-usage` "Visibility & Account Types". |
 | `TransactionRequest` | `@miden-sdk/react` | the client's `new*TransactionRequest` factories return `Promise<TransactionRequest>` as of 0.16 - always `await` them |
 | `TransactionSummary`, `ChainAnchor` | `@miden-sdk/react` | **type-only** re-exports. Import the `ChainAnchor` class itself from `@miden-sdk/miden-sdk` to call `ChainAnchor.deserialize(bytes)` |
 | `Word` | `@miden-sdk/miden-sdk` | 32-byte (4 felts) value; `Word.toU64s()` returns `BigUint64Array` of length 4 (each lane is a `bigint` after subscript). See `Word.toU64s` in `miden_client_web.d.ts`. |
@@ -924,7 +924,7 @@ The Rust (`miden-client`) and TypeScript (`@miden-sdk/miden-sdk`) SDKs share con
 | 32-byte word | `Word` (`[Felt; 4]`) | `Word`; `toU64s(): BigUint64Array` length 4 (each lane is `bigint` after subscript). |
 | Account identifier | `AccountId` | `AccountId`; construct via `AccountId.fromHex` |
 | Note visibility | `NoteType` enum | constants + string-union `NoteVisibility` (`'public' \| 'private'`) at the high-level `MidenClient` resource API; raw WASM `NoteType` enum (`Private = 0`, `Public = 1`) is also exported and used directly when constructing notes via the WASM classes. The two coexist; pick the layer your code lives in. |
-| Account type | `AccountType` | `AccountType` enum |
+| Account visibility / faucet kind | `AccountType` / `FaucetType` | Native builder visibility / `accounts.create({ type })` selector |
 | Authentication scheme | `AuthScheme` | `AuthScheme` enum |
 | Storage mode | `StorageMode` | `StorageMode` enum |
 

@@ -16,6 +16,10 @@ export class AccountsResource {
     this.#client = client;
   }
 
+  /**
+   * Create a wallet by default, a faucet via `FaucetType`, or a contract via
+   * `components`. Visibility is selected separately with `storage`.
+   */
   async create(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();

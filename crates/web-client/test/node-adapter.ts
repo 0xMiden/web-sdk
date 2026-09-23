@@ -522,6 +522,7 @@ export async function setupNodeGlobals(
   storeName: string,
   proverUrl?: string
 ) {
+  const publicSdk = await import("../js/node-index.js");
   let currentClient: any = null;
 
   // All SDK types go on globalThis so "window.X" works in callbacks
@@ -540,15 +541,8 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    // AccountType: the JS wrapper uses string-based types, not the napi enum
-    AccountType: {
-      MutableWallet: "MutableWallet",
-      ImmutableWallet: "ImmutableWallet",
-      FungibleFaucet: "FungibleFaucet",
-      NonFungibleFaucet: "NonFungibleFaucet",
-      ImmutableContract: "ImmutableContract",
-      MutableContract: "MutableContract",
-    },
+    AccountType: publicSdk.AccountType,
+    FaucetType: publicSdk.FaucetType,
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
     AccountComponent: wrapClass(sdk.AccountComponent),

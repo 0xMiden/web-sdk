@@ -79,3 +79,29 @@ base(
     expect(result.message.toLowerCase()).toContain("felt_new");
   }
 );
+
+for (const entry of ["./eager.js", "./index.js"]) {
+  base(
+    `${entry}: native account visibility and faucet selectors are distinct`,
+    async ({ page }) => {
+      const result = await page.evaluate(async (entry) => {
+        const mod = await import(entry);
+        await mod.MidenClient.ready();
+        const accepted = [];
+        for (const type of [mod.AccountType.Private, mod.AccountType.Public]) {
+          const builder = new mod.AccountBuilder(new Uint8Array(32));
+          const configured = builder.accountType(type);
+          accepted.push(type);
+          configured.free();
+          builder.free();
+        }
+        return { accepted, faucetType: mod.FaucetType };
+      }, entry);
+      expect(result.accepted).toEqual([0, 1]);
+      expect(result.faucetType).toEqual({
+        FungibleFaucet: 0,
+        NonFungibleFaucet: 1,
+      });
+    }
+  );
+}

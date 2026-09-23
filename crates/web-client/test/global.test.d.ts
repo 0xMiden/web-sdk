@@ -12,6 +12,7 @@ import {
   AccountStorageMode,
   AccountStorageRequirements,
   AccountType,
+  FaucetType,
   Address,
   AddressInterface,
   AdviceMap,
@@ -105,6 +106,7 @@ declare global {
     AccountStorageMode: typeof AccountStorageMode;
     AccountStorageRequirements: typeof AccountStorageRequirements;
     AccountType: typeof AccountType;
+    FaucetType: typeof FaucetType;
     AccountVaultDelta: typeof AccountVaultDelta;
     Address: typeof Address;
     AddressInterface: typeof AddressInterface;

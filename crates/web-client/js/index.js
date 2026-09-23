@@ -19,7 +19,7 @@ import {
 } from "./storageView.js";
 export * from "../Cargo.toml";
 
-export const AccountType = Object.freeze({
+export const FaucetType = Object.freeze({
   // Faucet-kind selectors for accounts.create({ type }).
   FungibleFaucet: 0,
   NonFungibleFaucet: 1,
