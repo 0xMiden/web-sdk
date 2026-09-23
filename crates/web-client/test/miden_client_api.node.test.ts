@@ -3,6 +3,30 @@ import { test, expect } from "./test-setup";
 import { createMidenClient } from "./test-helpers";
 import path from "path";
 
+test.describe("Node public SDK deserialization", () => {
+  // Import the public package to exercise its wrapper instead of the sdk fixture.
+  test("AuthSecretKey round-trips with Buffer and Uint8Array", async () => {
+    const { AuthSecretKey } = await import("@miden-sdk/miden-sdk");
+    const key = AuthSecretKey.rpoFalconWithRNG(new Uint8Array(32));
+    const base64 = key.serialize().toString("base64");
+    const bytes = Buffer.from(base64, "base64");
+
+    for (const input of [bytes, new Uint8Array(bytes)]) {
+      expect(AuthSecretKey.deserialize(input).serialize()).toEqual(bytes);
+    }
+  });
+
+  test("Word round-trips with Buffer and Uint8Array", async () => {
+    const { Word } = await import("@miden-sdk/miden-sdk");
+    const word = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+    const bytes = word.serialize();
+
+    for (const input of [bytes, new Uint8Array(bytes)]) {
+      expect(Word.deserialize(input).serialize()).toEqual(bytes);
+    }
+  });
+});
+
 // ════════════════════════════════════════════════════════════════
 // Mock chain tests — no node needed, self-contained
 // ════════════════════════════════════════════════════════════════

@@ -5,7 +5,8 @@
  * SDK surfaces so the shared MidenClient wrapper works on both platforms.
  *
  * Key normalizations:
- * - Uint8Array/Buffer -> Array (napi's Vec<u8> expects plain arrays)
+ * - Uint8Array/Buffer -> Array for Vec<u8> parameters (e.g. RNG seeds)
+ * - Uint8Array -> Buffer for wrapped deserialize methods (napi's JsBytes)
  * - BigUint64Array/BigInt64Array -> Array (napi's Vec<u64>/Vec<BigInt> expects plain arrays)
  * - null -> undefined (napi returns null for Option::None, wasm-bindgen returns undefined)
  * - camelCase -> snake_case aliases (napi uses camelCase, wasm-bindgen uses snake_case)
@@ -28,6 +29,18 @@ export function normalizeArg(val) {
   return val;
 }
 
+/**
+ * Wrapped deserialize methods take JsBytes (napi Buffer), not Vec<u8>.
+ * Preserve Buffers and expose only the selected bytes of a Uint8Array view.
+ */
+function normalizeDeserializeArg(val) {
+  if (Buffer.isBuffer(val)) return val;
+  if (val instanceof Uint8Array) {
+    return Buffer.from(val.buffer, val.byteOffset, val.byteLength);
+  }
+  return val;
+}
+
 // ── Class wrapping ───────────────────────────────────────────────────
 
 /**
@@ -43,7 +56,9 @@ function wrapClass(Cls) {
     if (key === "prototype" || key === "length" || key === "name") continue;
     const desc = Object.getOwnPropertyDescriptor(Cls, key);
     if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args) => desc.value.apply(Cls, args.map(normalizeArg));
+      const normalize =
+        key === "deserialize" ? normalizeDeserializeArg : normalizeArg;
+      Wrapper[key] = (...args) => desc.value.apply(Cls, args.map(normalize));
     } else if (desc) {
       try {
         Object.defineProperty(Wrapper, key, desc);
