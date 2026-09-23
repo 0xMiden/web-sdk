@@ -107,7 +107,7 @@ import { MidenProvider, useMiden, useCreateWallet, useAccounts } from '@miden-sd
 
 function App() {
   return (
-    <MidenProvider config={{ feeFaucetId: FEE_FAUCET }}>
+    <MidenProvider>
       <Wallet />
     </MidenProvider>
   );
@@ -154,10 +154,10 @@ function App() {
         // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
 
-        // REQUIRED: the faucet the chain mints its fee asset from, bech32 or hex.
-        // Since 0.17 the fee asset lives in a protocol configuration the node does
-        // not serve over RPC, and the SDK carries a default for no network yet, so
-        // a provider without this fails at client init.
+        // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
+        // The client receives the chain's protocol configuration, which names the
+        // fee asset, from the node when it syncs; this only sets what
+        // `client.feeFaucetId()` reports before that first sync.
         feeFaucetId: FEE_FAUCET,
 
         // Auto-sync interval in milliseconds (default: 15000)

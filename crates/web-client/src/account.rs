@@ -233,4 +233,56 @@ impl WebClient {
         // SAFETY: on wasm32 usize is 32 bits, so this conversion is infallible
         Ok(u32::try_from(deleted).expect("deleted count should fit in u32"))
     }
+
+    // ACCOUNT REGISTRATION
+    // --------------------------------------------------------------------------------------------
+
+    /// Binds an invitation code to a tracked account on the network allowlist.
+    ///
+    /// A network that enforces an account allowlist creates an account on chain only when the
+    /// account is registered. The first transaction of an account is what creates it, so the
+    /// account must be registered before that transaction is submitted: a submission that would
+    /// create an account the network does not accept fails with `ACCOUNT_NOT_ALLOWLISTED`. Only
+    /// account creation is gated. An account that already exists on chain is never checked, and
+    /// network accounts are exempt.
+    ///
+    /// The account must be tracked by this client, must not be deployed on chain yet, and must
+    /// not be a network account. A registration consumes the code, so the client asks the node
+    /// first and does not send it for an account the node already allows: that fails with
+    /// `ACCOUNT_ALREADY_ALLOWED`, which a network that does not enforce an allowlist answers for
+    /// every account. The node's own rejections carry `INVITATION_NOT_FOUND`,
+    /// `ALREADY_REGISTERED` or `INVALID_REGISTRATION_REQUEST`.
+    ///
+    /// When the network operator runs a funding service, the node pays the registered account a
+    /// public P2ID note with the native asset and answers once that note is committed, so this
+    /// call can take a few blocks. The note reaches the client on the next sync; consuming it is
+    /// the first transaction, which creates the account on chain and pays its fee out of the
+    /// received funds.
+    #[js_export(js_name = "registerAccount")]
+    pub async fn register_account(
+        &self,
+        account_id: &AccountId,
+        invitation_code: String,
+    ) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client
+            .register_account(account_id.into(), &invitation_code)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to register account"))
+    }
+
+    /// Returns whether the network lets the account be created on chain.
+    ///
+    /// The node answers `true` when it does not enforce an account allowlist, or when the
+    /// account is registered. Only account creation is gated, so the answer says nothing about
+    /// an account that already exists on chain.
+    #[js_export(js_name = "isAccountAllowed")]
+    pub async fn is_account_allowed(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.is_account_allowed(account_id.into()).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the account is allowed")
+        })
+    }
 }

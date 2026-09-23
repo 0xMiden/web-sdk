@@ -129,6 +129,7 @@ const WRITE_METHODS = new Set([
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "pruneAccountHistory",
+  "registerAccount",
   "removeAccountAddress",
   "removeTag",
   "removeSetting",
@@ -164,6 +165,7 @@ const READ_METHODS = new Set([
   "getSetting",
   "getSyncHeight",
   "getTransactions",
+  "isAccountAllowed",
   "listSettingKeys",
   "listTags",
   "executeProgram",
@@ -423,10 +425,9 @@ class WebClient {
    *   client and for its whole lifetime, whether observations carry the
    *   high-fidelity `sensitive` channel. Both are construction-only.
    * @param {string | undefined} [feeFaucetId] - Faucet of the chain's fee asset,
-   *   as a bech32 address or a hex account ID. Since 0.17 the fee asset lives in
-   *   the protocol configuration rather than the block header, and a client that
-   *   cannot build one can neither execute nor screen notes, so this is required
-   *   for a network the SDK knows no fee faucet for.
+   *   as a bech32 address or a hex account ID. Optional: the client receives the
+   *   protocol configuration, which names the fee asset, from the node when it
+   *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
    */
   constructor(
     rpcUrl,
@@ -828,9 +829,9 @@ class WebClient {
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
    * @param {string | undefined} feeFaucetId - Fee faucet of the chain, as a bech32 address or a
-   *   hex account ID. Required for a network the SDK knows no fee faucet for: since 0.17 the fee
-   *   asset lives in the protocol configuration rather than the block header, and a client
-   *   without one cannot execute.
+   *   hex account ID. Optional: the client receives the protocol configuration, which names the
+   *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
+   *   before the first sync.
    */
   static async createClient(
     rpcUrl,

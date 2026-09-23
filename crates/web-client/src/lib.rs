@@ -21,16 +21,14 @@ use js_export_macro::js_export;
 #[cfg(feature = "browser")]
 use js_sys::{Function, Reflect};
 use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::AssetId;
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
 use miden_client::crypto::RandomCoin;
 #[cfg(feature = "nodejs")]
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::protocol_config::ProtocolConfig;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, VerifyingRpcClient};
-use miden_client::store::Store;
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, RpcError, VerifyingRpcClient};
+use miden_client::store::{Store, StoreError};
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
 use miden_client::{Client, ClientError, ErrorHint, Felt};
@@ -223,8 +221,8 @@ pub fn setup_logging(log_level: &str) {
 #[js_export]
 pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
-    /// Faucet of the fee asset the registered protocol configuration names. Since 0.17 the block
-    /// header no longer carries it, so this is the only place a consumer can read it back from.
+    /// Fee faucet the caller declared at creation, or the mock chain's own. What `feeFaucetId()`
+    /// reports until the first sync stores the protocol configuration the chain commits to.
     fee_faucet: AsyncCell<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
@@ -279,17 +277,47 @@ impl WebClient {
         }
     }
 
-    /// Returns the fee faucet of the protocol configuration this client registered at creation.
+    /// Returns the faucet of the chain's fee asset.
     ///
     /// Before 0.17 any block header carried it, so a consumer could discover the chain's native
     /// asset by reading one. The header no longer does: the fee asset lives in the protocol
-    /// configuration, which the node does not serve over RPC yet, so this reports the
-    /// configuration the client registered when it was created - the caller's `feeFaucetId`, the
-    /// one this SDK knows for the network, or, for a mock client, the one the mock chain itself
-    /// commits to. `undefined` only on a client that has not been created yet.
+    /// configuration, which the client receives from the node when it syncs. After the first sync
+    /// this reports the faucet named by the configuration the block at the sync height commits
+    /// to. Before it, this falls back to the `feeFaucetId` the client was created with, or, for a
+    /// mock client, the one the mock chain itself commits to, and fails when neither is set.
     #[js_export(js_name = "feeFaucetId")]
-    pub async fn fee_faucet_id(&self) -> Option<models::account_id::AccountId> {
-        (*self.fee_faucet.lock().await).map(Into::into)
+    pub async fn fee_faucet_id(&self) -> Result<models::account_id::AccountId, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let sync_height = client
+            .get_sync_height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+        let header = client
+            .get_block_header_by_num(sync_height)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
+        if let Some((header, _)) = header {
+            match client.get_protocol_config(header.protocol_config_commitment()).await {
+                Ok(config) => return Ok(config.fee_asset_id().faucet_id().into()),
+                // Nothing has been synced yet, so no configuration is stored for the header.
+                Err(ClientError::StoreError(StoreError::ProtocolConfigNotFound(_))) => {},
+                Err(err) => {
+                    return Err(js_error_with_context(
+                        err,
+                        "failed to read the protocol configuration",
+                    ));
+                },
+            }
+        }
+
+        (*self.fee_faucet.lock().await).map(Into::into).ok_or_else(|| {
+            from_str_err(
+                "the chain's fee faucet is not known yet: sync the client so it receives the \
+                 protocol configuration from the node, or pass `feeFaucetId` when creating it",
+            )
+        })
     }
 
     /// Returns the identifier of the underlying store (e.g. `IndexedDB` database name, file path).
@@ -390,8 +418,8 @@ impl WebClient {
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
-    ///   ID. Required for a network this SDK knows no fee faucet for, since a client cannot execute
-    ///   without the protocol configuration built from it.
+    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
+    ///   configuration from the node; execution does not need it.
     #[wasm_bindgen(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -424,17 +452,10 @@ impl WebClient {
         );
         let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
 
-        let protocol_config = resolve_protocol_config(&endpoint, fee_faucet_id)?;
+        let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(
-            web_rpc_client,
-            store,
-            keystore,
-            rng,
-            note_transport_client,
-            protocol_config,
-        )
-        .await?;
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
+            .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -452,8 +473,8 @@ impl WebClient {
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
-    ///   ID. Required for a network this SDK knows no fee faucet for, since a client cannot execute
-    ///   without the protocol configuration built from it.
+    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
+    ///   configuration from the node; execution does not need it.
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
@@ -494,17 +515,10 @@ impl WebClient {
         let keystore =
             WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
 
-        let protocol_config = resolve_protocol_config(&endpoint, fee_faucet_id)?;
+        let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(
-            web_rpc_client,
-            store,
-            keystore,
-            rng,
-            note_transport_client,
-            protocol_config,
-        )
-        .await?;
+        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
+            .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -517,7 +531,7 @@ impl WebClient {
         keystore: WebKeyStore<RandomCoin>,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        protocol_config: ProtocolConfig,
+        fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsValue> {
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
@@ -528,9 +542,6 @@ impl WebClient {
         if let Some(transport) = note_transport_client {
             builder = builder.note_transport(transport);
         }
-
-        let fee_faucet = protocol_config.fee_asset_id().faucet_id();
-        builder = builder.protocol_config(protocol_config);
 
         let mut client = builder
             .build()
@@ -544,7 +555,7 @@ impl WebClient {
 
         // Published together with `inner`, so a creation that fails leaves neither set: the
         // accessor reports the faucet of a client that exists, or nothing.
-        *self.fee_faucet.lock().await = Some(fee_faucet);
+        *self.fee_faucet.lock().await = fee_faucet;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -567,8 +578,8 @@ impl WebClient {
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
-    ///   ID. Required for a network this SDK knows no fee faucet for, since a client cannot execute
-    ///   without the protocol configuration built from it.
+    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
+    ///   configuration from the node; execution does not need it.
     #[napi(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -604,9 +615,9 @@ impl WebClient {
         let keystore = FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
-        let protocol_config = resolve_protocol_config(&endpoint, fee_faucet_id)?;
+        let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, protocol_config)
+        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, fee_faucet)
             .await?;
 
         Ok("Client created successfully".to_string())
@@ -620,16 +631,14 @@ impl WebClient {
         keystore: FilesystemKeyStore,
         rng: RandomCoin,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        protocol_config: ProtocolConfig,
+        fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsErr> {
-        let fee_faucet = protocol_config.fee_asset_id().faucet_id();
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()
                 .rpc(rpc_client)
                 .rng(Box::new(rng))
                 .store(store)
-                .authenticator(Arc::new(keystore))
-                .protocol_config(protocol_config);
+                .authenticator(Arc::new(keystore));
 
             if let Some(transport) = note_transport_client {
                 builder = builder.note_transport(transport);
@@ -649,58 +658,15 @@ impl WebClient {
         })
         .await?;
 
-        *self.fee_faucet.lock().await = Some(fee_faucet);
+        *self.fee_faucet.lock().await = fee_faucet;
         *self.inner.lock().await = Some(client);
 
         Ok(())
     }
 }
 
-// PROTOCOL CONFIGURATION
+// FEE FAUCET
 // ================================================================================================
-
-/// Fee faucet of every network whose protocol configuration this SDK can build, keyed by network
-/// ID.
-///
-/// 0.17 moved the fee asset out of the block header and into the protocol configuration, which a
-/// node does not serve over RPC yet. Execution and note screening both resolve the configuration
-/// the reference block commits to, so a client that holds none cannot execute at all, and the only
-/// two sources are this table and the caller's `feeFaucetId`. A network is added here once its
-/// genesis names a fee faucet.
-const KNOWN_FEE_FAUCETS: &[(&str, &str)] = &[];
-
-/// Builds the protocol configuration the client executes under, from the caller's fee faucet or
-/// the one this SDK knows for the endpoint's network.
-///
-/// Errors when neither is available, rather than building a client that fails on its first
-/// execution with a store error naming a commitment the caller cannot act on.
-pub(crate) fn resolve_protocol_config(
-    endpoint: &Endpoint,
-    fee_faucet_id: Option<String>,
-) -> Result<ProtocolConfig, JsErr> {
-    let network_id = endpoint.to_network_id().to_string();
-
-    let faucet_id = if let Some(id) = fee_faucet_id {
-        parse_fee_faucet_id(&id)?
-    } else {
-        let known = KNOWN_FEE_FAUCETS
-            .iter()
-            .find_map(|(network, faucet)| (*network == network_id).then_some(*faucet))
-            .ok_or_else(|| {
-                from_str_err(&format!(
-                    "no fee faucet is known for network `{network_id}`, so the protocol \
-                     configuration this chain executes under cannot be built: pass \
-                     `feeFaucetId` when creating the client. Miden 0.17 moved the fee asset \
-                     out of the block header into the protocol configuration, which the node \
-                     does not serve over RPC yet."
-                ))
-            })?;
-        parse_fee_faucet_id(known)?
-    };
-
-    ProtocolConfig::current(AssetId::new_fungible(faucet_id))
-        .map_err(|err| js_error_with_context(err, "failed to build the protocol configuration"))
-}
 
 /// Reads a fee faucet written either as a bech32 address or as a hex account ID, the two spellings
 /// the rest of the JS surface accepts for an account.
@@ -801,9 +767,38 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
+            ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
+            // The node's verdict on a registration travels inside the RPC error rather than as
+            // a `ClientError` variant of its own.
+            ClientError::RpcError(rpc_error) => registration_code(rpc_error),
             _ => None,
         };
     }
 
+    if let Some(rpc_error) = err.downcast_ref::<RpcError>() {
+        return registration_code(rpc_error);
+    }
+
     err.source().and_then(code_from_error)
+}
+
+/// Maps the reasons a node rejects an account registration to stable string codes, for the
+/// `registerAccount` callers that branch on them. `None` for every other RPC error.
+#[cfg(feature = "browser")]
+fn registration_code(err: &RpcError) -> Option<&'static str> {
+    use miden_client::rpc::{EndpointError, RegisterAccountError};
+
+    let RpcError::RequestError {
+        endpoint_error: Some(EndpointError::RegisterAccount(reason)),
+        ..
+    } = err
+    else {
+        return None;
+    };
+    Some(match reason {
+        RegisterAccountError::InvitationNotFound => "INVITATION_NOT_FOUND",
+        RegisterAccountError::AlreadyRegistered => "ALREADY_REGISTERED",
+        RegisterAccountError::InvalidRequest(_) => "INVALID_REGISTRATION_REQUEST",
+    })
 }

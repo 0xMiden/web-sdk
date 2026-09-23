@@ -121,11 +121,9 @@ export class MidenClient {
    * If no `rpcUrl` is provided, defaults to testnet with full configuration
    * (RPC, prover, note transport, autoSync).
    *
-   * **Requires `feeFaucetId` today.** Since 0.17 the chain's fee asset lives in a
-   * protocol configuration the node does not serve, so the client has to be told
-   * which faucet mints it. The SDK carries a per-network default for no network
-   * yet, so every non-mock client must name one or creation fails with an error
-   * saying so.
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
    *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
@@ -207,11 +205,9 @@ export class MidenClient {
    * Defaults: rpcUrl "testnet", proverUrl "testnet", noteTransportUrl "testnet", autoSync true.
    * All defaults can be overridden via options.
    *
-   * **Requires `feeFaucetId` today.** Since 0.17 the chain's fee asset lives in a
-   * protocol configuration the node does not serve, so the client has to be told
-   * which faucet mints it. The SDK carries a per-network default for no network
-   * yet, so every non-mock client must name one or creation fails with an error
-   * saying so.
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized testnet client.
@@ -232,11 +228,9 @@ export class MidenClient {
    * Defaults: rpcUrl "devnet", proverUrl "devnet", noteTransportUrl "devnet", autoSync true.
    * All defaults can be overridden via options.
    *
-   * **Requires `feeFaucetId` today.** Since 0.17 the chain's fee asset lives in a
-   * protocol configuration the node does not serve, so the client has to be told
-   * which faucet mints it. The SDK carries a per-network default for no network
-   * yet, so every non-mock client must name one or creation fails with an error
-   * saying so.
+   * `feeFaucetId` is optional: the client receives the chain's protocol
+   * configuration, which names the fee asset, from the node when it syncs. The
+   * option only sets what `feeFaucetId()` reports before that first sync.
    *
    * @param {ClientOptions} [options] - Options to override defaults.
    * @returns {Promise<MidenClient>} A fully initialized devnet client.
@@ -424,13 +418,13 @@ export class MidenClient {
   }
 
   /**
-   * Returns the fee faucet of the protocol configuration this client
-   * registered at creation.
+   * Returns the faucet of the chain's fee asset.
    *
    * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
-   * protocol configuration rather than the block header, so it is the
-   * configuration the client registered at creation that names it - the
-   * `feeFaucetId` option, or, for a mock client, the mock chain's own.
+   * protocol configuration rather than the block header. The client receives
+   * that configuration from the node when it syncs, so after the first sync
+   * this reports the faucet the chain's configuration names; before it, the
+   * `feeFaucetId` option or, for a mock client, the mock chain's own.
    *
    * @returns {Promise<AccountId>} The fee faucet's account ID.
    */

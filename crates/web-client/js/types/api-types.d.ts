@@ -235,11 +235,10 @@ export interface ClientOptions {
   /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
-   * Required for a network the SDK knows no fee faucet for. Miden 0.17 moved the fee asset out of
-   * the block header and into the protocol configuration, which a node does not serve over RPC
-   * yet: execution and note screening both resolve the configuration the reference block commits
-   * to, so a client that cannot build one cannot execute at all. Read it back with
-   * `client.feeFaucetId()`, which replaces the `BlockHeader.feeFaucetId()` of earlier versions.
+   * Optional. Miden 0.17 moved the fee asset out of the block header and into the protocol
+   * configuration, which the client receives from the node when it syncs, so execution does not
+   * need this. It only sets what `client.feeFaucetId()` reports before the first sync; after it,
+   * the accessor reads the configuration the chain commits to.
    */
   feeFaucetId?: string;
   /** Sync state on creation (default: false). */
@@ -421,6 +420,14 @@ export interface InsertAccountOptions {
 
 /** Options for accounts.export(). Exists for forward-compatible extensibility. */
 export interface ExportAccountOptions {}
+
+/** Options for accounts.register(). */
+export interface RegisterAccountOptions {
+  /** The tracked, not yet deployed account to register. */
+  account: AccountRef;
+  /** The invitation code the network operator issued. Consumed by a successful registration. */
+  invitationCode: string;
+}
 
 // ════════════════════════════════════════════════════════════════
 // Transaction types
@@ -1023,6 +1030,42 @@ export interface AccountsResource {
    * @param options - Insert options.
    */
   insert(options: InsertAccountOptions): Promise<void>;
+  /**
+   * Bind an invitation code to a tracked account on the network allowlist.
+   *
+   * A network that enforces an account allowlist creates an account on chain only
+   * once it is registered. The first transaction of an account is what creates it,
+   * so register before submitting that transaction: a submission that would create
+   * an account the network does not accept fails with code `ACCOUNT_NOT_ALLOWLISTED`.
+   * Only creation is gated - an account that already exists on chain is never
+   * checked, and network accounts are exempt.
+   *
+   * The account must be tracked, not yet deployed, and not a network account. A
+   * registration consumes the code, so the node is asked first whether it already
+   * allows the account: if so this fails with `ACCOUNT_ALREADY_ALLOWED` and the code
+   * is kept, which is also what a network without an allowlist answers for every
+   * account. The node's own rejections carry `INVITATION_NOT_FOUND`,
+   * `ALREADY_REGISTERED` or `INVALID_REGISTRATION_REQUEST`.
+   *
+   * When the network operator runs a funding service, the node pays the registered
+   * account a public P2ID note with the native asset and answers once it is
+   * committed, so this can take a few blocks. The note is not returned: it arrives
+   * with the next `sync()`, and consuming it is the first transaction, which creates
+   * the account on chain and pays its fee out of the received funds.
+   *
+   * @param options - The account and its invitation code.
+   */
+  register(options: RegisterAccountOptions): Promise<void>;
+  /**
+   * Whether the network lets the account be created on chain.
+   *
+   * `true` when the node does not enforce an account allowlist, or when the account
+   * is registered. Only creation is gated, so the answer says nothing about an
+   * account that already exists on chain.
+   *
+   * @param accountId - The account to check.
+   */
+  isAllowed(accountId: AccountRef): Promise<boolean>;
   /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
    *
@@ -1844,13 +1887,14 @@ export declare class MidenClient {
   terminate(): void;
 
   /**
-   * Returns the fee faucet of the protocol configuration this client
-   * registered at creation.
+   * Returns the faucet of the chain's fee asset.
    *
    * Replaces `BlockHeader.feeFaucetId()`: since 0.17 the fee asset lives in the
-   * protocol configuration rather than the block header, so this reports the
-   * configuration the client registered at creation - the `feeFaucetId` option,
-   * or, for a mock client, the mock chain's own.
+   * protocol configuration rather than the block header. The client receives that
+   * configuration from the node when it syncs, so after the first sync this reports
+   * the faucet named by the configuration the block at the sync height commits to.
+   * Before it, this falls back to the `feeFaucetId` option, or, for a mock client,
+   * the mock chain's own, and rejects when neither is set.
    */
   feeFaucetId(): Promise<AccountId>;
 
