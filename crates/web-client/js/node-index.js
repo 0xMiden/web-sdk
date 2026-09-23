@@ -182,6 +182,7 @@ export const Address = /* @__PURE__ */ _reexport("Address");
 export const AddressInterface = /* @__PURE__ */ _reexport("AddressInterface");
 export const AdviceInputs = /* @__PURE__ */ _reexport("AdviceInputs");
 export const AdviceMap = /* @__PURE__ */ _reexport("AdviceMap");
+export const Asset = /* @__PURE__ */ _reexport("Asset");
 export const AssetCallbackFlag = /* @__PURE__ */ _reexport("AssetCallbackFlag");
 export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
 export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
@@ -233,6 +234,7 @@ export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
   "NetworkNoteStatusInfo"
 );
 export const NetworkType = /* @__PURE__ */ _reexport("NetworkType");
+export const NonFungibleAsset = /* @__PURE__ */ _reexport("NonFungibleAsset");
 export const Note = /* @__PURE__ */ _reexport("Note");
 export const NoteAndArgs = /* @__PURE__ */ _reexport("NoteAndArgs");
 export const NoteAssets = /* @__PURE__ */ _reexport("NoteAssets");

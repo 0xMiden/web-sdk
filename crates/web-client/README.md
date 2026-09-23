@@ -541,6 +541,47 @@ const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
 
+### Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `Asset.nonFungible({ key, value })` with the two `Word` objects.
+
+### Build Notes with Either Asset Type
+
+```typescript
+const token = Asset.fungible(faucetId, 100n);
+const name = Asset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, pass a single name asset to a public `Note` with the
+registry's approved script and inputs. Consume the returned P2ID note to put
+the asset back in the vault. See the [non-fungible asset guide](../../docs/external/src/web-client/library/non-fungible-assets.md).
+
 ### Batch Operations
 
 Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally; you don't have to assemble or serialize them yourself.
