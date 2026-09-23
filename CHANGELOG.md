@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.17.0 (TBD)
+## 0.17.0-rc.2 (TBD)
 
 ### Enhancements
 * [FEATURE][web] Added `accounts.register({ account, invitationCode })` and `accounts.isAllowed(account)` for networks that enforce an account allowlist, where an account's first transaction creates it on chain only once the account is registered. `register` binds an invitation code to a tracked, not yet deployed account that is not a network account; because a registration consumes the code, it asks the node first and fails with code `ACCOUNT_ALREADY_ALLOWED` (code kept) for an account the node already allows, which is every account on a network without an allowlist. A submission that would create an account the network does not accept now fails with `ACCOUNT_NOT_ALLOWLISTED` before anything is proven or sent. The node's own rejections carry `INVITATION_NOT_FOUND`, `ALREADY_REGISTERED` or `INVALID_REGISTRATION_REQUEST`. When the network funds registered accounts, `register` returns once the funding note is committed, and consuming that note after the next `sync()` is what creates the account. `WebClient.registerAccount` / `isAccountAllowed` expose the same calls on the low-level client, and `RpcClient.registerAccount` / `isAccountAllowed` send the node requests as given, without the tracked-account checks. Requires a 0.17.0-rc.2 node ([rust-sdk#2545](https://github.com/0xMiden/rust-sdk/pull/2545), [rust-sdk#2550](https://github.com/0xMiden/rust-sdk/pull/2550)) ([#414](https://github.com/0xMiden/web-sdk/pull/414)).
