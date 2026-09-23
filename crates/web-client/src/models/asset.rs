@@ -14,18 +14,18 @@ use crate::platform::{JsErr, from_str_err, js_u64_to_u64};
 
 /// A fungible or non-fungible asset.
 ///
-/// Create assets with `Asset.fungible(faucetId, amount)` or
-/// `Asset.nonFungible({ key, value })`. Both variants can be passed to `NoteAssets`.
+/// Create assets with `VaultAsset.fungible(faucetId, amount)` or
+/// `VaultAsset.nonFungible({ key, value })`. Both variants can be passed to `NoteAssets`.
 #[derive(Clone, Copy)]
 #[js_export]
-pub struct Asset(NativeAsset);
+pub struct VaultAsset(NativeAsset);
 
 #[js_export]
-impl Asset {
+impl VaultAsset {
     /// Creates a fungible asset. The amount must fit the protocol's asset amount range.
-    pub fn fungible(faucet_id: &AccountId, amount: JsU64) -> Result<Asset, JsErr> {
+    pub fn fungible(faucet_id: &AccountId, amount: JsU64) -> Result<VaultAsset, JsErr> {
         NativeFungibleAsset::new(faucet_id.into(), js_u64_to_u64(amount))
-            .map(|asset| Asset(asset.into()))
+            .map(|asset| VaultAsset(asset.into()))
             .map_err(|err| from_str_err(&format!("Failed to create fungible asset: {err}")))
     }
 
@@ -35,19 +35,19 @@ impl Asset {
     /// usable after this call. Returns an error for an invalid key, a fungible entry, or an asset
     /// class that does not match the first two value limbs.
     #[js_export(js_name = "nonFungible")]
-    pub fn non_fungible(input: NonFungibleAssetInput) -> Result<Asset, JsErr> {
+    pub fn non_fungible(input: NonFungibleAssetInput) -> Result<VaultAsset, JsErr> {
         let (key, value) = input.words()?;
         NativeNonFungibleAsset::from_id_and_value_words(key, value)
-            .map(|asset| Asset(asset.into()))
+            .map(|asset| VaultAsset(asset.into()))
             .map_err(|err| from_str_err(&format!("Failed to create non-fungible asset: {err}")))
     }
 
     /// Reconstructs either asset variant from a complete vault entry.
     /// The key determines the variant. Returns an error if the entry is invalid.
     #[js_export(js_name = "fromVaultEntry")]
-    pub fn from_vault_entry(key: &Word, value: &Word) -> Result<Asset, JsErr> {
+    pub fn from_vault_entry(key: &Word, value: &Word) -> Result<VaultAsset, JsErr> {
         NativeAsset::from_id_and_value_words(key.into(), value.into())
-            .map(Asset)
+            .map(VaultAsset)
             .map_err(|err| from_str_err(&format!("Failed to create asset: {err}")))
     }
 
@@ -96,13 +96,13 @@ impl Asset {
     }
 }
 
-impl From<NativeAsset> for Asset {
+impl From<NativeAsset> for VaultAsset {
     fn from(asset: NativeAsset) -> Self {
         Self(asset)
     }
 }
 
-impl_napi_from_value!(Asset);
+impl_napi_from_value!(VaultAsset);
 
 // Browser inputs read copies of the words. This preserves the source wrappers and supports the
 // existing FungibleAsset class without changing its public API.
@@ -114,7 +114,7 @@ mod browser {
 
     #[wasm_bindgen]
     extern "C" {
-        #[wasm_bindgen(typescript_type = "Asset | FungibleAsset | NonFungibleAsset")]
+        #[wasm_bindgen(typescript_type = "VaultAsset | FungibleAsset | NonFungibleAsset")]
         pub type AssetInput;
 
         #[wasm_bindgen(method, structural, catch, js_name = vaultKey)]
@@ -167,7 +167,7 @@ mod browser {
 pub use browser::{AssetInput, NonFungibleAssetInput};
 
 #[cfg(feature = "nodejs")]
-pub type AssetInput = napi::bindgen_prelude::Either3<Asset, FungibleAsset, NonFungibleAsset>;
+pub type AssetInput = napi::bindgen_prelude::Either3<VaultAsset, FungibleAsset, NonFungibleAsset>;
 
 // Either3 requires validation for owned values. Use each class's generated reference validator
 // before the existing FromNapiValue implementation copies the value.
@@ -175,7 +175,7 @@ pub type AssetInput = napi::bindgen_prelude::Either3<Asset, FungibleAsset, NonFu
 mod node_validation {
     use napi::bindgen_prelude::{ValidateNapiValue, sys};
 
-    use super::{Asset, FungibleAsset, NonFungibleAsset};
+    use super::{FungibleAsset, NonFungibleAsset, VaultAsset};
 
     macro_rules! validate_owned_asset {
         ($asset:ty) => {
@@ -190,7 +190,7 @@ mod node_validation {
         };
     }
 
-    validate_owned_asset!(Asset);
+    validate_owned_asset!(VaultAsset);
     validate_owned_asset!(FungibleAsset);
     validate_owned_asset!(NonFungibleAsset);
 }

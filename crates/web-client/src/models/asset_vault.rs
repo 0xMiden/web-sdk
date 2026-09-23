@@ -3,7 +3,7 @@ use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::AssetVault as NativeAssetVault;
 
 use super::account_id::AccountId;
-use super::asset::Asset;
+use super::asset::VaultAsset;
 use super::fungible_asset::FungibleAsset;
 use super::non_fungible_asset::NonFungibleAsset;
 use super::word::Word;
@@ -26,7 +26,7 @@ pub struct AssetVault(NativeAssetVault);
 impl AssetVault {
     /// Returns all fungible and non-fungible assets in this local vault snapshot.
     /// Returns an empty array if the vault is empty. The order is unspecified.
-    pub fn assets(&self) -> Vec<Asset> {
+    pub fn assets(&self) -> Vec<VaultAsset> {
         self.0.assets().map(Into::into).collect()
     }
 

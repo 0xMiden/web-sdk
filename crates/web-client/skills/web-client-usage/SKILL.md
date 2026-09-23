@@ -323,13 +323,13 @@ values. Keep these values as `bigint` or strings to prevent precision loss.
 
 Compare both the complete key and all four value limbs to verify an asset.
 The key alone does not contain the complete value. To reconstruct an asset,
-use `Asset.nonFungible({ key, value })` with the two `Word` objects.
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
 
 ## Build Notes with Either Asset Type
 
 ```typescript
-const token = Asset.fungible(faucetId, 100n);
-const name = Asset.nonFungible({ key, value });
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
 const assets = new NoteAssets([name]);
 assets.push(token);
 ```
@@ -340,8 +340,10 @@ throw catchable errors; a failed push leaves the list unchanged. Inputs remain
 usable. `vault.assets()` and `note.assets().assets()` return both variants;
 use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
 
-For registry publishing, pass a single name asset to a public `Note` with the
-registry's approved script and inputs. Consume the returned P2ID note to put
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
 the asset back in the vault. The amount-based `send` helper remains fungible-only.
 
 ## Account Creation

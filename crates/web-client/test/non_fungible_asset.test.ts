@@ -17,10 +17,16 @@ test.describe("non-fungible asset vault entries", () => {
           issuer.prefix().asInt(),
         ])
       );
-      const asset = sdk.Asset.nonFungible({ key, value });
-      const copy = sdk.Asset.fromVaultEntry(asset.vaultKey(), asset.intoWord());
+      const asset = sdk.VaultAsset.nonFungible({ key, value });
+      const copy = sdk.VaultAsset.fromVaultEntry(
+        asset.vaultKey(),
+        asset.intoWord()
+      );
       const differentValue = new sdk.Word(sdk.u64Array([11n, 22n, 55n, 66n]));
-      const different = sdk.Asset.nonFungible({ key, value: differentValue });
+      const different = sdk.VaultAsset.nonFungible({
+        key,
+        value: differentValue,
+      });
       return {
         issuer: copy.faucetId().toString(),
         expectedIssuer: issuer.toString(),
@@ -186,7 +192,7 @@ test.describe("unified note assets", () => {
     const result = await run(async ({ sdk }) => {
       const issuer = sdk.AccountId.fromHex("0x69817bcc6fb9f99127c2245f6979c5");
       const legacy = new sdk.FungibleAsset(issuer, sdk.u64(100));
-      const token = sdk.Asset.fungible(issuer, sdk.u64(100));
+      const token = sdk.VaultAsset.fungible(issuer, sdk.u64(100));
       const key = new sdk.Word(
         sdk.u64Array([
           11n,
@@ -196,7 +202,7 @@ test.describe("unified note assets", () => {
         ])
       );
       const value = new sdk.Word(sdk.u64Array([11n, 22n, 33n, 44n]));
-      const name = sdk.Asset.nonFungible({ key, value });
+      const name = sdk.VaultAsset.nonFungible({ key, value });
       const legacyOnly = new sdk.NoteAssets([legacy]);
       const legacyPushed = new sdk.NoteAssets();
       legacyPushed.push(legacy);
@@ -252,11 +258,11 @@ test.describe("unified note assets", () => {
           ])
         );
         const value = new sdk.Word(sdk.u64Array([limb, 22n, 33n, 44n]));
-        return sdk.Asset.nonFungible({ key, value });
+        return sdk.VaultAsset.nonFungible({ key, value });
       };
       const names = Array.from({ length: 17 }, (_, index) => createName(index));
       const full = new sdk.NoteAssets(names.slice(0, 16));
-      const token = sdk.Asset.fungible(issuer, sdk.u64(10));
+      const token = sdk.VaultAsset.fungible(issuer, sdk.u64(10));
       const legacy = new sdk.FungibleAsset(issuer, sdk.u64(20));
       const one = new sdk.NoteAssets([names[0]]);
       const operations = [
@@ -268,7 +274,7 @@ test.describe("unified note assets", () => {
         () => token.asNonFungible(),
         () => names[0].asFungible(),
         () =>
-          sdk.Asset.nonFungible({
+          sdk.VaultAsset.nonFungible({
             key: token.vaultKey(),
             value: token.intoWord(),
           }),
@@ -295,7 +301,7 @@ test.describe("unified note assets", () => {
     expect(result.storedValue).toBe(result.retainedValue);
   });
 
-  test("carries a single NFA through public note serialization and a P2ID consume", async ({
+  test("debits an NFA into a network note and restores it from a returned P2ID", async ({
     run,
   }) => {
     const result = await run(async ({ client, sdk }) => {
@@ -303,10 +309,25 @@ test.describe("unified note assets", () => {
         sdk.AccountStorageMode.private(),
         sdk.AuthScheme.AuthRpoFalcon512
       );
-      const registry = await client.newWallet(
-        sdk.AccountStorageMode.private(),
-        sdk.AuthScheme.AuthRpoFalcon512
+      const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
+        [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
+        owner.id()
       );
+      const registryBuilder = new sdk.AccountBuilder(new Uint8Array(32).fill(7))
+        .storageMode(sdk.AccountStorageMode.public())
+        .withBasicWalletComponent();
+      for (const component of networkAuth) {
+        registryBuilder.withComponent(component);
+      }
+      const registry = registryBuilder.build().account;
+      await client.newAccount(registry, false);
+      // Commit the public target so the mock node can load its account state.
+      await client.submitNewTransaction(
+        registry.id(),
+        new sdk.TransactionRequestBuilder().build()
+      );
+      await client.proveBlock();
+      await client.syncState();
       const issuer = owner.id();
       const key = new sdk.Word(
         sdk.u64Array([
@@ -319,7 +340,25 @@ test.describe("unified note assets", () => {
       const value = new sdk.Word(
         sdk.u64Array([11n, 22n, 9007199254740993n, 44n])
       );
-      const name = sdk.Asset.nonFungible({ key, value });
+      const name = sdk.VaultAsset.nonFungible({ key, value });
+      // Fund the sender locally before the transfer, without a live name faucet.
+      const funding = sdk.Note.createP2IDNote(
+        registry.id(),
+        owner.id(),
+        new sdk.NoteAssets([name]),
+        sdk.NoteType.Public,
+        new sdk.NoteAttachment()
+      );
+      const funded = await client.executeTransaction(
+        owner.id(),
+        new sdk.TransactionRequestBuilder()
+          .withExplicitInputNote(sdk.InputNote.unauthenticated(funding))
+          .build()
+      );
+      await client.applyTransaction(funded, 0);
+      const before = (await client.getAccount(owner.id())).vault().assets();
+      const beforeKey = before[0].vaultKey().toHex();
+      const beforeValue = before[0].intoWord().toHex();
       const noteAssets = new sdk.NoteAssets([name]);
       const metadata = new sdk.NoteMetadata(
         owner.id(),
@@ -333,8 +372,28 @@ test.describe("unified note assets", () => {
           new sdk.FeltArray([registry.id().suffix(), registry.id().prefix()])
         )
       );
-      const publicNote = new sdk.Note(noteAssets, metadata, recipient);
-      const restored = sdk.Note.deserialize(publicNote.serialize());
+      const publicNote = sdk.Note.withAttachments(
+        noteAssets,
+        metadata,
+        recipient,
+        [new sdk.NetworkAccountTarget(registry.id()).toAttachment()]
+      );
+      const ownOutputs = new sdk.NoteArray();
+      ownOutputs.push(publicNote);
+      const sent = await client.executeTransaction(
+        owner.id(),
+        new sdk.TransactionRequestBuilder()
+          .withOwnOutputNotes(ownOutputs)
+          .build()
+      );
+      const emitted = sent
+        .executedTransaction()
+        .outputNotes()
+        .getNote(0)
+        .intoFull();
+      const restored = sdk.Note.deserialize(emitted.serialize());
+      await client.applyTransaction(sent, 0);
+      const afterSend = (await client.getAccount(owner.id())).vault().assets();
       const returned = sdk.Note.createP2IDNote(
         registry.id(),
         owner.id(),
@@ -342,7 +401,8 @@ test.describe("unified note assets", () => {
         sdk.NoteType.Public,
         new sdk.NoteAttachment()
       );
-      // Execute an explicit input locally to test NFA consumption without a live registry.
+      // Simulate the registry's P2ID response with the asset from the executed output.
+      // Registry contract execution is outside this low-level binding test.
       const request = new sdk.TransactionRequestBuilder()
         .withExplicitInputNote(sdk.InputNote.unauthenticated(returned))
         .build();
@@ -351,6 +411,17 @@ test.describe("unified note assets", () => {
       const updated = await client.getAccount(owner.id());
       const owned = updated.vault().assets();
       return {
+        beforeCount: before.length,
+        beforeKey,
+        beforeValue,
+        afterSendCount: afterSend.length,
+        networkNote: restored.isNetworkNote(),
+        target: sdk.NetworkAccountTarget.fromAttachment(
+          restored.attachments()[0]
+        )
+          .targetId()
+          .toString(),
+        expectedTarget: registry.id().toString(),
         noteCount: restored.assets().assets().length,
         noteKey: restored.assets().assets()[0].vaultKey().toHex(),
         noteValue: restored.assets().assets()[0].intoWord().toHex(),
@@ -362,6 +433,12 @@ test.describe("unified note assets", () => {
         expectedValue: value.toHex(),
       };
     });
+    expect(result.beforeCount).toBe(1);
+    expect(result.beforeKey).toBe(result.expectedKey);
+    expect(result.beforeValue).toBe(result.expectedValue);
+    expect(result.afterSendCount).toBe(0);
+    expect(result.networkNote).toBe(true);
+    expect(result.target).toBe(result.expectedTarget);
     expect(result.noteCount).toBe(1);
     expect(result.noteKey).toBe(result.expectedKey);
     expect(result.noteValue).toBe(result.expectedValue);

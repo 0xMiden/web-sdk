@@ -17,7 +17,7 @@ export {
   AccountStoragePatch,
   AccountVaultPatch,
   AdviceMap,
-  Asset,
+  VaultAsset,
   AssetVault,
   BasicFungibleFaucetComponent,
   BlockHeader,

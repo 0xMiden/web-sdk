@@ -2,7 +2,7 @@ use js_export_macro::js_export;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::note::NoteAssets as NativeNoteAssets;
 
-use super::asset::{Asset, AssetInput, native_asset};
+use super::asset::{AssetInput, VaultAsset, native_asset};
 use super::fungible_asset::FungibleAsset;
 use super::non_fungible_asset::NonFungibleAsset;
 use crate::platform::{JsErr, from_str_err};
@@ -24,7 +24,7 @@ pub struct NoteAssets(NativeNoteAssets);
 impl NoteAssets {
     /// Creates a note asset list from an optional array of assets.
     ///
-    /// Accepts `Asset`, `FungibleAsset`, and `NonFungibleAsset` values in any combination. The
+    /// Accepts `VaultAsset`, `FungibleAsset`, and `NonFungibleAsset` values in any combination. The
     /// default is an empty list. Input order is preserved. Returns an error if the list exceeds
     /// 16 assets or contains duplicate asset IDs. Input assets remain usable after this call.
     #[js_export(constructor)]
@@ -36,7 +36,7 @@ impl NoteAssets {
             .map_err(|err| from_str_err(&format!("Failed to create NoteAssets: {err}")))
     }
 
-    /// Appends an `Asset`, `FungibleAsset`, or `NonFungibleAsset` without consuming the input.
+    /// Appends an `VaultAsset`, `FungibleAsset`, or `NonFungibleAsset` without consuming the input.
     /// Returns an error for a duplicate or a list longer than 16 assets.
     /// A failed push leaves the collection unchanged.
     pub fn push(&mut self, asset: AssetInput) -> Result<(), JsErr> {
@@ -44,7 +44,7 @@ impl NoteAssets {
     }
 
     /// Returns all assets in their stored order. Returns an empty array for an empty note.
-    pub fn assets(&self) -> Vec<Asset> {
+    pub fn assets(&self) -> Vec<VaultAsset> {
         self.0.iter().copied().map(Into::into).collect()
     }
 

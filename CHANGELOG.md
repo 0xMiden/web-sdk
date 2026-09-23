@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] Create either asset type with `Asset.fungible(faucetId, amount)` or `Asset.nonFungible({ key, value })`, and carry them in `new NoteAssets([asset])` or `NoteAssets.push(asset)`. Existing `FungibleAsset` calls remain valid. Vaults and notes expose `assets()` and `nonFungibleAssets()` for name recovery and NFA note flows, including the issuer, complete key, and all four value limbs. Invalid note asset lists now throw catchable errors instead of trapping WASM ([#418](https://github.com/0xMiden/web-sdk/pull/418)).
+* [FEATURE][web] Create either asset type with `VaultAsset.fungible(faucetId, amount)` or `VaultAsset.nonFungible({ key, value })`, and carry them in `new NoteAssets([asset])` or `NoteAssets.push(asset)`. Existing `FungibleAsset` calls remain valid. Vaults and notes expose `assets()` and `nonFungibleAssets()` for name recovery and NFA note flows, including the issuer, complete key, and all four value limbs. Invalid note asset lists now throw catchable errors instead of trapping WASM ([#418](https://github.com/0xMiden/web-sdk/pull/418)).
 
 ### Changes
 

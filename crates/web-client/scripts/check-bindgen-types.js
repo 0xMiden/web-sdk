@@ -152,3 +152,5 @@ if (missing.length > 0) {
 console.log(
   "Bindgen type check passed: all wasm exports are covered by the public TypeScript definitions."
 );
+
+await import("./check-asset-types.js");

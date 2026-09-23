@@ -25,8 +25,8 @@ values. Keep these values as `bigint` or strings to prevent precision loss.
 
 Compare both the complete key and all four value limbs to verify an asset.
 The key alone does not contain the complete value. To reconstruct an asset,
-use `Asset.nonFungible({ key, value })` with the two `Word` objects.
-`Asset.fromVaultEntry(key, value)` can reconstruct either asset variant.
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+`VaultAsset.fromVaultEntry(key, value)` can reconstruct either asset variant.
 
 For name recovery, use the issuer and asset key with the name faucet's
 `token_to_domain` map. That map's schema defines how to read the label; the
@@ -36,10 +36,10 @@ Enumeration does not publish name-to-address registry records.
 ## Build a note with assets
 
 ```typescript
-import { Asset, NoteAssets } from "@miden-sdk/miden-sdk";
+import { VaultAsset, NoteAssets } from "@miden-sdk/miden-sdk";
 
-const token = Asset.fungible(faucetId, 100n);
-const name = Asset.nonFungible({ key, value });
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
 const nameAssets = new NoteAssets([name]);
 const mixedAssets = new NoteAssets([token]);
 mixedAssets.push(name);
@@ -53,7 +53,7 @@ asset IDs, and lists longer than 16 assets throw catchable errors. A failed
 `push()` leaves the list unchanged.
 
 Use `vault.assets()` or `note.assets().assets()` to read both variants as
-`Asset` values. `kind()` returns `"fungible"` or `"nonFungible"`.
+`VaultAsset` values. `kind()` returns `"fungible"` or `"nonFungible"`.
 `asFungible()` and `asNonFungible()` return a copy of the selected variant,
 and throw if the variant does not match. The existing filtered getters remain
 available. Note asset order is preserved; vault asset order is unspecified.
@@ -65,15 +65,20 @@ recipient with its required script and inputs, and send a public note with
 the name NFA as its single asset:
 
 ```typescript
-import { Note, NoteAssets, NoteMetadata, NoteTag, NoteType } from "@miden-sdk/miden-sdk";
+import { NetworkAccountTarget, Note, NoteAssets, NoteMetadata, NoteTag, NoteType } from "@miden-sdk/miden-sdk";
 
 // registryRecipient contains the registry's approved script and required inputs.
-const note = new Note(
+const note = Note.withAttachments(
   new NoteAssets([name]),
   new NoteMetadata(ownerId, NoteType.Public, NoteTag.withAccountTarget(registryId)),
   registryRecipient,
+  [new NetworkAccountTarget(registryId).toAttachment()],
 );
 ```
+
+The registry account must be public. The `NetworkAccountTarget` attachment
+makes this a network note; the tag alone does not. The target account must
+allow the note script.
 
 Use this note with `TransactionRequestBuilder.withOwnOutputNotes()` and the
 custom transaction flow in [Transactions](./transactions.md). The SDK does
