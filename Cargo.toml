@@ -49,8 +49,8 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.17.0-rc.2" }
 # the `SequentialCommit` trait, which `miden-client` does not re-export but which the multisig auth
 # args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
 # copy of the protocol types, so bump the three together.
-miden-client              = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
-miden-client-sqlite-store = { branch = "next", default-features = false, git = "https://github.com/0xMiden/rust-sdk" }
+miden-client              = { default-features = false, version = "0.17.0-rc.2" }
+miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.2" }
 miden-protocol            = { default-features = false, version = "0.17.0-rc.6" }
 
 # External dependencies

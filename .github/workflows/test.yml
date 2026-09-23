@@ -26,8 +26,8 @@ env:
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
   # A `Client PR:` marker overrides this for the test-node jobs
   # (resolve-client-ref); this value stays the fallback for pushes to next.
-  # rust-sdk `next` at the 0.17.0-rc.2 release prep (rust-sdk#2612)
-  MIDEN_CLIENT_REF: 32181a44c54a00f2f19b2d0dc760955077328776
+  # v0.17.0-rc.2
+  MIDEN_CLIENT_REF: 0607abd66f9e9ae13c49da0857ad3f84f8e5fbcb
   # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
   # binary reads this variable; the node repo's local runner uses the same
   # placeholder. A node that does not know it ignores the variable.
