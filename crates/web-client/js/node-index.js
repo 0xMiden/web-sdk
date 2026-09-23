@@ -140,8 +140,28 @@ export const exportStore = /* @__PURE__ */ _reexport("exportStore");
 export const importStore = /* @__PURE__ */ _reexport("importStore");
 
 // Array wrappers are JS polyfills, so the native export generator cannot discover them.
+export const AccountArray = /* @__PURE__ */ _reexport("AccountArray");
+export const AccountIdArray = /* @__PURE__ */ _reexport("AccountIdArray");
 export const AccountInputsArray =
   /* @__PURE__ */ _reexport("AccountInputsArray");
+export const FeltArray = /* @__PURE__ */ _reexport("FeltArray");
+export const ForeignAccountArray = /* @__PURE__ */ _reexport(
+  "ForeignAccountArray"
+);
+export const NoteAndArgsArray = /* @__PURE__ */ _reexport("NoteAndArgsArray");
+export const NoteArray = /* @__PURE__ */ _reexport("NoteArray");
+export const NoteDetailsAndTagArray = /* @__PURE__ */ _reexport(
+  "NoteDetailsAndTagArray"
+);
+export const NoteIdAndArgsArray =
+  /* @__PURE__ */ _reexport("NoteIdAndArgsArray");
+export const NoteRecipientArray =
+  /* @__PURE__ */ _reexport("NoteRecipientArray");
+export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
+export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
+export const TransactionScriptInputPairArray = /* @__PURE__ */ _reexport(
+  "TransactionScriptInputPairArray"
+);
 
 // Every other public napi class. GENERATED — do not edit by hand. Run
 // `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports` to regenerate from the
