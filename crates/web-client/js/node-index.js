@@ -182,7 +182,6 @@ export const Address = /* @__PURE__ */ _reexport("Address");
 export const AddressInterface = /* @__PURE__ */ _reexport("AddressInterface");
 export const AdviceInputs = /* @__PURE__ */ _reexport("AdviceInputs");
 export const AdviceMap = /* @__PURE__ */ _reexport("AdviceMap");
-export const VaultAsset = /* @__PURE__ */ _reexport("VaultAsset");
 export const AssetCallbackFlag = /* @__PURE__ */ _reexport("AssetCallbackFlag");
 export const AssetVault = /* @__PURE__ */ _reexport("AssetVault");
 export const AuthFalcon512RpoMultisigConfig = /* @__PURE__ */ _reexport(
@@ -318,6 +317,7 @@ export const TransactionStoreUpdate = /* @__PURE__ */ _reexport(
 );
 export const TransactionSummary =
   /* @__PURE__ */ _reexport("TransactionSummary");
+export const VaultAsset = /* @__PURE__ */ _reexport("VaultAsset");
 export const Word = /* @__PURE__ */ _reexport("Word");
 export const createAuthFalcon512RpoMultisig = /* @__PURE__ */ _reexport(
   "createAuthFalcon512RpoMultisig"
