@@ -207,4 +207,46 @@ export class AccountsResource {
     const address = wasm.Address.fromBech32(addr);
     await this.#inner.removeAccountAddress(id, address);
   }
+
+  /**
+   * Binds an invitation code to a tracked account on the network allowlist,
+   * so the account's first transaction can create it on chain.
+   *
+   * The account must be tracked, not yet deployed, and not a network account.
+   * A registration consumes the code, so the node is asked first: an account
+   * it already allows fails with `ACCOUNT_ALREADY_ALLOWED` and the code is
+   * kept. The node's own rejections carry `INVITATION_NOT_FOUND`,
+   * `ALREADY_REGISTERED` or `INVALID_REGISTRATION_REQUEST`. When the network
+   * funds registered accounts, the call returns once the funding note is
+   * committed, which can take a few blocks; the note arrives on the next sync.
+   *
+   * @param {RegisterAccountOptions} options
+   * @returns {Promise<void>}
+   */
+  async register({ account, invitationCode }) {
+    this.#client.assertNotTerminated();
+    if (typeof invitationCode !== "string" || invitationCode.length === 0) {
+      throw new Error(
+        "accounts.register requires a non-empty 'invitationCode' string"
+      );
+    }
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(account, wasm);
+    await this.#inner.registerAccount(id, invitationCode);
+  }
+
+  /**
+   * Returns whether the network lets the account be created on chain: `true`
+   * when the node does not enforce an account allowlist, or when the account
+   * is registered.
+   *
+   * @param {AccountRef} ref
+   * @returns {Promise<boolean>}
+   */
+  async isAllowed(ref) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const id = resolveAccountRef(ref, wasm);
+    return await this.#inner.isAccountAllowed(id);
+  }
 }

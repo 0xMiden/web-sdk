@@ -84,6 +84,7 @@ const ciShardProjects = process.env.CI
         testMatch: [
           "test/account.test.ts",
           "test/account_component.test.ts",
+          "test/allowlist.test.ts",
           "test/account_file.test.ts",
           "test/account_reader.test.ts",
           "test/new_account.test.ts",
