@@ -16,6 +16,7 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 const require = createRequire(import.meta.url);
 
@@ -137,52 +138,6 @@ const sdk = new Proxy(
  */
 function toNum(val: any): any {
   return val;
-}
-
-/**
- * Normalizes arguments for napi:
- * - BigUint64Array / BigInt64Array → bigint[]
- * - Uint8Array/Buffer → Array<number> (for Vec<u8> params)
- *
- * `BigInt` values are passed through — napi-rs accepts JS `BigInt` for `u64`
- * parameters via `napi::bindgen_prelude::BigInt`.
- */
-function normalizeArg(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
-}
-
-/**
- * Wraps a class so that constructor args and static method args are normalized.
- * Returns a Proxy that intercepts `new` and static calls.
- */
-/**
- * Wraps a class so that constructor and static method args are normalized.
- * Copies all static methods/properties, wrapping functions to normalize args.
- */
-function wrapClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(normalizeArg));
-  };
-  Wrapper.prototype = Cls.prototype;
-  // Copy static methods with arg normalization
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) =>
-        desc.value.apply(Cls, args.map(normalizeArg));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip non-configurable */
-      }
-    }
-  }
-  return Wrapper;
 }
 
 // ── Client wrapper ────────────────────────────────────────────────────

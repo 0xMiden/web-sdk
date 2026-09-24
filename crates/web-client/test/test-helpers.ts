@@ -16,6 +16,7 @@ import { getRpcUrl, RUN_ID } from "./playwright.global.setup";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 let _helperCounter = 0;
 
@@ -26,13 +27,6 @@ function tmpDir(): string {
   );
   fs.mkdirSync(path.join(dir, "keystore"), { recursive: true });
   return dir;
-}
-
-function norm(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
 }
 
 // ── Mock chain transaction helpers ───────────────────────────────────
@@ -782,27 +776,6 @@ function makeArrayPolyfill() {
   };
 }
 
-function wrapClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(norm));
-  };
-  Wrapper.prototype = Cls.prototype;
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) => desc.value.apply(Cls, args.map(norm));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  return Wrapper;
-}
-
 /**
  * Wraps a raw napi WebClient for MidenClient compatibility.
  * Handles syncState → syncStateImpl (and the new split-sync siblings),
@@ -850,7 +823,7 @@ function wrapClientForMidenClient(
             name,
             symbol,
             decimals,
-            norm(maxSupply),
+            normalizeArg(maxSupply),
             auth,
             seed
           );
@@ -861,7 +834,7 @@ function wrapClientForMidenClient(
             wallet,
             faucet,
             noteType,
-            norm(amount)
+            normalizeArg(amount)
           );
       }
       if (prop === "newSendTransactionRequest") {
@@ -878,7 +851,7 @@ function wrapClientForMidenClient(
             targetId,
             faucet,
             noteType,
-            norm(amount),
+            normalizeArg(amount),
             ...rest
           );
       }
@@ -894,9 +867,9 @@ function wrapClientForMidenClient(
           target.newSwapTransactionRequest(
             accountId,
             assetAFaucet,
-            norm(assetAAmount),
+            normalizeArg(assetAAmount),
             assetBFaucet,
-            norm(assetBAmount),
+            normalizeArg(assetBAmount),
             ...rest
           );
       }
@@ -904,7 +877,7 @@ function wrapClientForMidenClient(
       if (typeof val === "function") {
         const bound = val.bind(target);
         return (...args: any[]) => {
-          const normalizedArgs = args.map(norm);
+          const normalizedArgs = args.map(normalizeArg);
           const result = bound(...normalizedArgs);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
@@ -976,9 +949,9 @@ export async function createMidenClient(sdk: any): Promise<any> {
       await client.createMockClient(
         path.join(dir, "store.db"),
         path.join(dir, "keystore"),
-        norm(seed) ?? null,
-        norm(serializedMockChain) ?? null,
-        norm(serializedNoteTransport) ?? null
+        normalizeArg(seed) ?? null,
+        normalizeArg(serializedMockChain) ?? null,
+        normalizeArg(serializedNoteTransport) ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, "mock");
     },
@@ -987,7 +960,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
   // WasmWebClient (for integration tests)
   const WasmWebClient = {
     buildSwapTag: (...args: any[]) =>
-      rawSdk.WebClient.buildSwapTag(...args.map(norm)),
+      rawSdk.WebClient.buildSwapTag(...args.map(normalizeArg)),
     createClient: async (
       rpcUrl?: string,
       noteTransportUrl?: any,
@@ -999,7 +972,7 @@ export async function createMidenClient(sdk: any): Promise<any> {
       await client.createClient(
         rpcUrl ?? null,
         noteTransportUrl ?? null,
-        norm(seed) ?? null,
+        normalizeArg(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
         false

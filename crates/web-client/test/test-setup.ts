@@ -27,6 +27,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { getRpcUrl, getProverUrl, RUN_ID } from "./playwright.global.setup";
+import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 const require = createRequire(import.meta.url);
 
@@ -203,7 +204,7 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       if (typeof val === "function") {
         const bound = val.bind(target);
         return (...args: any[]) => {
-          const normalizedArgs = args.map(normalizeNapiArg);
+          const normalizedArgs = args.map(normalizeArg);
           const result = bound(...normalizedArgs);
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
@@ -214,20 +215,6 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
       return val;
     },
   });
-}
-
-/**
- * Normalizes a single argument for napi:
- * - BigUint64Array / BigInt64Array → bigint[], Uint8Array/Buffer → number[]
- *
- * `BigInt` values are passed through untouched — napi-rs accepts JS `BigInt`
- * for `u64` parameters via `napi::bindgen_prelude::BigInt`.
- */
-function normalizeNapiArg(val: any): any {
-  if (val instanceof BigUint64Array) return Array.from(val);
-  if (val instanceof BigInt64Array) return Array.from(val);
-  if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  return val;
 }
 
 /**
@@ -266,32 +253,6 @@ function makeArrayPolyfills(): Record<string, any> {
     result[name] = polyfill;
   }
   return result;
-}
-
-/**
- * Wraps a napi class so that constructor and static method args are normalized
- * (Uint8Array → Array, BigInt → Number, etc.).
- */
-function wrapNapiClass(Cls: any): any {
-  const Wrapper: any = function (...args: any[]) {
-    return new Cls(...args.map(normalizeNapiArg));
-  };
-  Wrapper.prototype = Cls.prototype;
-  for (const key of Object.getOwnPropertyNames(Cls)) {
-    if (key === "prototype" || key === "length" || key === "name") continue;
-    const desc = Object.getOwnPropertyDescriptor(Cls, key);
-    if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args: any[]) =>
-        desc.value.apply(Cls, args.map(normalizeNapiArg));
-    } else if (desc) {
-      try {
-        Object.defineProperty(Wrapper, key, desc);
-      } catch {
-        /* skip non-configurable */
-      }
-    }
-  }
-  return Wrapper;
 }
 
 function patchNapiPrototypes(rawSdk: any) {
@@ -350,13 +311,13 @@ function createNodeSdkWrapper(rawSdk: any): any {
   return {
     ...rawSdk,
     // Wrap classes whose constructors/static methods accept Uint8Array or BigInt args
-    AccountBuilder: wrapNapiClass(rawSdk.AccountBuilder),
-    AccountComponent: wrapNapiClass(rawSdk.AccountComponent),
-    AuthSecretKey: wrapNapiClass(rawSdk.AuthSecretKey),
-    Felt: wrapNapiClass(rawSdk.Felt),
-    FungibleAsset: wrapNapiClass(rawSdk.FungibleAsset),
-    Word: wrapNapiClass(rawSdk.Word),
-    NoteTag: wrapNapiClass(rawSdk.NoteTag),
+    AccountBuilder: wrapClass(rawSdk.AccountBuilder),
+    AccountComponent: wrapClass(rawSdk.AccountComponent),
+    AuthSecretKey: wrapClass(rawSdk.AuthSecretKey),
+    Felt: wrapClass(rawSdk.Felt),
+    FungibleAsset: wrapClass(rawSdk.FungibleAsset),
+    Word: wrapClass(rawSdk.Word),
+    NoteTag: wrapClass(rawSdk.NoteTag),
     // StorageView JS wrapper — browser exposes these on window via index.js.
     StorageView: sv.StorageView,
     StorageResult: sv.StorageResult,
