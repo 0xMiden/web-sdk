@@ -46,7 +46,7 @@ function normalizeDeserializeArg(val) {
 /**
  * Wraps a napi class so constructor and static method args are normalized.
  */
-function wrapClass(Cls) {
+export function wrapClass(Cls) {
   if (!Cls) return Cls;
   const Wrapper = function (...args) {
     return new Cls(...args.map(normalizeArg));

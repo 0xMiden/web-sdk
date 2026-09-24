@@ -3,10 +3,13 @@ import { test, expect } from "./test-setup";
 import { createMidenClient } from "./test-helpers";
 import path from "path";
 
-test.describe("Node public SDK deserialization", () => {
-  // Import the public package to exercise its wrapper instead of the sdk fixture.
-  test("AuthSecretKey round-trips with Buffer and Uint8Array", async () => {
-    const { AuthSecretKey } = await import("@miden-sdk/miden-sdk");
+test.describe("Node SDK deserialization", () => {
+  // The sdk fixture shares the SDK's class wrapper; importing the public entry
+  // here would rewire MidenClient for every later test in this worker.
+  test("AuthSecretKey round-trips with Buffer and Uint8Array", async ({
+    sdk,
+  }) => {
+    const { AuthSecretKey } = sdk;
     const key = AuthSecretKey.rpoFalconWithRNG(new Uint8Array(32));
     const base64 = key.serialize().toString("base64");
     const bytes = Buffer.from(base64, "base64");
@@ -16,8 +19,8 @@ test.describe("Node public SDK deserialization", () => {
     }
   });
 
-  test("Word round-trips with Buffer and Uint8Array", async () => {
-    const { Word } = await import("@miden-sdk/miden-sdk");
+  test("Word round-trips with Buffer and Uint8Array", async ({ sdk }) => {
+    const { Word } = sdk;
     const word = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
     const bytes = word.serialize();
 
