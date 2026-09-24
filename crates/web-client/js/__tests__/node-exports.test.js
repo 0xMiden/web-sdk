@@ -37,3 +37,35 @@ describe("Node array exports", () => {
     expect(items.get(0)).toBe(item);
   });
 });
+
+describe("Node array container contract", () => {
+  it.each(declaredArrays)(
+    "%s rejects out-of-range get and replaceAt",
+    (name) => {
+      const first = {};
+      const second = {};
+      const items = new nodeIndex[name]([first, second]);
+      const keys = Reflect.ownKeys(items);
+
+      for (const index of [-1, 2]) {
+        expect(() => items.get(index)).toThrow(/out of bounds/);
+        expect(() => items.replaceAt(index, {})).toThrow(/out of bounds/);
+      }
+      expect(items[0]).toBe(first);
+      expect(items[1]).toBe(second);
+      expect(Reflect.ownKeys(items)).toEqual(keys);
+
+      const replacement = {};
+      expect(items.replaceAt(1, replacement)).toBe(items);
+      expect(items[0]).toBe(first);
+      expect(items[1]).toBe(replacement);
+    }
+  );
+
+  it.each(declaredArrays)("%s can be freed like a wasm object", (name) => {
+    const items = new nodeIndex[name]([{}]);
+
+    expect(items.free()).toBeUndefined();
+    expect(items[Symbol.dispose]()).toBeUndefined();
+  });
+});

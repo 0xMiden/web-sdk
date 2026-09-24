@@ -234,11 +234,28 @@ function makeArrayPolyfills() {
         : Array.isArray(items)
           ? [...items]
           : [items];
-    arr.get = (i) => arr[i];
+    // Match the browser containers (miden_array.rs), which reject any index
+    // outside the array instead of reading undefined or growing it.
+    const checkIndex = (i) => {
+      if (!Number.isInteger(i) || i < 0 || i >= arr.length) {
+        throw new RangeError(
+          `out of bounds access -- tried to access at index: ${i} with length ${arr.length}`
+        );
+      }
+    };
+    arr.get = (i) => {
+      checkIndex(i);
+      return arr[i];
+    };
     arr.replaceAt = (i, val) => {
+      checkIndex(i);
       arr[i] = val;
       return arr;
     };
+    // A plain array owns no native memory, but callers written against the
+    // wasm-bindgen classes free them.
+    arr.free = () => {};
+    if (Symbol.dispose) arr[Symbol.dispose] = arr.free;
     return arr;
   }
   return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, polyfill]));
