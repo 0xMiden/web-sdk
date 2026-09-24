@@ -411,7 +411,7 @@ The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that e
 pnpm check:wasm-types
 ```
 
-`scripts/check-asset-types.js` type-checks a consumer fixture that imports `VaultAsset`, `NoteAssets` and the `Asset` option type from every entry point, so a name collision between the generated bindings and the simplified API types fails before release:
+`scripts/check-asset-types.js` type-checks a consumer fixture (with `skipLibCheck`) that imports `VaultAsset` and the `Asset` option type from all four entry points and `NoteAssets` from the root entry. It fails if an entry point stops exporting `VaultAsset`, or if `Asset` stops resolving to the `{ token, amount }` option type, for example because a generated class takes its name:
 
 ```
 pnpm check:asset-types
