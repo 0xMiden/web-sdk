@@ -535,21 +535,21 @@ const ownOutputs = new wasm.NoteArray();
 ownOutputs.push(note);
 ```
 
-**Adding a new array wrapper takes three coordinated edits**, because on
-Node.js the array wrappers are JS polyfills rather than napi classes, and the
-re-export generator cannot discover them:
+**Adding a new array wrapper takes two coordinated edits and a regenerate**,
+because on Node.js the array wrappers are JS polyfills rather than napi classes:
 
 1. `crates/web-client/src/models/mod.rs` - a new
    `(crate::models::foo::Foo) -> FooArray` line in `declare_js_miden_arrays!`
-2. `crates/web-client/js/node/napi-compat.js` - add `"FooArray"` to the
-   `names` list in `makeArrayPolyfills()`
-3. `crates/web-client/js/node-index.js` - a hand-written
-   `export const FooArray = _reexport("FooArray");` in the section above the
-   generated block (`pnpm --filter @miden-sdk/miden-sdk gen:node-reexports`
-   regenerates only the block below it, and CI's `check:node-reexports` keeps
-   that part in lockstep with napi)
+2. `crates/web-client/js/node/napi-compat.js` - add `"FooArray"` to
+   `NODE_ARRAY_TYPES`
+3. Run `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports`, which writes the
+   `export const FooArray = _reexport("FooArray");` line into the generated
+   block of `crates/web-client/js/node-index.js`; `MidenArrays` picks it up
+   from the same list
 
-Miss step 2 or 3 and the browser build is fine while Node.js fails at import.
+Miss step 2 and `js/__tests__/node-exports.test.js` fails, since it compares
+`NODE_ARRAY_TYPES` against the macro; miss step 3 and CI's
+`check:node-reexports` fails.
 
 ### Node entry re-exports and name shadowing
 

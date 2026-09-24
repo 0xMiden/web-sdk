@@ -9,7 +9,7 @@
  */
 
 import { loadNativeModule } from "./node/loader.js";
-import { createSdkWrapper } from "./node/napi-compat.js";
+import { createSdkWrapper, NODE_ARRAY_TYPES } from "./node/napi-compat.js";
 import {
   createWasmWebClient,
   createMockWasmWebClient,
@@ -139,35 +139,18 @@ export const Rpo = /* @__PURE__ */ _reexport("Rpo");
 export const exportStore = /* @__PURE__ */ _reexport("exportStore");
 export const importStore = /* @__PURE__ */ _reexport("importStore");
 
-// Array wrappers are JS polyfills, so the native export generator cannot discover them.
-export const AccountArray = /* @__PURE__ */ _reexport("AccountArray");
-export const AccountIdArray = /* @__PURE__ */ _reexport("AccountIdArray");
-export const AccountInputsArray =
-  /* @__PURE__ */ _reexport("AccountInputsArray");
-export const FeltArray = /* @__PURE__ */ _reexport("FeltArray");
-export const ForeignAccountArray = /* @__PURE__ */ _reexport(
-  "ForeignAccountArray"
-);
-export const NoteAndArgsArray = /* @__PURE__ */ _reexport("NoteAndArgsArray");
-export const NoteArray = /* @__PURE__ */ _reexport("NoteArray");
-export const NoteDetailsAndTagArray = /* @__PURE__ */ _reexport(
-  "NoteDetailsAndTagArray"
-);
-export const NoteIdAndArgsArray =
-  /* @__PURE__ */ _reexport("NoteIdAndArgsArray");
-export const NoteRecipientArray =
-  /* @__PURE__ */ _reexport("NoteRecipientArray");
-export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
-export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
-export const TransactionScriptInputPairArray = /* @__PURE__ */ _reexport(
-  "TransactionScriptInputPairArray"
+// The browser entry's namespace of every array container, keyed by name.
+export const MidenArrays = Object.fromEntries(
+  NODE_ARRAY_TYPES.map((name) => [name, _wrappedSdk[name]])
 );
 
-// Every other public napi class. GENERATED — do not edit by hand. Run
-// `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports` to regenerate from the
-// native module; CI's `check:node-reexports` keeps it in lockstep with napi.
+// Every other public napi class, plus the array polyfills in NODE_ARRAY_TYPES.
+// GENERATED - do not edit by hand. Run
+// `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports` to regenerate; CI's
+// `check:node-reexports` keeps it in lockstep with napi and NODE_ARRAY_TYPES.
 // <generated:napi-reexports>
 export const Account = /* @__PURE__ */ _reexport("Account");
+export const AccountArray = /* @__PURE__ */ _reexport("AccountArray");
 export const AccountBuilder = /* @__PURE__ */ _reexport("AccountBuilder");
 export const AccountBuilderResult = /* @__PURE__ */ _reexport(
   "AccountBuilderResult"
@@ -181,7 +164,10 @@ export const AccountDelta = /* @__PURE__ */ _reexport("AccountDelta");
 export const AccountFile = /* @__PURE__ */ _reexport("AccountFile");
 export const AccountHeader = /* @__PURE__ */ _reexport("AccountHeader");
 export const AccountId = /* @__PURE__ */ _reexport("AccountId");
+export const AccountIdArray = /* @__PURE__ */ _reexport("AccountIdArray");
 export const AccountInputs = /* @__PURE__ */ _reexport("AccountInputs");
+export const AccountInputsArray =
+  /* @__PURE__ */ _reexport("AccountInputsArray");
 export const AccountInterface = /* @__PURE__ */ _reexport("AccountInterface");
 export const AccountPatch = /* @__PURE__ */ _reexport("AccountPatch");
 export const AccountProof = /* @__PURE__ */ _reexport("AccountProof");
@@ -227,9 +213,13 @@ export const ExecutedTransaction = /* @__PURE__ */ _reexport(
   "ExecutedTransaction"
 );
 export const Felt = /* @__PURE__ */ _reexport("Felt");
+export const FeltArray = /* @__PURE__ */ _reexport("FeltArray");
 export const FetchedAccount = /* @__PURE__ */ _reexport("FetchedAccount");
 export const FetchedNote = /* @__PURE__ */ _reexport("FetchedNote");
 export const ForeignAccount = /* @__PURE__ */ _reexport("ForeignAccount");
+export const ForeignAccountArray = /* @__PURE__ */ _reexport(
+  "ForeignAccountArray"
+);
 export const FungibleAsset = /* @__PURE__ */ _reexport("FungibleAsset");
 export const FungibleAssetDelta =
   /* @__PURE__ */ _reexport("FungibleAssetDelta");
@@ -255,6 +245,8 @@ export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
 export const NetworkType = /* @__PURE__ */ _reexport("NetworkType");
 export const Note = /* @__PURE__ */ _reexport("Note");
 export const NoteAndArgs = /* @__PURE__ */ _reexport("NoteAndArgs");
+export const NoteAndArgsArray = /* @__PURE__ */ _reexport("NoteAndArgsArray");
+export const NoteArray = /* @__PURE__ */ _reexport("NoteArray");
 export const NoteAssets = /* @__PURE__ */ _reexport("NoteAssets");
 export const NoteAttachment = /* @__PURE__ */ _reexport("NoteAttachment");
 export const NoteAttachmentScheme = /* @__PURE__ */ _reexport(
@@ -266,6 +258,9 @@ export const NoteConsumptionStatus = /* @__PURE__ */ _reexport(
 );
 export const NoteDetails = /* @__PURE__ */ _reexport("NoteDetails");
 export const NoteDetailsAndTag = /* @__PURE__ */ _reexport("NoteDetailsAndTag");
+export const NoteDetailsAndTagArray = /* @__PURE__ */ _reexport(
+  "NoteDetailsAndTagArray"
+);
 export const NoteExecutionHint = /* @__PURE__ */ _reexport("NoteExecutionHint");
 export const NoteExportFormat = /* @__PURE__ */ _reexport("NoteExportFormat");
 export const NoteFile = /* @__PURE__ */ _reexport("NoteFile");
@@ -274,11 +269,15 @@ export const NoteFilterTypes = /* @__PURE__ */ _reexport("NoteFilterTypes");
 export const NoteHeader = /* @__PURE__ */ _reexport("NoteHeader");
 export const NoteId = /* @__PURE__ */ _reexport("NoteId");
 export const NoteIdAndArgs = /* @__PURE__ */ _reexport("NoteIdAndArgs");
+export const NoteIdAndArgsArray =
+  /* @__PURE__ */ _reexport("NoteIdAndArgsArray");
 export const NoteInclusionProof =
   /* @__PURE__ */ _reexport("NoteInclusionProof");
 export const NoteLocation = /* @__PURE__ */ _reexport("NoteLocation");
 export const NoteMetadata = /* @__PURE__ */ _reexport("NoteMetadata");
 export const NoteRecipient = /* @__PURE__ */ _reexport("NoteRecipient");
+export const NoteRecipientArray =
+  /* @__PURE__ */ _reexport("NoteRecipientArray");
 export const NoteScript = /* @__PURE__ */ _reexport("NoteScript");
 export const NoteScriptFee = /* @__PURE__ */ _reexport("NoteScriptFee");
 export const NoteStorage = /* @__PURE__ */ _reexport("NoteStorage");
@@ -287,6 +286,7 @@ export const NoteSyncInfo = /* @__PURE__ */ _reexport("NoteSyncInfo");
 export const NoteTag = /* @__PURE__ */ _reexport("NoteTag");
 export const NoteType = /* @__PURE__ */ _reexport("NoteType");
 export const OutputNote = /* @__PURE__ */ _reexport("OutputNote");
+export const OutputNoteArray = /* @__PURE__ */ _reexport("OutputNoteArray");
 export const OutputNoteRecord = /* @__PURE__ */ _reexport("OutputNoteRecord");
 export const OutputNoteState = /* @__PURE__ */ _reexport("OutputNoteState");
 export const OutputNotes = /* @__PURE__ */ _reexport("OutputNotes");
@@ -313,6 +313,7 @@ export const StorageMapEntryJs = /* @__PURE__ */ _reexport("StorageMapEntryJs");
 export const StorageMapInfo = /* @__PURE__ */ _reexport("StorageMapInfo");
 export const StorageMapUpdate = /* @__PURE__ */ _reexport("StorageMapUpdate");
 export const StorageSlot = /* @__PURE__ */ _reexport("StorageSlot");
+export const StorageSlotArray = /* @__PURE__ */ _reexport("StorageSlotArray");
 export const SyncSummary = /* @__PURE__ */ _reexport("SyncSummary");
 export const TokenSymbol = /* @__PURE__ */ _reexport("TokenSymbol");
 export const TransactionArgs = /* @__PURE__ */ _reexport("TransactionArgs");
@@ -329,6 +330,9 @@ export const TransactionResult = /* @__PURE__ */ _reexport("TransactionResult");
 export const TransactionScript = /* @__PURE__ */ _reexport("TransactionScript");
 export const TransactionScriptInputPair = /* @__PURE__ */ _reexport(
   "TransactionScriptInputPair"
+);
+export const TransactionScriptInputPairArray = /* @__PURE__ */ _reexport(
+  "TransactionScriptInputPairArray"
 );
 export const TransactionStatus = /* @__PURE__ */ _reexport("TransactionStatus");
 export const TransactionStoreUpdate = /* @__PURE__ */ _reexport(

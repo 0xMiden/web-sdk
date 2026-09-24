@@ -200,6 +200,27 @@ function patchSdkPrototypes(rawSdk) {
 // ── Array polyfills ──────────────────────────────────────────────────
 
 /**
+ * Array containers declared by `declare_js_miden_arrays!` in src/models/mod.rs.
+ * On Node they are JS polyfills, so node-index.js re-exports them from this
+ * list (see scripts/gen-node-reexports.js).
+ */
+export const NODE_ARRAY_TYPES = Object.freeze([
+  "AccountArray",
+  "AccountIdArray",
+  "AccountInputsArray",
+  "FeltArray",
+  "ForeignAccountArray",
+  "NoteAndArgsArray",
+  "NoteArray",
+  "NoteDetailsAndTagArray",
+  "NoteIdAndArgsArray",
+  "NoteRecipientArray",
+  "OutputNoteArray",
+  "StorageSlotArray",
+  "TransactionScriptInputPairArray",
+]);
+
+/**
  * Creates polyfill constructors for WASM typed array types.
  * napi accepts plain JS arrays directly, but the browser SDK requires
  * typed wrappers (NoteAndArgsArray, FeltArray, etc.). These polyfills
@@ -220,27 +241,7 @@ function makeArrayPolyfills() {
     };
     return arr;
   }
-  const names = [
-    "AccountArray",
-    "AccountIdArray",
-    "AccountInputsArray",
-    "FeltArray",
-    "ForeignAccountArray",
-    "NoteAndArgsArray",
-    "NoteArray",
-    "NoteDetailsAndTagArray",
-    "NoteIdAndArgsArray",
-    "NoteRecipientArray",
-    "OutputNoteArray",
-    "OutputNotesArray",
-    "StorageSlotArray",
-    "TransactionScriptInputPairArray",
-  ];
-  const result = {};
-  for (const name of names) {
-    result[name] = polyfill;
-  }
-  return result;
+  return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, polyfill]));
 }
 
 // ── SDK wrapper ──────────────────────────────────────────────────────
