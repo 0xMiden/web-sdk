@@ -411,6 +411,12 @@ The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that e
 pnpm check:wasm-types
 ```
 
+`scripts/check-asset-types.js` type-checks a consumer fixture that imports `VaultAsset`, `NoteAssets` and the `Asset` option type from every entry point, so a name collision between the generated bindings and the simplified API types fails before release:
+
+```
+pnpm check:asset-types
+```
+
 `WebClient` is intentionally excluded because the wrapper defines its own implementation. If the check reports missing exports, update `js/types/index.d.ts` so consumers get the full generated surface.
 
 ## Usage
