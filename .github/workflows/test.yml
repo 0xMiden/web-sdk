@@ -422,6 +422,8 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Check bindgen type coverage
         run: pnpm --filter @miden-sdk/miden-sdk run check:wasm-types
+      - name: Check asset type imports on every entry point
+        run: pnpm --filter @miden-sdk/miden-sdk run check:asset-types
       - name: Check method classification
         run: pnpm --filter @miden-sdk/miden-sdk run check:method-classification
 

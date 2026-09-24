@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.16.3 (TBD)
+## 0.16.4 (TBD)
+
+### Fixes
+
+* [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+* [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+
+## 0.16.3 (2026-09-24)
+
+### Enhancements
+
+* [FEATURE][web] Create either asset type with `VaultAsset.fungible(faucetId, amount)` or `VaultAsset.nonFungible({ key, value })`, and carry them in `new NoteAssets([asset])` or `noteAssets.push(asset)`. Existing `FungibleAsset` calls remain valid. Vaults and notes expose `assets()` and `nonFungibleAssets()` for name recovery and NFA note flows, including the issuer, complete key, and all four value limbs. Invalid note asset lists now throw catchable errors instead of trapping WASM ([#418](https://github.com/0xMiden/web-sdk/pull/418)).
 
 ### Changes
 
@@ -8,8 +19,7 @@
 
 ### Fixes
 
-* [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
-* [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+* [FIX][web] In Node.js, `AuthSecretKey.deserialize()` and `Word.deserialize()` now accept `Buffer` and `Uint8Array` inputs, including subarrays, through the public SDK export. RNG seeds and account-builder seeds continue to accept byte arrays ([#422](https://github.com/0xMiden/web-sdk/pull/422)).
 * [FIX][para] `@miden-sdk/para-react` declared its optional `vite-plugin-node-polyfills` peer as `^0.22.0`, which every scaffolded Para app violated: `create-miden-para-react` and the Para examples install `^0.24.0`, and for a `0.x` version `^0.22.0` excludes `0.24.x`. `npm install` failed the whole tree with `ERESOLVE ... Conflicting peer dependency: vite-plugin-node-polyfills@0.22.0`, which the generated `.npmrc legacy-peer-deps=true` then swallowed. The peer is now `>=0.23.1 <1.0.0`, which states the actual constraint: `paraVitePlugin` only calls `nodePolyfills({ include })`, which is unchanged across the 0.2x line, but `vite-plugin-node-polyfills` below 0.23.1 caps its own `vite` peer at 5, so a 0.22 install cannot coexist with the Vite 7 these packages target. A caret range would have re-created the same `ERESOLVE` on the plugin's next minor ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
 * [FIX][turnkey] `create-miden-turnkey-react` scaffolded the same unresolvable tree from the other side: it wrote `vite: ^6.0.0` alongside `vite-plugin-node-polyfills: ^0.22.0`, whose `vite` peer stops at 5. It now writes `^0.24.0` ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
 * [FIX][web] `AccountDetails.storage`, the field `client.accounts.getDetails()` returns, was declared as the raw WASM `AccountStorage`. `Account.prototype.storage()` is patched at load time to return a `StorageView`, so the declaration named a type the value never had: TypeScript accepted `storage.getItem(name)` as returning a `Word` when it returns a `StorageResult`, and rejected `getSlotNames`, `getMapEntries`, `getCommitment` and `.raw`, which the value does have. It is now typed as `StorageView`, with the `valueOf()` overflow throw and the string-returning `toJSON()` documented on the field ([#394](https://github.com/0xMiden/web-sdk/pull/394)).

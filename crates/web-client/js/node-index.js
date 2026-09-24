@@ -253,6 +253,7 @@ export const NetworkNoteStatusInfo = /* @__PURE__ */ _reexport(
   "NetworkNoteStatusInfo"
 );
 export const NetworkType = /* @__PURE__ */ _reexport("NetworkType");
+export const NonFungibleAsset = /* @__PURE__ */ _reexport("NonFungibleAsset");
 export const Note = /* @__PURE__ */ _reexport("Note");
 export const NoteAndArgs = /* @__PURE__ */ _reexport("NoteAndArgs");
 export const NoteAndArgsArray = /* @__PURE__ */ _reexport("NoteAndArgsArray");
@@ -350,6 +351,7 @@ export const TransactionStoreUpdate = /* @__PURE__ */ _reexport(
 );
 export const TransactionSummary =
   /* @__PURE__ */ _reexport("TransactionSummary");
+export const VaultAsset = /* @__PURE__ */ _reexport("VaultAsset");
 export const Word = /* @__PURE__ */ _reexport("Word");
 export const createAuthFalcon512RpoMultisig = /* @__PURE__ */ _reexport(
   "createAuthFalcon512RpoMultisig"

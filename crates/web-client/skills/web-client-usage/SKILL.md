@@ -303,6 +303,49 @@ those evaluate to `undefined`. Wallets and contracts are not chosen via
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
 
+## Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+## Build Notes with Either Asset Type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. The amount-based `send` helper remains fungible-only.
+
 ## Account Creation
 
 ```typescript
@@ -421,11 +464,10 @@ clears the other, so whichever is called last wins.
 
 ## Transactions
 
-**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`). The
-constructors `unwrap` the protocol's `TooManyAssets` error, so going over the cap from
-JavaScript **traps the WASM instance** rather than rejecting with a catchable error - check
-the length yourself before building a note with many assets. Duplicates are rejected too,
-and the order of assets is unspecified.
+**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`).
+`new NoteAssets(...)` and `push()` throw a catchable error when the list would go over the
+cap or repeat an asset, and a failed `push()` leaves the list unchanged. Note assets keep
+their input order.
 
 Per-asset callbacks are read off `FungibleAsset.callbacks()`. There is no `withCallbacks`
 builder - do not reach for one.

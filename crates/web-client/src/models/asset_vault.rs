@@ -3,18 +3,19 @@ use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::AssetVault as NativeAssetVault;
 
 use super::account_id::AccountId;
+use super::asset::VaultAsset;
 use super::fungible_asset::FungibleAsset;
+use super::non_fungible_asset::NonFungibleAsset;
 use super::word::Word;
 
 /// A container for an unlimited number of assets.
 ///
-/// An asset vault can contain an unlimited number of assets. The assets are stored in a Sparse
-/// Merkle tree as follows:
-/// - For fungible assets, the index of a node is defined by the issuing faucet ID, and the value of
-///   the node is the asset itself. Thus, for any fungible asset there will be only one node in the
-///   tree.
-/// - For non-fungible assets, the index is defined by the asset itself, and the asset is also the
-///   value of the node.
+/// Assets are stored in a Sparse Merkle Tree. Each leaf uses the hash of an asset key as its
+/// index and stores a separate value word:
+/// - A fungible asset key identifies the issuing faucet and callback flag. Its value stores the
+///   amount.
+/// - A non-fungible asset key identifies the issuing faucet and asset class. Its value stores all
+///   four elements of the asset data commitment.
 ///
 /// An asset vault can be reduced to a single hash which is the root of the Sparse Merkle Tree.
 #[derive(Clone)]
@@ -23,6 +24,12 @@ pub struct AssetVault(NativeAssetVault);
 
 #[js_export]
 impl AssetVault {
+    /// Returns all fungible and non-fungible assets in this local vault snapshot.
+    /// Returns an empty array if the vault is empty. The order is unspecified.
+    pub fn assets(&self) -> Vec<VaultAsset> {
+        self.0.assets().map(Into::into).collect()
+    }
+
     /// Returns the root commitment of the asset vault tree.
     pub fn root(&self) -> Word {
         self.0.root().into()
@@ -57,7 +64,26 @@ impl AssetVault {
                 if asset.is_fungible() {
                     Some(asset.unwrap_fungible().into())
                 } else {
-                    None // TODO: Support non fungible assets
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Returns all non-fungible assets in this vault, or an empty array if none are present.
+    ///
+    /// Fungible assets are excluded. The order is unspecified. Each returned asset exposes its
+    /// issuer, complete vault key, and all four value elements. This reads the current vault
+    /// snapshot and does not fetch data from the network.
+    #[js_export(js_name = "nonFungibleAssets")]
+    pub fn non_fungible_assets(&self) -> Vec<NonFungibleAsset> {
+        self.0
+            .assets()
+            .filter_map(|asset| {
+                if asset.is_non_fungible() {
+                    Some(asset.unwrap_non_fungible().into())
+                } else {
+                    None
                 }
             })
             .collect()
