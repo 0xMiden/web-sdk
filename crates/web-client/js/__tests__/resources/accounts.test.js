@@ -568,3 +568,94 @@ describe("AccountsResource", () => {
     });
   });
 });
+
+describe("AccountsResource.create selector validation", () => {
+  const faucetFields = { symbol: "TOK", decimals: 8, maxSupply: 1000n };
+  // A complete contract request (seed and auth), so a masked selector would
+  // reach the builder rather than fail a contract precondition.
+  const contract = {
+    components: ["component"],
+    seed: new Uint8Array(32),
+    auth: "secretKey",
+  };
+
+  function setup() {
+    const inner = makeInner();
+    const wasm = makeWasm();
+    const resource = new AccountsResource(
+      inner,
+      vi.fn().mockResolvedValue(wasm),
+      makeClient()
+    );
+    return { inner, wasm, resource };
+  }
+
+  it.each([
+    [
+      "an undefined type with faucet fields",
+      { type: undefined, ...faucetFields },
+    ],
+    ["faucet fields without a type", { ...faucetFields }],
+    ["a name without a type", { name: "Token" }],
+    ["an unknown type", { type: "Foo" }],
+    ["a null type", { type: null }],
+    ["an unknown type with components", { type: "Foo", ...contract }],
+    ["components with faucet fields", { ...contract, symbol: "TOK" }],
+    [
+      "a contract type with faucet fields",
+      { type: "MutableContract", ...contract, maxSupply: 1000n },
+    ],
+    [
+      "a faucet type with components",
+      {
+        type: "FungibleFaucet",
+        ...faucetFields,
+        components: contract.components,
+      },
+    ],
+    ["legacy 0 without faucet fields", { type: 0 }],
+    [
+      "a faucet type without symbol",
+      { type: "FungibleFaucet", decimals: 8, maxSupply: 1000n },
+    ],
+    [
+      "a faucet type without decimals",
+      { type: "FungibleFaucet", symbol: "TOK", maxSupply: 1000n },
+    ],
+    [
+      "a faucet type without maxSupply",
+      { type: "FungibleFaucet", symbol: "TOK", decimals: 8 },
+    ],
+  ])("rejects %s before creating any account", async (_label, opts) => {
+    const { inner, wasm, resource } = setup();
+
+    await expect(resource.create(opts)).rejects.toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        message: expect.stringMatching(/FaucetType/),
+      })
+    );
+    expect(inner.newWallet).not.toHaveBeenCalled();
+    expect(inner.newFaucet).not.toHaveBeenCalled();
+    expect(wasm.AccountBuilder).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["FaucetType.FungibleFaucet", "FungibleFaucet"],
+    ["legacy 0", 0],
+  ])("still creates a faucet for %s", async (_label, type) => {
+    const { inner, resource } = setup();
+
+    await resource.create({ type, ...faucetFields });
+
+    expect(inner.newFaucet).toHaveBeenCalledOnce();
+  });
+
+  it("still creates a wallet when no type and no faucet fields are given", async () => {
+    const { inner, resource } = setup();
+
+    await resource.create({ storage: "public" });
+
+    expect(inner.newWallet).toHaveBeenCalledOnce();
+  });
+});
