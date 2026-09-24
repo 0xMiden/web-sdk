@@ -15,6 +15,12 @@ import {
   createMockWasmWebClient,
 } from "./node/client-factory.js";
 import { MidenClient } from "./client.js";
+import {
+  installStorageView,
+  StorageView,
+  StorageResult,
+  wordToBigInt,
+} from "./storageView.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
@@ -37,6 +43,8 @@ function ensureInitialized() {
 
   _rawSdk = loadNativeModule();
   _wrappedSdk = createSdkWrapper(_rawSdk);
+  // account.storage() returns a StorageView, as in the browser entry.
+  installStorageView(_rawSdk);
   _WasmWebClient = createWasmWebClient(_rawSdk);
   _MockWasmWebClient = createMockWasmWebClient(_rawSdk);
 
@@ -138,6 +146,8 @@ export const AuthSchemeNative = /* @__PURE__ */ _reexport("AuthScheme");
 export const Rpo = /* @__PURE__ */ _reexport("Rpo");
 export const exportStore = /* @__PURE__ */ _reexport("exportStore");
 export const importStore = /* @__PURE__ */ _reexport("importStore");
+
+export { StorageView, StorageResult, wordToBigInt };
 
 // The browser entry's namespace of every array container, keyed by name.
 export const MidenArrays = Object.fromEntries(
