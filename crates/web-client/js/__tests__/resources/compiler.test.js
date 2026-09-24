@@ -19,6 +19,7 @@ function makeAccountComponent() {
   return {
     withSupportsAllTypes: vi.fn().mockReturnThis(),
     componentCode: vi.fn(),
+    getProcedures: vi.fn().mockReturnValue([{ digest: "0x1", isAuth: false }]),
   };
 }
 
@@ -73,7 +74,10 @@ describe("CompilerResource", () => {
 
     it("returns component without withSupportsAllTypes when supportAllTypes=false", async () => {
       builder.compileAccountComponentCode.mockReturnValue("compiled");
-      const rawComponent = { withSupportsAllTypes: vi.fn() };
+      const rawComponent = {
+        withSupportsAllTypes: vi.fn(),
+        getProcedures: vi.fn().mockReturnValue([{}]),
+      };
       wasm.AccountComponent.compile.mockReturnValue(rawComponent);
       const resource = new CompilerResource(inner, getWasm, client);
       const result = await resource.component({
@@ -118,6 +122,32 @@ describe("CompilerResource", () => {
         "compiled",
         slots
       );
+    });
+
+    it("warns, without throwing, when the compiled component has no procedures", async () => {
+      builder.compileAccountComponentCode.mockReturnValue("compiled");
+      component.getProcedures.mockReturnValue([]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const resource = new CompilerResource(inner, getWasm, client);
+
+      const result = await resource.component({ code: "code", slots: [] });
+
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0][0]).toContain("no procedures");
+      expect(warn.mock.calls[0][0]).toContain("@account_procedure");
+      expect(result).toBe(component);
+      warn.mockRestore();
+    });
+
+    it("does not warn when the compiled component has procedures", async () => {
+      builder.compileAccountComponentCode.mockReturnValue("compiled");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const resource = new CompilerResource(inner, getWasm, client);
+
+      await resource.component({ code: "code", slots: [] });
+
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
     });
 
     it("works without a client (client=null)", async () => {

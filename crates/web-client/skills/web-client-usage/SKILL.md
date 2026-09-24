@@ -381,6 +381,12 @@ const contract = await client.accounts.create({
 });
 ```
 
+`compile.component` only turns exports marked `@account_procedure` or
+`@auth_script` into account procedures. A component with none logs a
+`[miden-sdk]` console warning but is still returned, and an account created from
+it can never be called into: every transaction against it fails inside the
+kernel. Watch the console the first time you compile a new component.
+
 A contract is whatever `accounts.create()` call carries `components` - the
 string forms `type: "MutableContract"` / `"ImmutableContract"` also route to a
 contract, but the canonical selector is `components`, and an empty
