@@ -292,9 +292,8 @@ NoteVisibility.Private; // "private"
 AccountType.Private; // 0
 AccountType.Public; // 1
 
-// accounts.create({ type }) selects faucet kind:
-FaucetType.FungibleFaucet; // 0
-FaucetType.NonFungibleFaucet; // 1
+// accounts.create({ type }) selects a faucet:
+FaucetType.FungibleFaucet; // "FungibleFaucet"
 
 AuthScheme.Falcon; // default - Falcon-512 over Poseidon2
 AuthScheme.ECDSA; // EcdsaK256Keccak
@@ -309,10 +308,12 @@ separate enum exported for the low-level WASM APIs and is easy to confuse with
 `AuthScheme.Falcon` for the Poseidon2-based Falcon-512 scheme.
 
 `AccountType.Private` / `AccountType.Public` select visibility in
-`AccountBuilder.accountType()`. `FaucetType` exposes `FungibleFaucet` and
-`NonFungibleFaucet` for `accounts.create({ type })`, with the same numeric
-values in browser and Node.js. Replace older `AccountType.*Faucet` references
-with `FaucetType.*Faucet`.
+`AccountBuilder.accountType()`. `FaucetType.FungibleFaucet` selects a fungible
+faucet in `accounts.create({ type })`; its value is a string, so it cannot be
+mistaken for an `AccountType` value. Replace older `AccountType.FungibleFaucet`
+references with `FaucetType.FungibleFaucet`: `create()` throws a `TypeError`
+for any unrecognised `type`, and for faucet fields (`name`, `symbol`,
+`decimals`, `maxSupply`) without a faucet selector.
 
 Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
 `components` for a contract (the strings `"MutableContract"` / `"ImmutableContract"`
@@ -321,9 +322,8 @@ are also accepted). Use `storage` to select visibility in `accounts.create()`.
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
 
-`FaucetType.NonFungibleFaucet` is reserved: account creation currently rejects
-it with "Non-fungible faucets are not supported yet". Only fungible faucet
-creation is supported.
+Non-fungible faucets are not supported yet, so `FaucetType` has no
+non-fungible member.
 
 ## Account Creation
 
@@ -338,7 +338,7 @@ const wallet = await client.accounts.create({
   auth: AuthScheme.Falcon,
 });
 
-// Faucet - selected via FaucetType.FungibleFaucet / NonFungibleFaucet
+// Faucet - selected via FaucetType.FungibleFaucet
 const faucet = await client.accounts.create({
   type: FaucetType.FungibleFaucet,
   storage: "public",

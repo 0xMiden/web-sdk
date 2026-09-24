@@ -26,17 +26,19 @@ it("type-checks visibility and faucet selectors through the public declarations"
       consumer,
       `
       import { AccountBuilder, AccountType, FaucetType,
-        type FaucetTypeValue, type AccountTypeValue,
         type FaucetCreateOptions } from "./index";
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Public);
       new AccountBuilder(new Uint8Array(32)).accountType(AccountType.Private);
       const visibility: AccountType = AccountType.Public;
       const kind: FaucetType = FaucetType.FungibleFaucet;
-      const value: FaucetTypeValue = FaucetType.NonFungibleFaucet;
-      const legacy: AccountTypeValue = kind;
+      const literal: "FungibleFaucet" = kind;
       const faucet: FaucetCreateOptions = {
         type: kind, symbol: "TOK", decimals: 8, maxSupply: 1000n
       };
+      // @ts-expect-error Non-fungible faucets have no public selector.
+      FaucetType.NonFungibleFaucet;
+      // @ts-expect-error The faucet-kind aliases were removed with the rename.
+      import type { FaucetTypeValue, AccountTypeValue } from "./index";
       // @ts-expect-error Faucet kinds are no longer members of AccountType.
       AccountType.FungibleFaucet;
       // @ts-expect-error FaucetType does not select visibility.

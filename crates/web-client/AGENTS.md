@@ -78,9 +78,10 @@ with it, and free the object wrappers the skills call out individually.
 
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
-Use `FaucetType.FungibleFaucet` / `FaucetType.NonFungibleFaucet` for
-`accounts.create({ type })`, and `storage` for visibility. Older
-`AccountType.*Faucet` references must migrate to `FaucetType.*Faucet`.
+Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
+for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+`FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
+`type` rather than creating a wallet.
 
 ## Going deeper
 

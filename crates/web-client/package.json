@@ -53,6 +53,7 @@
     "dist",
     "lazy",
     "mt",
+    "js/enums.js",
     "js/node-index.js",
     "js/node",
     "js/client.js",

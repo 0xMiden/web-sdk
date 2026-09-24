@@ -472,14 +472,13 @@ const builder = new AccountBuilder(new Uint8Array(32))
 ```
 
 For `client.accounts.create()`, select visibility with `storage: "public"` or
-`"private"`, and faucet kind with `FaucetType.FungibleFaucet` or
-`FaucetType.NonFungibleFaucet`. Migrate previous `AccountType.*Faucet` uses to
-`FaucetType.*Faucet`; both faucet selectors are numeric in browser and Node.js.
+`"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
+Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
-
-`FaucetType.NonFungibleFaucet` is reserved: account creation currently rejects
-it with "Non-fungible faucets are not supported yet". Only fungible faucet
-creation is supported.
+`create()` throws a `TypeError` for any other `type`, and for faucet fields
+(`name`, `symbol`, `decimals`, `maxSupply`) without a faucet selector, so a
+missed migration fails instead of creating a wallet. Non-fungible faucets are
+not supported yet.
 
 ### Create a New Wallet
 

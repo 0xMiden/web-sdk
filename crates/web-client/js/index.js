@@ -19,31 +19,13 @@ import {
 } from "./storageView.js";
 export * from "../Cargo.toml";
 
-export const FaucetType = Object.freeze({
-  // Faucet-kind selectors for accounts.create({ type }).
-  FungibleFaucet: 0,
-  NonFungibleFaucet: 1,
-});
-
-export const AuthScheme = Object.freeze({
-  Falcon: "falcon",
-  ECDSA: "ecdsa",
-});
-
-export const NoteVisibility = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const StorageMode = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const Linking = Object.freeze({
-  Dynamic: "dynamic",
-  Static: "static",
-});
+export {
+  FaucetType,
+  AuthScheme,
+  NoteVisibility,
+  StorageMode,
+  Linking,
+} from "./enums.js";
 
 export { isConsumableNow } from "./utils.js";
 export { MidenClient };

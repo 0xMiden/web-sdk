@@ -2,10 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AccountsResource } from "../../resources/accounts.js";
 
 function makeWasm(overrides = {}) {
-  const accountTypeEnum = {
-    Private: 0,
-    Public: 1,
-  };
   const fakeBuilderInstance = {
     accountType: vi.fn().mockReturnThis(),
     storageMode: vi.fn().mockReturnThis(),
@@ -26,7 +22,6 @@ function makeWasm(overrides = {}) {
       AuthEcdsaK256Keccak: 1,
       AuthRpoFalcon512: 2,
     },
-    AccountType: accountTypeEnum,
     AccountComponent: {
       createAuthComponentFromSecretKey: vi.fn().mockReturnValue("authComp"),
     },

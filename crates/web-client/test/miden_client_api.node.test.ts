@@ -7,16 +7,21 @@ import path from "path";
 // Mock chain tests — no node needed, self-contained
 // ════════════════════════════════════════════════════════════════
 
-test("public entry exposes native account visibility and numeric faucet selectors", async () => {
-  const { AccountBuilder, AccountType, FaucetType } =
-    await import("../js/node-index.js");
-  expect(AccountType.Private).toBe(0);
-  expect(AccountType.Public).toBe(1);
+// The public entry's exports are covered by js/__tests__/account-type-exports.test.js;
+// importing it here would rewire MidenClient for every later test in this worker.
+test("native account visibility selects the builder's account type", async ({
+  sdk,
+}) => {
+  const { AccountBuilder, AccountType } = sdk;
+  expect(Object.getOwnPropertyNames(AccountType).sort()).toEqual([
+    "Private",
+    "Public",
+  ]);
+  expect([AccountType.Private, AccountType.Public]).toEqual([0, 1]);
   for (const type of [AccountType.Private, AccountType.Public]) {
     const builder = new AccountBuilder(new Uint8Array(32));
     expect(builder.accountType(type)).toBeInstanceOf(AccountBuilder);
   }
-  expect(FaucetType).toEqual({ FungibleFaucet: 0, NonFungibleFaucet: 1 });
 });
 
 test.describe("MidenClient API - Mock Chain", () => {

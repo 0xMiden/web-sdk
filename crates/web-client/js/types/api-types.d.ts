@@ -148,23 +148,16 @@ export type Linking = "dynamic" | "static";
 export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
 
 /**
- * Faucet-kind selectors for `accounts.create({ type })`, identical on browser and Node.
+ * Faucet-kind selector for `accounts.create({ type })`, the same object on browser and Node.
  *
- * Use the native `AccountType.Private` / `AccountType.Public` enum with
- * `AccountBuilder.accountType()` to select visibility. Wallets are the default
- * when `type` is omitted; contracts are selected by passing `components`.
+ * Its value is a string, so it cannot be confused with the native
+ * `AccountType.Private` / `AccountType.Public` visibility enum, which
+ * `AccountBuilder.accountType()` takes. Wallets are the default when `type` is
+ * omitted; contracts are selected by passing `components`.
  */
 export declare const FaucetType: {
-  readonly FungibleFaucet: 0;
-  /** Reserved selector; creation currently rejects with "Non-fungible faucets are not supported yet". */
-  readonly NonFungibleFaucet: 1;
+  readonly FungibleFaucet: "FungibleFaucet";
 };
-
-/** Union of valid FaucetType numeric values. */
-export type FaucetTypeValue = FaucetType;
-
-/** @deprecated Use FaucetTypeValue for faucet-kind selectors. */
-export type AccountTypeValue = FaucetTypeValue;
 
 // ════════════════════════════════════════════════════════════════
 // Observability
@@ -331,8 +324,8 @@ export interface WalletCreateOptions {
 }
 
 export interface FaucetCreateOptions {
-  /** Use `FaucetType.FungibleFaucet` or `FaucetType.NonFungibleFaucet`. */
-  type: FaucetTypeValue;
+  /** Use `FaucetType.FungibleFaucet`. */
+  type: FaucetType;
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
   symbol: string;

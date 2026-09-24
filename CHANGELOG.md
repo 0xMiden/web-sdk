@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0-rc.3 (TBD)
+
+### Changes
+
+* [BREAKING][web] `AccountType` is now the native visibility enum (`AccountType.Private` / `AccountType.Public`) on both entry points, as `AccountBuilder.accountType()` expects; the JS object that shadowed it is gone. Faucets are selected with `FaucetType.FungibleFaucet`, whose value is the string `"FungibleFaucet"`: migrate `accounts.create({ type: AccountType.FungibleFaucet, ... })` to `type: FaucetType.FungibleFaucet`. `accounts.create()` now throws a `TypeError` naming `FaucetType` for an unrecognised `type` and for faucet fields without a faucet selector, where it used to create a wallet. `FaucetType` has no non-fungible member, and the `AccountTypeValue` type is removed ([#423](https://github.com/0xMiden/web-sdk/pull/423), fixes [#361](https://github.com/0xMiden/web-sdk/issues/361)).
+
 ## 0.17.0-rc.2 (TBD)
 
 ### Enhancements
@@ -17,10 +23,6 @@
 * [BREAKING][behavior][web] `notes.listAvailable({ account })` and `transactions.consumeAll({ account })` no longer return or consume block-locked notes. Both keep only notes the client's note screener reports as consumable by `account` at the last synced block, so `consumeAll` no longer fails a whole transaction on one time-locked note, and its `consumed`/`remaining` counts follow. Use `notes.listConsumable()` to also see block-locked notes. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 * [BREAKING][behavior][react] `useNotes().consumableNotes` (and `consumableNoteSummaries`), `useWaitForNotes().waitForConsumableNotes` and `useSessionAccount`'s funding poll now apply the same rule: block-locked notes are not reported as consumable, are not waited on as if they were, and are no longer put into a consume transaction that the whole account's funding step would fail on. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 ## 0.17.0-rc.1 (2026-09-21)
-
-### Breaking
-
-* [BREAKING][web] Rename the faucet selectors to `FaucetType.FungibleFaucet` and `FaucetType.NonFungibleFaucet`, with numeric values in both browser and Node.js. `AccountType.Private` and `AccountType.Public` now expose the native visibility enum accepted by `AccountBuilder.accountType()`. Replace existing `AccountType.*Faucet` references with `FaucetType.*Faucet` ([#361](https://github.com/0xMiden/web-sdk/issues/361)).
 
 ### Changes
 

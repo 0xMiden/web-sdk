@@ -98,10 +98,7 @@ for (const entry of ["./eager.js", "./index.js"]) {
         return { accepted, faucetType: mod.FaucetType };
       }, entry);
       expect(result.accepted).toEqual([0, 1]);
-      expect(result.faucetType).toEqual({
-        FungibleFaucet: 0,
-        NonFungibleFaucet: 1,
-      });
+      expect(result.faucetType).toEqual({ FungibleFaucet: "FungibleFaucet" });
     }
   );
 }

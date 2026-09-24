@@ -55,32 +55,15 @@ function ensureInitialized() {
 // Initialize on import
 ensureInitialized();
 
-// ── Enum constants (matching browser entry point) ────────────────────
+// ── Enum constants (shared with the browser entry via enums.js) ─────
 
-export const FaucetType = Object.freeze({
-  FungibleFaucet: 0,
-  NonFungibleFaucet: 1,
-});
-
-export const AuthScheme = Object.freeze({
-  Falcon: "falcon",
-  ECDSA: "ecdsa",
-});
-
-export const NoteVisibility = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const StorageMode = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const Linking = Object.freeze({
-  Dynamic: "dynamic",
-  Static: "static",
-});
+export {
+  FaucetType,
+  AuthScheme,
+  NoteVisibility,
+  StorageMode,
+  Linking,
+} from "./enums.js";
 
 // ── Re-exports ───────────────────────────────────────────────────────
 

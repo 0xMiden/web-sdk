@@ -16,6 +16,7 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { FaucetType } from "../js/enums.js";
 
 const require = createRequire(import.meta.url);
 
@@ -522,7 +523,6 @@ export async function setupNodeGlobals(
   storeName: string,
   proverUrl?: string
 ) {
-  const publicSdk = await import("../js/node-index.js");
   let currentClient: any = null;
 
   // All SDK types go on globalThis so "window.X" works in callbacks
@@ -541,8 +541,8 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    AccountType: publicSdk.AccountType,
-    FaucetType: publicSdk.FaucetType,
+    AccountType: sdk.AccountType,
+    FaucetType,
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
     AccountComponent: wrapClass(sdk.AccountComponent),

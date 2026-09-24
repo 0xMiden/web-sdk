@@ -28,14 +28,13 @@ const faucet = await client.accounts.create({
 });
 ```
 
-`FaucetType.FungibleFaucet` is `0` and `FaucetType.NonFungibleFaucet` is `1`
-on both runtimes. Migrate older `AccountType.*Faucet` references to
-`FaucetType.*Faucet`. Neither enum has wallet or contract members: omit `type`
-for a wallet, or pass `components` for a contract. Do not pass the native
-visibility enum as the `type` option of `accounts.create()`.
-
-`FaucetType.NonFungibleFaucet` is reserved: account creation currently rejects
-it with "Non-fungible faucets are not supported yet". Only fungible faucet
-creation is supported.
+`FaucetType.FungibleFaucet` is the string `"FungibleFaucet"` on both runtimes,
+so it cannot be mistaken for an `AccountType` value. Migrate older
+`AccountType.FungibleFaucet` references to `FaucetType.FungibleFaucet`. Neither
+enum has wallet or contract members: omit `type` for a wallet, or pass
+`components` for a contract. `accounts.create()` throws a `TypeError` for any
+other `type`, including a native visibility value, and for faucet fields
+(`name`, `symbol`, `decimals`, `maxSupply`) without a faucet selector.
+Non-fungible faucets are not supported yet.
 
 Wallets default to private storage; faucets and contracts default to public.
