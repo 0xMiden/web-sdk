@@ -5,6 +5,27 @@ import {
   hashSeed,
 } from "../utils.js";
 
+// Legacy numeric 0/1 and "NonFungibleFaucet" are still accepted; non-fungible
+// requests reach the Rust rejection.
+const FAUCET_TYPES = new Set(["FungibleFaucet", "NonFungibleFaucet", 0, 1]);
+const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
+const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply"];
+const REQUIRED_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
+
+function display(value) {
+  try {
+    return String(value);
+  } catch {
+    return typeof value;
+  }
+}
+
+function selectorError(problem) {
+  return new TypeError(
+    `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
+  );
+}
+
 export class AccountsResource {
   #inner;
   #getWasm;
@@ -16,18 +37,33 @@ export class AccountsResource {
     this.#client = client;
   }
 
+  /**
+   * Create a wallet by default, a faucet via `FaucetType`, or a contract via
+   * `components`. Visibility is selected separately with `storage`.
+   *
+   * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
+   * also AccountType.Private/Public, so a visibility value passed as `type` is
+   * read as a faucet selector. Throws a TypeError naming `FaucetType`, before
+   * creating anything, for an unrecognised `type`, for faucet fields (`name`,
+   * `symbol`, `decimals`, `maxSupply`) without a faucet type, for `components`
+   * on a faucet, and for a faucet missing `symbol`, `decimals` or `maxSupply`.
+   */
   async create(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
     const type = opts?.type;
 
-    if (
-      type === 0 ||
-      type === 1 ||
-      type === "FungibleFaucet" ||
-      type === "NonFungibleFaucet"
-    ) {
+    if (FAUCET_TYPES.has(type)) {
+      if (opts.components !== undefined) {
+        throw selectorError("a faucet request cannot carry components.");
+      }
+      const missing = REQUIRED_FAUCET_FIELDS.filter(
+        (field) => opts[field] === undefined
+      );
+      if (missing.length > 0) {
+        throw selectorError(`a faucet request needs ${missing.join(", ")}.`);
+      }
       const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
       const authScheme = resolveAuthScheme(opts.auth, wasm);
       return await this.#inner.newFaucet(
@@ -39,10 +75,27 @@ export class AccountsResource {
         BigInt(opts.maxSupply),
         authScheme
       );
-    } else if (
-      type === "ImmutableContract" ||
-      type === "MutableContract" ||
-      opts?.components // Contracts are distinguished from wallets by having components
+    }
+
+    if (type !== undefined && !CONTRACT_TYPES.has(type)) {
+      throw selectorError(`unrecognised type ${display(type)}.`);
+    }
+    // A stale AccountType.FungibleFaucet reads as undefined, so faucet fields
+    // are how a missed FaucetType migration shows up.
+    const faucetFields = FAUCET_FIELDS.filter(
+      (field) => opts?.[field] !== undefined
+    );
+    if (faucetFields.length > 0) {
+      throw selectorError(
+        `${faucetFields.join(", ")} only apply to faucets, and no faucet type was given.`
+      );
+    }
+
+    if (
+      CONTRACT_TYPES.has(type) ||
+      // Contracts are distinguished from wallets by having components; any
+      // value other than undefined asks for a contract, so null fails loudly.
+      opts?.components !== undefined
     ) {
       return await this.#createContract(opts, wasm);
     } else {

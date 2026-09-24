@@ -55,32 +55,15 @@ function ensureInitialized() {
 // Initialize on import
 ensureInitialized();
 
-// ── Enum constants (matching browser entry point) ────────────────────
+// ── Enum constants (shared with the browser entry via enums.js) ─────
 
-export const AccountType = Object.freeze({
-  FungibleFaucet: "FungibleFaucet",
-  NonFungibleFaucet: "NonFungibleFaucet",
-});
-
-export const AuthScheme = Object.freeze({
-  Falcon: "falcon",
-  ECDSA: "ecdsa",
-});
-
-export const NoteVisibility = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const StorageMode = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const Linking = Object.freeze({
-  Dynamic: "dynamic",
-  Static: "static",
-});
+export {
+  FaucetType,
+  AuthScheme,
+  NoteVisibility,
+  StorageMode,
+  Linking,
+} from "./enums.js";
 
 // ── Re-exports ───────────────────────────────────────────────────────
 
@@ -176,6 +159,7 @@ export const AccountStoragePatch = /* @__PURE__ */ _reexport(
 export const AccountStorageRequirements = /* @__PURE__ */ _reexport(
   "AccountStorageRequirements"
 );
+export const AccountType = /* @__PURE__ */ _reexport("AccountType");
 export const AccountVaultDelta = /* @__PURE__ */ _reexport("AccountVaultDelta");
 export const AccountVaultPatch = /* @__PURE__ */ _reexport("AccountVaultPatch");
 export const Address = /* @__PURE__ */ _reexport("Address");

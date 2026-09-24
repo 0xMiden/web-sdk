@@ -16,6 +16,7 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { FaucetType } from "../js/enums.js";
 
 const require = createRequire(import.meta.url);
 
@@ -540,15 +541,8 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    // AccountType: the JS wrapper uses string-based types, not the napi enum
-    AccountType: {
-      MutableWallet: "MutableWallet",
-      ImmutableWallet: "ImmutableWallet",
-      FungibleFaucet: "FungibleFaucet",
-      NonFungibleFaucet: "NonFungibleFaucet",
-      ImmutableContract: "ImmutableContract",
-      MutableContract: "MutableContract",
-    },
+    AccountType: sdk.AccountType,
+    FaucetType,
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
     AccountComponent: wrapClass(sdk.AccountComponent),

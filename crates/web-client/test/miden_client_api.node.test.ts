@@ -7,6 +7,23 @@ import path from "path";
 // Mock chain tests — no node needed, self-contained
 // ════════════════════════════════════════════════════════════════
 
+// The public entry's exports are covered by js/__tests__/account-type-exports.test.js;
+// importing it here would rewire MidenClient for every later test in this worker.
+test("native account visibility selects the builder's account type", async ({
+  sdk,
+}) => {
+  const { AccountBuilder, AccountType } = sdk;
+  expect(Object.getOwnPropertyNames(AccountType).sort()).toEqual([
+    "Private",
+    "Public",
+  ]);
+  expect([AccountType.Private, AccountType.Public]).toEqual([0, 1]);
+  for (const type of [AccountType.Private, AccountType.Public]) {
+    const builder = new AccountBuilder(new Uint8Array(32));
+    expect(builder.accountType(type)).toBeInstanceOf(AccountBuilder);
+  }
+});
+
 test.describe("MidenClient API - Mock Chain", () => {
   test("full flow: create accounts, mint, consume, check balance", async ({
     sdk,

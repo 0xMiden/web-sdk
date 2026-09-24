@@ -280,6 +280,7 @@ might exceed 2^53.
 import {
   NoteVisibility,
   AccountType,
+  FaucetType,
   AuthScheme,
   StorageMode,
 } from "@miden-sdk/miden-sdk";
@@ -287,9 +288,12 @@ import {
 NoteVisibility.Public; // "public"
 NoteVisibility.Private; // "private"
 
-// AccountType is a faucet-kind selector with ONLY two members:
-AccountType.FungibleFaucet; // 0
-AccountType.NonFungibleFaucet; // 1
+// AccountBuilder.accountType() selects visibility:
+AccountType.Private; // 0
+AccountType.Public; // 1
+
+// accounts.create({ type }) selects a faucet:
+FaucetType.FungibleFaucet; // "FungibleFaucet"
 
 AuthScheme.Falcon; // default - Falcon-512 over Poseidon2
 AuthScheme.ECDSA; // EcdsaK256Keccak
@@ -303,14 +307,26 @@ separate enum exported for the low-level WASM APIs and is easy to confuse with
 `NoteVisibility`, so do not pass it where a `NoteVisibility` is expected. Use
 `AuthScheme.Falcon` for the Poseidon2-based Falcon-512 scheme.
 
-`AccountType` exposes **only** `FungibleFaucet`/`NonFungibleFaucet`. There is no
-`MutableWallet`/`ImmutableWallet`/`MutableContract`/`ImmutableContract` member -
-those evaluate to `undefined`. Wallets and contracts are not chosen via
-`AccountType`: a wallet is the default (omit `type`), and a contract is any
-`accounts.create()` call that passes `components` (or `type: "MutableContract"`/`"ImmutableContract"` as strings). See "Account Creation".
+`AccountType.Private` / `AccountType.Public` select visibility in
+`AccountBuilder.accountType()`. `FaucetType.FungibleFaucet` selects a fungible
+faucet in `accounts.create({ type })`; its value is a string, so it cannot be
+mistaken for an `AccountType` value. Replace older `AccountType.FungibleFaucet`
+references with `FaucetType.FungibleFaucet`: `create()` throws a `TypeError`
+for any unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
+`maxSupply`) without a faucet type, for `components` on a faucet, and for a
+faucet missing `symbol`, `decimals` or `maxSupply`. The legacy `0`, `1` and
+`"NonFungibleFaucet"` are still read as faucet types, and `0` / `1` are also
+`AccountType.Private` / `Public`, so never pass a visibility value as `type`.
+
+Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
+`components` for a contract (the strings `"MutableContract"` / `"ImmutableContract"`
+are also accepted). Use `storage` to select visibility in `accounts.create()`.
 
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
+
+Non-fungible faucets are not supported yet, so `FaucetType` has no
+non-fungible member.
 
 ## Account Creation
 
@@ -325,9 +341,9 @@ const wallet = await client.accounts.create({
   auth: AuthScheme.Falcon,
 });
 
-// Faucet - selected via AccountType.FungibleFaucet / NonFungibleFaucet
+// Faucet - selected via FaucetType.FungibleFaucet
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   storage: "public",
   symbol: "DAG",
   decimals: 8,
@@ -1087,7 +1103,7 @@ fails to compile with `undefined item 'add_assets_to_account'`.
 ```typescript
 const wallet = await client.accounts.create();
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   storage: "public",
   symbol: "TEST",
   decimals: 8,

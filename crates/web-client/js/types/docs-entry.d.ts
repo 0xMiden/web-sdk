@@ -7,6 +7,8 @@
 // Curated WASM re-exports: only types referenced in the public API
 export {
   Account,
+  AccountBuilder,
+  AccountType,
   AccountCode,
   AccountFile,
   AccountHeader,

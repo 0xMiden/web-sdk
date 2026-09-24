@@ -76,6 +76,15 @@ single most common source of "impossible" runtime errors.
 way plain JS objects are. Call `terminate()` on the client when you are done
 with it, and free the object wrappers the skills call out individually.
 
+**Account visibility and faucet kind are separate.** Use native
+`AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
+Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
+for visibility. Older `AccountType.FungibleFaucet` references must migrate to
+`FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
+`type` rather than creating a wallet. The legacy `0` / `1` are still faucet
+selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
+value as `type`.
+
 ## Going deeper
 
 - Narrative documentation and the full generated API reference:

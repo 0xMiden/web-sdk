@@ -144,27 +144,20 @@ export declare const Linking: {
 /** Union of valid Linking string values. */
 export type Linking = "dynamic" | "static";
 
-/**
- * Union of all values in the AccountType const.
- */
-export type AccountType = (typeof AccountType)[keyof typeof AccountType];
+/** Union of the faucet-kind selectors accepted by `accounts.create({ type })`. */
+export type FaucetType = (typeof FaucetType)[keyof typeof FaucetType];
 
 /**
- * Faucet-kind selectors for `accounts.create({ type })`.
+ * Faucet-kind selector for `accounts.create({ type })`, the same object on browser and Node.
  *
- * These are NOT the low-level WASM `AccountType` enum. As of protocol 0.15 that
- * enum encodes only account visibility (`Private` / `Public`), which the
- * low-level builder sets via `AccountBuilder.storageMode()`. Wallets and
- * contracts are not selected by a `type` value: a wallet is the default, and a
- * contract is any `accounts.create()` call that passes `components`.
+ * Its value is a string, so it cannot be confused with the native
+ * `AccountType.Private` / `AccountType.Public` visibility enum, which
+ * `AccountBuilder.accountType()` takes. Wallets are the default when `type` is
+ * omitted; contracts are selected by passing `components`.
  */
-export declare const AccountType: {
-  readonly FungibleFaucet: 0;
-  readonly NonFungibleFaucet: 1;
+export declare const FaucetType: {
+  readonly FungibleFaucet: "FungibleFaucet";
 };
-
-/** Union of valid AccountType numeric values. */
-export type AccountTypeValue = 0 | 1;
 
 // ════════════════════════════════════════════════════════════════
 // Observability
@@ -316,8 +309,9 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Create a wallet, faucet, or contract. A faucet sets `type`, a contract
- * passes `components`, and a wallet is the default (neither).
+ * Create a wallet, faucet, or contract. A faucet sets `type:
+ * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
+ * the default (neither). Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
@@ -331,8 +325,8 @@ export interface WalletCreateOptions {
 }
 
 export interface FaucetCreateOptions {
-  /** Use `AccountType.FungibleFaucet` or `AccountType.NonFungibleFaucet`. */
-  type: AccountTypeValue;
+  /** Use `FaucetType.FungibleFaucet`. */
+  type: FaucetType;
   /** Human-readable token name. Defaults to `symbol` when omitted. */
   name?: string;
   symbol: string;
@@ -1019,8 +1013,17 @@ export interface AccountsResource {
    * Create a new wallet, faucet, or contract account. Defaults to a wallet
    * if no options are provided.
    *
+   * The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
+   * faucet types (non-fungible faucets are rejected). `0` and `1` are also
+   * `AccountType.Private` / `AccountType.Public`, so never pass a visibility
+   * value as `type`; use `storage`.
+   *
    * @param options - Account creation options. A faucet sets `type`, a
    * contract passes `components`, and a wallet is the default.
+   * @throws TypeError naming `FaucetType`, before creating anything, for an
+   * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
+   * `maxSupply`) without a faucet type, for `components` on a faucet, and for a
+   * faucet missing `symbol`, `decimals` or `maxSupply`.
    */
   create(options?: CreateAccountOptions): Promise<Account>;
   /**
