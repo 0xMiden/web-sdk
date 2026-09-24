@@ -433,6 +433,7 @@ impl IdxdbStore {
         patch: &AccountPatch,
     ) -> Result<(), StoreError> {
         let account_id = final_header.id();
+        self.load_stored_account_into_forest(account_id).await?;
         let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
 
         let write =
@@ -611,6 +612,26 @@ impl IdxdbStore {
         // Bound the read guard to this statement: `rebuild_account_forest` takes the write lock.
         let tracked = self.smt_forest.read().vault_root(account_id).is_some();
         if tracked {
+            return Ok(());
+        }
+        self.rebuild_account_forest(account_id).await
+    }
+
+    /// Loads an account's trees into the forest before a patch is applied to it, if the tables
+    /// track the account and the forest does not.
+    ///
+    /// The forest is built from the tables when the store opens, so it misses an account that
+    /// another store on the same database inserted afterwards. That is the normal case with the
+    /// web worker: an account imported on the main thread is written to `IndexedDB`, but the
+    /// worker's store, which applies transactions, opened before the import. An account the tables
+    /// do not track is left out, so `apply_patch_to_forest` still rejects it.
+    pub(crate) async fn load_stored_account_into_forest(
+        &self,
+        account_id: AccountId,
+    ) -> Result<(), StoreError> {
+        // Bound the read guard to this statement: `rebuild_account_forest` takes the write lock.
+        let tracked = self.smt_forest.read().vault_root(account_id).is_some();
+        if tracked || self.get_account_header(account_id).await?.is_none() {
             return Ok(());
         }
         self.rebuild_account_forest(account_id).await

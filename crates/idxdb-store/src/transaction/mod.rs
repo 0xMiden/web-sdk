@@ -229,8 +229,12 @@ impl IdxdbStore {
         let mut touched_accounts: BTreeSet<AccountId> = BTreeSet::new();
 
         for update in &tx_updates {
+            let account_id = update.executed_transaction().account_id();
+            if !update.executed_transaction().account_patch().is_full_state() {
+                self.load_stored_account_into_forest(account_id).await?;
+            }
             payloads.push(self.prepare_update_for_batch(update)?);
-            touched_accounts.insert(update.executed_transaction().account_id());
+            touched_accounts.insert(account_id);
         }
 
         // Serialize all payloads to a JS array of plain objects via serde_wasm_bindgen.
