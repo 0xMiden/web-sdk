@@ -17,7 +17,6 @@ export {
   AccountStoragePatch,
   AccountVaultPatch,
   AdviceMap,
-  VaultAsset,
   AssetVault,
   BasicFungibleFaucetComponent,
   BlockHeader,
@@ -52,6 +51,7 @@ export {
   TransactionResult,
   TransactionStoreUpdate,
   TransactionSummary,
+  VaultAsset,
   Word,
 } from "./crates/miden_client_web";
 

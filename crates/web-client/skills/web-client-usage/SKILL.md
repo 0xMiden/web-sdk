@@ -464,11 +464,10 @@ clears the other, so whichever is called last wins.
 
 ## Transactions
 
-**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`). The
-constructors `unwrap` the protocol's `TooManyAssets` error, so going over the cap from
-JavaScript **traps the WASM instance** rather than rejecting with a catchable error - check
-the length yourself before building a note with many assets. Duplicates are rejected too,
-and the order of assets is unspecified.
+**A note carries at most 16 assets** (`MAX_ASSETS_PER_NOTE` in `miden-protocol`).
+`new NoteAssets(...)` and `push()` throw a catchable error when the list would go over the
+cap or repeat an asset, and a failed `push()` leaves the list unchanged. Note assets keep
+their input order.
 
 Per-asset callbacks are read off `FungibleAsset.callbacks()`. There is no `withCallbacks`
 builder - do not reach for one.
