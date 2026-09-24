@@ -549,7 +549,10 @@ because on Node.js the array wrappers are JS polyfills rather than napi classes:
 
 Miss step 2 and `js/__tests__/node-exports.test.js` fails, since it compares
 `NODE_ARRAY_TYPES` against the macro; miss step 3 and CI's
-`check:node-reexports` fails.
+`check:node-reexports` fails. The Node Playwright harness still keeps its own
+array lists (`test/node-adapter.ts`, `test/test-setup.ts`,
+`test/test-helpers.ts`, tracked by #426), so add the name there too until it
+reads `NODE_ARRAY_TYPES`; nothing checks those copies.
 
 ### Node entry re-exports and name shadowing
 
