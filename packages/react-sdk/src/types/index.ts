@@ -109,9 +109,9 @@ export interface MidenConfig {
   /**
    * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
    *
-   * Required for a network the SDK knows no fee faucet for. Since 0.17 the fee asset lives in
-   * the protocol configuration rather than the block header, and a client that cannot build one
-   * can neither execute nor screen notes.
+   * Optional. Since 0.17 the fee asset lives in the protocol configuration, which the client
+   * receives from the node when it syncs, so execution does not need this. It only sets what
+   * `client.feeFaucetId()` reports before the first sync.
    */
   feeFaucetId?: string;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */

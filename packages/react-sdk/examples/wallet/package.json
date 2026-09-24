@@ -9,16 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@miden-sdk/miden-sdk": "^0.17.0-rc.1",
-    "@miden-sdk/miden-wallet-adapter-react": "^0.17.0-rc.1",
-    "@miden-sdk/para-react": "^0.17.0-rc.1",
-    "@miden-sdk/react": "^0.17.0-rc.1",
-    "@miden-sdk/turnkey-react": "^0.17.0-rc.1",
+    "@miden-sdk/miden-sdk": "^0.17.0-rc.2",
+    "@miden-sdk/miden-wallet-adapter-react": "^0.17.0-rc.2",
+    "@miden-sdk/para-react": "^0.17.0-rc.2",
+    "@miden-sdk/react": "^0.17.0-rc.2",
+    "@miden-sdk/turnkey-react": "^0.17.0-rc.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "@miden-sdk/vite-plugin": "^0.17.0-rc.1",
+    "@miden-sdk/vite-plugin": "^0.17.0-rc.2",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",

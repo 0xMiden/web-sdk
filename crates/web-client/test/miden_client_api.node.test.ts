@@ -126,6 +126,32 @@ test.describe("MidenClient API - Mock Chain", () => {
     expect(result.isPublic).toBe(true);
   });
 
+  test("accounts.isAllowed and accounts.register on a chain without an allowlist", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const wallet = await client.accounts.create();
+    const allowed = await client.accounts.isAllowed(wallet);
+
+    let message = null;
+    try {
+      await client.accounts.register({
+        account: wallet,
+        invitationCode: "invitation-code",
+      });
+    } catch (error) {
+      message = String(error.message ?? error);
+    }
+
+    // The mock node enforces no allowlist, so every account is allowed and the
+    // client keeps the invitation code rather than spending it.
+    expect(allowed).toBe(true);
+    expect(message).toContain("already allowed");
+  });
+
   test("accounts.list returns created accounts", async ({ sdk }) => {
     const MidenClient = await createMidenClient(sdk);
     test.skip(!MidenClient, "requires napi binary (Node.js only)");

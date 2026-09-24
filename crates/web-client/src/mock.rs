@@ -5,6 +5,7 @@ use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
 use miden_client::block::BlockNumber;
 use miden_client::crypto::eddsa_25519_sha512::KeyExchangeKey;
+use miden_client::protocol_config::ProtocolConfig;
 use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::Store;
 use miden_client::testing::MockChain;
@@ -59,18 +60,18 @@ impl WebClient {
         );
         let keystore = WebKeyStore::new_with_callbacks(rng, store_name, None, None, None);
 
-        // The mock chain is its own source of protocol configuration: it commits to one no
-        // network serves, so the client has to be given that one rather than a network's.
+        let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
             store,
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            mock_rpc_api.protocol_config(),
+            Some(protocol_config.fee_asset_id().faucet_id()),
         )
         .await?;
 
+        self.seed_mock_protocol_config(protocol_config).await?;
         self.seed_mock_transaction_encryption_key().await?;
 
         *self.mock_rpc_api.lock().await = Some(mock_rpc_api);
@@ -123,18 +124,18 @@ impl WebClient {
         let keystore = miden_client::keystore::FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
-        // The mock chain is its own source of protocol configuration: it commits to one no
-        // network serves, so the client has to be given that one rather than a network's.
+        let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
             store,
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            mock_rpc_api.protocol_config(),
+            Some(protocol_config.fee_asset_id().faucet_id()),
         )
         .await?;
 
+        self.seed_mock_protocol_config(protocol_config).await?;
         self.seed_mock_transaction_encryption_key().await?;
 
         *self.mock_rpc_api.lock().await = Some(mock_rpc_api);
@@ -145,6 +146,19 @@ impl WebClient {
 }
 
 impl WebClient {
+    /// Gives a mock-backed client the protocol configuration its chain commits to.
+    ///
+    /// A client gets its configurations from the node while syncing. The mock chain commits to
+    /// one no node serves and `MockRpcApi` delivers none, so the client is handed the mock
+    /// chain's own instead, ahead of the first execution that resolves it.
+    async fn seed_mock_protocol_config(&self, config: ProtocolConfig) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.seed_protocol_config(config).await.map_err(|err| {
+            js_error_with_context(err, "failed to seed the mock protocol configuration")
+        })
+    }
+
     /// Gives a mock-backed client the transaction encryption key that submission seals against.
     ///
     /// `MockRpcApi` refuses to serve a key, because attesting one needs a validator signature the

@@ -265,14 +265,13 @@ import { MidenClient, AccountId, Felt } from "@miden-sdk/miden-sdk";
 const id = AccountId.fromHex("0x…"); // sync, WASM is already initialized
 const felt = new Felt(42n); // sync
 
-const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
+const client = await MidenClient.createTestnet();
 ```
 
-Every non-mock constructor needs `feeFaucetId`. Since 0.17 the chain's fee asset
-lives in a protocol configuration the node does not serve over RPC, and the SDK
-carries a per-network default for no network yet, so a client created without it
-fails with an error naming the option. Snippets below leave it out where the
-point they make is something else.
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Snippets below leave it out.
 
 ### Lazy usage (`/lazy`)
 
@@ -483,6 +482,25 @@ console.log(wallet.isPublic()); // false
 console.log(wallet.isPrivate()); // true
 console.log(wallet.isFaucet()); // false
 ```
+
+### Register on an Allowlisted Network
+
+A network that enforces an account allowlist creates an account on chain only once the account is registered with an invitation code from the network operator. Register a new account before its first transaction:
+
+```typescript
+const wallet = await client.accounts.create();
+
+if (!(await client.accounts.isAllowed(wallet))) {
+  await client.accounts.register({ account: wallet, invitationCode });
+}
+
+// When the network funds registered accounts, the funding note arrives on the
+// next sync; consuming it is the transaction that creates the account on chain.
+await client.sync();
+await client.transactions.consumeAll({ account: wallet });
+```
+
+`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `RpcClient.registerAccount` and `RpcClient.isAccountAllowed` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
 ### Create a Faucet
 

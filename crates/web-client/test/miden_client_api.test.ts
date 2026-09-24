@@ -145,6 +145,44 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.isPublic).toBe(true);
   });
 
+  mockTest(
+    "accounts.isAllowed and accounts.register on a chain without an allowlist",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const allowed = await client.accounts.isAllowed(wallet);
+        let code = null;
+        let message = null;
+        try {
+          await client.accounts.register({
+            account: wallet,
+            invitationCode: "invitation-code",
+          });
+        } catch (error) {
+          code = error.code ?? null;
+          message = String(error.message ?? error);
+        }
+        let emptyCodeMessage = null;
+        try {
+          await client.accounts.register({
+            account: wallet,
+            invitationCode: "",
+          });
+        } catch (error) {
+          emptyCodeMessage = String(error.message ?? error);
+        }
+        return { allowed, code, message, emptyCodeMessage };
+      });
+      // The mock node enforces no allowlist, so every account is allowed and
+      // the client keeps the invitation code rather than spending it.
+      expect(result.allowed).toBe(true);
+      expect(result.code).toBe("ACCOUNT_ALREADY_ALLOWED");
+      expect(result.message).toContain("already allowed");
+      expect(result.emptyCodeMessage).toContain("invitationCode");
+    }
+  );
+
   mockTest("accounts.list returns created accounts", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
@@ -1241,27 +1279,46 @@ nodeTest.describe("MidenClient API - Integration", () => {
     }
   );
 
-  // The tripwire for every quickstart that now has to pass `feeFaucetId`: while
-  // KNOWN_FEE_FAUCETS is empty a client without one must fail, and fail naming
-  // the option. When a 0.17 network publishes its genesis and the table gains an
-  // entry, this test fails - and the docs that call the option mandatory are
-  // what has to change with it.
+  // The client gets the chain's protocol configuration from the node when it
+  // syncs, so a client created without `feeFaucetId` executes like any other
+  // and reports the chain's own faucet once synced.
   nodeTest(
-    "creating a client without a fee faucet fails and names the option",
+    "a client without a fee faucet syncs the protocol configuration and reports the chain's faucet",
     async ({ page }) => {
-      const message = await page.evaluate(async () => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          storeName: "miden_client_api_synced_fee_faucet_test",
+        });
+
+        let beforeSync = null;
         try {
-          await window.MidenClient.create({
-            rpcUrl: window.rpcUrl,
-            storeName: "miden_client_api_no_fee_faucet_test",
-          });
-          return null;
+          await client.feeFaucetId();
         } catch (err) {
-          return String(err?.message ?? err);
+          beforeSync = String(err?.message ?? err);
         }
+
+        await client.sync();
+
+        const canonical = (id) => {
+          try {
+            return window.AccountId.fromBech32(id).toString();
+          } catch {
+            return window.AccountId.fromHex(id).toString();
+          }
+        };
+
+        return {
+          beforeSync,
+          configured: canonical(window.feeFaucetId),
+          reported: (await client.feeFaucetId()).toString(),
+        };
       });
 
-      expect(message).toContain("feeFaucetId");
+      // Before the first sync nothing names the faucet, and the error says what
+      // to do about it.
+      expect(result.beforeSync).toContain("feeFaucetId");
+      expect(result.reported).toBe(result.configured);
     }
   );
 

@@ -6,7 +6,8 @@ use miden_client::Word;
 use miden_client::account::{Account, AccountId};
 use miden_client::crypto::{Forest, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
-use miden_client::store::StoreError;
+use miden_client::protocol_config::protocol_config_setting_key;
+use miden_client::store::{SettingScope, StoreError};
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -158,6 +159,7 @@ impl IdxdbStore {
             note_updates,
             transaction_updates,
             account_updates,
+            protocol_config,
         ) = state_sync_update.into_parts();
 
         let (
@@ -262,6 +264,19 @@ impl IdxdbStore {
             }
 
             self.apply_incremental_account_patch(new_header, patch).await?;
+        }
+
+        // Persist the protocol configuration the node sent before the chain state that commits to
+        // it lands. A failed write here fails the sync, which retries from the same height and is
+        // delivered the configuration again; a configuration stored ahead of a failed state write
+        // is only an unused row keyed by its commitment.
+        if let Some(config) = protocol_config {
+            self.set_setting(
+                SettingScope::Client,
+                protocol_config_setting_key(config.to_commitment()),
+                config.to_bytes(),
+            )
+            .await?;
         }
 
         let state_update = JsStateSyncUpdate {

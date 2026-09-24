@@ -24,8 +24,14 @@ env:
   # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
   # built against. A commit sha (not the branch name) keeps cache keys stable.
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
-  # v0.17.0-rc.1
-  MIDEN_CLIENT_REF: 2fb20aca0869034dd26aa35473dbfb14fa017083
+  # A `Client PR:` marker overrides this for the test-node jobs
+  # (resolve-client-ref); this value stays the fallback for pushes to next.
+  # v0.17.0-rc.2
+  MIDEN_CLIENT_REF: 0607abd66f9e9ae13c49da0857ad3f84f8e5fbcb
+  # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
+  # binary reads this variable; the node repo's local runner uses the same
+  # placeholder. A node that does not know it ignores the variable.
+  MIDEN_NODE_BATCH_BUILDER_WALLET_ACCOUNT_ID: "0xcc0000000000dd010000ee000000ff"
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -826,11 +832,45 @@ jobs:
   # the node rev pinned in its Cargo.lock, and builds the gen-genesis fixture
   # generator from its test-node-genesis crate. This job pre-builds both
   # pieces so the consumer jobs only download and start them.
+  # The published pin above tracks Cargo.lock. A PR that builds against an
+  # unreleased client via `Client PR:` must start the node from that same
+  # commit, or the block's protocol-config commitment is not the one the
+  # client stored.
+  resolve-client-ref:
+    name: Resolve test node ref
+    runs-on: ubuntu-24.04
+    outputs:
+      ref: ${{ steps.out.outputs.ref }}
+    steps:
+      - id: out
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FALLBACK: ${{ env.MIDEN_CLIENT_REF }}
+        run: |
+          set -euo pipefail
+          ref="$FALLBACK"
+          if [ -n "${PR_NUMBER:-}" ]; then
+            body=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+            marker=$(printf '%s\n' "$body" | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
+            if [ -n "$marker" ]; then
+              repo=$(printf '%s\n' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || true)
+              repo=${repo:-0xMiden/rust-sdk}
+              num=$(printf '%s\n' "$marker" | grep -oE '[0-9]+$')
+              ref=$(gh api "repos/${repo}/pulls/${num}" --jq '.head.sha')
+              echo "linked client ${repo}#${num} -> ${ref}"
+            fi
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "test node rust-sdk ref: ${ref}"
+
   build-test-node:
     name: Build test node
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes]
+    needs: [changes, resolve-client-ref]
     if: needs.changes.outputs.non_docs == 'true'
+    env:
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
@@ -901,9 +941,10 @@ jobs:
     # before the split.
     name: Web client tests (Node.js)
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-test-node]
+    needs: [build-test-node, resolve-client-ref]
     env:
       SCCACHE_GHA_ENABLED: "true"
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
       # Auto-patch miden-client dep against any "Client PR: #N" marker in
@@ -990,7 +1031,9 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
@@ -1040,7 +1083,9 @@ jobs:
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes, build-web-client-dist-folder, build-test-node]
+    needs: [changes, build-web-client-dist-folder, build-test-node, resolve-client-ref]
+    env:
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     if: needs.changes.outputs.non_docs == 'true'
     strategy:
       fail-fast: false
@@ -1103,7 +1148,9 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
@@ -1154,7 +1201,9 @@ jobs:
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes, build-web-client-dist-folder, build-test-node]
+    needs: [changes, build-web-client-dist-folder, build-test-node, resolve-client-ref]
+    env:
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     # Remote prover tests are slow (~14 min) and rarely affected by typical PR
     # changes. Skip on PRs unless explicitly opted in via the
     # 'run-remote-prover' label; always run on push to main/next.
@@ -1217,7 +1266,9 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
       # Since 0.17 the fee asset lives in the protocol configuration rather than
       # the block header, so a client is told which faucet issues it instead of
       # reading it off a block. Each genesis mints a fresh one, so it is read
