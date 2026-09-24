@@ -265,28 +265,40 @@ test.describe("unified note assets", () => {
       const token = sdk.VaultAsset.fungible(issuer, sdk.u64(10));
       const legacy = new sdk.FungibleAsset(issuer, sdk.u64(20));
       const one = new sdk.NoteAssets([names[0]]);
-      const operations = [
-        () => new sdk.NoteAssets([names[0], names[0]]),
-        () => new sdk.NoteAssets([token, legacy]),
-        () => new sdk.NoteAssets(names),
-        () => one.push(names[0]),
-        () => full.push(names[16]),
-        () => token.asNonFungible(),
-        () => names[0].asFungible(),
-        () =>
+      const operations = {
+        "duplicate in constructor": () =>
+          new sdk.NoteAssets([names[0], names[0]]),
+        "duplicate fungible in constructor": () =>
+          new sdk.NoteAssets([token, legacy]),
+        "17 assets in constructor": () => new sdk.NoteAssets(names),
+        "duplicate push": () => one.push(names[0]),
+        "push past 16": () => full.push(names[16]),
+        "fungible as non-fungible": () => token.asNonFungible(),
+        "non-fungible as fungible": () => names[0].asFungible(),
+        "fungible entry as non-fungible": () =>
           sdk.VaultAsset.nonFungible({
             key: token.vaultKey(),
             value: token.intoWord(),
           }),
-      ];
-      const rejected = operations.map((operation) => {
-        try {
-          operation();
-          return false;
-        } catch {
-          return true;
-        }
-      });
+      };
+      // The browser throws the Rust message as a string, Node as an Error. A WASM trap
+      // throws a WebAssembly.RuntimeError, which must not count as a rejection.
+      const rejected = Object.fromEntries(
+        Object.entries(operations).map(([label, operation]) => {
+          try {
+            operation();
+            return [label, "accepted"];
+          } catch (error) {
+            if (error instanceof WebAssembly.RuntimeError) {
+              return [label, `trap: ${error.message}`];
+            }
+            return [
+              label,
+              error instanceof Error ? error.message : String(error),
+            ];
+          }
+        })
+      );
       return {
         rejected,
         oneCount: one.assets().length,
@@ -295,7 +307,19 @@ test.describe("unified note assets", () => {
         storedValue: one.assets()[0].intoWord().toHex(),
       };
     });
-    expect(result.rejected).toEqual(Array(8).fill(true));
+    const prefixes = {
+      "duplicate in constructor": "Failed to create NoteAssets",
+      "duplicate fungible in constructor": "Failed to create NoteAssets",
+      "17 assets in constructor": "Failed to create NoteAssets",
+      "duplicate push": "Failed to add note asset",
+      "push past 16": "Failed to add note asset",
+      "fungible as non-fungible": "Asset is not non-fungible",
+      "non-fungible as fungible": "Asset is not fungible",
+      "fungible entry as non-fungible": "Failed to create non-fungible asset",
+    };
+    for (const [label, prefix] of Object.entries(prefixes)) {
+      expect(result.rejected[label], label).toMatch(new RegExp(`^${prefix}`));
+    }
     expect(result.oneCount).toBe(1);
     expect(result.fullCount).toBe(16);
     expect(result.storedValue).toBe(result.retainedValue);
