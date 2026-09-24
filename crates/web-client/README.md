@@ -475,10 +475,14 @@ For `client.accounts.create()`, select visibility with `storage: "public"` or
 `"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
 Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
 Omit `type` to create a wallet, or pass `components` to create a contract.
-`create()` throws a `TypeError` for any other `type`, and for faucet fields
-(`name`, `symbol`, `decimals`, `maxSupply`) without a faucet selector, so a
-missed migration fails instead of creating a wallet. Non-fungible faucets are
-not supported yet.
+The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
+faucet types (non-fungible faucets are not supported yet and are rejected);
+`0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
+a visibility value as `type`. `create()` throws a `TypeError` for any other
+`type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`) without a
+faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
+`decimals` or `maxSupply`, so a missed migration fails instead of creating a
+wallet.
 
 ### Create a New Wallet
 

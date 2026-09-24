@@ -312,8 +312,11 @@ separate enum exported for the low-level WASM APIs and is easy to confuse with
 faucet in `accounts.create({ type })`; its value is a string, so it cannot be
 mistaken for an `AccountType` value. Replace older `AccountType.FungibleFaucet`
 references with `FaucetType.FungibleFaucet`: `create()` throws a `TypeError`
-for any unrecognised `type`, and for faucet fields (`name`, `symbol`,
-`decimals`, `maxSupply`) without a faucet selector.
+for any unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
+`maxSupply`) without a faucet type, for `components` on a faucet, and for a
+faucet missing `symbol`, `decimals` or `maxSupply`. The legacy `0`, `1` and
+`"NonFungibleFaucet"` are still read as faucet types, and `0` / `1` are also
+`AccountType.Private` / `Public`, so never pass a visibility value as `type`.
 
 Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
 `components` for a contract (the strings `"MutableContract"` / `"ImmutableContract"`

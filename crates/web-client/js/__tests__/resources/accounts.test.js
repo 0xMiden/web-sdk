@@ -649,6 +649,9 @@ describe("AccountsResource.create selector validation", () => {
     await resource.create({ type, ...faucetFields });
 
     expect(inner.newFaucet).toHaveBeenCalledOnce();
+    // 0 is also AccountType.Private: a visibility value passed as `type` is
+    // read as the legacy fungible-faucet selector, as the docs state.
+    expect(inner.newFaucet.mock.calls[0][1]).toBe(false);
   });
 
   it("still creates a wallet when no type and no faucet fields are given", async () => {

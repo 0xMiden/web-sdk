@@ -33,10 +33,12 @@ export class AccountsResource {
    * Create a wallet by default, a faucet via `FaucetType`, or a contract via
    * `components`. Visibility is selected separately with `storage`.
    *
-   * Throws a TypeError naming `FaucetType`, before creating anything, for an
-   * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
-   * `maxSupply`) without a faucet type, for `components` on a faucet, and for
-   * a faucet missing `symbol`, `decimals` or `maxSupply`.
+   * The legacy 0, 1 and "NonFungibleFaucet" still select a faucet; 0 and 1 are
+   * also AccountType.Private/Public, so a visibility value passed as `type` is
+   * read as a faucet selector. Throws a TypeError naming `FaucetType`, before
+   * creating anything, for an unrecognised `type`, for faucet fields (`name`,
+   * `symbol`, `decimals`, `maxSupply`) without a faucet type, for `components`
+   * on a faucet, and for a faucet missing `symbol`, `decimals` or `maxSupply`.
    */
   async create(opts) {
     this.#client.assertNotTerminated();

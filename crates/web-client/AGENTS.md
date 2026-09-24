@@ -81,7 +81,9 @@ with it, and free the object wrappers the skills call out individually.
 Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`
 for visibility. Older `AccountType.FungibleFaucet` references must migrate to
 `FaucetType.FungibleFaucet`; `create()` throws a `TypeError` for an unrecognised
-`type` rather than creating a wallet.
+`type` rather than creating a wallet. The legacy `0` / `1` are still faucet
+selectors and equal `AccountType.Private` / `Public`, so never pass a visibility
+value as `type`.
 
 ## Going deeper
 

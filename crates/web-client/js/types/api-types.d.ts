@@ -309,8 +309,9 @@ export type NoteInput = string | NoteId | Note | InputNoteRecord;
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Create a wallet, faucet, or contract. A faucet sets `type`, a contract
- * passes `components`, and a wallet is the default (neither).
+ * Create a wallet, faucet, or contract. A faucet sets `type:
+ * FaucetType.FungibleFaucet`, a contract passes `components`, and a wallet is
+ * the default (neither). Visibility comes from `storage`.
  */
 export type CreateAccountOptions =
   | WalletCreateOptions
@@ -1012,8 +1013,17 @@ export interface AccountsResource {
    * Create a new wallet, faucet, or contract account. Defaults to a wallet
    * if no options are provided.
    *
+   * The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
+   * faucet types (non-fungible faucets are rejected). `0` and `1` are also
+   * `AccountType.Private` / `AccountType.Public`, so never pass a visibility
+   * value as `type`; use `storage`.
+   *
    * @param options - Account creation options. A faucet sets `type`, a
    * contract passes `components`, and a wallet is the default.
+   * @throws TypeError naming `FaucetType`, before creating anything, for an
+   * unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
+   * `maxSupply`) without a faucet type, for `components` on a faucet, and for a
+   * faucet missing `symbol`, `decimals` or `maxSupply`.
    */
   create(options?: CreateAccountOptions): Promise<Account>;
   /**
