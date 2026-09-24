@@ -37,8 +37,8 @@ it("type-checks visibility and faucet selectors through the public declarations"
       };
       // @ts-expect-error Non-fungible faucets have no public selector.
       FaucetType.NonFungibleFaucet;
-      // @ts-expect-error The faucet-kind aliases were removed with the rename.
-      import type { FaucetTypeValue, AccountTypeValue } from "./index";
+      // @ts-expect-error AccountTypeValue was removed with the rename.
+      import type { AccountTypeValue } from "./index";
       // @ts-expect-error Faucet kinds are no longer members of AccountType.
       AccountType.FungibleFaucet;
       // @ts-expect-error FaucetType does not select visibility.

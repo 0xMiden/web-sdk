@@ -12,6 +12,14 @@ const CONTRACT_TYPES = new Set(["ImmutableContract", "MutableContract"]);
 const FAUCET_FIELDS = ["name", "symbol", "decimals", "maxSupply"];
 const REQUIRED_FAUCET_FIELDS = ["symbol", "decimals", "maxSupply"];
 
+function display(value) {
+  try {
+    return String(value);
+  } catch {
+    return typeof value;
+  }
+}
+
 function selectorError(problem) {
   return new TypeError(
     `accounts.create(): ${problem} Pass type: FaucetType.FungibleFaucet for a faucet, omit type for a wallet, or pass components for a contract.`
@@ -70,7 +78,7 @@ export class AccountsResource {
     }
 
     if (type !== undefined && !CONTRACT_TYPES.has(type)) {
-      throw selectorError(`unrecognised type ${String(type)}.`);
+      throw selectorError(`unrecognised type ${display(type)}.`);
     }
     // A stale AccountType.FungibleFaucet reads as undefined, so faucet fields
     // are how a missed FaucetType migration shows up.
@@ -85,7 +93,9 @@ export class AccountsResource {
 
     if (
       CONTRACT_TYPES.has(type) ||
-      opts?.components // Contracts are distinguished from wallets by having components
+      // Contracts are distinguished from wallets by having components; any
+      // value other than undefined asks for a contract, so null fails loudly.
+      opts?.components !== undefined
     ) {
       return await this.#createContract(opts, wasm);
     } else {

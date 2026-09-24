@@ -640,6 +640,27 @@ describe("AccountsResource.create selector validation", () => {
     expect(wasm.AccountBuilder).not.toHaveBeenCalled();
   });
 
+  it("rejects an object type whose string conversion throws", async () => {
+    const { inner, resource } = setup();
+    const type = {
+      toString() {
+        throw new Error("no string form");
+      },
+    };
+
+    await expect(resource.create({ type })).rejects.toThrow(/FaucetType/);
+    expect(inner.newWallet).not.toHaveBeenCalled();
+  });
+
+  it("treats a malformed components value as a contract request, not a wallet", async () => {
+    const { inner, resource } = setup();
+
+    await expect(
+      resource.create({ ...contract, components: null })
+    ).rejects.toThrow(/non-auth procedure/);
+    expect(inner.newWallet).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["FaucetType.FungibleFaucet", "FungibleFaucet"],
     ["legacy 0", 0],
