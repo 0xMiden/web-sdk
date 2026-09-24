@@ -32,7 +32,8 @@ export function normalizeArg(val) {
 // ── Class wrapping ───────────────────────────────────────────────────
 
 /**
- * Wraps a napi class so constructor and static method args are normalized.
+ * Wraps a napi class so constructor and static method args are normalized,
+ * except `deserialize`, whose JsBytes argument passes through unchanged.
  */
 export function wrapClass(Cls) {
   if (!Cls) return Cls;
