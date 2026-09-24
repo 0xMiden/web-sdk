@@ -204,11 +204,15 @@ pub struct NonFungibleAssetInput {
 
 #[cfg(feature = "nodejs")]
 impl NonFungibleAssetInput {
+    // Same signature as the browser input, whose JS reads can fail.
+    #[allow(clippy::unnecessary_wraps)]
     fn words(&self) -> Result<(NativeWord, NativeWord), JsErr> {
         Ok(((&self.key).into(), (&self.value).into()))
     }
 }
 
+// Fallible in the browser, where the input is a duck-typed JS object; infallible under nodejs.
+#[cfg_attr(feature = "nodejs", allow(clippy::unnecessary_wraps))]
 pub(crate) fn native_asset(input: &AssetInput) -> Result<NativeAsset, JsErr> {
     #[cfg(feature = "browser")]
     {

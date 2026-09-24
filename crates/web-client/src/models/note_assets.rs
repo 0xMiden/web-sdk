@@ -31,12 +31,10 @@ impl NoteAssets {
     pub fn new(assets_array: Option<Vec<AssetInput>>) -> Result<NoteAssets, JsErr> {
         let assets = assets_array.unwrap_or_default();
         let native_assets = assets.iter().map(native_asset).collect::<Result<Vec<_>, _>>()?;
-        NativeNoteAssets::new(native_assets)
-            .map(NoteAssets)
-            .map_err(|err| from_str_err(&format!("Failed to create NoteAssets: {err}")))
+        native_note_assets(native_assets, "create NoteAssets").map(NoteAssets)
     }
 
-    /// Appends an `VaultAsset`, `FungibleAsset`, or `NonFungibleAsset` without consuming the input.
+    /// Appends a `VaultAsset`, `FungibleAsset`, or `NonFungibleAsset` without consuming the input.
     /// Returns an error for a duplicate or a list longer than 16 assets.
     /// A failed push leaves the collection unchanged.
     pub fn push(&mut self, asset: AssetInput) -> Result<(), JsErr> {
@@ -84,10 +82,13 @@ impl NoteAssets {
     fn push_asset(&mut self, asset: NativeAsset) -> Result<(), JsErr> {
         let mut assets: Vec<NativeAsset> = self.0.iter().copied().collect();
         assets.push(asset);
-        self.0 = NativeNoteAssets::new(assets)
-            .map_err(|err| from_str_err(&format!("Failed to add note asset: {err}")))?;
+        self.0 = native_note_assets(assets, "add note asset")?;
         Ok(())
     }
+}
+
+fn native_note_assets(assets: Vec<NativeAsset>, action: &str) -> Result<NativeNoteAssets, JsErr> {
+    NativeNoteAssets::new(assets).map_err(|err| from_str_err(&format!("Failed to {action}: {err}")))
 }
 
 // CONVERSIONS
