@@ -15,7 +15,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/0xMiden/web-sdk"
 rust-version = "1.98.1"
-version      = "0.17.0-rc.2"
+version      = "0.17.0-rc.3"
 
 [profile.dev]
 codegen-units = 16
@@ -41,17 +41,17 @@ codegen-units = 16
 [workspace.dependencies]
 # Workspace crates. The versions are required when publishing path dependencies and must track
 # `workspace.package.version`.
-idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.17.0-rc.2" }
-js-export-macro = { path = "crates/js-export-macro", version = "0.17.0-rc.2" }
+idxdb-store     = { default-features = false, package = "miden-idxdb-store", path = "crates/idxdb-store", version = "0.17.0-rc.3" }
+js-export-macro = { path = "crates/js-export-macro", version = "0.17.0-rc.3" }
 
 # Client crates
 # `miden-protocol` is the protocol crate `miden-client` itself resolves, needed directly only for
 # the `SequentialCommit` trait, which `miden-client` does not re-export but which the multisig auth
 # args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
 # copy of the protocol types, so bump the three together.
-miden-client              = { default-features = false, version = "0.17.0-rc.2" }
-miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.2" }
-miden-protocol            = { default-features = false, version = "0.17.0-rc.6" }
+miden-client              = { default-features = false, version = "0.17.0-rc.3" }
+miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.3" }
+miden-protocol            = { default-features = false, version = "0.17.0-rc.7" }
 
 # External dependencies
 async-trait = { version = "0.1" }
