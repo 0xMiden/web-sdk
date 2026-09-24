@@ -72,6 +72,7 @@
     "build-types": "node ./scripts/build-types.js",
     "build-dev": "pnpm install && cross-env MIDEN_WEB_DEV=true pnpm run build",
     "check:wasm-types": "node ./scripts/check-bindgen-types.js",
+    "check:asset-types": "node ./scripts/check-asset-types.js",
     "check:method-classification": "node ./scripts/check-method-classification.js",
     "check:standalone-types": "node ./scripts/check-standalone-types.js",
     "gen:node-reexports": "node ./scripts/gen-node-reexports.js",

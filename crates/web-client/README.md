@@ -411,6 +411,12 @@ The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that e
 pnpm check:wasm-types
 ```
 
+`scripts/check-asset-types.js` type-checks a consumer fixture (with `skipLibCheck`) that imports `VaultAsset` and the `Asset` option type from all four entry points and `NoteAssets` from the root entry. It fails if an entry point stops exporting `VaultAsset`, or if `Asset` stops resolving to the `{ token, amount }` option type, for example because a generated class takes its name:
+
+```
+pnpm check:asset-types
+```
+
 `WebClient` is intentionally excluded because the wrapper defines its own implementation. If the check reports missing exports, update `js/types/index.d.ts` so consumers get the full generated surface.
 
 ## Usage
@@ -540,6 +546,49 @@ console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
+
+### Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+### Build Notes with Either Asset Type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. See the [non-fungible asset guide](../../docs/external/src/web-client/library/non-fungible-assets.md).
 
 ### Batch Operations
 

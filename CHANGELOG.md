@@ -2,6 +2,10 @@
 
 ## 0.16.3 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] Create either asset type with `VaultAsset.fungible(faucetId, amount)` or `VaultAsset.nonFungible({ key, value })`, and carry them in `new NoteAssets([asset])` or `noteAssets.push(asset)`. Existing `FungibleAsset` calls remain valid. Vaults and notes expose `assets()` and `nonFungibleAssets()` for name recovery and NFA note flows, including the issuer, complete key, and all four value limbs. Invalid note asset lists now throw catchable errors instead of trapping WASM ([#418](https://github.com/0xMiden/web-sdk/pull/418)).
+
 ### Changes
 
 * [CHANGE][adapter] `@miden-sdk/miden-wallet-adapter-{base,miden,reactui}` now declare a `files` array and ship only what a consumer resolves. All three had neither `files` nor `.npmignore`, so npm packed the whole directory: TypeScript sources, `__tests__`, `tsconfig.json`, `vitest.config.ts`, the compiled tests and vitest config under `dist/`, and the generated typedoc `docs/` tree. `base` went from 131 files / 273 KB to 24 / 56 KB, `miden` from 35 / 230 KB to 11 / 44 KB, `reactui` from 77 / 218 KB to 46 / 73 KB. Every documented entry point still resolves, including both `@miden-sdk/miden-wallet-adapter-reactui/styles.css` and `.../reactui/dist/styles.css`. None of the three declares an `exports` map, so a deep import into their sources was legal and now stops resolving; import from the package root, or from `dist/` for the stylesheet ([#394](https://github.com/0xMiden/web-sdk/pull/394)).
