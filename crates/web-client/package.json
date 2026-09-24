@@ -57,6 +57,7 @@
     "js/node",
     "js/client.js",
     "js/standalone.js",
+    "js/storageView.js",
     "js/utils.js",
     "js/resources",
     "README.md",

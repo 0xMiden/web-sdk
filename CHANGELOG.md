@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.4 (TBD)
+
+### Fixes
+
+* [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+* [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
+
 ## 0.16.3 (2026-09-24)
 
 ### Enhancements

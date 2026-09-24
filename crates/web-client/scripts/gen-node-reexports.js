@@ -2,8 +2,8 @@
 
 /**
  * Generates the `_reexport(...)` block in `js/node-index.js` from the napi
- * module's actual exports, so the Node entry stays in lockstep with the native
- * surface without a hand-maintained list.
+ * module's actual exports plus the JS array polyfills (NODE_ARRAY_TYPES), so
+ * the Node entry stays in lockstep with both without a hand-maintained list.
  *
  * The Node entry can't `export *` from a native addon (ESM needs static named
  * exports), so every public napi class is listed as `export const X =
@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import prettier from "prettier";
 import { loadNativeModule } from "../js/node/loader.js";
+import { NODE_ARRAY_TYPES } from "../js/node/napi-compat.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE = path.resolve(__dirname, "../js/node-index.js");
@@ -37,9 +38,12 @@ const MANUAL = new Set(["WebClient", "AccountType", "AuthScheme"]);
 
 async function buildFile() {
   const napi = loadNativeModule();
-  const names = Object.keys(napi)
-    .filter((name) => !MANUAL.has(name))
-    .sort();
+  const names = [
+    ...new Set([
+      ...Object.keys(napi).filter((name) => !MANUAL.has(name)),
+      ...NODE_ARRAY_TYPES,
+    ]),
+  ].sort();
   const block = names
     .map(
       (name) => `export const ${name} = /* @__PURE__ */ _reexport("${name}");`
