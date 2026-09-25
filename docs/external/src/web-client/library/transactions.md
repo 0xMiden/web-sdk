@@ -313,7 +313,6 @@ const derived = await client.transactions.preview({
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
   throw new Error("proposal does not match the summary presented for signing");
 }
-const digest = proposed.eip712Hash(); // 32 bytes for EIP-712 signing
 
 // ── Executor ──────────────────────────────────────────────
 // The proposer's request, carrying the collected signatures in its advice map;
@@ -329,7 +328,8 @@ Encode `txSummaryHash` from the summary commitment as four little-endian `u64`
 values. `proposed.eip712Hash()` returns the 32-byte wallet signing digest.
 Once the wallet signature is converted to an SDK `Signature`, call
 `proposed.eip712SignatureAdvice(publicKey, signature)` to obtain an `AdviceMap`
-that can be attached with `request.extendAdviceMap(...)`. The corresponding
+that can be attached with `request.extendAdviceMap(...)`; submit the returned
+request. The corresponding
 key is `proposed.eip712SignatureKey(publicKey)`. These methods follow the
 protocol implementation and reject non-ECDSA keys or signatures; they do not
 validate what the transaction does, so inspect and re-derive the summary first.

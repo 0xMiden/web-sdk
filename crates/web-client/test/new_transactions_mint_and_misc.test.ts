@@ -710,6 +710,15 @@ test.describe("submitNewTransactionWithProver tests", () => {
         } catch {
           rejectsFalcon = true;
         }
+        let rejectsFalconSignature = false;
+        try {
+          summary.eip712SignatureAdvice(
+            publicKey,
+            approverKeys[0].sign(summary.toCommitment())
+          );
+        } catch {
+          rejectsFalconSignature = true;
+        }
         const summaryHashBytes = Array.from(
           summary.toCommitment().toU64s()
         ).flatMap((felt) =>
@@ -732,6 +741,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
           eip712Hash: Array.from(summary.eip712Hash()),
           adviceLength: advice.get(adviceKey)?.length,
           rejectsFalcon,
+          rejectsFalconSignature,
         };
       });
 
@@ -757,6 +767,7 @@ test.describe("submitNewTransactionWithProver tests", () => {
       );
       expect(result.adviceLength).toEqual(32);
       expect(result.rejectsFalcon).toBe(true);
+      expect(result.rejectsFalconSignature).toBe(true);
     });
 
     test("executeForSummary rejects when the transaction is already authorized", async ({

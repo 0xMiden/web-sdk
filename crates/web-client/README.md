@@ -717,7 +717,6 @@ const derived = await client.transactions.preview({
 if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
   throw new Error("proposal does not match the summary presented for signing");
 }
-const digest = proposed.eip712Hash(); // 32 bytes to sign as MidenTransaction typed data
 
 // Executor: replay at the same anchor, whatever the local height is by now.
 await client.transactions.submit(multisig, request, { anchor: received });
@@ -728,7 +727,8 @@ For an ECDSA co-signer, sign `{ txSummaryHash }` under the EIP-712 domain
 summary commitment encoded as four little-endian `u64` values. The SDK derives
 the digest with `proposed.eip712Hash()`. After converting the wallet's signature
 to an SDK `Signature`, attach the protocol witness with
-`request.extendAdviceMap(proposed.eip712SignatureAdvice(publicKey, signature))`.
+`request.extendAdviceMap(proposed.eip712SignatureAdvice(publicKey, signature))`
+and submit the returned request.
 The key is available separately via `proposed.eip712SignatureKey(publicKey)`.
 Inspect and re-derive the summary before requesting the signature; these helpers
 encode it but do not establish the proposer's intent.

@@ -2458,7 +2458,6 @@ dependencies = [
  "miden-client-sqlite-store",
  "miden-idxdb-store",
  "miden-protocol",
- "miden-standards",
  "napi",
  "napi-build",
  "napi-derive",

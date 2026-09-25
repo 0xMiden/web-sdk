@@ -1,10 +1,10 @@
 use alloc::sync::Arc;
 
 use js_export_macro::js_export;
+use miden_client::account::standards::auth::Eip712TransactionSummary;
 use miden_client::auth::{PublicKey as NativePublicKey, Signature as NativeSignature};
 use miden_client::transaction::TransactionSummary as NativeTransactionSummary;
 use miden_client::vm::AdviceMap as NativeAdviceMap;
-use miden_standards::account::auth::Eip712TransactionSummary;
 
 use super::account_delta::AccountDelta;
 use super::felt::Felt;

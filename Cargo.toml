@@ -52,7 +52,6 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.17.0-rc.3" }
 miden-client              = { default-features = false, version = "0.17.0-rc.3" }
 miden-client-sqlite-store = { default-features = false, version = "0.17.0-rc.3" }
 miden-protocol            = { default-features = false, version = "0.17.0-rc.7" }
-miden-standards           = { default-features = false, version = "0.17.0-rc.7" }
 
 # External dependencies
 async-trait = { version = "0.1" }
