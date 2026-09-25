@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] `TransactionSummary.eip712Hash()`, `eip712SignatureKey(publicKey)` and `eip712SignatureAdvice(publicKey, signature)` expose the protocol's EIP-712 digest and domain-separated witness for ECDSA multisig signing ([#428](https://github.com/0xMiden/web-sdk/issues/428)).
+* [FEATURE][web] `TransactionSummary.eip712Hash()`, `eip712SignatureKey(publicKey)` and `eip712SignatureAdvice(publicKey, signature)` expose the protocol's EIP-712 digest and domain-separated witness for ECDSA multisig signing ([#431](https://github.com/0xMiden/web-sdk/pull/431)).
 
 ### Changes
 
