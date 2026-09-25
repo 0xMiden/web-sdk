@@ -52,8 +52,9 @@ export function useWaitForNotes(): UseWaitForNotesResult {
           return consumable;
         }
 
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
-        waited += intervalMs;
+        const sleepMs = Math.min(intervalMs, timeoutMs - waited);
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+        waited += sleepMs;
       }
 
       throw new Error("Timeout waiting for consumable notes");

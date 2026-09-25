@@ -23,6 +23,10 @@
 * [BREAKING][web] `AccountFile` and `NoteFile` bytes are the protocol 0.17.0-rc.6 protobuf file format. `serialize()` and `deserialize()` keep the same shape, but bytes written by 0.17.0-rc.1 do not decode, and the other way around. The types moved onto `miden-objects` in [rust-sdk#2594](https://github.com/0xMiden/rust-sdk/pull/2594), which dropped the old `Serializable` codec. ([#414](https://github.com/0xMiden/web-sdk/pull/414))
 * [BREAKING][behavior][web] `notes.listAvailable({ account })` and `transactions.consumeAll({ account })` no longer return or consume block-locked notes. Both keep only notes the client's note screener reports as consumable by `account` at the last synced block, so `consumeAll` no longer fails a whole transaction on one time-locked note, and its `consumed`/`remaining` counts follow. Use `notes.listConsumable()` to also see block-locked notes. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
 * [BREAKING][behavior][react] `useNotes().consumableNotes` (and `consumableNoteSummaries`), `useWaitForNotes().waitForConsumableNotes` and `useSessionAccount`'s funding poll now apply the same rule: block-locked notes are not reported as consumable, are not waited on as if they were, and are no longer put into a consume transaction that the whole account's funding step would fail on. ([#170](https://github.com/0xMiden/web-sdk/pull/170))
+
+### Fixes
+* [FIX][react] `useWaitForNotes().waitForConsumableNotes` caps each polling sleep by the remaining timeout instead of overshooting by up to one full interval.
+
 ## 0.17.0-rc.1 (2026-09-21)
 
 ### Changes
