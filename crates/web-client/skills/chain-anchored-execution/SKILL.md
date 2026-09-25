@@ -318,12 +318,21 @@ multisig resolves its auth args whatever the chain charges.
 | Member | Returns | Purpose |
 | --- | --- | --- |
 | `toCommitment()` | `Word` | The value co-signers compare and sign over |
+| `eip712Hash()` | 32-byte array | Protocol EIP-712 digest for an ECDSA co-signer |
+| `eip712SignatureKey(publicKey)` | `Word` | Domain-separated ECDSA advice-map key |
+| `eip712SignatureAdvice(publicKey, signature)` | `AdviceMap` | Witness to attach to the request after signing |
 | `blockCommitment()` | `Word` | Reference block, for checking a received anchor cheaply |
 | `expirationDelta()` | `u16` | 0 means no expiration was set, not expired |
 | `accountDelta()` | `AccountDelta` | Inspect before signing |
 | `inputNotes()` / `outputNotes()` | `InputNotes` / `OutputNotes` | Inspect before signing; `outputNotes()` includes the fee note |
 | `userParams()` | `Felt[]` | Seven elements; `signature.masm` puts the final nonce in `[0]`, multisig zeroes them |
 | `serialize()` / `TransactionSummary.deserialize(bytes)` | bytes / `TransactionSummary` | Transport |
+
+For EIP-712, sign `MidenTransaction(bytes32 txSummaryHash)` in the
+`Miden Transaction` v1 domain after re-deriving and inspecting the summary.
+`txSummaryHash` is its commitment encoded as four little-endian `u64` values.
+The advice helper accepts SDK ECDSA `PublicKey` and `Signature` objects, not raw
+wallet `r/s/v` bytes, and does not verify signer intent.
 
 ### Determinism helpers for a request that travels
 

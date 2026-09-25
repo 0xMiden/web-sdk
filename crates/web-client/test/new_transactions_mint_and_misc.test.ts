@@ -4,6 +4,7 @@
 // send/custom describes live in new_transactions_send_and_custom.test.ts.
 // Platform-agnostic (browser + Node.js).
 import { test, expect } from "./test-setup";
+import { hashTypedData } from "viem";
 
 // NEW_MINT_TRANSACTION TESTS
 // =======================================================================================================
@@ -698,6 +699,25 @@ test.describe("submitNewTransactionWithProver tests", () => {
           consumeSentNoteRequest
         );
 
+        const ecdsaKey = sdk.AuthSecretKey.ecdsaWithRNG();
+        const publicKey = ecdsaKey.publicKey();
+        const signature = ecdsaKey.sign(summary.toCommitment());
+        const adviceKey = summary.eip712SignatureKey(publicKey);
+        const advice = summary.eip712SignatureAdvice(publicKey, signature);
+        let rejectsFalcon = false;
+        try {
+          summary.eip712SignatureAdvice(approverKeys[0].publicKey(), signature);
+        } catch {
+          rejectsFalcon = true;
+        }
+        const summaryHashBytes = Array.from(
+          summary.toCommitment().toU64s()
+        ).flatMap((felt) =>
+          Array.from({ length: 8 }, (_, i) =>
+            Number((felt >> BigInt(i * 8)) & 0xffn)
+          )
+        );
+
         const summaryInputNoteIds = summary
           .inputNotes()
           .notes()
@@ -708,12 +728,35 @@ test.describe("submitNewTransactionWithProver tests", () => {
           outputNotesCount: summary.outputNotes().numNotes(),
           summaryInputNoteIds,
           sentNoteIds,
+          summaryHashBytes,
+          eip712Hash: Array.from(summary.eip712Hash()),
+          adviceLength: advice.get(adviceKey)?.length,
+          rejectsFalcon,
         };
       });
 
       expect(result.inputNotesCount).toBe(1);
       expect(result.outputNotesCount).toBe(0);
       expect(result.summaryInputNoteIds).toEqual(result.sentNoteIds);
+      expect(result.eip712Hash).toEqual(
+        Array.from(
+          Buffer.from(
+            hashTypedData({
+              domain: { name: "Miden Transaction", version: "1" },
+              types: {
+                MidenTransaction: [{ name: "txSummaryHash", type: "bytes32" }],
+              },
+              primaryType: "MidenTransaction",
+              message: {
+                txSummaryHash: `0x${Buffer.from(result.summaryHashBytes).toString("hex")}`,
+              },
+            }).slice(2),
+            "hex"
+          )
+        )
+      );
+      expect(result.adviceLength).toEqual(32);
+      expect(result.rejectsFalcon).toBe(true);
     });
 
     test("executeForSummary rejects when the transaction is already authorized", async ({
