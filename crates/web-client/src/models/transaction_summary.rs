@@ -119,7 +119,8 @@ impl TransactionSummary {
         }
     }
 
-    /// Returns the advice-map entry for an ECDSA signature over `eip712Hash()`.
+    /// Encodes an ECDSA signature over `eip712Hash()` as an advice-map entry.
+    /// The signature is verified when the transaction executes, not by this method.
     #[js_export(js_name = "eip712SignatureAdvice")]
     pub fn eip712_signature_advice(
         &self,
