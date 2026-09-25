@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/create",
-  "version": "0.17.0-rc.2",
+  "version": "0.17.0-rc.3",
   "description": "Point your AI coding agent at version-matched Miden guidance. Run `npm create @miden-sdk@latest` in a project using the Miden web SDK.",
   "type": "commonjs",
   "main": "dist/index.js",
