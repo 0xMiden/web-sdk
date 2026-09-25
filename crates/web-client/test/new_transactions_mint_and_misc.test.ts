@@ -3,7 +3,7 @@
 // Split from new_transactions.test.ts to balance shard-1 wall clock — the
 // send/custom describes live in new_transactions_send_and_custom.test.ts.
 // Platform-agnostic (browser + Node.js).
-import { test, expect } from "./test-setup";
+import { test, expect, loadNodeSdk } from "./test-setup";
 import { hashTypedData, parseSignature, verifyTypedData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -569,7 +569,6 @@ test.describe("submitNewTransactionWithProver tests", () => {
   test.describe("executeForSummary tests", () => {
     test("executeForSummary returns TransactionSummary for unauthorized transaction", async ({
       run,
-      sdk,
     }, testInfo) => {
       const result = await run(async ({ client, sdk }) => {
         const walletSeed = new Uint8Array(32);
@@ -782,11 +781,12 @@ test.describe("submitNewTransactionWithProver tests", () => {
       expect(result.rejectsFalconSignature).toBe(true);
 
       if (testInfo.project.name === "nodejs") {
-        const summary = sdk.TransactionSummary.deserialize(
-          Uint8Array.from(result.summaryBytes)
+        const nodeSdk = loadNodeSdk();
+        const summary = nodeSdk.TransactionSummary.deserialize(
+          Buffer.from(result.summaryBytes)
         );
-        const ecdsaKey = sdk.AuthSecretKey.deserialize(
-          Uint8Array.from(result.ecdsaKeyBytes)
+        const ecdsaKey = nodeSdk.AuthSecretKey.deserialize(
+          Buffer.from(result.ecdsaKeyBytes)
         );
         const publicKey = ecdsaKey.publicKey();
         const privateKey = Buffer.from(
@@ -811,8 +811,8 @@ test.describe("submitNewTransactionWithProver tests", () => {
         const rawSignatureBytes = ecdsaKey
           .sign(summary.toCommitment())
           .serialize();
-        const signature = sdk.Signature.deserialize(
-          Uint8Array.from([
+        const signature = nodeSdk.Signature.deserialize(
+          Buffer.from([
             ...rawSignatureBytes.slice(0, -signatureBytes.length),
             ...signatureBytes,
           ])
