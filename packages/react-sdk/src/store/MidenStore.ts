@@ -27,7 +27,9 @@ interface MidenStoreState {
   accounts: AccountHeader[];
   accountDetails: Map<string, Account>;
   notes: InputNoteRecord[];
+  notesByFilter: Map<string, InputNoteRecord[]>;
   consumableNotes: ConsumableNoteRecord[];
+  consumableNotesByAccount: Map<string, ConsumableNoteRecord[]>;
   assetMetadata: Map<string, AssetMetadata>;
 
   // Temporal note tracking — records when each note ID was first observed
@@ -49,10 +51,16 @@ interface MidenStoreState {
 
   setAccounts: (accounts: AccountHeader[]) => void;
   setAccountDetails: (accountId: string, account: Account) => void;
-  setNotes: (notes: InputNoteRecord[]) => void;
-  setNotesIfChanged: (notes: InputNoteRecord[]) => void;
-  setConsumableNotes: (notes: ConsumableNoteRecord[]) => void;
-  setConsumableNotesIfChanged: (notes: ConsumableNoteRecord[]) => void;
+  setNotes: (notes: InputNoteRecord[], filterKey?: string) => void;
+  setNotesIfChanged: (notes: InputNoteRecord[], filterKey?: string) => void;
+  setConsumableNotes: (
+    notes: ConsumableNoteRecord[],
+    accountIdKey?: string
+  ) => void;
+  setConsumableNotesIfChanged: (
+    notes: ConsumableNoteRecord[],
+    accountIdKey?: string
+  ) => void;
   setAssetMetadata: (assetId: string, metadata: AssetMetadata) => void;
 
   setLoadingAccounts: (isLoading: boolean) => void;
@@ -79,7 +87,9 @@ function freshCachedState() {
     accounts: [] as AccountHeader[],
     accountDetails: new Map<string, Account>(),
     notes: [] as InputNoteRecord[],
+    notesByFilter: new Map<string, InputNoteRecord[]>(),
     consumableNotes: [] as ConsumableNoteRecord[],
+    consumableNotesByAccount: new Map<string, ConsumableNoteRecord[]>(),
     assetMetadata: new Map<string, AssetMetadata>(),
     noteFirstSeen: new Map<string, number>(),
 
@@ -141,38 +151,49 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
       return { accountDetails: newMap };
     }),
 
-  setNotes: (notes) =>
+  setNotes: (notes, filterKey = "all") =>
     set((state) => {
+      const newNotesByFilter = new Map(state.notesByFilter);
+      newNotesByFilter.set(filterKey, notes);
+
       const now = Date.now();
       const newFirstSeen = new Map<string, number>();
-      for (const note of notes) {
-        try {
-          // `id()` is `NoteId | undefined` on the 0.15 surface; `!` lets the
-          // `.toString()` of `undefined` fall into the surrounding `catch`
-          // (which already drops the note from the bookkeeping map).
-          const id = note.id()!.toString();
-          newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
-        } catch {
-          // Skip if id() fails
+
+      for (const [, noteList] of newNotesByFilter) {
+        for (const note of noteList) {
+          try {
+            const id = note.id()!.toString();
+            newFirstSeen.set(
+              id,
+              state.noteFirstSeen.get(id) ?? newFirstSeen.get(id) ?? now
+            );
+          } catch {
+            // Skip if id() fails
+          }
         }
       }
-      return { notes, noteFirstSeen: newFirstSeen };
+
+      return {
+        notes,
+        notesByFilter: newNotesByFilter,
+        noteFirstSeen: newFirstSeen,
+      };
     }),
 
-  setNotesIfChanged: (notes) =>
+  setNotesIfChanged: (notes, filterKey = "all") =>
     set((state) => {
       const safeId = (n: InputNoteRecord): string | null => {
         try {
-          // `id()` is `NoteId | undefined`; `!` lets the `.toString()` of
-          // `undefined` fall into the catch (mirroring how every other id-
-          // bearing throw is handled here).
           return n.id()!.toString();
         } catch {
           return null;
         }
       };
+      const prevNotes =
+        state.notesByFilter.get(filterKey) ??
+        (filterKey === "all" ? state.notes : []);
       const prevIds = new Set<string>();
-      for (const n of state.notes) {
+      for (const n of prevNotes) {
         const id = safeId(n);
         if (id) prevIds.add(id);
       }
@@ -182,42 +203,61 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
         if (id) newIds.add(id);
       }
       if (
+        state.notesByFilter.has(filterKey) &&
         prevIds.size === newIds.size &&
         [...prevIds].every((id) => newIds.has(id))
       ) {
         return {};
       }
+
+      const newNotesByFilter = new Map(state.notesByFilter);
+      newNotesByFilter.set(filterKey, notes);
+
       const now = Date.now();
       const newFirstSeen = new Map<string, number>();
-      for (const note of notes) {
-        try {
-          // `id()` is `NoteId | undefined` on the 0.15 surface; `!` lets the
-          // `.toString()` of `undefined` fall into the surrounding `catch`
-          // (which already drops the note from the bookkeeping map).
-          const id = note.id()!.toString();
-          // Preserve existing timestamp or record new one
-          newFirstSeen.set(id, state.noteFirstSeen.get(id) ?? now);
-        } catch {
-          // Skip
+
+      for (const [, noteList] of newNotesByFilter) {
+        for (const note of noteList) {
+          try {
+            const id = note.id()!.toString();
+            newFirstSeen.set(
+              id,
+              state.noteFirstSeen.get(id) ?? newFirstSeen.get(id) ?? now
+            );
+          } catch {
+            // Skip
+          }
         }
       }
-      return { notes, noteFirstSeen: newFirstSeen };
+
+      return {
+        notes,
+        notesByFilter: newNotesByFilter,
+        noteFirstSeen: newFirstSeen,
+      };
     }),
 
-  setConsumableNotes: (consumableNotes) => set({ consumableNotes }),
+  setConsumableNotes: (consumableNotes, accountIdKey = "default") =>
+    set((state) => {
+      const newMap = new Map(state.consumableNotesByAccount);
+      newMap.set(accountIdKey, consumableNotes);
+      return { consumableNotes, consumableNotesByAccount: newMap };
+    }),
 
-  setConsumableNotesIfChanged: (consumableNotes) =>
+  setConsumableNotesIfChanged: (consumableNotes, accountIdKey = "default") =>
     set((state) => {
       const safeId = (n: ConsumableNoteRecord): string | null => {
         try {
-          // `id()` is `NoteId | undefined`; see `setNotesIfChanged`.
           return n.inputNoteRecord().id()!.toString();
         } catch {
           return null;
         }
       };
+      const prevNotes =
+        state.consumableNotesByAccount.get(accountIdKey) ??
+        state.consumableNotes;
       const prevIds = new Set<string>();
-      for (const n of state.consumableNotes) {
+      for (const n of prevNotes) {
         const id = safeId(n);
         if (id) prevIds.add(id);
       }
@@ -227,12 +267,15 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
         if (id) newIds.add(id);
       }
       if (
+        state.consumableNotesByAccount.has(accountIdKey) &&
         prevIds.size === newIds.size &&
         [...prevIds].every((id) => newIds.has(id))
       ) {
         return {};
       }
-      return { consumableNotes };
+      const newMap = new Map(state.consumableNotesByAccount);
+      newMap.set(accountIdKey, consumableNotes);
+      return { consumableNotes, consumableNotesByAccount: newMap };
     }),
 
   setAssetMetadata: (assetId, metadata) =>
@@ -251,6 +294,9 @@ export const useMidenStore = create<MidenStoreState>()((set) => ({
   reset: () => set(freshState()),
 }));
 
+const EMPTY_INPUT_NOTES: InputNoteRecord[] = [];
+const EMPTY_CONSUMABLE_NOTES: ConsumableNoteRecord[] = [];
+
 // Selector hooks for optimal re-renders
 export const useSignerConnected = () =>
   useMidenStore((state) => state.signerConnected);
@@ -258,9 +304,21 @@ export const useIsInitializing = () =>
   useMidenStore((state) => state.isInitializing);
 export const useSyncStateStore = () => useMidenStore((state) => state.sync);
 export const useAccountsStore = () => useMidenStore((state) => state.accounts);
-export const useNotesStore = () => useMidenStore((state) => state.notes);
-export const useConsumableNotesStore = () =>
-  useMidenStore((state) => state.consumableNotes);
+export const useNotesStore = (filterKey?: string) =>
+  useMidenStore((state) =>
+    filterKey
+      ? (state.notesByFilter.get(filterKey) ?? EMPTY_INPUT_NOTES)
+      : (state.notesByFilter.get("all") ?? state.notes ?? EMPTY_INPUT_NOTES)
+  );
+export const useConsumableNotesStore = (accountIdKey?: string) =>
+  useMidenStore((state) =>
+    accountIdKey
+      ? (state.consumableNotesByAccount.get(accountIdKey) ??
+        EMPTY_CONSUMABLE_NOTES)
+      : (state.consumableNotesByAccount.get("default") ??
+        state.consumableNotes ??
+        EMPTY_CONSUMABLE_NOTES)
+  );
 export const useAssetMetadataStore = () =>
   useMidenStore((state) => state.assetMetadata);
 export const useNoteFirstSeenStore = () =>

@@ -50,7 +50,11 @@ export function useNoteStream(
 ): UseNoteStreamReturn {
   const { client, isReady } = useMiden();
 
-  const allNotes = useNotesStore();
+  const status = options.status ?? "committed";
+  const sender = options.sender ?? null;
+  const since = options.since;
+
+  const allNotes = useNotesStore(status);
   const noteFirstSeen = useNoteFirstSeenStore();
   const { lastSyncTime } = useSyncStateStore();
   const setNotesIfChanged = useMidenStore((state) => state.setNotesIfChanged);
@@ -59,11 +63,6 @@ export function useNoteStream(
   const [error, setError] = useState<Error | null>(null);
   const handledIdsRef = useRef<Set<string>>(new Set());
   const [handledVersion, setHandledVersion] = useState(0);
-
-  // Resolve options
-  const status = options.status ?? "committed";
-  const sender = options.sender ?? null;
-  const since = options.since;
 
   // Store amountFilter in a ref so the streamedNotes useMemo doesn't depend
   // on the function reference (callers typically pass inline lambdas).
@@ -95,7 +94,7 @@ export function useNoteStream(
       const filterType = getNoteFilterType(status);
       const filter = new NoteFilter(filterType);
       const fetched = await client.getInputNotes(filter);
-      setNotesIfChanged(fetched);
+      setNotesIfChanged(fetched, status);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
