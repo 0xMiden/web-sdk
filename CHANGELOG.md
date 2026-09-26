@@ -14,7 +14,7 @@
 
 * [CHANGE][web] Upgraded `miden-client` to 0.17.0-rc.4, which adds `TransactionRequestBuilder::block_numbers` for tip execution; protocol stays at 0.17.0-rc.7 and the node at 0.17.0-rc.3 ([rust-sdk#2629](https://github.com/0xMiden/rust-sdk/pull/2629)).
 * [CHANGE][docs] The shipped `chain-anchored-execution` skill, the README and the transactions and `useChainAnchor` guides now describe the 0.17 multisig flow: a proposal binds a block in its auth args and is previewed and submitted at the tip with that block in `withBlockNumbers`, never re-executed at an anchor, which fails once the node prunes the anchor's account state and cannot be submitted after the 20-block expiry. Anchors remain for flows whose summary binds the reference block, such as single-signature co-signing ([#432](https://github.com/0xMiden/web-sdk/issues/432)).
-* [BREAKING][web] `TransactionRequest.serialize()` bytes now always carry the declared block numbers, so bytes written by 0.17.0-rc.3 or earlier are not compatible with this version in either direction. Re-serialize a request with the client that will execute it ([rust-sdk#2629](https://github.com/0xMiden/rust-sdk/pull/2629)).
+* [BREAKING][web] `TransactionRequest.serialize()` bytes now always carry the declared block numbers, so bytes written by 0.17.0-rc.3 or earlier are not compatible with this version in either direction. Re-serialize a request with the client that will execute it. Where the serializing and executing SDKs differ, both must be on 0.17.0-rc.4 or later: a dApp and its wallet exchanging a `CustomTransaction` through the wallet adapter, and co-signers passing proposal bytes ([rust-sdk#2629](https://github.com/0xMiden/rust-sdk/pull/2629)).
 
 ## 0.17.0-rc.3 (TBD)
 
