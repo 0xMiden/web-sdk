@@ -6,21 +6,31 @@ sidebar_position: 11
 # useChainAnchor & usePreview
 
 Capture a reference block, derive the summary pending authorization at it, and
-execute against it later — the React surface for multisig proposals and offline
-co-signing.
+execute against it later: the React surface for offline co-signing with a
+single-signature account.
+
+> **Multisig proposals do not need an anchor.**
+> Since protocol 0.17 a multisig summary binds a bound block named in its auth
+> args, not the reference block. Build the request with
+> `client.feeAwareTransactionRequestBuilder(account)`, which adds that block with
+> `withBlockNumbers`, and let every party `usePreview()` and `useTransaction()`
+> without an anchor, at their own tip. Re-executing an older multisig proposal at
+> an anchor fails once the node prunes that block's account state (50 blocks), and
+> a transaction executed at an older reference block expires 20 blocks after it.
+> See [Multisig Proposals: Bind a Block, Execute at the Tip](../../web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip).
+> Available from `0.17.0-rc.4`.
 
 ## Why anchors exist
 
-By default a transaction executes against the client's current sync height.
-Since protocol 0.16 a signed transaction summary binds the reference block
-commitment, so signatures collected over a summary only authorize an execution
-whose reference block is the one the summary was built at.
+By default a transaction executes against the client's current sync height. A
+single-signature (`signature.masm`) account's summary binds the reference block
+commitment, so signatures collected over it only authorize an execution whose
+reference block is the one the summary was built at.
 
-In a flow that collects signatures and executes later, the proposer, each
-co-signer, and the executor are all at different heights. Without a shared
-reference block, each one derives a different summary and the signatures never
-match. A `ChainAnchor` pins that reference block so everyone reproduces the
-same summary.
+In a flow that collects such signatures and executes later, the signer and the
+executor are at different heights. Without a shared reference block, each one
+derives a different summary and the signatures never match. A `ChainAnchor`
+pins that reference block so everyone reproduces the same summary.
 
 ## Proposing
 

@@ -262,11 +262,65 @@ Note that declaring a *salt* against such an account does not work: miden-client
 
 One request-building path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` resolves the order and builds the request inside miden-client, so the SDK never sees a builder. On a fee-charging chain that leaves the outcome to the creator's auth component — an ordinary creator has its conversion info committed and pays normally, while a multisig creator fails with `FeeConversionInfoRequired`. Cancel by note with `client.transactions.pswapCancel` there, which declares a salt against the creator first.
 
+## Multisig Proposals: Bind a Block, Execute at the Tip
+
+Since protocol 0.17 a multisig proposal does not need a `ChainAnchor`. The multisig auth args name a **bound block**, and the transaction summary binds that block rather than the reference block the transaction executes at. A proposal can therefore be verified and submitted at whatever block is current, provided the transaction can authenticate the bound block. `withBlockNumbers([boundBlock])` adds it to the transaction's partial blockchain, and `feeAwareTransactionRequestBuilder` does that for you when it builds a multisig request.
+
+Use this flow for multisig. Re-executing at an anchor breaks down twice as a proposal ages:
+
+- A node serves account state for only the last 50 blocks, and every fee-paying transaction loads the chain's fee faucet as a foreign account. Re-execution at an older anchor fails with `block N has been pruned`, on every co-signer's verification as well as at submit.
+- A transaction expires 20 blocks after its reference block, so a transaction executed at an older anchor is rejected at submission even when it executes.
+
+```typescript
+import { TransactionRequest, TransactionSummary } from "@miden-sdk/miden-sdk";
+
+// ── Proposer ──────────────────────────────────────────────
+// The fee-aware builder binds the current sync height and adds it to the
+// request's block numbers.
+const builder = await client.feeAwareTransactionRequestBuilder(multisig);
+const request = builder.withCustomScript(script).build();
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+});
+await shipToCosigners({
+  request: request.serialize(),
+  summary: summary.serialize(),
+});
+
+// ── Co-signer ─────────────────────────────────────────────
+// Re-derive at the local tip from the proposer's request bytes.
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request: proposedRequest,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// ── Executor ──────────────────────────────────────────────
+// At the tip, with the collected signatures in the request's advice map.
+await client.transactions.submit(multisig, proposedRequest);
+```
+
+Notes:
+
+- **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes, exactly as in the anchored flow below.
+- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from `request.blockNumbers()`) and compare commitments.
+- **Approvals can expire.** `approvalExpirationDelta` on `feeAwareTransactionRequestBuilder` counts from the bound block, and the multisig rejects execution at or after that reference block. Omitted, the approval does not expire.
+- **A match still does not prove agreement on account state.** Everything under "Notes on anchors" about what the summary covers, and what it does not, applies unchanged.
+
+Available from `0.17.0-rc.4`.
+
 ## Chain-Anchored Execution
 
-By default a transaction executes against the client's current sync height. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution whose reference block is the one the summary was built at.
+For a multisig proposal, use the flow in the previous section instead. The rest of this section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over that summary only authorize an execution whose reference block is the one the summary was built at.
 
-That is a problem for any flow that collects signatures and executes later — a multisig proposal, offline co-signing — because the proposer, each co-signer, and the eventual executor are all at different heights. Re-deriving the summary locally produces a different summary, and the signatures no longer match.
+That is a problem for any flow that collects such signatures and executes later, such as offline co-signing, because the signer and the eventual executor are at different heights. Re-deriving the summary locally produces a different summary, and the signatures no longer match.
 
 A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
 
@@ -283,7 +337,7 @@ const anchor = await client.transactions.captureAnchor(request);
 // `preview` derives the summary the account is being asked to authorize.
 const summary = await client.transactions.preview({
   operation: "custom",
-  account: multisig,
+  account,
   request,
   anchor,
 });
@@ -306,7 +360,7 @@ const proposedRequest = TransactionRequest.deserialize(requestBytes);
 // the local sync height would produce a different summary every time.
 const derived = await client.transactions.preview({
   operation: "custom",
-  account: multisig,
+  account,
   request: proposedRequest,
   anchor: received,
 });
@@ -317,7 +371,7 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 // ── Executor ──────────────────────────────────────────────
 // The proposer's request, carrying the collected signatures in its advice map;
 // attaching them is part of the signing protocol, not the anchor.
-await client.transactions.submit(multisig, proposedRequest, {
+await client.transactions.submit(account, proposedRequest, {
   anchor: received,
 });
 ```

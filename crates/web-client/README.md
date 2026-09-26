@@ -672,9 +672,26 @@ Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `wit
 
 One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
 
+### Multisig Proposals: Execute at the Tip
+
+Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height and adds that block to the request with `withBlockNumbers`, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
+
+```typescript
+// Proposer
+const request = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const summary = await client.transactions.preview({ operation: "custom", account: multisig, request });
+// Co-signer: preview the proposer's request bytes at the local tip and compare
+// `toCommitment()`. Executor:
+await client.transactions.submit(multisig, request);
+```
+
+Available from `0.17.0-rc.4`. See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip) for verification details.
+
 ### Chain-Anchored Execution
 
-Transactions execute against the client's current sync height by default. Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block — which breaks any flow that collects signatures and executes later, since the proposer, co-signers, and executor are all at different heights.
+For a multisig, use the tip flow above. This section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over it only authorize an execution at that exact block, which breaks any flow that collects signatures and executes later.
 
 A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
 
@@ -689,7 +706,7 @@ import {
 const anchor = await client.transactions.captureAnchor(request);
 const summary = await client.transactions.preview({
   operation: "custom",
-  account: multisig,
+  account,
   request,
   anchor,
 });
@@ -710,7 +727,7 @@ const proposed = TransactionSummary.deserialize(summaryBytes);
 const proposedRequest = TransactionRequest.deserialize(requestBytes);
 const derived = await client.transactions.preview({
   operation: "custom",
-  account: multisig,
+  account,
   request: proposedRequest,
   anchor: received,
 });
@@ -719,7 +736,7 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 }
 
 // Executor: replay at the same anchor, whatever the local height is by now.
-await client.transactions.submit(multisig, request, { anchor: received });
+await client.transactions.submit(account, request, { anchor: received });
 ```
 
 The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
