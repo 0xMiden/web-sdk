@@ -9,19 +9,22 @@ use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 /// A self-contained, verifiable anchor that pins transaction execution to a specific reference
 /// block instead of the client's current sync height.
 ///
-/// Since protocol 0.16 a signed transaction summary binds the reference block commitment, so
-/// signatures collected over a summary only authorize an execution whose reference block is the
-/// one the summary was built at. Flows that collect signatures and execute later — multisig
-/// proposals, offline co-signing — capture an anchor alongside the summary and replay execution
-/// against it, so the summary reproduces exactly on a client at a different sync height,
-/// provided both parties agree on the account state.
+/// When a signed transaction summary binds the reference block commitment, signatures collected
+/// over it only authorize an execution whose reference block is the one the summary was built
+/// at. Flows that collect such signatures and execute later, such as single-signature
+/// co-signing, capture an anchor alongside the summary and replay execution against it, so the
+/// summary reproduces exactly on a client at a different sync height, provided both parties
+/// agree on the account state. A multisig proposal needs no anchor: its summary binds the block
+/// its auth args name, and a request from `feeAwareTransactionRequestBuilder` executes at the tip
+/// once the client has synced to that block.
 ///
 /// The anchor bundles the reference block header with a partial blockchain consistent with it.
 /// Both invariants (chain length matches the header's block number, peaks hash to the header's
 /// chain commitment) are enforced natively on construction and on [`Self::deserialize`], so an
 /// anchor received from an untrusted party can never be malformed — only pinned to the wrong
-/// block, or to one that never existed. To rule out the wrong block, compare [`Self::commitment`]
-/// against `TransactionSummary::blockCommitment()`, which is signed into the summary. Re-deriving
+/// block, or to one that never existed. For a summary that binds the reference block, rule out
+/// the wrong block by comparing [`Self::commitment`] against
+/// `TransactionSummary::blockCommitment()`, which is signed into the summary. Re-deriving
 /// the summary at the anchor and comparing `toCommitment()` is the stronger check, since it also
 /// binds the request and the local account state.
 ///

@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-wallet-adapter-base",
-  "version": "0.17.0-rc.3",
+  "version": "0.17.0-rc.4",
   "description": "Core infrastructure for connecting Miden-compatible wallets to your dApp.",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -35,7 +35,7 @@
     "url": "https://github.com/0xMiden/web-sdk/issues"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.17.0-rc.3"
+    "@miden-sdk/miden-sdk": "^0.17.0-rc.4"
   },
   "homepage": "https://github.com/0xMiden/web-sdk"
 }

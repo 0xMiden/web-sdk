@@ -183,7 +183,7 @@ CustomTransaction(address, recipientAddress, transactionRequest,
 `CustomTransaction` base64-encode the `Uint8Array` arguments for you, and
 `CustomTransaction` calls `transactionRequest.serialize()` on the live
 `TransactionRequest` you hand it, so build that with `@miden-sdk/miden-sdk`
-first.
+first. The wallet deserializes these bytes with its own SDK, so both must use the same `TransactionRequest` encoding: 0.17.0-rc.4 changed it, and a dApp and wallet on opposite sides of that change cannot exchange custom transactions.
 
 `requestTransaction` wants the envelope, not a bare payload:
 

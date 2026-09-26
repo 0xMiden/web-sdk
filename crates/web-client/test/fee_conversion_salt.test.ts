@@ -90,6 +90,56 @@ test.describe("multisig auth args", () => {
     expect(result.otherBlock).not.toBe(result.pinnedA);
   });
 
+  // The bound block has to be in the transaction's partial blockchain, and
+  // declaring it on the request is what lets the proposal execute at a later
+  // tip. A plain account binds no block and gets no auth args, so its request
+  // declares nothing a bare builder would not.
+  test("the bound block is declared for a multisig and nothing for a plain account", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      const { wallet } = await helpers.setupWalletAndFaucet();
+      const salt = () => new sdk.Word(sdk.u64Array([9, 10, 11, 12]));
+
+      const pinned = (
+        await client.feeAwareTransactionRequestBuilder(
+          multisigAccountId,
+          undefined,
+          salt(),
+          1
+        )
+      ).build();
+      const defaulted = (
+        await client.feeAwareTransactionRequestBuilder(multisigAccountId)
+      ).build();
+      const syncHeight = await client.getSyncHeight();
+
+      const plain = (
+        await client.feeAwareTransactionRequestBuilder(wallet.id())
+      ).build();
+
+      return {
+        pinned: Array.from(pinned.blockNumbers()),
+        defaulted: Array.from(defaulted.blockNumbers()),
+        syncHeight,
+        plain: Array.from(plain.blockNumbers()),
+        plainHasAuthArg: plain.authArg() != null,
+        plainHasSalt: plain.feeConversionSalt() != null,
+      };
+    });
+
+    expect(result.pinned).toEqual([1]);
+    // The mock chain is past its genesis here, so the default cannot collide
+    // with the pinned block and the two assertions test different paths.
+    expect(result.syncHeight).toBeGreaterThan(1);
+    expect(result.defaulted).toEqual([result.syncHeight]);
+    expect(result.plain).toEqual([]);
+    expect(result.plainHasAuthArg).toBe(false);
+    expect(result.plainHasSalt).toBe(false);
+  });
+
   test("the approval expiration is off by default and rejects zero", async ({
     run,
   }) => {

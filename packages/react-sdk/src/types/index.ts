@@ -581,7 +581,9 @@ export interface ExecuteTransactionOptions {
   /**
    * Execute against a pinned reference block instead of the current sync
    * height, so a summary signed at that block reproduces exactly. Capture one
-   * with {@link useChainAnchor}.
+   * with {@link useChainAnchor}. Leave it out for a multisig request built by
+   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+   * client has synced to its bound block.
    */
   anchor?: ChainAnchor;
 }
@@ -602,8 +604,10 @@ export interface PreviewTransactionOptions {
   request: TransactionRequestInput;
   /**
    * Derive the summary at a pinned reference block. Required when verifying a
-   * proposal: the summary binds the reference block commitment, so deriving it
-   * at the local sync height produces a different summary.
+   * summary that binds the reference block commitment, since deriving it at the
+   * local sync height produces a different summary. Leave it out for a multisig
+   * request built by `feeAwareTransactionRequestBuilder`, which previews at the
+   * tip once the client has synced to its bound block.
    */
   anchor?: ChainAnchor;
 }

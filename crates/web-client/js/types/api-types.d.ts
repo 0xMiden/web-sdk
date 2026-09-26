@@ -441,10 +441,18 @@ export interface AnchoredOptions {
    * A {@link ChainAnchor} from `transactions.captureAnchor(request)`, pinning
    * execution to the reference block the anchor was captured at.
    *
-   * Since protocol 0.16 a signed transaction summary binds the reference block
-   * commitment, so signatures only authorize an execution at that exact block.
-   * Supplying the proposer's anchor is what makes the signed summary reproduce
-   * on a client whose sync height has since advanced.
+   * When a signed transaction summary binds the reference block commitment,
+   * signatures only authorize an execution at that exact block, and supplying
+   * the proposer's anchor is what makes the signed summary reproduce on a client
+   * whose sync height has since advanced.
+   *
+   * A multisig request built by
+   * {@link MidenClient.feeAwareTransactionRequestBuilder} does not need one:
+   * its summary binds the block its auth args name, the request declares that
+   * block through `withBlockNumbers`, and so it executes and reproduces its
+   * summary at the current tip. That keeps working after the node prunes the
+   * bound block's account state, which an anchor at that block does not. The
+   * executing client must have synced to at least the bound block first.
    *
    * When the anchor came from an untrusted party, compare `anchor.commitment()`
    * against an independently trusted value before using it.
@@ -1253,6 +1261,13 @@ export interface TransactionsResource {
    * client's RNG — so the summary signed here would not be the summary the
    * submitted transaction produces.
    *
+   * Without an `anchor` the summary is derived at the current sync height. For
+   * a multisig request built by
+   * {@link MidenClient.feeAwareTransactionRequestBuilder} that reproduces the
+   * proposal's summary at any later tip, so a co-signer can verify it without
+   * the proposer's anchor once its client has synced to at least the bound
+   * block (the largest of `request.blockNumbers()`).
+   *
    * @param options - Preview options discriminated by `operation` field.
    */
   preview(options: PreviewOptions): Promise<TransactionSummary>;
@@ -1283,7 +1298,8 @@ export interface TransactionsResource {
    * Capture a {@link ChainAnchor} at the current sync height for `request`,
    * pinning the reference block that a later execution can replay against.
    *
-   * The anchor tracks the creation blocks of the request's authenticated input
+   * The anchor tracks the blocks the request declares through
+   * `withBlockNumbers` and the creation blocks of its authenticated input
    * notes, so it stays valid for that request once the chain advances. Pass it
    * back through the `anchor` option on {@link preview}, {@link executeRequest},
    * or {@link submit}; serialize it with `anchor.serialize()` to ship it
@@ -1338,7 +1354,9 @@ export interface TransactionsResource {
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Pass `anchor` to execute against a pinned reference block
-   *   instead of the current sync height.
+   *   instead of the current sync height. Leave it out for a multisig request
+   *   from {@link MidenClient.feeAwareTransactionRequestBuilder}, which executes
+   *   at the tip once this client has synced to its bound block.
    * @returns A handle to the executed transaction, ready to prove.
    * @throws `FeeConversionInfoRequired`, naming the auth component, when the
    *   executing account is a multisig and the request declares no fee
@@ -1945,6 +1963,18 @@ export declare class MidenClient {
    * bare builder. A zero base fee is not a second condition: since 0.17 a
    * multisig auth procedure resolves its auth args whatever the chain charges,
    * so a multisig gets them on a fee-free chain too.
+   *
+   * For a multisig the builder also declares the block the summary binds
+   * through `withBlockNumbers`, so the request executes at the current chain
+   * tip with no anchor. The summary stays bound to that block while foreign
+   * accounts, the fee faucet among them, load at the tip: the request still
+   * executes after the node has pruned the bound block's account state (about
+   * 50 blocks), and {@link TransactionsResource.preview} without an `anchor`
+   * reproduces the proposal's summary at the tip.
+   * Each party's client must first have synced to at least that bound block,
+   * the largest of `request.blockNumbers()` and by default the proposer's sync
+   * height when it built the request; below it execution fails with
+   * "requested block N is after transaction reference block M" until it syncs.
    *
    * Calling `withAuthArg` on the result clears what this declared, and vice
    * versa: miden-client keeps the two mutually exclusive, so whichever is

@@ -59,7 +59,7 @@ rather than failing loudly.
 
 **`CustomTransaction` serializes eagerly.** Its constructor calls
 `serialize()` on the `TransactionRequest` you pass, so hand it a live object
-from `@miden-sdk/miden-sdk`, not bytes you already encoded.
+from `@miden-sdk/miden-sdk`, not bytes you already encoded. The wallet deserializes these bytes with its own SDK, so both must use the same `TransactionRequest` encoding: 0.17.0-rc.4 changed it, and a dApp and wallet on opposite sides of that change cannot exchange custom transactions.
 
 **This package has no runtime dependency on the SDK.** It imports
 `@miden-sdk/miden-sdk` for types only, and declares it as a peer dependency.

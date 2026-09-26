@@ -1,5 +1,6 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
+use miden_client::block::BlockNumber;
 use miden_client::note::{
     Note as NativeNote,
     NoteDetails as NativeNoteDetails,
@@ -49,6 +50,14 @@ impl TransactionRequestBuilder {
     /// Creates a new empty transaction request builder (internal Rust access).
     pub(crate) fn new() -> TransactionRequestBuilder {
         TransactionRequestBuilder::from_native(NativeTransactionRequestBuilder::new())
+    }
+
+    fn add_block_numbers(&mut self, block_numbers: Vec<u32>) -> TransactionRequestBuilder {
+        self.builder = self
+            .builder
+            .clone()
+            .block_numbers(block_numbers.into_iter().map(BlockNumber::from));
+        self.clone()
     }
 
     /// Wraps a builder assembled in Rust.
@@ -221,6 +230,49 @@ impl TransactionRequestBuilder {
             .build()
             .map(TransactionRequest)
             .map_err(|err| js_error_with_context(err, "failed to build transaction request"))
+    }
+}
+
+// `withBlockNumbers` is split by platform only to type its argument `number[]` on both. napi maps
+// `Vec<u32>` to `number[]`; wasm-bindgen types it `Uint32Array` although it accepts a plain array.
+#[cfg(feature = "browser")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+impl TransactionRequestBuilder {
+    /// Adds blocks the transaction must be able to authenticate against its reference block.
+    ///
+    /// Each block's header and authentication path are added to the transaction's partial
+    /// blockchain, and to an anchor captured for the request with `chainAnchorForRequest`. A
+    /// header missing from the local store is fetched from the node. Every block must be at or
+    /// before the block the transaction executes against. Repeated calls add more blocks, and
+    /// duplicates collapse.
+    ///
+    /// A multisig proposal needs the block its summary binds. `feeAwareTransactionRequestBuilder`
+    /// already adds it, so this is only for requests whose auth args are assembled by hand.
+    #[wasm_bindgen(js_name = "withBlockNumbers")]
+    pub fn with_block_numbers(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "number[]")] block_numbers: Vec<u32>,
+    ) -> TransactionRequestBuilder {
+        self.add_block_numbers(block_numbers)
+    }
+}
+
+#[cfg(feature = "nodejs")]
+#[napi_derive::napi]
+impl TransactionRequestBuilder {
+    /// Adds blocks the transaction must be able to authenticate against its reference block.
+    ///
+    /// Each block's header and authentication path are added to the transaction's partial
+    /// blockchain, and to an anchor captured for the request with `chainAnchorForRequest`. A
+    /// header missing from the local store is fetched from the node. Every block must be at or
+    /// before the block the transaction executes against. Repeated calls add more blocks, and
+    /// duplicates collapse.
+    ///
+    /// A multisig proposal needs the block its summary binds. `feeAwareTransactionRequestBuilder`
+    /// already adds it, so this is only for requests whose auth args are assembled by hand.
+    #[napi(js_name = "withBlockNumbers")]
+    pub fn with_block_numbers(&mut self, block_numbers: Vec<u32>) -> TransactionRequestBuilder {
+        self.add_block_numbers(block_numbers)
     }
 }
 

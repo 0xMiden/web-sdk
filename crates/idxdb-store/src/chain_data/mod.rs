@@ -141,18 +141,12 @@ impl IdxdbStore {
                 let promise = idxdb_get_partial_blockchain_nodes(self.db_id(), formatted_list);
                 let js_value =
                     await_js_value(promise, "failed to get partial blockchain nodes").await?;
-                let nodes = process_partial_blockchain_nodes_from_js_value(js_value)?;
-
-                // Verify that all requested nodes were found. Missing nodes indicate
-                // that MMR authentication nodes were not persisted during a previous
-                // sync (e.g. the browser extension was closed mid-sync).
-                for id in &ids {
-                    if !nodes.contains_key(id) {
-                        return Err(StoreError::PartialBlockchainNodeNotFound(id.inner() as u64));
-                    }
-                }
-
-                Ok(nodes)
+                // Returns the nodes that are present, as the SQLite store does. A missing node
+                // is not an error here: the only caller builds authentication paths from these,
+                // checks each path against the MMR, and fetches a path the store cannot complete
+                // from the node. Failing instead made any block whose nodes were never stored
+                // (an older block a transaction declares, or a sync cut short) unusable.
+                process_partial_blockchain_nodes_from_js_value(js_value)
             },
             PartialBlockchainFilter::Forest(forest) => {
                 if forest.is_empty() {

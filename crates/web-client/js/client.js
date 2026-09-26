@@ -474,6 +474,18 @@ export class MidenClient {
    * by the summary. A co-signer holding the proposer's serialized request needs
    * neither - it carries the auth argument and its advice-map preimage.
    *
+   * For a multisig the builder also declares the bound block through
+   * `withBlockNumbers`, so the request executes at the current chain tip with
+   * no anchor. The summary stays bound to the bound block while foreign
+   * accounts, the fee faucet among them, load at the tip, so the request still
+   * executes after the node has pruned the bound block's account state (about
+   * 50 blocks), and `transactions.preview` without an anchor reproduces the
+   * proposal's summary at the tip.
+   * Each party's client must first have synced to at least that bound block,
+   * the largest of `request.blockNumbers()` and by default the proposer's sync
+   * height when it built the request; below it execution fails with
+   * "requested block N is after transaction reference block M" until it syncs.
+   *
    * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
    * returns for a multisig: the two setters clear each other, so either one
    * discards the auth args this already set. Pass `feeConversionSalt` here.

@@ -41,7 +41,9 @@ export interface UseTransactionResult {
  *
  * Pass `anchor` to execute against a pinned reference block instead of the
  * current sync height, so a summary signed at that block reproduces exactly.
- * Capture one with `useChainAnchor`.
+ * Capture one with `useChainAnchor`. Leave it out for a multisig request built
+ * by `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+ * client has synced to its bound block.
  *
  * Fees: the request is yours to build, so paying the verification fee is yours
  * too. A request assembled from `new TransactionRequestBuilder()` aborts with

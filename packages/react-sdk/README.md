@@ -1274,37 +1274,82 @@ function CustomTransactionButton({ accountId }: { accountId: string }) {
 
 #### `useChainAnchor()` / `usePreview()`
 
-Capture a reference block, derive the summary pending authorization at it, and
-execute against it later — the pair behind multisig proposals and offline
-co-signing.
+`usePreview()` derives the summary pending authorization without submitting.
+`useChainAnchor()` pins the reference block that summary is derived at, for
+flows whose summary binds that block, such as single-signature co-signing.
 
-Since protocol 0.16 a signed transaction summary binds the reference block
-commitment, so signatures only authorize an execution at that exact block. In a
-flow that collects signatures and executes later, the proposer, co-signers, and
-executor are all at different sync heights — a `ChainAnchor` is what makes them
-agree on one summary.
+**Multisig proposals need no anchor.** Since protocol 0.17 a multisig summary
+binds a bound block named in its auth args. Build the request with
+`client.feeAwareTransactionRequestBuilder(accountId)`, which declares that
+block with `withBlockNumbers`, ship the request bytes, and let every party
+preview and execute at its own tip once its client has synced to at least the
+bound block (the largest of `request.blockNumbers()`); below it the call fails
+with `requested block N is after transaction reference block M`. `usePreview`
+does not sync, and `useTransaction` syncs through the provider's `sync()`, which
+returns early while another sync runs, so sync and then check the height before
+verifying or executing. Re-executing an older multisig proposal at an anchor
+fails once the node prunes that block's account state (50 blocks).
 
 ```tsx
-import { useChainAnchor, usePreview, useTransaction } from '@miden-sdk/react';
-import { ChainAnchor } from '@miden-sdk/miden-sdk';
+import { useMiden, usePreview } from '@miden-sdk/react';
+import { TransactionRequest } from '@miden-sdk/miden-sdk';
 
-// Proposer: capture the anchor, derive the summary at it, ship both.
-function Propose({ multisigId, buildRequest }) {
-  const { captureAnchor, anchoredRequest } = useChainAnchor();
+// Multisig co-signer: re-derive at the local tip from the proposer's bytes.
+function VerifyMultisig({ accountId, requestBytes, proposed }) {
+  const { client, sync } = useMiden();
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
-        const anchor = await captureAnchor({ request: buildRequest });
-        // anchoredRequest, not buildRequest: a factory resolves to a new
-        // request each call, and the anchor pins only the one it captured.
-        const summary = await preview({
-          accountId: multisigId,
-          request: anchoredRequest,
-          anchor,
-        });
-        await shipToCosigners(anchor.serialize(), summary.serialize());
+        const request = TransactionRequest.deserialize(requestBytes);
+        await sync();
+        // sync() returns early while another sync runs; confirm the height.
+        const bound = Math.max(0, ...request.blockNumbers());
+        if ((await client.getSyncHeight()) < bound) {
+          throw new Error("not synced to the proposal's bound block yet; retry");
+        }
+        const derived = await preview({ accountId, request });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+```
+
+A summary that binds the reference block only authorizes an execution at that
+exact block. In a flow that collects such signatures and executes later, the
+signer, co-signers and executor are all at different sync heights, and a
+`ChainAnchor` is what makes them agree on one summary.
+
+```tsx
+import { useChainAnchor, useMiden, usePreview, useTransaction } from '@miden-sdk/react';
+import { ChainAnchor } from '@miden-sdk/miden-sdk';
+
+// Signer: capture the anchor, derive the summary at it, ship both.
+function Propose({ accountId, buildRequest }) {
+  const { client } = useMiden();
+  const { captureAnchor } = useChainAnchor();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        // Resolve the factory once and pass that object to both calls. A
+        // factory builds a new request per call, and anchoredRequest is state,
+        // so inside this handler it still holds the previous value.
+        const request = await buildRequest(client);
+        const anchor = await captureAnchor({ request });
+        const summary = await preview({ accountId, request, anchor });
+        await shipToCosigners(
+          request.serialize(),
+          anchor.serialize(),
+          summary.serialize()
+        );
       }}
     >
       Propose
@@ -1312,16 +1357,16 @@ function Propose({ multisigId, buildRequest }) {
   );
 }
 
-// Co-signer: re-derive at the proposer's anchor and compare before signing.
-// Deriving at the local sync height yields a different summary every time.
-function Verify({ multisigId, request, anchorBytes, proposed }) {
+// Co-signer: re-derive at the signer's anchor and compare before signing.
+// Deriving such a summary at the local sync height yields a different one.
+function Verify({ accountId, request, anchorBytes, proposed }) {
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
         const anchor = ChainAnchor.deserialize(anchorBytes);
-        const derived = await preview({ accountId: multisigId, request, anchor });
+        const derived = await preview({ accountId, request, anchor });
         if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
           await sign(derived);
         }
@@ -1333,10 +1378,10 @@ function Verify({ multisigId, request, anchorBytes, proposed }) {
 }
 
 // Executor: replay at the same anchor, whatever the local height is by now.
-function Execute({ multisigId, request, anchor }) {
+function Execute({ accountId, request, anchor }) {
   const { execute } = useTransaction();
   return (
-    <button onClick={() => execute({ accountId: multisigId, request, anchor })}>
+    <button onClick={() => execute({ accountId, request, anchor })}>
       Execute
     </button>
   );
@@ -1346,9 +1391,11 @@ function Execute({ multisigId, request, anchor }) {
 `useChainAnchor()` returns
 `{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
 `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
-`anchoredRequest` is the exact request the anchor was captured for; preview and
-execute against it rather than re-resolving a factory, which would build a
-different transaction than the one the anchor pins.
+`anchoredRequest` is the exact request the anchor was captured for; on a later
+interaction, preview and execute against it rather than re-resolving a factory,
+which would build a different transaction than the one the anchor pins. Inside
+the handler that captured, it still holds the previous value, so pass the object
+you resolved there, as `Propose` does.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
