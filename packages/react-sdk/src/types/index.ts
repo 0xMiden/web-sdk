@@ -581,7 +581,9 @@ export interface ExecuteTransactionOptions {
   /**
    * Execute against a pinned reference block instead of the current sync
    * height, so a summary signed at that block reproduces exactly. Capture one
-   * with {@link useChainAnchor}.
+   * with {@link useChainAnchor}. Leave it out for a multisig request built by
+   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+   * client has synced to its bound block.
    */
   anchor?: ChainAnchor;
 }

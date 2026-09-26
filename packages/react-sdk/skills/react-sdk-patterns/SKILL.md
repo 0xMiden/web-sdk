@@ -345,7 +345,8 @@ await execute({
   skipSync: true,             // optional: skip the auto-sync before executing
   privateNoteTarget: "0x...", // optional: deliver private output notes to this account
                               //   after the transaction commits
-  anchor,                     // optional: execute against a pinned reference block
+  anchor,                     // optional: execute against a pinned reference block;
+                              //   not for a multisig proposal, which runs at the tip
                               //   (see "Chain-Anchored Execution")
 });
 ```
@@ -401,7 +402,7 @@ Three things that surprise people here:
 
 A summary that binds the reference block commitment only authorizes an execution at that exact block, so a flow that collects such signatures and executes later - single-signature offline co-signing - captures a `ChainAnchor` next to the summary and ships both.
 
-A multisig proposal (0.17+) needs no anchor: its summary binds the block its auth args name. Build it with `client.feeAwareTransactionRequestBuilder(accountId)`, which declares that block with `withBlockNumbers`, ship the request bytes, and let every party preview and execute at its own tip once its client has synced to at least the bound block (the largest of `request.blockNumbers()`). Below that height the call fails with `requested block N is after transaction reference block M` until the client syncs. `usePreview` does not sync first; `useTransaction` does unless `skipSync` is set. Re-executing an older multisig proposal at an anchor fails once the node prunes that block's account state (50 blocks).
+A multisig proposal (0.17+) needs no anchor: its summary binds the block its auth args name. Build it with `client.feeAwareTransactionRequestBuilder(accountId)`, which declares that block with `withBlockNumbers`, ship the request bytes, and let every party preview and execute at its own tip once its client has synced to at least the bound block (the largest of `request.blockNumbers()`). Below that height the call fails with `requested block N is after transaction reference block M` until the client syncs. `usePreview` does not sync first, and `useTransaction` syncs through the provider's `sync()`, which returns early while another sync runs and records failures instead of throwing, so after syncing confirm `await client.getSyncHeight()` is at least that block before previewing or executing. Re-executing an older multisig proposal at an anchor fails once the node prunes that block's account state (50 blocks).
 
 ```tsx
 const { captureAnchor, anchor, anchoredRequest, isCapturing, error, reset } = useChainAnchor();
@@ -412,10 +413,11 @@ const { execute } = useTransaction();
 const captured = await captureAnchor({ request: txRequest });
 
 // 2. Derive the summary the account is being asked to authorize, at that block.
-const s = await preview({ accountId, request: anchoredRequest ?? txRequest, anchor: captured });
+const s = await preview({ accountId, request: txRequest, anchor: captured });
 
-// 3. Collect signatures, then execute against the SAME request and anchor.
-await execute({ accountId, request: anchoredRequest ?? txRequest, anchor: captured });
+// 3. Collect signatures, then execute against the SAME request and anchor. Inside this
+//    handler that is txRequest; on a later interaction use `anchoredRequest` and `anchor`.
+await execute({ accountId, request: txRequest, anchor: captured });
 ```
 
 **The trap: never re-invoke a request factory once an anchor exists.** A factory resolves to a new object per call, and two draws from the client's RNG make that object differ every time: any builder minting an output note takes a fresh serial number, and on a fee-charging chain the fee conversion info takes a fresh salt, which reaches even a request with no output notes. A second call therefore yields a transaction the anchor does not pin and the co-signers did not approve. Preview and execute against `anchoredRequest`, the exact request the anchor was captured for. Note `anchoredRequest` is state: inside the handler that just captured, it still holds the previous render's value (`null` on a first capture), so use the object you resolved yourself there and `anchoredRequest` on a later interaction.

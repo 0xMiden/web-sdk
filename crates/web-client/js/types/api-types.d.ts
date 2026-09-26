@@ -441,10 +441,10 @@ export interface AnchoredOptions {
    * A {@link ChainAnchor} from `transactions.captureAnchor(request)`, pinning
    * execution to the reference block the anchor was captured at.
    *
-   * Since protocol 0.16 a signed transaction summary binds the reference block
-   * commitment, so signatures only authorize an execution at that exact block.
-   * Supplying the proposer's anchor is what makes the signed summary reproduce
-   * on a client whose sync height has since advanced.
+   * When a signed transaction summary binds the reference block commitment,
+   * signatures only authorize an execution at that exact block, and supplying
+   * the proposer's anchor is what makes the signed summary reproduce on a client
+   * whose sync height has since advanced.
    *
    * A multisig request built by
    * {@link MidenClient.feeAwareTransactionRequestBuilder} does not need one:
@@ -1354,7 +1354,9 @@ export interface TransactionsResource {
    * @param account - The account executing the transaction.
    * @param request - The pre-built transaction request.
    * @param options - Pass `anchor` to execute against a pinned reference block
-   *   instead of the current sync height.
+   *   instead of the current sync height. Leave it out for a multisig request
+   *   from {@link MidenClient.feeAwareTransactionRequestBuilder}, which executes
+   *   at the tip once this client has synced to its bound block.
    * @returns A handle to the executed transaction, ready to prove.
    * @throws `FeeConversionInfoRequired`, naming the auth component, when the
    *   executing account is a multisig and the request declares no fee

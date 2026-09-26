@@ -29,12 +29,24 @@ precondition is height: a client has to have synced to at least the bound
 block, the largest of `request.blockNumbers()` (by default the proposer's sync
 height when it built the request). Below it the call fails with `requested
 block N is after transaction reference block M` until the client syncs.
-`useTransaction` syncs before executing unless you pass `skipSync`;
-`usePreview` does not, so a co-signer calls `sync()` first.
+`useTransaction` syncs before executing unless you pass `skipSync`, and
+`usePreview` does not sync at all. Both go through the provider's `sync()`,
+which returns early while another sync is running and records a failure rather
+than throwing, so check the height after syncing rather than assuming it.
 
 ```tsx
 import { useMiden, usePreview, useTransaction } from "@miden-sdk/react";
 import { TransactionRequest } from "@miden-sdk/miden-sdk";
+
+// The provider's sync() can return without reaching the tip, so confirm the
+// client has synced to the proposal's bound block before using it.
+async function assertSyncedTo(client, sync, request) {
+  await sync();
+  const bound = Math.max(0, ...request.blockNumbers());
+  if ((await client.getSyncHeight()) < bound) {
+    throw new Error("not synced to the proposal's bound block yet; retry");
+  }
+}
 
 function ProposeMultisig({ multisig, script }) {
   const { client } = useMiden();
@@ -57,12 +69,12 @@ function ProposeMultisig({ multisig, script }) {
 }
 
 function VerifyMultisig({ multisig, requestBytes, proposed }) {
-  const { sync } = useMiden();
+  const { client, sync } = useMiden();
   const { preview } = usePreview();
 
   const verify = async () => {
-    await sync();
     const request = TransactionRequest.deserialize(requestBytes);
+    await assertSyncedTo(client, sync, request);
     const derived = await preview({ accountId: multisig, request });
     if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
       throw new Error("proposal does not match the summary presented");
@@ -74,14 +86,55 @@ function VerifyMultisig({ multisig, requestBytes, proposed }) {
 }
 
 function ExecuteMultisig({ multisig, request }) {
+  const { client, sync } = useMiden();
   const { execute } = useTransaction();
-  return (
-    <button onClick={() => execute({ accountId: multisig, request })}>
-      Execute
-    </button>
-  );
+
+  const run = async () => {
+    await assertSyncedTo(client, sync, request);
+    await execute({ accountId: multisig, request, skipSync: true });
+  };
+
+  return <button onClick={run}>Execute</button>;
 }
 ```
+
+### Building the request: paying the fee
+
+These hooks take the request from you, so paying the verification fee is yours
+too. Since protocol 0.16 the fee is paid inside the account's auth procedure,
+which reads the asset and rate out of the transaction's auth argument. Fees
+always settle in the chain's native fee asset at rate 1/1 and miden-client
+commits that itself - but it will not invent the SALT the commitment is computed
+under, because a multisig reuses that salt as its transaction summary's replay
+guard. A multisig request that declares none fails with
+`FeeConversionInfoRequired`, which is why the proposer above builds with
+`feeAwareTransactionRequestBuilder`:
+
+```tsx
+const request = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+```
+
+The argument is the account that **executes** the request - the multisig, not a
+recipient. For an account that is not a multisig the builder comes back
+untouched, so this is a safe drop-in; a zero base fee is not a second condition,
+since 0.17 a multisig resolves its auth args whatever the chain charges.
+Requests produced by the `new*TransactionRequest` constructors already declare a
+salt and need nothing extra.
+
+Two caveats. `withAuthArg` and `withFeeConversionSalt` occupy the same slot and
+each setter clears the other, so a request cannot carry both. Never call either
+on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that
+builder already carries the three-word auth args, and either setter discards
+them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt`
+to `feeAwareTransactionRequestBuilder` instead. And because the salt and the
+bound block are chosen per build, build the request once and ship its bytes, as
+the proposer above does. Co-signers re-derive from those bytes; one that
+rebuilds the proposal instead must pass the same `feeConversionSalt` and
+`boundBlockNum`, or the two summaries cannot match. Each call consumes the
+`Word`, so a second build needs a freshly constructed one; a spent handle
+arrives as "no salt given" and one is drawn instead.
 
 The rest of this page covers anchored flows, whose summary binds the reference
 block.
@@ -142,45 +195,6 @@ function ProposeButton({ accountId, buildRequest }) {
   );
 }
 ```
-
-## Building the request: paying the fee
-
-These three hooks take the request from you, so paying the verification fee is
-yours too. Since protocol 0.16 the fee is paid inside the account's auth
-procedure, which reads the asset and rate out of the transaction's auth
-argument. Fees always settle in the chain's native fee asset at rate 1/1 and
-miden-client commits that itself — but it will not invent the SALT the
-commitment is computed under, because a multisig reuses that salt as its
-transaction summary's replay guard. A multisig request that declares none fails
-with `FeeConversionInfoRequired`, so this applies squarely to the multisig flow
-above.
-
-Ask the client for a builder that already declares one:
-
-```tsx
-import { AccountId } from "@miden-sdk/miden-sdk";
-
-const buildRequest = async (client) =>
-  (await client.feeAwareTransactionRequestBuilder(AccountId.fromHex(multisigId)))
-    .withCustomScript(script)
-    .build();
-```
-
-The argument is the account that **executes** the request — the multisig here,
-not a recipient. For an account that is not a multisig the builder comes back
-untouched, so this is a safe drop-in; a zero base fee is not a second condition,
-since 0.17 a multisig resolves its auth args whatever the chain charges. Requests produced by the `new*TransactionRequest` constructors
-already declare a salt and need nothing extra.
-
-Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`
-occupy the same slot and each setter clears the other, so a request cannot carry
-both. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead. And because the salt and the bound block are chosen per
-build, the warning below about resolving a factory exactly once applies here too
-- resolve it once and pass that object to every preview and execute call. A
-co-signer rebuilding the proposal instead of receiving its bytes passes
-`feeConversionSalt` and `boundBlockNum`, or the two summaries cannot match.
-Each call consumes the `Word`, so a second build needs a freshly constructed
-one; a spent handle arrives as "no salt given" and one is drawn instead.
 
 ## Verifying and co-signing
 
@@ -255,7 +269,7 @@ function ExecuteButton({ accountId, request, anchor }) {
   and any error.
 - `anchoredRequest` holds the exact request that anchor was captured for.
 
-:::warning Preview and execute against `anchoredRequest`
+:::warning Pass one resolved request to every call
 
 A factory resolves to a new `TransactionRequest` on every call, and two things
 draw from the client's RNG as it does: any builder that creates an output note

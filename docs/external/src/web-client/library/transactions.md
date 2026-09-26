@@ -290,7 +290,9 @@ await shipToCosigners({
 });
 
 // ── Co-signer ─────────────────────────────────────────────
-// Re-derive at the local tip from the proposer's request bytes.
+// Sync to the tip, which is at or past the bound block, then re-derive from the
+// proposer's request bytes.
+await client.sync();
 const proposedRequest = TransactionRequest.deserialize(requestBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
 const derived = await client.transactions.preview({

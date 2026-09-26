@@ -74,8 +74,9 @@ export interface UsePreviewResult {
  * declares, so it reproduces at the local tip once this client has synced to
  * at least that block (the largest of `request.blockNumbers()`); below it the
  * preview fails with "requested block N is after transaction reference block M".
- * This hook does not sync first, so call `sync()` from `useMiden()` before
- * previewing a received proposal.
+ * This hook does not sync first. Call `sync()` from `useMiden()` before
+ * previewing a received proposal, then confirm `client.getSyncHeight()` is at
+ * least that block: the provider's sync returns early while another sync runs.
  *
  * @example
  * ```tsx

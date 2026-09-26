@@ -691,8 +691,9 @@ sync height and declares it with `withBlockNumbers`, and ship the request
 bytes. Every party previews and executes at its own tip once its client has
 synced to at least the bound block (the largest of `request.blockNumbers()`);
 below it the call fails with `requested block N is after transaction reference
-block M` until it syncs. `useTransaction` syncs first unless `skipSync` is set;
-`usePreview` does not, so a co-signer calls `sync()` before previewing.
+block M` until it syncs. `usePreview` does not sync, and `useTransaction` syncs
+through the provider's `sync()`, which returns early while another sync runs, so
+sync and then check the height before previewing or executing.
 
 ```tsx
 import { TransactionRequest } from "@miden-sdk/miden-sdk";
@@ -709,12 +710,18 @@ const request = (await client.feeAwareTransactionRequestBuilder(accountId))
 const summary = await preview({ accountId, request });
 
 // Co-signer: re-derive from the proposer's bytes at the local tip and compare.
-await sync();
 const received = TransactionRequest.deserialize(requestBytes);
+await sync();
+// The provider's sync() can return without reaching the tip (it returns early
+// while another sync runs), so confirm the height before using the proposal.
+const bound = Math.max(0, ...received.blockNumbers());
+if ((await client.getSyncHeight()) < bound) {
+  throw new Error("not synced to the proposal's bound block yet; retry");
+}
 const derived = await preview({ accountId, request: received });
 
-// Executor: submit at the tip.
-await execute({ accountId, request: received });
+// Executor: submit at the tip, after the same sync and height check.
+await execute({ accountId, request: received, skipSync: true });
 ```
 
 Do not re-execute a multisig proposal at an anchor: a node keeps account state

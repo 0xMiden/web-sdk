@@ -682,8 +682,8 @@ const request = (await client.feeAwareTransactionRequestBuilder(multisig))
   .withCustomScript(script)
   .build();
 const summary = await client.transactions.preview({ operation: "custom", account: multisig, request });
-// Co-signer: preview the proposer's request bytes at the local tip and compare
-// `toCommitment()`. Executor:
+// Co-signer: `await client.sync()`, then preview the proposer's request bytes at
+// the local tip and compare `toCommitment()`. Executor:
 await client.transactions.submit(multisig, request);
 ```
 

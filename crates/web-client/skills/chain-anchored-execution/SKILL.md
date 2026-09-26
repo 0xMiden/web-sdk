@@ -405,7 +405,8 @@ const request = (await client.feeAwareTransactionRequestBuilder(account))
 const summary = await client.transactions.preview({ operation: "custom", account, request });
 ship(request.serialize(), summary.serialize());
 
-// Co-signer: re-derive at the local tip from the proposer's bytes.
+// Co-signer: sync to the tip (at or past the bound block), then re-derive from the proposer's bytes.
+await client.sync();
 const proposedRequest = TransactionRequest.deserialize(requestBytes);
 const derived = await client.transactions.preview({
   operation: "custom", account, request: proposedRequest,

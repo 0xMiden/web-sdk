@@ -1285,8 +1285,9 @@ block with `withBlockNumbers`, ship the request bytes, and let every party
 preview and execute at its own tip once its client has synced to at least the
 bound block (the largest of `request.blockNumbers()`); below it the call fails
 with `requested block N is after transaction reference block M`. `usePreview`
-does not sync first, so call `sync()` before verifying; `useTransaction` syncs
-unless `skipSync` is set. Re-executing an older multisig proposal at an anchor
+does not sync, and `useTransaction` syncs through the provider's `sync()`, which
+returns early while another sync runs, so sync and then check the height before
+verifying or executing. Re-executing an older multisig proposal at an anchor
 fails once the node prunes that block's account state (50 blocks).
 
 ```tsx
@@ -1295,14 +1296,19 @@ import { TransactionRequest } from '@miden-sdk/miden-sdk';
 
 // Multisig co-signer: re-derive at the local tip from the proposer's bytes.
 function VerifyMultisig({ accountId, requestBytes, proposed }) {
-  const { sync } = useMiden();
+  const { client, sync } = useMiden();
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
-        await sync();
         const request = TransactionRequest.deserialize(requestBytes);
+        await sync();
+        // sync() returns early while another sync runs; confirm the height.
+        const bound = Math.max(0, ...request.blockNumbers());
+        if ((await client.getSyncHeight()) < bound) {
+          throw new Error("not synced to the proposal's bound block yet; retry");
+        }
         const derived = await preview({ accountId, request });
         if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
           await sign(derived);
@@ -1385,9 +1391,11 @@ function Execute({ accountId, request, anchor }) {
 `useChainAnchor()` returns
 `{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
 `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
-`anchoredRequest` is the exact request the anchor was captured for; preview and
-execute against it rather than re-resolving a factory, which would build a
-different transaction than the one the anchor pins.
+`anchoredRequest` is the exact request the anchor was captured for; on a later
+interaction, preview and execute against it rather than re-resolving a factory,
+which would build a different transaction than the one the anchor pins. Inside
+the handler that captured, it still holds the previous value, so pass the object
+you resolved there, as `Propose` does.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous

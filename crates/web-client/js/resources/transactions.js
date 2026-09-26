@@ -475,10 +475,10 @@ export class TransactionsResource {
    *
    * With `operation: "custom"` you may pass an `anchor` from
    * {@link captureAnchor} to derive the summary at a pinned reference block
-   * rather than the current sync height. A co-signer verifying a proposal must
-   * use the proposer's anchor: since protocol 0.16 the summary binds the
-   * reference block commitment, so deriving it locally at a different height
-   * produces a different summary and the comparison always fails.
+   * rather than the current sync height. A co-signer verifying a summary that
+   * binds the reference block commitment must use the proposer's anchor:
+   * deriving such a summary locally at a different height produces a
+   * different summary and the comparison fails.
    *
    * The exception is a multisig request built by
    * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
