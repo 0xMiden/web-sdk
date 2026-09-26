@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0-rc.4 (TBD)
+
+### Changes
+
+* [CHANGE][docs] The shipped `chain-anchored-execution` skill, the README and the transactions and `useChainAnchor` guides now describe the 0.17 multisig flow: a proposal binds a block in its auth args and is previewed and submitted at the tip with that block in `withBlockNumbers`, never re-executed at an anchor, which fails once the node prunes the anchor's account state and cannot be submitted after the 20-block expiry. Anchors remain for flows whose summary binds the reference block, such as single-signature co-signing ([#432](https://github.com/0xMiden/web-sdk/issues/432)).
+
 ## 0.17.0-rc.3 (TBD)
 
 ### Changes
