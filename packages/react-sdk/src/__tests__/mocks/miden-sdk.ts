@@ -200,6 +200,7 @@ export const createMockTransactionRequest = () => ({
   scriptArg: vi.fn(() => undefined),
   authArg: vi.fn(() => undefined),
   feeConversionSalt: vi.fn(() => undefined),
+  blockNumbers: vi.fn((): number[] => []),
   adviceMap: vi.fn(() => ({}) as unknown as AdviceMap),
   extendAdviceMap: vi.fn(
     () => createMockTransactionRequest() as unknown as TransactionRequest
