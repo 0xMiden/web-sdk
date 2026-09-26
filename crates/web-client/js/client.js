@@ -481,6 +481,10 @@ export class MidenClient {
    * executes after the node has pruned the bound block's account state (about
    * 50 blocks), and `transactions.preview` without an anchor reproduces the
    * proposal's summary at the tip.
+   * Each party's client must first have synced to at least that bound block,
+   * the largest of `request.blockNumbers()` and by default the proposer's sync
+   * height when it built the request; below it execution fails with
+   * "requested block N is after transaction reference block M" until it syncs.
    *
    * Do not call `withFeeConversionSalt` or `withAuthArg` on the builder this
    * returns for a multisig: the two setters clear each other, so either one

@@ -681,16 +681,56 @@ no `isLoading` of their own.
 ## Chain-Anchored Execution
 
 Whenever one party signs a transaction summary and another party (or the same
-party, later) executes it - multisig proposals, offline co-signing - the two
-must agree on the block the transaction is built against. `useChainAnchor`
-captures that block; `usePreview` and `useTransaction` replay against it.
+party, later) executes it, every party has to derive the same summary. How
+depends on what the summary binds.
+
+**Multisig proposals (0.17+): no anchor.** A multisig summary binds a bound
+block named in its auth args. Build the request with
+`client.feeAwareTransactionRequestBuilder(accountId)`, which binds the current
+sync height and declares it with `withBlockNumbers`, and ship the request
+bytes. Every party previews and executes at its own tip once its client has
+synced to at least the bound block (the largest of `request.blockNumbers()`);
+below it the call fails with `requested block N is after transaction reference
+block M` until it syncs. `useTransaction` syncs first unless `skipSync` is set;
+`usePreview` does not, so a co-signer calls `sync()` before previewing.
+
+```tsx
+import { TransactionRequest } from "@miden-sdk/miden-sdk";
+
+const { client, sync } = useMiden();
+const { preview } = usePreview();
+const { execute } = useTransaction();
+
+// Proposer: resolve the request once and ship its bytes - a rebuild draws a
+// new salt, so it would bind a different summary.
+const request = (await client.feeAwareTransactionRequestBuilder(accountId))
+  .withCustomScript(script)
+  .build();
+const summary = await preview({ accountId, request });
+
+// Co-signer: re-derive from the proposer's bytes at the local tip and compare.
+await sync();
+const received = TransactionRequest.deserialize(requestBytes);
+const derived = await preview({ accountId, request: received });
+
+// Executor: submit at the tip.
+await execute({ accountId, request: received });
+```
+
+Do not re-execute a multisig proposal at an anchor: a node keeps account state
+for only 50 blocks, so anchored re-execution of an older proposal fails with
+`block N has been pruned`.
+
+**Summaries that bind the reference block (single-signature co-signing):
+anchor.** `useChainAnchor` captures that block; `usePreview` and
+`useTransaction` replay against it.
 
 ```tsx
 const { captureAnchor, isCapturing } = useChainAnchor();
 const { preview, isPreviewing } = usePreview();
 const { execute } = useTransaction();
 
-// Proposer: pin the reference block alongside the request.
+// Signer: pin the reference block alongside the request.
 const anchor = await captureAnchor({ request });
 
 // Co-signer: rebuild the same summary from the same anchor and inspect it
@@ -701,8 +741,9 @@ const summary = await preview({ accountId, request, anchor });
 await execute({ accountId, request, anchor });
 ```
 
-Without an anchor each party executes against its own sync height, the summaries
-commit to different reference blocks, and the summary commitments never match.
+Without an anchor, each party deriving such a summary executes against its own
+sync height, the summaries commit to different reference blocks, and the
+commitments never match.
 If you are debugging co-signers whose commitments disagree, or
 `INVALID_CHAIN_ANCHOR` / `STALE_CLIENT` / `OPERATION_BUSY`, read
 `node_modules/@miden-sdk/miden-sdk/skills/chain-anchored-execution/SKILL.md`

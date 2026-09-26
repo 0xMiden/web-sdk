@@ -14,11 +14,77 @@ single-signature account.
 > args, not the reference block. Build the request with
 > `client.feeAwareTransactionRequestBuilder(account)`, which adds that block with
 > `withBlockNumbers`, and let every party `usePreview()` and `useTransaction()`
-> without an anchor, at their own tip. Re-executing an older multisig proposal at
+> without an anchor, at their own tip, once their client has synced to the bound
+> block ([below](#multisig-proposals)). Re-executing an older multisig proposal at
 > an anchor fails once the node prunes that block's account state (50 blocks), and
 > a transaction executed at an older reference block expires 20 blocks after it.
 > See [Multisig Proposals: Bind a Block, Execute at the Tip](../../web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip).
 > Available from `0.17.0-rc.4`.
+
+## Multisig proposals
+
+A multisig request from `feeAwareTransactionRequestBuilder` is previewed,
+verified and executed without an anchor, each party at its own tip. The one
+precondition is height: a client has to have synced to at least the bound
+block, the largest of `request.blockNumbers()` (by default the proposer's sync
+height when it built the request). Below it the call fails with `requested
+block N is after transaction reference block M` until the client syncs.
+`useTransaction` syncs before executing unless you pass `skipSync`;
+`usePreview` does not, so a co-signer calls `sync()` first.
+
+```tsx
+import { useMiden, usePreview, useTransaction } from "@miden-sdk/react";
+import { TransactionRequest } from "@miden-sdk/miden-sdk";
+
+function ProposeMultisig({ multisig, script }) {
+  const { client } = useMiden();
+  const { preview } = usePreview();
+
+  const propose = async () => {
+    // Build once and ship these bytes: a rebuild draws a new salt and would
+    // bind a different summary.
+    const request = (await client.feeAwareTransactionRequestBuilder(multisig))
+      .withCustomScript(script)
+      .build();
+    const summary = await preview({ accountId: multisig, request });
+    await shipToCosigners({
+      request: request.serialize(),
+      summary: summary.serialize(),
+    });
+  };
+
+  return <button onClick={propose}>Propose</button>;
+}
+
+function VerifyMultisig({ multisig, requestBytes, proposed }) {
+  const { sync } = useMiden();
+  const { preview } = usePreview();
+
+  const verify = async () => {
+    await sync();
+    const request = TransactionRequest.deserialize(requestBytes);
+    const derived = await preview({ accountId: multisig, request });
+    if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+      throw new Error("proposal does not match the summary presented");
+    }
+    await sign(derived);
+  };
+
+  return <button onClick={verify}>Verify and sign</button>;
+}
+
+function ExecuteMultisig({ multisig, request }) {
+  const { execute } = useTransaction();
+  return (
+    <button onClick={() => execute({ accountId: multisig, request })}>
+      Execute
+    </button>
+  );
+}
+```
+
+The rest of this page covers anchored flows, whose summary binds the reference
+block.
 
 ## Why anchors exist
 
@@ -41,7 +107,7 @@ submitting anything.
 ```tsx
 import { useChainAnchor, useMiden, usePreview } from "@miden-sdk/react";
 
-function ProposeButton({ multisigId, buildRequest }) {
+function ProposeButton({ accountId, buildRequest }) {
   const { client } = useMiden();
   const { captureAnchor, isCapturing } = useChainAnchor();
   const { preview, isPreviewing } = usePreview();
@@ -53,15 +119,15 @@ function ProposeButton({ multisigId, buildRequest }) {
     const request = await buildRequest(client);
     const anchor = await captureAnchor({ request });
     const summary = await preview({
-      accountId: multisigId,
+      accountId,
       request,
       anchor,
     });
 
     // Ship the request too: a co-signer must re-derive from these exact
-    // bytes. A multisig request's fee conversion info carries a salt drawn
-    // fresh on every build, and the auth procedure uses it as the summary's
-    // replay guard, so a locally rebuilt request yields a different summary.
+    // bytes. On a fee-charging chain the fee conversion info carries a salt
+    // drawn fresh on every build, and output notes draw fresh serial numbers,
+    // so a locally rebuilt request yields a different summary.
     await shipToCosigners({
       request: request.serialize(),
       anchor: anchor.serialize(),
@@ -86,8 +152,8 @@ argument. Fees always settle in the chain's native fee asset at rate 1/1 and
 miden-client commits that itself — but it will not invent the SALT the
 commitment is computed under, because a multisig reuses that salt as its
 transaction summary's replay guard. A multisig request that declares none fails
-with `FeeConversionInfoRequired`, so this applies squarely to the flow on this
-page.
+with `FeeConversionInfoRequired`, so this applies squarely to the multisig flow
+above.
 
 Ask the client for a builder that already declares one:
 
@@ -110,7 +176,7 @@ Two caveats specific to this flow. `withAuthArg` and `withFeeConversionSalt`
 occupy the same slot and each setter clears the other, so a request cannot carry
 both. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead. And because the salt and the bound block are chosen per
 build, the warning below about resolving a factory exactly once applies here too
-— capture the anchor, then preview and execute against `anchoredRequest`. A
+- resolve it once and pass that object to every preview and execute call. A
 co-signer rebuilding the proposal instead of receiving its bytes passes
 `feeConversionSalt` and `boundBlockNum`, or the two summaries cannot match.
 Each call consumes the `Word`, so a second build needs a freshly constructed
@@ -119,8 +185,8 @@ one; a spent handle arrives as "no salt given" and one is drawn instead.
 ## Verifying and co-signing
 
 A co-signer rebuilds the anchor from bytes and re-derives the summary **at that
-anchor**. Deriving it at the local sync height produces a different summary, so
-the comparison would always fail.
+anchor**. Deriving such a summary at the local sync height produces a different
+one, so the comparison would fail.
 
 ```tsx
 import { usePreview } from "@miden-sdk/react";
@@ -128,14 +194,14 @@ import { usePreview } from "@miden-sdk/react";
 // classes from the SDK package to call their static `deserialize`.
 import { ChainAnchor, TransactionSummary } from "@miden-sdk/miden-sdk";
 
-function VerifyProposal({ multisigId, request, anchorBytes, summaryBytes }) {
+function VerifyProposal({ accountId, request, anchorBytes, summaryBytes }) {
   const { preview, isPreviewing, error } = usePreview();
 
   const verify = async () => {
     const anchor = ChainAnchor.deserialize(anchorBytes);
     const proposed = TransactionSummary.deserialize(summaryBytes);
 
-    const derived = await preview({ accountId: multisigId, request, anchor });
+    const derived = await preview({ accountId, request, anchor });
     if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
       throw new Error("proposal does not match the summary presented");
     }
@@ -163,12 +229,12 @@ advanced.
 ```tsx
 import { useTransaction } from "@miden-sdk/react";
 
-function ExecuteButton({ multisigId, request, anchor }) {
+function ExecuteButton({ accountId, request, anchor }) {
   const { execute, isLoading, stage } = useTransaction();
 
   return (
     <button
-      onClick={() => execute({ accountId: multisigId, request, anchor })}
+      onClick={() => execute({ accountId, request, anchor })}
       disabled={isLoading}
     >
       {isLoading ? `${stage}...` : "Execute"}
@@ -271,7 +337,7 @@ the call site. Capture again on the new client.
   authenticated input notes still come from each participant's own local store,
   so all parties must agree on the account state too. If the account moved in a
   way that changes the transaction's effects, the re-derived summary will not
-  match even though the anchor is correct — the most common reason a multisig
+  match even though the anchor is correct - the most common reason a co-signing
   flow fails.
 
   A match does not prove the reverse. The summary binds the account *delta*,
@@ -286,9 +352,10 @@ the call site. Capture again on the new client.
   queues other client calls behind it. Only `useTransaction().execute` is
   worker-backed.
 - **An anchor is captured for a specific request, but is not an identity for
-  one.** It tracks that request's authenticated input notes, so a different
+  one.** It tracks the blocks that request declares through `withBlockNumbers`
+  and the creation blocks of its authenticated input notes, so a different
   request fails against it only when it needs a block the anchor doesn't
-  track — which never happens for a request with no authenticated input notes.
+  track.
   What binds a request to a summary is the summary commitment, not the anchor.
 - **The anchor handle is reusable** — it is borrowed rather than consumed, so
   one anchor can drive the preview and the execution.

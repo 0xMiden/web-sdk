@@ -674,7 +674,7 @@ One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds i
 
 ### Multisig Proposals: Execute at the Tip
 
-Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height and adds that block to the request with `withBlockNumbers`, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
+Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height and adds that block to the request with `withBlockNumbers`, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
 
 ```typescript
 // Proposer
@@ -718,10 +718,10 @@ await shipToCosigners(
 
 // Co-signer: re-derive at the proposer's anchor and compare before signing.
 // Re-derive from the proposer's request bytes, never from a locally rebuilt
-// request — a multisig request's fee conversion info carries a salt drawn fresh
-// on every build, and the auth procedure uses it as the summary's replay guard,
-// so a rebuilt request yields a different summary and the check below fails as
-// if the proposal had been tampered with.
+// request: on a fee-charging chain its fee conversion info carries a salt drawn
+// fresh on every build, and output notes draw fresh serial numbers, so a rebuilt
+// request yields a different summary and the check below fails as if the
+// proposal had been tampered with.
 const received = ChainAnchor.deserialize(anchorBytes);
 const proposed = TransactionSummary.deserialize(summaryBytes);
 const proposedRequest = TransactionRequest.deserialize(requestBytes);
@@ -744,8 +744,9 @@ The `anchor` option is available on `preview({ operation: "custom" })`, `execute
 The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
 
 ```typescript
-// The summary signs its reference block, so a mismatched anchor is detectable
-// without paying for an execution.
+// A summary that binds the reference block signs that block, so a mismatched
+// anchor is detectable without paying for an execution. (A multisig summary
+// binds its bound block instead and takes no anchor.)
 if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
   throw new Error("anchor is not the block this summary was built at");
 }
@@ -753,7 +754,7 @@ if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
 
 Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
 
-An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct — the most common reason a multisig flow fails.
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
 
 A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
 

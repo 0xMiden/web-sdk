@@ -48,9 +48,12 @@ Build the request with `client.feeAwareTransactionRequestBuilder(account)`. For 
 multisig it binds the current sync height as the bound block and adds that block with
 `withBlockNumbers`, so the proposer, every co-signer and the executor can call
 `preview` / `submit` **without** `anchor`, each at its own tip, and derive the same
-summary. A request built any other way must call `withBlockNumbers([boundBlock])`
-itself, or tip execution fails with `transaction summary binds block N, which the
-transaction does not authenticate`.
+summary. Each party's client must first have synced to at least the bound block (the
+largest of `request.blockNumbers()`, by default the proposer's sync height when it
+built the request). A client below it fails with `requested block N is after
+transaction reference block M` until it syncs. A request built any other way must
+call `withBlockNumbers([boundBlock])` itself, or tip execution fails with
+`transaction summary binds block N, which the transaction does not authenticate`.
 
 Why not an anchor: a node keeps account state for only 50 blocks, and every
 fee-paying transaction loads the chain's fee faucet as a foreign account. Re-executing
@@ -253,7 +256,7 @@ Map an observed symptom to its cause before proposing a fix.
 
 | Symptom | Cause |
 | --- | --- |
-| Co-signer's summary never matches the proposer's | Anchor not passed to `preview` (R2), or the request was re-resolved instead of transported (R1, R2) |
+| Co-signer's summary never matches the proposer's | For a summary that binds the reference block: anchor not passed to `preview` (R2). For any flow: the request was re-resolved instead of transported (R1, R2). A multisig proposal takes no anchor (R0) |
 | Co-signers' summaries differ and every other check passes | The request used `withInputNotes`, so each client chose the consumption mode from its own store. Rebuild with `withExplicitInputNote` (R3) |
 | `FeeConversionInfoRequired` naming the auth component | The executing account is a multisig and the request declares no fee conversion salt. Build it from `await client.feeAwareTransactionRequestBuilder(account)` rather than a bare `TransactionRequestBuilder` |
 | `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or use `withAuthArg` plus `extendAdviceMap` |
@@ -261,6 +264,7 @@ Map an observed symptom to its cause before proposing a fix.
 | `preview` fails to find the account on the co-signer | Verification runs a real execution, so the account must already be in that participant's store. `accounts.getOrImport` for a public account; a private one needs its state transferred out of band (R2) |
 | Anchored execution fails naming a foreign account and a block | The anchor is older than the node's account-history window. Capture it closer to execution and re-capture an aged one (R4). For a multisig, stop anchoring and execute at the tip (R0) |
 | A multisig proposal fails with `block N has been pruned`, often naming the fee faucet | It is being re-executed at an anchor. Execute at the tip instead (R0) |
+| `requested block N is after transaction reference block M` | A multisig proposal previewed or submitted at the tip on a client whose sync height M is still below its bound block N. Sync, then retry (R0) |
 | `transaction summary binds block N, which the transaction does not authenticate` | A multisig request executed at the tip without its bound block in `withBlockNumbers`. Build it with `feeAwareTransactionRequestBuilder`, or add the block yourself (R0) |
 | `INVALID_CHAIN_ANCHOR` | A sync landed mid-capture and left the anchor inconsistent. **Retry**, since this is transient rather than a bug to work around |
 | `OPERATION_BUSY` | A capture or preview is already running. Await the previous one |

@@ -41,15 +41,18 @@ export interface UseChainAnchorResult {
  * Hook to capture a {@link ChainAnchor} — a pinned reference block that a later
  * execution can replay against.
  *
- * Since protocol 0.16 a signed transaction summary binds the reference block
- * commitment, so signatures collected over a summary only authorize an
- * execution at that exact block. Any flow that collects signatures and executes
- * later — multisig, offline co-signing — captures an anchor next to the summary
- * and ships both, so the summary reproduces on a client at a different sync height, provided both
- * parties agree on the account state.
+ * A summary that binds the reference block commitment only authorizes an
+ * execution at that exact block, so a flow that collects such signatures and
+ * executes later (single-signature co-signing) captures an anchor next to the
+ * summary and ships both, so the summary reproduces on a client at a different
+ * sync height, provided both parties agree on the account state. A multisig
+ * proposal needs no anchor: build it with `feeAwareTransactionRequestBuilder`
+ * and preview and execute it at each party's tip, once that party has synced
+ * to its bound block.
  *
- * The anchor tracks the creation blocks of the request's authenticated input
- * notes, so it stays valid for that request once the chain advances. Serialize
+ * The anchor tracks the blocks the request declares through `withBlockNumbers`
+ * and the creation blocks of its authenticated input notes, so it stays valid
+ * for that request once the chain advances. Serialize
  * it with `anchor.serialize()` to send it to co-signers, and rebuild it with
  * `ChainAnchor.deserialize(bytes)` — importing the class itself from
  * `@miden-sdk/miden-sdk`, since this package re-exports it as a type only.

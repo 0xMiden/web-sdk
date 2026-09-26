@@ -399,7 +399,9 @@ Three things that surprise people here:
 
 ## Chain-Anchored Execution
 
-Since protocol 0.16 a signed transaction summary binds the reference block commitment, so signatures collected over a summary only authorize an execution at that exact block. Any flow that collects signatures and executes later - multisig, offline co-signing - captures a `ChainAnchor` next to the summary and ships both.
+A summary that binds the reference block commitment only authorizes an execution at that exact block, so a flow that collects such signatures and executes later - single-signature offline co-signing - captures a `ChainAnchor` next to the summary and ships both.
+
+A multisig proposal (0.17+) needs no anchor: its summary binds the block its auth args name. Build it with `client.feeAwareTransactionRequestBuilder(accountId)`, which declares that block with `withBlockNumbers`, ship the request bytes, and let every party preview and execute at its own tip once its client has synced to at least the bound block (the largest of `request.blockNumbers()`). Below that height the call fails with `requested block N is after transaction reference block M` until the client syncs. `usePreview` does not sync first; `useTransaction` does unless `skipSync` is set. Re-executing an older multisig proposal at an anchor fails once the node prunes that block's account state (50 blocks).
 
 ```tsx
 const { captureAnchor, anchor, anchoredRequest, isCapturing, error, reset } = useChainAnchor();
@@ -430,7 +432,7 @@ const bytes = captured.serialize();                   // ship to co-signers
 const rebuilt = ChainAnchor.deserialize(bytes);
 ```
 
-`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). Pass `anchor` whenever you are verifying a proposal, because deriving the summary at the local sync height produces a different summary.
+`usePreview` is the first summary surface in the React SDK: verifying and co-signing a multisig proposal no longer requires dropping to the WASM client. The summary only exists while authorization is pending, i.e. when the account's auth procedure aborts with the unauthorized event (a multisig below its signing threshold). For a multisig request from `feeAwareTransactionRequestBuilder`, preview without an anchor after syncing to its bound block. Pass `anchor` when verifying a summary that binds the reference block, because deriving that summary at the local sync height produces a different one.
 
 ## Network Notes
 

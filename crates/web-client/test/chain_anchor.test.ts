@@ -492,4 +492,53 @@ test.describe("chain anchor", () => {
     expect(result.tip).toBeGreaterThan(result.boundBlock + 50);
     expect(result.atTip).toBe(result.original);
   });
+  // A proposal's bound block has to be at or below the executing client's
+  // sync height, so a co-signer that has not synced that far cannot preview
+  // it yet. The docs quote this error; pin it, and pin that syncing clears it.
+  test("a multisig proposal fails at the tip until the client syncs to its bound block", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+      const syncHeight = await client.getSyncHeight();
+
+      const request = (
+        await client.feeAwareTransactionRequestBuilder(
+          multisigAccountId,
+          undefined,
+          new sdk.Word(sdk.u64Array([5, 6, 7, 8])),
+          syncHeight + 1
+        )
+      ).build();
+
+      let earlyError = null;
+      try {
+        await client.executeForSummary(multisigAccountId, request);
+      } catch (err) {
+        earlyError = String(err?.message ?? err);
+      }
+
+      await client.proveBlock();
+      await client.syncState();
+      const synced = await client.getSyncHeight();
+      const summary = await client.executeForSummary(
+        multisigAccountId,
+        request
+      );
+
+      return {
+        syncHeight,
+        declared: Array.from(request.blockNumbers()),
+        earlyError,
+        synced,
+        commitment: summary.toCommitment().toHex(),
+      };
+    });
+
+    expect(result.declared).toEqual([result.syncHeight + 1]);
+    expect(result.earlyError).toContain("is after transaction reference block");
+    expect(result.synced).toBeGreaterThanOrEqual(result.syncHeight + 1);
+    expect(result.commitment).toMatch(/^0x[0-9a-f]+$/);
+  });
 });

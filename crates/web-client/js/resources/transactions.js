@@ -483,7 +483,9 @@ export class TransactionsResource {
    * The exception is a multisig request built by
    * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
    * auth args name, which the request declares, so previewing it without an
-   * anchor reproduces the proposal's summary at the current tip.
+   * anchor reproduces the proposal's summary at the current tip, once this
+   * client has synced to at least that block (the largest of
+   * `request.blockNumbers()`).
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
