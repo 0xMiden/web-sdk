@@ -8,6 +8,10 @@
 
 ## 0.17.0-rc.3 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] `TransactionSummary.eip712Hash()`, `eip712SignatureKey(publicKey)` and `eip712SignatureAdvice(publicKey, signature)` expose the protocol's EIP-712 digest and domain-separated witness for ECDSA multisig signing ([#431](https://github.com/0xMiden/web-sdk/pull/431)).
+
 ### Changes
 
 * [CHANGE][web] Upgraded `miden-client` to 0.17.0-rc.3, which adopts protocol 0.17.0-rc.7. Requires a 0.17.0-rc.3 node ([rust-sdk#2621](https://github.com/0xMiden/rust-sdk/pull/2621)).

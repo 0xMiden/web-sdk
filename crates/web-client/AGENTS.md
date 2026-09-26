@@ -76,6 +76,15 @@ single most common source of "impossible" runtime errors.
 way plain JS objects are. Call `terminate()` on the client when you are done
 with it, and free the object wrappers the skills call out individually.
 
+**EIP-712 multisig signing.** `TransactionSummary.eip712Hash()` returns the
+protocol's 32-byte digest for `MidenTransaction(bytes32 txSummaryHash)` in the
+`Miden Transaction` v1 domain. After an Ethereum wallet signs that typed data,
+convert its signature to the SDK `Signature` type and call
+`summary.eip712SignatureAdvice(publicKey, signature)` to get the `AdviceMap`
+for `TransactionRequest.extendAdviceMap`. The domain-separated key is also
+available from `summary.eip712SignatureKey(publicKey)`. These APIs require
+ECDSA; they do not verify the summary's intent or convert wallet `r/s/v` bytes.
+
 **Account visibility and faucet kind are separate.** Use native
 `AccountType.Private` / `AccountType.Public` with `AccountBuilder.accountType()`.
 Use `FaucetType.FungibleFaucet` for `accounts.create({ type })`, and `storage`

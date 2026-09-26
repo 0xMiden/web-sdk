@@ -376,6 +376,18 @@ await client.transactions.submit(account, proposedRequest, {
 });
 ```
 
+For ECDSA multisig approvals, sign the `MidenTransaction(bytes32 txSummaryHash)`
+typed data in the EIP-712 domain `{ name: "Miden Transaction", version: "1" }`.
+Encode `txSummaryHash` from the summary commitment as four little-endian `u64`
+values. `proposed.eip712Hash()` returns the 32-byte wallet signing digest.
+Once the wallet signature is converted to an SDK `Signature`, call
+`proposed.eip712SignatureAdvice(publicKey, signature)` to obtain an `AdviceMap`
+that can be attached with `request.extendAdviceMap(...)`; submit the returned
+request. The corresponding
+key is `proposed.eip712SignatureKey(publicKey)`. These methods follow the
+protocol implementation and reject non-ECDSA keys or signatures; they do not
+validate what the transaction does, so inspect and re-derive the summary first.
+
 Notes on anchors:
 
 - **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport.
