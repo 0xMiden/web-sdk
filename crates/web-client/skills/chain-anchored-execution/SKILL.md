@@ -1,6 +1,6 @@
 ---
 name: chain-anchored-execution
-description: Rules for multi-party signing flows. Multisig proposals (0.17+) bind a block in their auth args and execute at the tip with withBlockNumbers, never at an anchor; ChainAnchor pins execution to a specific block for flows whose summary binds the reference block, such as single-signature offline co-signing. Use when writing or reviewing multisig proposal, co-signing or submission code, when a multisig proposal fails with `block N has been pruned` or `transaction summary binds block N, which the transaction does not authenticate`, or when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or withForeignAccounts, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
+description: Rules for multi-party signing flows. Multisig proposals (0.17+) bind a block in their auth args and execute at the tip with withBlockNumbers, never at an anchor; ChainAnchor pins execution to a specific block for flows whose summary binds the reference block, such as single-signature offline co-signing. Use when writing or reviewing multisig proposal, co-signing or submission code, when a multisig proposal fails with `block N has been pruned`, `failed to lookup value in Merkle store` or `requested block N is after transaction reference block M`, or when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or withForeignAccounts, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
 ---
 
 # Chain-Anchored Execution
@@ -52,8 +52,9 @@ summary. Each party's client must first have synced to at least the bound block 
 largest of `request.blockNumbers()`, by default the proposer's sync height when it
 built the request). A client below it fails with `requested block N is after
 transaction reference block M` until it syncs. A request built any other way must
-call `withBlockNumbers([boundBlock])` itself, or tip execution fails with
-`transaction summary binds block N, which the transaction does not authenticate`.
+call `withBlockNumbers([boundBlock])` itself, or tip execution fails in the VM with
+`failed to lookup value in Merkle store`, because the auth procedure cannot read the
+bound block from the transaction's partial blockchain.
 
 Why not an anchor: a node keeps account state for only 50 blocks, and every
 fee-paying transaction loads the chain's fee faucet as a foreign account. Re-executing
@@ -265,7 +266,7 @@ Map an observed symptom to its cause before proposing a fix.
 | Anchored execution fails naming a foreign account and a block | The anchor is older than the node's account-history window. Capture it closer to execution and re-capture an aged one (R4). For a multisig, stop anchoring and execute at the tip (R0) |
 | A multisig proposal fails with `block N has been pruned`, often naming the fee faucet | It is being re-executed at an anchor. Execute at the tip instead (R0) |
 | `requested block N is after transaction reference block M` | A multisig proposal previewed or submitted at the tip on a client whose sync height M is still below its bound block N. Sync, then retry (R0) |
-| `transaction summary binds block N, which the transaction does not authenticate` | A multisig request executed at the tip without its bound block in `withBlockNumbers`. Build it with `feeAwareTransactionRequestBuilder`, or add the block yourself (R0) |
+| `failed to lookup value in Merkle store` from a multisig proposal at the tip | The request does not declare its bound block in `withBlockNumbers`, so the auth procedure cannot read it. Build it with `feeAwareTransactionRequestBuilder`, or add the block yourself (R0) |
 | `INVALID_CHAIN_ANCHOR` | A sync landed mid-capture and left the anchor inconsistent. **Retry**, since this is transient rather than a bug to work around |
 | `OPERATION_BUSY` | A capture or preview is already running. Await the previous one |
 | `STALE_CLIENT` | The client was swapped mid-call. Recapture on the new chain |

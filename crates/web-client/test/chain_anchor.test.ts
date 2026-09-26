@@ -336,6 +336,9 @@ test.describe("chain anchor", () => {
         declared: Array.from(request.blockNumbers()),
         restored: Array.from(restored.blockNumbers()),
         bare: Array.from(bare.blockNumbers()),
+        plainArrays: [request, restored, bare].map((r) =>
+          Array.isArray(r.blockNumbers())
+        ),
       };
     });
 
@@ -343,6 +346,9 @@ test.describe("chain anchor", () => {
     expect(result.declared).toEqual([1, 3, 5]);
     expect(result.restored).toEqual([1, 3, 5]);
     expect(result.bare).toEqual([]);
+    // The getter is split per platform so both bindings return number[];
+    // wasm-bindgen would otherwise hand the browser a Uint32Array.
+    expect(result.plainArrays).toEqual([true, true, true]);
   });
 
   // A multisig proposal binds its summary to the block its auth args name, and
@@ -401,6 +407,7 @@ test.describe("chain anchor", () => {
         original: original.toCommitment().toHex(),
         atTip: atTip.toCommitment().toHex(),
         atLateAnchor: atLateAnchor.toCommitment().toHex(),
+        undeclaredBlocks: Array.from(undeclared.blockNumbers()),
         undeclaredError,
       };
     });
@@ -410,7 +417,12 @@ test.describe("chain anchor", () => {
     expect(result.lateAnchorBlock).toBe(result.tip);
     expect(result.atTip).toBe(result.original);
     expect(result.atLateAnchor).toBe(result.original);
-    expect(result.undeclaredError).not.toBeNull();
+    // The control differs from the request only by the declaration, and fails
+    // for exactly that reason.
+    expect(result.undeclaredBlocks).toEqual([]);
+    expect(result.undeclaredError).toContain(
+      "failed to lookup value in Merkle store"
+    );
   });
   // The node-backed counterpart of the test above, and the regression for
   // web-sdk#432. A node serves account state only ~50 blocks back, so a
