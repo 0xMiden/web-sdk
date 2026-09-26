@@ -271,10 +271,12 @@ test.describe("chain anchor", () => {
   });
 
   // The co-signing path this feature exists for: a summary derived at an
-  // anchor, on an account whose transactions are not self-authorizing. Asserts
-  // the summary's own reference block rather than just that a summary came
-  // back, so swapping the implementation to the unanchored `executeForSummary`
-  // fails here — that call would reference the advanced tip instead.
+  // anchor, on an account whose transactions are not self-authorizing. A
+  // fee-aware multisig request declares its bound block and so reproduces its
+  // summary at any tip, which would hide an ignored anchor. This test drops the
+  // declaration and moves the bound block off the note's creation block, so
+  // only the anchor can supply it: swapping the implementation to the
+  // unanchored `executeForSummary` fails here.
   test("a summary derived at an anchor references the anchor block", async ({
     run,
   }) => {
@@ -282,11 +284,26 @@ test.describe("chain anchor", () => {
       const { multisigAccountId, notes } =
         await helpers.setupMultisigWithConsumableNote();
 
+      // The fixture ends synced at the note's creation block, which the
+      // request would track through its authenticated input note.
+      const noteBlock = (await client.getSyncHeight()) as number;
+      await client.proveBlock();
+      await client.syncState();
+
       const request = await client.newConsumeTransactionRequest(
         notes,
         multisigAccountId
       );
-      const anchor = await client.chainAnchorForRequest(request);
+      const undeclared = new sdk.TransactionRequestBuilder()
+        .withInputNotes(
+          new sdk.NoteAndArgsArray(
+            notes.map((note) => new sdk.NoteAndArgs(note))
+          )
+        )
+        .withAuthArg(request.authArg())
+        .extendAdviceMap(request.adviceMap())
+        .build();
+      const anchor = await client.chainAnchorForRequest(undeclared);
       const anchorBlock = anchor.blockNum();
       const anchorCommitment = anchor.commitment().toHex();
 
@@ -298,21 +315,33 @@ test.describe("chain anchor", () => {
 
       const summary = await client.executeForSummaryAt(
         multisigAccountId,
-        request,
+        undeclared,
         anchor
       );
 
+      let unanchoredError = null;
+      try {
+        await client.executeForSummary(multisigAccountId, undeclared);
+      } catch (err) {
+        unanchoredError = String(err?.message ?? err);
+      }
+
       return {
+        noteBlock,
         anchorBlock,
         anchorCommitment,
         tip,
+        undeclaredBlocks: Array.from(undeclared.blockNumbers()),
         summaryBlockCommitment: summary.blockCommitment().toHex(),
         expirationDelta: summary.expirationDelta(),
         inputNotesCount: summary.inputNotes().numNotes(),
+        unanchoredError,
       };
     });
 
+    expect(result.anchorBlock).toBeGreaterThan(result.noteBlock);
     expect(result.tip).toBeGreaterThan(result.anchorBlock);
+    expect(result.undeclaredBlocks).toEqual([]);
     // The assertion the test exists for: the summary's own reference block is
     // the anchor's, not the tip it would have used unanchored.
     expect(result.summaryBlockCommitment).toBe(result.anchorCommitment);
@@ -320,6 +349,10 @@ test.describe("chain anchor", () => {
     // Reported as 0 for a request that sets no expiration, which is this one.
     // Asserted to pin that the accessor reads the summary rather than throwing.
     expect(result.expirationDelta).toBe(0);
+    // Without the anchor the bound block is not in the partial blockchain.
+    expect(result.unanchoredError).toContain(
+      "failed to lookup value in Merkle store"
+    );
   });
   test("declared block numbers round-trip through the builder and serialization", async ({
     run,
