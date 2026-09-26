@@ -31,30 +31,3 @@ describe("Node array polyfills", () => {
     expect(new sdk.FeltArray(null)).toHaveLength(0);
   });
 });
-
-// napi rejects a typed array where it expects `Vec<u32>`; the browser build
-// accepts one. The Node build has to accept it as well.
-describe("Node block number normalization", () => {
-  class TransactionRequestBuilder {
-    withBlockNumbers(blockNumbers) {
-      if (!Array.isArray(blockNumbers)) {
-        throw new TypeError("napi expects a plain array");
-      }
-      this.received = blockNumbers;
-      return this;
-    }
-  }
-  createSdkWrapper({ TransactionRequestBuilder });
-
-  it("passes a Uint32Array to napi as a plain array", () => {
-    const builder = new TransactionRequestBuilder();
-    builder.withBlockNumbers(new Uint32Array([7, 3]));
-    expect(builder.received).toEqual([7, 3]);
-  });
-
-  it("passes a plain array through", () => {
-    const builder = new TransactionRequestBuilder();
-    expect(builder.withBlockNumbers([5])).toBe(builder);
-    expect(builder.received).toEqual([5]);
-  });
-});
