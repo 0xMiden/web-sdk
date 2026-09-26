@@ -188,6 +188,16 @@ function patchSdkPrototypes(rawSdk) {
     }
   }
 
+  // napi refuses a typed array where it expects `Vec<u32>`, while the browser
+  // build takes one as readily as a plain array. Accept both here too.
+  const builderProto = rawSdk.TransactionRequestBuilder?.prototype;
+  const withBlockNumbers = builderProto?.withBlockNumbers;
+  if (typeof withBlockNumbers === "function") {
+    builderProto.withBlockNumbers = function (blockNumbers) {
+      return withBlockNumbers.call(this, Array.from(blockNumbers));
+    };
+  }
+
   // snake_case aliases for static methods
   if (rawSdk.NoteScript) {
     if (!rawSdk.NoteScript.p2id && rawSdk.NoteScript.p2Id)
