@@ -321,4 +321,175 @@ test.describe("chain anchor", () => {
     // Asserted to pin that the accessor reads the summary rather than throwing.
     expect(result.expirationDelta).toBe(0);
   });
+  test("declared block numbers round-trip through the builder and serialization", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const request = new sdk.TransactionRequestBuilder()
+        .withBlockNumbers([5, 1])
+        .withBlockNumbers([5, 3])
+        .build();
+      const restored = sdk.TransactionRequest.deserialize(request.serialize());
+      const bare = new sdk.TransactionRequestBuilder().build();
+
+      return {
+        declared: Array.from(request.blockNumbers()),
+        restored: Array.from(restored.blockNumbers()),
+        bare: Array.from(bare.blockNumbers()),
+      };
+    });
+
+    // Repeated calls accumulate, duplicates collapse, and the set is ordered.
+    expect(result.declared).toEqual([1, 3, 5]);
+    expect(result.restored).toEqual([1, 3, 5]);
+    expect(result.bare).toEqual([]);
+  });
+
+  // A multisig proposal binds its summary to the block its auth args name, and
+  // the fee-aware builder declares that block on the request. Re-executing at a
+  // later tip, with no anchor, must reproduce the summary the approvers signed.
+  test("a multisig proposal reproduces its summary at a later tip without an anchor", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      const { multisigAccountId } =
+        await helpers.setupMultisigWithConsumableNote();
+
+      const request = (
+        await client.feeAwareTransactionRequestBuilder(multisigAccountId)
+      ).build();
+      const boundBlock = await client.getSyncHeight();
+      const original = await client.executeForSummary(
+        multisigAccountId,
+        request
+      );
+
+      await client.proveBlock();
+      await client.proveBlock();
+      await client.syncState();
+      const tip = await client.getSyncHeight();
+
+      const atTip = await client.executeForSummary(multisigAccountId, request);
+
+      // An anchor captured now, well after the bound block, tracks it too.
+      const lateAnchor = await client.chainAnchorForRequest(request);
+      const atLateAnchor = await client.executeForSummaryAt(
+        multisigAccountId,
+        request,
+        lateAnchor
+      );
+
+      // The same auth args without the declared block: the kernel cannot
+      // authenticate the bound block at the tip, which is what the declaration
+      // on the fee-aware request fixes.
+      const undeclared = new sdk.TransactionRequestBuilder()
+        .withAuthArg(request.authArg())
+        .extendAdviceMap(request.adviceMap())
+        .build();
+      let undeclaredError = null;
+      try {
+        await client.executeForSummary(multisigAccountId, undeclared);
+      } catch (err) {
+        undeclaredError = String(err?.message ?? err);
+      }
+
+      return {
+        boundBlock,
+        declared: Array.from(request.blockNumbers()),
+        tip,
+        lateAnchorBlock: lateAnchor.blockNum(),
+        original: original.toCommitment().toHex(),
+        atTip: atTip.toCommitment().toHex(),
+        atLateAnchor: atLateAnchor.toCommitment().toHex(),
+        undeclaredError,
+      };
+    });
+
+    expect(result.declared).toEqual([result.boundBlock]);
+    expect(result.tip).toBeGreaterThan(result.boundBlock);
+    expect(result.lateAnchorBlock).toBe(result.tip);
+    expect(result.atTip).toBe(result.original);
+    expect(result.atLateAnchor).toBe(result.original);
+    expect(result.undeclaredError).not.toBeNull();
+  });
+  // The node-backed counterpart of the test above, and the regression for
+  // web-sdk#432. A node serves account state only ~50 blocks back, so a
+  // proposal re-executed at its bound block stopped working once the chain
+  // moved past that window. Executing at the tip fetches the bound block's
+  // header and MMR path from the node instead, which it keeps. Needs a running
+  // node (CI's test node, or `TEST_MIDEN_RPC_URL`) and skips without one. The
+  // unfunded multisig relies on the fee-free chain CI starts
+  // (`MIDEN_VERIFICATION_BASE_FEE=0`); the fee-charging path is covered by
+  // rust-sdk's `multisig_proposal_reexecutes_after_bound_account_state_is_pruned`.
+  test("a multisig proposal reproduces its summary on a node after the bound block leaves the history window", async ({
+    run,
+  }) => {
+    // ~51 blocks at the test node's 3 s interval, plus setup.
+    test.setTimeout(480_000);
+    const result = await run(async ({ sdk, helpers }) => {
+      const integration = await helpers.createIntegrationClient();
+      if (!integration) return { skip: true };
+      const { client } = integration;
+      await client.syncState();
+
+      const walletSeed = new Uint8Array(32);
+      crypto.getRandomValues(walletSeed);
+      const approverKeys = [
+        sdk.AuthSecretKey.rpoFalconWithRNG(),
+        sdk.AuthSecretKey.rpoFalconWithRNG(),
+      ];
+      const multisigComponent = sdk.createAuthFalcon512RpoMultisig(
+        new sdk.AuthFalcon512RpoMultisigConfig(
+          approverKeys.map((key) => key.publicKey().toCommitment()),
+          2
+        )
+      );
+      const built = new sdk.AccountBuilder(walletSeed)
+        .storageMode(sdk.AccountStorageMode.private())
+        .withAuthComponent(multisigComponent)
+        .withBasicWalletComponent()
+        .build();
+      const multisigId = built.account.id();
+      await client.newAccount(built.account, false);
+      for (const key of approverKeys) {
+        await client.keystore.insert(multisigId, key);
+      }
+
+      const request = (
+        await client.feeAwareTransactionRequestBuilder(multisigId)
+      ).build();
+      const boundBlock = await client.getSyncHeight();
+      const original = await client.executeForSummary(multisigId, request);
+
+      // One block past the node's 50-block account history.
+      const target = boundBlock + 51;
+      const deadline = Date.now() + 360_000;
+      let tip = boundBlock;
+      while (tip < target) {
+        if (Date.now() > deadline) {
+          throw new Error(`chain stalled at ${tip}, waiting for ${target}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
+        await client.syncState();
+        tip = await client.getSyncHeight();
+      }
+
+      const atTip = await client.executeForSummary(multisigId, request);
+
+      return {
+        skip: false,
+        boundBlock,
+        tip,
+        original: original.toCommitment().toHex(),
+        atTip: atTip.toCommitment().toHex(),
+      };
+    });
+    if (result.skip) {
+      test.skip(true, "requires running node");
+      return;
+    }
+
+    expect(result.tip).toBeGreaterThan(result.boundBlock + 50);
+    expect(result.atTip).toBe(result.original);
+  });
 });

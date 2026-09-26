@@ -2,9 +2,18 @@
 
 ## 0.17.0-rc.4 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] Added `TransactionRequestBuilder.withBlockNumbers(blockNums: number[])` and `TransactionRequest.blockNumbers(): number[]`. The listed blocks are added to the transaction's partial blockchain, and to an anchor captured for the request, so a transaction can authenticate a block older than the one it executes against ([rust-sdk#2629](https://github.com/0xMiden/rust-sdk/pull/2629)).
+
+### Fixes
+
+* [FIX][web] A multisig proposal no longer becomes unverifiable and unexecutable once the node prunes the bound block's account state (about 50 blocks). `feeAwareTransactionRequestBuilder` now declares the block a multisig's summary binds through `withBlockNumbers`, so the request executes at the current tip with no anchor: the summary stays bound to that block while foreign accounts, the fee faucet among them, load at the tip. `transactions.preview({ operation: "custom", account, request })` without an `anchor` reproduces the proposal's summary, and `transactions.submit(account, request)` without one executes the signed request at the tip. The IndexedDB store now returns the MMR authentication nodes it holds rather than failing on a missing one, so a block whose nodes the browser never stored is authenticated with a path fetched from the node ([#432](https://github.com/0xMiden/web-sdk/issues/432), [rust-sdk#2629](https://github.com/0xMiden/rust-sdk/pull/2629)).
+
 ### Changes
 
 * [CHANGE][docs] The shipped `chain-anchored-execution` skill, the README and the transactions and `useChainAnchor` guides now describe the 0.17 multisig flow: a proposal binds a block in its auth args and is previewed and submitted at the tip with that block in `withBlockNumbers`, never re-executed at an anchor, which fails once the node prunes the anchor's account state and cannot be submitted after the 20-block expiry. Anchors remain for flows whose summary binds the reference block, such as single-signature co-signing ([#432](https://github.com/0xMiden/web-sdk/issues/432)).
+* [BREAKING][web] `TransactionRequest.serialize()` bytes now always carry the declared block numbers, so bytes written by 0.17.0-rc.3 or earlier are not compatible with this version in either direction. Re-serialize a request with the client that will execute it ([rust-sdk#2629](https://github.com/0xMiden/rust-sdk/pull/2629)).
 
 ## 0.17.0-rc.3 (TBD)
 

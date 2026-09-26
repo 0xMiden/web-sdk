@@ -479,6 +479,11 @@ export class TransactionsResource {
    * use the proposer's anchor: since protocol 0.16 the summary binds the
    * reference block commitment, so deriving it locally at a different height
    * produces a different summary and the comparison always fails.
+   *
+   * The exception is a multisig request built by
+   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
+   * auth args name, which the request declares, so previewing it without an
+   * anchor reproduces the proposal's summary at the current tip.
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
@@ -793,7 +798,8 @@ export class TransactionsResource {
    * Capture a {@link ChainAnchor} at the current sync height for `request`,
    * pinning the reference block that a later execution can replay against.
    *
-   * The anchor tracks the creation blocks of the request's authenticated input
+   * The anchor tracks the blocks the request declares through
+   * `withBlockNumbers` and the creation blocks of its authenticated input
    * notes, so it stays valid for that request once the chain advances. Pass it
    * back to {@link preview}, {@link executeRequest}, or {@link submit} via
    * their `anchor` option. Serialize it with `anchor.serialize()` to ship it

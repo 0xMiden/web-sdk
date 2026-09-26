@@ -517,9 +517,9 @@ impl WebClient {
             .map_err(|err| js_error_with_context(err, "failed to execute transaction"))
     }
 
-    /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the creation
-    /// blocks of the request's authenticated input notes so the request can later execute
-    /// against the anchor.
+    /// Captures a [`ChainAnchor`] at the client's current sync height, tracking the blocks the
+    /// request declares through `withBlockNumbers` and the creation blocks of its authenticated
+    /// input notes, so the request can later execute against the anchor.
     ///
     /// This is the capture entry point for flows that never see a successful execution at capture
     /// time — e.g. a multisig proposal, where execution intentionally fails with the unauthorized
@@ -633,6 +633,10 @@ impl WebClient {
     /// executes successfully it was already fully authorized, no summary is produced, and this
     /// method returns an error with code `TRANSACTION_ALREADY_AUTHORIZED` — submit the
     /// transaction with `execute` instead.
+    ///
+    /// Execution uses the current sync height. For a multisig request built by
+    /// `feeAwareTransactionRequestBuilder` that reproduces the proposal's summary at any later
+    /// tip, because the summary binds the request's bound block rather than the reference block.
     ///
     /// # Errors
     /// - If the transaction executes successfully (error code `TRANSACTION_ALREADY_AUTHORIZED`).
@@ -853,6 +857,14 @@ impl WebClient {
     /// anyone rebuilding it: both are bound by the summary, so two parties who disagree on
     /// either can never derive the same one. A co-signer who has the proposer's serialized
     /// request does not need these - it carries the auth argument and its advice-map preimage.
+    ///
+    /// For a multisig the builder also declares the bound block through `withBlockNumbers`, so
+    /// the request executes at the current chain tip with no anchor: the summary stays bound to
+    /// the bound block while foreign accounts, the fee faucet among them, load at the tip. It
+    /// therefore still executes after the node has pruned the bound block's account state (about
+    /// 50 blocks), and `executeForSummary` without an anchor reproduces the proposal's summary
+    /// at the tip. A pinned `bound_block_num` above the executing client's sync height fails at
+    /// execution until the client has synced past it.
     #[js_export(js_name = "feeAwareTransactionRequestBuilder")]
     pub async fn fee_aware_transaction_request_builder(
         &self,
@@ -1077,11 +1089,18 @@ async fn fee_aware_builder_with(
     // Handing a multisig the shorter preimage makes its auth procedure abort while piping it
     // ("advice stack read failed"), so build the multisig shape here and set it as the auth arg;
     // miden-client leaves a request that already carries one alone.
+    //
+    // The bound block is also declared as a block the transaction authenticates. That is what
+    // lets the proposal execute at the chain tip: the kernel needs the bound block in the partial
+    // blockchain, and without it the only way to supply it was an anchor at that block, which
+    // loads foreign accounts (the fee faucet among them) at a block the node prunes after ~50
+    // blocks.
     let auth_args = multisig_auth_args(client, overrides).await?;
     let commitment = auth_args.to_commitment();
     builder = builder
         .auth_arg(commitment)
-        .extend_advice_map([(commitment, auth_args.to_elements())]);
+        .extend_advice_map([(commitment, auth_args.to_elements())])
+        .block_numbers([auth_args.bound_block_num()]);
     Ok(builder)
 }
 
@@ -1089,9 +1108,9 @@ async fn fee_aware_builder_with(
 /// caller's salt and the chain's fee conversion info.
 ///
 /// The bound block is what the approvers sign over, and the kernel requires it at or before the
-/// transaction's reference block. A request executed against a [`ChainAnchor`] therefore has to be
-/// built and anchored at the same sync height - capture the anchor for the request as soon as it
-/// is built, before the chain advances.
+/// transaction's reference block and tracked by its partial blockchain. The caller declares it
+/// through the request's block numbers, so the request executes at any later tip, and an anchor
+/// captured for it at any later height tracks it too.
 ///
 /// The approval does not expire unless `approval_expiration_delta` asks for one.
 async fn multisig_auth_args(
