@@ -336,8 +336,11 @@ export interface FaucetCreateOptions {
 export interface ContractCreateOptions {
   /** Raw 32-byte seed (Uint8Array). Required. */
   seed: Uint8Array;
-  /** Auth secret key. Required. */
-  auth: AuthSecretKey;
+  /**
+   * Auth secret key, or `"none"` / omitted for a public NoAuth contract account
+   * (see `AccountBuilder.withNoAuthComponent`).
+   */
+  auth?: AuthSecretKey | "none";
   /** Pre-compiled AccountComponent instances. Required for contracts. */
   components: AccountComponent[];
   /** Storage mode. Defaults to "public" for contracts. */
