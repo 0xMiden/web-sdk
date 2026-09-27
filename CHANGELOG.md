@@ -9,6 +9,10 @@
 
 ## 0.16.3 (2026-09-24)
 
+### Fixes
+
+* [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#388](https://github.com/0xMiden/web-sdk/issues/388)).
+
 ### Enhancements
 
 * [FEATURE][web] Create either asset type with `VaultAsset.fungible(faucetId, amount)` or `VaultAsset.nonFungible({ key, value })`, and carry them in `new NoteAssets([asset])` or `noteAssets.push(asset)`. Existing `FungibleAsset` calls remain valid. Vaults and notes expose `assets()` and `nonFungibleAssets()` for name recovery and NFA note flows, including the issuer, complete key, and all four value limbs. Invalid note asset lists now throw catchable errors instead of trapping WASM ([#418](https://github.com/0xMiden/web-sdk/pull/418)).
