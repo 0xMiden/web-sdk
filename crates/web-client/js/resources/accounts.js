@@ -57,12 +57,15 @@ export class AccountsResource {
   async #createContract(opts, wasm) {
     if (!opts.seed)
       throw new Error("Contract creation requires a 'seed' (Uint8Array)");
-    if (!opts.auth)
-      throw new Error("Contract creation requires an 'auth' (AuthSecretKey)");
+
+    const noAuth = opts.auth === undefined || opts.auth === "none";
+    if (!noAuth && !opts.auth) {
+      throw new Error(
+        "Contract creation requires an 'auth' (AuthSecretKey), or auth: "none" for a NoAuth public contract"
+      );
+    }
 
     const storageMode = resolveStorageMode(opts.storage ?? "public", wasm);
-    const authComponent =
-      wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
 
     // Schema commitment from `build()` is not a substitute for contract code; require explicit
     // `components` so auth-only contracts are rejected at this layer.
@@ -73,9 +76,16 @@ export class AccountsResource {
       );
     }
 
-    let builder = new wasm.AccountBuilder(opts.seed)
-      .storageMode(storageMode)
-      .withAuthComponent(authComponent);
+    let builder = new wasm.AccountBuilder(opts.seed).storageMode(storageMode);
+
+    if (noAuth) {
+      // Trustless public contracts: anyone can consume notes against them.
+      builder = builder.withNoAuthComponent();
+    } else {
+      const authComponent =
+        wasm.AccountComponent.createAuthComponentFromSecretKey(opts.auth);
+      builder = builder.withAuthComponent(authComponent);
+    }
 
     for (const component of components) {
       builder = builder.withComponent(component);
@@ -84,7 +94,12 @@ export class AccountsResource {
     const built = builder.build();
     const account = built.account;
 
-    await this.#inner.newAccountWithSecretKey(account, opts.auth);
+    if (noAuth) {
+      // NoAuth accounts have no secret key to persist.
+      await this.#inner.newAccount(account, false);
+    } else {
+      await this.#inner.newAccountWithSecretKey(account, opts.auth);
+    }
     return account;
   }
 
