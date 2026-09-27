@@ -22,10 +22,27 @@ export function getDatabase(dbId) {
     return db;
 }
 /**
+ * Close and unregister a database previously opened for `network`.
+ * No-op when nothing is registered under that id.
+ */
+export function closeDatabase(network) {
+    const existing = databaseRegistry.get(network);
+    if (!existing) {
+        return;
+    }
+    existing.dexie.close();
+    databaseRegistry.delete(network);
+}
+/**
  * Opens a database for the given network and registers it in the registry.
  * Returns the database ID (network name) which can be used to retrieve the database later.
+ *
+ * If a database is already registered for `network`, the previous Dexie
+ * connection is closed before the new one is installed so successive
+ * short-lived clients do not leak open `IDBDatabase` handles (#377).
  */
 export async function openDatabase(network, clientVersion) {
+    closeDatabase(network);
     const db = new MidenDatabase(network);
     const success = await db.open(clientVersion);
     /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
@@ -34,6 +51,11 @@ export async function openDatabase(network, clientVersion) {
     }
     databaseRegistry.set(network, db);
     return network;
+}
+// Allow the web-client terminate path to close the store without a hard
+// packaging dependency on this module (loaded via the wasm idxdb glue).
+if (typeof globalThis !== "undefined") {
+    globalThis.__midenCloseIdxdb = closeDatabase;
 }
 var Table;
 (function (Table) {
