@@ -26,6 +26,10 @@ export function normalizeArg(val) {
   if (val instanceof BigUint64Array) return Array.from(val);
   if (val instanceof BigInt64Array) return Array.from(val);
   if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
+  // Node array polyfills expose the underlying plain array for napi Vec<T>.
+  if (val && typeof val === "object" && Array.isArray(val.__midenItems)) {
+    return val.__midenItems;
+  }
   return val;
 }
 
@@ -234,15 +238,21 @@ export const NODE_ARRAY_TYPES = Object.freeze([
  * let `new sdk.FeltArray([a, b])` work on Node.js by returning a plain array.
  */
 function makeArrayPolyfills() {
+  /**
+   * Browser `declare_js_miden_arrays!` containers expose `length()` as a method.
+   * A plain JS Array cannot also have a callable `length`, so Node uses a thin
+   * wrapper whose underlying items are unwrapped by `normalizeArg` before napi.
+   */
   function polyfill(items) {
     const arr =
       items === undefined || items === null
         ? []
         : Array.isArray(items)
           ? [...items]
-          : [items];
-    // Match the browser containers (miden_array.rs), which reject any index
-    // outside the array instead of reading undefined or growing it.
+          : items && typeof items === "object" && Array.isArray(items.__midenItems)
+            ? [...items.__midenItems]
+            : [items];
+
     const checkIndex = (i) => {
       if (!Number.isInteger(i) || i < 0 || i >= arr.length) {
         throw new RangeError(
@@ -250,22 +260,82 @@ function makeArrayPolyfills() {
         );
       }
     };
-    arr.get = (i) => {
-      checkIndex(i);
-      return arr[i];
+
+    const wrapper = {
+      __midenItems: arr,
+      get(i) {
+        checkIndex(i);
+        return arr[i];
+      },
+      replaceAt(i, val) {
+        checkIndex(i);
+        arr[i] = val;
+        return wrapper;
+      },
+      push(val) {
+        arr.push(val);
+        return wrapper;
+      },
+      length() {
+        return arr.length;
+      },
+      free() {},
+      [Symbol.iterator]() {
+        return arr[Symbol.iterator]();
+      },
     };
-    arr.replaceAt = (i, val) => {
-      checkIndex(i);
-      arr[i] = val;
-      return arr;
-    };
-    // A plain array owns no native memory, but callers written against the
-    // wasm-bindgen classes free them.
-    arr.free = () => {};
-    if (Symbol.dispose) arr[Symbol.dispose] = arr.free;
-    return arr;
+    if (Symbol.dispose) wrapper[Symbol.dispose] = wrapper.free;
+
+    // Indexed access parity with browser/wasm containers and plain arrays.
+    return new Proxy(wrapper, {
+      get(target, prop, receiver) {
+        if (typeof prop === "string" && /^\d+$/.test(prop)) {
+          const i = Number(prop);
+          return i >= 0 && i < arr.length ? arr[i] : undefined;
+        }
+        // Do not shadow length() with a numeric length property — browser
+        // typed code calls length() and must work on Node too (#427).
+        return Reflect.get(target, prop, receiver);
+      },
+      set(target, prop, value, receiver) {
+        if (typeof prop === "string" && /^\d+$/.test(prop)) {
+          const i = Number(prop);
+          if (i >= 0 && i < arr.length) {
+            arr[i] = value;
+            return true;
+          }
+          return false;
+        }
+        return Reflect.set(target, prop, value, receiver);
+      },
+      ownKeys() {
+        return [
+          ...Object.keys(arr),
+          ...Reflect.ownKeys(wrapper).filter((k) => k !== "__midenItems"),
+        ];
+      },
+      getOwnPropertyDescriptor(target, prop) {
+        if (typeof prop === "string" && /^\d+$/.test(prop)) {
+          const i = Number(prop);
+          if (i >= 0 && i < arr.length) {
+            return {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: arr[i],
+            };
+          }
+        }
+        return Reflect.getOwnPropertyDescriptor(target, prop);
+      },
+    });
   }
-  return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, polyfill]));
+
+  function ArrayCtor(items) {
+    return polyfill(items);
+  }
+
+  return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, ArrayCtor]));
 }
 
 // ── SDK wrapper ──────────────────────────────────────────────────────

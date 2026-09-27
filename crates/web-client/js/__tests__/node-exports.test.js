@@ -47,13 +47,14 @@ describe("Node array exports", () => {
     const ArrayType = nodeIndex[name];
     expect(ArrayType).toBeTypeOf("function");
     expect(nodeIndex.MidenArrays[name]).toBe(ArrayType);
-    expect(new ArrayType()).toHaveLength(0);
-    expect(new ArrayType([])).toHaveLength(0);
+    expect(new ArrayType().length()).toBe(0);
+    expect(new ArrayType([]).length()).toBe(0);
     const item = {};
     const items = new ArrayType([item]);
 
-    expect(Array.isArray(items)).toBe(true);
-    expect(items).toHaveLength(1);
+    expect(Array.isArray(items)).toBe(false);
+    expect(typeof items.length).toBe("function");
+    expect(items.length()).toBe(1);
     expect(items[0]).toBe(item);
     expect(items.get(0)).toBe(item);
   });
