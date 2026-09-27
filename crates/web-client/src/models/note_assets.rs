@@ -3,6 +3,7 @@ use miden_client::asset::Asset as NativeAsset;
 use miden_client::note::NoteAssets as NativeNoteAssets;
 
 use super::fungible_asset::FungibleAsset;
+use crate::platform::{JsErr, from_str_err};
 
 /// An asset container for a note.
 ///
@@ -10,9 +11,8 @@ use super::fungible_asset::FungibleAsset;
 /// (`miden_protocol::constants`). No duplicates are allowed, but the order of assets is
 /// unspecified.
 ///
-/// Note for JS callers: the constructors below `unwrap` the protocol's `TooManyAssets` error, so
-/// exceeding the cap from JavaScript traps the WASM instance rather than surfacing a catchable
-/// error. Check the length before constructing.
+/// Constructors and `push` return a catchable `JsErr` on validation failure (too many assets or
+/// duplicate fungible issuer) instead of trapping the WASM instance.
 ///
 /// All the assets in a note can be reduced to a single commitment which is computed by sequentially
 /// hashing the assets. Note that the same list of assets can result in two different commitments if
@@ -25,17 +25,18 @@ pub struct NoteAssets(NativeNoteAssets);
 impl NoteAssets {
     /// Creates a new asset list for a note.
     #[js_export(constructor)]
-    pub fn new(assets_array: Option<Vec<FungibleAsset>>) -> NoteAssets {
+    pub fn new(assets_array: Option<Vec<FungibleAsset>>) -> Result<NoteAssets, JsErr> {
         let assets = assets_array.unwrap_or_default();
         let native_assets: Vec<NativeAsset> = assets.into_iter().map(Into::into).collect();
-        NoteAssets(NativeNoteAssets::new(native_assets).unwrap())
+        native_note_assets(native_assets, "create NoteAssets").map(NoteAssets)
     }
 
     /// Adds a fungible asset to the collection.
-    pub fn push(&mut self, asset: &FungibleAsset) {
+    pub fn push(&mut self, asset: &FungibleAsset) -> Result<(), JsErr> {
         let mut assets: Vec<miden_client::asset::Asset> = self.0.iter().copied().collect();
         assets.push(asset.into());
-        self.0 = NativeNoteAssets::new(assets).unwrap();
+        self.0 = native_note_assets(assets, "add note asset")?;
+        Ok(())
     }
 
     /// Returns all fungible assets contained in the note.
@@ -52,6 +53,10 @@ impl NoteAssets {
             })
             .collect()
     }
+}
+
+fn native_note_assets(assets: Vec<NativeAsset>, action: &str) -> Result<NativeNoteAssets, JsErr> {
+    NativeNoteAssets::new(assets).map_err(|err| from_str_err(&format!("Failed to {action}: {err}")))
 }
 
 // CONVERSIONS
