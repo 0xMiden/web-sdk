@@ -1,12 +1,20 @@
+use alloc::sync::Arc;
+
 use js_export_macro::js_export;
+use miden_client::account::standards::auth::Eip712TransactionSummary;
+use miden_client::auth::{PublicKey as NativePublicKey, Signature as NativeSignature};
 use miden_client::transaction::TransactionSummary as NativeTransactionSummary;
+use miden_client::vm::AdviceMap as NativeAdviceMap;
 
 use super::account_delta::AccountDelta;
 use super::felt::Felt;
 use super::input_notes::InputNotes;
 use super::output_notes::OutputNotes;
+use super::public_key::PublicKey;
+use super::signature::Signature;
 use super::word::Word;
-use crate::platform::{JsBytes, JsErr};
+use crate::models::advice_map::AdviceMap;
+use crate::platform::{JsBytes, JsErr, bytes_to_js, from_str_err};
 use crate::utils::{deserialize_untrusted_bytes, serialize_to_bytes};
 
 /// Represents a transaction summary.
@@ -92,6 +100,43 @@ impl TransactionSummary {
     #[js_export(js_name = "toCommitment")]
     pub fn to_commitment(&self) -> Word {
         self.0.to_commitment().into()
+    }
+
+    /// Returns the EIP-712 digest signed by an Ethereum-compatible wallet.
+    #[js_export(js_name = "eip712Hash")]
+    pub fn eip712_hash(&self) -> JsBytes {
+        bytes_to_js(self.0.eip712_hash().as_bytes())
+    }
+
+    /// Returns the domain-separated advice-map key for an ECDSA approver.
+    #[js_export(js_name = "eip712SignatureKey")]
+    pub fn eip712_signature_key(&self, public_key: &PublicKey) -> Result<Word, JsErr> {
+        match &public_key.0 {
+            NativePublicKey::EcdsaK256Keccak(key) => {
+                Ok(self.0.eip712_signature_key(key.to_commitment().into()).into())
+            },
+            _ => Err(from_str_err("EIP-712 requires an ECDSA public key")),
+        }
+    }
+
+    /// Encodes an ECDSA signature over `eip712Hash()` as an advice-map entry.
+    /// The signature is verified when the transaction executes, not by this method.
+    #[js_export(js_name = "eip712SignatureAdvice")]
+    pub fn eip712_signature_advice(
+        &self,
+        public_key: &PublicKey,
+        signature: &Signature,
+    ) -> Result<AdviceMap, JsErr> {
+        let native_signature: NativeSignature = signature.into();
+        match (&public_key.0, native_signature) {
+            (NativePublicKey::EcdsaK256Keccak(key), NativeSignature::EcdsaK256Keccak(sig)) => {
+                let (advice_key, witness) = self.0.eip712_signature_advice(key, &sig);
+                let mut advice_map = NativeAdviceMap::default();
+                advice_map.insert(advice_key, Arc::from(witness));
+                Ok(advice_map.into())
+            },
+            _ => Err(from_str_err("EIP-712 requires an ECDSA public key and signature")),
+        }
     }
 }
 

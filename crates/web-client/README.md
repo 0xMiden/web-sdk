@@ -739,6 +739,17 @@ if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
 await client.transactions.submit(account, request, { anchor: received });
 ```
 
+For an ECDSA co-signer, sign `{ txSummaryHash }` under the EIP-712 domain
+`{ name: "Miden Transaction", version: "1" }`, where `txSummaryHash` is the
+summary commitment encoded as four little-endian `u64` values. The SDK derives
+the digest with `proposed.eip712Hash()`. After converting the wallet's signature
+to an SDK `Signature`, attach the protocol witness with
+`request.extendAdviceMap(proposed.eip712SignatureAdvice(publicKey, signature))`
+and submit the returned request.
+The key is available separately via `proposed.eip712SignatureKey(publicKey)`.
+Inspect and re-derive the summary before requesting the signature; these helpers
+encode it but do not establish the proposer's intent.
+
 The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
 
 The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
