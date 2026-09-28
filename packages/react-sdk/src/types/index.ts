@@ -394,7 +394,10 @@ export interface WaitForNotesOptions {
   minCount?: number;
   /** Timeout in milliseconds. Default: 10000 */
   timeoutMs?: number;
-  /** Polling interval in milliseconds. Default: 1000 */
+  /**
+   * Polling interval in milliseconds, capped by the remaining timeout.
+   * Default: 1000
+   */
   intervalMs?: number;
 }
 

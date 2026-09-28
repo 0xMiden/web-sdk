@@ -72,6 +72,48 @@ describe("useWaitForNotes", () => {
     expect(calls[0]?.[0]).not.toBe(calls[1]?.[0]);
   });
 
+  it("does not sleep past the configured timeout", async () => {
+    vi.useFakeTimers();
+
+    const mockClient = createMockWebClient({
+      syncState: vi.fn().mockResolvedValue(undefined),
+      getConsumableNotes: vi.fn().mockResolvedValue([]),
+    });
+
+    mockUseMiden.mockReturnValue({
+      client: mockClient,
+      isReady: true,
+    });
+
+    const { result } = renderHook(() => useWaitForNotes());
+    const wait = result.current.waitForConsumableNotes({
+      accountId: "0xaccount",
+      timeoutMs: 50,
+      intervalMs: 5_000,
+    });
+    let settled = false;
+    void wait.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(50);
+      expect(settled).toBe(true);
+      await expect(wait).rejects.toThrow(
+        "Timeout waiting for consumable notes"
+      );
+    } finally {
+      await vi.runAllTimersAsync();
+      await wait.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it("should resolve when consumable notes are available", async () => {
     const note = createMockConsumableNoteRecord("0xnote1", "0xaccount");
     const mockClient = createMockWebClient({
