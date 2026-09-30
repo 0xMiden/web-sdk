@@ -78,7 +78,7 @@ export interface MidenCustomTransaction {
 /**
  * Serializes `transactionRequest` in the constructor. The wallet deserializes
  * those bytes with its own SDK, so both must use the same `TransactionRequest`
- * encoding; 0.17.0-rc.4 changed it.
+ * encoding; 0.17.0-rc.5 changed it.
  */
 export class CustomTransaction implements MidenCustomTransaction {
   address: string;
