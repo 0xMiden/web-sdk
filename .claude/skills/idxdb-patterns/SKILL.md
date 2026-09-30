@@ -230,6 +230,7 @@ enum Table {
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
+  AccountWitnesses = "accountWitnesses",
 }
 ```
 
@@ -258,7 +259,7 @@ helper, e.g.
 `[Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId")`.
 Every later change is its own `.version(N).stores({...})` block.
 
-**The current schema version is 5.**
+**The current schema version is 6.**
 
 | Version | Change |
 | --- | --- |
@@ -267,6 +268,7 @@ Every later change is its own `.version(N).stores({...})` block.
 | 3 | Rekeys the input-note consumption index to `[consumedBlockHeight+consumedTxOrder+detailsCommitment]` (was `...+noteId`), so `Store::get_input_note_after` seeks on the values an `InputNoteCursor` carries. Index-only, no `.upgrade()` hook |
 | 4 | Drops `settings`: `this.dexie.version(4).stores({ [Table.Settings]: null })` |
 | 5 | Recreates `settings` as `indexes("[scope+key]", "scope")`. A primary key cannot change in place, hence the drop-and-recreate pair |
+| 6 | Adds `accountWitnesses`, primary key `&accountId`. `witness` is null until the first sync refresh |
 
 ### Migrations ARE in use
 

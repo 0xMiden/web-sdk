@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.0-rc.5 (TBD)
+
+### Changes
+
+* [CHANGE][web] The IndexedDB store keeps account witnesses for the accounts registered through the client, and a code upgrade writes the new account code before the header that commits to it. Creation patches (final nonce 1) still replace the whole account. Published `miden-client` stays at 0.17.0-rc.4 until the release that contains [rust-sdk#2645](https://github.com/0xMiden/rust-sdk/pull/2645); this branch is built against that pull request in CI.
+* [BREAKING][web] `TransactionRequest` bytes gain a trailing field, so bytes written by 0.17.0-rc.4 or earlier do not deserialize. Re-serialize a request with the client that will execute it. Where a dApp and a wallet, or co-signers, exchange proposal bytes, both sides need this version.
+
 ## 0.17.0-rc.4 (TBD)
 
 ### Enhancements
