@@ -8,6 +8,11 @@
 # A second failure: `version = "0.17.0-rc.8"` is a caret, so it matches every
 # later pre tag of 0.17.0. Publishing rc.9 makes that patch match two crates
 # and cargo refuses to choose. The retry pins the version the patch named.
+#
+# That pin is the protocol line. `cargo update -p miden-client` would still
+# take rc.9 for the rest of the family. The prover then builds a proof the
+# node cannot verify. After a successful update, crates that moved past the
+# pinned pre-release are put back on it.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -21,9 +26,86 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if cargo update "$@" >"$log" 2>&1; then
+finish_update() {
   cat "$log"
+  local args
+  args="$(python3 - "$root/Cargo.toml" "$log" <<'PY'
+import re, shlex, sys
+from pathlib import Path
+
+cargo_toml, log_path = sys.argv[1:]
+text = Path(cargo_toml).read_text()
+pins = {}
+in_patch = False
+for line in text.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("[patch"):
+        in_patch = True
+        continue
+    if stripped.startswith("[") and in_patch:
+        in_patch = False
+    if not in_patch:
+        continue
+    match = re.match(
+        r'^([A-Za-z0-9_-]+)\s*=\s*\{[^}]*\bversion\s*=\s*"=([^"]+)"',
+        stripped,
+    )
+    if match:
+        pins[match.group(1)] = match.group(2)
+
+def pre(version):
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)-rc\.(\d+)", version)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
+
+bases = {}
+for version in pins.values():
+    parsed = pre(version)
+    if not parsed:
+        continue
+    base, number = parsed
+    if base in bases and bases[base] != number:
+        bases[base] = None
+    elif base not in bases:
+        bases[base] = number
+
+holds = []
+seen = set()
+for match in re.finditer(
+    r"^Updating ([A-Za-z0-9_-]+) v(\S+) -> v(\S+)",
+    Path(log_path).read_text(),
+    re.M,
+):
+    name, new = match.group(1), match.group(3)
+    parsed = pre(new)
+    if not parsed or name in pins or name in seen:
+        continue
+    base, number = parsed
+    pin_number = bases.get(base)
+    if pin_number is None or number <= pin_number:
+        continue
+    seen.add(name)
+    holds.append((name, f"{base}-rc.{pin_number}"))
+
+if not holds:
+    sys.exit(0)
+parts = []
+for name, version in holds:
+    parts.extend(["-p", name, "--precise", version])
+print(" ".join(shlex.quote(part) for part in parts))
+PY
+)"
+  if [ -n "$args" ]; then
+    echo "cargo update: a newer pre-release is out; keeping the patched release line" >&2
+    # shellcheck disable=SC2086
+    cargo update $args
+  fi
   exit 0
+}
+
+if cargo update "$@" >"$log" 2>&1; then
+  finish_update
 fi
 cat "$log" >&2
 
@@ -75,8 +157,7 @@ PY
   then
     echo "cargo update: a patch version matched more than one crates.io release; retrying with that version pinned exact" >&2
     if cargo update "$@" >"$log" 2>&1; then
-      cat "$log"
-      exit 0
+      finish_update
     fi
     cat "$log" >&2
   fi
@@ -192,4 +273,8 @@ $config_vals
 EOF
 
 echo "cargo update: a patched git branch is gone; retrying against empty stand-in packages" >&2
-cargo update "$@"
+if cargo update "$@" >"$log" 2>&1; then
+  finish_update
+fi
+cat "$log" >&2
+exit 1
