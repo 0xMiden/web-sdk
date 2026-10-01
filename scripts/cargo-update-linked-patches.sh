@@ -4,6 +4,10 @@
 # branch fails the update even though the replacement is on crates.io. When
 # that happens, this stands up an empty package for each patched crate, points
 # git at it for one retry, and the patch selects the real crates.io crate.
+#
+# A second failure: `version = "0.17.0-rc.8"` is a caret, so it matches every
+# later pre tag of 0.17.0. Publishing rc.9 makes that patch match two crates
+# and cargo refuses to choose. The retry pins the version the patch named.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -22,6 +26,61 @@ if cargo update "$@" >"$log" 2>&1; then
   exit 0
 fi
 cat "$log" >&2
+
+if grep -q 'resolved to more than one candidate' "$log"; then
+  if python3 - "$root/Cargo.toml" "$log" <<'PY'
+import re, sys
+from pathlib import Path
+
+cargo_toml, log_path = sys.argv[1:]
+log = Path(log_path).read_text()
+blocks = re.findall(
+    r"patch for `([A-Za-z0-9_-]+)`[^\n]*resolved to more than one candidate\n"
+    r"note: found versions: ([^\n]+)",
+    log,
+)
+if not blocks:
+    sys.exit(1)
+candidates = {}
+for name, versions in blocks:
+    candidates.setdefault(name, set()).update(v.strip() for v in versions.split(","))
+
+lines = Path(cargo_toml).read_text().splitlines(keepends=True)
+in_patch = False
+changed = []
+out = []
+dep_re = re.compile(
+    r'^(\s*)([A-Za-z0-9_-]+)(\s*=\s*\{[^}\n]*\bversion\s*=\s*")(=)?([^"]+)(".*)$'
+)
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[patch"):
+        in_patch = True
+    elif stripped.startswith("[") and in_patch:
+        in_patch = False
+    match = dep_re.match(line.rstrip("\n"))
+    if in_patch and match and match.group(4) is None:
+        name, version = match.group(2), match.group(5)
+        if version in candidates.get(name, ()):
+            line = (
+                f"{match.group(1)}{name}{match.group(3)}={version}{match.group(6)}\n"
+            )
+            changed.append(f"{name} ={version}")
+    out.append(line)
+if not changed:
+    sys.exit(1)
+Path(cargo_toml).write_text("".join(out))
+sys.stderr.write("pinned " + ", ".join(changed) + "\n")
+PY
+  then
+    echo "cargo update: a patch version matched more than one crates.io release; retrying with that version pinned exact" >&2
+    if cargo update "$@" >"$log" 2>&1; then
+      cat "$log"
+      exit 0
+    fi
+    cat "$log" >&2
+  fi
+fi
 
 specs="$(grep -oE 'https://[^[:space:]]+\?branch=[^[:space:]]+' "$log" | sort -u || true)"
 if [ -z "$specs" ]; then
