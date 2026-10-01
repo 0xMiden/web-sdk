@@ -12,7 +12,9 @@
 # That pin is the protocol line. `cargo update -p miden-client` would still
 # take rc.9 for the rest of the family. The prover then builds a proof the
 # node cannot verify. After a successful update, crates that moved past the
-# pinned pre-release are put back on it.
+# pinned pre-release are put back on it. Cargo indents those lines ("    Updating
+# name vOLD -> vNEW") and may color them. A match anchored at column 0 never
+# fired, so the family stayed on the newer pre-release.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -72,9 +74,10 @@ for version in pins.values():
 
 holds = []
 seen = set()
+log_text = re.sub(r"\x1b\[[0-9;]*m", "", Path(log_path).read_text())
 for match in re.finditer(
-    r"^Updating ([A-Za-z0-9_-]+) v(\S+) -> v(\S+)",
-    Path(log_path).read_text(),
+    r"^[ \t]*Updating ([A-Za-z0-9_-]+) v(\S+) -> v(\S+)",
+    log_text,
     re.M,
 ):
     name, new = match.group(1), match.group(3)
