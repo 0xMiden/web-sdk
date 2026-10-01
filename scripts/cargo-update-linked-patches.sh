@@ -10,11 +10,13 @@
 # and cargo refuses to choose. The retry pins the version the patch named.
 #
 # That pin is the protocol line. `cargo update -p miden-client` would still
-# take rc.9 for the rest of the family. The prover then builds a proof the
-# node cannot verify. After a successful update, crates that moved past the
-# pinned pre-release are put back on it. Cargo indents those lines ("    Updating
-# name vOLD -> vNEW") and may color them. A match anchored at column 0 never
-# fired, so the family stayed on the newer pre-release.
+# take rc.9 for the rest of the family, and those rc.9 crates require each
+# other, so one crate cannot be moved back alone. The prover then builds a
+# proof the node cannot verify. Crates that moved past the pinned pre-release
+# are unpacked from crates.io and path-patched, then the update runs again.
+# `--precise` cannot be repeated, and a crates.io patch of another crates.io
+# version is rejected because both sources are the registry. Cargo indents
+# the "    Updating" lines and may color them.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -30,9 +32,9 @@ trap cleanup EXIT
 
 finish_update() {
   cat "$log"
-  local args
-  args="$(python3 - "$root/Cargo.toml" "$log" <<'PY'
-import re, shlex, sys
+  local holds hold_root manifest name version archive spec
+  holds="$(python3 - "$root/Cargo.toml" "$log" <<'PY'
+import re, sys
 from pathlib import Path
 
 cargo_toml, log_path = sys.argv[1:]
@@ -74,36 +76,137 @@ for version in pins.values():
 
 holds = []
 seen = set()
+
+def consider(name, version):
+    parsed = pre(version)
+    if not parsed or name in pins or name in seen:
+        return
+    base, number = parsed
+    pin_number = bases.get(base)
+    if pin_number is None or number <= pin_number:
+        return
+    seen.add(name)
+    holds.append((name, f"{base}-rc.{pin_number}"))
+
+# Cargo indents "    Updating" and may color it. The lock is the source of
+# truth either way: a crate already past the pin never prints an Updating line.
 log_text = re.sub(r"\x1b\[[0-9;]*m", "", Path(log_path).read_text())
 for match in re.finditer(
     r"^[ \t]*Updating ([A-Za-z0-9_-]+) v(\S+) -> v(\S+)",
     log_text,
     re.M,
 ):
-    name, new = match.group(1), match.group(3)
-    parsed = pre(new)
-    if not parsed or name in pins or name in seen:
-        continue
-    base, number = parsed
-    pin_number = bases.get(base)
-    if pin_number is None or number <= pin_number:
-        continue
-    seen.add(name)
-    holds.append((name, f"{base}-rc.{pin_number}"))
+    consider(match.group(1), match.group(3))
+
+lock_path = Path(cargo_toml).parent / "Cargo.lock"
+if lock_path.exists():
+    locked = None
+    for line in lock_path.read_text().splitlines():
+        if line.startswith("name = "):
+            locked = line.split("=", 1)[1].strip().strip('"')
+            continue
+        if line.startswith("version = ") and locked is not None:
+            consider(locked, line.split("=", 1)[1].strip().strip('"'))
+            locked = None
 
 if not holds:
     sys.exit(0)
-parts = []
 for name, version in holds:
-    parts.extend(["-p", name, "--precise", version])
-print(" ".join(shlex.quote(part) for part in parts))
+    print(f"{name} {version}")
 PY
 )"
-  if [ -n "$args" ]; then
-    echo "cargo update: a newer pre-release is out; keeping the patched release line" >&2
-    # shellcheck disable=SC2086
-    cargo update $args
+  if [ -z "$holds" ]; then
+    exit 0
   fi
+  # The unpacked crates stay for the rest of the job. Later cargo builds
+  # follow the path patch, so this directory must outlive the script.
+  echo "cargo update: a newer pre-release is out; keeping the patched release line" >&2
+  hold_root="$(mktemp -d)"
+  manifest="$hold_root/paths"
+  : >"$manifest"
+  while IFS= read -r spec; do
+    [ -z "$spec" ] && continue
+    name="${spec%% *}"
+    version="${spec#* }"
+    archive="$hold_root/${name}.crate"
+    curl -fsSL "https://static.crates.io/crates/${name}/${name}-${version}.crate" -o "$archive"
+    tar -xzf "$archive" -C "$hold_root"
+    printf '%s %s\n' "$name" "$hold_root/${name}-${version}" >>"$manifest"
+    echo "holding ${name} at ${version}" >&2
+  done <<EOF
+$holds
+EOF
+  python3 - "$root/Cargo.toml" "$manifest" <<'PY'
+import sys
+from pathlib import Path
+
+cargo_toml, manifest = sys.argv[1:]
+entries = []
+for line in Path(manifest).read_text().splitlines():
+    if not line.strip():
+        continue
+    name, path = line.split(" ", 1)
+    entries.append((name, path))
+lines = Path(cargo_toml).read_text().splitlines(keepends=True)
+fresh = [f'{name} = {{ path = "{path}" }}\n' for name, path in entries]
+header = next((i for i, line in enumerate(lines) if line.strip() == "[patch.crates-io]"), None)
+if header is None:
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] = lines[-1] + "\n"
+    if lines and lines[-1].strip() != "":
+        lines.append("\n")
+    lines.append("[patch.crates-io]\n")
+    lines.extend(fresh)
+else:
+    insert_at = header + 1
+    while insert_at < len(lines) and not lines[insert_at].startswith("["):
+        insert_at += 1
+    lines[insert_at:insert_at] = fresh
+Path(cargo_toml).write_text("".join(lines))
+PY
+  if cargo update "$@" >"$log" 2>&1; then
+    cat "$log"
+  else
+    cat "$log" >&2
+    exit 1
+  fi
+  python3 - "$root/Cargo.lock" "$manifest" <<'PY'
+import re, sys
+from pathlib import Path
+
+lock_path, manifest = sys.argv[1:]
+wanted = {}
+for line in Path(manifest).read_text().splitlines():
+    if not line.strip():
+        continue
+    name, path = line.split(" ", 1)
+    wanted[name] = path.rsplit(name + "-", 1)[1]
+
+def pre(version):
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)-rc\.(\d+)", version)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
+
+name = None
+bad = []
+for line in Path(lock_path).read_text().splitlines():
+    if line.startswith("name = "):
+        name = line.split("=", 1)[1].strip().strip('"')
+        continue
+    if not line.startswith("version = "):
+        continue
+    if name in wanted:
+        version = line.split("=", 1)[1].strip().strip('"')
+        got = pre(version)
+        pin = pre(wanted[name])
+        if got and pin and got[0] == pin[0] and got[1] > pin[1]:
+            bad.append(f"{name} {version}")
+    name = None
+if bad:
+    sys.stderr.write("still past the patched release: " + ", ".join(bad) + "\n")
+    sys.exit(1)
+PY
   exit 0
 }
 
