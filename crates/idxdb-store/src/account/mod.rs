@@ -54,6 +54,7 @@ use crate::account::utils::{
 use crate::promise::{await_js, await_js_value};
 
 mod js_bindings;
+mod witnesses;
 pub use js_bindings::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
 use js_bindings::{
     idxdb_get_account_code,
@@ -86,6 +87,7 @@ use utils::{
     apply_account_patch,
     apply_full_account_state,
     parse_account_record_idxdb_object,
+    patch_code_bytes,
     upsert_account_asset_vault,
     upsert_account_code,
     upsert_account_record,
@@ -434,13 +436,20 @@ impl IdxdbStore {
     ) -> Result<(), StoreError> {
         let account_id = final_header.id();
         let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
+        let code_bytes = patch_code_bytes(patch, final_header)?;
 
-        let write =
-            apply_account_patch(self.db_id(), account_id, final_header, &new_map_roots, patch)
-                .await
-                .map_err(|err| {
-                    StoreError::DatabaseError(format!("failed to apply account patch: {err:?}"))
-                });
+        let write = apply_account_patch(
+            self.db_id(),
+            account_id,
+            final_header,
+            &new_map_roots,
+            patch,
+            code_bytes,
+        )
+        .await
+        .map_err(|err| {
+            StoreError::DatabaseError(format!("failed to apply account patch: {err:?}"))
+        });
 
         // The forest advanced above. If the write did not land it has to be walked back, or the
         // account's trees stay ahead of its rows and every later witness read fails on the

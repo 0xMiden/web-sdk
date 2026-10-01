@@ -23,6 +23,7 @@ import type {
   OutputNoteRecord,
   ConsumableNoteRecord,
   NoteId,
+  NoteInclusionProof,
   NoteFile,
   NoteTag,
   Note,
@@ -980,13 +981,12 @@ export interface SendPrivateOptions {
   /** The recipient. */
   to: AccountRef;
   /**
-   * Block the recipient scans FORWARD from for the note's on-chain commitment. Must be at or below
-   * the commitment block — a hint above it is never scanned back to, so the recipient silently
-   * never receives the note. A safe, always-valid choice is the chain tip when the note's
-   * transaction was submitted. For one of this client's own output notes, prefer `sendPrivateOutput`,
-   * which derives this block for you.
+   * Inclusion proof the transport verifies. The recipient scans from the block the proof names.
+   * The proof exists once the creating transaction is committed and this client has synced past
+   * that block. For one of this client's own output notes, prefer `sendPrivateOutput`, which
+   * reads the stored proof.
    */
-  scanAfterBlockNum: number;
+  inclusionProof: NoteInclusionProof;
 }
 
 export interface SendPrivateOutputOptions {
@@ -1590,25 +1590,23 @@ export interface NotesResource {
    */
   fetchPrivate(): Promise<void>;
   /**
-   * Relay a private note to a recipient via the note transport service, with an explicit block
-   * hint (`scanAfterBlockNum`) the recipient scans forward from for the note's on-chain commitment.
+   * Relay a private note to a recipient via the note transport service, with the note's
+   * inclusion proof. The transport verifies the proof and the recipient scans from the block
+   * it names.
    *
-   * The hint must be at or below the commitment block; a hint above it is never scanned back to and
-   * the recipient silently never receives the note. This is the agnostic form for relaying an
-   * arbitrary note; for one of this client's own output notes prefer {@link NotesResource.sendPrivateOutput},
-   * which derives the block from the note's stored expected height.
+   * This is the agnostic form for relaying an arbitrary note. For one of this client's own
+   * output notes prefer {@link NotesResource.sendPrivateOutput}, which reads the proof sync
+   * stored on the note and throws if this client has not synced past the commitment.
    *
-   * @param options - The note, the recipient, and `scanAfterBlockNum`.
+   * @param options - The note, the recipient, and `inclusionProof`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
   /**
    * Relay one of this client's own private output notes via the note transport service.
    *
-   * The recipient's scan-start block is derived from the note's stored `expected_height` (the chain
-   * tip when its transaction was submitted), so delivery is correct regardless of how far this
-   * client has since synced past the note — a bare sync-height hint would overshoot the commitment
-   * once the sender advances past it (e.g. relaying after waiting for commit) and silently drop
-   * delivery. The note must exist in this client's store as an output note.
+   * The inclusion proof is the one sync stored on the output note. It is absent until this
+   * client has synced past the block that committed the note, and the call throws in that
+   * case. The note must exist in this client's store as an output note.
    *
    * @param options - The output note id and the recipient.
    */

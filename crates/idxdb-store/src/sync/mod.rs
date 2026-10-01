@@ -18,7 +18,7 @@ use miden_client::sync::{
 use miden_client::utils::{Deserializable, Serializable};
 
 use super::IdxdbStore;
-use super::account::utils::account_from_full_state_patch;
+use super::account::utils::creation_account_from_patch;
 use super::chain_data::utils::{
     SerializedPartialBlockchainNodeData,
     serialize_partial_blockchain_node,
@@ -30,6 +30,7 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::JsAccountUpdate;
 use js_bindings::{
+    JsAccountWitnessUpdate,
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
@@ -227,19 +228,21 @@ impl IdxdbStore {
             .map(serialize_transaction_record)
             .collect();
 
-        // Separate full account updates from incremental absolute patches. A full-state patch can
-        // also occur when a newly-created account is too large for the node's full-state response;
-        // convert it back into an account so it follows the same replacement path.
+        // Separate full account updates from incremental absolute patches. An oversized newly
+        // created account (final nonce 1) arrives as a creation patch rather than a full account;
+        // rebuild it so it follows the same replacement path. Code on a later nonce is an upgrade
+        // and stays on the incremental path.
         let mut full_accounts: Vec<Account> = Vec::new();
         let mut patch_updates = Vec::new();
         for update in account_updates.updated_public_accounts() {
             match update {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account.clone()),
-                PublicAccountUpdate::Patch { new_header, patch } if patch.is_full_state() => {
-                    full_accounts.push(account_from_full_state_patch(patch, new_header)?);
-                },
                 PublicAccountUpdate::Patch { new_header, patch } => {
-                    patch_updates.push((new_header, patch));
+                    if let Some(account) = creation_account_from_patch(patch, new_header)? {
+                        full_accounts.push(account);
+                    } else {
+                        patch_updates.push((new_header, patch));
+                    }
                 },
             }
         }
@@ -295,6 +298,14 @@ impl IdxdbStore {
                 .map(|account| JsAccountUpdate::from_account(account, None))
                 .collect(),
             transaction_updates,
+            account_witnesses: account_updates
+                .account_witnesses()
+                .iter()
+                .map(|(account_id, witness)| JsAccountWitnessUpdate {
+                    account_id: account_id.to_string(),
+                    witness: witness.to_bytes(),
+                })
+                .collect(),
         };
         let promise = idxdb_apply_state_sync(self.db_id(), state_update);
         await_js_value(promise, "failed to apply state sync").await?;

@@ -259,7 +259,19 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
         logWebStoreError(error, `Error inserting assets`);
     }
 }
-export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
+// The header names code by commitment, so the code row has to land before the header.
+// An empty `code` means the patch carries none: a changed commitment is then an error,
+// unless there is no previous header to compare against.
+async function persistAccountCode(db, codeRoot, code, previousCodeRoot) {
+    if (code && code.length > 0) {
+        await db.accountCodes.put({ root: codeRoot, code });
+        return;
+    }
+    if (previousCodeRoot !== undefined && previousCodeRoot !== codeRoot) {
+        throw new Error(`account code commitment changed from ${previousCodeRoot} to ${codeRoot} without the new code`);
+    }
+}
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, code) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -271,6 +283,7 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
             db.historicalAccountAssets,
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
+            db.accountCodes,
         ], async () => {
             const resetMapSlots = new Set();
             // Apply storage patch: read old → archive → write/delete final state.
@@ -418,6 +431,7 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
                     watched: oldHeader.watched ?? false,
                 });
             }
+            await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
             await db.latestAccountHeaders.put({
                 id: accountId,
                 codeRoot,
@@ -621,7 +635,7 @@ async function restoreAssetsFromHistorical(db, accountId, nonce) {
 export async function applyFullAccountState(dbId, accountState) {
     try {
         const db = getDatabase(dbId);
-        const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, } = accountState;
+        const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, code, } = accountState;
         await db.dexie.transaction("rw", [
             db.latestAccountStorages,
             db.historicalAccountStorages,
@@ -631,6 +645,7 @@ export async function applyFullAccountState(dbId, accountState) {
             db.historicalAccountAssets,
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
+            db.accountCodes,
         ], async () => {
             // Archive: save current latest values to historical (so they can be
             // restored on undo), then replace latest with the new state.
@@ -657,6 +672,7 @@ export async function applyFullAccountState(dbId, accountState) {
                     watched: oldHeader.watched ?? false,
                 });
             }
+            await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
             await db.latestAccountHeaders.put({
                 id: accountId,
                 codeRoot,

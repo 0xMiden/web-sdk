@@ -140,6 +140,7 @@ extern "C" {
         vault_root: String,
         committed: bool,
         commitment: String,
+        code: Vec<u8>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyFullAccountState)]

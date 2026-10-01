@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate block hints, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -345,17 +345,17 @@ const expired = txs.filter((t) => t.expirationBlockNum() < height);
 
 It throws only where the filter was actually applied: a query that also carries `status` or `ids` is served by those, and an undefined `expiredBefore` still means "no filter".
 
-## FP12: sendPrivate Requires scanAfterBlockNum, and Overshooting Drops Delivery (HIGH)
+## FP12: sendPrivate Requires an Inclusion Proof (HIGH)
 
-`client.notes.sendPrivate({ note, to })` now requires an explicit `scanAfterBlockNum` - the block the recipient scans **forward** from for the note's on-chain commitment. The SDK no longer infers it from the current sync height, because that inference silently dropped delivery once the sender had synced past the note (for example when relaying *after* waiting for the transaction to commit).
+`client.notes.sendPrivate({ note, to, inclusionProof })` requires a `NoteInclusionProof`. The transport verifies it and the recipient scans from the block the proof names. The proof exists once the creating transaction is committed and this client has synced past that block.
 
-The value must be at or below the commitment block. A hint above it is never scanned back to and the recipient simply never receives the note - no error, on either side.
+For one of this client's own output notes, `sendPrivateOutput({ noteId, to })` reads the stored proof and throws if sync has not produced it yet. Call it after the transaction commits.
+
+`NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof. The published package includes it because that build enables the `testing` feature. The mock transport accepts it. A real node rejects it.
 
 ```tsx
-// CORRECT for an arbitrary note - pin the chain tip at submission time
-await client.notes.sendPrivate({ note, to, scanAfterBlockNum: tipAtSubmit });
+await client.notes.sendPrivate({ note, to, inclusionProof });
 
-// BETTER for one of this client's own output notes - the block is derived for you
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
@@ -497,7 +497,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` block hint | HIGH | Pass `scanAfterBlockNum` at or below the commitment block, or prefer `sendPrivateOutput` |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |

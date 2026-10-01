@@ -26,8 +26,8 @@ env:
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
   # A `Client PR:` marker overrides this for the test-node jobs
   # (resolve-client-ref); this value stays the fallback for pushes to next.
-  # v0.17.0-rc.4
-  MIDEN_CLIENT_REF: c3e205805cebfbe9168665d1cd1e1b3ef6f13457
+  # v0.17.0-rc.5
+  MIDEN_CLIENT_REF: 89c06190bf18971b36e54e6b4f6595eb80ff912d
   # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
   # binary reads this variable; the node repo's local runner uses the same
   # placeholder. A node that does not know it ignores the variable.
@@ -1055,8 +1055,20 @@ jobs:
         # symlink/copy in place.
         run: |
           if [ "$(uname)" = "Darwin" ]; then EXT="dylib"; else EXT="so"; fi
-          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
+          # A restored target cache can leave an older cdylib on a path that
+          # sorts first. The check has to load the binary this job just built.
+          BINARY=
+          newest=0
+          while IFS= read -r -d '' candidate; do
+            modified=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate")
+            if [ "$modified" -gt "$newest" ]; then
+              newest=$modified
+              BINARY=$candidate
+            fi
+          done < <(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" -print0)
           [ -n "$BINARY" ] || { echo "::error::napi binary not found"; exit 1; }
+          echo "napi binary: $BINARY"
+          ls -l "$BINARY"
           cp "$BINARY" crates/web-client/miden_client_web.node
       - name: Check node re-exports are in sync with the napi surface
         env:

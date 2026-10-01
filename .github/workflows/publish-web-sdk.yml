@@ -158,7 +158,7 @@ jobs:
         run: rustup update --no-self-update
 
       - name: Build napi binary
-        run: cargo build -p miden-client-web --no-default-features --features nodejs --release
+        run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
 
       - name: Prepare .node binary
         run: |

@@ -21,9 +21,10 @@ use wasm_bindgen_futures::js_sys;
 
 use super::IdxdbStore;
 use super::account::utils::{
-    account_from_full_state_patch,
     apply_full_account_state,
     build_account_patch_payload,
+    creation_account_from_patch,
+    patch_code_bytes,
 };
 use super::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
 use super::note::utils::{
@@ -68,6 +69,8 @@ struct BatchFullAccountState {
     account_commitment: String,
     #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
     account_seed: Option<Vec<u8>>,
+    #[serde(with = "serde_bytes", skip_serializing_if = "Vec::is_empty")]
+    code: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +97,8 @@ enum BatchAccountState {
         vault_root: String,
         committed: bool,
         commitment: String,
+        #[serde(with = "serde_bytes", skip_serializing_if = "Vec::is_empty")]
+        code: Vec<u8>,
     },
 }
 
@@ -190,10 +195,7 @@ impl IdxdbStore {
         let patch = executed_tx.account_patch();
         let final_header = executed_tx.final_account();
 
-        if patch.is_full_state() {
-            // Full-state patches contain everything needed to reconstruct the new account.
-            let account = account_from_full_state_patch(patch, final_header)?;
-
+        if let Some(account) = creation_account_from_patch(patch, final_header)? {
             apply_full_account_state(self.db_id(), &account).await.map_err(|err| {
                 StoreError::DatabaseError(format!("failed to apply full account state: {err:?}"))
             })?;
@@ -278,9 +280,8 @@ impl IdxdbStore {
 
         // Build the payload and advance the forest. Later updates in the batch read the forest, so
         // each sees the earlier ones' state even though nothing has been written yet.
-        let account_state = if patch.is_full_state() {
-            let account = account_from_full_state_patch(patch, final_header)?;
-
+        let account_state = if let Some(account) = creation_account_from_patch(patch, final_header)?
+        {
             self.smt_forest.write().rebuild_account(&account)?;
 
             let storage_slots: Vec<JsStorageSlot> =
@@ -315,9 +316,11 @@ impl IdxdbStore {
                     committed: account.is_public(),
                     account_commitment: account.to_commitment().to_string(),
                     account_seed: account.seed().map(|seed| seed.to_bytes()),
+                    code: account.code().to_bytes(),
                 },
             }
         } else {
+            let code = patch_code_bytes(patch, final_header)?;
             let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
 
             let (js_slots, js_map_entries, js_assets) =
@@ -334,6 +337,7 @@ impl IdxdbStore {
                 vault_root: final_header.vault_root().to_string(),
                 committed: account_id.is_public(),
                 commitment: final_header.to_commitment().to_string(),
+                code,
             }
         };
 

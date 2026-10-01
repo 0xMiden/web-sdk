@@ -128,6 +128,7 @@ export async function applyTransactionBatch(dbId, payloads) {
         db.historicalAccountAssets,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
+        db.accountCodes,
         db.inputNotes,
         db.outputNotes,
         db.notesScripts,
@@ -146,7 +147,7 @@ export async function applyTransactionBatch(dbId, payloads) {
                 await applyFullAccountState(dbId, acct.account);
             }
             else {
-                await applyAccountPatch(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment);
+                await applyAccountPatch(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment, acct.code);
             }
             // 3. Upsert input and output notes
             for (const note of payload.inputNotes) {

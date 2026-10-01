@@ -183,6 +183,7 @@ interface JsFullAccountState {
   committed: boolean;
   accountCommitment: string;
   accountSeed: Uint8Array | undefined;
+  code?: Uint8Array;
 }
 
 interface JsDeltaAccountState {
@@ -196,6 +197,7 @@ interface JsDeltaAccountState {
   vaultRoot: string;
   committed: boolean;
   commitment: string;
+  code?: Uint8Array;
 }
 
 type JsBatchAccountState =
@@ -274,6 +276,7 @@ export async function applyTransactionBatch(
       db.historicalAccountAssets,
       db.latestAccountHeaders,
       db.historicalAccountHeaders,
+      db.accountCodes,
       db.inputNotes,
       db.outputNotes,
       db.notesScripts,
@@ -312,7 +315,8 @@ export async function applyTransactionBatch(
             acct.storageRoot,
             acct.vaultRoot,
             acct.committed,
-            acct.commitment
+            acct.commitment,
+            acct.code
           );
         }
 

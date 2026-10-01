@@ -264,6 +264,7 @@ pub async fn apply_account_patch(
     final_header: &AccountHeader,
     new_map_roots: &BTreeMap<StorageSlotName, Word>,
     patch: &AccountPatch,
+    code_bytes: Vec<u8>,
 ) -> Result<(), JsValue> {
     let account_id_str = account_id.to_string();
     let nonce_str = final_header.nonce().to_string();
@@ -289,23 +290,52 @@ pub async fn apply_account_patch(
         vault_root,
         committed,
         commitment,
+        code_bytes,
     ))
     .await?;
 
     Ok(())
 }
 
-/// Converts a full-state account patch into an [`Account`] and verifies that its commitment
-/// matches the expected final header.
-pub fn account_from_full_state_patch(
+/// Bytes of the code a patch carries, or empty when it carries none.
+///
+/// The header names code by commitment, so a carried code that does not match the final header is
+/// rejected before anything is written.
+pub fn patch_code_bytes(
+    patch: &AccountPatch,
+    final_header: &AccountHeader,
+) -> Result<Vec<u8>, StoreError> {
+    match patch.code().as_code() {
+        Some(code) if code.commitment() == final_header.code_commitment() => Ok(code.to_bytes()),
+        Some(code) => Err(StoreError::DatabaseError(format!(
+            "account patch code commitment {} does not match the final code commitment {}",
+            code.commitment(),
+            final_header.code_commitment()
+        ))),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Reconstructs an account from a creation patch.
+///
+/// A creation patch has final nonce 1. [`AccountPatch::try_to_new_account`] can also succeed for a
+/// later patch whose storage happens to contain only creates, and that account would not be the
+/// one on chain, so the nonce is checked first. Code on a patch with a higher nonce is an upgrade
+/// and returns [`None`], so the caller applies it incrementally.
+pub fn creation_account_from_patch(
     patch: &AccountPatch,
     expected_header: &AccountHeader,
-) -> Result<Account, StoreError> {
-    let account = Account::try_from(patch)?;
+) -> Result<Option<Account>, StoreError> {
+    if expected_header.nonce().as_canonical_u64() != 1 {
+        return Ok(None);
+    }
+    let Ok(account) = patch.try_to_new_account() else {
+        return Ok(None);
+    };
     if account.to_commitment() != expected_header.to_commitment() {
         return Err(StoreError::AccountCommitmentMismatch(account.id()));
     }
-    Ok(account)
+    Ok(Some(account))
 }
 
 /// Writes the full account state atomically in a single Dexie transaction.

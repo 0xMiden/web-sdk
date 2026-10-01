@@ -30,7 +30,7 @@ use miden_client::account::{
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
-use miden_client::block::BlockHeader;
+use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
@@ -455,6 +455,36 @@ impl Store for IdxdbStore {
         // Tag removal moved upstream — `Self::remove_note_tag` is the
         // caller's responsibility per the new trait contract.
         self.remove_address(address).await
+    }
+
+    // ACCOUNT WITNESSES
+    // --------------------------------------------------------------------------------------------
+
+    async fn track_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.track_account_witness(account_id).await
+    }
+
+    async fn untrack_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.untrack_account_witness(account_id).await
+    }
+
+    async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, StoreError> {
+        self.tracked_account_witnesses().await
+    }
+
+    async fn get_account_witness(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<AccountWitness>, StoreError> {
+        self.get_account_witness(account_id).await
+    }
+
+    async fn update_account_witness(
+        &self,
+        account_id: AccountId,
+        witness: &AccountWitness,
+    ) -> Result<bool, StoreError> {
+        self.update_account_witness(account_id, witness).await
     }
 
     // SETTINGS

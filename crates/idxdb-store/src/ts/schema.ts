@@ -71,6 +71,7 @@ enum Table {
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
+  AccountWitnesses = "accountWitnesses",
 }
 
 /** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
@@ -252,6 +253,12 @@ export interface ISetting {
   value: Uint8Array;
 }
 
+// `witness` stays null until the first sync refreshes it.
+export interface IAccountWitness {
+  accountId: string;
+  witness: Uint8Array | null;
+}
+
 export interface JsVaultAsset {
   vaultKey: string;
   asset: string;
@@ -369,6 +376,7 @@ declare module "dexie" {
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
     settings: Table<ISetting, [number, string]>;
+    accountWitnesses: Table<IAccountWitness, string>;
   }
 }
 
@@ -396,6 +404,7 @@ export type MidenDexie = Dexie & {
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
   settings: Dexie.Table<ISetting, [number, string]>;
+  accountWitnesses: Dexie.Table<IAccountWitness, string>;
 };
 
 export class MidenDatabase {
@@ -423,6 +432,7 @@ export class MidenDatabase {
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
   settings: Dexie.Table<ISetting, [number, string]>;
+  accountWitnesses: Dexie.Table<IAccountWitness, string>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -536,6 +546,12 @@ export class MidenDatabase {
       [Table.Settings]: indexes("[scope+key]", "scope"),
     });
 
+    // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
+    // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+    this.dexie.version(6).stores({
+      [Table.AccountWitnesses]: indexes("&accountId"),
+    });
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -603,6 +619,9 @@ export class MidenDatabase {
     );
     this.settings = this.dexie.table<ISetting, [number, string]>(
       Table.Settings
+    );
+    this.accountWitnesses = this.dexie.table<IAccountWitness, string>(
+      Table.AccountWitnesses
     );
 
     this.dexie.on("populate", () => {

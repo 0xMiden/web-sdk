@@ -116,6 +116,21 @@ pub struct JsStateSyncUpdate {
     /// Transaction data for transactions included in this update.
     #[wasm_bindgen(js_name = "transactionUpdates")]
     pub transaction_updates: Vec<SerializedTransactionData>,
+
+    /// Witnesses validated at the sync's target block. Updates land only for accounts already
+    /// registered with `track_account_witness`; the rest are ignored.
+    #[wasm_bindgen(js_name = "accountWitnesses")]
+    pub account_witnesses: Vec<JsAccountWitnessUpdate>,
+}
+
+/// One cached account witness to write during a sync.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct JsAccountWitnessUpdate {
+    #[wasm_bindgen(js_name = "accountId")]
+    pub account_id: String,
+    #[wasm_bindgen(js_name = "witness")]
+    pub witness: Vec<u8>,
 }
 
 /// Represents an update to a single account's state.
@@ -180,6 +195,10 @@ pub struct JsAccountUpdate {
     /// Optional seed data for the account.
     #[wasm_bindgen(js_name = "accountSeed")]
     pub account_seed: Option<Vec<u8>>,
+
+    /// Serialized account code. Empty when this update does not carry code.
+    #[wasm_bindgen(js_name = "code")]
+    pub code: Vec<u8>,
 }
 
 impl JsAccountUpdate {
@@ -209,6 +228,7 @@ impl JsAccountUpdate {
             nonce: account.nonce().to_string(),
             account_commitment: account.to_commitment().to_string(),
             account_seed: account_seed.map(|seed| seed.to_bytes()),
+            code: account.code().to_bytes(),
         }
     }
 }
