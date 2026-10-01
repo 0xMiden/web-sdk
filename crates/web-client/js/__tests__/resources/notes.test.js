@@ -435,23 +435,24 @@ describe("NotesResource", () => {
   });
 
   describe("sendPrivate", () => {
-    it("sends a Note object directly with the explicit scan-after block", async () => {
+    it("sends a Note object directly with its inclusion proof", async () => {
       inner.sendPrivateNote.mockResolvedValue(undefined);
       const noteObj = {
         id: vi.fn().mockReturnValue({ toString: () => "noteid" }),
         assets: vi.fn(),
       };
+      const proof = { block: 7 };
       const resource = makeResource();
       await resource.sendPrivate({
         note: noteObj,
         to: "0xrecipient",
-        scanAfterBlockNum: 7,
+        inclusionProof: proof,
       });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(inner.sendPrivateNote).toHaveBeenCalledWith(
         noteObj,
         expect.anything(),
-        7
+        proof
       );
     });
 
@@ -460,42 +461,44 @@ describe("NotesResource", () => {
       const record = {
         toNote: vi.fn().mockReturnValue(note),
       };
+      const proof = { block: 3 };
       inner.getInputNote.mockResolvedValue(record);
       inner.sendPrivateNote.mockResolvedValue(undefined);
       const resource = makeResource();
       await resource.sendPrivate({
         note: "0xnoteHex",
         to: "0xrecipient",
-        scanAfterBlockNum: 3,
+        inclusionProof: proof,
       });
       expect(inner.getInputNote).toHaveBeenCalledWith("0xnoteHex");
       expect(record.toNote).toHaveBeenCalledOnce();
       expect(inner.sendPrivateNote).toHaveBeenCalledWith(
         note,
         expect.anything(),
-        3
+        proof
       );
     });
 
-    it("throws when scanAfterBlockNum is missing", async () => {
+    it("throws when inclusionProof is missing", async () => {
       const resource = makeResource();
       await expect(
         resource.sendPrivate({
           note: { id: vi.fn(), assets: vi.fn() },
           to: "0xrec",
         })
-      ).rejects.toThrow("scanAfterBlockNum");
+      ).rejects.toThrow("inclusionProof");
       expect(inner.sendPrivateNote).not.toHaveBeenCalled();
     });
 
     it("throws when note not found by hex", async () => {
       inner.getInputNote.mockResolvedValue(undefined);
       const resource = makeResource();
+      const proof = { block: 1 };
       await expect(
         resource.sendPrivate({
           note: "0xmissing",
           to: "0xrec",
-          scanAfterBlockNum: 1,
+          inclusionProof: proof,
         })
       ).rejects.toThrow("Note not found: 0xmissing");
     });
@@ -506,18 +509,19 @@ describe("NotesResource", () => {
         id: vi.fn(),
         assets: vi.fn(),
       };
+      const proof = { block: 0 };
       const resource = makeResource();
       await resource.sendPrivate({
         note: noteObj,
         to: "mBech32Address",
-        scanAfterBlockNum: 0,
+        inclusionProof: proof,
       });
       expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Address");
     });
   });
 
   describe("sendPrivateOutput", () => {
-    it("relays an output note by id (SDK derives the block from expected height)", async () => {
+    it("relays an output note by id (the client reads the stored inclusion proof)", async () => {
       inner.sendPrivateOutputNote.mockResolvedValue(undefined);
       const resource = makeResource();
       await resource.sendPrivateOutput({

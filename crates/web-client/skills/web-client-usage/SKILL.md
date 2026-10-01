@@ -499,10 +499,11 @@ const { txId, note } = await client.transactions.send({
   amount: 100n,
   type: NoteVisibility.Private,
   returnNote: true,
+  waitForConfirmation: true,
 });
 
-// Stream the note via the note-transport service. For one of this client's own
-// output notes prefer sendPrivateOutput, which derives the scan block for you.
+// Stream the note via the note-transport service. sendPrivateOutput reads the
+// inclusion proof sync stored once the note has committed.
 await client.notes.sendPrivateOutput({ noteId: note.id(), to: "mtst1..." });
 ```
 
@@ -913,24 +914,25 @@ for it.
 // a newly tracked tag sit below that cursor and are back-filled by sync().
 await client.notes.fetchPrivate();
 
-// Relay one of this client's own output notes - the scan block is derived from
-// the note's stored expected height. Prefer this form.
+// Relay one of this client's own output notes. The call reads the inclusion
+// proof sync stored on the note and throws if this client has not synced past
+// the commitment. Prefer this form, after the transaction has committed.
 await client.notes.sendPrivateOutput({ noteId, to: "mtst1..." });
 
-// Agnostic form for an arbitrary note. `scanAfterBlockNum` is REQUIRED.
+// Agnostic form for an arbitrary note. `inclusionProof` is required.
 await client.notes.sendPrivate({
   note,
   to: "mtst1...",
-  scanAfterBlockNum: submissionHeight,
+  inclusionProof,
 });
 ```
 
-`sendPrivate` **throws** without an integer `scanAfterBlockNum`. It is the block
-the recipient scans **forward** from for the note's on-chain commitment, so it
-must be at or below the commitment block: a hint above it is never scanned back
-to and the recipient silently never receives the note. A safe choice is the
-chain tip when the note's transaction was submitted - which is exactly why
-relaying *after* waiting for the commit used to drop delivery. `to` accepts a
+`sendPrivate` **throws** without an `inclusionProof`. The transport verifies that
+`NoteInclusionProof` and the recipient scans from the block it names. The proof
+exists once the creating transaction is committed and this client has synced past
+that block. `NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof
+the mock transport accepts; a real node rejects it, and the constructor is present
+because the published build enables the `testing` feature. `to` accepts a
 bech32 string, a 0x-hex string, an `Account`, or an `AccountId`; it does **not**
 accept a pre-parsed `Address` object.
 
@@ -1151,9 +1153,9 @@ while (true) {
    `client.feeAwareTransactionRequestBuilder(account)` for anything you hand to
    `submit` / `executeRequest` / `submitBatch` / a `custom` preview, or a
    multisig account fails with `FeeConversionInfoRequired`.
-4. **`notes.sendPrivate()` without `scanAfterBlockNum`.** It throws. Prefer
-   `notes.sendPrivateOutput({ noteId, to })` for your own output notes, and
-   never pass a hint above the commitment block.
+4. **`notes.sendPrivate()` without `inclusionProof`.** It throws. For your own
+   output notes, wait until the transaction commits and call
+   `notes.sendPrivateOutput({ noteId, to })`, which reads the stored proof.
 5. **`number` literals above 2^53 for amounts.** Amount fields accept
    `number | bigint` and coerce via `BigInt()` (no `TypeError`), but a numeric
    literal above `Number.MAX_SAFE_INTEGER` loses precision _before_ coercion.

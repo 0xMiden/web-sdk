@@ -4,8 +4,11 @@
 
 ### Changes
 
-* [CHANGE][web] The IndexedDB store keeps account witnesses for the accounts registered through the client, and a code upgrade writes the new account code before the header that commits to it. Creation patches (final nonce 1) still replace the whole account. This release targets the miden-client RC that will contain [rust-sdk#2645](https://github.com/0xMiden/rust-sdk/pull/2645). That crate is not published yet, so `Cargo.toml` still names `miden-client` 0.17.0-rc.4 and CI builds this branch from the pull request. The pin moves to the published RC when it ships.
+* [CHANGE][web] The IndexedDB store keeps account witnesses for the accounts registered through the client, and a code upgrade writes the new account code before the header that commits to it. Creation patches (final nonce 1) still replace the whole account ([rust-sdk#2645](https://github.com/0xMiden/rust-sdk/pull/2645)).
+* [CHANGE][web] Upgraded `miden-client` to 0.17.0-rc.5, which adds the account-code upgrade helpers. Protocol moves to 0.17.0-rc.9 and the node proto to 0.17.0-rc.4 ([rust-sdk#2645](https://github.com/0xMiden/rust-sdk/pull/2645), [rust-sdk#2651](https://github.com/0xMiden/rust-sdk/pull/2651)).
 * [BREAKING][web] `TransactionRequest` bytes gain a trailing field, so bytes written by 0.17.0-rc.4 or earlier do not deserialize. Re-serialize a request with the client that will execute it. Where a dApp and a wallet, or co-signers, exchange proposal bytes, both sides need this version.
+* [BREAKING][web] `notes.sendPrivate` takes `inclusionProof` (a `NoteInclusionProof`) in place of `scanAfterBlockNum`. The transport verifies the proof and the recipient scans from the block it names. `notes.sendPrivateOutput({ noteId, to })` is unchanged and reads that proof from the output note; it throws if this client has not synced past the block that committed the note. `NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof the mock transport accepts and a real node rejects ([rust-sdk#2651](https://github.com/0xMiden/rust-sdk/pull/2651)).
+* [BREAKING][web] Account code, note scripts and transaction scripts now use the hashless MAST encoding of protocol 0.17.0-rc.9. A store an earlier version created cannot read them and must be recreated. This release keeps the same major.minor, so opening the client does not delete IndexedDB; export what you need and start a new store ([rust-sdk#2642](https://github.com/0xMiden/rust-sdk/pull/2642), [rust-sdk#2651](https://github.com/0xMiden/rust-sdk/pull/2651)).
 
 ## 0.17.0-rc.4 (TBD)
 

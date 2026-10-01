@@ -78,15 +78,12 @@ export class NotesResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
-    if (
-      !Number.isInteger(opts?.scanAfterBlockNum) ||
-      opts.scanAfterBlockNum < 0
-    ) {
+    if (!opts?.inclusionProof) {
       throw new Error(
-        "sendPrivate requires scanAfterBlockNum: the block the recipient scans forward " +
-          "from for the note's commitment. It must be at or below the commitment block. " +
-          "For one of this client's own output notes, use sendPrivateOutput({ noteId, to }) " +
-          "which derives this from the note's expected height."
+        "sendPrivate requires inclusionProof: a NoteInclusionProof the transport verifies. " +
+          "The recipient scans from the block the proof names. " +
+          "For one of this client's own output notes, use sendPrivateOutput({ noteId, to }), " +
+          "which reads the proof sync stored on the note."
       );
     }
 
@@ -111,7 +108,7 @@ export class NotesResource {
     }
 
     const address = resolveAddress(opts.to, wasm);
-    await this.#inner.sendPrivateNote(note, address, opts.scanAfterBlockNum);
+    await this.#inner.sendPrivateNote(note, address, opts.inclusionProof);
   }
 
   async sendPrivateOutput(opts) {
