@@ -122,6 +122,10 @@ PY
   # follow the path patch, so this directory must outlive the script.
   echo "cargo update: a newer pre-release is out; keeping the patched release line" >&2
   hold_root="$(mktemp -d)"
+  # macOS mktemp is /var/folders, a symlink of /private/var. The assembler
+  # canonicalizes member directories and then requires them to stay under the
+  # workspace root, which it leaves as given. The /var path fails that check.
+  hold_root="$(cd "$hold_root" && pwd -P)"
   manifest="$hold_root/paths"
   : >"$manifest"
   while IFS= read -r spec; do
