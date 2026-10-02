@@ -13,7 +13,7 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.u64Array([
           11n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
@@ -61,7 +61,7 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.u64Array([
           12n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
@@ -93,9 +93,10 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const serialized = account.serialize();
-      // Account bytes start with a 15-byte ID and a variable-length vault count.
+      // Account bytes start with a version byte, a 15-byte ID, and a variable-length vault count.
       // An empty vault count is one byte (1). Three assets use one byte (7).
-      const issuerBytes = serialized.slice(0, 15);
+      const accountPrefix = serialized.slice(0, 16);
+      const issuerBytes = serialized.slice(1, 16);
       const values = [
         new sdk.Word(sdk.u64Array([11n, 22n, 9007199254740993n, 44n])),
         new sdk.Word(sdk.u64Array([55n, 66n, 77n, 88n])),
@@ -122,19 +123,19 @@ test.describe("non-fungible asset vault entries", () => {
       });
       const restored = sdk.Account.deserialize(
         new Uint8Array([
-          ...issuerBytes,
+          ...accountPrefix,
           7,
           ...fungibleBytes,
           ...nonFungibleBytes,
-          ...serialized.slice(16),
+          ...serialized.slice(17),
         ])
       );
       const fungibleOnly = sdk.Account.deserialize(
         new Uint8Array([
-          ...issuerBytes,
+          ...accountPrefix,
           3,
           ...fungibleBytes,
-          ...serialized.slice(16),
+          ...serialized.slice(17),
         ])
       );
       const vault = restored.vault();
@@ -149,7 +150,7 @@ test.describe("non-fungible asset vault entries", () => {
           sdk.u64Array([
             limbs[0],
             limbs[1],
-            account.id().suffix().asInt(),
+            account.id().suffix().asInt() | 1n,
             account.id().prefix().asInt(),
           ])
         );
@@ -160,7 +161,7 @@ test.describe("non-fungible asset vault entries", () => {
         };
       });
       return {
-        emptyCount: serialized[15],
+        emptyCount: serialized[16],
         actual,
         expected,
         fungibleCount: vault.fungibleAssets().length,
@@ -207,7 +208,7 @@ test.describe("unified note assets", () => {
         sdk.u64Array([
           11n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
@@ -263,7 +264,7 @@ test.describe("unified note assets", () => {
           sdk.u64Array([
             limb,
             22n,
-            issuer.suffix().asInt(),
+            issuer.suffix().asInt() | 1n,
             issuer.prefix().asInt(),
           ])
         );
@@ -367,7 +368,7 @@ test.describe("unified note assets", () => {
         sdk.u64Array([
           11n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
