@@ -7,7 +7,7 @@ use miden_client::Word;
 use miden_client::block::BlockHeader;
 use miden_client::crypto::InOrderIndex;
 use miden_client::store::StoreError;
-use miden_client::utils::Serializable;
+use miden_client_proto::encode;
 use serde_wasm_bindgen::from_value;
 use wasm_bindgen::JsValue;
 
@@ -29,7 +29,7 @@ pub fn serialize_block_header(
     has_client_notes: bool,
 ) -> SerializedBlockHeaderData {
     let block_num = block_header.block_num().as_u32();
-    let header = block_header.to_bytes();
+    let header = encode(block_header);
 
     SerializedBlockHeaderData { block_num, header, has_client_notes }
 }
