@@ -18,6 +18,7 @@ use miden_client::asset::AssetVault;
 use miden_client::store::{AccountStatus, ClientAccountType, StoreError};
 use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{Felt, Word};
+use miden_client_proto::encode;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
@@ -39,7 +40,7 @@ use crate::sync::JsAccountUpdate;
 
 pub async fn upsert_account_code(db_id: &str, account_code: &AccountCode) -> Result<(), JsValue> {
     let root = account_code.commitment().to_string();
-    let code = account_code.to_bytes();
+    let code = encode(account_code);
 
     let promise = idxdb_upsert_account_code(db_id, root, code);
     JsFuture::from(promise).await?;
@@ -306,7 +307,7 @@ pub fn patch_code_bytes(
     final_header: &AccountHeader,
 ) -> Result<Vec<u8>, StoreError> {
     match patch.code().as_code() {
-        Some(code) if code.commitment() == final_header.code_commitment() => Ok(code.to_bytes()),
+        Some(code) if code.commitment() == final_header.code_commitment() => Ok(encode(code)),
         Some(code) => Err(StoreError::DatabaseError(format!(
             "account patch code commitment {} does not match the final code commitment {}",
             code.commitment(),

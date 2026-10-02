@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use miden_client::account::{AccountId, AccountIdError};
 use miden_client::block::AccountWitness;
 use miden_client::store::StoreError;
-use miden_client::utils::{Deserializable, Serializable};
+use miden_client_proto::{decode_unchecked, encode};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen_futures::js_sys;
@@ -76,9 +76,7 @@ impl IdxdbStore {
             return Err(StoreError::DatabaseError("account witness was not a byte array".into()));
         }
         let bytes = js_sys::Uint8Array::new(&value).to_vec();
-        AccountWitness::read_from_bytes(&bytes)
-            .map(Some)
-            .map_err(StoreError::DataDeserializationError)
+        Ok(Some(decode_unchecked::<AccountWitness>(&bytes)?))
     }
 
     pub(crate) async fn update_account_witness(
@@ -87,7 +85,7 @@ impl IdxdbStore {
         witness: &AccountWitness,
     ) -> Result<bool, StoreError> {
         let promise =
-            idxdb_update_account_witness(self.db_id(), account_id.to_string(), witness.to_bytes());
+            idxdb_update_account_witness(self.db_id(), account_id.to_string(), encode(witness));
         await_js(promise, "failed to update account witness").await
     }
 }

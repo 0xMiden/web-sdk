@@ -16,6 +16,7 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use miden_client_proto::{decode_mmr_peaks, encode, encode_mmr_peaks};
 
 use super::IdxdbStore;
 use super::account::utils::creation_account_from_patch;
@@ -106,11 +107,10 @@ impl IdxdbStore {
             return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
         }
 
-        let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks_idxdb.peaks)?;
         let forest = Forest::new(
             usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize"),
         )?;
-        MmrPeaks::new(forest, mmr_peaks_nodes).map_err(StoreError::MmrError)
+        Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {
@@ -171,7 +171,7 @@ impl IdxdbStore {
             serialized_nodes,
         ) = serialize_partial_blockchain_updates(&partial_blockchain_updates)?;
 
-        let new_peaks_bytes = partial_blockchain_updates.new_peaks.peaks().to_vec().to_bytes();
+        let new_peaks_bytes = encode_mmr_peaks(&partial_blockchain_updates.new_peaks);
 
         let (serialized_input_notes, serialized_output_notes): (Vec<_>, Vec<_>) = {
             let input_notes = note_updates.updated_input_notes();
@@ -303,7 +303,7 @@ impl IdxdbStore {
                 .iter()
                 .map(|(account_id, witness)| JsAccountWitnessUpdate {
                     account_id: account_id.to_string(),
-                    witness: witness.to_bytes(),
+                    witness: encode(witness),
                 })
                 .collect(),
         };
@@ -342,7 +342,7 @@ fn serialize_partial_blockchain_updates(
     let mut block_has_relevant_notes = Vec::new();
 
     for (block_header, has_client_notes) in partial_blockchain_updates.block_headers() {
-        block_headers_as_bytes.push(block_header.to_bytes());
+        block_headers_as_bytes.push(encode(block_header));
         block_nums.push(block_header.block_num().as_u32());
         block_has_relevant_notes.push(u8::from(*has_client_notes));
     }

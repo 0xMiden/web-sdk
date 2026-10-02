@@ -50,8 +50,10 @@ js-export-macro = { path = "crates/js-export-macro", version = "0.17.0" }
 # args are committed through. A requirement that drifts from `miden-client`'s would resolve a second
 # copy of the protocol types, so bump the three together.
 miden-client              = { default-features = false, version = "0.17" }
+miden-client-proto        = { default-features = false, version = "0.17" }
 miden-client-sqlite-store = { default-features = false, version = "0.17" }
 miden-protocol            = { default-features = false, version = "0.17" }
+
 
 # External dependencies
 async-trait = { version = "0.1" }

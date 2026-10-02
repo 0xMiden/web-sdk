@@ -40,8 +40,8 @@ use miden_client::store::{
     ClientAccountType,
     StoreError,
 };
-use miden_client::utils::{Deserializable, Serializable};
 use miden_client::{AccountError, Felt, Word};
+use miden_client_proto::{decode_unchecked, encode};
 
 use super::IdxdbStore;
 use crate::account::js_bindings::idxdb_get_account_addresses;
@@ -267,9 +267,7 @@ impl IdxdbStore {
         let account_code_idxdb: AccountCodeIdxdbObject =
             await_js(promise, "failed to fetch account code").await?;
 
-        let code = AccountCode::read_from_bytes(&account_code_idxdb.code)?;
-
-        Ok(code)
+        Ok(decode_unchecked(&account_code_idxdb.code)?)
     }
 
     /// Retrieves storage slot headers without fetching full map entries.
@@ -668,7 +666,7 @@ impl IdxdbStore {
         code: AccountCode,
     ) -> Result<(), StoreError> {
         let root = code.commitment().to_string();
-        let code = code.to_bytes();
+        let code = encode(&code);
         let account_id = account_id.to_string();
 
         let promise = idxdb_upsert_foreign_account_code(self.db_id(), account_id, code, root);
@@ -692,7 +690,7 @@ impl IdxdbStore {
             .map(|idxdb_object| {
                 let account_id = AccountId::from_hex(&idxdb_object.account_id)
                     .map_err(StoreError::AccountIdError)?;
-                let code = AccountCode::read_from_bytes(&idxdb_object.code)?;
+                let code: AccountCode = decode_unchecked(&idxdb_object.code)?;
 
                 Ok((account_id, code))
             })
