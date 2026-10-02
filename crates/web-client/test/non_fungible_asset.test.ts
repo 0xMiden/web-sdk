@@ -339,7 +339,7 @@ test.describe("unified note assets", () => {
   test("debits an NFA into a network note and restores it from a returned P2ID", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
       const owner = await client.newWallet(
         sdk.AccountStorageMode.private(),
         sdk.AuthScheme.AuthRpoFalcon512
@@ -356,35 +356,19 @@ test.describe("unified note assets", () => {
       }
       const registry = registryBuilder.build().account;
       await client.newAccount(registry, false);
-      // Commit the public target so the mock node can load its account state.
-      // Network accounts must have an effect before fee payment in 0.17, so
-      // create an empty output note instead of submitting an empty transaction.
-      const deploymentNote = sdk.Note.withAttachments(
-        new sdk.NoteAssets([]),
-        new sdk.NoteMetadata(
-          registry.id(),
-          sdk.NoteType.Public,
-          sdk.NoteTag.withAccountTarget(owner.id())
-        ),
-        new sdk.NoteRecipient(
-          new sdk.Word(sdk.u64Array([5n, 6n, 7n, 8n])),
-          sdk.NoteScript.p2id(),
-          new sdk.NoteStorage(
-            new sdk.FeltArray([owner.id().suffix(), owner.id().prefix()])
-          )
-        ),
-        []
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "FEE",
+        "FEE",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
       );
-      const deploymentNotes = new sdk.NoteArray();
-      deploymentNotes.push(deploymentNote);
-      await client.submitNewTransaction(
-        registry.id(),
-        new sdk.TransactionRequestBuilder()
-          .withOwnOutputNotes(deploymentNotes)
-          .build()
-      );
-      await client.proveBlock();
-      await client.syncState();
+      // Deploy through the allowed P2ID note script before pricing network notes.
+      await helpers.mockMintAndConsume(registry.id(), faucet.id(), {
+        publicNote: true,
+      });
       const issuer = owner.id();
       const key = new sdk.Word(
         sdk.u64Array([
