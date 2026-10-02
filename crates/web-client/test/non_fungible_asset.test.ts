@@ -100,22 +100,32 @@ test.describe("non-fungible asset vault entries", () => {
         new sdk.Word(sdk.u64Array([11n, 22n, 9007199254740993n, 44n])),
         new sdk.Word(sdk.u64Array([55n, 66n, 77n, 88n])),
       ];
-      // Each asset starts with its composition byte and the 15-byte issuer ID.
-      // A fungible asset then stores a u64; a non-fungible asset stores a Word.
-      const amount = new Uint8Array(8);
-      new DataView(amount.buffer).setBigUint64(0, 10n, true);
-      const fungibleBytes = [1, ...issuerBytes, ...amount];
+      // Each 0.17 asset starts with its ID version, composition, and 15-byte issuer ID.
+      // Non-fungible IDs also serialize their two-limb class before the value word.
+      const assetVersion = 1;
+      const fungibleValue = new sdk.Word(sdk.u64Array([10n, 0n, 0n, 0n]));
+      const fungibleBytes = [
+        assetVersion,
+        1,
+        ...issuerBytes,
+        ...fungibleValue.serialize(),
+      ];
+      const nonFungibleBytes = values.flatMap((value) => {
+        const serializedValue = value.serialize();
+        return [
+          assetVersion,
+          0,
+          ...issuerBytes,
+          ...serializedValue.slice(0, 16),
+          ...serializedValue,
+        ];
+      });
       const restored = sdk.Account.deserialize(
         new Uint8Array([
           ...issuerBytes,
           7,
           ...fungibleBytes,
-          0,
-          ...issuerBytes,
-          ...values[0].serialize(),
-          0,
-          ...issuerBytes,
-          ...values[1].serialize(),
+          ...nonFungibleBytes,
           ...serialized.slice(16),
         ])
       );
