@@ -48,6 +48,24 @@ describe("formatAssetAmount", () => {
     expect(formatAssetAmount(0n, 6)).toBe("0");
     expect(formatAssetAmount(0n)).toBe("0");
   });
+
+  it("formats negative amounts with a single leading minus sign", () => {
+    // 12345 with 2 decimals = 123.45 → negated = -123.45
+    expect(formatAssetAmount(-12345n, 2)).toBe("-123.45");
+  });
+
+  it("formats negative amounts with no fractional part", () => {
+    expect(formatAssetAmount(-500n, 2)).toBe("-5");
+  });
+
+  it("formats negative amounts smaller than one whole unit", () => {
+    // -50 with 2 decimals = -0.50 → "-0.5"
+    expect(formatAssetAmount(-50n, 2)).toBe("-0.5");
+  });
+
+  it("formats negative whole numbers when decimals is omitted", () => {
+    expect(formatAssetAmount(-42n)).toBe("-42");
+  });
 });
 
 describe("parseAssetAmount", () => {
@@ -108,6 +126,34 @@ describe("parseAssetAmount", () => {
 
   it("trims surrounding whitespace", () => {
     expect(parseAssetAmount("  42  ", 0)).toBe(42n);
+  });
+
+  it("parses negative whole numbers", () => {
+    expect(parseAssetAmount("-42", 0)).toBe(-42n);
+  });
+
+  it("applies the sign to the full magnitude, not just the integer part", () => {
+    // -5.25 with 2 decimals must be -525, not -475 (which is what you'd
+    // get from naively combining `whole * factor + fraction`).
+    expect(parseAssetAmount("-5.25", 2)).toBe(-525n);
+  });
+
+  it("preserves the sign when the whole part is zero", () => {
+    // "-0.5" must stay negative: BigInt("-0") === 0n, so a sign carried
+    // only on the whole part is silently lost here.
+    expect(parseAssetAmount("-0.5", 2)).toBe(-50n);
+  });
+
+  it("round-trips negative amounts with formatAssetAmount", () => {
+    const cases: Array<[string, number]> = [
+      ["-5.25", 2],
+      ["-0.5", 2],
+      ["-1000000", 6],
+    ];
+    for (const [input, decimals] of cases) {
+      const parsed = parseAssetAmount(input, decimals);
+      expect(formatAssetAmount(parsed, decimals)).toBe(input);
+    }
   });
 
   it("round-trips with formatAssetAmount", () => {
