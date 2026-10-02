@@ -2,7 +2,7 @@
 
 use core::ops::Deref;
 
-use miden_client::account::{Account, AccountId, StorageSlot};
+use miden_client::account::{Account, AccountId, StorageSlot, StorageSlotContent};
 use miden_client::asset::Asset;
 use miden_client::crypto::{ForestInMemoryBackend, VersionId};
 use miden_client::store::{AccountSmtForest, AccountUpdate, StoreError};
@@ -41,6 +41,17 @@ impl AccountForest {
         let version = self.next_version;
         self.next_version += 1;
         self.forest.apply(version, update)
+    }
+
+    pub(crate) fn refresh_account(&mut self, account: &Account) -> Result<(), StoreError> {
+        let current = self.vault_root(account.id()) == Some(account.vault().root())
+            && account.storage().slots().iter().all(|slot| match slot.content() {
+                StorageSlotContent::Map(map) => {
+                    self.map_root(account.id(), slot.name()) == Some(map.root())
+                },
+                StorageSlotContent::Value(_) => true,
+            });
+        if current { Ok(()) } else { self.rebuild_account(account) }
     }
 
     /// Sets an account's vault and map slots to exactly the state it holds.

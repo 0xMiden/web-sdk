@@ -266,6 +266,7 @@ pub async fn apply_account_patch(
     new_map_roots: &BTreeMap<StorageSlotName, Word>,
     patch: &AccountPatch,
     code_bytes: Vec<u8>,
+    initial_account_commitment: Word,
 ) -> Result<(), JsValue> {
     let account_id_str = account_id.to_string();
     let nonce_str = final_header.nonce().to_string();
@@ -292,6 +293,7 @@ pub async fn apply_account_patch(
         committed,
         commitment,
         code_bytes,
+        initial_account_commitment.to_string(),
     ))
     .await?;
 

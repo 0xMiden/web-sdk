@@ -34,6 +34,13 @@ extern "C" {
         account_commitment: String,
     ) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = getAccountSnapshot)]
+    pub fn idxdb_get_account_snapshot(
+        db_id: &str,
+        account_id: String,
+        full: bool,
+    ) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = getAccountCode)]
     pub fn idxdb_get_account_code(db_id: &str, code_root: String) -> js_sys::Promise;
 
@@ -141,6 +148,7 @@ extern "C" {
         committed: bool,
         commitment: String,
         code: Vec<u8>,
+        initial_account_commitment: String,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applyFullAccountState)]

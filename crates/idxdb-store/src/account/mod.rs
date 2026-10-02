@@ -62,6 +62,7 @@ use js_bindings::{
     idxdb_get_account_header_by_commitment,
     idxdb_get_account_headers,
     idxdb_get_account_ids,
+    idxdb_get_account_snapshot,
     idxdb_get_account_storage,
     idxdb_get_account_storage_maps,
     idxdb_get_account_vault_assets,
@@ -77,6 +78,7 @@ use models::{
     AccountAssetIdxdbObject,
     AccountCodeIdxdbObject,
     AccountRecordIdxdbObject,
+    AccountSnapshotIdxdbObject,
     AccountStorageIdxdbObject,
     ForeignAccountCodeIdxdbObject,
     StorageMapEntryIdxdbObject,
@@ -188,76 +190,107 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some((account_header, status, client_account_type)) =
-            self.get_account_header_with_type(account_id).await?
-        else {
+        let Some(snapshot) = self.get_account_snapshot(account_id, true).await? else {
             return Ok(None);
         };
-        let account_code = self.get_account_code(account_header.code_commitment()).await?;
-
-        let account_storage = self.get_storage(account_id, AccountStorageFilter::All).await?;
-        let assets = self.get_vault_assets(account_id, vec![]).await?;
-        let account_vault = AssetVault::new(&assets)?;
-
+        let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
+        let code = snapshot
+            .code
+            .ok_or_else(|| StoreError::DatabaseError("account snapshot code not found".into()))?;
         let account = Account::new(
-            account_header.id(),
-            account_vault,
-            account_storage,
-            account_code,
-            account_header.nonce(),
+            header.id(),
+            AssetVault::new(&Self::parse_assets(snapshot.assets)?)?,
+            Self::parse_storage(snapshot.storage, snapshot.maps)?,
+            decode_unchecked(&code.code)?,
+            header.nonce(),
             status.seed().copied(),
         )?;
+        if account.to_commitment() != header.to_commitment() {
+            return Err(StoreError::DatabaseError(format!(
+                "account snapshot commitment does not match header for {account_id}",
+            )));
+        }
+        // Other clients share the tables, but each store owns its forest.
+        self.smt_forest.write().refresh_account(&account)?;
+        Ok(Some(AccountRecord::new(AccountRecordData::Full(account), status, client_type)))
+    }
 
-        let account_data = AccountRecordData::Full(account);
-        Ok(Some(AccountRecord::new(account_data, status, client_account_type)))
+    async fn get_account_snapshot(
+        &self,
+        account_id: AccountId,
+        full: bool,
+    ) -> Result<Option<AccountSnapshotIdxdbObject>, StoreError> {
+        await_js(
+            idxdb_get_account_snapshot(self.db_id(), account_id.to_string(), full),
+            "failed to fetch account snapshot",
+        )
+        .await
+    }
+
+    pub(crate) async fn account_for_forest(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Account, StoreError> {
+        let record = self
+            .get_account(account_id)
+            .await?
+            .ok_or(StoreError::AccountDataNotFound(account_id))?;
+        Account::try_from(record).map_err(|error| StoreError::DatabaseError(error.to_string()))
     }
 
     pub(crate) async fn get_minimal_partial_account(
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some((account_header, status, client_account_type)) =
-            self.get_account_header_with_type(account_id).await?
-        else {
+        let Some(snapshot) = self.get_account_snapshot(account_id, false).await? else {
             return Ok(None);
         };
-
-        let partial_vault = PartialVault::new(account_header.vault_root());
-
-        let storage_slot_headers = self.get_storage_slot_headers(account_id).await?;
-
-        let mut storage_header_vec = Vec::new();
-        let mut maps = Vec::new();
-
-        // Storage maps are always minimal here (just roots, no entries).
-        // New accounts that need full storage data are handled by the DataStore layer,
-        // which fetches the full account via `get_account()` when nonce == 0.
-        for (slot_name, slot_type, value) in storage_slot_headers {
-            storage_header_vec.push(StorageSlotHeader::new(slot_name, slot_type, value));
-            if slot_type == StorageSlotType::Map {
-                maps.push(PartialStorageMap::new(value));
-            }
+        let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
+        let code = snapshot
+            .code
+            .ok_or_else(|| StoreError::DatabaseError("account snapshot code not found".into()))?;
+        let code: AccountCode = decode_unchecked(&code.code)?;
+        let mut slots = snapshot
+            .storage
+            .into_iter()
+            .map(|slot| {
+                let name = StorageSlotName::new(slot.slot_name).map_err(|error| {
+                    StoreError::DatabaseError(format!("invalid storage slot name in db: {error}"))
+                })?;
+                Ok(StorageSlotHeader::new(
+                    name,
+                    StorageSlotType::try_from(slot.slot_type)?,
+                    Word::try_from(slot.slot_value.as_str())?,
+                ))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        slots.sort_by_key(StorageSlotHeader::id);
+        let storage = AccountStorageHeader::new(slots)?;
+        if storage.to_commitment() != header.storage_commitment()
+            || code.commitment() != header.code_commitment()
+        {
+            return Err(StoreError::DatabaseError(format!(
+                "account snapshot commitment does not match header for {account_id}",
+            )));
         }
-
-        storage_header_vec.sort_by_key(StorageSlotHeader::id);
-        let storage_header =
-            AccountStorageHeader::new(storage_header_vec).map_err(StoreError::AccountError)?;
-        let partial_storage =
-            PartialStorage::new(storage_header, maps).map_err(StoreError::AccountError)?;
-
-        let account_code = self.get_account_code(account_header.code_commitment()).await?;
-
-        let partial_account = PartialAccount::new(
-            account_header.id(),
-            account_header.nonce(),
-            account_code,
-            partial_storage,
-            partial_vault,
+        let maps: Vec<_> = storage
+            .slots()
+            .filter(|slot| slot.slot_type() == StorageSlotType::Map)
+            .map(|slot| PartialStorageMap::new(slot.value()))
+            .collect();
+        let account = PartialAccount::new(
+            header.id(),
+            header.nonce(),
+            code,
+            PartialStorage::new(storage, maps)?,
+            PartialVault::new(header.vault_root()),
             status.seed().copied(),
         )?;
-
-        let account_data = AccountRecordData::Partial(partial_account);
-        Ok(Some(AccountRecord::new(account_data, status, client_account_type)))
+        Ok(Some(AccountRecord::new(
+            AccountRecordData::Partial(account),
+            status,
+            client_type,
+        )))
     }
 
     pub(super) async fn get_account_code(&self, root: Word) -> Result<AccountCode, StoreError> {
@@ -268,37 +301,6 @@ impl IdxdbStore {
             await_js(promise, "failed to fetch account code").await?;
 
         Ok(decode_unchecked(&account_code_idxdb.code)?)
-    }
-
-    /// Retrieves storage slot headers without fetching full map entries.
-    async fn get_storage_slot_headers(
-        &self,
-        account_id: AccountId,
-    ) -> Result<Vec<(StorageSlotName, StorageSlotType, Word)>, StoreError> {
-        let account_id_str = account_id.to_string();
-
-        let promise = idxdb_get_account_storage(self.db_id(), account_id_str, vec![]);
-        let account_storage_idxdb: Vec<AccountStorageIdxdbObject> =
-            await_js(promise, "failed to fetch account storage").await?;
-
-        if account_storage_idxdb.iter().any(|s| s.slot_name.is_empty()) {
-            return Err(StoreError::DatabaseError(
-                "account storage entries are missing `slotName`; clear IndexedDB and re-sync"
-                    .to_string(),
-            ));
-        }
-
-        account_storage_idxdb
-            .into_iter()
-            .map(|slot| {
-                let slot_name = StorageSlotName::new(slot.slot_name).map_err(|err| {
-                    StoreError::DatabaseError(format!("invalid storage slot name in db: {err}"))
-                })?;
-                let slot_type = StorageSlotType::try_from(slot.slot_type)?;
-                let value = Word::try_from(slot.slot_value.as_str())?;
-                Ok((slot_name, slot_type, value))
-            })
-            .collect()
     }
 
     pub(super) async fn get_storage(
@@ -359,8 +361,21 @@ impl IdxdbStore {
         let account_maps_idxdb: Vec<StorageMapEntryIdxdbObject> =
             await_js(promise, "failed to fetch account storage maps").await?;
 
+        Self::parse_storage(filtered_slots, account_maps_idxdb)
+    }
+
+    fn parse_storage(
+        slots_rows: Vec<AccountStorageIdxdbObject>,
+        map_rows: Vec<StorageMapEntryIdxdbObject>,
+    ) -> Result<AccountStorage, StoreError> {
+        if slots_rows.iter().any(|slot| slot.slot_name.is_empty()) {
+            return Err(StoreError::DatabaseError(
+                "account storage entries are missing `slotName`; clear IndexedDB and re-sync"
+                    .into(),
+            ));
+        }
         let mut maps = BTreeMap::new();
-        for entry in account_maps_idxdb {
+        for entry in map_rows {
             let map = maps.entry(entry.slot_name).or_insert_with(StorageMap::new);
             map.insert(
                 StorageMapKey::new(Word::try_from(entry.key.as_str())?),
@@ -368,7 +383,7 @@ impl IdxdbStore {
             )?;
         }
 
-        let slots: Vec<StorageSlot> = filtered_slots
+        let slots: Vec<StorageSlot> = slots_rows
             .into_iter()
             .map(|slot| {
                 let slot_name = StorageSlotName::new(slot.slot_name.clone()).map_err(|err| {
@@ -409,7 +424,11 @@ impl IdxdbStore {
         let vault_assets_idxdb: Vec<AccountAssetIdxdbObject> =
             await_js(promise, "failed to fetch vault assets").await?;
 
-        let assets = vault_assets_idxdb
+        Self::parse_assets(vault_assets_idxdb)
+    }
+
+    fn parse_assets(entries: Vec<AccountAssetIdxdbObject>) -> Result<Vec<Asset>, StoreError> {
+        let assets = entries
             .into_iter()
             .map(|entry| {
                 let key_word = Word::try_from(&entry.vault_key)?;
@@ -433,6 +452,12 @@ impl IdxdbStore {
         patch: &AccountPatch,
     ) -> Result<(), StoreError> {
         let account_id = final_header.id();
+        let initial = self.account_for_forest(account_id).await?;
+        if final_header.nonce() <= initial.nonce() {
+            return Err(StoreError::DatabaseError(format!(
+                "account patch nonce does not advance persisted state for {account_id}",
+            )));
+        }
         let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
         let code_bytes = patch_code_bytes(patch, final_header)?;
 
@@ -443,6 +468,7 @@ impl IdxdbStore {
             &new_map_roots,
             patch,
             code_bytes,
+            initial.to_commitment(),
         )
         .await
         .map_err(|err| {
@@ -595,11 +621,15 @@ impl IdxdbStore {
             .ok_or(StoreError::AccountDataNotFound(account_id))?
             .0;
 
-        self.ensure_account_in_forest(account_id).await?;
-
+        let stale =
+            self.smt_forest.read().vault_root(account_id) != Some(account_header.vault_root());
+        let vault_root = if stale {
+            self.account_for_forest(account_id).await?.vault().root()
+        } else {
+            account_header.vault_root()
+        };
         let smt_forest = self.smt_forest.read();
-
-        match smt_forest.get_asset_and_witness(account_id, account_header.vault_root(), vault_id) {
+        match smt_forest.get_asset_and_witness(account_id, vault_root, vault_id) {
             Ok(result) => Ok(Some(result)),
             Err(
                 StoreError::VaultKeyNotTracked(..)
@@ -607,20 +637,6 @@ impl IdxdbStore {
             ) => Ok(None),
             Err(e) => Err(e),
         }
-    }
-
-    /// Rebuilds an account's forest trees if it has none yet.
-    ///
-    /// The forest is a cache derived from the account tables, so a read for an account it never
-    /// learned about is a miss to fill, not an error. Serving one instead requires the trees, which
-    /// only the tables can supply.
-    async fn ensure_account_in_forest(&self, account_id: AccountId) -> Result<(), StoreError> {
-        // Bound the read guard to this statement: `rebuild_account_forest` takes the write lock.
-        let tracked = self.smt_forest.read().vault_root(account_id).is_some();
-        if tracked {
-            return Ok(());
-        }
-        self.rebuild_account_forest(account_id).await
     }
 
     pub(crate) async fn get_account_map_item(
@@ -648,9 +664,25 @@ impl IdxdbStore {
         if slot_type != StorageSlotType::Map {
             return Err(StoreError::AccountError(AccountError::other("Storage slot is not a map")));
         }
-        let map_root = Word::try_from(slot.slot_value.as_str())?;
-
-        self.ensure_account_in_forest(account_id).await?;
+        let mut map_root = Word::try_from(slot.slot_value.as_str())?;
+        let stale = self.smt_forest.read().map_root(account_id, &slot_name) != Some(map_root);
+        if stale {
+            let account = self.account_for_forest(account_id).await?;
+            let slot = account
+                .storage()
+                .slots()
+                .iter()
+                .find(|slot| slot.name() == &slot_name)
+                .ok_or_else(|| {
+                    StoreError::AccountError(AccountError::other("Storage slot not found"))
+                })?;
+            if slot.slot_type() != StorageSlotType::Map {
+                return Err(StoreError::AccountError(AccountError::other(
+                    "Storage slot is not a map",
+                )));
+            }
+            map_root = slot.value();
+        }
 
         let smt_forest = self.smt_forest.read();
         let witness =

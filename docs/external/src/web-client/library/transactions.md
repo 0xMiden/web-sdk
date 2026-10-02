@@ -162,6 +162,16 @@ Notes on the staged form:
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 ## Pinning How Input Notes Are Consumed
 
 `withInputNotes` adds notes and leaves the executing client to decide how each one is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. That is what you want for a request you build and execute yourself. It is not what you want for a request that travels — two clients with different stores produce different transaction summaries for the same request, and a multisig flow comparing summaries then fails for no visible reason.

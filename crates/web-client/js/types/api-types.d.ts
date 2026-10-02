@@ -719,6 +719,11 @@ export interface TransactionSubmission {
    * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
    * local store is unaware of the transaction.
    *
+   * Browser stores require the stored account to match the execution input;
+   * a mismatch rejects before changing account state or transaction history.
+   * The network may already have accepted the transaction, so check its status
+   * before submitting again after a local apply failure.
+   *
    * @returns The pre-apply store update.
    */
   apply(): Promise<TransactionStoreUpdate>;
@@ -1079,6 +1084,8 @@ export interface AccountsResource {
   isAllowed(accountId: AccountRef): Promise<boolean>;
   /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
+   * Browser stores read a coherent persisted snapshot, including changes made
+   * by other clients sharing the database. This does not sync from the network.
    *
    * @param accountId - The account to retrieve.
    */

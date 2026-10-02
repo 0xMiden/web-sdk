@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.17.0 (2026-10-02)
+## 0.17.0 (TBD)
+
+### Fixes
+
+* [FIX][web] Browser clients sharing a database refresh account witnesses from persisted state, preserving untouched assets when applying transaction patches. Applying a transaction rejects changed execution inputs before altering account state or transaction history ([wallet#1319](https://github.com/0xMiden/wallet/pull/1319)).
 
 ### Changes
 

@@ -1383,6 +1383,10 @@ class TransactionSubmission {
    * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
    * local store is unaware of the transaction.
    *
+   * Browser stores require the stored account to match the execution input;
+   * a mismatch rejects before changing account state or transaction history.
+   * Check network status before resubmitting after a local apply failure.
+   *
    * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
    */
   async apply() {

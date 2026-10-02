@@ -151,22 +151,9 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<(), StoreError> {
-        let state = match self.get_account_header(account_id).await? {
-            Some(_) => {
-                let vault = self.get_account_vault(account_id).await?;
-                let storage =
-                    self.get_account_storage(account_id, AccountStorageFilter::All).await?;
-                Some((vault, storage))
-            },
-            None => None,
-        };
-
-        let mut smt_forest = self.smt_forest.write();
-        match &state {
-            Some((vault, storage)) => {
-                smt_forest.rebuild(account_id, vault.assets(), storage.slots().iter())
-            },
-            None => smt_forest.rebuild(account_id, core::iter::empty(), [].iter()),
+        match self.get_account(account_id).await? {
+            Some(_) => Ok(()),
+            None => self.smt_forest.write().rebuild(account_id, core::iter::empty(), [].iter()),
         }
     }
 

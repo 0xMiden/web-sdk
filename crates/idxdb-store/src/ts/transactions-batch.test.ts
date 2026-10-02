@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
+import { upsertAccountRecord } from "./accounts.js";
 import { applyTransactionBatch } from "./transactions.js";
 
 // Unique DB names to avoid collisions between tests.
@@ -33,6 +34,7 @@ async function openTestDb(): Promise<string> {
 function buildPayload(suffix: string) {
   const dummy = new Uint8Array([1, 2, 3]);
   return {
+    initialAccountCommitment: `initial-${suffix}`,
     transactionRecord: {
       id: `tx-${suffix}`,
       details: dummy,
@@ -74,10 +76,27 @@ function buildPayload(suffix: string) {
   };
 }
 
+async function seedInputs(dbId: string, suffixes: string[]) {
+  for (const suffix of suffixes) {
+    await upsertAccountRecord(
+      dbId,
+      `0xacc-${suffix}`,
+      "0xcode",
+      "old-storage",
+      "old-vault",
+      "0",
+      false,
+      `initial-${suffix}`
+    );
+  }
+}
+
 describe("applyTransactionBatch atomicity", () => {
   it("commits all writes from a valid 2-payload batch (positive control)", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
+
+    await seedInputs(dbId, ["a", "b"]);
 
     await applyTransactionBatch(dbId, [buildPayload("a"), buildPayload("b")]);
 
@@ -89,6 +108,8 @@ describe("applyTransactionBatch atomicity", () => {
   it("rolls back all writes when a mid-batch write fails", async () => {
     const dbId = await openTestDb();
     const db = getDatabase(dbId);
+
+    await seedInputs(dbId, ["a", "b"]);
 
     // Install a Dexie `creating` hook on inputNotes that throws on the second
     // insert. This simulates a realistic mid-batch Dexie write failure (e.g.
@@ -109,7 +130,72 @@ describe("applyTransactionBatch atomicity", () => {
 
     expect(await db.transactions.count()).toBe(0);
     expect(await db.inputNotes.count()).toBe(0);
-    expect(await db.latestAccountHeaders.count()).toBe(0);
+    expect(await db.latestAccountHeaders.count()).toBe(2);
     expect(await db.notesScripts.count()).toBe(0);
+  });
+
+  it("rejects state adopted after forest preparation without changing any tables", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedInputs(dbId, ["a"]);
+    const payload = buildPayload("a");
+    await db.latestAccountHeaders.update("0xacc-a", {
+      accountCommitment: "adopted-after-prepare",
+      nonce: "2",
+      locked: true,
+      watched: true,
+    });
+    const before = await Promise.all(
+      db.dexie.tables.map((table) => table.toArray())
+    );
+    await expect(applyTransactionBatch(dbId, [payload])).rejects.toThrow(
+      "transaction input account commitment"
+    );
+    expect(
+      await Promise.all(db.dexie.tables.map((table) => table.toArray()))
+    ).toEqual(before);
+  });
+
+  it("checks every sequential input and rolls back earlier payload writes", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedInputs(dbId, ["a"]);
+    const first = buildPayload("a");
+    const second = {
+      ...first,
+      transactionRecord: { ...first.transactionRecord, id: "tx-second" },
+      initialAccountCommitment: "wrong-intermediate",
+    };
+    const before = await Promise.all(
+      db.dexie.tables.map((table) => table.toArray())
+    );
+    await expect(applyTransactionBatch(dbId, [first, second])).rejects.toThrow(
+      "transaction input account commitment"
+    );
+    expect(
+      await Promise.all(db.dexie.tables.map((table) => table.toArray()))
+    ).toEqual(before);
+  });
+
+  it("accepts a sequential input only when it matches the previous final commitment", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedInputs(dbId, ["a"]);
+    const first = buildPayload("a");
+    const second = {
+      ...first,
+      transactionRecord: { ...first.transactionRecord, id: "tx-second" },
+      initialAccountCommitment: first.accountState.commitment,
+      accountState: {
+        ...first.accountState,
+        nonce: "2",
+        commitment: "final-second",
+      },
+    };
+    await applyTransactionBatch(dbId, [first, second]);
+    expect(await db.transactions.count()).toBe(2);
+    expect(
+      (await db.latestAccountHeaders.get("0xacc-a"))!.accountCommitment
+    ).toBe("final-second");
   });
 });

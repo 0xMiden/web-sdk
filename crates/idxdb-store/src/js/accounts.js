@@ -63,6 +63,27 @@ export async function getAccountHeader(dbId, accountId) {
         logWebStoreError(error, `Error while fetching account header for id: ${accountId}`);
     }
 }
+export async function getAccountSnapshot(dbId, accountId, full) {
+    const db = getDatabase(dbId);
+    return db.dexie.transaction("r", [
+        db.latestAccountHeaders,
+        db.accountCodes,
+        db.latestAccountStorages,
+        db.latestStorageMapEntries,
+        db.latestAccountAssets,
+    ], async () => {
+        const header = await getAccountHeader(dbId, accountId);
+        if (!header)
+            return null;
+        const [code, storage, maps, assets] = await Promise.all([
+            getAccountCode(dbId, header.codeRoot),
+            getAccountStorage(dbId, accountId, []),
+            full ? getAccountStorageMaps(dbId, accountId) : [],
+            full ? getAccountVaultAssets(dbId, accountId, []) : [],
+        ]);
+        return { header, code, storage, maps, assets };
+    });
+}
 export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
     try {
         const db = getDatabase(dbId);
@@ -271,7 +292,7 @@ async function persistAccountCode(db, codeRoot, code, previousCodeRoot) {
         throw new Error(`account code commitment changed from ${previousCodeRoot} to ${codeRoot} without the new code`);
     }
 }
-export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, code) {
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, code, initialAccountCommitment) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -285,6 +306,12 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
             db.historicalAccountHeaders,
             db.accountCodes,
         ], async () => {
+            if (initialAccountCommitment !== undefined) {
+                const current = await db.latestAccountHeaders.get(accountId);
+                if (current?.accountCommitment !== initialAccountCommitment) {
+                    throw new Error(`account patch input commitment does not match persisted state for ${accountId}`);
+                }
+            }
             const resetMapSlots = new Set();
             // Apply storage patch: read old → archive → write/delete final state.
             for (const slot of updatedSlots) {

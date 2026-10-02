@@ -237,6 +237,16 @@ Common patterns:
 single sync at construction time - it is not a polling loop. Use the React
 SDK's `useSyncState` or `MidenProvider` `autoSyncInterval` for periodic sync.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 ## Type Conversions
 
 Type confusion across the WASM boundary is the leading source of bugs.

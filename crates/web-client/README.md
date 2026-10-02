@@ -649,6 +649,16 @@ await submitted.apply(); // persist + fire observers
 
 Nothing is persisted until `apply` runs — stopping after `submit()` leaves the local store unaware of the transaction until the next sync. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
 
 ### Paying Transaction Fees
