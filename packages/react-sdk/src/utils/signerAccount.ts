@@ -49,7 +49,7 @@ export async function initializeSignerAccount(
   client: WebClient,
   config: SignerAccountConfig
 ): Promise<string> {
-  const { AccountBuilder, AccountComponent, AuthScheme, Word } =
+  const { AccountBuilder, AccountComponent, Word, getWasmOrThrow } =
     await import("@miden-sdk/miden-sdk");
 
   // Sync first to get latest state
@@ -95,6 +95,16 @@ export async function initializeSignerAccount(
   // Convert Uint8Array commitment to Word (required by SDK)
   const commitmentWord = Word.deserialize(config.publicKeyCommitment);
 
+  // `AccountComponent.createAuthComponentFromCommitment` is a raw wasm-bindgen
+  // static method: its second parameter is the native numeric `AuthScheme`
+  // enum (`AuthEcdsaK256Keccak = 1`), not the friendly string-valued
+  // `AuthScheme` const exported from the package root (`{ Falcon: "falcon",
+  // ECDSA: "ecdsa" }`) — the friendly const shadows the native enum on the
+  // public surface, so `AuthScheme.AuthEcdsaK256Keccak` is always undefined.
+  // Resolve the real wasm module via the public `getWasmOrThrow()` accessor
+  // to reach the native enum instead.
+  const wasm = await getWasmOrThrow();
+
   // Build account with auth component from public key commitment.
   //
   // `config.accountType` is intentionally not forwarded to the builder: AccountType
@@ -106,7 +116,7 @@ export async function initializeSignerAccount(
     .withAuthComponent(
       AccountComponent.createAuthComponentFromCommitment(
         commitmentWord,
-        AuthScheme.AuthEcdsaK256Keccak
+        wasm.AuthScheme.AuthEcdsaK256Keccak
       )
     )
     .storageMode(config.storageMode)
