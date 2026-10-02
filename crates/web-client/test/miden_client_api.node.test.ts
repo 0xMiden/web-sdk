@@ -3,6 +3,44 @@ import { test, expect } from "./test-setup";
 import { createMidenClient } from "./test-helpers";
 import path from "path";
 
+test.describe("Node SDK deserialization", () => {
+  // The sdk fixture shares the SDK's class wrapper; importing the public entry
+  // here would rewire MidenClient for every later test in this worker.
+
+  // A plain Uint8Array view at a non-zero offset into 0xff padding, so a wrapper
+  // that reads the whole backing buffer decodes the padding instead.
+  const framed = (bytes) => {
+    const buffer = new Uint8Array(bytes.length + 16).fill(0xff);
+    buffer.set(bytes, 8);
+    return new Uint8Array(buffer.buffer, 8, bytes.length);
+  };
+
+  test("AuthSecretKey round-trips with Buffer, Uint8Array and offset views", async ({
+    sdk,
+  }) => {
+    const { AuthSecretKey } = sdk;
+    const key = AuthSecretKey.rpoFalconWithRNG(new Uint8Array(32));
+    const base64 = key.serialize().toString("base64");
+    const bytes = Buffer.from(base64, "base64");
+
+    for (const input of [bytes, new Uint8Array(bytes), framed(bytes)]) {
+      expect(AuthSecretKey.deserialize(input).serialize()).toEqual(bytes);
+    }
+  });
+
+  test("Word round-trips with Buffer, Uint8Array and offset views", async ({
+    sdk,
+  }) => {
+    const { Word } = sdk;
+    const word = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+    const bytes = word.serialize();
+
+    for (const input of [bytes, new Uint8Array(bytes), framed(bytes)]) {
+      expect(Word.deserialize(input).serialize()).toEqual(bytes);
+    }
+  });
+});
+
 // ════════════════════════════════════════════════════════════════
 // Mock chain tests — no node needed, self-contained
 // ════════════════════════════════════════════════════════════════
