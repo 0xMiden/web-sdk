@@ -1,14 +1,6 @@
 # Changelog
 
-## 0.17.0 (2026-10-02)
-
-### Changes
-
-* [CHANGE][web] Upgraded `miden-client` to 0.17.0 (from 0.17.0-rc.5), which adopts protocol and node proto 0.17.0. Requires a compatible node ([rust-sdk v0.17.0](https://github.com/0xMiden/rust-sdk/releases/tag/v0.17.0), [#445](https://github.com/0xMiden/web-sdk/pull/445)).
-* [BREAKING][behavior][web] A 32-byte client seed now seeds the client's random generator directly; the release candidates derived a `RandomCoin` from it. The seed remains deterministic, but it produces different account keys, note serial numbers and other random values than the 0.17 release candidates; do not rely on a client seed to preserve generated identities across this upgrade ([#445](https://github.com/0xMiden/web-sdk/pull/445)).
-* [BREAKING][web] IndexedDB persistence now uses `miden-client-proto`'s protobuf encoding for stored protocol values. A database written by a 0.17 release candidate uses the previous native encoding and is not compatible with 0.17.0; export anything needed and recreate the client database before upgrading ([#444](https://github.com/0xMiden/web-sdk/pull/444)).
-
-## 0.17.0-rc.5 (TBD)
+## 0.17.0 (2026-10-03)
 
 ### Enhancements
 
@@ -19,6 +11,14 @@
 * [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
 * [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
 * [FIX][web] In Node.js, `AuthSecretKey.deserialize()` and `Word.deserialize()` now accept `Buffer` and `Uint8Array` inputs, including subarrays, through the public SDK export. RNG seeds and account-builder seeds continue to accept byte arrays ([#422](https://github.com/0xMiden/web-sdk/pull/422)).
+
+### Changes
+
+* [CHANGE][web] Upgraded `miden-client` to 0.17.0 (from 0.17.0-rc.5), which adopts protocol and node proto 0.17.0. Requires a compatible node ([rust-sdk v0.17.0](https://github.com/0xMiden/rust-sdk/releases/tag/v0.17.0), [#445](https://github.com/0xMiden/web-sdk/pull/445)).
+* [BREAKING][behavior][web] A 32-byte client seed now seeds the client's random generator directly; the release candidates derived a `RandomCoin` from it. The seed remains deterministic, but it produces different account keys, note serial numbers and other random values than the 0.17 release candidates; do not rely on a client seed to preserve generated identities across this upgrade ([#445](https://github.com/0xMiden/web-sdk/pull/445)).
+* [BREAKING][web] IndexedDB persistence now uses `miden-client-proto`'s protobuf encoding for stored protocol values. A database written by a 0.17 release candidate uses the previous native encoding and is not compatible with 0.17.0; export anything needed and recreate the client database before upgrading ([#444](https://github.com/0xMiden/web-sdk/pull/444)).
+
+## 0.17.0-rc.5 (TBD)
 
 ### Changes
 
