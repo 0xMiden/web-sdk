@@ -4,7 +4,7 @@
 
 ### Fixes
 
-* [FIX][web] Browser clients sharing a database refresh account witnesses from persisted state, preserving untouched assets when applying transaction patches. Applying a transaction rejects changed execution inputs before altering account state or transaction history ([wallet#1319](https://github.com/0xMiden/wallet/pull/1319)).
+* [FIX][web] Browser clients sharing a database refresh account witnesses from persisted state, preserving untouched assets when applying transaction patches. Applying a transaction rejects changed execution inputs before altering account state or transaction history ([#453](https://github.com/0xMiden/web-sdk/pull/453)).
 
 ### Changes
 
