@@ -346,7 +346,7 @@ test.describe("unified note assets", () => {
       );
       const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
         [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
-        owner.id()
+        await client.feeFaucetId()
       );
       const registryBuilder = new sdk.AccountBuilder(new Uint8Array(32).fill(7))
         .storageMode(sdk.AccountStorageMode.public())
@@ -357,9 +357,20 @@ test.describe("unified note assets", () => {
       const registry = registryBuilder.build().account;
       await client.newAccount(registry, false);
       // Commit the public target so the mock node can load its account state.
+      // Network accounts must have an effect before fee payment in 0.17, so
+      // consume an empty P2ID note instead of submitting an empty transaction.
+      const deploymentNote = sdk.Note.createP2IDNote(
+        owner.id(),
+        registry.id(),
+        new sdk.NoteAssets([]),
+        sdk.NoteType.Public,
+        new sdk.NoteAttachment()
+      );
       await client.submitNewTransaction(
         registry.id(),
-        new sdk.TransactionRequestBuilder().build()
+        new sdk.TransactionRequestBuilder()
+          .withExplicitInputNote(sdk.InputNote.unauthenticated(deploymentNote))
+          .build()
       );
       await client.proveBlock();
       await client.syncState();
