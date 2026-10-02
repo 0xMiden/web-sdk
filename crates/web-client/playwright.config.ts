@@ -113,6 +113,7 @@ const ciShardProjects = process.env.CI
           "test/address.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
           "test/fungible_asset.test.ts",
+          "test/non_fungible_asset.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
