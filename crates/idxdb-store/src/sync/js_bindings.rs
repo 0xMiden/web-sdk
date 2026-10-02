@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use miden_client::Word;
 use miden_client::account::{Account, StorageSlotContent};
 use miden_client::utils::Serializable;
+use miden_client_proto::encode;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
@@ -228,7 +229,7 @@ impl JsAccountUpdate {
             nonce: account.nonce().to_string(),
             account_commitment: account.to_commitment().to_string(),
             account_seed: account_seed.map(|seed| seed.to_bytes()),
-            code: account.code().to_bytes(),
+            code: encode(account.code()),
         }
     }
 }

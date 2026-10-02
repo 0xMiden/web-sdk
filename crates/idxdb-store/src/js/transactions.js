@@ -154,7 +154,7 @@ export async function applyTransactionBatch(dbId, payloads) {
                 await upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight ?? null, note.consumedTxOrder ?? null, note.consumerAccountId ?? null);
             }
             for (const note of payload.outputNotes) {
-                await upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                await upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state, note.noteScriptRoot, note.noteScript);
             }
             // 4. Add note tags (deduplicated within the transaction)
             for (const tagEntry of payload.tags) {

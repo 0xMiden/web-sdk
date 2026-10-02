@@ -14,7 +14,8 @@ use miden_client::transaction::{
     TransactionStatus,
     TransactionStoreUpdate,
 };
-use miden_client::utils::{Deserializable, Serializable};
+use miden_client::utils::Serializable;
+use miden_client_proto::{decode_unchecked, encode};
 use serde::Serialize;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::js_sys;
@@ -151,12 +152,12 @@ impl IdxdbStore {
             .map(|tx_idxdb| {
                 let id: Word = tx_idxdb.id.try_into()?;
 
-                let details = TransactionDetails::read_from_bytes(&tx_idxdb.details)?;
+                let details: TransactionDetails = decode_unchecked(&tx_idxdb.details)?;
 
                 let script: Option<TransactionScript> = if tx_idxdb.script_root.is_some() {
                     let tx_script = tx_idxdb
                         .tx_script
-                        .map(|script| TransactionScript::read_from_bytes(&script))
+                        .map(|script| decode_unchecked::<TransactionScript>(&script))
                         .transpose()?
                         .ok_or(StoreError::DatabaseError(
                             "transaction script missing from store despite script_root being set"
@@ -168,7 +169,7 @@ impl IdxdbStore {
                     None
                 };
 
-                let status = TransactionStatus::read_from_bytes(&tx_idxdb.status)?;
+                let status: TransactionStatus = decode_unchecked(&tx_idxdb.status)?;
 
                 Ok(TransactionRecord {
                     id: TransactionId::from_raw(id),
@@ -316,7 +317,7 @@ impl IdxdbStore {
                     committed: account.is_public(),
                     account_commitment: account.to_commitment().to_string(),
                     account_seed: account.seed().map(|seed| seed.to_bytes()),
-                    code: account.code().to_bytes(),
+                    code: encode(account.code()),
                 },
             }
         } else {

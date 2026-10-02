@@ -209,6 +209,7 @@ export interface IOutputNote {
   stateDiscriminant: number;
   nullifier?: string;
   expectedHeight: number;
+  scriptRoot?: string;
   state: Uint8Array;
 }
 

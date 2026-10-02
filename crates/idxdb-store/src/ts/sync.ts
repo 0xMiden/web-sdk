@@ -164,6 +164,8 @@ interface SerializedOutputNoteData {
   attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
+  noteScriptRoot?: string;
+  noteScript?: Uint8Array;
   nullifier?: string;
   expectedHeight: number;
   stateDiscriminant: number;
@@ -298,7 +300,9 @@ export async function applyStateSync(
             note.nullifier,
             note.expectedHeight,
             note.stateDiscriminant,
-            note.state
+            note.state,
+            note.noteScriptRoot,
+            note.noteScript
           );
         })
       ),
