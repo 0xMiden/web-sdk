@@ -6,6 +6,7 @@
 
 * [CHANGE][web] Upgraded `miden-client` to 0.17.0 (from 0.17.0-rc.5), which adopts protocol and node proto 0.17.0. Requires a compatible node ([rust-sdk v0.17.0](https://github.com/0xMiden/rust-sdk/releases/tag/v0.17.0), [#445](https://github.com/0xMiden/web-sdk/pull/445)).
 * [BREAKING][behavior][web] A 32-byte client seed now seeds the client's random generator directly; the release candidates derived a `RandomCoin` from it. The seed remains deterministic, but it produces different account keys, note serial numbers and other random values than the 0.17 release candidates; do not rely on a client seed to preserve generated identities across this upgrade ([#445](https://github.com/0xMiden/web-sdk/pull/445)).
+* [BREAKING][web] IndexedDB persistence now uses `miden-client-proto`'s protobuf encoding for stored protocol values. A database written by a 0.17 release candidate uses the previous native encoding and is not compatible with 0.17.0; export anything needed and recreate the client database before upgrading ([#444](https://github.com/0xMiden/web-sdk/pull/444)).
 
 ## 0.17.0-rc.5 (TBD)
 
