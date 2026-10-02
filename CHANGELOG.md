@@ -4,6 +4,7 @@
 
 ### Fixes
 
+* [FIX][react] `MidenProvider`'s external-signer account initialization no longer passes `undefined` as the auth scheme to `AccountComponent.createAuthComponentFromCommitment`, which made every ECDSA external-signer account creation fail. The internal `initializeSignerAccount` helper had picked up the friendly, string-valued `AuthScheme` export (`{ Falcon: "falcon", ECDSA: "ecdsa" }`) instead of the native numeric enum the wasm-bindgen method expects; it now resolves the real enum through `getWasmOrThrow()`. ([#277](https://github.com/0xMiden/web-sdk/issues/277))
 * [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
 * [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
 

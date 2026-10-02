@@ -38,10 +38,22 @@ vi.mock("@miden-sdk/miden-sdk", async () => {
     AccountComponent: {
       createAuthComponentFromCommitment: vi.fn(() => "mockAuthComponent"),
     },
+    // The real public `AuthScheme` export is the friendly string-valued
+    // const (`{ Falcon: "falcon", ECDSA: "ecdsa" }`) — it has no
+    // `AuthEcdsaK256Keccak`/`AuthRpoFalcon512` members. Those live only on
+    // the native wasm enum reached via `getWasmOrThrow()`. Mocking this
+    // accurately is what catches signerAccount.ts reaching for the wrong
+    // one (see "should set auth component from commitment" below).
     AuthScheme: {
-      AuthRpoFalcon512: 2,
-      AuthEcdsaK256Keccak: 1,
+      Falcon: "falcon",
+      ECDSA: "ecdsa",
     },
+    getWasmOrThrow: vi.fn().mockResolvedValue({
+      AuthScheme: {
+        AuthRpoFalcon512: 2,
+        AuthEcdsaK256Keccak: 1,
+      },
+    }),
     Word: {
       deserialize: vi.fn(() => mockCommitmentWord),
     },
