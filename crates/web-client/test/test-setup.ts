@@ -32,7 +32,6 @@ import {
   getFeeFaucetId,
   RUN_ID,
 } from "./playwright.global.setup";
-import { getRpcUrl, getProverUrl, RUN_ID } from "./playwright.global.setup";
 import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 const require = createRequire(import.meta.url);
