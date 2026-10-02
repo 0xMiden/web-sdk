@@ -358,18 +358,29 @@ test.describe("unified note assets", () => {
       await client.newAccount(registry, false);
       // Commit the public target so the mock node can load its account state.
       // Network accounts must have an effect before fee payment in 0.17, so
-      // consume an empty P2ID note instead of submitting an empty transaction.
-      const deploymentNote = sdk.Note.createP2IDNote(
-        owner.id(),
-        registry.id(),
+      // create an empty output note instead of submitting an empty transaction.
+      const deploymentNote = sdk.Note.withAttachments(
         new sdk.NoteAssets([]),
-        sdk.NoteType.Public,
-        new sdk.NoteAttachment()
+        new sdk.NoteMetadata(
+          registry.id(),
+          sdk.NoteType.Public,
+          sdk.NoteTag.withAccountTarget(owner.id())
+        ),
+        new sdk.NoteRecipient(
+          new sdk.Word(sdk.u64Array([5n, 6n, 7n, 8n])),
+          sdk.NoteScript.p2id(),
+          new sdk.NoteStorage(
+            new sdk.FeltArray([owner.id().suffix(), owner.id().prefix()])
+          )
+        ),
+        []
       );
+      const deploymentNotes = new sdk.NoteArray();
+      deploymentNotes.push(deploymentNote);
       await client.submitNewTransaction(
         registry.id(),
         new sdk.TransactionRequestBuilder()
-          .withExplicitInputNote(sdk.InputNote.unauthenticated(deploymentNote))
+          .withOwnOutputNotes(deploymentNotes)
           .build()
       );
       await client.proveBlock();
