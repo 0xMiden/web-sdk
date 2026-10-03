@@ -238,6 +238,30 @@ impl IdxdbStore {
         Account::try_from(record).map_err(|error| StoreError::DatabaseError(error.to_string()))
     }
 
+    /// Returns a tracked account's persisted header, refreshing this store's forest from the full
+    /// account only when its roots differ from persisted state.
+    pub(crate) async fn current_account_header(
+        &self,
+        account_id: AccountId,
+    ) -> Result<AccountHeader, StoreError> {
+        let record = self
+            .get_minimal_partial_account(account_id)
+            .await?
+            .ok_or(StoreError::AccountDataNotFound(account_id))?;
+        let account = PartialAccount::try_from(record)
+            .map_err(|error| StoreError::DatabaseError(error.to_string()))?;
+        let maps = account
+            .storage()
+            .header()
+            .slots()
+            .filter(|slot| slot.slot_type() == StorageSlotType::Map)
+            .map(|slot| (slot.name(), slot.value()));
+        if self.smt_forest.read().is_current(account_id, account.vault().root(), maps) {
+            return Ok(account.to_header());
+        }
+        Ok(AccountHeader::from(&self.account_for_forest(account_id).await?))
+    }
+
     pub(crate) async fn get_minimal_partial_account(
         &self,
         account_id: AccountId,
@@ -452,7 +476,7 @@ impl IdxdbStore {
         patch: &AccountPatch,
     ) -> Result<(), StoreError> {
         let account_id = final_header.id();
-        let initial = self.account_for_forest(account_id).await?;
+        let initial = self.current_account_header(account_id).await?;
         if final_header.nonce() <= initial.nonce() {
             return Err(StoreError::DatabaseError(format!(
                 "account patch nonce does not advance persisted state for {account_id}",

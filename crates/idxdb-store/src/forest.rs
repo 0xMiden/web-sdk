@@ -2,7 +2,8 @@
 
 use core::ops::Deref;
 
-use miden_client::account::{Account, AccountId, StorageSlot, StorageSlotContent};
+use miden_client::Word;
+use miden_client::account::{Account, AccountId, StorageSlot, StorageSlotContent, StorageSlotName};
 use miden_client::asset::Asset;
 use miden_client::crypto::{ForestInMemoryBackend, VersionId};
 use miden_client::store::{AccountSmtForest, AccountUpdate, StoreError};
@@ -43,15 +44,29 @@ impl AccountForest {
         self.forest.apply(version, update)
     }
 
+    /// Whether the account's vault and the given map slots hold exactly these roots.
+    pub(crate) fn is_current<'a>(
+        &self,
+        account_id: AccountId,
+        vault_root: Word,
+        map_roots: impl IntoIterator<Item = (&'a StorageSlotName, Word)>,
+    ) -> bool {
+        self.vault_root(account_id) == Some(vault_root)
+            && map_roots
+                .into_iter()
+                .all(|(name, root)| self.map_root(account_id, name) == Some(root))
+    }
+
     pub(crate) fn refresh_account(&mut self, account: &Account) -> Result<(), StoreError> {
-        let current = self.vault_root(account.id()) == Some(account.vault().root())
-            && account.storage().slots().iter().all(|slot| match slot.content() {
-                StorageSlotContent::Map(map) => {
-                    self.map_root(account.id(), slot.name()) == Some(map.root())
-                },
-                StorageSlotContent::Value(_) => true,
-            });
-        if current { Ok(()) } else { self.rebuild_account(account) }
+        let maps = account.storage().slots().iter().filter_map(|slot| match slot.content() {
+            StorageSlotContent::Map(map) => Some((slot.name(), map.root())),
+            StorageSlotContent::Value(_) => None,
+        });
+        if self.is_current(account.id(), account.vault().root(), maps) {
+            Ok(())
+        } else {
+            self.rebuild_account(account)
+        }
     }
 
     /// Sets an account's vault and map slots to exactly the state it holds.

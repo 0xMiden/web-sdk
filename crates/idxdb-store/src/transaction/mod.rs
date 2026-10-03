@@ -203,7 +203,7 @@ impl IdxdbStore {
                     *commitment
                 } else {
                     touched_accounts.insert(id);
-                    self.account_for_forest(id).await?.to_commitment()
+                    self.current_account_header(id).await?.to_commitment()
                 };
                 if tx.initial_account().to_commitment() != commitment {
                     return Err(StoreError::DatabaseError(format!(
