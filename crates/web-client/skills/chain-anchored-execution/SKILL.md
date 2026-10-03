@@ -1,13 +1,15 @@
 ---
 name: chain-anchored-execution
-description: Rules for using ChainAnchor to pin transaction execution to a specific block, required whenever a signature is collected over a transaction summary by one party and the transaction is executed later or by another party, as in multisig proposals and offline co-signing. Use when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or foreignAccountInputs, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
+description: Rules for multi-party signing flows. Multisig proposals (0.17+) bind a block in their auth args and execute at the tip with withBlockNumbers, never at an anchor; ChainAnchor pins execution to a specific block for flows whose summary binds the reference block, such as single-signature offline co-signing. Use when writing or reviewing multisig proposal, co-signing or submission code, when a multisig proposal fails with `block N has been pruned`, `failed to lookup value in Merkle store` or `requested block N is after transaction reference block M`, or when writing or reviewing code that calls captureAnchor, preview, executeRequest or submit with an anchor, builds a request that travels between parties with withExplicitInputNote or withForeignAccounts, uses useChainAnchor or usePreview, or when debugging summary commitments that never match between co-signers, INVALID_CHAIN_ANCHOR, OPERATION_BUSY, STALE_CLIENT, TRANSACTION_ALREADY_AUTHORIZED or FeeConversionInfoRequired.
 ---
 
 # Chain-Anchored Execution
 
 **Availability:** `@miden-sdk/miden-sdk` and `@miden-sdk/react` from `0.16.0-rc.3`,
 and in every release since. `withExplicitInputNote` (R3) and foreign-account
-prefetching (R4) arrived in `0.16.1`.
+prefetching, removed again in `0.17.0` (R4), arrived in `0.16.1`.
+`withBlockNumbers` and tip execution of multisig proposals (§1, R0) arrived in
+`0.17.0-rc.4`.
 This skill ships inside the package, so if you are reading it from
 `node_modules/@miden-sdk/miden-sdk/skills/`, the installed version has these
 surfaces. If a symbol is missing anyway, you are on a build older than the release
@@ -28,13 +30,44 @@ Do **not** reach for `ChainAnchor` by default. Apply this test:
 
 - **No** → omit `anchor` entirely. Execution runs at the current tip, exactly as
   before. Nothing in this document applies to you.
-- **Yes** → you need an anchor. Multisig proposals and offline co-signing are the
-  canonical cases.
+- **Yes, and the executing account is a multisig** → do **not** use an anchor.
+  Follow R0: bind a block, and let every party execute at its own tip.
+- **Yes, and the summary binds the reference block** (a single-signature
+  `signature.masm` account, e.g. offline co-signing) → you need an anchor.
 
-**Why:** since protocol 0.16 a signed transaction summary binds the reference block
-commitment, so a signature authorizes execution **only at that exact block**. Without
-an anchor, each party re-executing at their own sync height derives a different summary
-and verification can never succeed.
+**Why:** a single-signature summary binds the reference block commitment
+(`auth::create_tx_summary`), so a signature authorizes execution **only at that exact
+block**, and without an anchor each party derives a different summary. Since protocol
+0.17 a multisig summary binds instead the **bound block** named in its auth args
+(`auth::create_tx_summary_with_block`), which any later reference block can
+authenticate once it is in the transaction's partial blockchain.
+
+### R0 - A multisig proposal executes at the tip, never at an anchor
+
+Build the request with `client.feeAwareTransactionRequestBuilder(account)`. For a
+multisig it binds the current sync height as the bound block and adds that block with
+`withBlockNumbers`, so the proposer, every co-signer and the executor can call
+`preview` / `submit` **without** `anchor`, each at its own tip, and derive the same
+summary. Each party's client must first have synced to at least the bound block (the
+largest of `request.blockNumbers()`, by default the proposer's sync height when it
+built the request). A client below it fails with `requested block N is after
+transaction reference block M` until it syncs. A request built any other way must
+call `withBlockNumbers([boundBlock])` itself, or tip execution fails in the VM with
+`failed to lookup value in Merkle store`, because the auth procedure cannot read the
+bound block from the transaction's partial blockchain.
+
+Why not an anchor: a node keeps account state for only 50 blocks, and every
+fee-paying transaction loads the chain's fee faucet as a foreign account. Re-executing
+an older proposal at its anchor therefore fails with `block N has been pruned`, at
+every co-signer's verification as well as at submit. And a transaction expires 20
+blocks after its reference block, so one executed at an older anchor is rejected at
+submission even when it executes. The 0.16 advice to re-execute a multisig at the
+proposer's anchor is obsolete.
+
+R1 and R2's request transport still apply: co-signers must re-derive from the
+proposer's request bytes, because the salt in the auth args is drawn fresh per build.
+Check the bound block is real by comparing `summary.blockCommitment()` with the header a
+trusted node returns for the number in `request.blockNumbers()`.
 
 ---
 
@@ -120,48 +153,42 @@ from its own store or from the anchor the request executes against.
 
 Available from `0.16.1`.
 
-### R4 - Prefetch foreign-account inputs at the anchor's block, and do not sync after
+### R4 - A foreign account forces a recent anchor
+
+For a multisig this is solved by R0: executing at the tip fetches foreign accounts at
+the tip. The rest of this rule applies to anchored (single-signature) flows.
 
 A transaction that calls into a foreign account fetches that account's state at
 execution time, from the node, at the reference block. An anchored flow executes at
-an older block, and a node stops serving account state past a limited window, so a
-proposal that sat awaiting signatures fails at execution, naming the account and
-the block.
+an older block, and a node stops serving account state past a limited window (50
+blocks at the time of writing), so a proposal that sat awaiting signatures fails at
+execution, naming the account and the block. On a fee-charging chain every
+transaction loads the fee faucet this way, so this applies even to a request that
+declares no foreign account.
 
-Fetch the state once, at the anchor's block, and ship it with the proposal:
+Until 0.16 the state could be fetched at the anchor's block and shipped with the
+proposal. 0.17 removed that path along with the upstream types behind it -
+`foreignAccountInputs`, `ForeignAccount.prefetched` and `AccountInputs` are gone,
+and a foreign account's vault entries and storage-map keys are resolved during
+execution instead. So for a request that calls into a foreign account, the anchor
+must stay inside the node's account-history window: capture it close to execution,
+and re-capture rather than reuse one that has aged out.
 
 ```ts
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(targetId, storageRequirements)],
-  anchor.blockNum() // exactly the anchor's block, not the sync height
-);
-ship(inputs.map((i) => i.serialize()));
-
-// Executor: nothing is fetched for these accounts at execution time.
 const request = builder
-  .withForeignAccounts([
-    ForeignAccount.prefetched(AccountInputs.deserialize(bytes)),
-  ])
+  .withForeignAccounts([ForeignAccount.public(targetId, storageRequirements)])
   .build();
+const anchor = await client.transactions.captureAnchor(request);
+// collect signatures, then execute promptly against `anchor`
 ```
 
-Three things to get right:
+Two things to get right:
 
-- **`blockNum` must be the anchor's block.** Each witness opens against the account
-  tree of that block alone. Passing the sync height produces inputs valid only for
-  an unanchored execution.
-- **Do not sync between fetching and executing.** Execution fails naming the
-  account and the block.
-- **Only the accounts you name are fetched.** This does not discover accounts the
+- **Only the accounts you name are declared.** This does not discover accounts the
   transaction loads on its own, such as a faucet whose asset callback it triggers.
-
-`ForeignAccount.public(id, requirements)` is fetched from the network,
-`ForeignAccount.private(account)` contributes its own state and fetches only an
-inclusion proof, and `ForeignAccount.prefetched(inputs)` is returned untouched.
-`AccountInputs.serialize()` / `.deserialize()` are the transport, and
-`inputs.accountId()` reads back which account an entry describes.
-
-Available from `0.16.1`.
+- **`ForeignAccount.public(id, requirements)` is fetched from the network** and
+  `ForeignAccount.private(account)` contributes its own state and fetches only an
+  inclusion proof.
 
 ### R5 - Validate an anchor that arrives from an untrusted party
 
@@ -217,7 +244,7 @@ triggering control while `isCapturing` / `isPreviewing` is true.
 ### R9 - Import the class, not the type, to deserialize in React
 
 `@miden-sdk/react` re-exports `ChainAnchor` and `TransactionRequest` as **types
-only**, and does not re-export `InputNote`, `ForeignAccount` or `AccountInputs` at
+only**, and does not re-export `InputNote` or `ForeignAccount` at
 all. Calling a static such as `ChainAnchor.deserialize(bytes)` or
 `TransactionRequest.deserialize(bytes)` requires importing the class from
 `@miden-sdk/miden-sdk` directly.
@@ -230,13 +257,16 @@ Map an observed symptom to its cause before proposing a fix.
 
 | Symptom | Cause |
 | --- | --- |
-| Co-signer's summary never matches the proposer's | Anchor not passed to `preview` (R2), or the request was re-resolved instead of transported (R1, R2) |
+| Co-signer's summary never matches the proposer's | For a summary that binds the reference block: anchor not passed to `preview` (R2). For any flow: the request was re-resolved instead of transported (R1, R2). A multisig proposal takes no anchor (R0) |
 | Co-signers' summaries differ and every other check passes | The request used `withInputNotes`, so each client chose the consumption mode from its own store. Rebuild with `withExplicitInputNote` (R3) |
 | `FeeConversionInfoRequired` naming the auth component | The executing account is a multisig and the request declares no fee conversion salt. Build it from `await client.feeAwareTransactionRequestBuilder(account)` rather than a bare `TransactionRequestBuilder` |
 | `FeeConversionInfoUnsupported` naming the auth component | A salt was declared against an auth component that never reads it. Drop the salt, or use `withAuthArg` plus `extendAdviceMap` |
 | `ERR_FEE_CONVERSION_INFO_MISSING` aborting in the VM | A custom auth procedure reads conversion info that nothing committed. Attach it yourself with `withAuthArg` |
 | `preview` fails to find the account on the co-signer | Verification runs a real execution, so the account must already be in that participant's store. `accounts.getOrImport` for a public account; a private one needs its state transferred out of band (R2) |
-| Anchored execution fails naming a foreign account and a block | Foreign-account state was fetched at the wrong block, or a sync landed between fetching and executing. Refetch at `anchor.blockNum()` and execute without syncing (R4) |
+| Anchored execution fails naming a foreign account and a block | The anchor is older than the node's account-history window. Capture it closer to execution and re-capture an aged one (R4). For a multisig, stop anchoring and execute at the tip (R0) |
+| A multisig proposal fails with `block N has been pruned`, often naming the fee faucet | It is being re-executed at an anchor. Execute at the tip instead (R0) |
+| `requested block N is after transaction reference block M` | A multisig proposal previewed or submitted at the tip on a client whose sync height M is still below its bound block N. Sync, then retry (R0) |
+| `failed to lookup value in Merkle store` from a multisig proposal at the tip | The request does not declare its bound block in `withBlockNumbers`, so the auth procedure cannot read it. Build it with `feeAwareTransactionRequestBuilder`, or add the block yourself (R0) |
 | `INVALID_CHAIN_ANCHOR` | A sync landed mid-capture and left the anchor inconsistent. **Retry**, since this is transient rather than a bug to work around |
 | `OPERATION_BUSY` | A capture or preview is already running. Await the previous one |
 | `STALE_CLIENT` | The client was swapped mid-call. Recapture on the new chain |
@@ -300,7 +330,6 @@ that tolerates both shapes.
 
 ```ts
 captureAnchor(request: TransactionRequest): Promise<ChainAnchor>
-foreignAccountInputs(accounts: ForeignAccount[], blockNum: number): Promise<AccountInputs[]>
 
 preview({ operation: "custom", account, request, anchor? })
 executeRequest(account, request, { anchor? })
@@ -310,8 +339,9 @@ submit(account, request, { anchor?, ...txOptions })
 `client.feeAwareTransactionRequestBuilder(account)` returns a
 `TransactionRequestBuilder` that already declares a fee conversion salt where the
 executing account needs one. It is a safe drop-in for `new
-TransactionRequestBuilder()`: on a zero-fee chain, or for an account that does not
-choose its own salt, the builder comes back untouched.
+TransactionRequestBuilder()`: for an account that is not a multisig the builder
+comes back untouched. A zero base fee is not a second condition: since 0.17 a
+multisig resolves its auth args whatever the chain charges.
 
 ### `ChainAnchor`
 
@@ -321,7 +351,7 @@ choose its own salt, the builder comes back untouched.
 | `ChainAnchor.deserialize(bytes)` | `ChainAnchor` | Static; rebuild on the receiving side |
 | `blockNum()` | `u32` | Number of the anchored reference block |
 | `commitment()` | `Word` | Commitment of the anchored reference block |
-| `blockHeader()` | `BlockHeader` | The anchored reference block header, which also carries `verificationBaseFee()` and `feeFaucetId()` |
+| `blockHeader()` | `BlockHeader` | The anchored reference block header, which also carries `verificationBaseFee()` and `protocolConfigCommitment()`. The fee faucet moved into the protocol configuration in 0.17; read it with `client.feeFaucetId()` |
 | `free()` | void | Release the partial blockchain it carries |
 
 ### `TransactionSummary`
@@ -340,17 +370,15 @@ choose its own salt, the builder comes back untouched.
 
 ```ts
 new TransactionRequestBuilder()
+  .withBlockNumbers([boundBlock])            // blocks the tx must authenticate; lets a multisig run at the tip (R0)
   .withExplicitInputNote(inputNote, args?)   // pins authenticated vs unauthenticated
-  .withForeignAccounts([foreignAccount])     // prefetched entries skip execution-time fetches
+  .withForeignAccounts([foreignAccount])     // declared foreign accounts, read at the reference block
 
 InputNote.authenticated(note, inclusionProof)
 InputNote.unauthenticated(note)
 
 ForeignAccount.public(id, storageRequirements)
 ForeignAccount.private(account)
-ForeignAccount.prefetched(accountInputs)
-
-AccountInputs.deserialize(bytes) // instance: serialize(), accountId()
 ```
 
 ### React
@@ -365,11 +393,39 @@ useTransaction() // execute({ ..., anchor? })
 
 ## 6. Reference implementation
 
+### Multisig (R0): no anchor
+
+```ts
+import { TransactionRequest } from "@miden-sdk/miden-sdk";
+
+// Proposer: the fee-aware builder binds the sync height and adds it to the block numbers.
+const request = (await client.feeAwareTransactionRequestBuilder(account))
+  .withCustomScript(script)
+  .build();
+const summary = await client.transactions.preview({ operation: "custom", account, request });
+ship(request.serialize(), summary.serialize());
+
+// Co-signer: sync to the tip (at or past the bound block), then re-derive from the proposer's bytes.
+await client.sync();
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
+const derived = await client.transactions.preview({
+  operation: "custom", account, request: proposedRequest,
+});
+if (derived.toCommitment().toHex() === expected.toCommitment().toHex()) {
+  sign(derived);
+}
+
+// Executor: at the tip.
+await client.transactions.submit(account, proposedRequest);
+```
+
+### Anchored (single-signature summary)
+
 ```ts
 import { ChainAnchor, TransactionRequest } from "@miden-sdk/miden-sdk";
 
 // -- Proposer ---------------------------------------------------------
-// Build from the fee-aware builder: a multisig needs a declared salt.
+// A single-signature summary binds the reference block, so it needs the anchor.
 const builder = await client.feeAwareTransactionRequestBuilder(account);
 const request = builder.withCustomScript(script).build();
 
@@ -430,6 +486,9 @@ interaction executes the request whose summary you just displayed.
 Before considering anchor-related work complete, confirm each of these:
 
 - [ ] The flow genuinely needs an anchor (§1). If not, `anchor` is absent everywhere.
+- [ ] A multisig proposal is built with `feeAwareTransactionRequestBuilder` (or carries
+      its bound block in `withBlockNumbers`) and is previewed and submitted without an
+      anchor (R0).
 - [ ] Every `preview` / `executeRequest` / `submit` uses the request the anchor was
       captured for, not a re-resolved one (R1).
 - [ ] In React, the handler that captures passes the request it resolved itself, not

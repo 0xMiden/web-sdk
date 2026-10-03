@@ -232,6 +232,26 @@ describe("MidenDatabase migrations", () => {
     const userRow = await mdb.settings.get([SETTING_SCOPE_USER, "shared"]);
     expect(userRow!.value).toEqual(new Uint8Array([2]));
   });
+
+  // v6: account witness registry. A null witness is a registered account the sync has not
+  // refreshed yet.
+  it("v6 migration adds accountWitnesses", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.15.5")).toBe(true);
+
+    await mdb.accountWitnesses.add({ accountId: "0xacc", witness: null });
+    expect(await mdb.accountWitnesses.get("0xacc")).toEqual({
+      accountId: "0xacc",
+      witness: null,
+    });
+  });
 });
 
 // ============================================================

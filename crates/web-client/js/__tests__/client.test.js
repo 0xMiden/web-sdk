@@ -52,7 +52,10 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     await client.feeAwareTransactionRequestBuilder("0xabc");
     expect(wasm.AccountId.fromHex).toHaveBeenCalledWith("0xabc");
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "fromHex", hex: "0xabc" })
+      expect.objectContaining({ kind: "fromHex", hex: "0xabc" }),
+      undefined,
+      undefined,
+      undefined
     );
   });
 
@@ -60,7 +63,10 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     await client.feeAwareTransactionRequestBuilder("mtst1qabc");
     expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mtst1qabc");
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "fromBech32", bech32: "mtst1qabc" })
+      expect.objectContaining({ kind: "fromBech32", bech32: "mtst1qabc" }),
+      undefined,
+      undefined,
+      undefined
     );
   });
 
@@ -69,7 +75,12 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     const account = { id: vi.fn(() => id) };
     await client.feeAwareTransactionRequestBuilder(account);
     expect(account.id).toHaveBeenCalled();
-    expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(id);
+    expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+      id,
+      undefined,
+      undefined,
+      undefined
+    );
   });
 
   it("passes an AccountId through untouched", async () => {
@@ -77,7 +88,10 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     await client.feeAwareTransactionRequestBuilder(accountId);
     expect(wasm.AccountId.fromHex).not.toHaveBeenCalled();
     expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
-      accountId
+      accountId,
+      undefined,
+      undefined,
+      undefined
     );
   });
 
@@ -86,6 +100,38 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       client.feeAwareTransactionRequestBuilder(undefined)
     ).rejects.toThrow(/cannot be null or undefined/i);
     expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
+  });
+
+  // Every multisig override is off unless asked for: the cases above pin the
+  // `undefined`s that mean "SDK default", these pin that each option reaches the
+  // WASM boundary unchanged, in its own positional slot.
+  it("forwards an approval expiration delta", async () => {
+    const accountId = { kind: "accountId" };
+    await client.feeAwareTransactionRequestBuilder(accountId, {
+      approvalExpirationDelta: 100,
+    });
+    expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+      accountId,
+      100,
+      undefined,
+      undefined
+    );
+  });
+
+  // The two a co-signer needs to reproduce a proposal rather than receive it.
+  it("forwards the salt and bound block a co-signer must agree on", async () => {
+    const accountId = { kind: "accountId" };
+    const salt = { kind: "word" };
+    await client.feeAwareTransactionRequestBuilder(accountId, {
+      feeConversionSalt: salt,
+      boundBlockNum: 42,
+    });
+    expect(inner.feeAwareTransactionRequestBuilder).toHaveBeenCalledWith(
+      accountId,
+      undefined,
+      salt,
+      42
+    );
   });
 
   it("throws once terminated", async () => {

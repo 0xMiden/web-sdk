@@ -48,7 +48,7 @@ import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
 await MidenClient.ready();
 await initThreadPool(navigator.hardwareConcurrency); // same realm as the direct MT client
-const client = await MidenClient.create({ useWorker: false });
+const client = await MidenClient.create({ useWorker: false, feeFaucetId: FEE_FAUCET });
 ```
 
 The ST entries don't expose `initThreadPool`, because there is no pool to bring up.

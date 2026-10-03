@@ -53,9 +53,10 @@ impl VaultAsset {
 
     /// Returns `"fungible"` or `"nonFungible"`.
     pub fn kind(&self) -> String {
-        match self.0 {
-            NativeAsset::Fungible(_) => "fungible".into(),
-            NativeAsset::NonFungible(_) => "nonFungible".into(),
+        if self.0.is_fungible() {
+            "fungible".into()
+        } else {
+            "nonFungible".into()
         }
     }
 
@@ -80,20 +81,23 @@ impl VaultAsset {
     /// Returns a fungible asset copy. Throws if this asset is non-fungible.
     #[js_export(js_name = "asFungible")]
     pub fn as_fungible(&self) -> Result<FungibleAsset, JsErr> {
-        match self.0 {
-            NativeAsset::Fungible(asset) => Ok(asset.into()),
-            NativeAsset::NonFungible(_) => Err(from_str_err("Asset is not fungible")),
-        }
+        self.0
+            .as_fungible()
+            .map(Into::into)
+            .ok_or_else(|| from_str_err("Asset is not fungible"))
     }
 
     /// Returns a non-fungible asset copy. Throws if this asset is fungible.
     #[js_export(js_name = "asNonFungible")]
     pub fn as_non_fungible(&self) -> Result<NonFungibleAsset, JsErr> {
-        match self.0 {
-            NativeAsset::NonFungible(asset) => Ok(asset.into()),
-            NativeAsset::Fungible(_) => Err(from_str_err("Asset is not non-fungible")),
-        }
+        native_non_fungible_asset(&self.0)
+            .map(Into::into)
+            .ok_or_else(|| from_str_err("Asset is not non-fungible"))
     }
+}
+
+pub(crate) fn native_non_fungible_asset(asset: &NativeAsset) -> Option<NativeNonFungibleAsset> {
+    NativeNonFungibleAsset::from_id_and_value(asset.id(), asset.to_value_word()).ok()
 }
 
 impl From<NativeAsset> for VaultAsset {

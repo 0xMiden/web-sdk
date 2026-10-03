@@ -7,7 +7,7 @@ use miden_client::block::BlockHeader;
 use miden_client::crypto::InOrderIndex;
 use miden_client::note::BlockNumber;
 use miden_client::store::{BlockRelevance, PartialBlockchainFilter, StoreError};
-use miden_client::utils::Deserializable;
+use miden_client_proto::decode_unchecked;
 
 use super::IdxdbStore;
 use crate::promise::{await_js, await_js_value, await_ok};
@@ -86,7 +86,7 @@ impl IdxdbStore {
             .filter_map(|record_option| record_option.map(Ok))
             .map(|record_result: Result<BlockHeaderIdxdbObject, StoreError>| {
                 let record = record_result?;
-                let block_header = BlockHeader::read_from_bytes(&record.header)?;
+                let block_header: BlockHeader = decode_unchecked(&record.header)?;
                 let has_client_notes = record.has_client_notes.into();
 
                 Ok((block_header, has_client_notes))
@@ -104,7 +104,7 @@ impl IdxdbStore {
         let results: Result<Vec<BlockHeader>, StoreError> = block_headers_idxdb
             .into_iter()
             .map(|record| {
-                let block_header = BlockHeader::read_from_bytes(&record.header)?;
+                let block_header: BlockHeader = decode_unchecked(&record.header)?;
 
                 Ok(block_header)
             })
@@ -141,25 +141,24 @@ impl IdxdbStore {
                 let promise = idxdb_get_partial_blockchain_nodes(self.db_id(), formatted_list);
                 let js_value =
                     await_js_value(promise, "failed to get partial blockchain nodes").await?;
-                let nodes = process_partial_blockchain_nodes_from_js_value(js_value)?;
-
-                // Verify that all requested nodes were found. Missing nodes indicate
-                // that MMR authentication nodes were not persisted during a previous
-                // sync (e.g. the browser extension was closed mid-sync).
-                for id in &ids {
-                    if !nodes.contains_key(id) {
-                        return Err(StoreError::PartialBlockchainNodeNotFound(id.inner() as u64));
-                    }
-                }
-
-                Ok(nodes)
+                // Returns the nodes that are present, as the SQLite store does. A missing node
+                // is not an error here: the only caller builds authentication paths from these,
+                // checks each path against the MMR, and fetches a path the store cannot complete
+                // from the node. Failing instead made any block whose nodes were never stored
+                // (an older block a transaction declares, or a sync cut short) unusable.
+                process_partial_blockchain_nodes_from_js_value(js_value)
             },
             PartialBlockchainFilter::Forest(forest) => {
                 if forest.is_empty() {
                     return Ok(BTreeMap::new());
                 }
 
-                let max_in_order_index = forest.rightmost_in_order_index().inner().to_string();
+                // `rightmost_in_order_index` is `None` only for an empty forest, which the
+                // check above already returned for.
+                let Some(rightmost) = forest.rightmost_in_order_index() else {
+                    return Ok(BTreeMap::new());
+                };
+                let max_in_order_index = rightmost.inner().to_string();
                 let promise = idxdb_get_partial_blockchain_nodes_up_to_inorder_index(
                     self.db_id(),
                     max_in_order_index,

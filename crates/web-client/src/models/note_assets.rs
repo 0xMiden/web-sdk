@@ -2,7 +2,7 @@ use js_export_macro::js_export;
 use miden_client::asset::Asset as NativeAsset;
 use miden_client::note::NoteAssets as NativeNoteAssets;
 
-use super::asset::{AssetInput, VaultAsset, native_asset};
+use super::asset::{AssetInput, VaultAsset, native_asset, native_non_fungible_asset};
 use super::fungible_asset::FungibleAsset;
 use super::non_fungible_asset::NonFungibleAsset;
 use crate::platform::{JsErr, from_str_err};
@@ -52,13 +52,7 @@ impl NoteAssets {
     pub fn non_fungible_assets(&self) -> Vec<NonFungibleAsset> {
         self.0
             .iter()
-            .filter_map(|asset| {
-                if asset.is_non_fungible() {
-                    Some(asset.unwrap_non_fungible().into())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|asset| native_non_fungible_asset(asset).map(Into::into))
             .collect()
     }
 
