@@ -64,7 +64,6 @@ use js_bindings::{
     idxdb_get_account_ids,
     idxdb_get_account_snapshot,
     idxdb_get_account_storage,
-    idxdb_get_account_storage_maps,
     idxdb_get_account_vault_assets,
     idxdb_get_foreign_account_code,
     idxdb_lock_account,
@@ -190,7 +189,7 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some(snapshot) = self.get_account_snapshot(account_id, true).await? else {
+        let Some(snapshot) = self.get_account_snapshot(account_id, true, true).await? else {
             return Ok(None);
         };
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
@@ -218,10 +217,11 @@ impl IdxdbStore {
     async fn get_account_snapshot(
         &self,
         account_id: AccountId,
-        full: bool,
+        maps: bool,
+        assets: bool,
     ) -> Result<Option<AccountSnapshotIdxdbObject>, StoreError> {
         await_js(
-            idxdb_get_account_snapshot(self.db_id(), account_id.to_string(), full),
+            idxdb_get_account_snapshot(self.db_id(), account_id.to_string(), maps, assets),
             "failed to fetch account snapshot",
         )
         .await
@@ -266,7 +266,7 @@ impl IdxdbStore {
         &self,
         account_id: AccountId,
     ) -> Result<Option<AccountRecord>, StoreError> {
-        let Some(snapshot) = self.get_account_snapshot(account_id, false).await? else {
+        let Some(snapshot) = self.get_account_snapshot(account_id, false, false).await? else {
             return Ok(None);
         };
         let (header, status, client_type) = parse_account_record_idxdb_object(snapshot.header)?;
@@ -325,67 +325,6 @@ impl IdxdbStore {
             await_js(promise, "failed to fetch account code").await?;
 
         Ok(decode_unchecked(&account_code_idxdb.code)?)
-    }
-
-    pub(super) async fn get_storage(
-        &self,
-        account_id: AccountId,
-        filter: AccountStorageFilter,
-    ) -> Result<AccountStorage, StoreError> {
-        let account_id_str = account_id.to_string();
-
-        let promise = idxdb_get_account_storage(self.db_id(), account_id_str.clone(), vec![]);
-        let account_storage_idxdb: Vec<AccountStorageIdxdbObject> =
-            await_js(promise, "failed to fetch account storage").await?;
-
-        if account_storage_idxdb.iter().any(|s| s.slot_name.is_empty()) {
-            return Err(StoreError::DatabaseError(
-                "account storage entries are missing `slotName`; clear IndexedDB and re-sync"
-                    .to_string(),
-            ));
-        }
-
-        let filtered_slots: Vec<AccountStorageIdxdbObject> = match filter {
-            AccountStorageFilter::All => account_storage_idxdb,
-            AccountStorageFilter::Root(map_root) => {
-                let map_root_hex = map_root.to_hex();
-                let slot = account_storage_idxdb.into_iter().find(|s| {
-                    s.slot_value == map_root_hex
-                        && StorageSlotType::try_from(s.slot_type).ok() == Some(StorageSlotType::Map)
-                });
-                match slot {
-                    Some(slot) => vec![slot],
-                    None => return Err(StoreError::AccountStorageRootNotFound(map_root)),
-                }
-            },
-            AccountStorageFilter::SlotName(name) => {
-                let wanted_name = name.as_str();
-                let slot =
-                    account_storage_idxdb.into_iter().find(|s| s.slot_name.as_str() == wanted_name);
-                match slot {
-                    Some(slot) => vec![slot],
-                    None => {
-                        return Err(StoreError::AccountError(
-                            AccountError::StorageSlotNameNotFound { slot_name: name },
-                        ));
-                    },
-                }
-            },
-            AccountStorageFilter::SlotNames(names) => {
-                let wanted: alloc::collections::BTreeSet<&str> =
-                    names.iter().map(StorageSlotName::as_str).collect();
-                account_storage_idxdb
-                    .into_iter()
-                    .filter(|s| wanted.contains(s.slot_name.as_str()))
-                    .collect()
-            },
-        };
-
-        let promise = idxdb_get_account_storage_maps(self.db_id(), account_id_str);
-        let account_maps_idxdb: Vec<StorageMapEntryIdxdbObject> =
-            await_js(promise, "failed to fetch account storage maps").await?;
-
-        Self::parse_storage(filtered_slots, account_maps_idxdb)
     }
 
     fn parse_storage(
@@ -616,12 +555,56 @@ impl IdxdbStore {
         account_id: AccountId,
         filter: AccountStorageFilter,
     ) -> Result<AccountStorage, StoreError> {
-        // Verify account exists
-        self.get_account_header(account_id)
+        let snapshot = self
+            .get_account_snapshot(account_id, true, false)
             .await?
             .ok_or(StoreError::AccountDataNotFound(account_id))?;
+        let account_storage_idxdb = snapshot.storage;
 
-        self.get_storage(account_id, filter).await
+        if account_storage_idxdb.iter().any(|s| s.slot_name.is_empty()) {
+            return Err(StoreError::DatabaseError(
+                "account storage entries are missing `slotName`; clear IndexedDB and re-sync"
+                    .to_string(),
+            ));
+        }
+
+        let filtered_slots: Vec<AccountStorageIdxdbObject> = match filter {
+            AccountStorageFilter::All => account_storage_idxdb,
+            AccountStorageFilter::Root(map_root) => {
+                let map_root_hex = map_root.to_hex();
+                let slot = account_storage_idxdb.into_iter().find(|s| {
+                    s.slot_value == map_root_hex
+                        && StorageSlotType::try_from(s.slot_type).ok() == Some(StorageSlotType::Map)
+                });
+                match slot {
+                    Some(slot) => vec![slot],
+                    None => return Err(StoreError::AccountStorageRootNotFound(map_root)),
+                }
+            },
+            AccountStorageFilter::SlotName(name) => {
+                let wanted_name = name.as_str();
+                let slot =
+                    account_storage_idxdb.into_iter().find(|s| s.slot_name.as_str() == wanted_name);
+                match slot {
+                    Some(slot) => vec![slot],
+                    None => {
+                        return Err(StoreError::AccountError(
+                            AccountError::StorageSlotNameNotFound { slot_name: name },
+                        ));
+                    },
+                }
+            },
+            AccountStorageFilter::SlotNames(names) => {
+                let wanted: alloc::collections::BTreeSet<&str> =
+                    names.iter().map(StorageSlotName::as_str).collect();
+                account_storage_idxdb
+                    .into_iter()
+                    .filter(|s| wanted.contains(s.slot_name.as_str()))
+                    .collect()
+            },
+        };
+
+        Self::parse_storage(filtered_slots, snapshot.maps)
     }
 
     pub(crate) async fn get_account_asset(

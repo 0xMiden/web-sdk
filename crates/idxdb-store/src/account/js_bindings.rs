@@ -38,7 +38,8 @@ extern "C" {
     pub fn idxdb_get_account_snapshot(
         db_id: &str,
         account_id: String,
-        full: bool,
+        maps: bool,
+        assets: bool,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getAccountCode)]
@@ -50,9 +51,6 @@ extern "C" {
         account_id: String,
         slot_names: Vec<String>,
     ) -> js_sys::Promise;
-
-    #[wasm_bindgen(js_name = getAccountStorageMaps)]
-    pub fn idxdb_get_account_storage_maps(db_id: &str, account_id: String) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getAccountVaultAssets)]
     pub fn idxdb_get_account_vault_assets(

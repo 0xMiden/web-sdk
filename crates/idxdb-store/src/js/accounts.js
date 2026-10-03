@@ -63,7 +63,7 @@ export async function getAccountHeader(dbId, accountId) {
         logWebStoreError(error, `Error while fetching account header for id: ${accountId}`);
     }
 }
-export async function getAccountSnapshot(dbId, accountId, full) {
+export async function getAccountSnapshot(dbId, accountId, maps, assets) {
     const db = getDatabase(dbId);
     return db.dexie.transaction("r", [
         db.latestAccountHeaders,
@@ -75,13 +75,19 @@ export async function getAccountSnapshot(dbId, accountId, full) {
         const header = await getAccountHeader(dbId, accountId);
         if (!header)
             return null;
-        const [code, storage, maps, assets] = await Promise.all([
+        const [code, storage, mapEntries, vaultAssets] = await Promise.all([
             getAccountCode(dbId, header.codeRoot),
             getAccountStorage(dbId, accountId, []),
-            full ? getAccountStorageMaps(dbId, accountId) : [],
-            full ? getAccountVaultAssets(dbId, accountId, []) : [],
+            maps ? getAccountStorageMaps(dbId, accountId) : [],
+            assets ? getAccountVaultAssets(dbId, accountId, []) : [],
         ]);
-        return { header, code, storage, maps, assets };
+        return {
+            header,
+            code,
+            storage,
+            maps: mapEntries,
+            assets: vaultAssets,
+        };
     });
 }
 export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
