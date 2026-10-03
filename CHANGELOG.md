@@ -8,6 +8,8 @@
 
 ### Fixes
 
+* [FIX][web] Browser clients sharing a database refresh account witnesses from persisted state, preserving untouched assets when applying transaction patches. Applying a transaction rejects changed execution inputs before altering account state or transaction history ([#453](https://github.com/0xMiden/web-sdk/pull/453)).
+
 * [FIX][web] On Node.js, `account.storage()` now returns a `StorageView`, as the declared type and the browser entry already do, so `getItem` returns a `StorageResult` instead of a raw `Word`; use `.raw` for the underlying `AccountStorage`. `StorageView`, `StorageResult` and `wordToBigInt` are now exported from the Node.js entry point ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
 * [FIX][web] Export `NoteAndArgsArray`, `NoteArray`, `FeltArray` and the other declared array containers, and the `MidenArrays` namespace, from the Node.js entry point so their constructors are available at runtime. On Node.js each container is a plain array: `get` and `replaceAt` now throw on an out-of-range index and `free()` is a no-op, as in the browser, but use the `length` property rather than `length()` ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#417](https://github.com/0xMiden/web-sdk/pull/417)).
 * [FIX][web] In Node.js, `AuthSecretKey.deserialize()` and `Word.deserialize()` now accept `Buffer` and `Uint8Array` inputs, including subarrays, through the public SDK export. RNG seeds and account-builder seeds continue to accept byte arrays ([#422](https://github.com/0xMiden/web-sdk/pull/422)).

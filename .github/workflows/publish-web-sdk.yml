@@ -158,7 +158,9 @@ jobs:
         run: rustup update --no-self-update
 
       - name: Build napi binary
-        run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
+        run: |
+          cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked
+          git diff --exit-code -- Cargo.lock
 
       - name: Prepare .node binary
         run: |
@@ -185,6 +187,10 @@ jobs:
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
+      (
+        needs.check-version.outputs.should_publish_web != 'true' ||
+        needs.build-native-nodejs.result == 'success'
+      ) &&
       (
         needs.check-version.outputs.should_publish_web == 'true' ||
         needs.check-version.outputs.should_publish_react == 'true' ||
@@ -275,7 +281,9 @@ jobs:
         if: >
           needs.check-version.outputs.should_publish_web == 'true' ||
           needs.check-version.outputs.should_publish_react == 'true'
-        run: pnpm --filter @miden-sdk/miden-sdk run build
+        run: |
+          pnpm --filter @miden-sdk/miden-sdk run build
+          git diff --exit-code -- Cargo.lock
 
       - name: Verify WASM is optimized
         if: needs.check-version.outputs.should_publish_web == 'true'

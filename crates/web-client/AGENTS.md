@@ -63,6 +63,16 @@ and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
 `client.sync()` first is the difference between correct balances and confusing
 ones. `skills/web-client-usage/SKILL.md` documents where in each flow it belongs.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 **Amounts are always `BigInt`.** Passing a `number` either throws at the WASM
 boundary or silently loses precision above 2^53. Convert at the edges of your
 own code, not in the middle of a transaction builder.

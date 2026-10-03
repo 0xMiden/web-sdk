@@ -79,6 +79,42 @@ export async function getAccountHeader(dbId: string, accountId: string) {
   }
 }
 
+export async function getAccountSnapshot(
+  dbId: string,
+  accountId: string,
+  maps: boolean,
+  assets: boolean
+) {
+  const db = getDatabase(dbId);
+  return db.dexie.transaction(
+    "r",
+    [
+      db.latestAccountHeaders,
+      db.accountCodes,
+      db.latestAccountStorages,
+      db.latestStorageMapEntries,
+      db.latestAccountAssets,
+    ],
+    async () => {
+      const header = await getAccountHeader(dbId, accountId);
+      if (!header) return null;
+      const [code, storage, mapEntries, vaultAssets] = await Promise.all([
+        getAccountCode(dbId, header.codeRoot),
+        getAccountStorage(dbId, accountId, []),
+        maps ? getAccountStorageMaps(dbId, accountId) : [],
+        assets ? getAccountVaultAssets(dbId, accountId, []) : [],
+      ]);
+      return {
+        header,
+        code,
+        storage,
+        maps: mapEntries,
+        assets: vaultAssets,
+      };
+    }
+  );
+}
+
 export async function getAccountHeaderByCommitment(
   dbId: string,
   accountCommitment: string
@@ -368,7 +404,8 @@ export async function applyAccountPatch(
   vaultRoot: string,
   committed: boolean,
   commitment: string,
-  code?: Uint8Array
+  code?: Uint8Array,
+  initialAccountCommitment?: string
 ) {
   try {
     const db = getDatabase(dbId);
@@ -387,6 +424,14 @@ export async function applyAccountPatch(
         db.accountCodes,
       ],
       async () => {
+        if (initialAccountCommitment !== undefined) {
+          const current = await db.latestAccountHeaders.get(accountId);
+          if (current?.accountCommitment !== initialAccountCommitment) {
+            throw new Error(
+              `account patch input commitment does not match persisted state for ${accountId}`
+            );
+          }
+        }
         const resetMapSlots = new Set<string>();
 
         // Apply storage patch: read old → archive → write/delete final state.

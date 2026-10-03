@@ -135,6 +135,12 @@ export async function applyTransactionBatch(dbId, payloads) {
         db.tags,
     ], async () => {
         for (const payload of payloads) {
+            const acct = payload.accountState;
+            const accountId = acct.kind === "full" ? acct.account.accountId : acct.accountId;
+            const current = await db.latestAccountHeaders.get(accountId);
+            if (current?.accountCommitment !== payload.initialAccountCommitment) {
+                throw new Error(`transaction input account commitment does not match persisted state for ${accountId}`);
+            }
             // 1. Insert the transaction record (script first, then record)
             const rec = payload.transactionRecord;
             if (rec.scriptRoot && rec.txScript) {
@@ -142,7 +148,6 @@ export async function applyTransactionBatch(dbId, payloads) {
             }
             await upsertTransactionRecord(dbId, rec.id, rec.details, rec.blockNum, rec.statusVariant, rec.status, rec.scriptRoot);
             // 2. Apply account state (full or delta)
-            const acct = payload.accountState;
             if (acct.kind === "full") {
                 await applyFullAccountState(dbId, acct.account);
             }

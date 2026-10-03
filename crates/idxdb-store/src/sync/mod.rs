@@ -1,4 +1,3 @@
-use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -209,18 +208,9 @@ impl IdxdbStore {
             .map(|tx_record| tx_record.details.final_account_state)
             .collect::<Vec<_>>();
 
-        let rolled_back_accounts: BTreeSet<AccountId> = transaction_updates
-            .discarded_transactions()
-            .map(|tx_record| tx_record.details.account_id)
-            .collect();
-
-        // Restore the previous account states, then rebuild the forest from them. Committed
-        // transactions need nothing: their forest updates were applied when they were recorded.
+        // Restore the previous account states. The forest keeps the undone roots until a reader
+        // sees them differ from the tables and refreshes the account.
         self.undo_account_states(&account_states_to_rollback).await?;
-
-        for account_id in rolled_back_accounts {
-            self.rebuild_account_forest(account_id).await?;
-        }
 
         let transaction_updates: Vec<_> = transaction_updates
             .committed_transactions()

@@ -12,7 +12,6 @@ use miden_client::note::{
     NoteRecipient,
     NoteScript,
     NoteStorage,
-    NoteUpdateTracker,
     Nullifier,
 };
 use miden_client::store::{InputNoteRecord, InputNoteState, OutputNoteRecord, StoreError};
@@ -26,11 +25,7 @@ use miden_client_proto::{
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use super::js_bindings::{
-    idxdb_upsert_input_note,
-    idxdb_upsert_note_script,
-    idxdb_upsert_output_note,
-};
+use super::js_bindings::{idxdb_upsert_input_note, idxdb_upsert_note_script};
 use super::{InputNoteIdxdbObject, OutputNoteIdxdbObject};
 use crate::note::models::NoteScriptIdxdbObject;
 use crate::promise::await_js_value;
@@ -226,28 +221,6 @@ pub(crate) fn serialize_output_note(note: &OutputNoteRecord) -> SerializedOutput
     }
 }
 
-pub async fn upsert_output_note_tx(db_id: &str, note: &OutputNoteRecord) -> Result<(), StoreError> {
-    let serialized_data = serialize_output_note(note);
-
-    let promise = idxdb_upsert_output_note(
-        db_id,
-        serialized_data.details_commitment,
-        serialized_data.note_id,
-        serialized_data.note_assets,
-        serialized_data.attachments,
-        serialized_data.recipient_digest,
-        serialized_data.metadata,
-        serialized_data.nullifier,
-        serialized_data.expected_height,
-        serialized_data.state_discriminant,
-        serialized_data.state,
-        serialized_data.note_script_root,
-        serialized_data.note_script,
-    );
-    await_js_value(promise, "failed to upsert output note").await?;
-    Ok(())
-}
-
 /// Decodes the serialized `NoteAttachments` bytes persisted on a note row.
 ///
 /// A row written by this store always carries a serialized `NoteAttachments`
@@ -326,19 +299,4 @@ pub fn parse_note_script_idxdb_object(
     } = note_script_idxdb;
 
     Ok(decode_unchecked(&serialized_note_script)?)
-}
-
-pub(crate) async fn apply_note_updates_tx(
-    db_id: &str,
-    note_updates: &NoteUpdateTracker,
-) -> Result<(), StoreError> {
-    for input_note in note_updates.updated_input_notes() {
-        upsert_input_note_tx(db_id, input_note.inner()).await?;
-    }
-
-    for output_note in note_updates.updated_output_notes() {
-        upsert_output_note_tx(db_id, output_note.inner()).await?;
-    }
-
-    Ok(())
 }

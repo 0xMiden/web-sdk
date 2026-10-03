@@ -1,9 +1,9 @@
-use alloc::collections::BTreeSet;
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
-use miden_client::account::{AccountId, StorageSlotContent};
+use miden_client::account::StorageSlotContent;
 use miden_client::store::{StoreError, TransactionFilter};
 use miden_client::sync::NoteTagSource;
 use miden_client::transaction::{
@@ -22,7 +22,6 @@ use wasm_bindgen_futures::js_sys;
 
 use super::IdxdbStore;
 use super::account::utils::{
-    apply_full_account_state,
     build_account_patch_payload,
     creation_account_from_patch,
     patch_code_bytes,
@@ -31,7 +30,6 @@ use super::account::{JsStorageMapEntry, JsStorageSlot, JsVaultAsset};
 use super::note::utils::{
     SerializedInputNoteData,
     SerializedOutputNoteData,
-    apply_note_updates_tx,
     serialize_input_note,
     serialize_output_note,
 };
@@ -44,12 +42,7 @@ mod models;
 use models::TransactionIdxdbObject;
 
 pub mod utils;
-use utils::{
-    SerializedTransactionData,
-    build_transaction_record,
-    insert_proven_transaction_data,
-    serialize_transaction_record,
-};
+use utils::{SerializedTransactionData, build_transaction_record, serialize_transaction_record};
 
 // BATCH PAYLOAD TYPES
 // ================================================================================================
@@ -121,6 +114,7 @@ struct BatchNoteTag {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BatchUpdatePayload {
+    initial_account_commitment: String,
     transaction_record: SerializedTransactionData,
     account_state: BatchAccountState,
     input_notes: Vec<SerializedInputNoteData>,
@@ -187,33 +181,7 @@ impl IdxdbStore {
         &self,
         tx_update: TransactionStoreUpdate,
     ) -> Result<(), StoreError> {
-        let executed_tx = tx_update.executed_transaction();
-
-        // Transaction Data
-        insert_proven_transaction_data(self.db_id(), executed_tx, tx_update.submission_height())
-            .await?;
-
-        let patch = executed_tx.account_patch();
-        let final_header = executed_tx.final_account();
-
-        if let Some(account) = creation_account_from_patch(patch, final_header)? {
-            apply_full_account_state(self.db_id(), &account).await.map_err(|err| {
-                StoreError::DatabaseError(format!("failed to apply full account state: {err:?}"))
-            })?;
-
-            self.smt_forest.write().rebuild_account(&account)?;
-        } else {
-            self.apply_incremental_account_patch(final_header, patch).await?;
-        }
-
-        // Updates for notes
-        apply_note_updates_tx(self.db_id(), tx_update.note_updates()).await?;
-
-        for tag_record in tx_update.new_tags() {
-            self.add_note_tag(*tag_record).await?;
-        }
-
-        Ok(())
+        self.apply_transaction_batch_atomic(vec![tx_update]).await
     }
 
     /// Applies multiple transaction updates atomically in a single Dexie transaction.
@@ -224,43 +192,35 @@ impl IdxdbStore {
         if tx_updates.is_empty() {
             return Ok(());
         }
-
-        let mut payloads: Vec<BatchUpdatePayload> = Vec::with_capacity(tx_updates.len());
-
-        // Preparing an update advances the forest, so if the single write below fails every account
-        // it touched has to be rebuilt from the tables.
-        let mut touched_accounts: BTreeSet<AccountId> = BTreeSet::new();
-
+        let mut expected = BTreeMap::new();
+        // Read every persisted input before staging any forest updates.
         for update in &tx_updates {
-            payloads.push(self.prepare_update_for_batch(update)?);
-            touched_accounts.insert(update.executed_transaction().account_id());
+            let tx = update.executed_transaction();
+            let id = tx.account_id();
+            let commitment = if let Some(commitment) = expected.get(&id) {
+                *commitment
+            } else {
+                self.current_account_header(id).await?.to_commitment()
+            };
+            if tx.initial_account().to_commitment() != commitment {
+                return Err(StoreError::DatabaseError(format!(
+                    "transaction input account commitment does not match state for {id}",
+                )));
+            }
+            expected.insert(id, tx.final_account().to_commitment());
         }
-
-        // Serialize all payloads to a JS array of plain objects via serde_wasm_bindgen.
-        // The default Serializer (serialize_bytes_as_arrays: false) produces Uint8Array for
-        // Vec<u8> fields annotated with #[serde(with = "serde_bytes")].
         let serializer = serde_wasm_bindgen::Serializer::new();
         let js_array = js_sys::Array::new();
-        for payload in &payloads {
-            let js_value = payload
-                .serialize(&serializer)
-                .map_err(|e| StoreError::DatabaseError(format!("serialization error: {e}")))?;
-            js_array.push(&js_value);
+        for update in &tx_updates {
+            let payload = self.prepare_update_for_batch(update)?;
+            let value = payload.serialize(&serializer).map_err(|error| {
+                StoreError::DatabaseError(format!("serialization error: {error}"))
+            })?;
+            js_array.push(&value);
         }
-
+        // A failed write leaves the staged forest ahead of the tables, which its readers detect.
         let promise = idxdb_apply_transaction_batch(self.db_id(), JsValue::from(js_array));
-        let js_result = crate::promise::await_ok(promise, "batch apply").await;
-
-        // The forest advanced while the payloads were prepared, so a successful write leaves
-        // nothing to do. A failed one wrote nothing, so the forest has to be walked back.
-        if let Err(err) = js_result {
-            for account_id in touched_accounts {
-                self.rebuild_account_forest(account_id).await?;
-            }
-            return Err(err);
-        }
-
-        Ok(())
+        crate::promise::await_ok(promise, "batch apply").await
     }
 
     /// Pre-computes all SMT work for a single update and builds the serializable payload
@@ -375,6 +335,7 @@ impl IdxdbStore {
             .collect();
 
         let payload = BatchUpdatePayload {
+            initial_account_commitment: executed_tx.initial_account().to_commitment().to_string(),
             transaction_record,
             account_state,
             input_notes,

@@ -369,6 +369,7 @@ const mtOnlyCargoArgs = isMt
 // mtOnlyCargoArgs above) — `+atomics` cfg requires nightly to flip true,
 // and atomics-enabled std requires recompiling std from rust-src.
 const baseCargoArgs = [
+  "--locked",
   "--features",
   // `browser` must be passed explicitly: the build runs with
   // `--no-default-features`, and the wasm_bindgen surface (plus the
