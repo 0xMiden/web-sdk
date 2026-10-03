@@ -1,4 +1,4 @@
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -192,49 +192,35 @@ impl IdxdbStore {
         if tx_updates.is_empty() {
             return Ok(());
         }
-        let mut touched_accounts = BTreeSet::new();
-        let result = async {
-            let mut expected = BTreeMap::new();
-            // Read every persisted input before staging any forest updates.
-            for update in &tx_updates {
-                let tx = update.executed_transaction();
-                let id = tx.account_id();
-                let commitment = if let Some(commitment) = expected.get(&id) {
-                    *commitment
-                } else {
-                    touched_accounts.insert(id);
-                    self.current_account_header(id).await?.to_commitment()
-                };
-                if tx.initial_account().to_commitment() != commitment {
-                    return Err(StoreError::DatabaseError(format!(
-                        "transaction input account commitment does not match state for {id}",
-                    )));
-                }
-                expected.insert(id, tx.final_account().to_commitment());
+        let mut expected = BTreeMap::new();
+        // Read every persisted input before staging any forest updates.
+        for update in &tx_updates {
+            let tx = update.executed_transaction();
+            let id = tx.account_id();
+            let commitment = if let Some(commitment) = expected.get(&id) {
+                *commitment
+            } else {
+                self.current_account_header(id).await?.to_commitment()
+            };
+            if tx.initial_account().to_commitment() != commitment {
+                return Err(StoreError::DatabaseError(format!(
+                    "transaction input account commitment does not match state for {id}",
+                )));
             }
-            let serializer = serde_wasm_bindgen::Serializer::new();
-            let js_array = js_sys::Array::new();
-            for update in &tx_updates {
-                let payload = self.prepare_update_for_batch(update)?;
-                let value = payload.serialize(&serializer).map_err(|error| {
-                    StoreError::DatabaseError(format!("serialization error: {error}"))
-                })?;
-                js_array.push(&value);
-            }
-            let promise = idxdb_apply_transaction_batch(self.db_id(), JsValue::from(js_array));
-            crate::promise::await_ok(promise, "batch apply").await
+            expected.insert(id, tx.final_account().to_commitment());
         }
-        .await;
-        if let Err(error) = result {
-            let mut cleanup_error = None;
-            for id in touched_accounts {
-                if let Err(rebuild_error) = self.rebuild_account_forest(id).await {
-                    cleanup_error.get_or_insert(rebuild_error);
-                }
-            }
-            return Err(cleanup_error.unwrap_or(error));
+        let serializer = serde_wasm_bindgen::Serializer::new();
+        let js_array = js_sys::Array::new();
+        for update in &tx_updates {
+            let payload = self.prepare_update_for_batch(update)?;
+            let value = payload.serialize(&serializer).map_err(|error| {
+                StoreError::DatabaseError(format!("serialization error: {error}"))
+            })?;
+            js_array.push(&value);
         }
-        Ok(())
+        // A failed write leaves the staged forest ahead of the tables, which its readers detect.
+        let promise = idxdb_apply_transaction_batch(self.db_id(), JsValue::from(js_array));
+        crate::promise::await_ok(promise, "batch apply").await
     }
 
     /// Pre-computes all SMT work for a single update and builds the serializable payload

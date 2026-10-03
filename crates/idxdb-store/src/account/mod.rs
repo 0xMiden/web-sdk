@@ -485,7 +485,7 @@ impl IdxdbStore {
         let new_map_roots = self.apply_patch_to_forest(final_header, patch)?;
         let code_bytes = patch_code_bytes(patch, final_header)?;
 
-        let write = apply_account_patch(
+        apply_account_patch(
             self.db_id(),
             account_id,
             final_header,
@@ -495,17 +495,7 @@ impl IdxdbStore {
             initial.to_commitment(),
         )
         .await
-        .map_err(|err| {
-            StoreError::DatabaseError(format!("failed to apply account patch: {err:?}"))
-        });
-
-        // The forest advanced above. If the write did not land it has to be walked back, or the
-        // account's trees stay ahead of its rows and every later witness read fails on the
-        // mismatch.
-        if write.is_err() {
-            self.rebuild_account_forest(account_id).await?;
-        }
-        write
+        .map_err(|err| StoreError::DatabaseError(format!("failed to apply account patch: {err:?}")))
     }
 
     /// Applies an account patch to the SMT forest, returning the new root of each map slot it
@@ -515,8 +505,8 @@ impl IdxdbStore {
     /// Each call advances the forest, so a later patch in a batch sees the earlier ones' results.
     ///
     /// The forest must be updated before the store write, because the write needs these roots. A
-    /// caller whose write then fails has to
-    /// [rebuild](crate::IdxdbStore::rebuild_account_forest).
+    /// write that then fails leaves the forest ahead of the tables; its readers compare roots with
+    /// persisted state and refresh the account, so nothing has to walk it back.
     pub(crate) fn apply_patch_to_forest(
         &self,
         final_header: &AccountHeader,
