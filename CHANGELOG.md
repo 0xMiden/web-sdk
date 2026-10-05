@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+* [CHANGE][web] Reading input or output notes from the IndexedDB store now fetches their note scripts in a single read per query instead of one read per note ([#456](https://github.com/0xMiden/web-sdk/pull/456)).
+
 ## 0.17.0 (2026-10-03)
 
 ### Enhancements
