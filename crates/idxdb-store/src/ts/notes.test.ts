@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { openDatabase, getDatabase } from "./schema.js";
 import {
   upsertInputNote,
@@ -868,6 +868,136 @@ describe("getOutputNotes", () => {
 
     const result = await getOutputNotesFromIds(dbId, ["out-partial"]);
     expect(result![0].serializedNoteScript).toBeUndefined();
+  });
+});
+
+// ================================================================================================
+// Note script batching
+// ================================================================================================
+
+describe("note script batching", () => {
+  // base64 of [1] and [2].
+  const SCRIPT_A = new Uint8Array([1]);
+  const SCRIPT_A_BASE64 = "AQ==";
+  const SCRIPT_B = new Uint8Array([2]);
+  const SCRIPT_B_BASE64 = "Ag==";
+
+  // The noteId is stored in `createdAt` so each processed input note can be identified.
+  async function insertInputNoteWithScript(
+    dbId: string,
+    noteId: string,
+    scriptRoot: string,
+    script: Uint8Array
+  ) {
+    await upsertInputNote(
+      dbId,
+      noteId,
+      noteId,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      scriptRoot,
+      script,
+      `nullifier-${noteId}`,
+      noteId,
+      STATE_EXPECTED,
+      DUMMY_BYTES,
+      undefined,
+      undefined,
+      undefined
+    );
+  }
+
+  // The noteId is stored in `recipientDigest` so each processed output note can be identified.
+  async function insertOutputNoteWithScript(
+    dbId: string,
+    noteId: string,
+    scriptRoot?: string,
+    script?: Uint8Array
+  ) {
+    await upsertOutputNote(
+      dbId,
+      noteId,
+      noteId,
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      noteId,
+      DUMMY_BYTES,
+      undefined,
+      100,
+      STATE_EXPECTED,
+      DUMMY_BYTES,
+      scriptRoot,
+      script
+    );
+  }
+
+  it("returns each input note its own script, including shared and missing roots", async () => {
+    const dbId = await openTestDb();
+    await insertInputNoteWithScript(dbId, "in-a1", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "in-a2", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "in-b", "root-b", SCRIPT_B);
+    await insertInputNoteWithScript(
+      dbId,
+      "in-missing",
+      "root-missing",
+      SCRIPT_A
+    );
+    // Model a note whose script row is absent.
+    await getDatabase(dbId).notesScripts.delete("root-missing");
+
+    const result = await getInputNotes(dbId, new Uint8Array([]));
+    const scripts = Object.fromEntries(
+      result!.map((note) => [note.createdAt, note.serializedNoteScript])
+    );
+
+    expect(scripts).toEqual({
+      "in-a1": SCRIPT_A_BASE64,
+      "in-a2": SCRIPT_A_BASE64,
+      "in-b": SCRIPT_B_BASE64,
+      "in-missing": undefined,
+    });
+  });
+
+  it("returns each output note its own script, including shared and missing roots", async () => {
+    const dbId = await openTestDb();
+    await insertOutputNoteWithScript(dbId, "out-a1", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "out-a2", "root-a", SCRIPT_A);
+    await insertOutputNoteWithScript(dbId, "out-b", "root-b", SCRIPT_B);
+    // A root without script bytes writes no `notesScripts` row.
+    await insertOutputNoteWithScript(dbId, "out-missing", "root-missing");
+    await insertOutputNoteWithScript(dbId, "out-no-recipient");
+
+    const result = await getOutputNotes(dbId, new Uint8Array([]));
+    const scripts = Object.fromEntries(
+      result!.map((note) => [note.recipientDigest, note.serializedNoteScript])
+    );
+
+    expect(scripts).toEqual({
+      "out-a1": SCRIPT_A_BASE64,
+      "out-a2": SCRIPT_A_BASE64,
+      "out-b": SCRIPT_B_BASE64,
+      "out-missing": undefined,
+      "out-no-recipient": undefined,
+    });
+  });
+
+  it("reads all scripts with a single bulkGet of the unique roots", async () => {
+    const dbId = await openTestDb();
+    await insertInputNoteWithScript(dbId, "in-a1", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "in-a2", "root-a", SCRIPT_A);
+    await insertInputNoteWithScript(dbId, "in-b", "root-b", SCRIPT_B);
+
+    const table = getDatabase(dbId).notesScripts;
+    const bulkGet = vi.spyOn(table, "bulkGet");
+    const get = vi.spyOn(table, "get");
+
+    await getInputNotes(dbId, new Uint8Array([]));
+
+    expect(bulkGet).toHaveBeenCalledTimes(1);
+    expect([...bulkGet.mock.calls[0][0]].sort()).toEqual(["root-a", "root-b"]);
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("returns all output notes when states is empty", async () => {
