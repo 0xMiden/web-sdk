@@ -365,7 +365,6 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
 }
 
 async function processOutputNotes(dbId: string, notes: IOutputNote[]) {
-  // Notes without a recipient have no script root.
   const scripts = await getNoteScriptsBase64(
     dbId,
     notes.map((note) => note.scriptRoot)

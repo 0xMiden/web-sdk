@@ -282,7 +282,6 @@ async function processInputNotes(dbId, notes) {
     });
 }
 async function processOutputNotes(dbId, notes) {
-    // Notes without a recipient have no script root.
     const scripts = await getNoteScriptsBase64(dbId, notes.map((note) => note.scriptRoot));
     return notes.map((note) => {
         const assetsBase64 = uint8ArrayToBase64(note.assets);
