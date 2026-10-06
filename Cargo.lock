@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "js-export-macro"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2283,9 +2283,9 @@ dependencies = [
 
 [[package]]
 name = "miden-agglayer"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdf39a50610f629fabb46dc86d168b3fc79994d8626f1bf70559b875f6ce9cfb"
+checksum = "6e8678c1ebbf8e896a8213fc290e4793885e114601312145a5cbf288a5955828"
 dependencies = [
  "alloy-sol-types",
  "fs-err",
@@ -2419,9 +2419,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eb60ffa02829dd9372181c825e9624ffbe7970fcb9d7d50e9c5c7e307322471"
+checksum = "b2c750011375ee29cc9f98d784395a5883eb2daaa615c49b869ed74ded407397"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,9 +2460,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f87b6c9908e43268cdd004c27776f1b21f41737611764db8ff406c56e069c2cc"
+checksum = "66b5e863bb6be3600a33a5ca02d1d6bd8ae63b8dbade53e9b166fbe5db478da2"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2475,9 +2475,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b6b8726158af8223c3bfe277bc1f55da91731ad10ea0b9b2f0cfd17570fff86"
+checksum = "707b7b9d82469518570c07b25aefb90233c710015a62f9097daf52d8c6c9656d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "miden-client-web"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "async-trait",
  "console_error_panic_hook",
@@ -2798,7 +2798,7 @@ dependencies = [
 
 [[package]]
 name = "miden-idxdb-store"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "async-trait",
  "base64",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "miden-mobile-prover"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "miden-client",
 ]
@@ -3144,9 +3144,9 @@ dependencies = [
 
 [[package]]
 name = "miden-protocol"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d9e8eb8b0ff7edebbbd5ef959c0cf624f0e8f5033c45151856e728debe04d83"
+checksum = "9880b79313d737d8ea71290651f196eaadaaadd30e8282886a0f6ffc89901ba6"
 dependencies = [
  "bech32",
  "fs-err",
@@ -3176,9 +3176,9 @@ dependencies = [
 
 [[package]]
 name = "miden-protocol-build-utils"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74ab122a13dcdcb6bb0df76b521bfd36336bc29a4084c0ab8d4704c77c8abe19"
+checksum = "e2844b72f6dcbe4788a07ec81ababb4e52a903fd0bcec981db63bf2d17ba9782"
 dependencies = [
  "fs-err",
  "miden-assembly",
@@ -3241,9 +3241,9 @@ dependencies = [
 
 [[package]]
 name = "miden-standards"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a19f9779d0e098792030e854a6d59a204138212a09533d7403f520399a77061"
+checksum = "d16c6d60f72228e503173fbc36c794a7ddc8ff8bee923f03f695274e7e2a3e2d"
 dependencies = [
  "bon",
  "miden-assembly",
@@ -3323,9 +3323,9 @@ dependencies = [
 
 [[package]]
 name = "miden-tx"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "005ab35f7e2a1feba8688fc3aff4f7c1d92b38b857792a348cb03d91f143b82a"
+checksum = "cc57d91b71116b0dbb585fe48c2af04b854d397be903e3e70ed70e30840cb482"
 dependencies = [
  "bon",
  "miden-agglayer",
@@ -5384,7 +5384,7 @@ dependencies = [
 
 [[package]]
 name = "strip-masp-debug"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "miden-core 0.33.0",
  "miden-mast-package 0.33.0",

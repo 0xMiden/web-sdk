@@ -105,6 +105,7 @@ const ciShardProjects = process.env.CI
           "test/fpi.test.ts",
           "test/explicit_input_note.test.ts",
           "test/compile_and_contract.test.ts",
+          "test/faucet_policy_v2.browser.test.ts",
           "test/package.test.ts",
           "test/mockchain.test.ts",
           "test/no_auth_consume.test.ts",
