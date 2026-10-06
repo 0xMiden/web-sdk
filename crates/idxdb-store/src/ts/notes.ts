@@ -403,6 +403,9 @@ async function getNoteScriptsBase64(
 ): Promise<Map<string, string>> {
   const db = getDatabase(dbId);
   const uniqueRoots = [...new Set(roots.filter((root) => !!root))] as string[];
+  if (uniqueRoots.length === 0) {
+    return new Map();
+  }
   const records = await db.notesScripts.bulkGet(uniqueRoots);
 
   return new Map(
