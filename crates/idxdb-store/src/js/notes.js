@@ -307,6 +307,9 @@ async function processOutputNotes(dbId, notes) {
 async function getNoteScriptsBase64(dbId, roots) {
     const db = getDatabase(dbId);
     const uniqueRoots = [...new Set(roots.filter((root) => !!root))];
+    if (uniqueRoots.length === 0) {
+        return new Map();
+    }
     const records = await db.notesScripts.bulkGet(uniqueRoots);
     return new Map(records
         .filter((record) => record !== undefined)
