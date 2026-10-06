@@ -725,6 +725,7 @@ describe("getInputNotes", () => {
       result!.map((note) => [note.createdAt, note.serializedNoteScript])
     );
 
+    expect(result).toHaveLength(4);
     expect(scripts).toEqual({
       a1: SCRIPT_A_BASE64,
       a2: SCRIPT_A_BASE64,
