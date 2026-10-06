@@ -4,7 +4,7 @@
 
 ### Changes
 
-* [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1.
+* [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).
 
 ## 0.17.1 (2026-10-07)
 
