@@ -280,20 +280,102 @@ describe("openDatabase", () => {
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
   });
-  it("closes the previous Dexie connection when reopening the same network", async () => {
+});
+
+describe("openDatabase / closeDatabase holders", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps a database open until its last holder closes it", async () => {
     const name = uniqueDbName();
     await openDatabase(name, "1.0.0");
-    const first = getDatabase(name);
-    openMidenDbs.push(first);
-    const closeSpy = vi.spyOn(first.dexie, "close");
+    await openDatabase(name, "1.0.0");
+    const db = trackMidenDb(getDatabase(name));
+
+    closeDatabase(name);
+    expect(getDatabase(name)).toBe(db);
+    expect(db.dexie.isOpen()).toBe(true);
+
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(false);
+    expect(() => getDatabase(name)).toThrow(/Database not found/);
+  });
+
+  it("opens one connection for concurrent opens of the same name", async () => {
+    const name = uniqueDbName();
+    const openSpy = vi.spyOn(MidenDatabase.prototype, "open");
+
+    await Promise.all([
+      openDatabase(name, "1.0.0"),
+      openDatabase(name, "1.0.0"),
+    ]);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+
+    const db = trackMidenDb(getDatabase(name));
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(true);
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(false);
+  });
+
+  it("leaves the registered database in place when a reopen fails", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    // A connection closed elsewhere makes the next open a real one.
+    first.dexie.close();
+
+    let failed: MidenDatabase | undefined;
+    vi.spyOn(MidenDatabase.prototype, "open").mockImplementationOnce(
+      async function (this: MidenDatabase) {
+        failed = this;
+        await this.dexie.open();
+        throw new Error("open failed");
+      }
+    );
+
+    await expect(openDatabase(name, "1.0.0")).rejects.toThrow("open failed");
+    expect(getDatabase(name)).toBe(first);
+    expect(failed).toBeDefined();
+    expect(failed!.dexie.isOpen()).toBe(false);
+  });
+
+  it("replaces a registered database whose connection was closed elsewhere", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    first.dexie.close();
 
     await openDatabase(name, "1.0.0");
-    const second = getDatabase(name);
-    openMidenDbs.push(second);
-
-    expect(closeSpy).toHaveBeenCalled();
+    const second = trackMidenDb(getDatabase(name));
     expect(second).not.toBe(first);
+    expect(second.dexie.isOpen()).toBe(true);
+
+    // The first holder still holds the name, so one close keeps it open.
     closeDatabase(name);
+    expect(second.dexie.isOpen()).toBe(true);
+    closeDatabase(name);
+    expect(second.dexie.isOpen()).toBe(false);
+  });
+
+  it("closes a replaced connection that reopened while the fresh open was in flight", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    first.dexie.close();
+
+    const reopening = openDatabase(name, "1.0.0");
+    await first.dexie.open();
+    await reopening;
+
+    const second = trackMidenDb(getDatabase(name));
+    expect(second).not.toBe(first);
+    expect(first.dexie.isOpen()).toBe(false);
+  });
+
+  it("ignores a close for a name that was never opened", () => {
+    expect(() => closeDatabase(uniqueDbName())).not.toThrow();
   });
 });
 

@@ -10,66 +10,107 @@ export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+interface RegistryEntry {
+  db: MidenDatabase;
+  holders: number;
+}
+
+interface PendingOpen {
+  holders: number;
+  opened: Promise<void>;
+}
+
 // Since we can't have a pointer to a JS Object from rust, we'll
 // use this instead to keep track of open DBs. A client can have
 // a DB for mainnet, devnet, testnet or a custom one, so this should be ok.
-const databaseRegistry = new Map<string, MidenDatabase>();
+// Each name has one connection, held by every live Rust `IdxdbStore` on it.
+const databaseRegistry = new Map<string, RegistryEntry>();
+const pendingOpens = new Map<string, PendingOpen>();
 
 /**
  * Get a database instance from the registry by its ID.
  * Throws if the database hasn't been opened yet.
  */
 export function getDatabase(dbId: string): MidenDatabase {
-  const db = databaseRegistry.get(dbId);
-  if (!db) {
+  const entry = databaseRegistry.get(dbId);
+  if (!entry) {
     throw new Error(
       `Database not found for id: ${dbId}. Call openDatabase first.`
     );
   }
-  return db;
+  return entry.db;
 }
 
 /**
- * Close and unregister a database previously opened for `network`.
- * No-op when nothing is registered under that id.
+ * Releases one holder of the database registered for `network`, closing and
+ * unregistering it when the last holder is gone. No-op for an unknown name.
  */
 export function closeDatabase(network: string): void {
-  const existing = databaseRegistry.get(network);
-  if (!existing) {
+  const entry = databaseRegistry.get(network);
+  if (!entry) {
     return;
   }
-  existing.dexie.close();
+  entry.holders -= 1;
+  if (entry.holders > 0) {
+    return;
+  }
+  entry.db.dexie.close();
   databaseRegistry.delete(network);
 }
 
 /**
- * Opens a database for the given network and registers it in the registry.
- * Returns the database ID (network name) which can be used to retrieve the database later.
- *
- * If a database is already registered for `network`, the previous Dexie
- * connection is closed before the new one is installed so successive
- * short-lived clients do not leak open `IDBDatabase` handles (#377).
+ * Opens the database for `network`, or joins the connection already open or
+ * opening under that name, and counts the caller as one holder until it calls
+ * `closeDatabase`. Returns the database ID (network name) which can be used to
+ * retrieve the database later.
  */
 export async function openDatabase(
   network: string,
   clientVersion: string
 ): Promise<string> {
-  closeDatabase(network);
-  const db = new MidenDatabase(network);
-  const success = await db.open(clientVersion);
-  /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
-  if (!success) {
-    throw new Error(`Failed to open IndexedDB database: ${network}`);
+  const registered = databaseRegistry.get(network);
+  if (registered?.db.dexie.isOpen()) {
+    registered.holders += 1;
+    return network;
   }
-  databaseRegistry.set(network, db);
+  let pending = pendingOpens.get(network);
+  if (!pending) {
+    pending = { holders: 0, opened: Promise.resolve() };
+    pendingOpens.set(network, pending);
+    pending.opened = openAndRegister(network, clientVersion, pending);
+  }
+  pending.holders += 1;
+  await pending.opened;
   return network;
 }
 
-// Allow the web-client terminate path to close the store without a hard
-// packaging dependency on this module (loaded via the wasm idxdb glue).
-if (typeof globalThis !== "undefined") {
-  (globalThis as typeof globalThis & { __midenCloseIdxdb?: typeof closeDatabase }).__midenCloseIdxdb =
-    closeDatabase;
+// Registers the connection and counts its waiting holders in one turn, so a
+// close landing in between cannot release it under them. An entry it replaces
+// was closed elsewhere, and that entry's holders now hold this connection.
+async function openAndRegister(
+  network: string,
+  clientVersion: string,
+  pending: PendingOpen
+): Promise<void> {
+  const db = new MidenDatabase(network);
+  try {
+    const success = await db.open(clientVersion);
+    /* v8 ignore next 3 - open() only returns false after logWebStoreError re-throws, so !success is unreachable */
+    if (!success) {
+      throw new Error(`Failed to open IndexedDB database: ${network}`);
+    }
+  } catch (err) {
+    db.dexie.close();
+    throw err;
+  } finally {
+    pendingOpens.delete(network);
+  }
+  const replaced = databaseRegistry.get(network);
+  replaced?.db.dexie.close();
+  databaseRegistry.set(network, {
+    db,
+    holders: (replaced?.holders ?? 0) + pending.holders,
+  });
 }
 
 enum Table {

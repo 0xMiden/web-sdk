@@ -201,6 +201,64 @@ test.describe("Sync Lock Tests", () => {
       expect(result.count).toBe(5);
       expect(result.allValid).toBe(true);
     });
+
+    test("terminating one in-realm client leaves its sibling's store open until the last one goes", async ({
+      page,
+    }) => {
+      const result = await page.evaluate(async () => {
+        const storeName = `${window.storeName}_terminate`;
+        const createInRealm = () =>
+          window.WasmWebClient.createClient(
+            window.rpcUrl,
+            undefined,
+            undefined,
+            storeName,
+            undefined, // logLevel
+            false, // useWorker
+            undefined, // observability
+            window.feeFaucetId
+          );
+        const first = await createInRealm();
+        const second = await createInRealm();
+
+        first.terminate();
+        await first.waitForIdle();
+        const accounts = await second.getAccounts();
+        const summary = await second.syncState();
+
+        second.terminate();
+        await second.waitForIdle();
+        // Dexie closes a connection a delete would be blocked by and warns
+        // that it did, so a warning here means the store was never released.
+        const warnings = [];
+        const originalWarn = console.warn;
+        console.warn = (...args) => {
+          warnings.push(args.map(String).join(" "));
+          originalWarn(...args);
+        };
+        try {
+          await new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(storeName);
+            request.onsuccess = () => resolve(undefined);
+            request.onerror = () => reject(request.error);
+          });
+        } finally {
+          console.warn = originalWarn;
+        }
+
+        return {
+          accountCount: accounts.length,
+          blockNum: summary.blockNum(),
+          openConnectionWarnings: warnings.filter((w) =>
+            w.includes(`delete database '${storeName}'`)
+          ),
+        };
+      });
+
+      expect(result.accountCount).toBe(0);
+      expect(result.blockNum).toBeGreaterThanOrEqual(0);
+      expect(result.openConnectionWarnings).toEqual([]);
+    });
   });
 
   test.describe("Different Stores", () => {

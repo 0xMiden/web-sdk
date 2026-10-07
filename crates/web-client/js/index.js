@@ -1320,15 +1320,6 @@ class WebClient {
       this.wasmWebClient = null;
       this.wasmWebClientPromise = null;
     }
-
-    const closeIdxdb = globalThis.__midenCloseIdxdb;
-    if (typeof closeIdxdb === "function" && this.storeName) {
-      try {
-        closeIdxdb(this.storeName);
-      } catch {
-        // Best-effort: store may already be closed or never opened.
-      }
-    }
   }
 }
 
