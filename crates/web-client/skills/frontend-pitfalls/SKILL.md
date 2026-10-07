@@ -361,6 +361,8 @@ await client.notes.sendPrivate({ note, to, inclusionProof });
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
+A rejection from either is final. The SDK keeps no queue, and neither `sync()` nor `syncNoteTransport()` sends the note again; only transient transport failures are retried, inside the call (`noteTransportMaxRetries` / `noteTransportRetryIntervalMs` on `ClientOptions`). Keep the note id and send the same note again: delivery is idempotent by note id. The React hooks report the same situation as a `PrivateNoteDeliveryError` and retry it with `useResendPrivateNotes`.
+
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 
 ## FP13: Foreign-Account State Is Read at the Reference Block (HIGH)
@@ -499,7 +501,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits; a rejected send is final, so send it again yourself |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |

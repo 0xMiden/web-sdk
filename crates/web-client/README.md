@@ -273,6 +273,13 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`noteTransportMaxRetries` (0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250) set how
+`notes.sendPrivate` / `notes.sendPrivateOutput` retry a transient note
+transport failure within the call. A send that still fails rejects, and the
+rejection is final: the client keeps no queue and no sync sends the note again,
+so send the same note again to retry (delivery is idempotent by note id).
+
 ### Lazy usage (`/lazy`)
 
 ```typescript
