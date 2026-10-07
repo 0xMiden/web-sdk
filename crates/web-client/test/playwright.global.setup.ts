@@ -26,6 +26,16 @@ export function isLocalhost(): boolean {
   return !network || network === "localhost";
 }
 
+// Fee faucet of the chain under test. Since 0.17 the fee asset lives in the
+// protocol configuration rather than the block header, so a client cannot execute
+// until it is told which faucet issues it, and a local node mints a fresh one at
+// each genesis. `scripts/start-test-node.sh` reports it as
+// "Native faucet account id:" in its bootstrap log; CI reads that line into this
+// variable. Left unset, the SDK falls back to what it knows for the network.
+export function getFeeFaucetId(): string | undefined {
+  return process.env.TEST_MIDEN_FEE_FAUCET_ID || undefined;
+}
+
 // Determine RPC URL from environment or default to localhost
 export function getRpcUrl(): string {
   if (process.env.TEST_MIDEN_RPC_URL) {
@@ -102,7 +112,8 @@ export const test = base.extend<{ forEachTest: void }>({
           rpcUrl,
           undefined,
           undefined,
-          storeName
+          storeName,
+          getFeeFaucetId()
         );
         setClient(client);
       } else {
@@ -124,7 +135,13 @@ export const test = base.extend<{ forEachTest: void }>({
         await page.goto("http://localhost:8080");
 
         await page.evaluate(
-          async ({ rpcUrl, proverUrl, storeName }) => {
+          async ({
+            rpcUrl,
+            proverUrl,
+            localTxProverUrl,
+            storeName,
+            feeFaucetId,
+          }) => {
             // Import the sdk classes and attach them
             // to the window object for testing
             const sdkExports = await import("./index.js");
@@ -139,15 +156,63 @@ export const test = base.extend<{ forEachTest: void }>({
               rpcUrl,
               undefined,
               undefined,
-              storeName
+              storeName,
+              undefined, // logLevel
+              undefined, // useWorker, defaulted
+              undefined, // observability
+              feeFaucetId
             );
             window.rpcUrl = rpcUrl;
+            window.feeFaucetId = feeFaucetId;
             window.storeName = storeName;
 
             window.client = client;
 
             // Create a namespace for helper functions
             window.helpers = window.helpers || {};
+
+            // One place that knows the wrapper's positional list, so a test that
+            // wants a second client against the same node cannot silently drop
+            // the fee faucet - without it the client cannot execute or screen
+            // notes, and the failure surfaces far from the call.
+            window.helpers.createClient = (clientStoreName, seed) =>
+              window.WasmWebClient.createClient(
+                window.rpcUrl,
+                undefined,
+                seed,
+                clientStoreName,
+                undefined, // logLevel
+                undefined, // useWorker, defaulted
+                undefined, // observability
+                window.feeFaucetId
+              );
+
+            window.helpers.createClientWithKeystore = (
+              getKeyCb,
+              insertKeyCb,
+              signCb,
+              clientStoreName
+            ) =>
+              window.WasmWebClient.createClientWithExternalKeystore(
+                window.rpcUrl,
+                undefined,
+                undefined,
+                clientStoreName,
+                getKeyCb,
+                insertKeyCb,
+                signCb,
+                undefined, // logLevel
+                undefined, // useWorker, defaulted
+                undefined, // observability
+                window.feeFaucetId
+              );
+
+            // The test node runs a prover beside its RPC. Expose its URL
+            // unconditionally, separately from `remoteProverUrl`: a test that
+            // needs to prove remotely can then do so without setting
+            // TEST_MIDEN_PROVER_URL, which would flip `fullyParallel` for every
+            // project in the run (playwright.config.ts).
+            window.localTxProverUrl = localTxProverUrl;
 
             // Add the remote prover url to window
             window.remoteProverUrl = proverUrl;
@@ -196,14 +261,20 @@ export const test = base.extend<{ forEachTest: void }>({
                 transactionRequest
               );
 
-              const useRemoteProver =
-                prover != null && window.remoteProverUrl != null;
-              const proverToUse = useRemoteProver
-                ? window.TransactionProver.newRemoteProver(
-                    window.remoteProverUrl,
-                    BigInt(120_000)
-                  )
-                : window.TransactionProver.newLocalProver();
+              // A caller that hands over a prover gets that prover. The older
+              // shape rebuilt one from `window.remoteProverUrl` and ignored the
+              // argument, so a test could not prove remotely unless the whole
+              // run was configured for it - and configuring the run flips
+              // Playwright's `fullyParallel` for every project, which is far
+              // more than one test should cost.
+              const proverToUse =
+                prover ??
+                (window.remoteProverUrl != null
+                  ? window.TransactionProver.newRemoteProver(
+                      window.remoteProverUrl,
+                      BigInt(120_000)
+                    )
+                  : window.TransactionProver.newLocalProver());
 
               const proven = await client.proveTransaction(result, proverToUse);
               const submissionHeight = await client.submitProvenTransaction(
@@ -237,7 +308,11 @@ export const test = base.extend<{ forEachTest: void }>({
                 rpcUrl,
                 undefined,
                 initSeed,
-                window.storeName
+                window.storeName,
+                undefined, // logLevel
+                undefined, // useWorker, defaulted
+                undefined, // observability
+                window.feeFaucetId
               );
               window.client = client;
               await window.client.syncState();
@@ -265,7 +340,9 @@ export const test = base.extend<{ forEachTest: void }>({
           {
             rpcUrl: getRpcUrl(),
             proverUrl: getProverUrl() ?? null,
+            localTxProverUrl: `http://localhost:${REMOTE_TX_PROVER_PORT}`,
             storeName,
+            feeFaucetId: getFeeFaucetId(),
           }
         );
       }

@@ -31,6 +31,7 @@ import {
   createMockAccountId,
   createMockInputNoteRecord,
   createMockTransactionId,
+  createMockConsumableNoteRecord,
 } from "../mocks/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
@@ -334,9 +335,10 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
     const mockWallet = createMockAccount({
       id: vi.fn(() => createMockAccountId("0xprivate_wallet")),
     });
-    const consumable = {
-      inputNoteRecord: vi.fn(() => ({ toNote: vi.fn(() => ({})) })),
-    };
+    const consumable = createMockConsumableNoteRecord(
+      "0xnote1",
+      "0xprivate_wallet"
+    );
     const newWallet = vi.fn().mockResolvedValue(mockWallet);
     const mockClient = createMockWebClient({
       newWallet,
@@ -460,9 +462,10 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
     const mockWallet = createMockAccount({
       id: vi.fn(() => createMockAccountId("0xfallback_wallet")),
     });
-    const consumable = {
-      inputNoteRecord: vi.fn(() => ({ toNote: vi.fn(() => ({})) })),
-    };
+    const consumable = createMockConsumableNoteRecord(
+      "0xnote1",
+      "0xfallback_wallet"
+    );
     const newWallet = vi.fn().mockResolvedValue(mockWallet);
     const mockClient = createMockWebClient({
       newWallet,

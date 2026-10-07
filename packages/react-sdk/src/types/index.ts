@@ -106,6 +106,14 @@ export interface MidenConfig {
   rpcUrl?: RpcUrlConfig;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
+  /**
+   * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
+   *
+   * Optional. Since 0.17 the fee asset lives in the protocol configuration, which the client
+   * receives from the node when it syncs, so execution does not need this. It only sets what
+   * `client.feeFaucetId()` reports before the first sync.
+   */
+  feeFaucetId?: string;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */
@@ -573,7 +581,9 @@ export interface ExecuteTransactionOptions {
   /**
    * Execute against a pinned reference block instead of the current sync
    * height, so a summary signed at that block reproduces exactly. Capture one
-   * with {@link useChainAnchor}.
+   * with {@link useChainAnchor}. Leave it out for a multisig request built by
+   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+   * client has synced to its bound block.
    */
   anchor?: ChainAnchor;
 }
@@ -594,8 +604,10 @@ export interface PreviewTransactionOptions {
   request: TransactionRequestInput;
   /**
    * Derive the summary at a pinned reference block. Required when verifying a
-   * proposal: the summary binds the reference block commitment, so deriving it
-   * at the local sync height produces a different summary.
+   * summary that binds the reference block commitment, since deriving it at the
+   * local sync height produces a different summary. Leave it out for a multisig
+   * request built by `feeAwareTransactionRequestBuilder`, which previews at the
+   * tip once the client has synced to its bound block.
    */
   anchor?: ChainAnchor;
 }

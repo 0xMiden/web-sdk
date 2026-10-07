@@ -965,7 +965,11 @@ export async function createMidenClient(sdk: any): Promise<any> {
       rpcUrl?: string,
       noteTransportUrl?: any,
       seed?: any,
-      storeName?: string
+      storeName?: string,
+      _logLevel?: unknown,
+      _useWorker?: unknown,
+      _observability?: unknown,
+      feeFaucetId?: string
     ) => {
       const dir = tmpDir();
       const client = new rawSdk.WebClient();
@@ -975,7 +979,10 @@ export async function createMidenClient(sdk: any): Promise<any> {
         normalizeArg(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
-        false
+        // Forward what the caller passed; the environment is only the fixture
+        // default. Reconstructing it here meant deleting `options?.feeFaucetId`
+        // from client.js failed no node-mode test.
+        feeFaucetId ?? process.env.TEST_MIDEN_FEE_FAUCET_ID ?? null
       );
       return wrapClientForMidenClient(client, rawSdk, storeName);
     },
@@ -1024,9 +1031,24 @@ export async function createIntegrationClient(): Promise<{
 } | null> {
   const rpcUrl = getRpcUrl();
   const storeName = `integration_${RUN_ID}_${++_integrationCounter}`;
+  // `null` from here means "no node reachable", and callers turn that into
+  // test.skip. A misconfiguration must not be able to borrow that meaning: the
+  // browser twin swallowed a missing fee faucet once and turned 12 integration
+  // tests into silent skips while their shards reported success.
+  if (!process.env.TEST_MIDEN_FEE_FAUCET_ID) {
+    throw new Error(
+      "TEST_MIDEN_FEE_FAUCET_ID is unset - a client without a fee faucet " +
+        "cannot execute or screen notes on any 0.17 network"
+    );
+  }
   try {
     return await createNodeIntegrationClient(rpcUrl, storeName);
-  } catch {
+  } catch (err) {
+    // Keep the skip for an unreachable node, but leave a trace: a future cause
+    // is otherwise invisible in the run output.
+    console.debug(
+      `integration client unavailable: ${(err as Error)?.message ?? err}`
+    );
     return null;
   }
 }

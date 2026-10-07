@@ -21,6 +21,7 @@ guard, so do not reason from one package to the other.
 ```ts
 const client = await MidenClient.create({
   rpcUrl: "testnet",
+  feeFaucetId: FEE_FAUCET,
   observer: createSentryObserver({ client: Sentry, minDurationMs: 5_000 }),
 });
 ```

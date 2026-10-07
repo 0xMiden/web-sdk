@@ -35,6 +35,7 @@ interface MidenObservation {
 ```ts
 const client = await MidenClient.create({
   rpcUrl: "testnet",
+  feeFaucetId: FEE_FAUCET,
   observer: (o) => metrics.record(o.op, o.outcome, Math.round(o.durationMs)),
 });
 ```

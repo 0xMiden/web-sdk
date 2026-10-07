@@ -82,6 +82,7 @@ var Table;
     Table["Tags"] = "tags";
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
+    Table["AccountWitnesses"] = "accountWitnesses";
 })(Table || (Table = {}));
 /** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
 export const SETTING_SCOPE_CLIENT = 0;
@@ -143,6 +144,7 @@ export class MidenDatabase {
     tags;
     foreignAccountCode;
     settings;
+    accountWitnesses;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -236,6 +238,11 @@ export class MidenDatabase {
         this.dexie.version(5).stores({
             [Table.Settings]: indexes("[scope+key]", "scope"),
         });
+        // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
+        // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+        this.dexie.version(6).stores({
+            [Table.AccountWitnesses]: indexes("&accountId"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -259,6 +266,7 @@ export class MidenDatabase {
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
+        this.accountWitnesses = this.dexie.table(Table.AccountWitnesses);
         this.dexie.on("populate", () => {
             this.blockchainCheckpoint
                 .put({

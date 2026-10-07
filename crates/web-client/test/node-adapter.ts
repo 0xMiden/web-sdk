@@ -16,6 +16,7 @@ import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { FaucetType } from "../js/enums.js";
 import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
 
 const require = createRequire(import.meta.url);
@@ -107,7 +108,7 @@ function initSdk(): any {
     "getMapEntries",
     "getMapItem",
   ]);
-  patchNullToUndefined(rawSdk.NoteConsumability, ["consumableAfterBlock"]);
+  patchNullToUndefined(rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]);
 
   // Patch static methods (snake_case aliases for camelCase)
   if (rawSdk.NoteScript) {
@@ -316,7 +317,8 @@ export const WasmWebClient = {
     rpcUrl?: string,
     noteTransportUrl?: any,
     seed?: any,
-    storeName?: string
+    storeName?: string,
+    feeFaucetId?: string
   ) => {
     const dir = tmpTestDir();
     const client = new sdk.WebClient();
@@ -330,7 +332,7 @@ export const WasmWebClient = {
       normSeed ?? null,
       path.join(dir, `${storeName || "store"}.db`),
       path.join(dir, "keystore"),
-      false
+      feeFaucetId ?? null
     );
     return wrapClient(client, storeName);
   },
@@ -494,15 +496,8 @@ export async function setupNodeGlobals(
     NoteFilter: sdk.NoteFilter,
     NoteFilterTypes: sdk.NoteFilterTypes,
     AccountId: sdk.AccountId,
-    // AccountType: the JS wrapper uses string-based types, not the napi enum
-    AccountType: {
-      MutableWallet: "MutableWallet",
-      ImmutableWallet: "ImmutableWallet",
-      FungibleFaucet: "FungibleFaucet",
-      NonFungibleFaucet: "NonFungibleFaucet",
-      ImmutableContract: "ImmutableContract",
-      MutableContract: "MutableContract",
-    },
+    AccountType: sdk.AccountType,
+    FaucetType,
     AccountInterface: sdk.AccountInterface,
     AccountBuilder: wrapClass(sdk.AccountBuilder),
     AccountComponent: wrapClass(sdk.AccountComponent),

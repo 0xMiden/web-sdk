@@ -52,6 +52,9 @@ import { MidenClient } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create({
   endpoint: "https://rpc.testnet.miden.xyz",
+  // Required: the faucet the chain mints its fee asset from. Since 0.17 that
+  // lives in a protocol configuration the node does not serve over RPC.
+  feeFaucetId: FEE_FAUCET,
 });
 
 const account = await client.accounts.create({ storage: "public" });
@@ -221,7 +224,7 @@ import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
 await MidenClient.ready();
 await initThreadPool(navigator.hardwareConcurrency); // once, at startup
-const client = await MidenClient.createTestnet();     // prove calls now fan out across threads
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET }); // prove calls now fan out across threads
 ```
 
 The [web-client README](crates/web-client/README.md#setting-cross-origin-isolation-headers) has the full header recipes (Vite, Next.js, Express, extension manifests), the COEP caveats, and a service-worker fallback for hosts where you can't add headers.

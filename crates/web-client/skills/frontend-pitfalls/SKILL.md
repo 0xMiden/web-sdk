@@ -1,6 +1,6 @@
 ---
 name: frontend-pitfalls
-description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate block hints, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
+description: Critical pitfalls and safety rules for Miden frontend development. Covers per-hook readiness, non-atomic client sequences, COOP/COEP headers, BigInt boundaries, Bech32 network inference, IndexedDB state loss including the minor-version store wipe, auto-sync side effects, Vite configuration, React rendering race conditions, the Web Worker shim and callback-prover downgrade, structured error codes, eager vs lazy entry points, the fee note now included in outputNotes(), the removed expiredBefore filter, sendPrivate inclusion proofs, block-pinned foreign-account inputs, and transaction preview authorization. Use when reviewing, debugging, or writing Miden frontend code, or when upgrading from 0.15 to 0.16.
 ---
 
 # Miden Frontend Pitfalls
@@ -345,38 +345,37 @@ const expired = txs.filter((t) => t.expirationBlockNum() < height);
 
 It throws only where the filter was actually applied: a query that also carries `status` or `ids` is served by those, and an undefined `expiredBefore` still means "no filter".
 
-## FP12: sendPrivate Requires scanAfterBlockNum, and Overshooting Drops Delivery (HIGH)
+## FP12: sendPrivate Requires an Inclusion Proof (HIGH)
 
-`client.notes.sendPrivate({ note, to })` now requires an explicit `scanAfterBlockNum` - the block the recipient scans **forward** from for the note's on-chain commitment. The SDK no longer infers it from the current sync height, because that inference silently dropped delivery once the sender had synced past the note (for example when relaying *after* waiting for the transaction to commit).
+`client.notes.sendPrivate({ note, to, inclusionProof })` requires a `NoteInclusionProof`. The transport verifies it and the recipient scans from the block the proof names. The proof exists once the creating transaction is committed and this client has synced past that block.
 
-The value must be at or below the commitment block. A hint above it is never scanned back to and the recipient simply never receives the note - no error, on either side.
+For one of this client's own output notes, `sendPrivateOutput({ noteId, to })` reads the stored proof and throws if sync has not produced it yet. Call it after the transaction commits.
+
+`NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof. The published package includes it because that build enables the `testing` feature. The mock transport accepts it. A real node rejects it.
 
 ```tsx
-// CORRECT for an arbitrary note - pin the chain tip at submission time
-await client.notes.sendPrivate({ note, to, scanAfterBlockNum: tipAtSubmit });
+await client.notes.sendPrivate({ note, to, inclusionProof });
 
-// BETTER for one of this client's own output notes - the block is derived for you
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 
-## FP13: Foreign-Account Inputs Are Pinned to One Block (HIGH)
+## FP13: Foreign-Account State Is Read at the Reference Block (HIGH)
 
-`client.transactions.foreignAccountInputs(accounts, blockNum)` (0.16.1) fetches each foreign account's state and inclusion witness so you can supply it instead of having it fetched at execution time. Each witness opens against the account tree of `blockNum` alone.
+A foreign account's state and witness are fetched against the transaction's own reference block, and the vault entries and storage-map keys the foreign code reads are resolved during execution as per-asset and per-key witnesses. Nothing is prefetched: `foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17 along with the upstream types behind them.
 
-**Do not sync between fetching these and executing.** The results are valid only for a transaction whose reference block is exactly `blockNum` - the anchor's block when executing against a `ChainAnchor`, or the sync height at execution time otherwise. Execution fails naming the account and the block. With auto-sync on a 15 s timer (FP6), a fetch-then-execute gap is easy to open by accident; capture a `ChainAnchor` or disable auto-sync across the window.
+**The reference block must be one the node still serves account state for.** Nodes keep a bounded window of account history (50 blocks at the time of writing), so a transaction pinned to an older block - an anchor captured minutes earlier, say - fails naming the account and the block, and there is no longer a way to carry the state along with the request. Capture the `ChainAnchor` close to execution. For a multisig proposal, do not anchor at all: execute at the tip with the bound block in `withBlockNumbers` (chain-anchored-execution R0).
 
 ```tsx
-const inputs = await client.transactions.foreignAccountInputs(
-  [ForeignAccount.public(id, storageRequirements)],
-  anchor.blockNum() // a method, not a property
-);
-// re-declare them so nothing is fetched at execution time
-const accounts = inputs.map((i) => ForeignAccount.prefetched(i));
+const foreign = ForeignAccount.public(id, storageRequirements);
+const request = builder
+  .withCustomScript(script)
+  .withForeignAccounts(new ForeignAccountArray([foreign]))
+  .build();
 ```
 
-Second trap: **only the accounts you name are fetched.** This does not discover the accounts a transaction loads on its own, such as faucets whose asset callbacks it triggers. Each returned `AccountInputs` entry serializes on its own (`entry.serialize()`), which is how you ship prefetched state to another client.
+Second trap: **only the accounts you name are declared.** This does not discover the accounts a transaction loads on its own, such as faucets whose asset callbacks it triggers.
 
 ## FP14: transactions.preview Rejects When Already Authorized (MEDIUM)
 
@@ -476,7 +475,7 @@ Verify: `crates/web-client/js/eager.js`.
 - `FungibleAsset.withCallbacks(flag)` removed. The flag is an immutable property of the issuing faucet's account id; `FungibleAsset.callbacks()` still reports it.
 - `TransactionSummary.salt()` replaced by `userParams()` (the seven user-defined field elements the summary commitment binds).
 - `ExecutedTransaction.accountDelta()` and `TransactionStoreUpdate.accountDelta()` replaced by `accountPatch()`, exposing the absolute-valued `AccountPatch` / `AccountStoragePatch` / `AccountVaultPatch`. `TransactionSummary.accountDelta()` remains relative. `AccountStorageDelta` was removed.
-- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`.
+- `AccountComponent.createNetworkAuth` renamed to `createNetworkAuthComponents(NoteScriptFee[], feeFaucetId)`, which returns an **array**. Add every returned component to the builder with `AccountBuilder.withComponent`. Since 0.17 `feeFaucetId` must be the chain's own (`client.feeFaucetId()`): the node never runs network transactions for an account whose fee asset differs from the chain's protocol configuration, and the notes sent to it silently go unconsumed.
 - MASM: note scripts calling `basic_wallet::add_assets_to_account` must switch to `basic_wallet::move_note_assets_to_account` (a stale script fails to compile with `undefined item 'add_assets_to_account'`). Account-component procedures now require `@account_procedure`, and transaction scripts use `@transaction_script pub proc main`.
 - `newConsumeTransactionRequest` is async and takes the consuming account as a second argument. `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` are async too (parameters unchanged). Code going through `client.transactions.consume(...)` / `consumeAll(...)` or the `useConsume` hook is unaffected.
 - `TransactionProver.newLocalProver()` now produces Poseidon2 proofs, matching the client's own default prover instead of the prover crate's Blake3 default. Expect local proving to take roughly 1.6-2.6x longer. This is an alignment, not a regression - do not go hunting for a performance bug.
@@ -498,7 +497,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` block hint | HIGH | Pass `scanAfterBlockNum` at or below the commitment block, or prefer `sendPrivateOutput` |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |

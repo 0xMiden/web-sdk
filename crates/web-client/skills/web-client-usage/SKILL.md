@@ -22,7 +22,7 @@ The SDK exposes a top-level `MidenClient` whose state is split across typed
 | Resource             | What it covers                                                                                                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `client.accounts`    | Wallets, faucets, custom contracts, listing, import/export, addresses                                                                                                          |
-| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `foreignAccountInputs` / `list` / `waitFor` |
+| `client.transactions` | `send` / `mint` / `bridge` / `consume` / `consumeAll` / `swap` / `pswapCreate` / `pswapConsume` / `pswapCancel` / `createNetworkNote` / `execute` / `executeProgram` / `batch` / `submitBatch` / `preview` / `captureAnchor` / `executeRequest` / `submit` / `submitProven` / `list` / `waitFor` |
 | `client.notes`       | Listing, fetching, importing/exporting, private-note transport                                                                                                                 |
 | `client.tags`        | Note-tag subscriptions                                                                                                                                                         |
 | `client.settings`    | Persistent client settings                                                                                                                                                     |
@@ -67,11 +67,19 @@ the low-level surface on every upgrade.
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 // Testnet - autoSync on, testnet RPC + prover + note transport
-const client = await MidenClient.createTestnet();
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET });
 
 // Devnet equivalent
-const client = await MidenClient.createDevnet();
+const client = await MidenClient.createDevnet({ feeFaucetId: FEE_FAUCET });
 ```
+
+`feeFaucetId` is not optional today, on any constructor but `createMock`. Since
+0.17 the chain's fee asset lives in a protocol configuration the node does not
+serve over RPC, and the SDK carries a per-network default for no network yet, so
+a client created without it fails with an error naming the option. It is the
+faucet the chain mints its fee asset from: ask whoever runs the network, or read
+it from a local node's genesis. Snippets below leave it out to keep their own
+point legible.
 
 Both accept the same `ClientOptions` for overrides:
 
@@ -88,6 +96,7 @@ const client = await MidenClient.createTestnet({
 ```typescript
 const client = await MidenClient.create({
   rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
+  feeFaucetId: FEE_FAUCET, // required - the chain's fee faucet, bech32 or hex
   noteTransportUrl: "https://transport.miden.io",
   storeName: "my-store",
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
@@ -228,6 +237,16 @@ Common patterns:
 single sync at construction time - it is not a polling loop. Use the React
 SDK's `useSyncState` or `MidenProvider` `autoSyncInterval` for periodic sync.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 ## Type Conversions
 
 Type confusion across the WASM boundary is the leading source of bugs.
@@ -271,6 +290,7 @@ might exceed 2^53.
 import {
   NoteVisibility,
   AccountType,
+  FaucetType,
   AuthScheme,
   StorageMode,
 } from "@miden-sdk/miden-sdk";
@@ -278,9 +298,12 @@ import {
 NoteVisibility.Public; // "public"
 NoteVisibility.Private; // "private"
 
-// AccountType is a faucet-kind selector with ONLY two members:
-AccountType.FungibleFaucet; // 0
-AccountType.NonFungibleFaucet; // 1
+// AccountBuilder.accountType() selects visibility:
+AccountType.Private; // 0
+AccountType.Public; // 1
+
+// accounts.create({ type }) selects a faucet:
+FaucetType.FungibleFaucet; // "FungibleFaucet"
 
 AuthScheme.Falcon; // default - Falcon-512 over Poseidon2
 AuthScheme.ECDSA; // EcdsaK256Keccak
@@ -294,14 +317,26 @@ separate enum exported for the low-level WASM APIs and is easy to confuse with
 `NoteVisibility`, so do not pass it where a `NoteVisibility` is expected. Use
 `AuthScheme.Falcon` for the Poseidon2-based Falcon-512 scheme.
 
-`AccountType` exposes **only** `FungibleFaucet`/`NonFungibleFaucet`. There is no
-`MutableWallet`/`ImmutableWallet`/`MutableContract`/`ImmutableContract` member -
-those evaluate to `undefined`. Wallets and contracts are not chosen via
-`AccountType`: a wallet is the default (omit `type`), and a contract is any
-`accounts.create()` call that passes `components` (or `type: "MutableContract"`/`"ImmutableContract"` as strings). See "Account Creation".
+`AccountType.Private` / `AccountType.Public` select visibility in
+`AccountBuilder.accountType()`. `FaucetType.FungibleFaucet` selects a fungible
+faucet in `accounts.create({ type })`; its value is a string, so it cannot be
+mistaken for an `AccountType` value. Replace older `AccountType.FungibleFaucet`
+references with `FaucetType.FungibleFaucet`: `create()` throws a `TypeError`
+for any unrecognised `type`, for faucet fields (`name`, `symbol`, `decimals`,
+`maxSupply`) without a faucet type, for `components` on a faucet, and for a
+faucet missing `symbol`, `decimals` or `maxSupply`. The legacy `0`, `1` and
+`"NonFungibleFaucet"` are still read as faucet types, and `0` / `1` are also
+`AccountType.Private` / `Public`, so never pass a visibility value as `type`.
+
+Neither enum has wallet or contract members. Omit `type` for a wallet, or pass
+`components` for a contract (the strings `"MutableContract"` / `"ImmutableContract"`
+are also accepted). Use `storage` to select visibility in `accounts.create()`.
 
 `StorageMode` has only `Public`/`Private`. There is no `StorageMode.Network`
 (accessing it yields `undefined`, which silently resolves to private).
+
+Non-fungible faucets are not supported yet, so `FaucetType` has no
+non-fungible member.
 
 ## Read Non-Fungible Assets
 
@@ -359,9 +394,9 @@ const wallet = await client.accounts.create({
   auth: AuthScheme.Falcon,
 });
 
-// Faucet - selected via AccountType.FungibleFaucet / NonFungibleFaucet
+// Faucet - selected via FaucetType.FungibleFaucet
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   storage: "public",
   symbol: "DAG",
   decimals: 8,
@@ -408,10 +443,14 @@ declines to attach fee conversion info to one it cannot classify:
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
-  consume notes running it (zero is valid). It returns an **array**; add every
-  element to the builder:
+  consume notes running it (zero is valid). `feeFaucetId` must be the chain's
+  own fee faucet, `client.feeFaucetId()`: the node never runs network
+  transactions for an account whose fee asset differs from the chain's protocol
+  configuration, and the client is not told - the notes just sit unconsumed.
+  It returns an **array**; add every element to the builder:
 
   ```typescript
+  const feeFaucetId = await client.feeFaucetId();
   const components = AccountComponent.createNetworkAuthComponents(
     [new NoteScriptFee(noteScript.root(), 0n)],
     feeFaucetId
@@ -447,9 +486,11 @@ await client.transactions.submit(wallet, request);
 ```
 
 `account` is the account that **executes** the request, not the recipient. The
-method is a safe drop-in: on a zero-fee chain, or for a single-sig, no-auth or
-network account, the builder comes back untouched and the request is
-byte-identical to one from a bare builder.
+method is a safe drop-in: for a single-sig, no-auth or network account the
+builder comes back untouched and the request is byte-identical to one from a
+bare builder. A zero base fee is not a second condition: since 0.17 a multisig
+resolves its auth args whatever the chain charges, so a multisig gets them on a
+fee-free chain too.
 
 What happens if you skip it:
 
@@ -460,7 +501,7 @@ What happens if you skip it:
   with `TransactionRequestBuilder.withAuthArg` plus `extendAdviceMap`.
 
 `withAuthArg` and `withFeeConversionSalt` are mutually exclusive - each setter
-clears the other, so whichever is called last wins.
+clears the other, so whichever is called last wins. Never call either on a builder from `feeAwareTransactionRequestBuilder` for a multisig: that builder already carries the three-word auth args, and either setter discards them, so the transaction aborts in the auth procedure. Pass `feeConversionSalt` to `feeAwareTransactionRequestBuilder` instead - and build a fresh `Word` for every call, because the parameter is moved across the WASM boundary and a spent handle arrives as "no salt given".
 
 ## Transactions
 
@@ -510,10 +551,11 @@ const { txId, note } = await client.transactions.send({
   amount: 100n,
   type: NoteVisibility.Private,
   returnNote: true,
+  waitForConfirmation: true,
 });
 
-// Stream the note via the note-transport service. For one of this client's own
-// output notes prefer sendPrivateOutput, which derives the scan block for you.
+// Stream the note via the note-transport service. sendPrivateOutput reads the
+// inclusion proof sync stored once the note has committed.
 await client.notes.sendPrivateOutput({ noteId: note.id(), to: "mtst1..." });
 ```
 
@@ -574,12 +616,22 @@ Passing both, or neither, throws a descriptive error naming the two fields.
 
 `target` must genuinely be a network account: one built from
 `AccountComponent.createNetworkAuthComponents(...)` (see "Standard auth
-components"), already committed on-chain at the transaction's reference block,
-whose allowlist prices the note's script root. The note is priced by calling
+components") with the chain's fee faucet, already committed on-chain at the
+transaction's reference block, whose allowlist prices the note's script root.
+The fee faucet requirement fails silently: the note is emitted, and the node
+simply never consumes it. The note is priced by calling
 `estimate_note_fee` on the target even on a chain that charges no fees, so
 targeting a plain wallet fails with
 `account procedure ... is not in the account procedure index map`, and targeting
 an account that has not been committed yet fails to resolve the account at all.
+
+That pricing call also caps the transaction: `estimate_note_fee` applies the
+standards' default expiration delta, so the emitting transaction must be
+included within **20 blocks** of its reference block, roughly a minute at a
+three-second block interval. An expiration can only be lowered, never raised,
+so neither the SDK nor the caller can widen it. If proving is slow enough that
+the node rejects the submission as expired, re-execute against a fresh
+reference block and submit again.
 
 ### Consume
 
@@ -669,8 +721,8 @@ await client.transactions.execute({
 The resource maps both the bare-ref form and the `{ id, storage }` wrapper
 through `ForeignAccount.public(...)`, which rejects a non-public account id with
 `InvalidForeignAccountId`. The wrapper supplies storage requirements; it does
-not make the account private. For a private foreign account, or for prefetched
-state, build the request yourself (see below) and submit it with
+not make the account private. For a private foreign account, build the request
+yourself (see below) and submit it with
 `transactions.submit`. The same applies to `transactions.executeProgram`.
 
 ### Execute a program (read-only view call)
@@ -691,35 +743,27 @@ computes.
 
 ### Foreign accounts (FPI)
 
-`ForeignAccount` has three constructors:
+`ForeignAccount` has two constructors:
 
 - `ForeignAccount.public(accountId, storageRequirements)` - state is fetched
   from the network at execution time.
 - `ForeignAccount.private(account)` - you supply the account's state; only its
   inclusion proof is fetched.
-- `ForeignAccount.prefetched(accountInputs)` - nothing is fetched at all.
 
-Fetch the inputs up front with
-`client.transactions.foreignAccountInputs(accounts, blockNum)`, which returns
-an `AccountInputs[]` in the order given. Each witness opens against the account
-tree of `blockNum` alone, so the results are valid only for a transaction whose
-reference block is exactly `blockNum` (the anchor's block when executing against
-a `ChainAnchor`, the sync height otherwise). Do not sync between fetching and
-executing. `AccountInputs.serialize()` / `AccountInputs.deserialize(bytes)`
-ships prefetched state to another client.
+The account's state and witness are read against the transaction's reference
+block, and the vault entries and storage-map keys the foreign code touches are
+resolved during execution as per-asset and per-key witnesses rather than up
+front. Pin the transaction to a block the node still serves account state for;
+prefetching the state to execute against an older block is no longer possible
+(`foreignAccountInputs` and `ForeignAccount.prefetched` were removed in 0.17).
 
 ```typescript
 const foreign = ForeignAccount.public(foreignAccountId, storageRequirements);
-const blockNum = await client.getSyncHeight();
-const [inputs] = await client.transactions.foreignAccountInputs(
-  [foreign],
-  blockNum
-);
 
 const builder = await client.feeAwareTransactionRequestBuilder(account);
 const request = builder
   .withCustomScript(script)
-  .withForeignAccounts(new ForeignAccountArray([ForeignAccount.prefetched(inputs)]))
+  .withForeignAccounts(new ForeignAccountArray([foreign]))
   .build();
 await client.transactions.submit(account, request);
 ```
@@ -922,24 +966,25 @@ for it.
 // a newly tracked tag sit below that cursor and are back-filled by sync().
 await client.notes.fetchPrivate();
 
-// Relay one of this client's own output notes - the scan block is derived from
-// the note's stored expected height. Prefer this form.
+// Relay one of this client's own output notes. The call reads the inclusion
+// proof sync stored on the note and throws if this client has not synced past
+// the commitment. Prefer this form, after the transaction has committed.
 await client.notes.sendPrivateOutput({ noteId, to: "mtst1..." });
 
-// Agnostic form for an arbitrary note. `scanAfterBlockNum` is REQUIRED.
+// Agnostic form for an arbitrary note. `inclusionProof` is required.
 await client.notes.sendPrivate({
   note,
   to: "mtst1...",
-  scanAfterBlockNum: submissionHeight,
+  inclusionProof,
 });
 ```
 
-`sendPrivate` **throws** without an integer `scanAfterBlockNum`. It is the block
-the recipient scans **forward** from for the note's on-chain commitment, so it
-must be at or below the commitment block: a hint above it is never scanned back
-to and the recipient silently never receives the note. A safe choice is the
-chain tip when the note's transaction was submitted - which is exactly why
-relaying *after* waiting for the commit used to drop delivery. `to` accepts a
+`sendPrivate` **throws** without an `inclusionProof`. The transport verifies that
+`NoteInclusionProof` and the recipient scans from the block it names. The proof
+exists once the creating transaction is committed and this client has synced past
+that block. `NoteInclusionProof.mockAtBlock(blockNum)` builds an empty-path proof
+the mock transport accepts; a real node rejects it, and the constructor is present
+because the published build enables the `testing` feature. `to` accepts a
 bech32 string, a 0x-hex string, an `Account`, or an `AccountId`; it does **not**
 accept a pre-parsed `Address` object.
 
@@ -1112,7 +1157,7 @@ fails to compile with `undefined item 'add_assets_to_account'`.
 ```typescript
 const wallet = await client.accounts.create();
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   storage: "public",
   symbol: "TEST",
   decimals: 8,
@@ -1160,9 +1205,9 @@ while (true) {
    `client.feeAwareTransactionRequestBuilder(account)` for anything you hand to
    `submit` / `executeRequest` / `submitBatch` / a `custom` preview, or a
    multisig account fails with `FeeConversionInfoRequired`.
-4. **`notes.sendPrivate()` without `scanAfterBlockNum`.** It throws. Prefer
-   `notes.sendPrivateOutput({ noteId, to })` for your own output notes, and
-   never pass a hint above the commitment block.
+4. **`notes.sendPrivate()` without `inclusionProof`.** It throws. For your own
+   output notes, wait until the transaction commits and call
+   `notes.sendPrivateOutput({ noteId, to })`, which reads the stored proof.
 5. **`number` literals above 2^53 for amounts.** Amount fields accept
    `number | bigint` and coerce via `BigInt()` (no `TypeError`), but a numeric
    literal above `Number.MAX_SAFE_INTEGER` loses precision _before_ coercion.
@@ -1173,7 +1218,7 @@ while (true) {
    rejects with `TRANSACTION_ALREADY_AUTHORIZED` unless authorization is pending.
 8. **Passing a private account id in `execute({ foreignAccounts })`.** Every
    entry becomes a public foreign account; build the request yourself with
-   `ForeignAccount.private` / `.prefetched`.
+   `ForeignAccount.private`.
 9. **`transactions.list({ expiredBefore })`.** The filter was removed and the
    query now throws. Use `{ status: "uncommitted" }`.
 10. **Passing a low-level `AccountId`-only WASM method a raw string** - resource

@@ -14,7 +14,7 @@ export async function getOutputNotes(dbId: string, states: Uint8Array) {
             .anyOf(states)
             .toArray();
 
-    return await processOutputNotes(notes);
+    return await processOutputNotes(dbId, notes);
   } catch (err) {
     logWebStoreError(err, "Failed to get output notes");
   }
@@ -76,7 +76,7 @@ export async function getOutputNotesFromNullifiers(
       .where("nullifier")
       .anyOf(nullifiers)
       .toArray();
-    return await processOutputNotes(notes);
+    return await processOutputNotes(dbId, notes);
   } catch (err) {
     logWebStoreError(err, "Failed to get output notes from nullifiers");
   }
@@ -124,7 +124,7 @@ export async function getOutputNotesFromDetailsCommitments(
       .where("detailsCommitment")
       .anyOf(detailsCommitments)
       .toArray();
-    return await processOutputNotes(notes);
+    return await processOutputNotes(dbId, notes);
   } catch (err) {
     logWebStoreError(
       err,
@@ -137,7 +137,7 @@ export async function getOutputNotesFromIds(dbId: string, noteIds: string[]) {
   try {
     const db = getDatabase(dbId);
     let notes = await db.outputNotes.where("noteId").anyOf(noteIds).toArray();
-    return await processOutputNotes(notes);
+    return await processOutputNotes(dbId, notes);
   } catch (err) {
     logWebStoreError(err, "Failed to get output notes from IDs");
   }
@@ -298,6 +298,8 @@ export async function upsertOutputNote(
   expectedHeight: number,
   stateDiscriminant: number,
   state: Uint8Array,
+  scriptRoot?: string | null,
+  serializedNoteScript?: Uint8Array | null,
   tx?: Transaction
 ) {
   const db = getDatabase(dbId);
@@ -312,11 +314,17 @@ export async function upsertOutputNote(
         metadata,
         nullifier: nullifier ? nullifier : undefined,
         expectedHeight,
+        // Only known once the recipient is known.
+        scriptRoot: scriptRoot ?? undefined,
         stateDiscriminant,
         state,
       };
 
       await t.outputNotes.put(data);
+
+      if (scriptRoot && serializedNoteScript) {
+        await t.notesScripts.put({ scriptRoot, serializedNoteScript });
+      }
       /* v8 ignore next 3 — requires a mid-transaction Dexie write failure, not modelable with fake-indexeddb */
     } catch (error) {
       logWebStoreError(error, `Error inserting note: ${detailsCommitment}`);
@@ -364,12 +372,23 @@ async function processInputNotes(dbId: string, notes: IInputNote[]) {
   );
 }
 
-async function processOutputNotes(notes: IOutputNote[]) {
+async function processOutputNotes(dbId: string, notes: IOutputNote[]) {
+  const db = getDatabase(dbId);
   return await Promise.all(
-    notes.map((note) => {
+    notes.map(async (note) => {
       const assetsBase64 = uint8ArrayToBase64(note.assets);
 
       const metadataBase64 = uint8ArrayToBase64(note.metadata);
+
+      let serializedNoteScriptBase64: string | undefined = undefined;
+      if (note.scriptRoot) {
+        const record = await db.notesScripts.get(note.scriptRoot);
+        if (record) {
+          serializedNoteScriptBase64 = uint8ArrayToBase64(
+            record.serializedNoteScript
+          );
+        }
+      }
 
       const stateBase64 = uint8ArrayToBase64(note.state);
 
@@ -380,6 +399,7 @@ async function processOutputNotes(notes: IOutputNote[]) {
         recipientDigest: note.recipientDigest,
         metadata: metadataBase64,
         expectedHeight: note.expectedHeight,
+        serializedNoteScript: serializedNoteScriptBase64,
         state: stateBase64,
         attachments: attachmentsBase64,
       };

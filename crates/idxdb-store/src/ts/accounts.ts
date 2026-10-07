@@ -79,6 +79,42 @@ export async function getAccountHeader(dbId: string, accountId: string) {
   }
 }
 
+export async function getAccountSnapshot(
+  dbId: string,
+  accountId: string,
+  maps: boolean,
+  assets: boolean
+) {
+  const db = getDatabase(dbId);
+  return db.dexie.transaction(
+    "r",
+    [
+      db.latestAccountHeaders,
+      db.accountCodes,
+      db.latestAccountStorages,
+      db.latestStorageMapEntries,
+      db.latestAccountAssets,
+    ],
+    async () => {
+      const header = await getAccountHeader(dbId, accountId);
+      if (!header) return null;
+      const [code, storage, mapEntries, vaultAssets] = await Promise.all([
+        getAccountCode(dbId, header.codeRoot),
+        getAccountStorage(dbId, accountId, []),
+        maps ? getAccountStorageMaps(dbId, accountId) : [],
+        assets ? getAccountVaultAssets(dbId, accountId, []) : [],
+      ]);
+      return {
+        header,
+        code,
+        storage,
+        maps: mapEntries,
+        assets: vaultAssets,
+      };
+    }
+  );
+}
+
 export async function getAccountHeaderByCommitment(
   dbId: string,
   accountCommitment: string
@@ -336,6 +372,26 @@ export async function upsertVaultAssets(
   }
 }
 
+// The header names code by commitment, so the code row has to land before the header.
+// An empty `code` means the patch carries none: a changed commitment is then an error,
+// unless there is no previous header to compare against.
+async function persistAccountCode(
+  db: MidenDatabase,
+  codeRoot: string,
+  code: Uint8Array | undefined,
+  previousCodeRoot: string | undefined
+) {
+  if (code && code.length > 0) {
+    await db.accountCodes.put({ root: codeRoot, code });
+    return;
+  }
+  if (previousCodeRoot !== undefined && previousCodeRoot !== codeRoot) {
+    throw new Error(
+      `account code commitment changed from ${previousCodeRoot} to ${codeRoot} without the new code`
+    );
+  }
+}
+
 export async function applyAccountPatch(
   dbId: string,
   accountId: string,
@@ -347,7 +403,9 @@ export async function applyAccountPatch(
   storageRoot: string,
   vaultRoot: string,
   committed: boolean,
-  commitment: string
+  commitment: string,
+  code?: Uint8Array,
+  initialAccountCommitment?: string
 ) {
   try {
     const db = getDatabase(dbId);
@@ -363,8 +421,17 @@ export async function applyAccountPatch(
         db.historicalAccountAssets,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
+        db.accountCodes,
       ],
       async () => {
+        if (initialAccountCommitment !== undefined) {
+          const current = await db.latestAccountHeaders.get(accountId);
+          if (current?.accountCommitment !== initialAccountCommitment) {
+            throw new Error(
+              `account patch input commitment does not match persisted state for ${accountId}`
+            );
+          }
+        }
         const resetMapSlots = new Set<string>();
 
         // Apply storage patch: read old → archive → write/delete final state.
@@ -523,6 +590,8 @@ export async function applyAccountPatch(
             watched: oldHeader.watched ?? false,
           });
         }
+
+        await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
 
         await db.latestAccountHeaders.put({
           id: accountId,
@@ -787,6 +856,7 @@ export async function applyFullAccountState(
     committed: boolean;
     accountCommitment: string;
     accountSeed: Uint8Array | undefined;
+    code?: Uint8Array;
   }
 ) {
   try {
@@ -803,6 +873,7 @@ export async function applyFullAccountState(
       committed,
       accountCommitment,
       accountSeed,
+      code,
     } = accountState;
 
     await db.dexie.transaction(
@@ -816,6 +887,7 @@ export async function applyFullAccountState(
         db.historicalAccountAssets,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
+        db.accountCodes,
       ],
       async () => {
         // Archive: save current latest values to historical (so they can be
@@ -850,6 +922,8 @@ export async function applyFullAccountState(
             watched: oldHeader.watched ?? false,
           });
         }
+
+        await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
 
         await db.latestAccountHeaders.put({
           id: accountId,
