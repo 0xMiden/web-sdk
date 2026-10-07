@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.0-rc.0 (TBD)
+
+### Changes
+
+* [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).
+
+## 0.17.1 (2026-10-07)
+
+### Fixes
+
+* [FIX][web] Include the V2 faucet receive and send policy callbacks so consuming or transferring V2 assets no longer fails with a missing procedure-root digest.
+
+### Changes
+
+* [CHANGE][web] Pin Rust SDK client, proto and SQLite store to exactly 0.17.1 and refresh protocol, standards and transaction libraries to 0.17.1.
+
 ## 0.17.0 (2026-10-03)
 
 ### Enhancements
