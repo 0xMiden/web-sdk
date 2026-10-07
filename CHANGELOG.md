@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.17.2 (TBD)
+
+### Enhancements
+
+* [FEATURE][web] `ClientOptions.noteTransportMaxRetries` (integer 0 to 10, default 3) and `ClientOptions.noteTransportRetryIntervalMs` (integer 0 to 60000, default 250, doubling per retry) set how a private-note send retries a transient transport failure within the call; `MidenConfig` in `@miden-sdk/react` takes the same two fields. An out-of-range value throws a `TypeError` before the client is built. A service `retry-after` replaces the delay uncapped, so pass `noteTransportMaxRetries: 0` to bound a send to one attempt ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
+
+### Fixes
+
+* [FIX][react] `useSend`, `useMultiSend` and `useTransaction` (with `privateNoteTarget`) no longer lose the transaction id when a private note is not delivered after the transaction was submitted. They reject with `PrivateNoteDeliveryError` (new `MidenErrorCode` member `PRIVATE_NOTE_DELIVERY_FAILED`) carrying `transactionId`, `commitment` (`"committed"` or `"unknown"`), `delivered` and `undelivered`; a discarded transaction is still a plain error. Every owed note is attempted, so `useMultiSend` no longer stops at the first failed recipient, and the new `useResendPrivateNotes()` sends the undelivered notes again: `resend({ transactionId: err.transactionId, notes: err.undelivered })`. `useTransaction` now checks `privateNoteTarget` before executing, finds the request's private output notes (it relayed none before), and no longer fails with a consumed transaction id when the commit takes more than one poll; `useWaitForCommit` and `useTransactionHistory` likewise keep a caller's `TransactionId` usable ([#460](https://github.com/0xMiden/web-sdk/issues/460)).
+
+### Changes
+
+* [BREAKING][behavior][web] The bundled Rust SDK 0.17.2 no longer queues a private-note send that fails, and `sync()` / `syncNoteTransport()` no longer re-send it. A rejected `notes.sendPrivate` / `notes.sendPrivateOutput` is final: keep the note id and send the same note again, which is idempotent by note id. Transient transport errors are retried within the call (in the browser: timeouts, and the service answering `Unavailable` or rate-limiting with `retry-after`; a failed `fetch` is not retried). The IndexedDB store drops the queue row a 0.17.1 client may have left, on upgrade and on importing an older export ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
+* [CHANGE][web] Pin Rust SDK client, proto and SQLite store to exactly 0.17.2 ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
+
 ## 0.17.1 (2026-10-07)
 
 ### Fixes
