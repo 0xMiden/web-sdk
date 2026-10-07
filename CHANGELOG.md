@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.2 (TBD)
+
+### Fixes
+
+* [FIX][web] `terminate()` now frees the client's main-realm wasm object and releases its IndexedDB connection, so creating and terminating clients no longer leaks open database handles. A store shared by several clients stays open until the last of them is terminated, and a terminated `WebClient` rejects every later call with `WebClient terminated` ([#377](https://github.com/0xMiden/web-sdk/issues/377)) ([#410](https://github.com/0xMiden/web-sdk/pull/410)).
+
 ## 0.17.1 (2026-10-07)
 
 ### Fixes
