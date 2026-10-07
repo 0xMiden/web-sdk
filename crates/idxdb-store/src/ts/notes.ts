@@ -336,74 +336,85 @@ export async function upsertOutputNote(
 }
 
 async function processInputNotes(dbId: string, notes: IInputNote[]) {
-  const db = getDatabase(dbId);
-  return await Promise.all(
-    notes.map(async (note) => {
-      const assetsBase64 = uint8ArrayToBase64(note.assets);
-
-      const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
-
-      const inputsBase64 = uint8ArrayToBase64(note.inputs);
-
-      let serializedNoteScriptBase64: string | undefined = undefined;
-      if (note.scriptRoot) {
-        let record = await db.notesScripts.get(note.scriptRoot);
-        if (record) {
-          serializedNoteScriptBase64 = uint8ArrayToBase64(
-            record.serializedNoteScript
-          );
-        }
-      }
-
-      const stateBase64 = uint8ArrayToBase64(note.state);
-
-      const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
-
-      return {
-        assets: assetsBase64,
-        serialNumber: serialNumberBase64,
-        inputs: inputsBase64,
-        createdAt: note.serializedCreatedAt,
-        serializedNoteScript: serializedNoteScriptBase64,
-        state: stateBase64,
-        attachments: attachmentsBase64,
-      };
-    })
+  const scripts = await getNoteScriptsBase64(
+    dbId,
+    notes.map((note) => note.scriptRoot)
   );
+
+  return notes.map((note) => {
+    const assetsBase64 = uint8ArrayToBase64(note.assets);
+
+    const serialNumberBase64 = uint8ArrayToBase64(note.serialNumber);
+
+    const inputsBase64 = uint8ArrayToBase64(note.inputs);
+
+    const stateBase64 = uint8ArrayToBase64(note.state);
+
+    const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
+
+    return {
+      assets: assetsBase64,
+      serialNumber: serialNumberBase64,
+      inputs: inputsBase64,
+      createdAt: note.serializedCreatedAt,
+      serializedNoteScript: scripts.get(note.scriptRoot),
+      state: stateBase64,
+      attachments: attachmentsBase64,
+    };
+  });
 }
 
 async function processOutputNotes(dbId: string, notes: IOutputNote[]) {
+  const scripts = await getNoteScriptsBase64(
+    dbId,
+    notes.map((note) => note.scriptRoot)
+  );
+
+  return notes.map((note) => {
+    const assetsBase64 = uint8ArrayToBase64(note.assets);
+
+    const metadataBase64 = uint8ArrayToBase64(note.metadata);
+
+    const serializedNoteScriptBase64 = note.scriptRoot
+      ? scripts.get(note.scriptRoot)
+      : undefined;
+
+    const stateBase64 = uint8ArrayToBase64(note.state);
+
+    const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
+
+    return {
+      assets: assetsBase64,
+      recipientDigest: note.recipientDigest,
+      metadata: metadataBase64,
+      expectedHeight: note.expectedHeight,
+      serializedNoteScript: serializedNoteScriptBase64,
+      state: stateBase64,
+      attachments: attachmentsBase64,
+    };
+  });
+}
+
+// Fetches the scripts for the given roots in one read and returns them base64-encoded, keyed by
+// root. Empty roots are skipped, and roots without a stored script are absent from the map.
+async function getNoteScriptsBase64(
+  dbId: string,
+  roots: (string | undefined)[]
+): Promise<Map<string, string>> {
   const db = getDatabase(dbId);
-  return await Promise.all(
-    notes.map(async (note) => {
-      const assetsBase64 = uint8ArrayToBase64(note.assets);
+  const uniqueRoots = [...new Set(roots.filter((root) => !!root))] as string[];
+  if (uniqueRoots.length === 0) {
+    return new Map();
+  }
+  const records = await db.notesScripts.bulkGet(uniqueRoots);
 
-      const metadataBase64 = uint8ArrayToBase64(note.metadata);
-
-      let serializedNoteScriptBase64: string | undefined = undefined;
-      if (note.scriptRoot) {
-        const record = await db.notesScripts.get(note.scriptRoot);
-        if (record) {
-          serializedNoteScriptBase64 = uint8ArrayToBase64(
-            record.serializedNoteScript
-          );
-        }
-      }
-
-      const stateBase64 = uint8ArrayToBase64(note.state);
-
-      const attachmentsBase64 = uint8ArrayToBase64(note.attachments);
-
-      return {
-        assets: assetsBase64,
-        recipientDigest: note.recipientDigest,
-        metadata: metadataBase64,
-        expectedHeight: note.expectedHeight,
-        serializedNoteScript: serializedNoteScriptBase64,
-        state: stateBase64,
-        attachments: attachmentsBase64,
-      };
-    })
+  return new Map(
+    records
+      .filter((record) => record !== undefined)
+      .map((record) => [
+        record.scriptRoot,
+        uint8ArrayToBase64(record.serializedNoteScript),
+      ])
   );
 }
 
