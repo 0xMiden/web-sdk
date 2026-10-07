@@ -1635,6 +1635,12 @@ export interface NotesResource {
    * output notes prefer {@link NotesResource.sendPrivateOutput}, which reads the proof sync
    * stored on the note and throws if this client has not synced past the commitment.
    *
+   * A rejection means the note did not reach the transport or the outcome is not known, and
+   * it is final. The SDK keeps no queue and no `sync()` sends the note again;
+   * transient transport failures are already retried within the call (see
+   * {@link ClientOptions.noteTransportMaxRetries}). To try again, call this again with the
+   * same note: delivery is idempotent by note id.
+   *
    * @param options - The note, the recipient, and `inclusionProof`.
    */
   sendPrivate(options: SendPrivateOptions): Promise<void>;
@@ -1644,6 +1650,12 @@ export interface NotesResource {
    * The inclusion proof is the one sync stored on the output note. It is absent until this
    * client has synced past the block that committed the note, and the call throws in that
    * case. The note must exist in this client's store as an output note.
+   *
+   * A rejection means the note did not reach the transport or the outcome is not known, and
+   * it is final. The SDK keeps no queue and no `sync()` sends the note again;
+   * transient transport failures are already retried within the call (see
+   * {@link ClientOptions.noteTransportMaxRetries}). To try again, call this again with the
+   * same note id: delivery is idempotent by note id.
    *
    * @param options - The output note id and the recipient.
    */

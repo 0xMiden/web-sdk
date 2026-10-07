@@ -988,6 +988,14 @@ because the published build enables the `testing` feature. `to` accepts a
 bech32 string, a 0x-hex string, an `Account`, or an `AccountId`; it does **not**
 accept a pre-parsed `Address` object.
 
+A rejected `sendPrivate` / `sendPrivateOutput` means the note did not reach the
+transport or the outcome is not known, and it is final. The SDK keeps no queue,
+and neither `sync()` nor `syncNoteTransport()` sends the note again. Transient
+transport failures are retried inside the call (`noteTransportMaxRetries` and
+`noteTransportRetryIntervalMs` on `ClientOptions`; in the browser a failed
+`fetch` is not one of them). To try again, call it again with the same note:
+delivery is idempotent by note id, so a repeat cannot duplicate it.
+
 `fetchPrivate()` takes no arguments. The `{ mode: "all" }` full re-scan was
 removed; after adding a tag, just `sync()`.
 
