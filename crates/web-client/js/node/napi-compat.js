@@ -374,7 +374,7 @@ function makeContainer(items) {
         const i = Number(prop);
         return i >= 0 && i < arr.length ? arr[i] : undefined;
       }
-      // Do not shadow length() with a numeric length property — browser
+      // Do not shadow length() with a numeric length property: browser
       // typed code calls length() and must work on Node too (#427).
       return Reflect.get(target, prop, receiver);
     },
