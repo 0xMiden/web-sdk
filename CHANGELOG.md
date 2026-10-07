@@ -5,6 +5,7 @@
 ### Changes
 
 * [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).
+* [BREAKING][web] On Node.js the array containers (`NoteArray`, `FeltArray`, `AccountIdArray` and the other declared containers) are no longer `Array`s: `length()` is a method, as in the browser, and `get`, `replaceAt`, `push` and `free()` exist under the browser's names, while index access and `for...of` still work. Code that read the `length` property or called Array methods such as `map` or `slice` must use `length()`, `get(i)`, `for...of` or `Array.from(container)`. Results the browser types as a container, such as `SigningInputs.toElements()` and `TransactionScriptInputPair.felts()`, come back as one too. Some behaviour still differs from the browser on Node.js: `get` returns the stored object rather than a copy, `replaceAt` and `push` return the container and keep the caller's reference, `free()` does nothing, and `instanceof` and per-type constructor identity do not hold ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#435](https://github.com/0xMiden/web-sdk/pull/435)).
 
 ## 0.17.1 (2026-10-07)
 
