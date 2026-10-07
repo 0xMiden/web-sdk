@@ -26,7 +26,14 @@ export function normalizeArg(val) {
   if (val instanceof BigUint64Array) return Array.from(val);
   if (val instanceof BigInt64Array) return Array.from(val);
   if (val instanceof Uint8Array || Buffer.isBuffer(val)) return Array.from(val);
-  // Node array polyfills expose the underlying plain array for napi Vec<T>.
+  return unwrapContainer(val);
+}
+
+/**
+ * Returns the plain array behind a Node array container (napi's `Vec<T>` needs
+ * a real Array) and any other value unchanged, so bytes reach JsBytes as given.
+ */
+export function unwrapContainer(val) {
   if (val && typeof val === "object" && Array.isArray(val.__midenItems)) {
     return val.__midenItems;
   }
@@ -208,6 +215,83 @@ function patchSdkPrototypes(rawSdk) {
   }
 }
 
+// ── Container boundary ───────────────────────────────────────────────
+
+// Native methods whose declared result is a container: napi returns a plain
+// Array, which the browser-typed caller reads with length() and get().
+const CONTAINER_RESULTS = [
+  ["SigningInputs", "toElements"],
+  ["SigningInputs", "arbitraryPayload"],
+  ["TransactionScriptInputPair", "felts"],
+  ["WebClient", "executeProgram"],
+];
+
+const toContainer = (value) =>
+  Array.isArray(value) ? makeContainer(value) : value;
+
+function isNativeClass(value) {
+  return typeof value === "function" && typeof value.prototype === "object";
+}
+
+/**
+ * Makes every native entry point take Node array containers: prototype methods
+ * of every class are patched in place (raw instances such as a fee-aware
+ * request builder use them too), and the returned module replaces each class
+ * with a wrapper whose constructor and static methods unwrap their arguments.
+ */
+function unwrapContainersAtNapiBoundary(rawSdk) {
+  const containerResults = new Set(
+    CONTAINER_RESULTS.map(([cls, method]) => `${cls}.${method}`)
+  );
+  const wrapped = {};
+  for (const [name, value] of Object.entries(rawSdk)) {
+    if (!isNativeClass(value)) continue;
+    for (const key of Object.getOwnPropertyNames(value.prototype)) {
+      if (key === "constructor") continue;
+      const desc = Object.getOwnPropertyDescriptor(value.prototype, key);
+      if (typeof desc?.value !== "function" || !desc.writable) continue;
+      const original = desc.value;
+      const wrapsResult = containerResults.has(`${name}.${key}`);
+      value.prototype[key] = function (...args) {
+        const result = original.apply(this, args.map(unwrapContainer));
+        if (!wrapsResult) return result;
+        return typeof result?.then === "function"
+          ? result.then(toContainer)
+          : toContainer(result);
+      };
+    }
+    wrapped[name] = wrapNativeClass(value);
+  }
+  return wrapped;
+}
+
+/**
+ * Like wrapClass, but only unwraps containers, so byte arguments pass as given.
+ * napi functions also carry a prototype, so a plain call stays a plain call.
+ */
+function wrapNativeClass(Cls) {
+  const Wrapper = function (...args) {
+    const unwrapped = args.map(unwrapContainer);
+    return new.target ? new Cls(...unwrapped) : Cls.apply(this, unwrapped);
+  };
+  Wrapper.prototype = Cls.prototype;
+  for (const key of Object.getOwnPropertyNames(Cls)) {
+    if (key === "prototype" || key === "length" || key === "name") continue;
+    const desc = Object.getOwnPropertyDescriptor(Cls, key);
+    if (desc && typeof desc.value === "function") {
+      Wrapper[key] = (...args) =>
+        desc.value.apply(Cls, args.map(unwrapContainer));
+    } else if (desc) {
+      try {
+        Object.defineProperty(Wrapper, key, desc);
+      } catch {
+        /* skip non-configurable */
+      }
+    }
+  }
+  return Wrapper;
+}
+
 // ── Array polyfills ──────────────────────────────────────────────────
 
 /**
@@ -231,112 +315,113 @@ export const NODE_ARRAY_TYPES = Object.freeze([
 ]);
 
 /**
+ * Browser `declare_js_miden_arrays!` containers expose `length()` as a method.
+ * A plain JS Array cannot also have a callable `length`, so Node uses a thin
+ * wrapper whose underlying items are unwrapped at every napi entry point
+ * (`unwrapContainer`).
+ */
+function makeContainer(items) {
+  const arr =
+    items === undefined || items === null
+      ? []
+      : Array.isArray(items)
+        ? [...items]
+        : items &&
+            typeof items === "object" &&
+            Array.isArray(items.__midenItems)
+          ? [...items.__midenItems]
+          : [items];
+
+  const checkIndex = (i) => {
+    if (!Number.isInteger(i) || i < 0 || i >= arr.length) {
+      throw new RangeError(
+        `out of bounds access -- tried to access at index: ${i} with length ${arr.length}`
+      );
+    }
+  };
+
+  // The mutators return the Proxy the caller holds, not this target object.
+  let container;
+  const wrapper = {
+    __midenItems: arr,
+    get(i) {
+      checkIndex(i);
+      return arr[i];
+    },
+    replaceAt(i, val) {
+      checkIndex(i);
+      arr[i] = val;
+      return container;
+    },
+    push(val) {
+      arr.push(val);
+      return container;
+    },
+    length() {
+      return arr.length;
+    },
+    free() {},
+    [Symbol.iterator]() {
+      return arr[Symbol.iterator]();
+    },
+  };
+  if (Symbol.dispose) wrapper[Symbol.dispose] = wrapper.free;
+
+  // Indexed access parity with browser/wasm containers and plain arrays.
+  container = new Proxy(wrapper, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && /^\d+$/.test(prop)) {
+        const i = Number(prop);
+        return i >= 0 && i < arr.length ? arr[i] : undefined;
+      }
+      // Do not shadow length() with a numeric length property — browser
+      // typed code calls length() and must work on Node too (#427).
+      return Reflect.get(target, prop, receiver);
+    },
+    set(target, prop, value, receiver) {
+      if (typeof prop === "string" && /^\d+$/.test(prop)) {
+        const i = Number(prop);
+        if (i >= 0 && i < arr.length) {
+          arr[i] = value;
+          return true;
+        }
+        return false;
+      }
+      return Reflect.set(target, prop, value, receiver);
+    },
+    ownKeys() {
+      return [
+        ...Object.keys(arr),
+        ...Reflect.ownKeys(wrapper).filter((k) => k !== "__midenItems"),
+      ];
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (typeof prop === "string" && /^\d+$/.test(prop)) {
+        const i = Number(prop);
+        if (i >= 0 && i < arr.length) {
+          return {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: arr[i],
+          };
+        }
+      }
+      return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
+  });
+  return container;
+}
+
+/**
  * Creates polyfill constructors for WASM typed array types.
  * napi accepts plain JS arrays directly, but the browser SDK requires
  * typed wrappers (NoteAndArgsArray, FeltArray, etc.). These polyfills
- * let `new sdk.FeltArray([a, b])` work on Node.js by returning a plain array.
+ * let `new sdk.FeltArray([a, b])` work on Node.js by returning a container.
  */
 function makeArrayPolyfills() {
-  /**
-   * Browser `declare_js_miden_arrays!` containers expose `length()` as a method.
-   * A plain JS Array cannot also have a callable `length`, so Node uses a thin
-   * wrapper whose underlying items are unwrapped by `normalizeArg` before napi.
-   */
-  function polyfill(items) {
-    const arr =
-      items === undefined || items === null
-        ? []
-        : Array.isArray(items)
-          ? [...items]
-          : items &&
-              typeof items === "object" &&
-              Array.isArray(items.__midenItems)
-            ? [...items.__midenItems]
-            : [items];
-
-    const checkIndex = (i) => {
-      if (!Number.isInteger(i) || i < 0 || i >= arr.length) {
-        throw new RangeError(
-          `out of bounds access -- tried to access at index: ${i} with length ${arr.length}`
-        );
-      }
-    };
-
-    // The mutators return the Proxy the caller holds, not this target object.
-    let container;
-    const wrapper = {
-      __midenItems: arr,
-      get(i) {
-        checkIndex(i);
-        return arr[i];
-      },
-      replaceAt(i, val) {
-        checkIndex(i);
-        arr[i] = val;
-        return container;
-      },
-      push(val) {
-        arr.push(val);
-        return container;
-      },
-      length() {
-        return arr.length;
-      },
-      free() {},
-      [Symbol.iterator]() {
-        return arr[Symbol.iterator]();
-      },
-    };
-    if (Symbol.dispose) wrapper[Symbol.dispose] = wrapper.free;
-
-    // Indexed access parity with browser/wasm containers and plain arrays.
-    container = new Proxy(wrapper, {
-      get(target, prop, receiver) {
-        if (typeof prop === "string" && /^\d+$/.test(prop)) {
-          const i = Number(prop);
-          return i >= 0 && i < arr.length ? arr[i] : undefined;
-        }
-        // Do not shadow length() with a numeric length property — browser
-        // typed code calls length() and must work on Node too (#427).
-        return Reflect.get(target, prop, receiver);
-      },
-      set(target, prop, value, receiver) {
-        if (typeof prop === "string" && /^\d+$/.test(prop)) {
-          const i = Number(prop);
-          if (i >= 0 && i < arr.length) {
-            arr[i] = value;
-            return true;
-          }
-          return false;
-        }
-        return Reflect.set(target, prop, value, receiver);
-      },
-      ownKeys() {
-        return [
-          ...Object.keys(arr),
-          ...Reflect.ownKeys(wrapper).filter((k) => k !== "__midenItems"),
-        ];
-      },
-      getOwnPropertyDescriptor(target, prop) {
-        if (typeof prop === "string" && /^\d+$/.test(prop)) {
-          const i = Number(prop);
-          if (i >= 0 && i < arr.length) {
-            return {
-              configurable: true,
-              enumerable: true,
-              writable: true,
-              value: arr[i],
-            };
-          }
-        }
-        return Reflect.getOwnPropertyDescriptor(target, prop);
-      },
-    });
-    return container;
-  }
-
   function ArrayCtor(items) {
-    return polyfill(items);
+    return makeContainer(items);
   }
 
   return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, ArrayCtor]));
@@ -349,10 +434,13 @@ function makeArrayPolyfills() {
  * Applies all patches and returns an object that can be used as `getWasm()` return value.
  */
 export function createSdkWrapper(rawSdk) {
+  // Before patchSdkPrototypes, so its snake_case aliases copy the patched methods.
+  const nativeClasses = unwrapContainersAtNapiBoundary(rawSdk);
   patchSdkPrototypes(rawSdk);
 
   return {
     ...rawSdk,
+    ...nativeClasses,
     // Wrap classes whose constructors/static methods accept BigInt or Uint8Array
     AccountBuilder: wrapClass(rawSdk.AccountBuilder),
     AccountComponent: wrapClass(rawSdk.AccountComponent),
