@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] Added `accounts.isInvitationCodeValid(invitationCode)`, which asks the node whether an invitation code can still register an account without consuming the code. It answers `true` for an unused code or when the node does not enforce an allowlist, and `false` for an unknown or registered code. `WebClient.isInvitationCodeValid` and `RpcClient.isInvitationCodeValid` expose the same query on the low-level surfaces. Requires a node with the `IsInvitationCodeValid` endpoint ([rust-sdk#2686](https://github.com/0xMiden/rust-sdk/pull/2686)).
+* [FEATURE][web] Added `accounts.isInvitationCodeValid(invitationCode)`, which asks the node whether an invitation code can still register an account without consuming the code. It answers `true` for an unused code or when the node does not enforce an allowlist, and `false` for an unknown or registered code. `WebClient.isInvitationCodeValid` and `RpcClient.isInvitationCodeValid` expose the same query on the low-level surfaces. Requires a node with the `IsInvitationCodeValid` endpoint ([#459](https://github.com/0xMiden/web-sdk/pull/459), [rust-sdk#2686](https://github.com/0xMiden/rust-sdk/pull/2686)).
 
 ### Changes
 
