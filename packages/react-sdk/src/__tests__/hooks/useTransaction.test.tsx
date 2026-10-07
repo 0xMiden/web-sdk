@@ -14,6 +14,7 @@ import {
   createMockTransactionRequest,
   createMockTransactionResult,
   createMockNote,
+  createMockOutputNote,
   createMockChainAnchor,
 } from "../mocks/miden-sdk";
 
@@ -436,12 +437,7 @@ describe("useTransaction", () => {
         id: vi.fn(() => createMockTransactionId(id)),
         executedTransaction: vi.fn(() => ({
           outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [
-              {
-                noteType: vi.fn(() => NoteType.Private),
-                intoFull: vi.fn(() => mockNote),
-              },
-            ]),
+            notes: vi.fn(() => [createMockOutputNote(mockNote)]),
           })),
         })),
         serialize: vi.fn(() => new Uint8Array()),
@@ -551,10 +547,7 @@ describe("useTransaction", () => {
         executedTransaction: vi.fn(() => ({
           outputNotes: vi.fn(() => ({
             notes: vi.fn(() => [
-              {
-                noteType: vi.fn(() => NoteType.Public),
-                intoFull: vi.fn(() => null),
-              },
+              createMockOutputNote(createMockNote(), NoteType.Public),
             ]),
           })),
         })),

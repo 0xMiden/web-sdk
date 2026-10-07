@@ -1,6 +1,4 @@
-import { NoteType } from "@miden-sdk/miden-sdk";
 import type {
-  Note,
   TransactionRequest,
   WasmWebClient as WebClient,
 } from "@miden-sdk/miden-sdk";
@@ -48,54 +46,4 @@ export function assertAnchorValueUsable(options: { anchor?: unknown }): void {
     `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
       "passing it, or omit the option entirely to execute at the current tip"
   );
-}
-
-export function extractFullNotes(txResult: unknown): Note[] {
-  try {
-    const executedTx = (
-      txResult as { executedTransaction?: () => unknown }
-    ).executedTransaction?.() as {
-      outputNotes?: () => {
-        notes?: () => Array<{
-          noteType?: () => NoteType;
-          intoFull?: () => Note | null;
-        }>;
-      };
-    };
-    const notes = executedTx?.outputNotes?.().notes?.() ?? [];
-    const result: Note[] = [];
-    for (const note of notes) {
-      if (note.noteType?.() === NoteType.Private) {
-        const full = note.intoFull?.();
-        if (full) result.push(full);
-      }
-    }
-    return result;
-  } catch {
-    return [];
-  }
-}
-
-export function extractFullNote(txResult: unknown): Note | null {
-  try {
-    const executedTx = (
-      txResult as { executedTransaction?: () => unknown }
-    ).executedTransaction?.() as {
-      userOutputNotes?: () => Array<{ intoFull?: () => Note | null }>;
-      outputNotes?: () => {
-        notes?: () => Array<{ intoFull?: () => Note | null }>;
-      };
-    };
-    // `userOutputNotes()` is `outputNotes()` with the kernel's fee note removed. Indexing the
-    // unsplit list is only correct on a fee-free chain: where the chain charges, index 0 can be
-    // the fee note, and this note's id is what gets relayed to the recipient.
-    const notes =
-      executedTx?.userOutputNotes?.() ??
-      executedTx?.outputNotes?.().notes?.() ??
-      [];
-    const note = notes[0];
-    return note?.intoFull?.() ?? null;
-  } catch {
-    return null;
-  }
 }

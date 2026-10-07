@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import { NoteType } from "@miden-sdk/miden-sdk";
 import type {
   AdviceMap,
   BlockHeader,
@@ -81,7 +82,14 @@ export const createMockNote = (id: string = "0xnote1") => ({
   free: vi.fn(),
 });
 
-const createMockOutputNote = (note = createMockNote()) => ({
+// The binding has no `noteType()` on an output note: the type is on its
+// metadata, and the id is readable whether or not `intoFull()` succeeds.
+export const createMockOutputNote = (
+  note = createMockNote(),
+  noteType: NoteType = NoteType.Private
+) => ({
+  id: vi.fn(() => note.id()),
+  metadata: vi.fn(() => ({ noteType: vi.fn(() => noteType) })),
   intoFull: vi.fn(() => note),
 });
 
@@ -488,7 +496,17 @@ export const createMockWebClient = (
       }
       return undefined;
     }),
-    sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
+    // `Address` crosses by value, so the call moves it: a second relay with
+    // the same address fails the way it does in WASM.
+    sendPrivateOutputNote: vi.fn(async (_noteId: unknown, address: unknown) => {
+      const handle = address as { _live?: boolean } | null;
+      if (handle && typeof handle === "object") {
+        if (handle._live === false) {
+          throw new Error("null pointer passed to rust");
+        }
+        handle._live = false;
+      }
+    }),
     importAccountFile: vi.fn().mockResolvedValue("Imported account"),
     importAccountById: vi.fn().mockResolvedValue(undefined),
     importPublicAccountFromSeed: vi.fn().mockResolvedValue(createMockAccount()),

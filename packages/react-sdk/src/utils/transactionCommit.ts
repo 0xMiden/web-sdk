@@ -13,6 +13,13 @@ type ClientWithTransactions = {
   >;
 };
 
+/** The transaction will never commit, so nothing it created can be delivered. */
+export class TransactionDiscardedError extends Error {
+  constructor() {
+    super("Transaction was discarded before commit");
+  }
+}
+
 /**
  * Poll until a transaction is committed or discarded.
  *
@@ -43,7 +50,7 @@ export async function waitForTransactionCommit(
         return;
       }
       if (status.isDiscarded()) {
-        throw new Error("Transaction was discarded before commit");
+        throw new TransactionDiscardedError();
       }
     }
     await new Promise((resolve) => setTimeout(resolve, delayMs));

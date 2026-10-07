@@ -4,6 +4,8 @@ import { useSend } from "../../hooks/useSend";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
+  createMockNote,
+  createMockOutputNote,
   createMockWebClient,
   createMockTransactionRequest,
   createMockTransactionResult,
@@ -771,16 +773,17 @@ describe("useSend", () => {
   });
 
   describe("private note branch coverage", () => {
-    it("should throw Missing full note when extractFullNote returns null (lines 276-277)", async () => {
-      // Return a txResult whose executedTransaction throws so extractFullNote catches and returns null
+    it("reports a private note with no full note as undelivered, with the transaction id", async () => {
+      const partialNote = createMockOutputNote(createMockNote("0xpartial"));
+      partialNote.intoFull.mockReturnValue(null as never);
       const brokenTxResult = {
         id: vi.fn(() => ({
           toHex: vi.fn(() => "0xtxbad"),
           toString: vi.fn(() => "0xtxbad"),
         })),
-        executedTransaction: vi.fn(() => {
-          throw new Error("no output notes");
-        }),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({ notes: vi.fn(() => [partialNote]) })),
+        })),
       };
 
       const record = {
@@ -821,8 +824,17 @@ describe("useSend", () => {
             amount: 100n,
             noteType: "private",
           })
-        ).rejects.toThrow("Missing full note for private send");
+        ).rejects.toMatchObject({
+          code: "PRIVATE_NOTE_DELIVERY_FAILED",
+          transactionId: "0xtxbad",
+          commitment: "unknown",
+          undelivered: [{ noteId: "0xpartial", to: "0x2" }],
+          message: expect.stringContaining(
+            "Missing full note for private send"
+          ),
+        });
       });
+      expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
     });
 
     it("should use submitNewTransactionWithProver in returnNote path (line 183)", async () => {

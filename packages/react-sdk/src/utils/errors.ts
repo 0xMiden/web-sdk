@@ -30,6 +30,7 @@ export type MidenErrorCode =
   | "SEND_BUSY"
   | "OPERATION_BUSY"
   | "STALE_CLIENT"
+  | "PRIVATE_NOTE_DELIVERY_FAILED"
   | "UNKNOWN";
 
 export class MidenError extends Error {
@@ -46,6 +47,79 @@ export class MidenError extends Error {
     if (options?.cause !== undefined) {
       this.cause = options.cause;
     }
+  }
+}
+
+/** A private note a transaction created, and who it is for. */
+export interface PrivateNoteDelivery {
+  /** The note's id, as hex. */
+  noteId: string;
+  /**
+   * The recipient, in a form the hooks accept again: the string the caller
+   * passed, or an object recipient's account id as hex.
+   */
+  to: string;
+}
+
+/** What `useResendPrivateNotes().resend` relays. */
+export interface PrivateNoteResendRequest {
+  /** The transaction that created the notes. */
+  transactionId: string;
+  notes: PrivateNoteDelivery[];
+}
+
+/**
+ * A transaction was submitted, but private notes it created for a recipient
+ * were not delivered.
+ *
+ * The transaction is not retried and is not undone: `transactionId` names it
+ * whatever happened to its notes. `commitment` is `"committed"` when the hook
+ * saw the transaction commit before relaying, and `"unknown"` when it did not
+ * get that far: applying it locally failed, the commit wait did not see it
+ * commit, or none of the notes had a full note to relay. The SDK keeps no
+ * queue, so nothing re-sends a note on its own: pass
+ * `{ transactionId, notes: undelivered }` to `useResendPrivateNotes().resend`,
+ * which is safe to repeat. A note whose transaction this client could not apply
+ * is not in its store, so it cannot be resent from this client.
+ *
+ * `undelivered` is empty only when the transaction's output notes could not be
+ * read at all; `cause` then says why.
+ */
+export class PrivateNoteDeliveryError extends MidenError {
+  declare readonly code: "PRIVATE_NOTE_DELIVERY_FAILED";
+  readonly transactionId: string;
+  readonly commitment: "committed" | "unknown";
+  readonly delivered: PrivateNoteDelivery[];
+  readonly undelivered: PrivateNoteDelivery[];
+
+  constructor(details: {
+    transactionId: string;
+    commitment: "committed" | "unknown";
+    delivered: PrivateNoteDelivery[];
+    undelivered: PrivateNoteDelivery[];
+    cause?: unknown;
+  }) {
+    const { transactionId, commitment, delivered, undelivered, cause } =
+      details;
+    const missed =
+      undelivered.length === 0
+        ? "its private notes could not be read"
+        : `${undelivered.length} of ${delivered.length + undelivered.length} private notes ${undelivered.length === 1 ? "was" : "were"} not delivered`;
+    const reason =
+      cause instanceof Error
+        ? cause.message
+        : cause == null
+          ? ""
+          : String(cause);
+    super(
+      `Transaction ${transactionId} was ${commitment === "committed" ? "committed" : "submitted"}, but ${missed}${reason ? `: ${reason}` : ""}`,
+      { cause, code: "PRIVATE_NOTE_DELIVERY_FAILED" }
+    );
+    this.name = "PrivateNoteDeliveryError";
+    this.transactionId = transactionId;
+    this.commitment = commitment;
+    this.delivered = delivered;
+    this.undelivered = undelivered;
   }
 }
 

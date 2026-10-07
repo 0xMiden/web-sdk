@@ -675,9 +675,9 @@ describe("useConsume — prover + length-mismatch branches", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// useSend: cover the private-send prover branch and extractFullNote catch.
+// useSend: cover the private-send prover branch and unreadable output notes.
 // ────────────────────────────────────────────────────────────────────────
-describe("useSend — returnNote prover branch + extractFullNote catch", () => {
+describe("useSend - returnNote prover branch + unreadable output notes", () => {
   it("returnNote path uses submitNewTransactionWithProver when prover is provided", async () => {
     const submitWithProver = vi
       .fn()
@@ -806,10 +806,7 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
     expect(newSendReq).toHaveBeenCalled();
   });
 
-  it("extractFullNote returns null when executedTransaction throws (catch branch)", async () => {
-    // Build a tx result whose executedTransaction throws. extractFullNote
-    // should swallow the error and return null, so the Private-send
-    // post-check throws "Missing full note for private send".
+  it("reports the transaction when its output notes cannot be read", async () => {
     const txResult = {
       id: () => ({ toString: () => "0xtx", toHex: () => "0xtx" }),
       executedTransaction: () => {
@@ -841,7 +838,14 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
           amount: 100n,
           noteType: "private",
         })
-      ).rejects.toThrow(/Missing full note for private send/);
+      ).rejects.toMatchObject({
+        code: "PRIVATE_NOTE_DELIVERY_FAILED",
+        transactionId: "0xtx",
+        commitment: "unknown",
+        undelivered: [],
+        message: expect.stringContaining("WASM consumed"),
+      });
+      expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -160,13 +160,17 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       fromHex: vi.fn((hex: string) => createMockAccountId(hex)),
       fromBech32: vi.fn((bech32: string) => createMockAccountId(bech32)),
     },
+    // `_live` lets a by-value consumer (the shared `sendPrivateOutputNote`
+    // mock) mark an address moved, so reusing one fails as it does in WASM.
     Address: {
       fromBech32: vi.fn((bech32: string) => ({
+        _live: true,
         accountId: vi.fn(() => createMockAccountId(bech32)),
         toString: vi.fn(() => bech32),
       })),
       fromAccountId: vi.fn(
         (accountId: ReturnType<typeof createMockAccountId>) => ({
+          _live: true,
           accountId: vi.fn(() => accountId),
           toString: vi.fn(() => accountId.toString()),
         })

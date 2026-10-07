@@ -9,15 +9,18 @@ import {
 } from "@miden-sdk/miden-sdk";
 import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
-import { parseAccountId, parseAddress } from "../utils/accountParsing";
+import { parseAccountId } from "../utils/accountParsing";
 import { runExclusiveDirect } from "../utils/runExclusive";
 import { createNoteAttachment, emptyAttachment } from "../utils/noteAttachment";
 import { MidenError } from "../utils/errors";
 import { getNoteType } from "../utils/noteFilters";
-import { waitForTransactionCommit } from "../utils/transactionCommit";
-import type { ClientWithTransactions } from "../utils/transactionCommit";
 import { proveWithFallback } from "../utils/prover";
-import { extractFullNote } from "../utils/transactions";
+import {
+  readOwedPrivateNotes,
+  recipientRef,
+  sentNoteOwed,
+  settlePrivateNotes,
+} from "../utils/privateNoteDelivery";
 import { useMidenStore } from "../store/MidenStore";
 
 export interface UseSendResult {
@@ -37,6 +40,12 @@ export interface UseSendResult {
 
 /**
  * Hook to send tokens between accounts.
+ *
+ * A private send waits for the transaction to commit and then relays the note
+ * to the recipient. If the note is not delivered after the transaction was
+ * submitted, the call rejects with a `PrivateNoteDeliveryError` carrying the
+ * transaction id and the undelivered note; pass them to
+ * `useResendPrivateNotes` to try again.
  *
  * @example
  * ```tsx
@@ -92,6 +101,7 @@ export function useSend(): UseSendResult {
       setIsLoading(true);
       setStage("executing");
       setError(null);
+      setResult(null);
 
       try {
         // Auto-sync before send unless opted out
@@ -254,42 +264,26 @@ export function useSend(): UseSendResult {
           client.submitProvenTransaction(provenTransaction, txResult)
         );
 
-        // Save txId hex BEFORE applyTransaction, which consumes the WASM
-        // pointer inside txResult (and any child objects like TransactionId).
+        // Read once the transaction is submitted, so a failure from here on
+        // still reports which transaction it was.
         const txIdHex = txResult.id().toHex();
 
-        // For private notes, extract the full note BEFORE applyTransaction
-        // consumes the WASM pointers.
-        let fullNote: Note | null = null;
+        const apply = () =>
+          runExclusiveSafe(() =>
+            client.applyTransaction(txResult, submissionHeight)
+          );
         if (noteType === NoteType.Private) {
-          fullNote = extractFullNote(txResult);
-        }
-
-        await runExclusiveSafe(() =>
-          client.applyTransaction(txResult, submissionHeight)
-        );
-
-        if (noteType === NoteType.Private) {
-          if (!fullNote) {
-            throw new Error("Missing full note for private send");
-          }
-
-          await waitForTransactionCommit(
-            client as unknown as ClientWithTransactions,
+          await settlePrivateNotes({
+            client,
             runExclusiveSafe,
-            txIdHex
-          );
-
-          // Create a fresh AccountId — the original toAccountId may have been
-          // consumed by Note.createP2IDNote or newSendTransactionRequest.
-          const recipientAccountId = parseAccountId(options.to);
-          const recipientAddress = parseAddress(options.to, recipientAccountId);
-          await runExclusiveSafe(() =>
-            client.sendPrivateOutputNote(
-              fullNote!.id().toString(),
-              recipientAddress
-            )
-          );
+            transactionId: txIdHex,
+            owed: readOwedPrivateNotes(() =>
+              sentNoteOwed(txResult, recipientRef(options.to))
+            ),
+            apply,
+          });
+        } else {
+          await apply();
         }
 
         const sendResult: SendResult = {
