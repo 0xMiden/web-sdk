@@ -109,6 +109,8 @@ extern "C" {
         expected_height: u32,
         state_discriminant: u8,
         state: Vec<u8>,
+        script_root: Option<String>,
+        serialized_note_script: Option<Vec<u8>>,
     ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = upsertNoteScript)]

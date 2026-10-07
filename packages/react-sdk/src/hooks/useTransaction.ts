@@ -41,7 +41,9 @@ export interface UseTransactionResult {
  *
  * Pass `anchor` to execute against a pinned reference block instead of the
  * current sync height, so a summary signed at that block reproduces exactly.
- * Capture one with `useChainAnchor`.
+ * Capture one with `useChainAnchor`. Leave it out for a multisig request built
+ * by `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+ * client has synced to its bound block.
  *
  * Fees: the request is yours to build, so paying the verification fee is yours
  * too. A request assembled from `new TransactionRequestBuilder()` aborts with
@@ -181,10 +183,9 @@ export function useTransaction(): UseTransactionResult {
           const targetAddress = parseAddress(options.privateNoteTarget);
           const fullNotes = extractFullNotes(txResult);
           for (const note of fullNotes) {
-            // Relay via the output-note convenience: it derives the recipient's
-            // scan-start block from the note's expected height, so delivery is
-            // correct even though we relay after waiting for the commit (which has
-            // advanced this client's sync height past the note's commitment block).
+            // Relay via the output-note convenience: it reads the inclusion proof
+            // sync stored once the note committed, so the call has to follow the
+            // commit wait.
             await runExclusiveSafe(() =>
               client.sendPrivateOutputNote(note.id().toString(), targetAddress)
             );

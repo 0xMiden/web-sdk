@@ -359,4 +359,42 @@ impl RpcClient {
 
         Ok(height.map(|height| height.as_u32()))
     }
+
+    /// Binds an invitation code to an account on the network allowlist, through the node's
+    /// `RegisterAccount` endpoint.
+    ///
+    /// Unlike `WebClient.registerAccount`, this sends the request as given: the account does not
+    /// have to be tracked by a client, and the node is not asked first whether it already allows
+    /// the account. A registration consumes the code. The node rejects an unknown code
+    /// (`INVITATION_NOT_FOUND`), a code or account that is already registered
+    /// (`ALREADY_REGISTERED`) and a malformed request (`INVALID_REGISTRATION_REQUEST`); a network
+    /// that does not enforce the allowlist ignores the code but still registers the account.
+    ///
+    /// When the network operator runs a funding service, the node pays the registered account a
+    /// public P2ID note and answers once that note is committed, so this call can take a few
+    /// blocks.
+    #[js_export(js_name = "registerAccount")]
+    pub async fn register_account(
+        &self,
+        account_id: &AccountId,
+        invitation_code: String,
+    ) -> Result<(), JsErr> {
+        self.inner
+            .register_account(&invitation_code, account_id.into())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to register account"))
+    }
+
+    /// Returns whether the node lets the account be created on chain, through the
+    /// `IsAccountAllowed` endpoint.
+    ///
+    /// `true` when the node does not enforce an account allowlist, or when the account is
+    /// registered. Only account creation is gated, so the answer says nothing about an account
+    /// that already exists on chain.
+    #[js_export(js_name = "isAccountAllowed")]
+    pub async fn is_account_allowed(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        self.inner.is_account_allowed(account_id.into()).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the account is allowed")
+        })
+    }
 }

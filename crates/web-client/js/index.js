@@ -19,32 +19,15 @@ import {
 } from "./storageView.js";
 export * from "../Cargo.toml";
 
-export const AccountType = Object.freeze({
-  // Faucet-kind selectors for accounts.create({ type }).
-  FungibleFaucet: 0,
-  NonFungibleFaucet: 1,
-});
+export {
+  FaucetType,
+  AuthScheme,
+  NoteVisibility,
+  StorageMode,
+  Linking,
+} from "./enums.js";
 
-export const AuthScheme = Object.freeze({
-  Falcon: "falcon",
-  ECDSA: "ecdsa",
-});
-
-export const NoteVisibility = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const StorageMode = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const Linking = Object.freeze({
-  Dynamic: "dynamic",
-  Static: "static",
-});
-
+export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
 export { createP2IDNote, createP2IDENote, buildSwapTag };
@@ -128,6 +111,7 @@ const WRITE_METHODS = new Set([
   "newSendTransactionRequest",
   "newSwapTransactionRequest",
   "pruneAccountHistory",
+  "registerAccount",
   "removeAccountAddress",
   "removeTag",
   "removeSetting",
@@ -152,7 +136,6 @@ const READ_METHODS = new Set([
   "getAccountVault",
   "getAccounts",
   "getConsumableNotes",
-  "getForeignAccountInputs",
   "getInputNote",
   "getInputNotes",
   "getOutputNote",
@@ -164,9 +147,11 @@ const READ_METHODS = new Set([
   "getSetting",
   "getSyncHeight",
   "getTransactions",
+  "isAccountAllowed",
   "listSettingKeys",
   "listTags",
   "executeProgram",
+  "feeFaucetId",
   "storeIdentifier",
 ]);
 
@@ -421,6 +406,10 @@ class WebClient {
    *   the process-wide observation sink; `observeSensitive` decides, for this
    *   client and for its whole lifetime, whether observations carry the
    *   high-fidelity `sensitive` channel. Both are construction-only.
+   * @param {string | undefined} [feeFaucetId] - Faucet of the chain's fee asset,
+   *   as a bech32 address or a hex account ID. Optional: the client receives the
+   *   protocol configuration, which names the fee asset, from the node when it
+   *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
    */
   constructor(
     rpcUrl,
@@ -432,7 +421,8 @@ class WebClient {
     signCb,
     logLevel,
     useWorker = true,
-    observability
+    observability,
+    feeFaucetId
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -442,6 +432,11 @@ class WebClient {
     this.insertKeyCb = insertKeyCb;
     this.signCb = signCb;
     this.logLevel = logLevel;
+    // Stored under a private name on purpose: `createClientProxy` forwards only
+    // properties MISSING from this instance (`prop in target` wins), so an own
+    // property called `feeFaucetId` would shadow the WASM accessor of that name
+    // and `client.feeFaucetId()` would return this string instead of calling it.
+    this._feeFaucetId = feeFaucetId;
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -780,6 +775,7 @@ class WebClient {
         !!this.signCb,
         this.logLevel,
         numThreads,
+        this._feeFaucetId,
       ],
     });
   }
@@ -814,6 +810,10 @@ class WebClient {
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
+   * @param {string | undefined} feeFaucetId - Fee faucet of the chain, as a bech32 address or a
+   *   hex account ID. Optional: the client receives the protocol configuration, which names the
+   *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
+   *   before the first sync.
    */
   static async createClient(
     rpcUrl,
@@ -822,7 +822,8 @@ class WebClient {
     network,
     logLevel,
     useWorker = true,
-    observability
+    observability,
+    feeFaucetId
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -835,7 +836,8 @@ class WebClient {
       undefined,
       logLevel,
       useWorker,
-      observability
+      observability,
+      feeFaucetId
     );
 
     // Set up logging on the main thread before creating the client.
@@ -846,7 +848,13 @@ class WebClient {
 
     // Wait for the underlying wasmWebClient to be initialized.
     const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, network);
+    await wasmWebClient.createClient(
+      rpcUrl,
+      noteTransportUrl,
+      seed,
+      network,
+      feeFaucetId
+    );
 
     // Wait for the worker to be ready
     await instance.ready;
@@ -883,7 +891,8 @@ class WebClient {
     signCb,
     logLevel,
     useWorker = true,
-    observability
+    observability,
+    feeFaucetId
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -896,7 +905,8 @@ class WebClient {
       signCb,
       logLevel,
       useWorker,
-      observability
+      observability,
+      feeFaucetId
     );
 
     // Set up logging on the main thread before creating the client.
@@ -912,6 +922,7 @@ class WebClient {
       noteTransportUrl,
       seed,
       storeName,
+      feeFaucetId,
       getKeyCb,
       insertKeyCb,
       signCb

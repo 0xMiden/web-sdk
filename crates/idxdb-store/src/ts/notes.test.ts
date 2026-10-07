@@ -824,6 +824,52 @@ describe("upsertNoteScript", () => {
 // ================================================================================================
 
 describe("getOutputNotes", () => {
+  it("stores the script in notesScripts and joins it on read", async () => {
+    const dbId = await openTestDb();
+    const script = new Uint8Array([7, 8, 9]);
+    await upsertOutputNote(
+      dbId,
+      "dc-out-script",
+      "out-script",
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      "recipient-script",
+      DUMMY_BYTES,
+      undefined,
+      100,
+      2,
+      DUMMY_BYTES,
+      "0xscriptroot",
+      script
+    );
+
+    const stored = await getNoteScript(dbId, "0xscriptroot");
+    expect(stored!.serializedNoteScript).toEqual(script);
+
+    const result = await getOutputNotesFromIds(dbId, ["out-script"]);
+    expect(result![0].serializedNoteScript).toBe("BwgJ");
+  });
+
+  it("returns no script for a note without a recipient", async () => {
+    const dbId = await openTestDb();
+    await upsertOutputNote(
+      dbId,
+      "dc-out-partial",
+      "out-partial",
+      DUMMY_BYTES,
+      DUMMY_BYTES,
+      "recipient-partial",
+      DUMMY_BYTES,
+      undefined,
+      100,
+      0,
+      DUMMY_BYTES
+    );
+
+    const result = await getOutputNotesFromIds(dbId, ["out-partial"]);
+    expect(result![0].serializedNoteScript).toBeUndefined();
+  });
+
   it("returns all output notes when states is empty", async () => {
     const dbId = await openTestDb();
     await upsertOutputNote(
@@ -1152,6 +1198,8 @@ describe("upsertOutputNote with external transaction", () => {
           999,
           3,
           DUMMY_BYTES,
+          undefined,
+          undefined,
           tx
         );
       }

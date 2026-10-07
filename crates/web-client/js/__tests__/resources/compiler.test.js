@@ -8,6 +8,7 @@ function makeBuilder() {
     compileTxScript: vi.fn(),
     compileNoteScript: vi.fn(),
     buildLibrary: vi.fn(),
+    linkModule: vi.fn(),
     linkStaticLibrary: vi.fn(),
     linkDynamicLibrary: vi.fn(),
     linkStaticAccountComponentCode: vi.fn(),
@@ -21,6 +22,12 @@ function makeAccountComponent() {
     componentCode: vi.fn(),
   };
 }
+
+// A pre-built library is recognised by shape (it carries neither `namespace`
+// nor `code`), not by class identity, so a library built in another realm - a
+// worker, a second SDK copy - still links. This stand-in is deliberately a
+// class the resource has no way to know about.
+class ForeignLibrary {}
 
 function makeWasm(builder, component) {
   return {
@@ -126,9 +133,110 @@ describe("CompilerResource", () => {
       // Should not throw even without client
       await resource.component({ code: "code" });
     });
+
+    it("static-links dependency modules via linkModule before compiling", async () => {
+      builder.compileAccountComponentCode.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({
+        code: "component code",
+        slots: [],
+        libraries: [
+          { namespace: "oz::auth::guardian", code: "guardian masm" },
+          { namespace: "oz::auth::multisig", code: "multisig masm" },
+        ],
+      });
+      // Modules are linked as source (linkModule), not via buildLibrary, so the
+      // compiled component is identical to building it off a raw code builder.
+      expect(builder.linkModule).toHaveBeenNthCalledWith(
+        1,
+        "oz::auth::guardian",
+        "guardian masm"
+      );
+      expect(builder.linkModule).toHaveBeenNthCalledWith(
+        2,
+        "oz::auth::multisig",
+        "multisig masm"
+      );
+      expect(builder.buildLibrary).not.toHaveBeenCalled();
+      expect(builder.compileAccountComponentCode).toHaveBeenCalledWith(
+        "component code"
+      );
+    });
+
+    it("links libraries before compiling under an explicit namespace", async () => {
+      builder.compileAccountComponentCodeWithPath.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({
+        code: "component code",
+        namespace: "oz::auth::component",
+        libraries: [{ namespace: "oz::auth::guardian", code: "guardian masm" }],
+      });
+      expect(builder.linkModule).toHaveBeenCalledWith(
+        "oz::auth::guardian",
+        "guardian masm"
+      );
+      expect(builder.compileAccountComponentCodeWithPath).toHaveBeenCalledWith(
+        "oz::auth::component",
+        "component code"
+      );
+      expect(builder.linkModule.mock.invocationCallOrder[0]).toBeLessThan(
+        builder.compileAccountComponentCodeWithPath.mock.invocationCallOrder[0]
+      );
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
+    });
+
+    it("compiles with no libraries without calling linkModule", async () => {
+      builder.compileAccountComponentCode.mockReturnValue("compiled");
+      const resource = new CompilerResource(inner, getWasm, client);
+      await resource.component({ code: "code", libraries: [] });
+      expect(builder.linkModule).not.toHaveBeenCalled();
+      expect(builder.compileAccountComponentCode).toHaveBeenCalledWith("code");
+    });
+
+    it("throws a descriptive error for a malformed library entry", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.component({
+          code: "code",
+          libraries: [{ namespace: "oz::auth", code: "masm" }, { code: "x" }],
+        })
+      ).rejects.toThrow(/libraries\[1\]/);
+      // Must fail before producing a component, not link a bad entry.
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
+    });
+
+    it("propagates linkModule errors (e.g. duplicate namespace)", async () => {
+      builder.linkModule.mockImplementation(() => {
+        throw new Error("DuplicateModule");
+      });
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.component({
+          code: "code",
+          libraries: [{ namespace: "oz::auth", code: "masm" }],
+        })
+      ).rejects.toThrow(/DuplicateModule/);
+      expect(builder.compileAccountComponentCode).not.toHaveBeenCalled();
+    });
   });
 
   describe("txScript", () => {
+    it("rejects a library entry missing `code`, naming its index", async () => {
+      // Same validator as compile.component: a malformed entry must not reach
+      // the binding, where it fails with a raw type error instead.
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({
+          code: "script",
+          libraries: [
+            { namespace: "oz::auth", code: "masm" },
+            { namespace: "x" },
+          ],
+        })
+      ).rejects.toThrow(/compile\.txScript: libraries\[1\]/);
+      expect(builder.compileTxScript).not.toHaveBeenCalled();
+    });
+
     it("compiles and returns txScript result", async () => {
       builder.compileTxScript.mockReturnValue("txScriptResult");
       const resource = new CompilerResource(inner, getWasm, client);
@@ -165,13 +273,44 @@ describe("CompilerResource", () => {
       expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
     });
 
-    it("links pre-built library object dynamically when no namespace field", async () => {
+    it("links a pre-built Library dynamically, whatever realm its class came from", async () => {
+      // Recognised by shape, not by class identity: a Library forwarded from
+      // another realm (a worker, a second SDK copy) must still link.
       builder.compileTxScript.mockReturnValue("txResult");
-      const prebuiltLib = { someData: true }; // no .namespace
+      const prebuiltLib = new ForeignLibrary();
       const resource = new CompilerResource(inner, getWasm, client);
       await resource.txScript({ code: "code", libraries: [prebuiltLib] });
       expect(builder.buildLibrary).not.toHaveBeenCalled();
       expect(builder.linkDynamicLibrary).toHaveBeenCalledWith(prebuiltLib);
+    });
+
+    it("rejects an entry missing `namespace` instead of treating it as a Library", async () => {
+      // A typo'd or omitted namespace used to fall through to
+      // linkDynamicLibrary and fail inside the binding, with no index.
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({ code: "script", libraries: [{ code: "masm" }] })
+      ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
+      expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
+      expect(builder.compileTxScript).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-object entry", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({ code: "script", libraries: ["oops"] })
+      ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
+    });
+
+    it("rejects a non-string namespace", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.txScript({
+          code: "script",
+          libraries: [{ namespace: 42, code: "masm" }],
+        })
+      ).rejects.toThrow(/compile\.txScript: libraries\[0\]/);
+      expect(builder.linkDynamicLibrary).not.toHaveBeenCalled();
     });
 
     it("links the exact account component code dynamically", async () => {
@@ -228,6 +367,13 @@ describe("CompilerResource", () => {
   });
 
   describe("noteScript", () => {
+    it("rejects a malformed library entry with the noteScript caller name", async () => {
+      const resource = new CompilerResource(inner, getWasm, client);
+      await expect(
+        resource.noteScript({ code: "note", libraries: [{ code: "masm" }] })
+      ).rejects.toThrow(/compile\.noteScript: libraries\[0\]/);
+    });
+
     it("compiles and returns noteScript result", async () => {
       builder.compileNoteScript.mockReturnValue("noteScriptResult");
       const resource = new CompilerResource(inner, getWasm, client);

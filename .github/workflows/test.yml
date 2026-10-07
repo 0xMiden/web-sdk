@@ -24,8 +24,14 @@ env:
   # to in Cargo.lock: that ref's own Cargo.lock pins the node rev the client is
   # built against. A commit sha (not the branch name) keeps cache keys stable.
   # Re-pin whenever Cargo.lock moves, and to the release tag once one ships.
-  # v0.16.0
-  MIDEN_CLIENT_REF: 5478eeb3baf84a24d129b292fbc5ba558740bd46
+  # A `Client PR:` marker overrides this for the test-node jobs
+  # (resolve-client-ref); this value stays the fallback for pushes to next.
+  # v0.17.0
+  MIDEN_CLIENT_REF: 24bcd27f5aa40c7de7e712691f4b0a083c15bd7a
+  # Sequencer 0.17.0-rc.2 will not start without a batch-builder wallet. The
+  # binary reads this variable; the node repo's local runner uses the same
+  # placeholder. A node that does not know it ignores the variable.
+  MIDEN_NODE_BATCH_BUILDER_WALLET_ACCOUNT_ID: "0xcc0000000000dd010000ee000000ff"
 
 jobs:
   # Pre-flight: detect whether any non-docs files changed. See build.yml's
@@ -828,11 +834,45 @@ jobs:
   # the node rev pinned in its Cargo.lock, and builds the gen-genesis fixture
   # generator from its test-node-genesis crate. This job pre-builds both
   # pieces so the consumer jobs only download and start them.
+  # The published pin above tracks Cargo.lock. A PR that builds against an
+  # unreleased client via `Client PR:` must start the node from that same
+  # commit, or the block's protocol-config commitment is not the one the
+  # client stored.
+  resolve-client-ref:
+    name: Resolve test node ref
+    runs-on: ubuntu-24.04
+    outputs:
+      ref: ${{ steps.out.outputs.ref }}
+    steps:
+      - id: out
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FALLBACK: ${{ env.MIDEN_CLIENT_REF }}
+        run: |
+          set -euo pipefail
+          ref="$FALLBACK"
+          if [ -n "${PR_NUMBER:-}" ]; then
+            body=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+            marker=$(printf '%s\n' "$body" | grep -ioE '^[[:space:]]*Client PR:[[:space:]]*([0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+)?#[0-9]+' | head -1 || true)
+            if [ -n "$marker" ]; then
+              repo=$(printf '%s\n' "$marker" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || true)
+              repo=${repo:-0xMiden/rust-sdk}
+              num=$(printf '%s\n' "$marker" | grep -oE '[0-9]+$')
+              ref=$(gh api "repos/${repo}/pulls/${num}" --jq '.head.sha')
+              echo "linked client ${repo}#${num} -> ${ref}"
+            fi
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "test node rust-sdk ref: ${ref}"
+
   build-test-node:
     name: Build test node
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes]
+    needs: [changes, resolve-client-ref]
     if: needs.changes.outputs.non_docs == 'true'
+    env:
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
       - name: Checkout miden-client for test infra
         uses: actions/checkout@v6
@@ -903,9 +943,10 @@ jobs:
     # before the split.
     name: Web client tests (Node.js)
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [build-test-node]
+    needs: [build-test-node, resolve-client-ref]
     env:
       SCCACHE_GHA_ENABLED: "true"
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     steps:
       - uses: actions/checkout@v6
       # Auto-patch miden-client dep against any "Client PR: #N" marker in
@@ -992,7 +1033,21 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       - name: Build napi binary
         run: cargo build -p miden-client-web --no-default-features --features nodejs,testing --release
       - name: Stage napi binary as `miden_client_web.node`
@@ -1002,8 +1057,20 @@ jobs:
         # symlink/copy in place.
         run: |
           if [ "$(uname)" = "Darwin" ]; then EXT="dylib"; else EXT="so"; fi
-          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
+          # A restored target cache can leave an older cdylib on a path that
+          # sorts first. The check has to load the binary this job just built.
+          BINARY=
+          newest=0
+          while IFS= read -r -d '' candidate; do
+            modified=$(stat -c %Y "$candidate" 2>/dev/null || stat -f %m "$candidate")
+            if [ "$modified" -gt "$newest" ]; then
+              newest=$modified
+              BINARY=$candidate
+            fi
+          done < <(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" -print0)
           [ -n "$BINARY" ] || { echo "::error::napi binary not found"; exit 1; }
+          echo "napi binary: $BINARY"
+          ls -l "$BINARY"
           cp "$BINARY" crates/web-client/miden_client_web.node
       - name: Check node re-exports are in sync with the napi surface
         env:
@@ -1030,7 +1097,9 @@ jobs:
     # for the rationale and the per-shard file lists.
     name: Integration tests (${{ matrix.project }})
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes, build-web-client-dist-folder, build-test-node]
+    needs: [changes, build-web-client-dist-folder, build-test-node, resolve-client-ref]
+    env:
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     if: needs.changes.outputs.non_docs == 'true'
     strategy:
       fail-fast: false
@@ -1093,7 +1162,21 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       # Install Playwright separately from the test run. Inlining the install
       # into the test:ci script (yarn-style chained `&&`) breaks pnpm arg
       # forwarding: pnpm appends `-- --project=X` to the LAST command, but
@@ -1103,6 +1186,21 @@ jobs:
         run: pnpm --filter @miden-sdk/miden-sdk run test:install:ci
       - name: Run web client tests
         run: pnpm --filter @miden-sdk/miden-sdk run test:ci --project=${{ matrix.project }}
+      # A network transaction that the builder declines is not an error anywhere the test can
+      # see: the note simply stays unconsumed. Its own log is the only place that says why.
+      - name: Dump node logs on failure
+        if: failure()
+        run: |
+          # Locate the logs rather than assuming a path: a previous attempt
+          # guessed one and reported three missing files, which says nothing.
+          echo "::group::log files found"
+          find . -path ./node_modules -prune -o -name '*.log' -path '*test-node*' -print 2>/dev/null | head -40
+          echo "::endgroup::"
+          find . -path ./node_modules -prune -o -name '*.log' -path '*test-node*' -print 2>/dev/null | while read -r f; do
+            echo "::group::$f (last 200 lines)"
+            tail -n 200 "$f"
+            echo "::endgroup::"
+          done
       - name: Upload Playwright JSON report
         if: always()
         uses: actions/upload-artifact@v4
@@ -1117,7 +1215,9 @@ jobs:
   integration-tests-remote-prover-web-client:
     name: Integration tests for remote prover
     runs-on: warp-ubuntu-latest-x64-8x
-    needs: [changes, build-web-client-dist-folder, build-test-node]
+    needs: [changes, build-web-client-dist-folder, build-test-node, resolve-client-ref]
+    env:
+      MIDEN_CLIENT_REF: ${{ needs.resolve-client-ref.outputs.ref }}
     # Remote prover tests are slow (~14 min) and rarely affected by typical PR
     # changes. Skip on PRs unless explicitly opted in via the
     # 'run-remote-prover' label; always run on push to main/next.
@@ -1180,7 +1280,21 @@ jobs:
           # with the native fee asset, so run the node fee-free. Remove once the
           # tests draw fee balances from the genesis funder wallets.
           MIDEN_VERIFICATION_BASE_FEE: "0"
-        run: ./scripts/start-test-node.sh --background
+        run: |
+          ../scripts/patch-linked-test-node.sh ./scripts/start-test-node.sh
+          ./scripts/start-test-node.sh --background
+      # Since 0.17 the fee asset lives in the protocol configuration rather than
+      # the block header, so a client is told which faucet issues it instead of
+      # reading it off a block. Each genesis mints a fresh one, so it is read
+      # from the bootstrap log rather than pinned.
+      - name: Export the node's native fee faucet
+        working-directory: miden-client
+        run: |
+          ID=$(sed -n 's/^Native faucet account id: //p' \
+            target/test-node/data/logs/bootstrap.log | tail -1)
+          [ -n "$ID" ] || { echo "::error::native faucet id not found in bootstrap.log"; exit 1; }
+          echo "TEST_MIDEN_FEE_FAUCET_ID=$ID" >> "$GITHUB_ENV"
+          echo "native fee faucet: $ID"
       # See integration-tests-web-client for rationale on splitting the
       # Playwright install from the test invocation.
       - name: Install Playwright browsers

@@ -6,7 +6,7 @@ import {
   useConsumableNotesStore,
   useSyncStateStore,
 } from "../store/MidenStore";
-import { NoteFilter } from "@miden-sdk/miden-sdk";
+import { isConsumableNow, NoteFilter } from "@miden-sdk/miden-sdk";
 import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
 import { useAssetMetadata } from "./useAssetMetadata";
@@ -74,12 +74,20 @@ export function useNotes(options?: NotesFilter): NotesResult {
 
       const fetchedNotes = await client.getInputNotes(filter);
 
+      // Block-locked notes come back from the screener but cannot be consumed
+      // yet, so they are not "consumable" here either - the same rule
+      // notes.listAvailable and transactions.consumeAll apply.
       let fetchedConsumable;
       if (options?.accountId) {
         const accountIdObj = parseAccountId(options.accountId);
-        fetchedConsumable = await client.getConsumableNotes(accountIdObj);
+        const accountIdHex = accountIdObj.toString();
+        fetchedConsumable = (
+          await client.getConsumableNotes(accountIdObj)
+        ).filter((record) => isConsumableNow(record, accountIdHex));
       } else {
-        fetchedConsumable = await client.getConsumableNotes();
+        fetchedConsumable = (await client.getConsumableNotes()).filter(
+          (record) => isConsumableNow(record)
+        );
       }
 
       // Smart refetch: only update store if note IDs changed (prevents unnecessary re-renders)

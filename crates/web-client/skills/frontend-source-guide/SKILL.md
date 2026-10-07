@@ -163,8 +163,8 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | State management | `src/store/MidenStore.ts` | Zustand selectors, cached state |
 | Direct WasmWebClient usage | `src/context/MidenProvider.tsx` | useMidenClient(), runExclusive |
 | Multi-step workflow | `src/hooks/useWaitForCommit.ts`, `useWaitForNotes.ts` | Polling, timeout patterns |
-| Multisig proposal / co-signing | `src/hooks/useChainAnchor.ts`, `usePreview.ts` | ChainAnchor capture, `anchoredRequest`, TransactionSummary |
-| Foreign-account (FPI) reads | `crates/web-client/js/resources/transactions.js` (`foreignAccountInputs`) | ForeignAccount.public/private/prefetched, block pinning |
+| Multisig proposal / co-signing | `src/hooks/usePreview.ts`, `useChainAnchor.ts` | Multisig: preview and submit at the tip, no anchor (chain-anchored-execution R0). Single-signature co-signing: ChainAnchor capture, `anchoredRequest`, TransactionSummary |
+| Foreign-account (FPI) reads | `crates/web-client/js/resources/transactions.js` (`executeRequest`, `submit`) | ForeignAccount.public/private, reference-block pinning |
 | Custom MASM component | `src/hooks/useCompile.ts`, `useExecuteProgram.ts` | `@account_procedure`, `@transaction_script pub proc main` |
 | Network note | `src/hooks/useCreateNetworkNote.ts` | NetworkAccountTarget, createNetworkAuthComponents |
 | Batch send | `src/hooks/useMultiSend.ts` | feeAwareTransactionRequestBuilder |

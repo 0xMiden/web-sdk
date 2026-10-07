@@ -12,6 +12,7 @@ use miden_client::transaction::{
     TransactionStatus,
 };
 use miden_client::utils::Serializable;
+use miden_client_proto::encode;
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -99,16 +100,16 @@ pub(crate) fn serialize_transaction_record(
     let transaction_id: String = transaction_record.id.as_word().to_hex();
 
     let script_root = transaction_record.script.as_ref().map(|script| script.root().to_bytes());
-    let tx_script = transaction_record.script.as_ref().map(TransactionScript::to_bytes);
+    let tx_script = transaction_record.script.as_ref().map(encode::<TransactionScript>);
 
     SerializedTransactionData {
         id: transaction_id,
         script_root,
         tx_script,
-        details: transaction_record.details.to_bytes(),
+        details: encode(&transaction_record.details),
         block_num: transaction_record.details.block_num.as_u32(),
         status_variant: transaction_record.status.variant() as u8,
-        status: transaction_record.status.to_bytes(),
+        status: encode(&transaction_record.status),
     }
 }
 

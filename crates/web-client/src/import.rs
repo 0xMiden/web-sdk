@@ -1,7 +1,7 @@
 use js_export_macro::js_export;
 use miden_client::account::{AccountFile as NativeAccountFile, AccountId as NativeAccountId};
 use miden_client::keystore::Keystore;
-use miden_client::notes::NoteFile as NativeNoteFile;
+use miden_client::note::NoteFile as NativeNoteFile;
 #[cfg(feature = "browser")]
 use wasm_bindgen::prelude::*;
 
@@ -23,9 +23,8 @@ impl WebClient {
         let mut guard = self.get_mut_inner().await;
         let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
         let account_data: NativeAccountFile = account_file.into();
-        let account_id = account_data.account.id().to_string();
-
-        let NativeAccountFile { account, auth_secret_keys } = account_data;
+        let account_id = account_data.account().id().to_string();
+        let (account, auth_secret_keys) = account_data.into_parts();
 
         client
             .add_account(&account.clone(), false)

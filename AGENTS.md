@@ -117,6 +117,8 @@ Two long-lived branches:
 - **`main`** → npm `latest` dist-tag. Released on GitHub release events.
 - **`next`** → npm `next` dist-tag. Released when a PR merges into `next` carrying the `patch release` label.
 
+GitHub prereleases publish the tagged commit to npm `next`, including tags from a maintenance branch. Stable GitHub releases and workflow dispatch publish to `latest`; use a prerelease rather than dispatch for release candidates. Core SDK publication requires successful builds of all three Node platform packages, and the tagged `Cargo.lock` must remain unchanged.
+
 Both branches have protection enabled; required status checks mirror across the two.
 
 The release-publish gate compares the local `package.json` version against the **npm registry**, not against the previous git commit. So a release tag publishes whichever packages have versions not yet on npm, and bumping a single package is a clean release of just that one. Three gating mechanisms are in play and they do not share code:

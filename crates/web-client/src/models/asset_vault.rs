@@ -3,7 +3,7 @@ use miden_client::account::AccountId as NativeAccountId;
 use miden_client::asset::AssetVault as NativeAssetVault;
 
 use super::account_id::AccountId;
-use super::asset::VaultAsset;
+use super::asset::{VaultAsset, native_non_fungible_asset};
 use super::fungible_asset::FungibleAsset;
 use super::non_fungible_asset::NonFungibleAsset;
 use super::word::Word;
@@ -79,13 +79,7 @@ impl AssetVault {
     pub fn non_fungible_assets(&self) -> Vec<NonFungibleAsset> {
         self.0
             .assets()
-            .filter_map(|asset| {
-                if asset.is_non_fungible() {
-                    Some(asset.unwrap_non_fungible().into())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|asset| native_non_fungible_asset(&asset).map(Into::into))
             .collect()
     }
 }

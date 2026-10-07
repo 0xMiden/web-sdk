@@ -62,6 +62,29 @@ export function resolveAddress(ref, wasm) {
 }
 
 /**
+ * True when `record` can be consumed right now, as of the client's last sync.
+ *
+ * Reads each entry's status rather than inferring it: a missing
+ * `consumableAfterBlock()` alone would also match a note that is never
+ * consumable. With `accountIdHex`, only that account's entry counts, so a note
+ * locked for it is excluded even when another tracked account could spend it;
+ * without one (a listing that spans accounts), any account's entry counts.
+ *
+ * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
+ * @param {string} [accountIdHex] - The account the record was screened for.
+ * @returns {boolean} True when a counted entry reports a consumable-now status.
+ */
+export function isConsumableNow(record, accountIdHex) {
+  return record
+    .noteConsumability()
+    .some(
+      (nc) =>
+        (accountIdHex == null || nc.accountId().toString() === accountIdHex) &&
+        nc.consumptionStatus().isConsumableNow()
+    );
+}
+
+/**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *
  * @param {string | undefined} type - "public" or "private". Defaults to "public".

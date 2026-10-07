@@ -230,6 +230,7 @@ enum Table {
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
+  AccountWitnesses = "accountWitnesses",
 }
 ```
 
@@ -258,7 +259,7 @@ helper, e.g.
 `[Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId")`.
 Every later change is its own `.version(N).stores({...})` block.
 
-**The current schema version is 5.**
+**The current schema version is 6.**
 
 | Version | Change |
 | --- | --- |
@@ -267,6 +268,7 @@ Every later change is its own `.version(N).stores({...})` block.
 | 3 | Rekeys the input-note consumption index to `[consumedBlockHeight+consumedTxOrder+detailsCommitment]` (was `...+noteId`), so `Store::get_input_note_after` seeks on the values an `InputNoteCursor` carries. Index-only, no `.upgrade()` hook |
 | 4 | Drops `settings`: `this.dexie.version(4).stores({ [Table.Settings]: null })` |
 | 5 | Recreates `settings` as `indexes("[scope+key]", "scope")`. A primary key cannot change in place, hence the drop-and-recreate pair |
+| 6 | Adds `accountWitnesses`, primary key `&accountId`. `witness` is null until the first sync refresh |
 
 ### Migrations ARE in use
 
@@ -738,10 +740,13 @@ in-memory `AccountSmtForest<ForestInMemoryBackend>` plus a monotonic
 `VersionId`. Asset and storage-map **witnesses** are served from it, not from a
 Dexie query. It is in memory because the forest storage `Backend` trait is
 synchronous while every IndexedDB access from WASM goes through a JS promise,
-so it is rebuilt from the account tables on store open. Updates are
-forward-only - there is no staging or rollback, and a store write that fails
-after the forest advanced is recovered by
-`IdxdbStore::rebuild_account_forest` (`crates/idxdb-store/src/lib.rs:150`).
+so it starts empty on store open and is filled from the account tables as
+accounts are read. Updates are forward-only - there is no staging or rollback.
+Other clients sharing the database change the tables, and a store write can
+fail after the forest advanced, so every forest reader compares the roots it
+uses with persisted state and refreshes the account from a validated full read
+when they differ. Write paths do this through
+`IdxdbStore::current_account_header` (`crates/idxdb-store/src/account/mod.rs`).
 
 Do not add a table to try to persist it, and do not add a promise-backed path
 for witness reads.

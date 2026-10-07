@@ -1474,3 +1474,56 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
     expect(slots[0].slotValue).toBe("0xv1");
   });
 });
+
+describe("account code on a patch", () => {
+  it("stores code before the header records the new commitment", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    const code = new Uint8Array([9, 8, 7]);
+
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [],
+      [],
+      [],
+      "0xcode2",
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit2",
+      code
+    );
+
+    expect(await db.accountCodes.get("0xcode2")).toEqual({
+      root: "0xcode2",
+      code,
+    });
+    expect(
+      (await db.latestAccountHeaders.where("id").equals(ACC).first())?.codeRoot
+    ).toBe("0xcode2");
+  });
+
+  it("rejects a changed code commitment that arrives without code", async () => {
+    const dbId = await openTestDb();
+    await seedAccount(dbId);
+
+    await expect(
+      applyAccountPatch(
+        dbId,
+        ACC,
+        "2",
+        [],
+        [],
+        [],
+        "0xcode2",
+        STORAGE_ROOT,
+        VAULT_ROOT,
+        false,
+        "0xcommit2"
+      )
+    ).rejects.toThrow(/without the new code/);
+  });
+});
