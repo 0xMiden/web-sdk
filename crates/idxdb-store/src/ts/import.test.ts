@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
-import { openDatabase, getDatabase } from "./schema.js";
+import {
+  openDatabase,
+  getDatabase,
+  SETTING_SCOPE_CLIENT,
+  SETTING_SCOPE_USER,
+} from "./schema.js";
 import { exportStore } from "./export.js";
 import { forceImportStore, transformForImport } from "./import.js";
 import { uint8ArrayToBase64 } from "./utils.js";
@@ -216,6 +221,36 @@ describe("forceImportStore", () => {
     // Only the row from DB-A should remain
     expect(codesAfter.map((c) => c.root)).toContain("root-a1");
     expect(codesAfter.map((c) => c.root)).not.toContain("root-b-old");
+  });
+
+  it("does not restore the client-scope note transport outbox from an older export", async () => {
+    const dbIdA = await openTestDb();
+    const dbA = getDatabase(dbIdA);
+    await dbA.settings.bulkPut([
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "note_transport_outbox",
+        value: new Uint8Array([1]),
+      },
+      {
+        scope: SETTING_SCOPE_USER,
+        key: "note_transport_outbox",
+        value: new Uint8Array([2]),
+      },
+    ]);
+    const jsonStr = await exportStore(dbIdA);
+
+    const dbIdB = await openTestDb();
+    await forceImportStore(dbIdB, jsonStr);
+
+    const dbB = getDatabase(dbIdB);
+    expect(
+      await dbB.settings.get([SETTING_SCOPE_CLIENT, "note_transport_outbox"])
+    ).toBe(undefined);
+    expect(
+      (await dbB.settings.get([SETTING_SCOPE_USER, "note_transport_outbox"]))!
+        .value
+    ).toEqual(new Uint8Array([2]));
   });
 
   it("handles double-serialized JSON (string payload)", async () => {
