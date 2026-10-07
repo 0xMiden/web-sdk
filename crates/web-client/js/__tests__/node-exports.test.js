@@ -13,6 +13,19 @@ const fakeNative = vi.hoisted(() => {
     storage() {
       return rawStorage;
     }
+    toCommitment(arg) {
+      received.push(arg);
+      return "commitment";
+    }
+  }
+  // napi names the statics p2Id/p2Ide; the browser's p2id/p2ide are aliases.
+  class NoteScript {
+    static p2Id() {
+      return "p2id";
+    }
+    static p2Ide() {
+      return "p2ide";
+    }
   }
   class Word {}
   class TransactionRequestBuilder {
@@ -65,6 +78,7 @@ const fakeNative = vi.hoisted(() => {
     EthAddress,
     WebClient,
     exportStore,
+    NoteScript,
     rawStorage,
     received,
   };
@@ -80,6 +94,7 @@ vi.mock("../node/loader.js", () => ({
     EthAddress: fakeNative.EthAddress,
     WebClient: fakeNative.WebClient,
     exportStore: fakeNative.exportStore,
+    NoteScript: fakeNative.NoteScript,
   }),
 }));
 
@@ -187,6 +202,18 @@ describe("Node napi boundary", () => {
     expect(nodeIndex.exportStore(new nodeIndex.NoteArray([item]))).toBe(
       "exported"
     );
+    expect(fakeNative.received.at(-1)).toEqual([item]);
+  });
+
+  it("keeps the NoteScript.p2id and p2ide aliases", () => {
+    expect(nodeIndex.NoteScript.p2id()).toBe("p2id");
+    expect(nodeIndex.NoteScript.p2ide()).toBe("p2ide");
+  });
+
+  it("unwraps containers passed to a snake_case alias", () => {
+    const item = {};
+    new fakeNative.Account().to_commitment(new nodeIndex.NoteArray([item]));
+
     expect(fakeNative.received.at(-1)).toEqual([item]);
   });
 

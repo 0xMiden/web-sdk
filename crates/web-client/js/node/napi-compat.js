@@ -434,9 +434,10 @@ function makeArrayPolyfills() {
  * Applies all patches and returns an object that can be used as `getWasm()` return value.
  */
 export function createSdkWrapper(rawSdk) {
-  // Before patchSdkPrototypes, so its snake_case aliases copy the patched methods.
-  const nativeClasses = unwrapContainersAtNapiBoundary(rawSdk);
+  // Aliases and patches first, so the wrappers copy every static (NoteScript.p2id)
+  // and the container patch wraps every prototype method, aliases included.
   patchSdkPrototypes(rawSdk);
+  const nativeClasses = unwrapContainersAtNapiBoundary(rawSdk);
 
   return {
     ...rawSdk,
