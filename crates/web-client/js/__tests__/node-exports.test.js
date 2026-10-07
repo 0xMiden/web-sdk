@@ -235,6 +235,14 @@ describe("Node napi boundary", () => {
     expect(new W().tag()).toBe(2);
   });
 
+  it("keeps each wrapped export's class or function name", () => {
+    expect(nodeIndex.TransactionRequestBuilder.name).toBe(
+      "TransactionRequestBuilder"
+    );
+    expect(new nodeIndex.Word().constructor.name).toBe("Word");
+    expect(nodeIndex.exportStore.name).toBe("exportStore");
+  });
+
   it("reports the export as an instance's constructor", () => {
     expect(new nodeIndex.TransactionRequestBuilder().constructor).toBe(
       nodeIndex.TransactionRequestBuilder

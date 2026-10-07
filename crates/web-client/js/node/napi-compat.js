@@ -64,6 +64,10 @@ export function wrapClass(Cls) {
   const Wrapper = function (...args) {
     return construct(Cls, args.map(normalizeArg), new.target, Wrapper);
   };
+  Object.defineProperty(Wrapper, "name", {
+    value: Cls.name,
+    configurable: true,
+  });
   Wrapper.prototype = Cls.prototype;
   for (const key of Object.getOwnPropertyNames(Cls)) {
     if (key === "prototype" || key === "length" || key === "name") continue;
@@ -289,6 +293,10 @@ function wrapNativeClass(Cls) {
       ? construct(Cls, unwrapped, new.target, Wrapper)
       : Cls.apply(this, unwrapped);
   };
+  Object.defineProperty(Wrapper, "name", {
+    value: Cls.name,
+    configurable: true,
+  });
   Wrapper.prototype = Cls.prototype;
   for (const key of Object.getOwnPropertyNames(Cls)) {
     if (key === "prototype" || key === "length" || key === "name") continue;
