@@ -17,12 +17,12 @@ type ClientWithRelay = {
 };
 
 /** A note a hook owes its recipient, and why it cannot be relayed if it cannot. */
-export interface OwedPrivateNote extends PrivateNoteDelivery {
+interface OwedPrivateNote extends PrivateNoteDelivery {
   unavailable?: Error;
 }
 
 /** The notes a hook owes, read once its transaction is submitted. */
-export type OwedPrivateNotes =
+type OwedPrivateNotes =
   | { notes: OwedPrivateNote[]; unreadable?: undefined }
   | { notes: []; unreadable: { cause: unknown } };
 
