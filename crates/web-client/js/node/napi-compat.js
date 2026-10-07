@@ -43,13 +43,26 @@ export function unwrapContainer(val) {
 // ── Class wrapping ───────────────────────────────────────────────────
 
 /**
+ * Builds a native instance for a class wrapper. new.target carries a subclass's
+ * prototype through `super()`; a plain call (no `new`) builds for the wrapper.
+ */
+function construct(Cls, args, newTarget, Wrapper) {
+  const target = newTarget ?? Wrapper;
+  const instance = Reflect.construct(Cls, args, target);
+  if (Object.getPrototypeOf(instance) !== target.prototype) {
+    Object.setPrototypeOf(instance, target.prototype);
+  }
+  return instance;
+}
+
+/**
  * Wraps a napi class so constructor and static method args are normalized,
  * except `deserialize`, whose JsBytes argument passes through unchanged.
  */
 export function wrapClass(Cls) {
   if (!Cls) return Cls;
   const Wrapper = function (...args) {
-    return new Cls(...args.map(normalizeArg));
+    return construct(Cls, args.map(normalizeArg), new.target, Wrapper);
   };
   Wrapper.prototype = Cls.prototype;
   for (const key of Object.getOwnPropertyNames(Cls)) {
@@ -272,7 +285,9 @@ function unwrapContainersAtNapiBoundary(rawSdk) {
 function wrapNativeClass(Cls) {
   const Wrapper = function (...args) {
     const unwrapped = args.map(unwrapContainer);
-    return new.target ? new Cls(...unwrapped) : Cls.apply(this, unwrapped);
+    return new.target
+      ? construct(Cls, unwrapped, new.target, Wrapper)
+      : Cls.apply(this, unwrapped);
   };
   Wrapper.prototype = Cls.prototype;
   for (const key of Object.getOwnPropertyNames(Cls)) {
@@ -439,7 +454,7 @@ export function createSdkWrapper(rawSdk) {
   patchSdkPrototypes(rawSdk);
   const nativeClasses = unwrapContainersAtNapiBoundary(rawSdk);
 
-  return {
+  const sdk = {
     ...rawSdk,
     ...nativeClasses,
     // Wrap classes whose constructors/static methods accept BigInt or Uint8Array
@@ -453,4 +468,19 @@ export function createSdkWrapper(rawSdk) {
     // Array type polyfills
     ...makeArrayPolyfills(),
   };
+  // A wrapper shares its class's prototype, so instances report the final
+  // export, whichever wrapper produced it, as their constructor.
+  for (const [name, exported] of Object.entries(sdk)) {
+    const raw = rawSdk[name];
+    if (exported === raw || !isNativeClass(raw)) continue;
+    if (exported?.prototype !== raw.prototype) continue;
+    const desc = Object.getOwnPropertyDescriptor(raw.prototype, "constructor");
+    if (desc && !desc.writable && !desc.configurable) continue;
+    Object.defineProperty(raw.prototype, "constructor", {
+      value: exported,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return sdk;
 }

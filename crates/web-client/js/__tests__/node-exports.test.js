@@ -217,6 +217,32 @@ describe("Node napi boundary", () => {
     expect(fakeNative.received.at(-1)).toEqual([item]);
   });
 
+  it("lets a subclass of an exported native class keep its own methods", () => {
+    class Sub extends nodeIndex.NoteStorage {
+      tag() {
+        return 1;
+      }
+    }
+    const sub = new Sub(new nodeIndex.FeltArray([]));
+    expect(sub).toBeInstanceOf(Sub);
+    expect(sub.tag()).toBe(1);
+
+    class W extends nodeIndex.Word {
+      tag() {
+        return 2;
+      }
+    }
+    expect(new W().tag()).toBe(2);
+  });
+
+  it("reports the export as an instance's constructor", () => {
+    expect(new nodeIndex.TransactionRequestBuilder().constructor).toBe(
+      nodeIndex.TransactionRequestBuilder
+    );
+    expect(new nodeIndex.Word().constructor).toBe(nodeIndex.Word);
+    expect(nodeIndex.Word()).toBeInstanceOf(nodeIndex.Word);
+  });
+
   it("leaves byte arguments to native methods untouched", () => {
     const bytes = new Uint8Array(20);
     nodeIndex.EthAddress.fromBytes(bytes);
