@@ -114,6 +114,19 @@ export interface MidenConfig {
    * `client.feeFaucetId()` reports before the first sync.
    */
   feeFaucetId?: string;
+  /**
+   * Retries of a private note send after a transient note transport failure,
+   * an integer from 0 to 10. Default: 3. `0` makes a send a single attempt.
+   * See `ClientOptions.noteTransportMaxRetries` in `@miden-sdk/miden-sdk` for
+   * which failures are retried.
+   */
+  noteTransportMaxRetries?: number;
+  /**
+   * Delay before the first such retry in milliseconds, doubling for each later
+   * one, an integer from 0 to 60000. Default: 250. A `retry-after` from the
+   * transport service replaces it.
+   */
+  noteTransportRetryIntervalMs?: number;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */

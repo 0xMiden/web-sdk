@@ -235,6 +235,36 @@ export interface ClientOptions {
    * the accessor reads the configuration the chain commits to.
    */
   feeFaucetId?: string;
+  /**
+   * How many times a private note send is retried after a transient note
+   * transport failure, within the same `notes.sendPrivate` /
+   * `notes.sendPrivateOutput` call. An integer from 0 to 10; defaults to 3.
+   * Pass `0` to bound a send to a single attempt.
+   *
+   * Retried: a failed connection, and the service answering `Unavailable`,
+   * `DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value.
+   * Nothing else is, since a retry would get the same answer. In the browser a
+   * failed `fetch` (network down, CORS, DNS) reaches the client as an
+   * `Unknown` status and is **not** retried; a request that times out is.
+   *
+   * Validated before the client is built: anything else throws a `TypeError`.
+   * Ignored by `MidenClient.createMock()`, whose note transport is in-process.
+   */
+  noteTransportMaxRetries?: number;
+  /**
+   * Delay before the first of those retries, in milliseconds; each later retry
+   * waits twice as long as the one before. An integer from 0 to 60000;
+   * defaults to 250. With both options at their maximum the longest wait is
+   * 60000 * 2^9 ms.
+   *
+   * A `retry-after` value from the service replaces the computed delay and is
+   * not capped, so a rate-limited send can wait longer than this bound; use
+   * `noteTransportMaxRetries: 0` to rule that out.
+   *
+   * Validated before the client is built: anything else throws a `TypeError`.
+   * Ignored by `MidenClient.createMock()`.
+   */
+  noteTransportRetryIntervalMs?: number;
   /** Sync state on creation (default: false). */
   autoSync?: boolean;
   /** External keystore callbacks. */

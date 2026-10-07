@@ -303,16 +303,16 @@ describe("MidenClient.create forwards the observability options", () => {
       observeSensitive: true,
     });
     expect(calls.createClient).toHaveLength(1);
-    // `feeFaucetId` is the factory's last positional argument, so the
-    // observability bag is the one before it.
+    // The observability bag sits just before `feeFaucetId`, which the two
+    // note transport retry options follow.
     const args = calls.createClient[0];
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(10);
     const observability = args[6];
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
   });
 
-  it("passes feeFaucetId to createClient as its last argument", async () => {
+  it("passes feeFaucetId to createClient at index 7", async () => {
     const calls = captureFactory();
     await MidenClient.create({
       rpcUrl: "testnet",
@@ -320,11 +320,11 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClient).toHaveLength(1);
     const args = calls.createClient[0];
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(10);
     expect(args[7]).toBe("0x1234567890abcdef");
   });
 
-  it("passes feeFaucetId to the external-keystore factory as its last argument", async () => {
+  it("passes feeFaucetId to the external-keystore factory at index 10", async () => {
     const calls = captureFactory();
     await MidenClient.create({
       rpcUrl: "testnet",
@@ -333,7 +333,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(11);
+    expect(args).toHaveLength(13);
     expect(args[10]).toBe("0x1234567890abcdef");
   });
 
@@ -348,7 +348,7 @@ describe("MidenClient.create forwards the observability options", () => {
     });
     expect(calls.createClientWithExternalKeystore).toHaveLength(1);
     const args = calls.createClientWithExternalKeystore[0];
-    expect(args).toHaveLength(11);
+    expect(args).toHaveLength(13);
     const observability = args[9];
     expect(observability.observer).toBe(observer);
     expect(observability.observeSensitive).toBe(true);
@@ -357,11 +357,11 @@ describe("MidenClient.create forwards the observability options", () => {
   it("passes no observability options when none were supplied", async () => {
     const calls = captureFactory();
     await MidenClient.create({ rpcUrl: "testnet" });
-    // Index 6, not -1: feeFaucetId is now the trailing argument, so a
-    // position counted from the end reads the faucet and these optional-chained
-    // assertions pass whatever the observability bag holds.
+    // Index 6, not counted from the end: the arguments after it are not the
+    // observability bag, and these optional-chained assertions would pass
+    // whatever they read there.
     const args = calls.createClient[0];
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(10);
     const observability = args[6];
     expect(observability?.observer).toBeUndefined();
     expect(observability?.observeSensitive).toBeUndefined();

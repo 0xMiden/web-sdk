@@ -157,7 +157,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    noteTransportMaxRetries?: number,
+    noteTransportRetryIntervalMs?: number
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -171,7 +173,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    noteTransportMaxRetries?: number,
+    noteTransportRetryIntervalMs?: number
   ): Promise<WasmWebClient>;
 
   syncState(): Promise<SyncSummary>;

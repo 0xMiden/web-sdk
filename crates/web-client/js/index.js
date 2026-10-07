@@ -4,6 +4,7 @@ import { withSyncLock } from "./syncLock.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
+import { validateNoteTransportRetryOptions } from "./utils.js";
 import {
   createP2IDNote,
   createP2IDENote,
@@ -410,6 +411,15 @@ class WebClient {
    *   as a bech32 address or a hex account ID. Optional: the client receives the
    *   protocol configuration, which names the fee asset, from the node when it
    *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
+   * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private
+   *   note send after a transient transport failure, an integer from 0 to 10.
+   *   Defaults to 3.
+   * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before
+   *   the first such retry, doubling for each later one, an integer from 0 to
+   *   60000. Defaults to 250.
+   * @throws {TypeError} If either retry option is out of range. Checked here,
+   *   before any worker or WASM call, so every way of building a client
+   *   rejects the same values.
    */
   constructor(
     rpcUrl,
@@ -422,8 +432,14 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    noteTransportMaxRetries,
+    noteTransportRetryIntervalMs
   ) {
+    validateNoteTransportRetryOptions(
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
+    );
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
     this.seed = seed;
@@ -437,6 +453,8 @@ class WebClient {
     // property called `feeFaucetId` would shadow the WASM accessor of that name
     // and `client.feeFaucetId()` would return this string instead of calling it.
     this._feeFaucetId = feeFaucetId;
+    this._noteTransportMaxRetries = noteTransportMaxRetries;
+    this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -776,6 +794,8 @@ class WebClient {
         this.logLevel,
         numThreads,
         this._feeFaucetId,
+        this._noteTransportMaxRetries,
+        this._noteTransportRetryIntervalMs,
       ],
     });
   }
@@ -814,6 +834,10 @@ class WebClient {
    *   hex account ID. Optional: the client receives the protocol configuration, which names the
    *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
    *   before the first sync.
+   * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private note send
+   *   after a transient transport failure; see the constructor.
+   * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
+   *   retry; see the constructor.
    */
   static async createClient(
     rpcUrl,
@@ -823,7 +847,9 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    noteTransportMaxRetries,
+    noteTransportRetryIntervalMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -837,7 +863,9 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
     );
 
     // Set up logging on the main thread before creating the client.
@@ -853,7 +881,9 @@ class WebClient {
       noteTransportUrl,
       seed,
       network,
-      feeFaucetId
+      feeFaucetId,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
     );
 
     // Wait for the worker to be ready
@@ -880,6 +910,11 @@ class WebClient {
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
+   * @param {string | undefined} [feeFaucetId] - Fee faucet of the chain; see `createClient`.
+   * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private note send
+   *   after a transient transport failure; see the constructor.
+   * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
+   *   retry; see the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -892,7 +927,9 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    noteTransportMaxRetries,
+    noteTransportRetryIntervalMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -906,7 +943,9 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
     );
 
     // Set up logging on the main thread before creating the client.
@@ -925,7 +964,9 @@ class WebClient {
       feeFaucetId,
       getKeyCb,
       insertKeyCb,
-      signCb
+      signCb,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
     );
 
     await instance.ready;

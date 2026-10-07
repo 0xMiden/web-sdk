@@ -224,3 +224,50 @@ export async function hashSeed(seed) {
     `Invalid seed type: expected string or Uint8Array, got ${typeof seed}`
   );
 }
+
+/**
+ * Bounds for the note transport send-retry options. A retry waits
+ * `noteTransportRetryIntervalMs * 2^n` before attempt `n + 1`, and the browser
+ * timer that sleeps it throws inside WASM once a delay passes `2^31 - 1` ms, so
+ * the two caps are chosen together: the longest delay they allow is
+ * `60000 * 2^9` ms (about 8.5 hours).
+ */
+const NOTE_TRANSPORT_MAX_RETRIES_CAP = 10;
+const NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP = 60_000;
+
+/**
+ * Validates the note transport send-retry options before any worker or WASM
+ * call sees them. Validation lives here because wasm-bindgen converts a JS
+ * number to `u32` with `>>> 0` (so `-1` silently becomes `4294967295`), while
+ * the napi binding throws; checking first makes both builds agree.
+ *
+ * `undefined` means "use the default" and is accepted.
+ *
+ * @param {unknown} noteTransportMaxRetries - Integer from 0 to 10, or undefined.
+ * @param {unknown} noteTransportRetryIntervalMs - Integer from 0 to 60000, or undefined.
+ * @throws {TypeError} Naming the option that is out of range.
+ */
+export function validateNoteTransportRetryOptions(
+  noteTransportMaxRetries,
+  noteTransportRetryIntervalMs
+) {
+  checkRetryOption(
+    "noteTransportMaxRetries",
+    noteTransportMaxRetries,
+    NOTE_TRANSPORT_MAX_RETRIES_CAP
+  );
+  checkRetryOption(
+    "noteTransportRetryIntervalMs",
+    noteTransportRetryIntervalMs,
+    NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP
+  );
+}
+
+function checkRetryOption(name, value, cap) {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < 0 || value > cap) {
+    throw new TypeError(
+      `${name} must be an integer from 0 to ${cap}, got ${String(value)}`
+    );
+  }
+}

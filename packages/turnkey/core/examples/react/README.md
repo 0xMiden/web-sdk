@@ -63,7 +63,8 @@ const signCb = (turnkeyConfig: TConfig) => {
 // Create Miden client with external keystore (Turnkey).
 // The list is positional, so every skipped slot needs its own `undefined`:
 // (rpcUrl, noteTransportUrl, seed, storeName, getKeyCb, insertKeyCb, signCb,
-//  logLevel, useWorker, observability, feeFaucetId)
+//  logLevel, useWorker, observability, feeFaucetId,
+//  noteTransportMaxRetries, noteTransportRetryIntervalMs)
 const webClient = await WebClient.createClientWithExternalKeystore(
   endpoint,
   noteTransportUrl,
