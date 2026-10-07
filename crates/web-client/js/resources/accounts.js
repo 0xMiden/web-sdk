@@ -309,4 +309,26 @@ export class AccountsResource {
     const id = resolveAccountRef(ref, wasm);
     return await this.#inner.isAccountAllowed(id);
   }
+
+  /**
+   * Returns whether the invitation code can be used to register an account:
+   * `true` when the node does not enforce an account allowlist, or when the
+   * code exists and is not registered to an account. Unknown and registered
+   * codes answer `false`.
+   *
+   * The query does not consume the code and does not identify the account
+   * that holds it.
+   *
+   * @param {string} invitationCode
+   * @returns {Promise<boolean>}
+   */
+  async isInvitationCodeValid(invitationCode) {
+    this.#client.assertNotTerminated();
+    if (typeof invitationCode !== "string" || invitationCode.length === 0) {
+      throw new Error(
+        "accounts.isInvitationCodeValid requires a non-empty 'invitationCode' string"
+      );
+    }
+    return await this.#inner.isInvitationCodeValid(invitationCode);
+  }
 }

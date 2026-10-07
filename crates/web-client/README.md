@@ -520,6 +520,10 @@ A network that enforces an account allowlist creates an account on chain only on
 const wallet = await client.accounts.create();
 
 if (!(await client.accounts.isAllowed(wallet))) {
+  // Optional: check the code first. The check does not consume the code.
+  if (!(await client.accounts.isInvitationCodeValid(invitationCode))) {
+    throw new Error("The invitation code cannot be used.");
+  }
   await client.accounts.register({ account: wallet, invitationCode });
 }
 
@@ -529,7 +533,7 @@ await client.sync();
 await client.transactions.consumeAll({ account: wallet });
 ```
 
-`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `RpcClient.registerAccount` and `RpcClient.isAccountAllowed` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
+`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `accounts.isInvitationCodeValid` answers `false` for an unknown or registered code, and `true` when the node does not enforce an allowlist. `RpcClient.registerAccount`, `RpcClient.isAccountAllowed` and `RpcClient.isInvitationCodeValid` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
 ### Create a Faucet
 

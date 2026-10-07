@@ -2,6 +2,10 @@
 
 ## 0.18.0-rc.0 (TBD)
 
+### Enhancements
+
+* [FEATURE][web] Added `accounts.isInvitationCodeValid(invitationCode)`, which asks the node whether an invitation code can still register an account without consuming the code. It answers `true` for an unused code or when the node does not enforce an allowlist, and `false` for an unknown or registered code. `WebClient.isInvitationCodeValid` and `RpcClient.isInvitationCodeValid` expose the same query on the low-level surfaces. Requires a node with the `IsInvitationCodeValid` endpoint ([rust-sdk#2686](https://github.com/0xMiden/rust-sdk/pull/2686)).
+
 ### Changes
 
 * [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).

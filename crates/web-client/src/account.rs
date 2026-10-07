@@ -285,4 +285,19 @@ impl WebClient {
             js_error_with_context(err, "failed to check whether the account is allowed")
         })
     }
+
+    /// Returns whether the invitation code can be used to register an account.
+    ///
+    /// The node answers `true` when it does not enforce an account allowlist, or when the code
+    /// exists and is not registered to an account. Unknown and registered codes answer `false`.
+    /// An empty code is an error when the node enforces the allowlist. The query does not consume
+    /// the code and does not identify the account that holds it.
+    #[js_export(js_name = "isInvitationCodeValid")]
+    pub async fn is_invitation_code_valid(&self, invitation_code: String) -> Result<bool, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.is_invitation_code_valid(&invitation_code).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the invitation code is valid")
+        })
+    }
 }

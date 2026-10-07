@@ -205,6 +205,10 @@ test.describe("MidenClient API - Mock Chain", () => {
     // client keeps the invitation code rather than spending it.
     expect(allowed).toBe(true);
     expect(message).toContain("already allowed");
+    // A node without an allowlist accepts every code.
+    expect(await client.accounts.isInvitationCodeValid("invitation-code")).toBe(
+      true
+    );
   });
 
   test("accounts.list returns created accounts", async ({ sdk }) => {

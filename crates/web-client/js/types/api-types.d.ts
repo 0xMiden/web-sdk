@@ -1083,6 +1083,20 @@ export interface AccountsResource {
    */
   isAllowed(accountId: AccountRef): Promise<boolean>;
   /**
+   * Whether the invitation code can be used to register an account.
+   *
+   * `true` when the node does not enforce an account allowlist, or when the code
+   * exists and is not registered to an account. Unknown and registered codes
+   * answer `false`. An empty code throws before the node is asked.
+   *
+   * The query does not consume the code and does not identify the account that
+   * holds it. A `true` answer is not a reservation: another account can register
+   * the code before `register` runs, which then fails with `ALREADY_REGISTERED`.
+   *
+   * @param invitationCode - The invitation code the network operator issued.
+   */
+  isInvitationCodeValid(invitationCode: string): Promise<boolean>;
+  /**
    * Retrieve an account by ID. Returns `null` if not found in the local store.
    * Browser stores read a coherent persisted snapshot, including changes made
    * by other clients sharing the database. This does not sync from the network.
