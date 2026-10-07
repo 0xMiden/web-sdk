@@ -1,7 +1,6 @@
-import { NoteType, TransactionFilter } from "@miden-sdk/miden-sdk";
+import { NoteType } from "@miden-sdk/miden-sdk";
 import type {
   Note,
-  TransactionId,
   TransactionRequest,
   WasmWebClient as WebClient,
 } from "@miden-sdk/miden-sdk";
@@ -49,50 +48,6 @@ export function assertAnchorValueUsable(options: { anchor?: unknown }): void {
     `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
       "passing it, or omit the option entirely to execute at the current tip"
   );
-}
-
-type ClientWithTransactions = {
-  syncState: () => Promise<unknown>;
-  getTransactions: (filter: TransactionFilter) => Promise<
-    Array<{
-      id: () => { toHex: () => string };
-      transactionStatus: () => {
-        isPending: () => boolean;
-        isCommitted: () => boolean;
-        isDiscarded: () => boolean;
-      };
-    }>
-  >;
-};
-
-export async function waitForTransactionCommit(
-  client: ClientWithTransactions,
-  runExclusiveSafe: <T>(fn: () => Promise<T>) => Promise<T>,
-  txId: TransactionId,
-  maxWaitMs = 10_000,
-  delayMs = 1_000
-) {
-  let waited = 0;
-
-  while (waited < maxWaitMs) {
-    await runExclusiveSafe(() => client.syncState());
-    const [record] = await runExclusiveSafe(() =>
-      client.getTransactions(TransactionFilter.ids([txId]))
-    );
-    if (record) {
-      const status = record.transactionStatus();
-      if (status.isCommitted()) {
-        return;
-      }
-      if (status.isDiscarded()) {
-        throw new Error("Transaction was discarded before commit");
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    waited += delayMs;
-  }
-
-  throw new Error("Timeout waiting for transaction commit");
 }
 
 export function extractFullNotes(txResult: unknown): Note[] {

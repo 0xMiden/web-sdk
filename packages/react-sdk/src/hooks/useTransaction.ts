@@ -11,11 +11,11 @@ import { MidenError } from "../utils/errors";
 import { proveWithFallback } from "../utils/prover";
 import { useMidenStore } from "../store/MidenStore";
 import {
-  waitForTransactionCommit,
   extractFullNotes,
   assertAnchorValueUsable,
   resolveTransactionRequest,
 } from "../utils/transactions";
+import { waitForTransactionCommit } from "../utils/transactionCommit";
 
 export interface UseTransactionResult {
   /** Execute a transaction request end-to-end */
@@ -169,6 +169,7 @@ export function useTransaction(): UseTransactionResult {
         const submissionHeight = await runExclusiveSafe(() =>
           client.submitProvenTransaction(provenTransaction, txResult)
         );
+        const txIdHex = txResult.id().toHex();
 
         // Step 4: Apply
         await runExclusiveSafe(() =>
@@ -176,9 +177,8 @@ export function useTransaction(): UseTransactionResult {
         );
 
         // Deliver private notes if requested
-        const txId = txResult.id();
         if (options.privateNoteTarget != null) {
-          await waitForTransactionCommit(client, runExclusiveSafe, txId);
+          await waitForTransactionCommit(client, runExclusiveSafe, txIdHex);
 
           const targetAddress = parseAddress(options.privateNoteTarget);
           const fullNotes = extractFullNotes(txResult);
@@ -192,7 +192,7 @@ export function useTransaction(): UseTransactionResult {
           }
         }
 
-        const txSummary = { transactionId: txId.toHex() };
+        const txSummary = { transactionId: txIdHex };
         setStage("complete");
         setResult(txSummary);
         await sync();

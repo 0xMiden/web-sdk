@@ -169,17 +169,28 @@ const createMockWord = (hex: string = "0xword") => ({
 // callers that reach for `.toString()` hit Object.prototype's default and get
 // "[object Object]" (issue #83). Mirror that here so any future hook that
 // regresses to `.toString()` fails the unit tests instead of silently passing.
-export const createMockTransactionId = (id: string = "0xtx123") => ({
-  toString: vi.fn(() => "[object Object]"),
-  toHex: vi.fn(() => id),
-  asElements: vi.fn(() => []),
-  asBytes: vi.fn(() => new Uint8Array()),
-  inner: vi.fn(() => createMockWord(id)),
-  free: vi.fn(),
-  // TS 5.2+ ships [Symbol.dispose] on Disposable WASM bindings; tsc requires
-  // mocks to expose it even if tests never invoke it.
-  [Symbol.dispose]: vi.fn(),
-});
+//
+// `_live` mirrors wasm-bindgen ownership: `TransactionFilter.ids` in setup.ts
+// takes its handles by value and clears it, after which `toHex` throws the way
+// a moved handle does.
+export const createMockTransactionId = (id: string = "0xtx123") => {
+  const handle = {
+    _live: true,
+    toString: vi.fn(() => "[object Object]"),
+    toHex: vi.fn(() => {
+      if (!handle._live) throw new Error("null pointer passed to rust");
+      return id;
+    }),
+    asElements: vi.fn(() => []),
+    asBytes: vi.fn(() => new Uint8Array()),
+    inner: vi.fn(() => createMockWord(id)),
+    free: vi.fn(),
+    // TS 5.2+ ships [Symbol.dispose] on Disposable WASM bindings; tsc requires
+    // mocks to expose it even if tests never invoke it.
+    [Symbol.dispose]: vi.fn(),
+  };
+  return handle;
+};
 
 // Mock TransactionRecord
 const createMockTransactionRecord = (
