@@ -248,7 +248,9 @@ function makeArrayPolyfills() {
         ? []
         : Array.isArray(items)
           ? [...items]
-          : items && typeof items === "object" && Array.isArray(items.__midenItems)
+          : items &&
+              typeof items === "object" &&
+              Array.isArray(items.__midenItems)
             ? [...items.__midenItems]
             : [items];
 
@@ -260,6 +262,8 @@ function makeArrayPolyfills() {
       }
     };
 
+    // The mutators return the Proxy the caller holds, not this target object.
+    let container;
     const wrapper = {
       __midenItems: arr,
       get(i) {
@@ -269,11 +273,11 @@ function makeArrayPolyfills() {
       replaceAt(i, val) {
         checkIndex(i);
         arr[i] = val;
-        return wrapper;
+        return container;
       },
       push(val) {
         arr.push(val);
-        return wrapper;
+        return container;
       },
       length() {
         return arr.length;
@@ -286,7 +290,7 @@ function makeArrayPolyfills() {
     if (Symbol.dispose) wrapper[Symbol.dispose] = wrapper.free;
 
     // Indexed access parity with browser/wasm containers and plain arrays.
-    return new Proxy(wrapper, {
+    container = new Proxy(wrapper, {
       get(target, prop, receiver) {
         if (typeof prop === "string" && /^\d+$/.test(prop)) {
           const i = Number(prop);
@@ -328,6 +332,7 @@ function makeArrayPolyfills() {
         return Reflect.getOwnPropertyDescriptor(target, prop);
       },
     });
+    return container;
   }
 
   function ArrayCtor(items) {

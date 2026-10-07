@@ -81,6 +81,11 @@ describe("Node array container contract", () => {
       expect(items.replaceAt(1, replacement)).toBe(items);
       expect(items[0]).toBe(first);
       expect(items[1]).toBe(replacement);
+
+      const third = {};
+      expect(items.push(third)).toBe(items);
+      expect(items.length()).toBe(3);
+      expect(items[2]).toBe(third);
     }
   );
 
