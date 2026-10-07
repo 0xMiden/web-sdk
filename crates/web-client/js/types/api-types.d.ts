@@ -1909,7 +1909,11 @@ export declare class MidenClient {
   lastAuthError(): unknown;
   /** Returns the client-level default prover. */
   readonly defaultProver: TransactionProver | null;
-  /** Terminates the underlying Web Worker. After this, all method calls throw. */
+  /**
+   * Terminates the client: stops its Web Worker if there is one, and always
+   * releases the main-realm wasm client and, through it, its IndexedDB store
+   * connection. After this, all method calls throw.
+   */
   terminate(): void;
 
   /**

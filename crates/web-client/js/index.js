@@ -323,6 +323,17 @@ function createClientProxy(instance) {
         }
         return value;
       }
+      // Once terminate() has freed the wasm client, its methods answer with
+      // the same rejection as every other route instead of vanishing. Never
+      // for "then", which would make the proxy itself look like a promise.
+      if (
+        target._freedWasmPrototype &&
+        typeof prop === "string" &&
+        prop !== "then" &&
+        prop in target._freedWasmPrototype
+      ) {
+        return () => Promise.reject(new Error("WebClient terminated"));
+      }
       return undefined;
     },
   });
@@ -665,6 +676,11 @@ class WebClient {
    * @returns {Promise<any>} The result of fn.
    */
   _serializeWasmCall(fn, opName) {
+    // A call nested in an in-flight `_withInnerWebClient` still runs inline:
+    // it belongs to work that was already queued when terminate() ran.
+    if (this._terminated && this._withInnerLockDepth === 0) {
+      return Promise.reject(new Error("WebClient terminated"));
+    }
     // Opt-in twice over: with no op name or nobody listening, `fn` is
     // enqueued exactly as before and no timing work is done at all.
     const observed = opName !== undefined && hasObserver();
@@ -783,6 +799,9 @@ class WebClient {
   async getWasmWebClient() {
     if (this.wasmWebClient) {
       return this.wasmWebClient;
+    }
+    if (this._terminated) {
+      throw new Error("WebClient terminated");
     }
     if (!this.wasmWebClientPromise) {
       this.wasmWebClientPromise = (async () => {
@@ -939,6 +958,9 @@ class WebClient {
    * @returns {Promise<any>}
    */
   async callMethodWithWorker(methodName, ...args) {
+    if (this._terminated) {
+      throw new Error("WebClient terminated");
+    }
     await this.ready;
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
@@ -1295,31 +1317,40 @@ class WebClient {
   }
 
   /**
-   * Terminates the underlying Web Worker used by this WebClient instance,
-   * or frees the in-realm wasm client when `useWorker` was false.
+   * Terminates this WebClient: stops its Web Worker if there is one, and
+   * always releases the main-realm wasm client and, through it, its IndexedDB
+   * store connection, which closes once no other client in this realm holds
+   * the same store.
    *
    * Call this method when you're done using a WebClient to free up browser
-   * resources. With a worker, terminating releases that thread. With an
-   * in-realm client, the wasm-bindgen object is freed and its IndexedDB
-   * connection is closed when the idxdb store module has registered a closer.
-   *
-   * After calling terminate(), the WebClient should not be used.
+   * resources. Serialized calls already queued still run against the
+   * attached client, and the release waits for them to settle; every call
+   * made after terminate() rejects with "WebClient terminated". Calling it
+   * again is harmless.
    */
   terminate() {
+    this._terminated = true;
     if (this.worker) {
       this.worker.terminate();
-      this.worker = null;
     }
-
-    if (this.wasmWebClient) {
-      try {
-        this.wasmWebClient.free();
-      } catch {
-        // Already freed by FinalizationRegistry or a prior terminate().
-      }
+    this._afterQueuedWasmCalls(() => {
+      const client = this.wasmWebClient;
       this.wasmWebClient = null;
       this.wasmWebClientPromise = null;
-    }
+      if (client) {
+        this._freedWasmPrototype = Object.getPrototypeOf(client);
+        client.free();
+      }
+    });
+  }
+
+  /**
+   * Runs `step` once every serialized call already on `_wasmCallChain` has
+   * settled, so a wasm client is never freed under a call still using it.
+   * @private
+   */
+  _afterQueuedWasmCalls(step) {
+    this._wasmCallChain = this._wasmCallChain.then(step).catch(() => {});
   }
 }
 
@@ -1564,8 +1595,10 @@ class MockWebClient extends WebClient {
         return transactionResult.id();
       }
 
+      const replaced = this.wasmWebClient;
       this.wasmWebClient = new wasm.WebClient();
       this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
+      this._afterQueuedWasmCalls(() => replaced?.free());
       await this.wasmWebClient.createMockClient(
         this.seed,
         newMockChain,
@@ -1621,8 +1654,10 @@ class MockWebClient extends WebClient {
         return transactionResult.id();
       }
 
+      const replaced = this.wasmWebClient;
       this.wasmWebClient = new wasm.WebClient();
       this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
+      this._afterQueuedWasmCalls(() => replaced?.free());
       await this.wasmWebClient.createMockClient(
         this.seed,
         newMockChain,

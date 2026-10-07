@@ -1,5 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// `index.js` re-exports the wasm-bindgen surface from `../Cargo.toml`, which
+// the node test environment cannot load, and reaches the wasm module through
+// `../wasm.js`. Both are stubbed; the stand-in module's `WebClient` counts the
+// clients built, so a test can tell that a terminated wrapper builds none.
+const fakeWasm = vi.hoisted(() => {
+  class WebClient {
+    static constructed = 0;
+    constructor() {
+      WebClient.constructed += 1;
+      this.free = vi.fn();
+      this.createMockClient = vi.fn(async () => {});
+    }
+  }
+  return {
+    WebClient,
+    TransactionResult: { deserialize: () => ({ id: () => "tx-id" }) },
+  };
+});
+vi.mock("../../Cargo.toml", () => ({}));
+vi.mock("../wasm.js", () => ({ default: async () => fakeWasm }));
+
 import { MidenClient } from "../client.js";
+import {
+  WasmWebClient,
+  MockWasmWebClient,
+  __createClientProxyForTest as createClientProxy,
+} from "../index.js";
 
 // `MidenClient` is constructible without a real WASM module as long as the test
 // supplies the two things its constructor takes: the proxied inner client and a
@@ -141,4 +168,254 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
     ).rejects.toThrow("Client terminated");
     expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
   });
+});
+
+describe("WasmWebClient.terminate", () => {
+  const wasmSymbol = Symbol("wasm method");
+
+  // Stands in for the wasm-bindgen client: its methods live on the prototype,
+  // as wasm-bindgen's do, and refuse to run once it has been freed.
+  class FakeWasmClient {
+    constructor() {
+      this.freed = false;
+      this.calls = 0;
+      this.free = vi.fn(() => {
+        this.freed = true;
+      });
+    }
+    async getAccounts() {
+      this.calls += 1;
+      if (this.freed) throw new Error("used after free");
+      return ["account"];
+    }
+    async newWallet() {
+      if (this.freed) throw new Error("used after free");
+      return "wallet";
+    }
+    async submitNewTransaction() {
+      throw new Error("ran in-realm");
+    }
+    serializeMockChain() {
+      return new Uint8Array([1]);
+    }
+    serializeMockNoteTransportNode() {
+      return new Uint8Array([2]);
+    }
+    [wasmSymbol]() {}
+  }
+
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+
+  // Node has no Worker, so the wrapper is built in-realm; a test that needs a
+  // worker attaches a stand-in for one.
+  const makeWebClient = (wasmClient = new FakeWasmClient()) => {
+    const client = new WasmWebClient(
+      undefined,
+      undefined,
+      undefined,
+      "store",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false
+    );
+    client.wasmWebClient = wasmClient;
+    client.wasmWebClientPromise = Promise.resolve(wasmClient);
+    return { client, wasmClient };
+  };
+
+  const attachWorker = (client) => {
+    const worker = { postMessage: vi.fn(), terminate: vi.fn() };
+    client.worker = worker;
+    client.pendingRequests = new Map();
+    return worker;
+  };
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("frees the wasm client only after the serialized call already running settles", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const inFlight = deferred();
+    const running = client._serializeWasmCall(() => inFlight.promise);
+
+    client.terminate();
+    await Promise.resolve();
+    expect(wasmClient.free).not.toHaveBeenCalled();
+    expect(client.wasmWebClient).toBe(wasmClient);
+
+    inFlight.resolve("done");
+    await expect(running).resolves.toBe("done");
+    await client.waitForIdle();
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    expect(client.wasmWebClient).toBeNull();
+    expect(client.wasmWebClientPromise).toBeNull();
+  });
+
+  it("runs a wrapped call queued before terminate against the attached client", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const inFlight = deferred();
+    client._serializeWasmCall(() => inFlight.promise);
+    const queued = client.newWallet("private", "auth");
+
+    client.terminate();
+    inFlight.resolve();
+    await expect(queued).resolves.toBe("wallet");
+    await client.waitForIdle();
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects later calls instead of building a fresh wasm client", async () => {
+    const { client } = makeWebClient();
+    client.terminate();
+    await client.waitForIdle();
+    const constructed = fakeWasm.WebClient.constructed;
+
+    await expect(client.getWasmWebClient()).rejects.toThrow(/terminated/);
+    await expect(client.callMethodWithWorker("syncState")).rejects.toThrow(
+      /terminated/
+    );
+    await expect(client.newWallet("private", "auth")).rejects.toThrow(
+      /terminated/
+    );
+    expect(fakeWasm.WebClient.constructed).toBe(constructed);
+  });
+
+  it("rejects a worker call queued before terminate instead of running it in-realm", async () => {
+    const { client } = makeWebClient();
+    const worker = attachWorker(client);
+    const inFlight = deferred();
+    client._serializeWasmCall(() => inFlight.promise);
+    const queued = client.submitNewTransaction(
+      { toString: () => "0xacc" },
+      { serialize: () => new Uint8Array() }
+    );
+
+    client.terminate();
+    expect(worker.terminate).toHaveBeenCalled();
+    inFlight.resolve();
+    await expect(queued).rejects.toThrow(/terminated/);
+    expect(worker.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("still runs a call nested in an in-flight _withInnerWebClient inline", async () => {
+    const { client } = makeWebClient();
+    client._withInnerLockDepth = 1;
+    client.terminate();
+    await expect(client._serializeWasmCall(async () => "inline")).resolves.toBe(
+      "inline"
+    );
+  });
+
+  it("keeps the call chain usable when freeing the wasm client throws", async () => {
+    const { client, wasmClient } = makeWebClient();
+    wasmClient.free = vi.fn(() => {
+      throw new Error("still borrowed");
+    });
+
+    client.terminate();
+    // Nothing awaits the chain here, so a rejection left on it would surface
+    // as an unhandled rejection and fail the run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    expect(client.wasmWebClient).toBeNull();
+  });
+
+  it("can be called twice", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const worker = attachWorker(client);
+    client.terminate();
+    expect(() => client.terminate()).not.toThrow();
+    await client.waitForIdle();
+    expect(worker.terminate).toHaveBeenCalled();
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a proxied call queued before terminate finish before the free", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const proxy = createClientProxy(client);
+    const inFlight = deferred();
+    client._serializeWasmCall(() => inFlight.promise);
+    const queued = proxy.getAccounts();
+
+    client.terminate();
+    inFlight.resolve();
+    await expect(queued).resolves.toEqual(["account"]);
+    await client.waitForIdle();
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a proxied call made after terminate, before and after the free", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const proxy = createClientProxy(client);
+
+    client.terminate();
+    await expect(proxy.getAccounts()).rejects.toThrow(/terminated/);
+    await client.waitForIdle();
+    await expect(proxy.getAccounts()).rejects.toThrow(/terminated/);
+    expect(wasmClient.calls).toBe(0);
+  });
+
+  it("never answers then, a symbol or an unknown name after the free", async () => {
+    class ThenableWasmClient extends FakeWasmClient {
+      then() {}
+    }
+    const client = makeWebClient().client;
+    client.wasmWebClient = new ThenableWasmClient();
+    client.wasmWebClientPromise = null;
+    const proxy = createClientProxy(client);
+
+    client.terminate();
+    await client.waitForIdle();
+    expect(proxy.then).toBeUndefined();
+    expect(proxy[wasmSymbol]).toBeUndefined();
+    expect(proxy.notAWasmMethod).toBeUndefined();
+  });
+
+  it.each([
+    ["submitNewTransaction", []],
+    ["submitNewTransactionWithProver", [{ serialize: () => "local" }]],
+  ])(
+    "frees the wasm client a mock %s replaces once the queued calls settle",
+    async (method, extraArgs) => {
+      const client = new MockWasmWebClient();
+      const replaced = new FakeWasmClient();
+      client.wasmWebClient = replaced;
+      attachWorker(client);
+      client.callMethodWithWorker = vi.fn().mockResolvedValue({
+        serializedMockChain: [1],
+        serializedTransactionResult: [2],
+      });
+      const inFlight = deferred();
+      client._serializeWasmCall(() => inFlight.promise);
+
+      await expect(
+        client[method](
+          { toString: () => "0xacc" },
+          { serialize: () => new Uint8Array() },
+          ...extraArgs
+        )
+      ).resolves.toBe("tx-id");
+      expect(client.wasmWebClient).not.toBe(replaced);
+      expect(replaced.free).not.toHaveBeenCalled();
+
+      inFlight.resolve();
+      await client.waitForIdle();
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+      expect(client.wasmWebClient.free).not.toHaveBeenCalled();
+    }
+  );
 });
