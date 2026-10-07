@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.17.2 (TBD)
+## 0.18.0-rc.0 (TBD)
 
 ### Changes
 
-* [BREAKING][web] On Node.js the array containers (`NoteArray`, `FeltArray`, `AccountIdArray` and the other declared containers) now match the browser: `length()` is a method, and `get`, `replaceAt`, `push` and `free()` behave as there, while index access and `for...of` still work. A container is no longer an `Array`, so code that read the `length` property or called Array methods such as `map` or `slice` must use `length()`, `get(i)`, `for...of` or `Array.from(container)`. Results the browser types as a container, such as `SigningInputs.toElements()` and `TransactionScriptInputPair.felts()`, come back as one too ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#435](https://github.com/0xMiden/web-sdk/pull/435)).
+* [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).
 
 ## 0.17.1 (2026-10-07)
 
