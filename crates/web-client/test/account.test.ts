@@ -554,8 +554,10 @@ test.describe("Account.getPublicKeyCommitments", () => {
     );
     expect(result.error).toContain("client.keystore.getCommitments(accountId)");
     expect(result.error).toContain("different miden-standards revision");
-    expect(result.error).toContain("AccountComponent.compile");
-    expect(result.error).toContain("createAuthGuardedMultisig");
+    // AccountComponent.compile only wraps compiled code, and compiling the standard source
+    // keeps the standard root (pinned below), so neither is a cause.
+    expect(result.error).not.toContain("AccountComponent.compile");
+    expect(result.error).not.toContain("links it dynamically");
     expect(result.isFaucet).toBe(false);
   });
 
@@ -1097,6 +1099,68 @@ test.describe("Account.getPublicKeyCommitments", () => {
     expect(result.error).toContain(
       "not owned by exactly one standard auth component"
     );
+  });
+
+  test("a guarded multisig compiled from its MASM source keeps the factory's auth root", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk }) => {
+      // miden-standards 0.17.1's guarded-multisig component source, compiled the way
+      // client.compile.component compiles a component.
+      const code = `
+        use miden::protocol::tx
+        use miden::standards::auth::multisig
+        use miden::standards::auth::guardian
+        use miden::standards::auth::signature
+        use miden::standards::fee
+
+        pub use {update_signers_and_threshold} from miden::standards::auth::multisig
+        pub use {get_threshold_and_num_approvers} from miden::standards::auth::multisig
+        pub use {set_procedure_threshold} from miden::standards::auth::multisig
+        pub use {get_signer_at} from miden::standards::auth::multisig
+        pub use {is_signer} from miden::standards::auth::multisig
+        pub use {update_guardian_public_key} from miden::standards::auth::guardian
+
+        @auth_script
+        pub proc auth_tx_guarded_multisig(auth_args: word)
+            exec.multisig::resolve_auth_args
+            dup.5 exec.tx::get_reference_block_number
+            exec.multisig::assert_approval_not_expired movdn.10
+            exec.guardian::assert_rotation_policy movdn.11
+            exec.multisig::get_initial_threshold_and_num_approvers drop
+            add.1
+            exec.signature::estimate_multisig_authentication_cycles
+            dup.5 movdn.5
+            exec.fee::pay_fee drop
+            exec.multisig::auth_tx
+            dupw movup.9
+            exec.guardian::verify_signature
+            exec.guardian::get_guardian_public_key
+            exec.multisig::assert_not_approver_public_key
+            exec.multisig::record_and_assert_new_tx
+            exec.multisig::apply_approval_expiration
+        end
+      `;
+      const codeBuilder = await client.createCodeBuilder();
+      const compiled = sdk.AccountComponent.compile(
+        codeBuilder.compileAccountComponentCode(code),
+        []
+      ).withSupportsAllTypes();
+      const factory = sdk.createAuthGuardedMultisig(
+        new sdk.AuthGuardedMultisigConfig(
+          [4, 5].map((n) => new sdk.Word(sdk.u64Array([n, 0, 0, 0]))),
+          1,
+          new sdk.Word(sdk.u64Array([6, 0, 0, 0])),
+          sdk.AuthScheme.AuthRpoFalcon512
+        )
+      );
+      return {
+        compiledRoot: compiled.getProcedureHash("auth_tx_guarded_multisig"),
+        factoryRoot: factory.getProcedureHash("auth_tx_guarded_multisig"),
+      };
+    });
+
+    expect(result.compiledRoot).toBe(result.factoryRoot);
   });
 });
 

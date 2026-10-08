@@ -120,7 +120,9 @@ pub struct AccountComponent(NativeAccountComponent);
 
 #[js_export]
 impl AccountComponent {
-    /// Compiles account code with the given storage slots using the provided assembler.
+    /// Wraps already-compiled component code with the given storage slots.
+    ///
+    /// Nothing is assembled or linked here; compile MASM source with a `CodeBuilder` first.
     pub fn compile(
         account_code: AccountComponentCode,
         storage_slots: Vec<StorageSlot>,

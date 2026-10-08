@@ -164,9 +164,6 @@ impl Account {
     ///   keys this client holds.
     /// - A standard component built from a different miden-standards revision: use an SDK version
     ///   that matches the revision the account was built with.
-    /// - A standard component compiled through `AccountComponent.compile`, which links it
-    ///   dynamically and so changes its procedure root: build it with the SDK's factory, such as
-    ///   `createAuthGuardedMultisig`.
     ///
     /// Two kinds of standard auth component return `[]`: `NoAuth` and the network account hold no
     /// key, and the tx fee collector's key is not read here (the SDK cannot build such an
@@ -208,9 +205,7 @@ impl Account {
                  keys through the package that defines it, or use \
                  client.keystore.getCommitments(accountId) for the keys this client holds. If it \
                  is a standard component built from a different miden-standards revision, use an \
-                 SDK version that matches it. If it is a standard component compiled through \
-                 AccountComponent.compile, which links it dynamically, build it with the SDK's \
-                 factory such as createAuthGuardedMultisig instead."
+                 SDK version that matches it."
             )));
         }
 
