@@ -25,15 +25,18 @@ impl BatchItem {
             request: request.clone(),
         }
     }
-}
 
-impl BatchItem {
-    pub(crate) fn account_id(&self) -> &AccountId {
-        &self.account_id
+    /// Returns the account that executes this item's request.
+    #[js_export(js_name = "accountId")]
+    pub fn account_id(&self) -> AccountId {
+        self.account_id
     }
 
-    pub(crate) fn request(&self) -> &TransactionRequest {
-        &self.request
+    /// Returns a copy of this item's transaction request.
+    ///
+    /// The browser `WebClient` reads both halves back out to serialize a batch for its worker.
+    pub fn request(&self) -> TransactionRequest {
+        self.request.clone()
     }
 }
 

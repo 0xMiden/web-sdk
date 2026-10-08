@@ -450,16 +450,17 @@ impl WebClient {
 
     /// Executes a batch of transactions across one or more local accounts, proves them
     /// individually and as a batch, submits the batch to the network, and atomically applies
-    /// the per-tx updates to the local store. Returns the block number the batch was accepted
-    /// into.
+    /// the per-tx updates to the local store. Returns the node's chain tip as of submission, not
+    /// the block the batch commits in, which only a later sync reveals.
     ///
     /// Every proof is produced inside the batch primitive by the client's built-in local prover.
     /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or
     /// React `prover` setting does not apply to batches.
     ///
-    /// In the browser this method has no worker route: the batch proves on the calling thread,
-    /// which for a page is the main thread even with `useWorker` on, and blocks it until it
-    /// settles. Keep batches small.
+    /// The batch proves on whichever thread calls this. The browser `WebClient` forwards the call
+    /// to its Web Worker when it has one, so a page keeps its main thread. Without a worker
+    /// (`useWorker: false`, or no `Worker` in the environment), and always on a mock client, the
+    /// batch proves on the calling thread and blocks it until it settles.
     ///
     /// Each [`BatchItem`] pairs the executing account with its transaction request, so the
     /// pairing is enforced at the type level — there's no way to call this with mismatched

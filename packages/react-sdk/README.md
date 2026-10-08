@@ -850,9 +850,10 @@ producer-before-consumer. The underlying primitive returns a block number
 rather than per-tx ids, so the hook's result is `{ blockNumber }`.
 Each tx is proven inside that primitive by the client's built-in local prover,
 so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
-In the browser the batch has no worker route: it proves on the calling thread,
-which is the page's main thread even with `useWorker` on, and blocks the page
-until it settles, so keep batches small.
+In the browser the batch runs in the client's Web Worker, so the page stays
+responsive while it proves; with `useWorker: false`, or without `Worker`
+support, it proves on the calling thread and blocks the page until it settles,
+so keep batches small there.
 
 Built-in features:
 - **Auto pre-sync** before submit (disable with `skipSync: true`)
@@ -882,7 +883,7 @@ function BatchButton() {
         { account: bob,   request: consumeReq },  // can consume notes from earlier items
       ],
     });
-    console.log('Batch landed in block', blockNumber);
+    console.log('Batch submitted at chain tip', blockNumber);
   };
 
   return (
@@ -894,9 +895,9 @@ function BatchButton() {
 ```
 
 Pass `skipSync: true` if you've already synced and want to avoid the pre-submit
-round-trip. The hook never serializes the requests — the WASM `BatchItem`
-constructor takes the `TransactionRequest` by reference, so there's no
-hidden `.serialize()` cost on the JS side.
+round-trip. The hook itself never serializes the requests: the WASM `BatchItem`
+constructor takes the `TransactionRequest` by reference. A client running a
+Web Worker serializes each request once to hand the batch to the worker.
 
 #### `useInternalTransfer()`
 

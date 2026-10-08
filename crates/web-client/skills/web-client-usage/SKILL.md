@@ -127,9 +127,8 @@ wallet path of `accounts.create({ seed })`. The **contract** path of
 `accounts.create` is the exception - its seed goes straight into
 `new AccountBuilder(seed)`, so it must be a raw 32-byte `Uint8Array`.
 
-`useWorker` defaults to `true` and runs WASM calls off the main thread, except
-batch submission (`transactions.batch` / `submitBatch`), which always proves on
-the calling thread. Set it to `false` when you pass a `CallbackProver` from
+`useWorker` defaults to `true` and runs WASM calls off the main thread. Set it
+to `false` when you pass a `CallbackProver` from
 `TransactionProver.newCallbackProver(jsFn)` (the worker boundary serializes the
 prover and silently downgrades the callback variant to `"local"`), or when
 embedding in a single-WebView native shell. `client.lastAuthError()` - which
@@ -849,15 +848,17 @@ across accounts, so order the producer first. Every account must be tracked by
 this client, and no note may be consumed twice in one batch.
 
 The result is `{ blockNumber }` only - the Rust V1 batch API returns no
-per-transaction ids, so `waitForConfirmation` polls local sync height until it
-reaches that block rather than watching transaction status. A
+per-transaction ids, and the number is the node's chain tip as of submission,
+not the block the batch commits in. `waitForConfirmation` does not currently
+work on a batch (#314): sync and check `transactions.list()` instead. A
 `custom` operation carries a request you built, so the fee rules above apply to
 it: use `client.feeAwareTransactionRequestBuilder(account)`. Every transaction
 is proven inside the batch primitive by the client's built-in local prover, so
 `proverUrl` does not apply, and the V1 batch API has no per-call prover override.
-In the browser a batch has no worker route: it proves on the calling thread
-(the main thread for a page, even with `useWorker` on) and blocks it until it
-settles, so keep batches small.
+In the browser the batch runs in the client's Web Worker, so the page stays
+responsive while it proves; with `useWorker: false`, without `Worker` support,
+or on a mock client it proves on the calling thread and blocks it until it
+settles, so keep batches small there.
 
 ### Preview (dry run)
 

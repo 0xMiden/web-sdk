@@ -244,9 +244,7 @@ export interface ClientOptions {
     sign: SignCallback;
   };
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread,
-   * except batch submission (`transactions.batch` / `submitBatch`), which
-   * always proves on the calling thread.
+   * Enable the Web Worker shim that runs WASM calls off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
@@ -591,10 +589,13 @@ export interface ConsumeAllOptions extends TransactionOptions {
 }
 
 /**
- * A single operation inside a transaction batch. The shape mirrors the
- * singular options types (`SendOptions`, `MintOptions`, ...). Each
- * operation specifies which local account executes it via `account`; a
- * batch may mix operations across any combination of local accounts.
+ * A single operation inside a transaction batch. Each shape carries the
+ * request-building fields of its singular options type (`SendOptions`,
+ * `MintOptions`, ...) and none of the per-submission ones. Each operation
+ * specifies which local account executes it via `account`; a batch may mix
+ * operations across any combination of local accounts. Neither `prover`,
+ * `waitForConfirmation` and `timeout` nor `returnNote`, which selects a
+ * different request shape, has any per-operation meaning.
  */
 export type BatchOperation =
   | {
@@ -647,9 +648,16 @@ export interface BatchOptions {
   /** Operations to execute atomically as a batch. Must be non-empty. */
   operations: BatchOperation[];
   /**
-   * Wait until the batch's block has been observed in the local sync height.
-   * Differs from singular `waitForConfirmation`: the batch API returns only
-   * a block number, so we poll chain height rather than per-tx status.
+   * Poll until the local sync height reaches the block number returned by the
+   * submission.
+   *
+   * Does not currently work on a batch: the poll's sync step calls a method
+   * that does not exist, so it cannot advance the height and the call throws
+   * `Batch confirmation timed out` unless the client is already at or past
+   * that height. Even once fixed it would be a weak signal, since the number
+   * is the tip as of submission rather than the batch's commit block. See
+   * https://github.com/0xMiden/web-sdk/issues/314. Sync and check
+   * `transactions.list()` or the account nonce instead.
    */
   waitForConfirmation?: boolean;
   /** Wall-clock polling timeout for `waitForConfirmation` (default 60_000ms). */
@@ -658,7 +666,10 @@ export interface BatchOptions {
 
 
 export interface BatchSubmitResult {
-  /** The block number the batch was accepted into. */
+  /**
+   * The node's chain tip as of submission — not the block the batch commits
+   * in. Sync to learn where it landed.
+   */
   blockNumber: number;
 }
 
@@ -1405,14 +1416,16 @@ export interface TransactionsResource {
 
   /**
    * Execute a heterogeneous batch of operations across one or more local
-   * accounts. Each operation specifies its executing `account`. Operations
-   * are built, proven individually and as a batch, and submitted atomically —
-   * either every tx in the batch lands or none does. Every proof runs inside
-   * the batch primitive on the client's built-in local prover, so `proverUrl`
-   * does not apply to batches.
-   * In the browser a batch has no worker route: it proves on the calling
-   * thread (the main thread for a page, even with `useWorker` on) and blocks
-   * it until it settles, so keep batches small.
+   * accounts. Each operation specifies its executing `account`. Each
+   * operation is proven individually as it is added, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all. Every proof runs inside the batch
+   * primitive on the client's built-in local prover, so `proverUrl` does not
+   * apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
@@ -1437,12 +1450,23 @@ export interface TransactionsResource {
    * {@link MidenClient.feeAwareTransactionRequestBuilder}.
    *
    * @param items - Per-tx (account, request) pairs (must be non-empty).
-   * @param options - Optional batch settings (waitForConfirmation, timeout).
+   * @param options - Optional batch settings (timeout, and `waitForConfirmation`,
+   *   which does not currently work, see its own documentation and #314).
    *   There is no prover option: every transaction is proven inside the batch
    *   primitive by the client's built-in local prover, and `proverUrl` does not
    *   apply.
-   *   In the browser the batch proves on the calling thread, never the worker,
-   *   so it blocks the page's main thread until it settles; keep batches small.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one; see {@link batch} for when it runs in-thread instead.
+   *
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's fixed 30s ceiling, and since signing happens
+   *   at push time and this wrapper treats a failed push as fatal, one timeout
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`) loses its reason and surfaces as
+   *   the generic `sign callback must return a Uint8Array`. Both are shared
+   *   with every worker-forwarded method; tracked in #316. Relatedly,
+   *   `lastAuthError()` reads the main-thread instance, so it does not report
+   *   a forwarded batch's auth error.
    */
   submitBatch(
     items: { account: AccountRef; request: TransactionRequest }[],

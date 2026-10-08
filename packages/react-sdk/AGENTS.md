@@ -247,7 +247,7 @@ const { blockNumber } = await batch({
 });
 ```
 
-Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically: either every tx lands or none. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply to batches. In the browser the batch has no worker route: it proves on the calling thread, which is the page's main thread even with `useWorker` on, and blocks the page until it settles, so keep batches small. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
+Each item pairs a tracked account with a pre-built `TransactionRequest`. The batch is proven and submitted atomically: either every tx lands or none. Each tx is proven inside the batch primitive by the client's built-in local prover, so `MidenProvider`'s `prover` setting and its fallback do not apply to batches. In the browser the batch runs in the client's Web Worker, so the page stays responsive while it proves; with `useWorker: false`, or without `Worker` support, it proves on the calling thread and blocks the page until it settles, so keep batches small there. Items can target multiple accounts; later items may consume notes produced by earlier ones (push order must respect producer-before-consumer).
 
 ### Claim Notes
 ```tsx
