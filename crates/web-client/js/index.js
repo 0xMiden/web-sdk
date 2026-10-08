@@ -1384,17 +1384,27 @@ class WebClient {
         return;
       }
       this._freedWasmPrototype = Object.getPrototypeOf(client);
-      // free() refuses a client that a raw-bound call still borrows.
-      await Promise.allSettled(this._rawWasmCalls ?? []);
-      try {
-        client.free();
-      } catch (error) {
-        console.error(
-          "WebClient: failed to free the wasm client on terminate:",
-          error
-        );
-      }
+      await this._freeWasmClient(client, "terminate");
     });
+  }
+
+  /**
+   * Frees a detached wasm client once every tracked raw-bound call has
+   * settled: those calls borrow it off the call chain, and free() refuses a
+   * borrowed client. A free() that still throws is reported, not rethrown.
+   * It never joins the call chain, so a step on the chain can await it.
+   * @private
+   */
+  async _freeWasmClient(client, occasion) {
+    await Promise.allSettled(this._rawWasmCalls ?? []);
+    try {
+      client.free();
+    } catch (error) {
+      console.error(
+        `WebClient: failed to free the wasm client on ${occasion}:`,
+        error
+      );
+    }
   }
 
   /**
@@ -1408,8 +1418,8 @@ class WebClient {
 
   /**
    * Tracks a raw-bound call that returned a promise until it settles. It
-   * borrows the wasm client off the call chain, so terminate's free waits for
-   * it as well.
+   * borrows the wasm client off the call chain, so `_freeWasmClient` waits
+   * for it as well.
    * @private
    */
   _trackRawWasmCall(promise) {
@@ -1686,11 +1696,7 @@ class MockWebClient extends WebClient {
         }
         this.wasmWebClient = replacement;
         this.wasmWebClientPromise = Promise.resolve(replacement);
-        try {
-          wasmWebClient.free();
-        } catch {
-          // Still borrowed by a raw-bound call; nothing references it now.
-        }
+        await this._freeWasmClient(wasmWebClient, "replacement");
 
         return transactionResult.id();
       });
@@ -1762,11 +1768,7 @@ class MockWebClient extends WebClient {
         }
         this.wasmWebClient = replacement;
         this.wasmWebClientPromise = Promise.resolve(replacement);
-        try {
-          wasmWebClient.free();
-        } catch {
-          // Still borrowed by a raw-bound call; nothing references it now.
-        }
+        await this._freeWasmClient(wasmWebClient, "replacement");
 
         return transactionResult.id();
       });

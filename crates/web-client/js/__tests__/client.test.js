@@ -706,6 +706,85 @@ describe("WasmWebClient.terminate", () => {
       expect(replaced.free).toHaveBeenCalledTimes(1);
     }
   );
+
+  it.each(mockSubmits)(
+    "frees the client a mock %s replaces only once a raw-bound call on it settles",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      const proving = deferred();
+      replaced.proveBlock = vi.fn(() => proving.promise);
+      const running = createClientProxy(client).proveBlock();
+
+      const submitted = submit(client, method, extraArgs);
+      const outcome = outcomeAfterFlush(submitted);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(replaced.free).not.toHaveBeenCalled();
+      expect(await outcome).toBe("pending");
+
+      proving.resolve("proved");
+      await expect(running).resolves.toBe("proved");
+      await expect(submitted).resolves.toBe("tx-id");
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+      await client.waitForIdle();
+      expect(replaced.free).toHaveBeenCalledTimes(1);
+      expect(client.wasmWebClient.free).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(mockSubmits)(
+    "reports a replaced client a mock %s cannot free",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      const borrowed = new Error("still borrowed");
+      replaced.free = vi.fn(() => {
+        throw borrowed;
+      });
+
+      await expect(submit(client, method, extraArgs)).resolves.toBe("tx-id");
+      expect(console.error).toHaveBeenCalledWith(
+        "WebClient: failed to free the wasm client on replacement:",
+        borrowed
+      );
+    }
+  );
+
+  it.each(mockSubmits)(
+    "asyncDispose during a mock %s resolves only once the replaced client is freed",
+    async (method, extraArgs) => {
+      const { client, replaced } = makeMockClient();
+      client.callMethodWithWorker = workerResult();
+      const creating = deferred();
+      fakeWasm.WebClient.pendingCreateMockClient = creating.promise;
+      const proxy = createClientProxy(client);
+      const midenClient = new MidenClient(proxy, async () => makeWasm(), null);
+
+      const submitted = submit(client, method, extraArgs);
+      await vi.waitFor(() =>
+        expect(fakeWasm.WebClient.latest?.createMockClient).toHaveBeenCalled()
+      );
+      const created = fakeWasm.WebClient.latest;
+      const proving = deferred();
+      replaced.proveBlock = vi.fn(() => proving.promise);
+      const running = proxy.proveBlock();
+      const disposing = midenClient[Symbol.asyncDispose]().then(
+        () => replaced.free.mock.calls.length
+      );
+
+      creating.resolve();
+      const disposed = outcomeAfterFlush(disposing);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(replaced.free).not.toHaveBeenCalled();
+      expect(await disposed).toBe("pending");
+
+      proving.resolve("proved");
+      await expect(running).resolves.toBe("proved");
+      expect(await disposing).toBe(1);
+      await expect(submitted).resolves.toBe("tx-id");
+      expect(created.free).toHaveBeenCalledTimes(1);
+    }
+  );
 });
 
 describe("MidenClient disposal", () => {
