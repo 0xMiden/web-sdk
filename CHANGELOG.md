@@ -13,6 +13,10 @@
 * [BREAKING][web] `Account.getPublicKeyCommitments()` now throws when the account's auth procedure is not owned by exactly one standard auth component bundled with this SDK, instead of returning `[]` or keys it cannot vouch for. There are two causes. A custom auth component defines its own key storage layout, so read its keys through the package that defines it, or use `client.keystore.getCommitments(accountId)` for the keys this client actually holds. A standard component built from a different miden-standards revision needs an SDK version that matches it. `isFaucet()` and `isRegularAccount()` no longer trap on an account whose procedures match more than one standard auth component ([web-sdk#285](https://github.com/0xMiden/web-sdk/pull/285), [guardian#306](https://github.com/OpenZeppelin/guardian/issues/306)).
 * [BREAKING][web] `client.transactions.batch` no longer takes a batch-level `account`; put `account` on each operation instead. `submitBatch(account, requests, options?)` becomes `submitBatch(items, options?)` with `items` as `{ account, request }[]`, and the WASM `submitNewTransactionBatch(accountId, serializedRequests)` becomes `submitNewTransactionBatch(items: BatchItem[])` ([#161](https://github.com/0xMiden/web-sdk/pull/161)).
 
+### Fixes
+
+* [FIX][web] The single-threaded WASM build now caches the precompile preprocessed data for the lifetime of the WASM instance, as the multi-threaded build already did, so repeat local batch proofs (`client.transactions.batch`, `useBatch`) that settle a precompile claim, such as one raised by an ECDSA-authenticated transaction, no longer rebuild it. Single-transaction proving defers those claims and is unaffected, as are Falcon-authenticated transactions, which raise none. The cache holds one bundle per hash function, about 50 MiB each; a local batch uses one (Blake3) ([#319](https://github.com/0xMiden/web-sdk/pull/319), [#318](https://github.com/0xMiden/web-sdk/issues/318)).
+
 ## 0.17.2 (TBD)
 
 ### Fixes
