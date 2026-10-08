@@ -26,6 +26,7 @@ import {
   createP2IDNote,
   createP2IDENote,
   buildSwapTag,
+  buildNetworkNote,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -76,7 +77,7 @@ export {
 // ── Re-exports ───────────────────────────────────────────────────────
 
 export { MidenClient };
-export { createP2IDNote, createP2IDENote, buildSwapTag };
+export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
 // Standalone helpers must be re-exported here too: this entry is what the
 // package's "node" condition resolves to, while both entries share one .d.ts.
 export { isConsumableNow } from "./utils.js";
