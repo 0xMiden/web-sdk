@@ -5,7 +5,10 @@ use miden_client::account::{
     Account as NativeAccount,
     AccountComponentInterface,
     AccountComponentInterfaceExt,
+    StorageSlot,
+    StorageSlotContent,
 };
+use miden_client::auth::{AuthGuardedMultisig, AuthMultisig, AuthMultisigSmart};
 use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 
 use crate::models::account_code::AccountCode;
@@ -160,6 +163,9 @@ impl Account {
     /// Two kinds of standard auth component return `[]`: `NoAuth` and the network account hold no
     /// key, and the tx fee collector's key is not read here (the SDK cannot build such an
     /// account).
+    ///
+    /// Also throws when a multisig's threshold config declares more approvers than its approver
+    /// key storage holds, which only a tampered account can do.
     #[js_export(js_name = "getPublicKeyCommitments")]
     pub fn get_public_key_commitments(&self) -> Result<Vec<Word>, JsErr> {
         let procedures = self.0.code().procedures();
@@ -205,6 +211,42 @@ impl Account {
                  AccountComponent.compile, which links it dynamically, build it with the SDK's \
                  factory such as createAuthGuardedMultisig instead."
             )));
+        }
+
+        // `get_public_keys_from_account` looks up as many approver keys as the threshold config
+        // declares, so a count above the stored entries would loop over keys that do not exist.
+        let multisig_slots = match auth_components[0] {
+            AccountComponentInterface::AuthMultisig => Some((
+                AuthMultisig::threshold_config_slot(),
+                AuthMultisig::approver_public_keys_slot(),
+            )),
+            AccountComponentInterface::AuthMultisigSmart => Some((
+                AuthMultisigSmart::threshold_config_slot(),
+                AuthMultisigSmart::approver_public_keys_slot(),
+            )),
+            AccountComponentInterface::AuthGuardedMultisig => Some((
+                AuthGuardedMultisig::threshold_config_slot(),
+                AuthGuardedMultisig::approver_public_keys_slot(),
+            )),
+            _ => None,
+        };
+        if let Some((config_slot, keys_slot)) = multisig_slots
+            && let Ok(config) = self.0.storage().get_item(config_slot)
+        {
+            // Truncated exactly as the upstream loop bound is.
+            #[allow(clippy::cast_possible_truncation)]
+            let count = config[1].as_canonical_u64() as u32;
+            let stored = match self.0.storage().get(keys_slot).map(StorageSlot::content) {
+                Some(StorageSlotContent::Map(map)) => map.num_entries(),
+                _ => 0,
+            };
+            if count as usize > stored {
+                return Err(from_str_err(&format!(
+                    "cannot derive public key commitments from account state: the multisig auth \
+                     component declares {count} approvers but its approver key storage holds \
+                     {stored} entries"
+                )));
+            }
         }
 
         // Exactly one auth component was classified, so the `AccountInterface` this builds

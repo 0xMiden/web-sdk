@@ -335,6 +335,147 @@ test.describe("Account.getPublicKeyCommitments", () => {
     expect(result.count).toBe(0);
   });
 
+  test("throws when a deserialized multisig claims more approvers than it stores", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const approvers = [11, 12, 13].map(
+        (n) => new sdk.Word(sdk.u64Array([n, 0, 0, 0]))
+      );
+      const config = new sdk.AuthFalcon512RpoMultisigConfig(approvers, 2);
+      const seed = new Uint8Array(32);
+      seed.fill(0x28);
+      const honest = new sdk.AccountBuilder(seed)
+        .withAuthComponent(sdk.createAuthFalcon512RpoMultisig(config))
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+
+      // The threshold config slot serializes as its name (length byte, then bytes),
+      // the value slot type 0, and the [threshold, approvers, 0, 0] word as
+      // little-endian u64s. Raise the approver count far above the three stored keys.
+      const bytes = Uint8Array.from(honest.serialize());
+      const view = new DataView(bytes.buffer);
+      const name = new TextEncoder().encode(
+        "miden::standards::auth::multisig::threshold_config"
+      );
+      const configWords = [];
+      for (let i = 0; i + name.length + 18 <= bytes.length; i++) {
+        const word = i + name.length + 2;
+        if (
+          bytes[i] === name.length &&
+          name.every((byte, j) => bytes[i + 1 + j] === byte) &&
+          bytes[word - 1] === 0 &&
+          view.getBigUint64(word, true) === 2n &&
+          view.getBigUint64(word + 8, true) === 3n
+        ) {
+          configWords.push(word);
+        }
+      }
+      if (configWords.length === 1) {
+        view.setBigUint64(configWords[0] + 8, 1000000000n, true);
+      }
+
+      // The account ends with the nonce (a u64) and the seed Option (tag 1, then a
+      // 32-byte word). A non-zero nonce with no seed is how an account already on
+      // chain serializes, and deserialize then skips the seed check.
+      const seedTag = bytes[bytes.length - 33];
+      const crafted = bytes.slice(0, bytes.length - 32);
+      new DataView(crafted.buffer).setBigUint64(crafted.length - 9, 1n, true);
+      crafted[crafted.length - 1] = 0;
+
+      let account = null;
+      let deserializeError = null;
+      try {
+        account = sdk.Account.deserialize(crafted);
+      } catch (err) {
+        deserializeError = err?.message ?? String(err);
+      }
+
+      let keys = null;
+      let error = null;
+      if (account) {
+        try {
+          keys = account.getPublicKeyCommitments().length;
+        } catch (err) {
+          error = err?.message ?? String(err);
+        }
+      }
+
+      return {
+        configWords: configWords.length,
+        seedTag,
+        deserializeError,
+        keys,
+        error,
+      };
+    });
+
+    expect(result.configWords).toBe(1);
+    expect(result.seedTag).toBe(1);
+    expect(result.deserializeError).toBeNull();
+    expect(result.keys).toBeNull();
+    expect(result.error).toContain("declares 1000000000 approvers");
+    expect(result.error).toContain("holds 3 entries");
+  });
+
+  test("throws when a multisig keeps its approver keys outside a map", async ({
+    run,
+  }) => {
+    const result = await run(async ({ sdk }) => {
+      const approvers = [14, 15].map(
+        (n) => new sdk.Word(sdk.u64Array([n, 0, 0, 0]))
+      );
+      const multisig = sdk.createAuthFalcon512RpoMultisig(
+        new sdk.AuthFalcon512RpoMultisigConfig(approvers, 1)
+      );
+      // The SDK multisig's own code with storage that claims a billion approvers and
+      // holds the approver keys in a value slot instead of a map.
+      const forged = sdk.AccountComponent.compile(multisig.componentCode(), [
+        sdk.StorageSlot.fromValue(
+          "miden::standards::auth::multisig::threshold_config",
+          new sdk.Word(sdk.u64Array([1, 1000000000, 0, 0]))
+        ),
+        sdk.StorageSlot.fromValue(
+          "miden::standards::auth::multisig::approver_public_keys",
+          new sdk.Word(sdk.u64Array([14, 0, 0, 0]))
+        ),
+      ]).withSupportsAllTypes();
+      const seed = new Uint8Array(32);
+      seed.fill(0x29);
+      const built = new sdk.AccountBuilder(seed)
+        .withAuthComponent(forged)
+        .withBasicWalletComponent()
+        .storageMode(sdk.AccountStorageMode.public())
+        .build().account;
+
+      let account = null;
+      let deserializeError = null;
+      try {
+        account = sdk.Account.deserialize(built.serialize());
+      } catch (err) {
+        deserializeError = err?.message ?? String(err);
+      }
+
+      let keys = null;
+      let error = null;
+      if (account) {
+        try {
+          keys = account.getPublicKeyCommitments().length;
+        } catch (err) {
+          error = err?.message ?? String(err);
+        }
+      }
+
+      return { deserializeError, keys, error };
+    });
+
+    expect(result.deserializeError).toBeNull();
+    expect(result.keys).toBeNull();
+    expect(result.error).toContain("declares 1000000000 approvers");
+    expect(result.error).toContain("holds 0 entries");
+  });
+
   test("throws for a non-standard auth component", async ({ run }) => {
     const result = await run(async ({ client, sdk }) => {
       // An auth component compiled from arbitrary MASM: its auth procedure matches no
