@@ -689,7 +689,7 @@ The `StreamedNote` type provides:
 ```typescript
 interface StreamedNote {
   id: string;              // Note ID (hex)
-  sender: string;          // Sender account ID (bech32)
+  sender: string;          // Sender account ID (bech32 if the network is known, else hex)
   amount: bigint;          // First fungible asset amount (0n if none)
   assets: NoteAsset[];     // All assets on the note
   record: InputNoteRecord; // Underlying record for escape-hatch access
@@ -1649,7 +1649,7 @@ Compare and normalize account IDs across hex and bech32 formats:
 ```typescript
 import { normalizeAccountId, accountIdsEqual } from '@miden-sdk/react';
 
-const bech32 = normalizeAccountId('0x1234...');  // Returns bech32 format
+const bech32 = normalizeAccountId('0x1234...');  // bech32 for the client's network (raw id if unknown)
 accountIdsEqual('0x1234...', 'miden1abc...');     // true (format-agnostic)
 ```
 

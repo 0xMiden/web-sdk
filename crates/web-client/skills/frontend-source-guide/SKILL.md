@@ -173,7 +173,7 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | Live note feed | `src/hooks/useNoteStream.ts`, `useSyncControl.ts` | Subscription and sync gating |
 | Prover selection and fallback | `src/utils/prover.ts` | `resolveTransactionProver`, `proveWithFallback` - what a `ProverTarget` / `ProverConfig` resolves to |
 | Structured error handling | `src/utils/errors.ts` | `MidenError`, `MidenErrorCode`, `CodedError`, `WasmErrorCode` - the codes FP17 says to branch on |
-| RPC URL resolution | `src/utils/network.ts` | `resolveRpcUrl` - the shorthand expansion the bech32 HRP inference then reads |
+| RPC URL resolution | `src/utils/network.ts` | `resolveRpcUrl` - the shorthand expansion `MidenProvider` hands to the client; the bech32 HRP inference reads `client.endpoint()` (`src/utils/accountBech32.ts`) |
 | Pausing auto-sync | `src/hooks/useSyncControl.ts` | `pauseSync` / `resumeSync` / `isPaused`; manual `sync()` still works while paused |
 | Compiling MASM from the raw client | `crates/web-client/js/resources/compiler.js` | `CompilerResource` - `component`, `txScript`, `noteScript` |
 
