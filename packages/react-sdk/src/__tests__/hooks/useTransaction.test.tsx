@@ -435,11 +435,13 @@ describe("useTransaction", () => {
       const mockNote = createMockNote("0xprivate_note");
       return {
         id: vi.fn(() => createMockTransactionId(id)),
-        executedTransaction: vi.fn(() => ({
-          outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [createMockOutputNote(mockNote)]),
-          })),
-        })),
+        executedTransaction: vi.fn(() => {
+          const outputs = [createMockOutputNote(mockNote)];
+          return {
+            outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+            userOutputNotes: vi.fn(() => outputs),
+          };
+        }),
         serialize: vi.fn(() => new Uint8Array()),
       };
     };
@@ -541,16 +543,55 @@ describe("useTransaction", () => {
       expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
     });
 
+    it("relays only the user note when outputNotes() lists the fee note first", async () => {
+      const userNote = createMockOutputNote(createMockNote("0xuser"));
+      const feeNote = createMockOutputNote(createMockNote("0xfee"));
+      const mockTxResult = {
+        id: vi.fn(() => createMockTransactionId("0xtx_fee")),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({
+            notes: vi.fn(() => [feeNote, userNote]),
+          })),
+          userOutputNotes: vi.fn(() => [userNote]),
+        })),
+      };
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          privateNoteTarget: "0xrecipient",
+        });
+      });
+
+      const relayed = mockClient.sendPrivateOutputNote.mock.calls.map(
+        ([noteId]) => noteId
+      );
+      expect(relayed).toEqual(["0xuser"]);
+    });
+
     it("should not deliver notes when there are no private output notes", async () => {
       const mockTxResult = {
         id: vi.fn(() => createMockTransactionId("0xtx_noprivate")),
-        executedTransaction: vi.fn(() => ({
-          outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [
-              createMockOutputNote(createMockNote(), NoteType.Public),
-            ]),
-          })),
-        })),
+        executedTransaction: vi.fn(() => {
+          const outputs = [
+            createMockOutputNote(createMockNote(), NoteType.Public),
+          ];
+          return {
+            outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+            userOutputNotes: vi.fn(() => outputs),
+          };
+        }),
         serialize: vi.fn(() => new Uint8Array()),
       };
 

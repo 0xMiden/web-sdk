@@ -783,6 +783,7 @@ describe("useSend", () => {
         })),
         executedTransaction: vi.fn(() => ({
           outputNotes: vi.fn(() => ({ notes: vi.fn(() => [partialNote]) })),
+          userOutputNotes: vi.fn(() => [partialNote]),
         })),
       };
 
@@ -835,6 +836,48 @@ describe("useSend", () => {
         });
       });
       expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("relays the user note's id, never the fee note listed first in outputNotes()", async () => {
+      const userNote = createMockOutputNote(createMockNote("0xuser"));
+      const feeNote = createMockOutputNote(createMockNote("0xfee"));
+      const txResult = {
+        id: vi.fn(() => ({ toHex: vi.fn(() => "0xtxfee") })),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({
+            notes: vi.fn(() => [feeNote, userNote]),
+          })),
+          userOutputNotes: vi.fn(() => [userNote]),
+        })),
+      };
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi.fn().mockResolvedValue(txResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+      await act(async () => {
+        await result.current.send({
+          from: "0x1",
+          to: "0x2",
+          assetId: "0x3",
+          amount: 100n,
+          noteType: "private",
+        });
+      });
+
+      const relayed = mockClient.sendPrivateOutputNote.mock.calls.map(
+        ([noteId]) => noteId
+      );
+      expect(relayed).toEqual(["0xuser"]);
     });
 
     it("should use submitNewTransactionWithProver in returnNote path (line 183)", async () => {

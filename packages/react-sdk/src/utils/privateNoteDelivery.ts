@@ -55,15 +55,14 @@ export function readOwedPrivateNotes(
   }
 }
 
-// The kernel's fee note is not the caller's to deliver, hence `userOutputNotes`.
+// Only `userOutputNotes` is read: the unsplit `outputNotes` also holds the
+// kernel's fee note, which is never the caller's to deliver. A result without
+// the accessor throws here, so it is reported as unreadable.
 function userOutputNotes(txResult: unknown): OutputNoteHeader[] {
   const executed = (
     txResult as { executedTransaction: () => unknown }
-  ).executedTransaction() as {
-    userOutputNotes?: () => OutputNoteHeader[];
-    outputNotes: () => { notes: () => OutputNoteHeader[] };
-  };
-  return executed.userOutputNotes?.() ?? executed.outputNotes().notes();
+  ).executedTransaction() as { userOutputNotes: () => OutputNoteHeader[] };
+  return executed.userOutputNotes();
 }
 
 function owedNote(

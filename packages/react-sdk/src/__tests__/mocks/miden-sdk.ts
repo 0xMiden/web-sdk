@@ -98,11 +98,13 @@ export const createMockTransactionResult = (
   note = createMockNote()
 ) => ({
   id: vi.fn(() => createMockTransactionId(id)),
-  executedTransaction: vi.fn(() => ({
-    outputNotes: vi.fn(() => ({
-      notes: vi.fn(() => [createMockOutputNote(note)]),
-    })),
-  })),
+  executedTransaction: vi.fn(() => {
+    const outputs = [createMockOutputNote(note)];
+    return {
+      outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+      userOutputNotes: vi.fn(() => outputs),
+    };
+  }),
   serialize: vi.fn(() => new Uint8Array()),
 });
 

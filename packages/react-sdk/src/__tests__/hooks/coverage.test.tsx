@@ -343,6 +343,7 @@ describe("useSend — private-send error branch", () => {
       id: () => ({ toString: () => "0xtx", toHex: () => "0xtx" }),
       executedTransaction: () => ({
         outputNotes: () => ({ notes: () => [] }),
+        userOutputNotes: () => [],
       }),
     };
     const mockClient = createMockWebClient({

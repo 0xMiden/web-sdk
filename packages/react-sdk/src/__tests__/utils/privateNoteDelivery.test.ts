@@ -86,7 +86,31 @@ describe("recipientRef", () => {
 });
 
 describe("owed notes", () => {
-  it("falls back to outputNotes() when userOutputNotes() is absent", () => {
+  // The kernel's fee note is private-typed here so only the accessor keeps it
+  // out of what is owed.
+  const withFeeNoteFirst = () => {
+    const userNote = createMockOutputNote(createMockNote("0xuser"));
+    const feeNote = createMockOutputNote(createMockNote("0xfee"));
+    return {
+      executedTransaction: () => ({
+        outputNotes: () => ({ notes: () => [feeNote, userNote] }),
+        userOutputNotes: () => [userNote],
+      }),
+    };
+  };
+
+  it("owes only the user note when outputNotes() lists the fee note first", () => {
+    expect(
+      sentNoteOwed(withFeeNoteFirst(), "0xto").map((note) => note.noteId)
+    ).toEqual(["0xuser"]);
+    expect(
+      privateOutputNotesOwed(withFeeNoteFirst(), "0xto").map(
+        (note) => note.noteId
+      )
+    ).toEqual(["0xuser"]);
+  });
+
+  it("reports a result without userOutputNotes() as unreadable", () => {
     const txResult = {
       executedTransaction: () => ({
         outputNotes: () => ({
@@ -94,9 +118,14 @@ describe("owed notes", () => {
         }),
       }),
     };
-    expect(privateOutputNotesOwed(txResult, "0xto")).toEqual([
-      { noteId: "0xn", to: "0xto" },
-    ]);
+    const owed = readOwedPrivateNotes(() =>
+      privateOutputNotesOwed(txResult, "0xto")
+    );
+    expect(owed.unreadable).toBeDefined();
+    expect(owed.notes).toEqual([]);
+    expect(
+      readOwedPrivateNotes(() => sentNoteOwed(txResult, "0xto")).unreadable
+    ).toBeDefined();
   });
 
   it("marks a note whose intoFull() returns nothing as unavailable", () => {
