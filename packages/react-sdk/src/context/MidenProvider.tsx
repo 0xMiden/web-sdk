@@ -267,7 +267,9 @@ export function MidenProvider({
               undefined,
               resolvedConfig.useWorker,
               undefined,
-              resolvedConfig.feeFaucetId
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.noteTransportMaxRetries,
+              resolvedConfig.noteTransportRetryIntervalMs
             );
 
             if (cancelled) return;
@@ -295,7 +297,9 @@ export function MidenProvider({
               undefined,
               resolvedConfig.useWorker,
               undefined,
-              resolvedConfig.feeFaucetId
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.noteTransportMaxRetries,
+              resolvedConfig.noteTransportRetryIntervalMs
             );
             if (cancelled) return;
           }

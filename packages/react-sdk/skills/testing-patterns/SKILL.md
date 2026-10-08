@@ -322,7 +322,7 @@ These pass against a loosely-typed fixture and diverge from the real API at runt
 each one before carrying a pre-0.16 fixture forward.
 
 - **`debugMode` does not exist.** `MidenConfig` is exactly
-  `{ rpcUrl?, noteTransportUrl?, autoSyncInterval?, seed?, prover?, proverUrls?, proverTimeoutMs?, useWorker? }`.
+  `{ rpcUrl?, noteTransportUrl?, noteTransportMaxRetries?, noteTransportRetryIntervalMs?, autoSyncInterval?, seed?, prover?, proverUrls?, proverTimeoutMs?, useWorker? }`.
   Drop any `debugMode` field and any trailing `debugMode` argument to `createClient*`.
   There is no `storeName` field on it either (that lives on `SignerContextValue`).
 - **`ExecutedTransaction` and `TransactionStoreUpdate` expose `accountPatch()`, not

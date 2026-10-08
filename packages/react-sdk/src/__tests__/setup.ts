@@ -168,13 +168,17 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       fromHex: vi.fn((hex: string) => createMockAccountId(hex)),
       fromBech32: vi.fn((bech32: string) => createMockAccountId(bech32)),
     },
+    // `_live` lets a by-value consumer (the shared `sendPrivateOutputNote`
+    // mock) mark an address moved, so reusing one fails as it does in WASM.
     Address: {
       fromBech32: vi.fn((bech32: string) => ({
+        _live: true,
         accountId: vi.fn(() => createMockAccountId(bech32)),
         toString: vi.fn(() => bech32),
       })),
       fromAccountId: vi.fn(
         (accountId: ReturnType<typeof createMockAccountId>) => ({
+          _live: true,
           accountId: vi.fn(() => accountId),
           toString: vi.fn(() => accountId.toString()),
         })
@@ -484,16 +488,34 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       Unverified: 8,
     },
     TransactionId: {
-      fromHex: vi.fn((hex: string) => ({
-        toString: vi.fn(() => hex),
-        toHex: vi.fn(() => hex),
-        free: vi.fn(),
-      })),
+      fromHex: vi.fn((hex: string) => {
+        const handle = {
+          _live: true,
+          toString: vi.fn(() => hex),
+          toHex: vi.fn(() => {
+            if (!handle._live) throw new Error("null pointer passed to rust");
+            return hex;
+          }),
+          free: vi.fn(),
+        };
+        return handle;
+      }),
     },
     TransactionFilter: {
       all: vi.fn(() => ({})),
       uncommitted: vi.fn(() => ({})),
-      ids: vi.fn((ids: unknown) => ({ ids })),
+      // `ids` takes `Vec<TransactionId>`, which moves every handle out of its JS
+      // wrapper: a handle passed once is dead, and passing it again fails.
+      ids: vi.fn((ids: unknown[]) => {
+        const handles = ids.filter(
+          (id): id is { _live?: boolean } => !!id && typeof id === "object"
+        );
+        if (handles.some((id) => id._live === false)) {
+          throw new Error("null pointer passed to rust");
+        }
+        for (const id of handles) id._live = false;
+        return { ids };
+      }),
     },
     AccountFile: class AccountFile {
       account() {

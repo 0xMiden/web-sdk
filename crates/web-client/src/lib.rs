@@ -419,7 +419,12 @@ impl WebClient {
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
     ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
     ///   configuration from the node; execution does not need it.
+    /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
+    ///   transport failure. `None` keeps the transport's default.
+    /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
+    ///   for each later one. `None` keeps the transport's default.
     #[wasm_bindgen(js_name = "createClient")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_client(
         &self,
         node_url: Option<String>,
@@ -427,6 +432,8 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
         fee_faucet_id: Option<String>,
+        note_transport_max_retries: Option<u32>,
+        note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
@@ -436,8 +443,11 @@ impl WebClient {
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
-            Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
-                as Arc<dyn NoteTransportClient>
+            build_note_transport_client(
+                url,
+                note_transport_max_retries,
+                note_transport_retry_interval_ms,
+            )
         });
 
         let store_name =
@@ -483,6 +493,10 @@ impl WebClient {
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
+    /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
+    ///   transport failure. `None` keeps the transport's default.
+    /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
+    ///   for each later one. `None` keeps the transport's default.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -495,6 +509,8 @@ impl WebClient {
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
+        note_transport_max_retries: Option<u32>,
+        note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
@@ -504,8 +520,11 @@ impl WebClient {
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
-            Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
-                as Arc<dyn NoteTransportClient>
+            build_note_transport_client(
+                url,
+                note_transport_max_retries,
+                note_transport_retry_interval_ms,
+            )
         });
 
         let store_name =
@@ -590,7 +609,12 @@ impl WebClient {
     /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
     ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
     ///   configuration from the node; execution does not need it.
+    /// * `note_transport_max_retries`: Optional retries of a private note send after a transient
+    ///   transport failure. `None` keeps the transport's default.
+    /// * `note_transport_retry_interval_ms`: Optional delay before the first such retry, doubling
+    ///   for each later one. `None` keeps the transport's default.
     #[napi(js_name = "createClient")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_client(
         &self,
         node_url: Option<String>,
@@ -599,6 +623,8 @@ impl WebClient {
         db_path: String,
         keystore_path: String,
         fee_faucet_id: Option<String>,
+        note_transport_max_retries: Option<u32>,
+        note_transport_retry_interval_ms: Option<u32>,
     ) -> Result<String, JsErr> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
@@ -607,12 +633,13 @@ impl WebClient {
         let rpc_client =
             Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
-        let note_transport_client = if let Some(url) = node_note_transport_url {
-            let client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
-            Some(Arc::new(client) as Arc<dyn NoteTransportClient>)
-        } else {
-            None
-        };
+        let note_transport_client = node_note_transport_url.map(|url| {
+            build_note_transport_client(
+                url,
+                note_transport_max_retries,
+                note_transport_retry_interval_ms,
+            )
+        });
 
         let rng = create_rng(seed)?;
 
@@ -673,6 +700,27 @@ impl WebClient {
 
         Ok(())
     }
+}
+
+// NOTE TRANSPORT
+// ================================================================================================
+
+/// Builds the note transport client every create path uses, so their retry policy cannot diverge.
+/// A `None` keeps the transport's own default for that setting. The JS wrappers bound both values
+/// before they get here: wasm-bindgen wraps an out-of-range number into a `u32` silently.
+fn build_note_transport_client(
+    url: String,
+    max_retries: Option<u32>,
+    retry_interval_ms: Option<u32>,
+) -> Arc<dyn NoteTransportClient> {
+    let mut client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
+    if let Some(max_retries) = max_retries {
+        client = client.with_max_retries(max_retries);
+    }
+    if let Some(retry_interval_ms) = retry_interval_ms {
+        client = client.with_retry_interval_ms(u64::from(retry_interval_ms));
+    }
+    Arc::new(client)
 }
 
 // FEE FAUCET

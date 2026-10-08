@@ -24,7 +24,7 @@ import { useMint } from "../../hooks/useMint";
 import { useSwap } from "../../hooks/useSwap";
 import { useMultiSend } from "../../hooks/useMultiSend";
 import { accountIdsEqual } from "../../utils/accountId";
-import { AccountId } from "@miden-sdk/miden-sdk";
+import { AccountId, TransactionId } from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockAccount,
@@ -558,9 +558,8 @@ describe("useWaitForCommit — timeout + normalizeHex prefix branches", () => {
     ).rejects.toThrow(/Timeout waiting for transaction commit/);
   });
 
-  it("matches a record whose id() returns a non-`0x`-prefixed hex string", async () => {
-    // Caller supplies "deadbeef" (no prefix); the SDK record returns
-    // "deadbeef" too. Both must be normalized to "0xdeadbeef" to match.
+  it("prefixes a caller's hex without `0x` before building the filter", async () => {
+    // `TransactionId.fromHex` rejects a hex string without the prefix.
     const record = {
       id: vi.fn(() => ({ toHex: () => "deadbeef" })),
       transactionStatus: vi.fn(() => ({
@@ -580,7 +579,7 @@ describe("useWaitForCommit — timeout + normalizeHex prefix branches", () => {
       timeoutMs: 50,
       intervalMs: 1,
     });
-    // No throw → record was matched via the no-prefix normalize branch.
+    expect(TransactionId.fromHex).toHaveBeenCalledWith("0xdeadbeef");
     expect(record.transactionStatus).toHaveBeenCalled();
   });
 });
@@ -676,9 +675,9 @@ describe("useConsume — prover + length-mismatch branches", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// useSend: cover the private-send prover branch and extractFullNote catch.
+// useSend: cover the private-send prover branch and unreadable output notes.
 // ────────────────────────────────────────────────────────────────────────
-describe("useSend — returnNote prover branch + extractFullNote catch", () => {
+describe("useSend - returnNote prover branch + unreadable output notes", () => {
   it("returnNote path uses submitNewTransactionWithProver when prover is provided", async () => {
     const submitWithProver = vi
       .fn()
@@ -807,10 +806,7 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
     expect(newSendReq).toHaveBeenCalled();
   });
 
-  it("extractFullNote returns null when executedTransaction throws (catch branch)", async () => {
-    // Build a tx result whose executedTransaction throws. extractFullNote
-    // should swallow the error and return null, so the Private-send
-    // post-check throws "Missing full note for private send".
+  it("reports the transaction when its output notes cannot be read", async () => {
     const txResult = {
       id: () => ({ toString: () => "0xtx", toHex: () => "0xtx" }),
       executedTransaction: () => {
@@ -842,7 +838,14 @@ describe("useSend — returnNote prover branch + extractFullNote catch", () => {
           amount: 100n,
           noteType: "private",
         })
-      ).rejects.toThrow(/Missing full note for private send/);
+      ).rejects.toMatchObject({
+        code: "PRIVATE_NOTE_DELIVERY_FAILED",
+        transactionId: "0xtx",
+        commitment: "unknown",
+        undelivered: [],
+        message: expect.stringContaining("WASM consumed"),
+      });
+      expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
     });
   });
 });

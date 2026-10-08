@@ -39,6 +39,14 @@ import { MidenProvider } from "@miden-sdk/react";
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
     noteTransportUrl: "...",    // optional: for private note delivery
+    noteTransportMaxRetries: 3, // optional: in-call retries of a private note send after a
+                                //   transient transport failure. 0..10, default 3
+    noteTransportRetryIntervalMs: 250, // optional: delay before the first retry, doubling
+                                //   for each later one. 0..60000 ms, default 250.
+                                //   Together: at most 120000 ms of total backoff,
+                                //   interval * (2^retries - 1). Retries hold the
+                                //   provider lock, blocking other client calls;
+                                //   0 retries suits a latency-sensitive UI
     useWorker: true,            // default true; set FALSE for a CallbackProver (a native
                                 //   iOS/Android prover behind a Capacitor plugin) or a
                                 //   single-WebView native shell. The worker boundary
@@ -270,6 +278,21 @@ await send({
 **Combining `attachment` with `recallHeight` or `timelockHeight` throws**, before anything is built: `"recallHeight and timelockHeight are not supported when attachment is provided"`. The attachment path constructs the P2ID note by hand and has nowhere to put either height. Pick one or the other.
 
 **Private notes need an explicit delivery push, and the hook does it for you.** For `noteType: "private"` `useSend` waits for the transaction to commit and then calls `client.sendPrivateOutputNote(noteId, recipientAddress)` to hand the note details to the recipient over the note-transport layer. That call reads the inclusion proof sync stored on the output note and throws if this client has not synced past the commitment. The same push happens in `useMultiSend` (once per private recipient, after one shared commit wait) and in `useTransaction` when `privateNoteTarget` is set. Without it a private note is **never delivered** - the recipient has no way to learn it exists. A public note needs no such push. If you hand-roll a private send through `useTransaction`, either pass `privateNoteTarget` or make the `sendPrivateOutputNote` call yourself.
+
+**An undelivered private note rejects the call, but the transaction stands.** Once the transaction is submitted, a note that is not delivered (the transport rejects it, the commit wait times out, or applying the transaction locally fails) makes the hook reject with `PrivateNoteDeliveryError` (code `PRIVATE_NOTE_DELIVERY_FAILED`) carrying `transactionId`, `commitment` (`"committed"` or `"unknown"`), `delivered`, `undelivered` and `cause`. Every owed note is attempted first, so `useMultiSend` does not stop at the first failure. A discarded transaction is still a plain error: nothing was delivered because nothing landed. The SDK keeps no queue and no sync re-sends a note, so retry with `useResendPrivateNotes`:
+
+```tsx
+const { resend } = useResendPrivateNotes();
+try {
+  await send({ from, to, assetId, amount: 100n, noteType: "private" });
+} catch (err) {
+  if (err instanceof PrivateNoteDeliveryError) {
+    await resend({ transactionId: err.transactionId, notes: err.undelivered });
+  }
+}
+```
+
+`resend` syncs once and relays through `runExclusive`; a note that still fails comes back in a new `PrivateNoteDeliveryError`, and repeating is safe because delivery is idempotent by note id. `useTransaction` checks `privateNoteTarget` before executing, so a malformed target fails before anything is submitted.
 
 ### useMultiSend()
 ```tsx
