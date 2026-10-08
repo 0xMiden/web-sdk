@@ -222,8 +222,14 @@ client.terminate(); // free WASM resources, close the store handle
 After `terminate()`, nearly every method throws `Client terminated` - guard
 against late callbacks on unmount. The exceptions are `usesMockChain()`, the
 `defaultProver` getter and `terminate()` itself, which is idempotent.
-`MidenClient` also implements `[Symbol.dispose]` and `[Symbol.asyncDispose]`,
-both of which just call `terminate()`, so `using client = ...` works.
+`MidenClient` also implements `[Symbol.dispose]`, which calls `terminate()`,
+so `using client = ...` works, and `[Symbol.asyncDispose]`, which calls it and
+then waits until the wasm client is freed and its store connection released.
+The release waits for calls already queued or running to settle. Use
+`await using client = ...` when the code after the block deletes or reopens
+the same store. The release is browser-only: on the Node.js binding
+`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
+and `[Symbol.asyncDispose]` resolves at once.
 
 ## Sync - Always Sync First
 
@@ -1056,10 +1062,24 @@ slots to a `StorageResult`. Reach the protocol-level `AccountStorage` through
 not tracked.
 
 For a single asset balance without loading the full vault, prefer
-`client.accounts.getBalance(account, token)` (returns `bigint`). It wraps the
-WASM client's `accountReader(id)` lazy reader, which lives on the low-level
-client: reach it through `client._withInnerWebClient(async (inner) => inner.accountReader(id))`,
-not through the private `#inner` field.
+`client.accounts.getBalance(account, token)` (returns `bigint`), which frees
+the reader it uses. It wraps the WASM client's `accountReader(id)` lazy reader,
+which lives on the low-level client: reach it through
+`client._withInnerWebClient(async (inner) => inner.accountReader(id))`, not
+through the private `#inner` field. A reader you obtain yourself holds the
+client's store, so free it when you are done; an unfreed one keeps the store
+open after `terminate()` and `await using`:
+
+```typescript
+const balance = await client._withInnerWebClient(async (inner) => {
+  const reader = await inner.accountReader(accountId);
+  try {
+    return await reader.getBalance(faucetId);
+  } finally {
+    reader.free?.();
+  }
+});
+```
 
 ## Storage - slots are named, not indexed
 
@@ -1266,10 +1286,14 @@ while (true) {
 14. **Holding WASM-owned objects across `terminate()`** - every `Account`,
     `Note`, `AccountId`, `NoteAndArgsArray` etc. owns Rust memory through the
     WASM ArrayBuffer. After `terminate()` they panic with "null pointer
-    passed to rust" - drop references on unmount.
+    passed to rust" - drop references on unmount. A handle that holds the
+    client's store, such as an `AccountReader`, must be freed, not just
+    dropped: an unfreed one keeps the store open after `terminate()` and
+    `await using`.
 15. **Calling `accountReader(...)` in parallel with a write** - the readers
     share the WASM client. Wrap concurrent flows with `client.waitForIdle()`
-    or rely on the React SDK's `runExclusive`.
+    or rely on the React SDK's `runExclusive`, and release each reader in a
+    `finally` (`try { ... } finally { reader.free?.() }`).
 16. **Assuming `TransactionProver.newLocalProver()` is cheap.** It now produces
     Poseidon2 proofs, matching the client's default prover, and is roughly
     1.6-2.6x slower than the old Blake3 default.

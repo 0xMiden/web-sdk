@@ -89,6 +89,12 @@ const SYNC_METHODS = new Set([
   "usesMockChain",
 ]);
 
+// The instance members whose live call returns a value rather than a Promise,
+// so a terminated client's copy throws instead of rejecting. Not SYNC_METHODS:
+// four of its entries are `async fn` in Rust, and `buildSwapTag` is a static of
+// the class, which the proxy never serves.
+const SYNCHRONOUS_METHODS = new Set(["lastAuthError"]);
+
 const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
   "addTag",
@@ -305,8 +311,14 @@ function createClientProxy(instance) {
       if (prop in target) {
         return Reflect.get(target, prop, receiver);
       }
-      if (target.wasmWebClient && prop in target.wasmWebClient) {
-        const value = target.wasmWebClient[prop];
+      const live = target.wasmWebClient;
+      // After terminate() only a read nested in an in-flight
+      // `_withInnerWebClient` keeps the live route, as in `_serializeWasmCall`:
+      // it belongs to work that was already queued when terminate() ran.
+      const liveRoute =
+        live && (!target._terminated || target._withInnerLockDepth > 0);
+      if (liveRoute && prop in live) {
+        const value = live[prop];
         if (typeof value === "function") {
           // SYNC_METHODS are safe to bind raw (synchronous in JS, or
           // documented exceptions). Everything else holds the WASM
@@ -315,7 +327,13 @@ function createClientProxy(instance) {
           // any in-flight call panics with "RefCell already borrowed"
           // and poisons the instance for every later call.
           if (typeof prop === "string" && SYNC_METHODS.has(prop)) {
-            return value.bind(target.wasmWebClient);
+            return (...args) => {
+              const result = value.apply(live, args);
+              if (typeof result?.then === "function") {
+                target._trackRawWasmCall(result);
+              }
+              return result;
+            };
           }
           return (...args) =>
             target._serializeWasmCall(
@@ -324,6 +342,31 @@ function createClientProxy(instance) {
             );
         }
         return value;
+      }
+      // After terminate(), whether or not the wasm client has been freed yet,
+      // each of its members fails in its live call shape instead of vanishing:
+      // an accessor throws on access, a synchronous method throws, every other
+      // method rejects. Never for "then", which would make the proxy itself
+      // look like a promise.
+      const members = target._terminated
+        ? (target._freedWasmPrototype ?? (live && Object.getPrototypeOf(live)))
+        : null;
+      if (
+        members &&
+        typeof prop === "string" &&
+        prop !== "then" &&
+        prop in members
+      ) {
+        const terminated = () => new Error("WebClient terminated");
+        if (Object.getOwnPropertyDescriptor(members, prop)?.get) {
+          throw terminated();
+        }
+        if (SYNCHRONOUS_METHODS.has(prop)) {
+          return () => {
+            throw terminated();
+          };
+        }
+        return () => Promise.reject(terminated());
       }
       return undefined;
     },
@@ -690,6 +733,11 @@ class WebClient {
    * @returns {Promise<any>} The result of fn.
    */
   _serializeWasmCall(fn, opName) {
+    // A call nested in an in-flight `_withInnerWebClient` still runs inline:
+    // it belongs to work that was already queued when terminate() ran.
+    if (this._terminated && this._withInnerLockDepth === 0) {
+      return Promise.reject(new Error("WebClient terminated"));
+    }
     // Opt-in twice over: with no op name or nobody listening, `fn` is
     // enqueued exactly as before and no timing work is done at all.
     const observed = opName !== undefined && hasObserver();
@@ -811,6 +859,9 @@ class WebClient {
     if (this.wasmWebClient) {
       return this.wasmWebClient;
     }
+    if (this._terminated) {
+      throw new Error("WebClient terminated");
+    }
     if (!this.wasmWebClientPromise) {
       this.wasmWebClientPromise = (async () => {
         const wasm = await getWasmOrThrow();
@@ -875,26 +926,32 @@ class WebClient {
       noteTransportRetryIntervalMs
     );
 
-    // Set up logging on the main thread before creating the client.
-    if (logLevel) {
-      const wasm = await getWasmOrThrow();
-      wasm.setupLogging(logLevel);
+    try {
+      // Set up logging on the main thread before creating the client.
+      if (logLevel) {
+        const wasm = await getWasmOrThrow();
+        wasm.setupLogging(logLevel);
+      }
+
+      // Wait for the underlying wasmWebClient to be initialized.
+      const wasmWebClient = await instance.getWasmWebClient();
+      await wasmWebClient.createClient(
+        rpcUrl,
+        noteTransportUrl,
+        seed,
+        network,
+        feeFaucetId,
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs
+      );
+
+      // Wait for the worker to be ready
+      await instance.ready;
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      instance.terminate();
+      throw error;
     }
-
-    // Wait for the underlying wasmWebClient to be initialized.
-    const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClient(
-      rpcUrl,
-      noteTransportUrl,
-      seed,
-      network,
-      feeFaucetId,
-      noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
-    );
-
-    // Wait for the worker to be ready
-    await instance.ready;
 
     return createClientProxy(instance);
   }
@@ -955,28 +1012,34 @@ class WebClient {
       noteTransportRetryIntervalMs
     );
 
-    // Set up logging on the main thread before creating the client.
-    if (logLevel) {
-      const wasm = await getWasmOrThrow();
-      wasm.setupLogging(logLevel);
+    try {
+      // Set up logging on the main thread before creating the client.
+      if (logLevel) {
+        const wasm = await getWasmOrThrow();
+        wasm.setupLogging(logLevel);
+      }
+
+      // Wait for the underlying wasmWebClient to be initialized.
+      const wasmWebClient = await instance.getWasmWebClient();
+      await wasmWebClient.createClientWithExternalKeystore(
+        rpcUrl,
+        noteTransportUrl,
+        seed,
+        storeName,
+        feeFaucetId,
+        getKeyCb,
+        insertKeyCb,
+        signCb,
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs
+      );
+
+      await instance.ready;
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      instance.terminate();
+      throw error;
     }
-
-    // Wait for the underlying wasmWebClient to be initialized.
-    const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClientWithExternalKeystore(
-      rpcUrl,
-      noteTransportUrl,
-      seed,
-      storeName,
-      feeFaucetId,
-      getKeyCb,
-      insertKeyCb,
-      signCb,
-      noteTransportMaxRetries,
-      noteTransportRetryIntervalMs
-    );
-
-    await instance.ready;
     return createClientProxy(instance);
   }
 
@@ -987,7 +1050,15 @@ class WebClient {
    * @returns {Promise<any>}
    */
   async callMethodWithWorker(methodName, ...args) {
+    if (this._terminated) {
+      throw new Error("WebClient terminated");
+    }
     await this.ready;
+    // terminate() can land while this awaits a settled `ready`; the stopped
+    // worker would never answer a request posted now.
+    if (this._terminated) {
+      throw new Error("WebClient terminated");
+    }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
     return new Promise((resolve, reject) => {
@@ -1360,18 +1431,91 @@ class WebClient {
   }
 
   /**
-   * Terminates the underlying Web Worker used by this WebClient instance.
+   * Terminates this WebClient: stops its Web Worker if there is one, and
+   * releases the main-realm wasm client and, through it, its IndexedDB store
+   * connection, which closes once no other client in this realm holds the
+   * same store.
    *
    * Call this method when you're done using a WebClient to free up browser
-   * resources. Each WebClient instance uses a dedicated Web Worker for
-   * computationally intensive operations. Terminating releases that thread.
+   * resources. A call already queued or running that executes against the
+   * main-realm wasm client still finishes. A call that needs the worker,
+   * whether in flight, waiting for the worker to be ready or still queued
+   * behind terminate(), rejects with "WebClient terminated". Every wasm call
+   * made after terminate() fails with it too: a synchronous member or an
+   * accessor throws, every other member rejects. The release waits until all
+   * of these calls have settled. Calling it again is harmless.
    *
-   * After calling terminate(), the WebClient should not be used.
+   * The release and the rejections are browser-only: on the Node.js binding
+   * WasmWebClient.terminate() is a no-op.
    */
   terminate() {
+    this._terminated = true;
     if (this.worker) {
       this.worker.terminate();
+      // The stopped worker answers nothing, so a call still waiting on it
+      // would hold the call chain, and the release queued behind it, forever.
+      this.readyRejecter(new Error("WebClient terminated"));
+      for (const { reject } of this.pendingRequests.values()) {
+        reject(new Error("WebClient terminated"));
+      }
+      this.pendingRequests.clear();
     }
+    this._afterQueuedWasmCalls(async () => {
+      const client = this.wasmWebClient;
+      this.wasmWebClient = null;
+      this.wasmWebClientPromise = null;
+      if (!client) {
+        return;
+      }
+      this._freedWasmPrototype = Object.getPrototypeOf(client);
+      await this._freeWasmClient(client, "terminate");
+    });
+  }
+
+  /**
+   * Frees a detached wasm client once every tracked raw-bound call has
+   * settled: those calls borrow it off the call chain, and free() refuses a
+   * borrowed client. A free() that still throws is reported, not rethrown.
+   * It never joins the call chain, so a step on the chain can await it.
+   * @private
+   */
+  async _freeWasmClient(client, occasion) {
+    await Promise.allSettled(this._rawWasmCalls ?? []);
+    try {
+      client.free();
+    } catch (error) {
+      console.error(
+        `WebClient: failed to free the wasm client on ${occasion}:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Runs `step` once every serialized call already on `_wasmCallChain` has
+   * settled, so a wasm client is never freed under a call still using it.
+   * @private
+   */
+  _afterQueuedWasmCalls(step) {
+    this._wasmCallChain = this._wasmCallChain.then(step).catch(() => {});
+  }
+
+  /**
+   * Tracks a raw-bound call that returned a promise until it settles. It
+   * borrows the wasm client off the call chain, so `_freeWasmClient` waits
+   * for it as well.
+   * @private
+   */
+  _trackRawWasmCall(promise) {
+    if (!this._rawWasmCalls) {
+      this._rawWasmCalls = new Set();
+    }
+    const calls = this._rawWasmCalls;
+    const tracked = Promise.resolve(promise).then(
+      () => calls.delete(tracked),
+      () => calls.delete(tracked)
+    );
+    calls.add(tracked);
   }
 }
 
@@ -1427,22 +1571,28 @@ class MockWebClient extends WebClient {
     // Construct the instance (synchronously).
     const instance = new MockWebClient(seed, logLevel);
 
-    // Set up logging on the main thread before creating the client.
-    if (logLevel) {
-      const wasm = await getWasmOrThrow();
-      wasm.setupLogging(logLevel);
+    try {
+      // Set up logging on the main thread before creating the client.
+      if (logLevel) {
+        const wasm = await getWasmOrThrow();
+        wasm.setupLogging(logLevel);
+      }
+
+      // Wait for the underlying wasmWebClient to be initialized.
+      const wasmWebClient = await instance.getWasmWebClient();
+      await wasmWebClient.createMockClient(
+        seed ?? null,
+        serializedMockChain ?? null,
+        serializedMockNoteTransportNode ?? null
+      );
+
+      // Wait for the worker to be ready
+      await instance.ready;
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      instance.terminate();
+      throw error;
     }
-
-    // Wait for the underlying wasmWebClient to be initialized.
-    const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createMockClient(
-      seed ?? null,
-      serializedMockChain ?? null,
-      serializedMockNoteTransportNode ?? null
-    );
-
-    // Wait for the worker to be ready
-    await instance.ready;
 
     return createClientProxy(instance);
   }
@@ -1586,45 +1736,60 @@ class MockWebClient extends WebClient {
         return await super.submitNewTransaction(accountId, transactionRequest);
       }
 
-      const wasmWebClient = await this.getWasmWebClient();
-      const wasm = await getWasmOrThrow();
-      const serializedTransactionRequest = transactionRequest.serialize();
-      const serializedMockChain = (await wasmWebClient.serializeMockChain())
-        .buffer;
-      const serializedMockNoteTransportNode = (
-        await wasmWebClient.serializeMockNoteTransportNode()
-      ).buffer;
+      return await this._serializeWasmCall(async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+        const wasm = await getWasmOrThrow();
+        const serializedTransactionRequest = transactionRequest.serialize();
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
 
-      const result = await this.callMethodWithWorker(
-        MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
-        accountId.toString(),
-        serializedTransactionRequest,
-        serializedMockChain,
-        serializedMockNoteTransportNode
-      );
+        const result = await this.callMethodWithWorker(
+          MethodName.SUBMIT_NEW_TRANSACTION_MOCK,
+          accountId.toString(),
+          serializedTransactionRequest,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
 
-      const newMockChain = new Uint8Array(result.serializedMockChain);
-      const newMockNoteTransportNode = result.serializedMockNoteTransportNode
-        ? new Uint8Array(result.serializedMockNoteTransportNode)
-        : undefined;
+        const newMockChain = new Uint8Array(result.serializedMockChain);
+        const newMockNoteTransportNode = result.serializedMockNoteTransportNode
+          ? new Uint8Array(result.serializedMockNoteTransportNode)
+          : undefined;
 
-      const transactionResult = wasm.TransactionResult.deserialize(
-        new Uint8Array(result.serializedTransactionResult)
-      );
+        const transactionResult = wasm.TransactionResult.deserialize(
+          new Uint8Array(result.serializedTransactionResult)
+        );
 
-      if (!(this instanceof MockWebClient)) {
+        if (!(this instanceof MockWebClient)) {
+          return transactionResult.id();
+        }
+
+        // Attached only once it is built, so a failed build leaves the
+        // replaced client in place.
+        const replacement = new wasm.WebClient();
+        try {
+          await replacement.createMockClient(
+            this.seed,
+            newMockChain,
+            newMockNoteTransportNode
+          );
+        } catch (error) {
+          try {
+            replacement.free();
+          } catch {
+            // Nothing references it.
+          }
+          throw error;
+        }
+        this.wasmWebClient = replacement;
+        this.wasmWebClientPromise = Promise.resolve(replacement);
+        await this._freeWasmClient(wasmWebClient, "replacement");
+
         return transactionResult.id();
-      }
-
-      this.wasmWebClient = new wasm.WebClient();
-      this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
-      await this.wasmWebClient.createMockClient(
-        this.seed,
-        newMockChain,
-        newMockNoteTransportNode
-      );
-
-      return transactionResult.id();
+      });
     } catch (error) {
       console.error("INDEX.JS: Error in submitNewTransaction:", error);
       throw error;
@@ -1641,47 +1806,62 @@ class MockWebClient extends WebClient {
         );
       }
 
-      const wasmWebClient = await this.getWasmWebClient();
-      const wasm = await getWasmOrThrow();
-      const serializedTransactionRequest = transactionRequest.serialize();
-      const proverPayload = prover.serialize();
-      const serializedMockChain = (await wasmWebClient.serializeMockChain())
-        .buffer;
-      const serializedMockNoteTransportNode = (
-        await wasmWebClient.serializeMockNoteTransportNode()
-      ).buffer;
+      return await this._serializeWasmCall(async () => {
+        const wasmWebClient = await this.getWasmWebClient();
+        const wasm = await getWasmOrThrow();
+        const serializedTransactionRequest = transactionRequest.serialize();
+        const proverPayload = prover.serialize();
+        const serializedMockChain = (await wasmWebClient.serializeMockChain())
+          .buffer;
+        const serializedMockNoteTransportNode = (
+          await wasmWebClient.serializeMockNoteTransportNode()
+        ).buffer;
 
-      const result = await this.callMethodWithWorker(
-        MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,
-        accountId.toString(),
-        serializedTransactionRequest,
-        proverPayload,
-        serializedMockChain,
-        serializedMockNoteTransportNode
-      );
+        const result = await this.callMethodWithWorker(
+          MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER_MOCK,
+          accountId.toString(),
+          serializedTransactionRequest,
+          proverPayload,
+          serializedMockChain,
+          serializedMockNoteTransportNode
+        );
 
-      const newMockChain = new Uint8Array(result.serializedMockChain);
-      const newMockNoteTransportNode = result.serializedMockNoteTransportNode
-        ? new Uint8Array(result.serializedMockNoteTransportNode)
-        : undefined;
+        const newMockChain = new Uint8Array(result.serializedMockChain);
+        const newMockNoteTransportNode = result.serializedMockNoteTransportNode
+          ? new Uint8Array(result.serializedMockNoteTransportNode)
+          : undefined;
 
-      const transactionResult = wasm.TransactionResult.deserialize(
-        new Uint8Array(result.serializedTransactionResult)
-      );
+        const transactionResult = wasm.TransactionResult.deserialize(
+          new Uint8Array(result.serializedTransactionResult)
+        );
 
-      if (!(this instanceof MockWebClient)) {
+        if (!(this instanceof MockWebClient)) {
+          return transactionResult.id();
+        }
+
+        // Attached only once it is built, so a failed build leaves the
+        // replaced client in place.
+        const replacement = new wasm.WebClient();
+        try {
+          await replacement.createMockClient(
+            this.seed,
+            newMockChain,
+            newMockNoteTransportNode
+          );
+        } catch (error) {
+          try {
+            replacement.free();
+          } catch {
+            // Nothing references it.
+          }
+          throw error;
+        }
+        this.wasmWebClient = replacement;
+        this.wasmWebClientPromise = Promise.resolve(replacement);
+        await this._freeWasmClient(wasmWebClient, "replacement");
+
         return transactionResult.id();
-      }
-
-      this.wasmWebClient = new wasm.WebClient();
-      this.wasmWebClientPromise = Promise.resolve(this.wasmWebClient);
-      await this.wasmWebClient.createMockClient(
-        this.seed,
-        newMockChain,
-        newMockNoteTransportNode
-      );
-
-      return transactionResult.id();
+      });
     } catch (error) {
       console.error(
         "INDEX.JS: Error in submitNewTransactionWithProver:",

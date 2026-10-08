@@ -89,6 +89,7 @@ describe("MidenProvider resilient disconnect handling", () => {
 
       // Client should still be ready (not destroyed)
       expect(screen.getByTestId("ready").textContent).toBe("true");
+      expect(useMidenStore.getState().client!.terminate).not.toHaveBeenCalled();
 
       // No new client was created
       expect(
@@ -222,6 +223,7 @@ describe("MidenProvider resilient disconnect handling", () => {
         (WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>)
           .mock.calls.length
       ).toBe(initialCreateCount);
+      expect(useMidenStore.getState().client!.terminate).not.toHaveBeenCalled();
     });
   });
 
@@ -259,6 +261,20 @@ describe("MidenProvider resilient disconnect handling", () => {
       const firstCreateCount = (
         WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
       ).mock.calls.length;
+      const firstClient = useMidenStore.getState().client!;
+      const secondClient = {
+        ...firstClient,
+        terminate: vi.fn(),
+      } as unknown as WebClient;
+      let finishSecond!: (client: WebClient) => void;
+      vi.mocked(
+        WebClient.createClientWithExternalKeystore
+      ).mockImplementationOnce(
+        () =>
+          new Promise<WebClient>((resolve) => {
+            finishSecond = resolve;
+          })
+      );
 
       // Connect with different identity
       const signer2 = createMockSignerContext({
@@ -282,6 +298,17 @@ describe("MidenProvider resilient disconnect handling", () => {
           ).mock.calls.length
         ).toBeGreaterThan(firstCreateCount);
       });
+      // The identity change clears the store but leaves the first client
+      // alive: a hook flow that captured it may still be running.
+      expect(firstClient.terminate).not.toHaveBeenCalled();
+      expect(useMidenStore.getState().client).toBeNull();
+
+      finishSecond(secondClient);
+      await waitFor(() => {
+        expect(useMidenStore.getState().client).toBe(secondClient);
+      });
+      expect(firstClient.terminate).not.toHaveBeenCalled();
+      expect(secondClient.terminate).not.toHaveBeenCalled();
     });
   });
 
