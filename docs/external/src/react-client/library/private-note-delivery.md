@@ -87,8 +87,10 @@ What happens at each point after the transaction is submitted:
 - **A relay fails after commit.** Every owed note is still attempted, so
   `useMultiSend` does not stop at the first recipient. The error lists which
   notes were delivered and which were not, with `commitment: "committed"`.
-- **A note has no full form to relay** (a partial output note). It is reported
-  as undelivered rather than skipped.
+- **This client holds no details for a note** (a partial output note). The note
+  is still relayed by id, the relay rejects it ("output note has no details to
+  relay"), and it is reported as undelivered with `commitment: "committed"`.
+  This client cannot resend it.
 
 A failure before or at submission is a plain error, as it always was:
 `useTransaction` checks `privateNoteTarget` before it executes anything, so a

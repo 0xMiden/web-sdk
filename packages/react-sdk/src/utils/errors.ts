@@ -75,12 +75,13 @@ export interface PrivateNoteResendRequest {
  * The transaction is not retried and is not undone: `transactionId` names it
  * whatever happened to its notes. `commitment` is `"committed"` when the hook
  * saw the transaction commit before relaying, and `"unknown"` when it did not
- * get that far: applying it locally failed, the commit wait did not see it
- * commit, or none of the notes had a full note to relay. The SDK keeps no
- * queue, so nothing re-sends a note on its own: pass
+ * get that far: applying it locally failed, or the commit wait did not see it
+ * commit. The SDK keeps no queue, so nothing re-sends a note on its own: pass
  * `{ transactionId, notes: undelivered }` to `useResendPrivateNotes().resend`,
  * which is safe to repeat. A note whose transaction this client could not apply
- * is not in its store, so it cannot be resent from this client.
+ * is not in its store, and a note this client holds no details for is rejected
+ * by the relay ("output note has no details to relay"); neither can be resent
+ * from this client.
  *
  * `undelivered` is empty only when the transaction's output notes could not be
  * read at all; `cause` then says why.

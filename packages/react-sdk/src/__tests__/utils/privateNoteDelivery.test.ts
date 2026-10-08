@@ -128,16 +128,15 @@ describe("owed notes", () => {
     ).toBeDefined();
   });
 
-  it("marks a note whose intoFull() returns nothing as unavailable", () => {
+  it("owes a note whose intoFull() returns nothing by its id alone", () => {
     const partial = createMockOutputNote(createMockNote("0xn"));
     partial.intoFull.mockReturnValue(undefined as never);
-    const [owed] = privateOutputNotesOwed(
-      { executedTransaction: () => ({ userOutputNotes: () => [partial] }) },
-      "0xto"
-    );
-    expect(owed.unavailable?.message).toBe(
-      "Private output note 0xn has no full note to relay"
-    );
+    expect(
+      privateOutputNotesOwed(
+        { executedTransaction: () => ({ userOutputNotes: () => [partial] }) },
+        "0xto"
+      )
+    ).toEqual([{ noteId: "0xn", to: "0xto" }]);
   });
 
   it("skips public notes", () => {
@@ -173,9 +172,10 @@ describe("owed notes", () => {
 describe("settlePrivateNotes", () => {
   const settle = (
     owed: Parameters<typeof settlePrivateNotes>[0]["owed"],
-    apply: () => Promise<unknown> = () => Promise.resolve()
+    apply: () => Promise<unknown> = () => Promise.resolve(),
+    overrides: Parameters<typeof createMockWebClient>[0] = {}
   ) => {
-    const client = createMockWebClient();
+    const client = createMockWebClient(overrides);
     return {
       client,
       run: settlePrivateNotes({
@@ -220,19 +220,49 @@ describe("settlePrivateNotes", () => {
     expect(client.sendPrivateOutputNote).not.toHaveBeenCalled();
   });
 
-  it("reports a note with no full note after the others are delivered", async () => {
-    const { client, run } = settle({
-      notes: [
-        { noteId: "0x1", to: "0xa" },
-        { noteId: "0x2", to: "0xa", unavailable: new Error("no full note") },
-      ],
-    });
+  it("relays a note whose intoFull() returns nothing by id", async () => {
+    const partial = createMockOutputNote(createMockNote("0xn"));
+    partial.intoFull.mockReturnValue(null as never);
+    const owed = readOwedPrivateNotes(() =>
+      privateOutputNotesOwed(
+        { executedTransaction: () => ({ userOutputNotes: () => [partial] }) },
+        "0xa"
+      )
+    );
+    const { client, run } = settle(owed);
+    await run.catch(() => {});
+    expect(client.sendPrivateOutputNote).toHaveBeenCalledWith(
+      "0xn",
+      expect.anything()
+    );
+    await expect(run).resolves.toBeUndefined();
+  });
+
+  it("reports a note the relay holds no details for as undelivered after commit", async () => {
+    const { client, run } = settle(
+      {
+        notes: [
+          { noteId: "0x1", to: "0xa" },
+          { noteId: "0x2", to: "0xa" },
+        ],
+      },
+      undefined,
+      {
+        sendPrivateOutputNote: vi
+          .fn()
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(
+            new Error("output note has no details to relay (recipient unknown)")
+          ),
+      }
+    );
     await expect(run).rejects.toMatchObject({
       commitment: "committed",
       delivered: [{ noteId: "0x1", to: "0xa" }],
       undelivered: [{ noteId: "0x2", to: "0xa" }],
-      message: expect.stringContaining("no full note"),
+      message: expect.stringContaining("no details to relay"),
     });
-    expect(client.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
+    expect(client.sendPrivateOutputNote).toHaveBeenCalledTimes(2);
+    expect(waitForCommit).toHaveBeenCalledTimes(1);
   });
 });

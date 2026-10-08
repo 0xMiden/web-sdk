@@ -32,6 +32,10 @@ const discarded = () =>
   new transactionCommit.TransactionDiscardedError() as Error;
 const timedOut = () => new Error("Timeout waiting for transaction commit");
 const relayDown = () => new Error("transport unavailable");
+// What the binding's sendPrivateOutputNote rejects with for a note this client
+// holds no details for.
+const noDetails = () =>
+  new Error("output note has no details to relay (recipient unknown)");
 
 beforeEach(() => {
   useMidenStore.getState().reset();
@@ -210,21 +214,29 @@ describe("useTransaction with privateNoteTarget", () => {
     });
   });
 
-  it("reports a private note whose full note cannot be read as undelivered", async () => {
-    const unreadable = privateOutput("0xp1");
-    unreadable.intoFull.mockImplementation(() => {
+  it("reports a note the relay rejects without details as undelivered after commit", async () => {
+    const partial = privateOutput("0xp1");
+    partial.intoFull.mockImplementation(() => {
       throw new Error("partial note");
     });
     const client = clientFor(
-      txResultWith("0xtx7", [unreadable, privateOutput("0xp2")])
+      txResultWith("0xtx7", [partial, privateOutput("0xp2")]),
+      {
+        sendPrivateOutputNote: vi.fn(async (noteId: string) => {
+          if (noteId === "0xp1") throw noDetails();
+        }),
+      }
     );
     ready(client);
     const { result } = renderHook(() => useTransaction());
 
     const err = await rejection(() => execute(result));
 
-    expect(client.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
-    expect(client.sendPrivateOutputNote.mock.calls[0][0]).toBe("0xp2");
+    expect(client.sendPrivateOutputNote).toHaveBeenCalledWith(
+      "0xp1",
+      expect.anything()
+    );
+    expect(client.sendPrivateOutputNote).toHaveBeenCalledTimes(2);
     expect(err).toMatchObject({
       transactionId: "0xtx7",
       commitment: "committed",
@@ -359,26 +371,29 @@ describe("useSend with a private note", () => {
     expect(err).not.toHaveProperty("code");
   });
 
-  it("reports a note with no full note to relay with the transaction id", async () => {
+  it("reports a note the relay rejects without details, with the transaction id", async () => {
     const partial = privateOutput("0xn1");
     partial.intoFull.mockReturnValue(null as never);
-    const client = clientFor(txResultWith("0xsend5", [partial]));
+    const client = clientFor(txResultWith("0xsend5", [partial]), {
+      sendPrivateOutputNote: vi.fn().mockRejectedValue(noDetails()),
+    });
     ready(client);
     const { result } = renderHook(() => useSend());
 
     const err = await rejection(() => send(result));
 
+    expect(client.sendPrivateOutputNote).toHaveBeenCalledWith(
+      "0xn1",
+      expect.anything()
+    );
     expect(err).toMatchObject({
       code: "PRIVATE_NOTE_DELIVERY_FAILED",
       transactionId: "0xsend5",
-      commitment: "unknown",
+      commitment: "committed",
       undelivered: [{ noteId: "0xn1", to: "0x2" }],
     });
-    expect((err as Error).message).toContain(
-      "Missing full note for private send"
-    );
-    expect(client.applyTransaction).toHaveBeenCalledTimes(1);
-    expect(waitForCommit).not.toHaveBeenCalled();
+    expect((err as Error).message).toContain("no details to relay");
+    expect(waitForCommit).toHaveBeenCalledTimes(1);
   });
 
   it("clears the previous result when a new call starts", async () => {

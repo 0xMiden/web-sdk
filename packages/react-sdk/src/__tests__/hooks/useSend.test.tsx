@@ -773,7 +773,7 @@ describe("useSend", () => {
   });
 
   describe("private note branch coverage", () => {
-    it("reports a private note with no full note as undelivered, with the transaction id", async () => {
+    it("reports a note the relay rejects without details as undelivered, with the transaction id", async () => {
       const partialNote = createMockOutputNote(createMockNote("0xpartial"));
       partialNote.intoFull.mockReturnValue(null as never);
       const brokenTxResult = {
@@ -806,6 +806,11 @@ describe("useSend", () => {
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
         sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi
+          .fn()
+          .mockRejectedValue(
+            new Error("output note has no details to relay (recipient unknown)")
+          ),
       });
 
       mockUseMiden.mockReturnValue({
@@ -828,14 +833,16 @@ describe("useSend", () => {
         ).rejects.toMatchObject({
           code: "PRIVATE_NOTE_DELIVERY_FAILED",
           transactionId: "0xtxbad",
-          commitment: "unknown",
+          commitment: "committed",
           undelivered: [{ noteId: "0xpartial", to: "0x2" }],
-          message: expect.stringContaining(
-            "Missing full note for private send"
-          ),
+          message: expect.stringContaining("no details to relay"),
         });
       });
       expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledWith(
+        "0xpartial",
+        expect.anything()
+      );
     });
 
     it("relays the user note's id, never the fee note listed first in outputNotes()", async () => {

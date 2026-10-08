@@ -83,7 +83,7 @@ export const createMockNote = (id: string = "0xnote1") => ({
 });
 
 // The binding has no `noteType()` on an output note: the type is on its
-// metadata, and the id is readable whether or not `intoFull()` succeeds.
+// metadata.
 export const createMockOutputNote = (
   note = createMockNote(),
   noteType: NoteType = NoteType.Private

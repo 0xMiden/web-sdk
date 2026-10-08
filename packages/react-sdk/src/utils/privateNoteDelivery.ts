@@ -16,20 +16,14 @@ type ClientWithRelay = {
   sendPrivateOutputNote: (noteId: string, address: Address) => Promise<void>;
 };
 
-/** A note a hook owes its recipient, and why it cannot be relayed if it cannot. */
-interface OwedPrivateNote extends PrivateNoteDelivery {
-  unavailable?: Error;
-}
-
 /** The notes a hook owes, read once its transaction is submitted. */
 type OwedPrivateNotes =
-  | { notes: OwedPrivateNote[]; unreadable?: undefined }
+  | { notes: PrivateNoteDelivery[]; unreadable?: undefined }
   | { notes: []; unreadable: { cause: unknown } };
 
 type OutputNoteHeader = {
   id: () => { toString: () => string };
   metadata: () => { noteType: () => NoteType };
-  intoFull?: () => unknown;
 };
 
 /**
@@ -46,7 +40,7 @@ export function recipientRef(to: AccountRef): string {
  * must not pass for one that created no private notes.
  */
 export function readOwedPrivateNotes(
-  read: () => OwedPrivateNote[]
+  read: () => PrivateNoteDelivery[]
 ): OwedPrivateNotes {
   try {
     return { notes: read() };
@@ -65,50 +59,31 @@ function userOutputNotes(txResult: unknown): OutputNoteHeader[] {
   return executed.userOutputNotes();
 }
 
-function owedNote(
-  note: OutputNoteHeader,
-  to: string,
-  missingMessage: (noteId: string) => string
-): OwedPrivateNote {
-  const noteId = note.id().toString();
-  let full: unknown = null;
-  try {
-    full = note.intoFull?.() ?? null;
-  } catch {
-    full = null;
-  }
-  return full
-    ? { noteId, to }
-    : { noteId, to, unavailable: new Error(missingMessage(noteId)) };
-}
-
 /**
- * The private output notes a transaction created, each owed to `to`. The ids
- * come from the note headers, so a note whose full form cannot be read is still
- * reported rather than silently skipped.
+ * The private output notes a transaction created, each owed to `to` by the id
+ * on its header. Whether this client holds a note's details is for the relay to
+ * decide: `sendPrivateOutputNote` rejects a note it cannot send, which then
+ * lands in `undelivered` like any other failed relay.
  */
 export function privateOutputNotesOwed(
   txResult: unknown,
   to: string
-): OwedPrivateNote[] {
+): PrivateNoteDelivery[] {
   return userOutputNotes(txResult)
     .filter((note) => note.metadata().noteType() === NoteType.Private)
-    .map((note) =>
-      owedNote(
-        note,
-        to,
-        (noteId) => `Private output note ${noteId} has no full note to relay`
-      )
-    );
+    .map((note) => ({ noteId: note.id().toString(), to }));
 }
 
 /** The one note a send transaction created, owed to `to`. */
-export function sentNoteOwed(txResult: unknown, to: string): OwedPrivateNote[] {
+export function sentNoteOwed(
+  txResult: unknown,
+  to: string
+): PrivateNoteDelivery[] {
   const [note] = userOutputNotes(txResult);
   if (!note) {
     throw new Error("The send transaction created no output note");
   }
-  return [owedNote(note, to, () => "Missing full note for private send")];
+  return [{ noteId: note.id().toString(), to }];
 }
 
 /**
@@ -142,11 +117,6 @@ export async function deliverPrivateNotes(
   return { delivered, undelivered, firstError };
 }
 
-const report = ({ noteId, to }: PrivateNoteDelivery): PrivateNoteDelivery => ({
-  noteId,
-  to,
-});
-
 /**
  * Finishes a submitted transaction that owes private notes: applies it, waits
  * for it to commit and relays every note, rejecting with a
@@ -167,7 +137,7 @@ export async function settlePrivateNotes({
   owed: OwedPrivateNotes;
   apply: () => Promise<unknown>;
 }): Promise<void> {
-  const all = owed.notes.map(report);
+  const all = owed.notes;
   const fail = (
     commitment: "committed" | "unknown",
     delivered: PrivateNoteDelivery[],
@@ -190,12 +160,6 @@ export async function settlePrivateNotes({
   }
   if (owed.unreadable) throw fail("unknown", [], [], owed.unreadable.cause);
 
-  const unavailable = owed.notes.filter((note) => note.unavailable);
-  const relayable = owed.notes.filter((note) => !note.unavailable).map(report);
-  if (unavailable.length > 0 && relayable.length === 0) {
-    throw fail("unknown", [], all, unavailable[0].unavailable);
-  }
-
   try {
     await waitForTransactionCommit(client, runExclusiveSafe, transactionId);
   } catch (cause) {
@@ -208,14 +172,9 @@ export async function settlePrivateNotes({
   const { delivered, undelivered, firstError } = await deliverPrivateNotes(
     client,
     runExclusiveSafe,
-    relayable
+    all
   );
-  if (undelivered.length > 0 || unavailable.length > 0) {
-    throw fail(
-      "committed",
-      delivered,
-      [...undelivered, ...unavailable.map(report)],
-      undelivered.length > 0 ? firstError : unavailable[0].unavailable
-    );
+  if (undelivered.length > 0) {
+    throw fail("committed", delivered, undelivered, firstError);
   }
 }
