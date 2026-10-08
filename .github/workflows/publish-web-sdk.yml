@@ -17,15 +17,21 @@
 # Branching:
 # - `release: published` → publishes to the `latest` dist-tag, gated by
 #   the `check-*-version-release.sh` scripts.
+# - `workflow_dispatch` → same `latest` path as a GitHub Release, but
+#   checks out the dispatched ref (typically `main`) instead of a tag.
+#   Use this to publish adopted packages whose versions are not on npm
+#   yet without cutting a new web-client tag.
 # - `pull_request: closed` (against next, with the `patch release` label)
 #   → publishes to the `next` dist-tag, gated by `check-*-version-pr.sh`.
-# - The vite-plugin ships only on release events (no -pr.sh script for it).
+# - The vite-plugin ships on `latest` events (release and dispatch; no
+#   -pr.sh script for it).
 
 name: Publish Web SDK
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
   pull_request:
     branches:
       - next
@@ -40,6 +46,7 @@ jobs:
   check-version:
     if: |
       github.event_name == 'release' ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
        contains(github.event.pull_request.labels.*.name, 'patch release'))
     runs-on: ubuntu-24.04
@@ -51,19 +58,35 @@ jobs:
       should_publish_vite: ${{ steps.check_vite.outputs.should_publish }}
       vite_version: ${{ steps.check_vite.outputs.current_version }}
       dist_tag: ${{ steps.event.outputs.dist_tag }}
+      adopted_plan: ${{ steps.plan_adopted.outputs.plan }}
+      adopted_count: ${{ steps.plan_adopted.outputs.count }}
       checkout_ref: ${{ steps.event.outputs.checkout_ref }}
     steps:
       - name: Resolve event-specific config
         id: event
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
-            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            # A pre-release must not take `latest`: it is the version every fresh
+            # `npm install` resolves to, and an rc client is rejected outright by a
+            # node on the stable line it does not match.
+            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+              echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+            else
+              echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            fi
             echo "checkout_ref=refs/tags/${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
             echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "version_mode=release" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "checkout_ref=${{ github.ref }}" >> "$GITHUB_OUTPUT"
+            echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "version_mode=release" >> "$GITHUB_OUTPUT"
           else
             echo "dist_tag=next" >> "$GITHUB_OUTPUT"
             echo "checkout_ref=next" >> "$GITHUB_OUTPUT"
             echo "version_check_arg=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "version_mode=pr" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check out code
@@ -75,7 +98,7 @@ jobs:
       - name: Check web-client version bump
         id: check_web
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "${{ steps.event.outputs.version_mode }}" = "release" ]; then
             ./scripts/check-web-client-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
           else
             ./scripts/check-web-client-version-pr.sh "${{ steps.event.outputs.version_check_arg }}"
@@ -84,24 +107,38 @@ jobs:
       - name: Check react-sdk version bump
         id: check_react
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "${{ steps.event.outputs.version_mode }}" = "release" ]; then
             ./scripts/check-react-sdk-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
           else
             ./scripts/check-react-sdk-version-pr.sh "${{ steps.event.outputs.version_check_arg }}"
           fi
 
-      - name: Check vite-plugin version bump (release only)
+      - name: Check vite-plugin version bump (latest only)
         id: check_vite
-        if: github.event_name == 'release'
+        if: steps.event.outputs.version_mode == 'release'
         run: ./scripts/check-vite-plugin-version-release.sh "${{ steps.event.outputs.version_check_arg }}"
+
+      # The packages adopted from the wallet-adapter / para / turnkey repos are
+      # gated from scripts/publish-manifest.json rather than one bespoke script
+      # each. Adding a package to that manifest is all a new package needs.
+      - name: Build publish plan for adopted packages
+        id: plan_adopted
+        run: |
+          if [ "${{ steps.event.outputs.version_mode }}" = "release" ]; then
+            PLAN=$(./scripts/publish-plan.sh plan release "$GITHUB_SHA")
+          else
+            PLAN=$(./scripts/publish-plan.sh plan pr "${{ github.event.pull_request.base.sha }}")
+          fi
+          echo "plan<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$PLAN" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "count=$(printf '%s' "$PLAN" | jq 'length')" >> "$GITHUB_OUTPUT"
+          printf '%s' "$PLAN" | jq -r '.[] | "will publish \(.name)@\(.version) (level \(.level))"'
 
   build-native-nodejs:
     needs: check-version
     if: needs.check-version.outputs.should_publish_web == 'true'
     strategy:
-      # Independent legs: a musl cross-build failure must not cancel the
-      # glibc/darwin legs (which are the established, must-ship binaries).
-      fail-fast: false
       matrix:
         include:
           - os: macos-26
@@ -110,16 +147,7 @@ jobs:
             platform-package: node-sdk-darwin-x64
           - os: ubuntu-24.04
             platform-package: node-sdk-linux-x64-gnu
-          # musl / Alpine. Cross-compiled from the same ubuntu runner.
-          - os: ubuntu-24.04
-            platform-package: node-sdk-linux-x64-musl
-            rust-target: x86_64-unknown-linux-musl
     runs-on: ${{ matrix.os }}
-    # The musl binary is newer/best-effort: a cross-build hiccup should leave
-    # this leg green so the publish job still ships the glibc + darwin
-    # binaries and the WASM package. The publish loop skips any missing
-    # artifact, so a failed musl leg simply defers musl to the next release.
-    continue-on-error: ${{ matrix.rust-target == 'x86_64-unknown-linux-musl' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -130,11 +158,49 @@ jobs:
         run: rustup update --no-self-update
 
       - name: Build napi binary
-        if: ${{ !matrix.rust-target }}
-        run: cargo build -p miden-client-web --no-default-features --features nodejs --release
+        run: |
+          cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked
+          git diff --exit-code -- Cargo.lock
+
+      - name: Prepare .node binary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXT="dylib"
+          else
+            EXT="so"
+          fi
+          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "::error::napi binary not found"
+            exit 1
+          fi
+          cp "$BINARY" "packages/${{ matrix.platform-package }}/miden_client_web.node"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform-package }}
+          path: packages/${{ matrix.platform-package }}/miden_client_web.node
+
+  # The musl (Alpine) binary is built by its own job, outside the matrix above,
+  # so it can never fail or cancel the three required legs. It is best-effort:
+  # `publish` waits for it but does not gate on its result, and publishes the
+  # musl package only if this job uploaded an artifact.
+  build-native-nodejs-musl:
+    needs: check-version
+    if: needs.check-version.outputs.should_publish_web == 'true'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    # Bounded so a stalled musl build cannot hold `publish` far past the
+    # slowest required leg.
+    timeout-minutes: 30
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check-version.outputs.checkout_ref }}
 
       - name: Build napi binary (musl cross via rust-musl-cross)
-        if: ${{ matrix.rust-target }}
         # A dynamically linked musl cdylib so a musl-linked Node (Alpine) can
         # dlopen it against its own libc instead of a second, statically
         # embedded copy (-crt-static is disabled; a static CRT inside a shared
@@ -158,51 +224,53 @@ jobs:
             -v "$PWD:/home/rust/src" -w /home/rust/src \
             -e RUSTFLAGS="-C target-feature=-crt-static" \
             messense/rust-musl-cross:x86_64-musl@sha256:ce75e9174325d4fbb3de85c309e2d7ca29f7500169bc4b5d2c611ff7e86d549a \
-            bash -c "rustup target add ${{ matrix.rust-target }} && cargo build -p miden-client-web --no-default-features --features nodejs --release --target ${{ matrix.rust-target }}"
+            bash -c "rustup target add x86_64-unknown-linux-musl && cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked --target x86_64-unknown-linux-musl"
+          git diff --exit-code -- Cargo.lock
 
       - name: Prepare .node binary
         run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            EXT="dylib"
-          else
-            EXT="so"
-          fi
-          BINARY=$(find target -name "libmiden_client_web.${EXT}" -path "*/release/*" | head -1)
-          if [ -z "$BINARY" ]; then
-            echo "::error::napi binary not found"
+          BINARY=target/x86_64-unknown-linux-musl/release/libmiden_client_web.so
+          if [ ! -f "$BINARY" ]; then
+            echo "::error::musl napi binary not found at $BINARY"
             exit 1
           fi
-          cp "$BINARY" "packages/${{ matrix.platform-package }}/miden_client_web.node"
+          cp "$BINARY" packages/node-sdk-linux-x64-musl/miden_client_web.node
 
       - name: Verify musl binary loads on Alpine
-        if: ${{ matrix.rust-target }}
         # A cross-compiled musl cdylib can link "successfully" yet fail to
         # dlopen on a real musl runtime. Load the built addon inside
-        # node:alpine before publishing: if it can't load, this
-        # (continue-on-error) leg fails, the artifact is not uploaded, and the
-        # publish job skips musl — instead of shipping a broken binary that
-        # reintroduces the original "module not found" on Alpine.
+        # node:alpine before publishing: if it can't load, this job fails, the
+        # artifact is not uploaded, and the publish job skips musl instead of
+        # shipping a broken binary that reintroduces "module not found" on
+        # Alpine.
         run: |
           docker run --rm \
-            -v "$PWD/packages/${{ matrix.platform-package }}:/pkg:ro" \
+            -v "$PWD/packages/node-sdk-linux-x64-musl:/pkg:ro" \
             node:20-alpine \
             node -e "require('/pkg/miden_client_web.node'); console.log('musl .node loaded on Alpine OK')"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform-package }}
-          path: packages/${{ matrix.platform-package }}/miden_client_web.node
+          name: node-sdk-linux-x64-musl
+          path: packages/node-sdk-linux-x64-musl/miden_client_web.node
 
   publish:
-    needs: [check-version, build-native-nodejs]
+    # Waits for build-native-nodejs-musl so its artifact can be downloaded, but
+    # the condition below never reads its result.
+    needs: [check-version, build-native-nodejs, build-native-nodejs-musl]
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
       (
+        needs.check-version.outputs.should_publish_web != 'true' ||
+        needs.build-native-nodejs.result == 'success'
+      ) &&
+      (
         needs.check-version.outputs.should_publish_web == 'true' ||
         needs.check-version.outputs.should_publish_react == 'true' ||
-        needs.check-version.outputs.should_publish_vite == 'true'
+        needs.check-version.outputs.should_publish_vite == 'true' ||
+        needs.check-version.outputs.adopted_count != '0'
       )
     # Must be a github-hosted runner — npm's provenance verifier rejects
     # attestations from "self-hosted" runners (Warp, etc.) with
@@ -267,8 +335,13 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain stable
 
       - name: Install binaryen (wasm-opt)
-        run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+        # The optimizer that produces the PUBLISHED bytes. The shared installer
+        # verifies the immutable digest recorded in the repository before
+        # extracting the native binary, so a release is reproducible, and
+        # WASM_OPT_BIN avoids resolving to the npm package's ~10x slower JS
+        # shim. Keep this in step with bench.yml: if the two disagree, the
+        # proving benchmark stops measuring the optimizer users actually ship.
+        run: ./scripts/install-binaryen.sh
 
       # Single workspace install — used for web-client build (when needed),
       # react-sdk build (which consumes the WASM dist), and vite-plugin build.
@@ -283,38 +356,15 @@ jobs:
         if: >
           needs.check-version.outputs.should_publish_web == 'true' ||
           needs.check-version.outputs.should_publish_react == 'true'
-        run: pnpm --filter @miden-sdk/miden-sdk run build
+        run: |
+          pnpm --filter @miden-sdk/miden-sdk run build
+          git diff --exit-code -- Cargo.lock
 
       - name: Verify WASM is optimized
         if: needs.check-version.outputs.should_publish_web == 'true'
-        # The dist layout used to be a single flat `dist/assets/` tree.
-        # After the ST/MT split (PR #134), each variant has its own
-        # subtree: `dist/st/assets/`, `dist/st/workers/assets/`,
-        # `dist/mt/assets/`, `dist/mt/workers/assets/`. Hard-coding
-        # `dist/assets/` made find error with "No such file or
-        # directory" and bash -e killed the step before the gate even
-        # evaluated. Walk the whole `dist/` tree instead and verify
-        # every .wasm individually — both variants must stay under
-        # 25 MB.
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          wasm_files=$(find crates/web-client/dist -name '*.wasm' -type f)
-          if [ -z "$wasm_files" ]; then
-            echo "::error::No .wasm files found under crates/web-client/dist — build did not produce output."
-            exit 1
-          fi
-          max_size=$((25 * 1024 * 1024))
-          fail=0
-          while IFS= read -r wasm_file; do
-            size=$(stat --format=%s "$wasm_file")
-            echo "WASM size: $((size / 1024 / 1024))MB ($size bytes) — $wasm_file"
-            if [ "$size" -gt "$max_size" ]; then
-              echo "::error::WASM at $wasm_file is $((size / 1024 / 1024))MB — exceeds 25MB limit. wasm-opt likely failed silently."
-              fail=1
-            fi
-          done <<< "$wasm_files"
-          exit "$fail"
+        # The variant-specific limits reject both unoptimized output and a
+        # silently skipped MASP strip while leaving normal growth headroom.
+        run: ./scripts/verify-wasm-size.sh
 
       # ── Node.js platform packages ─────────────────────────────────────
       # Tied to the web-client publish; ship only when web-client itself
@@ -332,32 +382,49 @@ jobs:
         run: |
           WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
           DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
-          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu node-sdk-linux-x64-musl; do
-            if [ ! -f "artifacts/${pkg}/miden_client_web.node" ]; then
-              echo "::warning::No native binary artifact for ${pkg}; skipping its publish (its build leg produced none — see build-native-nodejs)."
-              continue
-            fi
+          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
             cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
             jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
             mv /tmp/pkg.json "packages/${pkg}/package.json"
             echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
-            ( cd "packages/${pkg}" && npm publish --tag "$DIST_TAG" --access public --provenance ) && continue
-            # Publish failed. musl is best-effort: it is the newest platform
-            # and its first-ever OIDC publish needs the trusted publisher for
-            # @miden-sdk/node-linux-x64-musl registered on npm (or a one-time
-            # manual publish). Defer it rather than wedging a release whose
-            # stable packages have already published. optionalDependencies
-            # tolerate a missing (404) version, so consumers are unaffected.
-            if [ "$pkg" = "node-sdk-linux-x64-musl" ]; then
-              echo "::warning::Publishing ${pkg} failed; deferring musl to the next release. First musl release? Register the trusted publisher for @miden-sdk/node-linux-x64-musl on npm (or publish it once manually)."
-              continue
-            fi
-            echo "::error::Publishing ${pkg} failed."
-            exit 1
+            cd "packages/${pkg}"
+            npm publish --tag "$DIST_TAG" --access public --provenance
+            cd ../..
           done
+
+      - name: Publish the musl platform package (best-effort)
+        id: musl
+        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        # Never fails the release. No artifact (its build job failed, timed out
+        # or was cancelled) or a failed publish leaves this release on the
+        # three required binaries, and the next step then omits musl from the
+        # web-client's optionalDependencies. A first-ever publish of
+        # @miden-sdk/node-linux-x64-musl fails until its npm trusted publisher
+        # is registered, since this workflow has no token fallback.
+        continue-on-error: true
+        run: |
+          pkg=node-sdk-linux-x64-musl
+          name=@miden-sdk/node-linux-x64-musl
+          if [ ! -f "artifacts/${pkg}/miden_client_web.node" ]; then
+            echo "::warning::No ${pkg} artifact (see build-native-nodejs-musl); this release ships without the musl binary."
+            exit 0
+          fi
+          WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
+          DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
+          cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
+          jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
+          mv /tmp/pkg.json "packages/${pkg}/package.json"
+          echo "Publishing ${name}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
+          if (cd "packages/${pkg}" && npm publish --tag "$DIST_TAG" --access public --provenance); then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Publishing ${name}@${WEB_VERSION} failed; this release ships without the musl binary. On a first musl release, register the npm trusted publisher for ${name}."
+          fi
 
       - name: Inject Node.js optionalDependencies before web-client publish
         if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        env:
+          MUSL_PUBLISHED: ${{ steps.musl.outputs.published }}
         run: |
           cd crates/web-client
           node -e "
@@ -367,8 +434,10 @@ jobs:
               '@miden-sdk/node-darwin-arm64': v,
               '@miden-sdk/node-darwin-x64': v,
               '@miden-sdk/node-linux-x64-gnu': v,
-              '@miden-sdk/node-linux-x64-musl': v,
             };
+            if (process.env.MUSL_PUBLISHED === 'true') {
+              pkg.optionalDependencies['@miden-sdk/node-linux-x64-musl'] = v;
+            }
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             console.log('Injected optionalDependencies with version ' + v);
           "
@@ -400,6 +469,81 @@ jobs:
       - name: Publish vite-plugin to npm
         if: needs.check-version.outputs.should_publish_vite == 'true'
         run: pnpm --filter @miden-sdk/vite-plugin publish --tag "${{ needs.check-version.outputs.dist_tag }}" --access public --provenance --no-git-checks
+
+      # ── Adopted packages (wallet-adapter / para / turnkey) ────────────
+      # Published in dependency-level order so a dependent never lands before
+      # the package it pins. The script counts what it attempted against the
+      # plan length, so a loop that publishes nothing cannot report success.
+
+      # Both dist/ directories the adopted packages compile against are
+      # gitignored, so on a fresh checkout they exist only if a step above
+      # produced them — and every step above is gated on *publishing*, not on
+      # *building*. On a retry of a partially published release (the v0.16.0-rc.5
+      # case) @miden-sdk/miden-sdk and @miden-sdk/react are already on npm, so
+      # should_publish_web and should_publish_react are both false, "Build
+      # web-client" and "Build react-sdk" are both skipped, and every adopted
+      # package that resolves either one's types dies with
+      # `TS2307: Cannot find module '@miden-sdk/miden-sdk'` — which is 9 of the
+      # 11 manifest packages. These two steps supply that build input. They are
+      # purely additive: neither changes any existing step's condition, and
+      # neither runs in a job that publishes the package it provisions.
+
+      - name: Ensure web-client dist exists (hydrate from npm)
+        # ONLY when the client is not being built from source. "Build web-client"
+        # above runs whenever web OR react publishes, and when should_publish_web
+        # is true that directory IS the artifact about to be published —
+        # hydrating over it would push npm's old bytes back to npm instead of the
+        # freshly built WASM. The conditions are mutually exclusive by
+        # construction, and hydrate-web-client.mjs refuses to overwrite a
+        # non-empty dist without --force as a second line of defence.
+        #
+        # The exact-version assertion matters because hydrate falls back to the
+        # newest published client when the tree's version is unpublished. In
+        # release mode `should_publish_web == false` already implies "this exact
+        # version is on npm" (check-web-client-version-release.sh is a registry
+        # probe). The `next`-channel path is weaker: check-web-client-version-pr.sh
+        # returns false whenever crates/web-client/package.json merely did not
+        # change in the PR, which is routinely true of an unreleased rc. Compiling
+        # the adopted packages against a silently different client version and
+        # then publishing them is worse than failing here.
+        if: >
+          needs.check-version.outputs.adopted_count != '0' &&
+          needs.check-version.outputs.should_publish_web != 'true' &&
+          needs.check-version.outputs.should_publish_react != 'true'
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r '.version' crates/web-client/package.json)
+          PUBLISHED=$(npm view "@miden-sdk/miden-sdk@${VERSION}" version 2>/dev/null || echo "")
+          if [ "$VERSION" != "$PUBLISHED" ]; then
+            echo "::error title=Cannot hydrate web-client::@miden-sdk/miden-sdk@${VERSION} is not on npm and is not being built in this run; refusing to compile the adopted packages against a different client version."
+            exit 1
+          fi
+          pnpm run hydrate:web-client
+
+      - name: Ensure react-sdk dist exists (build from source)
+        # `@miden-sdk/react` is a workspace dependency of the adapter/para/turnkey
+        # React packages and its `types` field points at dist/index.d.ts, so its
+        # dist has to exist before they can typecheck. Skipped when
+        # should_publish_react is true — "Build react-sdk" above already produced
+        # it. Built from source rather than hydrated: the ref being released is
+        # the source of the published tarball, there is no hydrate script for this
+        # package, and nothing here publishes it (the publish step above is gated
+        # on should_publish_react, which is false whenever this step runs).
+        #
+        # Ordering: this needs crates/web-client/dist, supplied either by "Build
+        # web-client" above (when should_publish_web is true) or by the hydrate
+        # step immediately above (when it is not).
+        if: >
+          needs.check-version.outputs.adopted_count != '0' &&
+          needs.check-version.outputs.should_publish_react != 'true'
+        run: pnpm --filter @miden-sdk/react run build
+
+      - name: Publish adopted packages
+        if: needs.check-version.outputs.adopted_count != '0'
+        run: |
+          ./scripts/publish-plan.sh publish \
+            '${{ needs.check-version.outputs.adopted_plan }}' \
+            "${{ needs.check-version.outputs.dist_tag }}"
 
       # ── Reporting ─────────────────────────────────────────────────────
 
@@ -436,7 +580,8 @@ jobs:
       needs.check-version.result == 'success' &&
       needs.check-version.outputs.should_publish_web != 'true' &&
       needs.check-version.outputs.should_publish_react != 'true' &&
-      needs.check-version.outputs.should_publish_vite != 'true'
+      needs.check-version.outputs.should_publish_vite != 'true' &&
+      needs.check-version.outputs.adopted_count == '0'
     runs-on: ubuntu-24.04
     steps:
       - name: Skipped publish (all packages)

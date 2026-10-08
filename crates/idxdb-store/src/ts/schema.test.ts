@@ -1,15 +1,16 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import Dexie from "dexie";
 import {
   openDatabase,
+  closeDatabase,
   getDatabase,
   MidenDatabase,
   CLIENT_VERSION_SETTING_KEY,
+  SETTING_SCOPE_CLIENT,
+  SETTING_SCOPE_USER,
+  V1_STORES,
 } from "./schema.js";
 import { uniqueDbName } from "./test-utils.js";
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 // Track DBs for cleanup.
 const openDbs: Dexie[] = [];
@@ -44,67 +45,267 @@ function trackMidenDb(mdb: MidenDatabase): MidenDatabase {
 }
 
 describe("MidenDatabase migrations", () => {
-  // Placeholder for the actual v1→v2 migration test. When the first real
-  // migration is introduced, replace the dummy schema and upgrade logic below
-  // with the production V1_STORES → V2 change. The test structure (create v1
-  // DB, insert data, reopen as v2, verify data survived) stays the same.
-  //
-  // This uses a raw Dexie instance with a toy schema because there's no real
-  // migration yet — the purpose is to validate the vitest + fake-indexeddb
-  // test setup and provide a working template for future migration tests.
-  it("v1 → v2 migration preserves data", async () => {
+  // v1 → v2: prunes note tags leaked by output-note registration
+  // (miden-client < 0.15.4). See the version(2) block in schema.ts.
+  it("v1 → v2 migration prunes leaked output-note tags", async () => {
     const name = uniqueDbName();
 
-    const testV1 = {
-      items: "id,category",
-      settings: "key",
-    };
-
-    // Step 1: Create a v1 database and insert test data
+    // Step 1: seed a physical v1 database with the production v1 schema.
     const dbV1 = trackDb(new Dexie(name));
-    dbV1.version(1).stores(testV1);
+    dbV1.version(1).stores(V1_STORES);
     await dbV1.open();
 
-    await dbV1
-      .table("items")
-      .put({ id: "item-1", category: "a", name: "Alice" });
-    await dbV1.table("items").put({ id: "item-2", category: "b", name: "Bob" });
-    await dbV1
-      .table("settings")
-      .put({ key: "color", value: encoder.encode("blue") });
+    const leakedCommitment = "0x" + "aa".repeat(32);
+    const pendingCommitment = "0x" + "bb".repeat(32);
+    const inputOnlyCommitment = "0x" + "cc".repeat(32);
+
+    await dbV1.table("outputNotes").bulkPut([
+      // Consumed output note whose tag was leaked.
+      {
+        detailsCommitment: leakedCommitment,
+        noteId: "0x1",
+        stateDiscriminant: 3,
+      },
+      // Output note that is also a still-pending input note (self-transfer).
+      {
+        detailsCommitment: pendingCommitment,
+        noteId: "0x2",
+        stateDiscriminant: 0,
+      },
+    ]);
+    await dbV1.table("inputNotes").bulkPut([
+      // Expected (0) — inclusion-pending, its tags must survive.
+      {
+        detailsCommitment: pendingCommitment,
+        noteId: "0x2",
+        stateDiscriminant: 0,
+      },
+      // Expected input-only note — no output note matches, tag must survive.
+      {
+        detailsCommitment: inputOnlyCommitment,
+        noteId: "0x3",
+        stateDiscriminant: 0,
+      },
+    ]);
+    await dbV1.table("tags").bulkPut([
+      // Leaked: matches an output note, no pending input note needs it.
+      { tag: "dGFnMQ==", sourceNoteId: leakedCommitment, sourceAccountId: "" },
+      // Kept: matches an output note but a pending input note still needs it.
+      { tag: "dGFnMg==", sourceNoteId: pendingCommitment, sourceAccountId: "" },
+      // Kept: note-sourced but no output note matches.
+      {
+        tag: "dGFnMw==",
+        sourceNoteId: inputOnlyCommitment,
+        sourceAccountId: "",
+      },
+      // Kept: account-sourced tag.
+      { tag: "dGFnNA==", sourceNoteId: "", sourceAccountId: "0xdeadbeef" },
+      // Kept: user-sourced tag.
+      { tag: "dGFnNQ==", sourceNoteId: "", sourceAccountId: "" },
+    ]);
 
     dbV1.close();
 
-    // Step 2: Open with v1 + v2 (v2 adds an index and a data transform)
-    const dbV2 = trackDb(new Dexie(name));
-    dbV2.version(1).stores(testV1);
-    dbV2
-      .version(2)
-      .stores({ items: "id,category,name" })
-      .upgrade((tx) => {
-        return tx
-          .table("items")
-          .toCollection()
-          .modify((record: Record<string, unknown>) => {
-            if (!record.name) {
-              record.name = "unknown";
-            }
-          });
-      });
-    await dbV2.open();
+    // Step 2: reopen through MidenDatabase, whose version chain includes v2.
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    const success = await mdb.open("0.15.5");
+    expect(success).toBe(true);
 
-    // Verify data survived migration
-    const item1 = await dbV2.table("items").get("item-1");
-    expect(item1).toBeDefined();
-    expect(item1.name).toBe("Alice");
-    expect(item1.category).toBe("a");
+    const remaining = await mdb.tags.toArray();
+    const remainingTags = remaining.map((t) => t.tag).sort();
+    expect(remainingTags).toEqual([
+      "dGFnMg==",
+      "dGFnMw==",
+      "dGFnNA==",
+      "dGFnNQ==",
+    ]);
 
-    const item2 = await dbV2.table("items").get("item-2");
-    expect(item2).toBeDefined();
-    expect(item2.name).toBe("Bob");
+    // Unrelated tables survive the upgrade untouched.
+    expect(await mdb.outputNotes.count()).toBe(2);
+    expect(await mdb.inputNotes.count()).toBe(2);
+  });
 
-    const setting = await dbV2.table("settings").get("color");
-    expect(decoder.decode(setting.value)).toBe("blue");
+  it("v2 upgrade is a no-op when there are no output notes", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    await dbV1.table("tags").put({
+      tag: "dGFnMQ==",
+      sourceNoteId: "0x" + "aa".repeat(32),
+      sourceAccountId: "",
+    });
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    await mdb.open("0.15.5");
+
+    expect(await mdb.tags.count()).toBe(1);
+  });
+
+  // v3: rekeys the input-note consumption index on detailsCommitment, which is what
+  // `Store::get_input_note_after` seeks with. See the version(3) block in schema.ts.
+  it("v3 migration rebuilds the consumption index on detailsCommitment", async () => {
+    const name = uniqueDbName();
+    const lowCommitment = "0x" + "aa".repeat(32);
+    const highCommitment = "0x" + "ff".repeat(32);
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+
+    // noteId order and detailsCommitment order disagree, so reading through the new index
+    // yields an order the noteId-keyed one could not produce.
+    await dbV1.table("inputNotes").bulkPut([
+      {
+        detailsCommitment: lowCommitment,
+        noteId: "0xff",
+        stateDiscriminant: 8,
+        consumedBlockHeight: 1,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xconsumer",
+      },
+      {
+        detailsCommitment: highCommitment,
+        noteId: "0xaa",
+        stateDiscriminant: 8,
+        consumedBlockHeight: 1,
+        consumedTxOrder: 0,
+        consumerAccountId: "0xconsumer",
+      },
+    ]);
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.15.5")).toBe(true);
+
+    const ordered = await mdb.inputNotes
+      .orderBy("[consumedBlockHeight+consumedTxOrder+detailsCommitment]")
+      .toArray();
+    expect(ordered.map((n) => n.detailsCommitment)).toEqual([
+      lowCommitment,
+      highCommitment,
+    ]);
+
+    // Rebuilding an index moves no rows.
+    expect(await mdb.inputNotes.count()).toBe(2);
+  });
+
+  // v4/v5: `settings` is rekeyed on `[scope+key]`, which Dexie can only do by dropping and
+  // recreating the table. See the version(4) and version(5) blocks in schema.ts.
+  it("v4/v5 migration rekeys settings by scope and drops the old rows", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    await dbV1.table("settings").put({
+      key: "stale",
+      value: new Uint8Array([1]),
+    });
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.15.5")).toBe(true);
+
+    // The pre-scope row cannot be addressed under the new primary key, so it goes. The only row
+    // left is the client version `ensureClientVersion` persisted on this open.
+    expect(await mdb.settings.toArray()).toEqual([
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.15.5"),
+      },
+    ]);
+
+    // The same name in each scope is now a separate row.
+    await mdb.settings.bulkPut([
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "shared",
+        value: new Uint8Array([1]),
+      },
+      { scope: SETTING_SCOPE_USER, key: "shared", value: new Uint8Array([2]) },
+    ]);
+    const clientRow = await mdb.settings.get([SETTING_SCOPE_CLIENT, "shared"]);
+    expect(clientRow!.value).toEqual(new Uint8Array([1]));
+    const userRow = await mdb.settings.get([SETTING_SCOPE_USER, "shared"]);
+    expect(userRow!.value).toEqual(new Uint8Array([2]));
+  });
+
+  // v6: account witness registry. A null witness is a registered account the sync has not
+  // refreshed yet.
+  it("v6 migration adds accountWitnesses", async () => {
+    const name = uniqueDbName();
+
+    const dbV1 = trackDb(new Dexie(name));
+    dbV1.version(1).stores(V1_STORES);
+    await dbV1.open();
+    dbV1.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.15.5")).toBe(true);
+
+    await mdb.accountWitnesses.add({ accountId: "0xacc", witness: null });
+    expect(await mdb.accountWitnesses.get("0xacc")).toEqual({
+      accountId: "0xacc",
+      witness: null,
+    });
+  });
+
+  // v7: drops the private-note relay queue a 0.17.1 client could leave behind. See the
+  // version(7) block in schema.ts.
+  it("v7 migration deletes only the client-scope note transport outbox row", async () => {
+    const name = uniqueDbName();
+    const outboxKey = "note_transport_outbox";
+
+    const dbV6 = trackDb(new Dexie(name));
+    dbV6.version(6).stores({
+      ...V1_STORES,
+      inputNotes:
+        "detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumedBlockHeight+consumedTxOrder+detailsCommitment]",
+      settings: "[scope+key],scope",
+      accountWitnesses: "&accountId",
+    });
+    await dbV6.open();
+    await dbV6.table("settings").bulkPut([
+      // Same minor as the version opened below, so ensureClientVersion keeps the store.
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.17.1"),
+      },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: outboxKey,
+        value: new Uint8Array([1]),
+      },
+      { scope: SETTING_SCOPE_USER, key: outboxKey, value: new Uint8Array([2]) },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "note_transport_cursors",
+        value: new Uint8Array([3]),
+      },
+    ]);
+    dbV6.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.17.2")).toBe(true);
+
+    expect(await mdb.settings.get([SETTING_SCOPE_CLIENT, outboxKey])).toBe(
+      undefined
+    );
+    expect(
+      (await mdb.settings.get([SETTING_SCOPE_USER, outboxKey]))!.value
+    ).toEqual(new Uint8Array([2]));
+    expect(
+      (await mdb.settings.get([
+        SETTING_SCOPE_CLIENT,
+        "note_transport_cursors",
+      ]))!.value
+    ).toEqual(new Uint8Array([3]));
+    expect(await mdb.settings.count()).toBe(3);
   });
 });
 
@@ -126,9 +327,109 @@ describe("openDatabase", () => {
     await openDatabase(name, "1.0.0");
     const db = getDatabase(name);
     openMidenDbs.push(db);
-    const record = await db.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const record = await db.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     expect(record).toBeDefined();
     expect(new TextDecoder().decode(record!.value)).toBe("1.0.0");
+  });
+});
+
+describe("openDatabase / closeDatabase holders", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps a database open until its last holder closes it", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    await openDatabase(name, "1.0.0");
+    const db = trackMidenDb(getDatabase(name));
+
+    closeDatabase(name);
+    expect(getDatabase(name)).toBe(db);
+    expect(db.dexie.isOpen()).toBe(true);
+
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(false);
+    expect(() => getDatabase(name)).toThrow(/Database not found/);
+  });
+
+  it("opens one connection for concurrent opens of the same name", async () => {
+    const name = uniqueDbName();
+    const openSpy = vi.spyOn(MidenDatabase.prototype, "open");
+
+    await Promise.all([
+      openDatabase(name, "1.0.0"),
+      openDatabase(name, "1.0.0"),
+    ]);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+
+    const db = trackMidenDb(getDatabase(name));
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(true);
+    closeDatabase(name);
+    expect(db.dexie.isOpen()).toBe(false);
+  });
+
+  it("leaves the registered database in place when a reopen fails", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    // A connection closed elsewhere makes the next open a real one.
+    first.dexie.close();
+
+    let failed: MidenDatabase | undefined;
+    vi.spyOn(MidenDatabase.prototype, "open").mockImplementationOnce(
+      async function (this: MidenDatabase) {
+        failed = this;
+        await this.dexie.open();
+        throw new Error("open failed");
+      }
+    );
+
+    await expect(openDatabase(name, "1.0.0")).rejects.toThrow("open failed");
+    expect(getDatabase(name)).toBe(first);
+    expect(failed).toBeDefined();
+    expect(failed!.dexie.isOpen()).toBe(false);
+  });
+
+  it("replaces a registered database whose connection was closed elsewhere", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    first.dexie.close();
+
+    await openDatabase(name, "1.0.0");
+    const second = trackMidenDb(getDatabase(name));
+    expect(second).not.toBe(first);
+    expect(second.dexie.isOpen()).toBe(true);
+
+    // The first holder still holds the name, so one close keeps it open.
+    closeDatabase(name);
+    expect(second.dexie.isOpen()).toBe(true);
+    closeDatabase(name);
+    expect(second.dexie.isOpen()).toBe(false);
+  });
+
+  it("closes a replaced connection that reopened while the fresh open was in flight", async () => {
+    const name = uniqueDbName();
+    await openDatabase(name, "1.0.0");
+    const first = trackMidenDb(getDatabase(name));
+    first.dexie.close();
+
+    const reopening = openDatabase(name, "1.0.0");
+    await first.dexie.open();
+    await reopening;
+
+    const second = trackMidenDb(getDatabase(name));
+    expect(second).not.toBe(first);
+    expect(first.dexie.isOpen()).toBe(false);
+  });
+
+  it("ignores a close for a name that was never opened", () => {
+    expect(() => closeDatabase(uniqueDbName())).not.toThrow();
   });
 });
 
@@ -145,6 +446,7 @@ describe("ensureClientVersion: same version already stored", () => {
 
     // Insert a sentinel row that should survive if the DB is NOT nuked
     await db1.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "sentinel",
       value: new TextEncoder().encode("alive"),
     });
@@ -157,7 +459,7 @@ describe("ensureClientVersion: same version already stored", () => {
     expect(success).toBe(true);
 
     // Sentinel must still be there
-    const sentinel = await mdb2.settings.get("sentinel");
+    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
     expect(sentinel).toBeDefined();
     expect(new TextDecoder().decode(sentinel!.value)).toBe("alive");
   });
@@ -173,6 +475,7 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
     await db1.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "sentinel",
       value: new TextEncoder().encode("safe"),
     });
@@ -184,11 +487,14 @@ describe("ensureClientVersion: same major.minor, new patch", () => {
     expect(success).toBe(true);
 
     // Sentinel must survive (no nuke)
-    const sentinel = await mdb2.settings.get("sentinel");
+    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
     expect(sentinel).toBeDefined();
 
     // Version must be updated
-    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const versionRecord = await mdb2.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("1.2.5");
   });
 });
@@ -203,6 +509,7 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
     await db1.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "sentinel",
       value: new TextEncoder().encode("present"),
     });
@@ -213,7 +520,7 @@ describe("ensureClientVersion: stored version is newer (downgrade path)", () => 
     await mdb2.open("1.9.0");
 
     // The non-gt branch just persists the new version without nuking
-    const sentinel = await mdb2.settings.get("sentinel");
+    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
     expect(sentinel).toBeDefined();
   });
 });
@@ -229,6 +536,7 @@ describe("ensureClientVersion: major version bump triggers nuke", () => {
     openMidenDbs.push(db1);
     // Insert a sentinel row that should be GONE after nuke
     await db1.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "sentinel",
       value: new TextEncoder().encode("gone-after-nuke"),
     });
@@ -240,11 +548,14 @@ describe("ensureClientVersion: major version bump triggers nuke", () => {
     expect(success).toBe(true);
 
     // Sentinel should be gone (DB was nuked)
-    const sentinel = await mdb2.settings.get("sentinel");
+    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
     expect(sentinel).toBeUndefined();
 
     // New version should be persisted
-    const versionRecord = await mdb2.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const versionRecord = await mdb2.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     expect(new TextDecoder().decode(versionRecord!.value)).toBe("2.0.0");
   });
 });
@@ -260,6 +571,7 @@ describe("ensureClientVersion: invalid semver strings", () => {
     const db1 = getDatabase(name);
     openMidenDbs.push(db1);
     await db1.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "sentinel",
       value: new TextEncoder().encode("will-be-nuked"),
     });
@@ -271,7 +583,7 @@ describe("ensureClientVersion: invalid semver strings", () => {
     expect(success).toBe(true);
 
     // After the nuke the sentinel is gone
-    const sentinel = await mdb2.settings.get("sentinel");
+    const sentinel = await mdb2.settings.get([SETTING_SCOPE_USER, "sentinel"]);
     expect(sentinel).toBeUndefined();
   });
 });

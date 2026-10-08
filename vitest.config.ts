@@ -11,8 +11,14 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     projects: [
+      "./packages/create/vitest.config.ts",
       "./packages/react-sdk/vitest.config.ts",
+      "./packages/telemetry-otel/vitest.config.ts",
+      "./packages/telemetry-sentry/vitest.config.ts",
       "./packages/vite-plugin/vitest.config.ts",
+      "./packages/adapter/base/vitest.config.ts",
+      "./packages/adapter/miden/vitest.config.ts",
+      "./packages/adapter/react/vitest.config.ts",
       "./crates/web-client/vitest.config.js",
     ],
   },

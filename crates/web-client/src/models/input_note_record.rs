@@ -110,6 +110,14 @@ impl InputNoteRecord {
         self.0.is_processing()
     }
 
+    /// Returns true while the note's on-chain inclusion is still unsettled
+    /// (`Expected` or `Unverified`), i.e. while sync is the mechanism that can
+    /// advance this record.
+    #[js_export(js_name = "isInclusionPending")]
+    pub fn is_inclusion_pending(&self) -> bool {
+        self.0.is_inclusion_pending()
+    }
+
     /// Converts the record into an `InputNote` (including proof when available).
     #[js_export(js_name = "toInputNote")]
     pub fn to_input_note(&self) -> Result<InputNote, JsErr> {

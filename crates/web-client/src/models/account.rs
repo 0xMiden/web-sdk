@@ -1,6 +1,8 @@
 use js_export_macro::js_export;
 use miden_client::Word as NativeWord;
+use miden_client::account::component::NetworkAccount;
 use miden_client::account::{Account as NativeAccount, AccountInterfaceExt};
+use miden_client::testing::standards::account_interface::get_public_keys_from_account;
 use miden_client::transaction::{AccountComponentInterface, AccountInterface};
 
 use crate::models::account_code::AccountCode;
@@ -100,6 +102,29 @@ impl Account {
         self.0.is_new()
     }
 
+    /// Returns true if this is a network account.
+    ///
+    /// A network account is a public account whose storage
+    /// carries the standardized network-account note-script allowlist slot.
+    #[js_export(js_name = "isNetworkAccount")]
+    pub fn is_network_account(&self) -> bool {
+        NetworkAccount::new(self.0.clone()).is_ok()
+    }
+
+    /// Returns the note-script roots this network account is allowed to
+    /// consume, or `undefined` if this is not a network account.
+    #[js_export(js_name = "networkNoteAllowlist")]
+    pub fn network_note_allowlist(&self) -> Option<Vec<Word>> {
+        NetworkAccount::new(self.0.clone()).ok().map(|network_account| {
+            network_account
+                .allowed_notes()
+                .allowed_script_roots()
+                .iter()
+                .map(|root| Word::from(NativeWord::from(*root)))
+                .collect()
+        })
+    }
+
     /// Serializes the account into bytes.
     pub fn serialize(&self) -> JsBytes {
         serialize_to_bytes(&self.0)
@@ -113,15 +138,7 @@ impl Account {
     /// Returns the public key commitments derived from the account's authentication scheme.
     #[js_export(js_name = "getPublicKeyCommitments")]
     pub fn get_public_key_commitments(&self) -> Vec<Word> {
-        let inner_account = &self.0;
-        let mut pks = vec![];
-        let interface: AccountInterface = AccountInterface::from_account(inner_account);
-
-        for auth in interface.auth() {
-            pks.extend(auth.get_public_key_commitments());
-        }
-
-        pks.into_iter().map(NativeWord::from).map(Into::into).collect()
+        get_public_keys_from_account(&self.0).into_iter().map(Into::into).collect()
     }
 }
 

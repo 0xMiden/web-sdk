@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/node-linux-x64-musl",
-  "version": "0.15.5",
+  "version": "0.17.2",
   "description": "Miden Client SDK native module for Linux x64 (musl / Alpine)",
   "os": [
     "linux"
@@ -13,7 +13,8 @@
   ],
   "main": "miden_client_web.node",
   "files": [
-    "miden_client_web.node"
+    "miden_client_web.node",
+    "AGENTS.md"
   ],
   "license": "MIT",
   "repository": {

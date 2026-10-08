@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useTransactionHistory } from "../../hooks/useTransactionHistory";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { TransactionFilter } from "@miden-sdk/miden-sdk";
+import { TransactionFilter, TransactionId } from "@miden-sdk/miden-sdk";
 import {
   createMockTransactionId,
   createMockWebClient,
@@ -69,8 +69,35 @@ describe("useTransactionHistory", () => {
 
     await waitFor(() => expect(result.current.record).not.toBeNull());
 
-    expect(TransactionFilter.ids).toHaveBeenCalledWith([txId]);
+    expect(TransactionId.fromHex).toHaveBeenCalledWith("0xdeadbeef");
+    expect(TransactionFilter.ids).toHaveBeenCalledTimes(1);
+    expect(TransactionFilter.ids).not.toHaveBeenCalledWith([txId]);
     expect(result.current.status).toBe("committed");
+  });
+
+  it("refetches with a caller's TransactionId after a sync without reusing it", async () => {
+    const txId = createMockTransactionId("0xdeadbeef");
+    const mockClient = createMockWebClient({
+      getTransactions: vi
+        .fn()
+        .mockResolvedValueOnce([createRecord("0xdeadbeef", "pending")])
+        .mockResolvedValue([createRecord("0xdeadbeef", "committed")]),
+    });
+    mockUseMiden.mockReturnValue({ client: mockClient, isReady: true });
+
+    const { result } = renderHook(() =>
+      useTransactionHistory({ id: txId as never })
+    );
+    await waitFor(() => expect(result.current.status).toBe("pending"));
+
+    act(() => {
+      useMidenStore.getState().setSyncState({ lastSyncTime: Date.now() });
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("committed"));
+    expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBeNull();
+    expect(txId.toHex()).toBe("0xdeadbeef");
   });
 
   it("filters by string ids locally", async () => {

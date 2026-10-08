@@ -3,13 +3,19 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTransaction } from "../../hooks/useTransaction";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { NoteType } from "@miden-sdk/miden-sdk";
+import {
+  NoteType,
+  TransactionFilter,
+  TransactionId,
+} from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockTransactionId,
   createMockTransactionRequest,
   createMockTransactionResult,
   createMockNote,
+  createMockOutputNote,
+  createMockChainAnchor,
 } from "../mocks/miden-sdk";
 
 // Mock useMiden
@@ -129,6 +135,115 @@ describe("useTransaction", () => {
 
       expect(requestFactory).toHaveBeenCalledWith(mockClient);
       expect(mockClient.executeTransaction).toHaveBeenCalled();
+    });
+  });
+
+  describe("anchored execution", () => {
+    it("pins execution to the anchor when one is supplied", async () => {
+      const mockTxResult = createMockTransactionResult("0xtxAnchored");
+      const mockClient = createMockWebClient({
+        executeTransactionAt: vi.fn().mockResolvedValue(mockTxResult),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      const request = createMockTransactionRequest();
+      const anchor = createMockChainAnchor(42);
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request,
+          anchor,
+        });
+      });
+
+      expect(mockClient.executeTransactionAt).toHaveBeenCalledWith(
+        expect.anything(),
+        request,
+        anchor
+      );
+      expect(mockClient.executeTransaction).not.toHaveBeenCalled();
+      // The rest of the pipeline is unchanged by anchoring.
+      expect(mockClient.proveTransaction).toHaveBeenCalled();
+      expect(mockClient.submitProvenTransaction).toHaveBeenCalled();
+      expect(mockClient.applyTransaction).toHaveBeenCalled();
+      expect(result.current.stage).toBe("complete");
+    });
+
+    it("keeps the sync-height path when no anchor is supplied", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+        });
+      });
+
+      expect(mockClient.executeTransaction).toHaveBeenCalled();
+      expect(mockClient.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    // This hook is the one that submits, so a silently unanchored execution
+    // here spends against a different reference block than the one signed for.
+    it.each([
+      ["null", null],
+      ["false", false],
+      ["empty string", ""],
+    ])("rejects a %s anchor instead of executing at the tip", async (_l, v) => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await expect(
+        result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          anchor: v as never,
+        })
+      ).rejects.toThrow(/await captureAnchor/);
+
+      expect(mockClient.executeTransaction).not.toHaveBeenCalled();
+      expect(mockClient.executeTransactionAt).not.toHaveBeenCalled();
+    });
+
+    it("treats an undefined anchor as omitted", async () => {
+      const mockClient = createMockWebClient();
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn(),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          anchor: undefined,
+        });
+      });
+
+      expect(mockClient.executeTransaction).toHaveBeenCalled();
+      expect(mockClient.executeTransactionAt).not.toHaveBeenCalled();
     });
   });
 
@@ -320,16 +435,13 @@ describe("useTransaction", () => {
       const mockNote = createMockNote("0xprivate_note");
       return {
         id: vi.fn(() => createMockTransactionId(id)),
-        executedTransaction: vi.fn(() => ({
-          outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [
-              {
-                noteType: vi.fn(() => NoteType.Private),
-                intoFull: vi.fn(() => mockNote),
-              },
-            ]),
-          })),
-        })),
+        executedTransaction: vi.fn(() => {
+          const outputs = [createMockOutputNote(mockNote)];
+          return {
+            outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+            userOutputNotes: vi.fn(() => outputs),
+          };
+        }),
         serialize: vi.fn(() => new Uint8Array()),
       };
     };
@@ -351,7 +463,7 @@ describe("useTransaction", () => {
         submitProvenTransaction: vi.fn().mockResolvedValue(100),
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
-        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
       });
 
       mockUseMiden.mockReturnValue({
@@ -376,24 +488,110 @@ describe("useTransaction", () => {
       expect(mockClient.proveTransaction).toHaveBeenCalled();
       expect(mockClient.submitProvenTransaction).toHaveBeenCalled();
       expect(mockClient.applyTransaction).toHaveBeenCalled();
-      expect(mockClient.sendPrivateNote).toHaveBeenCalledTimes(1);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
       expect(result.current.stage).toBe("complete");
       expect(mockSync).toHaveBeenCalled();
+    });
+
+    it("builds a fresh TransactionId from the snapshot hex for every commit poll", async () => {
+      const mockTxResult = createMockTxResultWithPrivateNotes("0xtx_twopolls");
+      const recordWith = (committed: boolean) => ({
+        id: vi.fn(() => ({ toHex: () => "0xtx_twopolls" })),
+        transactionStatus: vi.fn(() => ({
+          isPending: vi.fn(() => !committed),
+          isCommitted: vi.fn(() => committed),
+          isDiscarded: vi.fn(() => false),
+        })),
+      });
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        getTransactions: vi
+          .fn()
+          .mockResolvedValueOnce([recordWith(false)])
+          .mockResolvedValue([recordWith(true)]),
+        sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      let txResult: any;
+      await act(async () => {
+        txResult = await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          privateNoteTarget: "0xrecipient",
+        });
+      });
+
+      expect(txResult.transactionId).toBe("0xtx_twopolls");
+      expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(TransactionId.fromHex).mock.calls).toEqual([
+        ["0xtx_twopolls"],
+        ["0xtx_twopolls"],
+      ]);
+      const polled = vi
+        .mocked(TransactionFilter.ids)
+        .mock.calls.map(([ids]) => ids[0]);
+      expect(polled).toHaveLength(2);
+      expect(polled[0]).not.toBe(polled[1]);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
+    });
+
+    it("relays only the user note when outputNotes() lists the fee note first", async () => {
+      const userNote = createMockOutputNote(createMockNote("0xuser"));
+      const feeNote = createMockOutputNote(createMockNote("0xfee"));
+      const mockTxResult = {
+        id: vi.fn(() => createMockTransactionId("0xtx_fee")),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({
+            notes: vi.fn(() => [feeNote, userNote]),
+          })),
+          userOutputNotes: vi.fn(() => [userNote]),
+        })),
+      };
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          privateNoteTarget: "0xrecipient",
+        });
+      });
+
+      const relayed = mockClient.sendPrivateOutputNote.mock.calls.map(
+        ([noteId]) => noteId
+      );
+      expect(relayed).toEqual(["0xuser"]);
     });
 
     it("should not deliver notes when there are no private output notes", async () => {
       const mockTxResult = {
         id: vi.fn(() => createMockTransactionId("0xtx_noprivate")),
-        executedTransaction: vi.fn(() => ({
-          outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [
-              {
-                noteType: vi.fn(() => NoteType.Public),
-                intoFull: vi.fn(() => null),
-              },
-            ]),
-          })),
-        })),
+        executedTransaction: vi.fn(() => {
+          const outputs = [
+            createMockOutputNote(createMockNote(), NoteType.Public),
+          ];
+          return {
+            outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+            userOutputNotes: vi.fn(() => outputs),
+          };
+        }),
         serialize: vi.fn(() => new Uint8Array()),
       };
 
@@ -411,7 +609,7 @@ describe("useTransaction", () => {
         submitProvenTransaction: vi.fn().mockResolvedValue(100),
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
-        sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
       });
 
       mockUseMiden.mockReturnValue({
@@ -430,7 +628,7 @@ describe("useTransaction", () => {
         });
       });
 
-      expect(mockClient.sendPrivateNote).not.toHaveBeenCalled();
+      expect(mockClient.sendPrivateOutputNote).not.toHaveBeenCalled();
     });
 
     it("should handle errors in pipeline", async () => {
