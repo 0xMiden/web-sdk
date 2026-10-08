@@ -337,10 +337,8 @@ test("a targeted Cargo refresh selects the newer patch without updating unrelate
     /name = "compatible-support"\nversion = "0.17.1"/
   );
   assert.match(f.read("Cargo.lock"), /name = "unrelated"\nversion = "1.0.0"/);
-  assert.doesNotMatch(
-    result.stdout + result.stderr,
-    /was not used in the crate graph/
-  );
+  assert.doesNotMatch(metadata.stderr, /was not used in the crate graph/);
+  assert.doesNotMatch(f.read("Cargo.lock"), /\[\[patch\.unused\]\]/);
 });
 
 test("the prerelease-hold retry keeps the targeted package arguments", (t) => {
