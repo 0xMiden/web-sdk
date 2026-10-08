@@ -408,6 +408,8 @@ export class MidenClient {
    * After this, all method calls will throw. To wait for the release, use
    * `await using` or `await client[Symbol.asyncDispose]()`. The release is
    * browser-only: on the Node.js binding nothing is released.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
    */
   terminate() {
     this.#terminated = true;
@@ -424,6 +426,8 @@ export class MidenClient {
    * store connection released, so the store can be deleted or reopened once
    * this settles. On the Node.js binding it releases nothing and resolves at
    * once.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
    */
   async [Symbol.asyncDispose]() {
     this.terminate();

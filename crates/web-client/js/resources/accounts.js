@@ -197,7 +197,13 @@ export class AccountsResource {
     const accountId = resolveAccountRef(accountRef, wasm);
     const faucetId = resolveAccountRef(tokenRef, wasm);
     const reader = await this.#inner.accountReader(accountId);
-    return await reader.getBalance(faucetId);
+    try {
+      return await reader.getBalance(faucetId);
+    } finally {
+      // The reader holds the client's store, which terminate() cannot release
+      // while it lives. The Node binding's reader has no free().
+      reader.free?.();
+    }
   }
 
   async import(input) {

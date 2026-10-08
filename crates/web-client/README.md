@@ -952,7 +952,7 @@ client.terminate();
 } // terminates, then resolves once the wasm client is freed and its store released
 ```
 
-A store that several clients share stays open until the last of them is terminated.
+A store that several clients share stays open until the last of them is terminated. A store handle you obtain yourself, such as an `AccountReader` from `accountReader`, keeps the connection open until you call its `free()`.
 
 ## Observability
 
