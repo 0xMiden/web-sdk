@@ -5,6 +5,7 @@
 ### Fixes
 
 * [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#401](https://github.com/0xMiden/web-sdk/pull/401), [#388](https://github.com/0xMiden/web-sdk/issues/388)).
+* [FIX][web] For an account whose header names a code root with no stored code row, `WebClient.getAccountCode`, `feeAwareTransactionRequestBuilder` and the `new*TransactionRequest` constructors that build through it now fail with `account code with root <root> not found` instead of a serde `invalid type: unit value, expected struct AccountCodeIdxdbObject` error ([#241](https://github.com/0xMiden/web-sdk/pull/241)).
 
 ## 0.17.1 (2026-10-07)
 

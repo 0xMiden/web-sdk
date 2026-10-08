@@ -74,6 +74,31 @@ function buildPayload(suffix: string) {
   };
 }
 
+function buildFullPayload(suffix: string) {
+  const payload = buildPayload(suffix);
+  const code = new Uint8Array([4, 5, 6]);
+  return {
+    ...payload,
+    accountState: {
+      kind: "full" as const,
+      account: {
+        accountId: `0xacc-${suffix}`,
+        nonce: "1",
+        storageSlots: [],
+        storageMapEntries: [],
+        assets: [],
+        codeRoot: `0xcode-${suffix}`,
+        code,
+        storageRoot: `0xsroot-${suffix}`,
+        vaultRoot: `0xvroot-${suffix}`,
+        committed: false,
+        accountCommitment: `0xcommit-${suffix}`,
+        accountSeed: undefined,
+      },
+    },
+  };
+}
+
 describe("applyTransactionBatch atomicity", () => {
   it("commits all writes from a valid 2-payload batch (positive control)", async () => {
     const dbId = await openTestDb();
@@ -84,6 +109,17 @@ describe("applyTransactionBatch atomicity", () => {
     expect(await db.transactions.count()).toBe(2);
     expect(await db.inputNotes.count()).toBe(2);
     expect(await db.latestAccountHeaders.count()).toBe(2);
+  });
+
+  it("persists account code with a full-state update", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+
+    await applyTransactionBatch(dbId, [buildFullPayload("full")]);
+
+    expect((await db.accountCodes.get("0xcode-full"))?.code).toEqual(
+      new Uint8Array([4, 5, 6])
+    );
   });
 
   it("rolls back all writes when a mid-batch write fails", async () => {
@@ -104,12 +140,16 @@ describe("applyTransactionBatch atomicity", () => {
     });
 
     await expect(
-      applyTransactionBatch(dbId, [buildPayload("a"), buildPayload("b")])
+      applyTransactionBatch(dbId, [
+        buildFullPayload("a"),
+        buildFullPayload("b"),
+      ])
     ).rejects.toThrow();
 
     expect(await db.transactions.count()).toBe(0);
     expect(await db.inputNotes.count()).toBe(0);
     expect(await db.latestAccountHeaders.count()).toBe(0);
+    expect(await db.accountCodes.count()).toBe(0);
     expect(await db.notesScripts.count()).toBe(0);
   });
 });
