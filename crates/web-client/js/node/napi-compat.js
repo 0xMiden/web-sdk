@@ -176,7 +176,7 @@ export function wrapClient(rawClient, storeName, rawSdk) {
 /**
  * Patches the raw SDK module:
  * - Adds snake_case aliases for camelCase methods
- * - Converts null -> undefined for Option<T> returns
+ * - Converts null -> undefined for Option<T> method returns and getters
  * - Aliases static methods
  */
 function patchSdkPrototypes(rawSdk) {
@@ -219,6 +219,29 @@ function patchSdkPrototypes(rawSdk) {
           return result === null ? undefined : result;
         };
       }
+    }
+  }
+
+  // null -> undefined for Option<T> getters. napi-rs defines them as
+  // configurable prototype accessors; any other shape is left as it is.
+  for (const [cls, getters] of [
+    [rawSdk.Endpoint, ["port"]],
+    [rawSdk.FetchedNote, ["note"]],
+    [rawSdk.NetworkNoteStatusInfo, ["lastAttemptBlockNum", "lastError"]],
+    [rawSdk.StorageValueSlotPatch, ["value"]],
+  ]) {
+    if (!cls?.prototype) continue;
+    for (const name of getters) {
+      const desc = Object.getOwnPropertyDescriptor(cls.prototype, name);
+      if (typeof desc?.get !== "function" || !desc.configurable) continue;
+      const original = desc.get;
+      Object.defineProperty(cls.prototype, name, {
+        ...desc,
+        get() {
+          const value = original.call(this);
+          return value === null ? undefined : value;
+        },
+      });
     }
   }
 

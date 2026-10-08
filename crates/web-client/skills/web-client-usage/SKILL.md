@@ -922,7 +922,12 @@ transaction produces. Only `"custom"` accepts an `anchor`.
 elements; this replaces the removed `salt()`, and the protocol assigns them no
 meaning), `blockCommitment()`, `expirationDelta()` and `toCommitment()`. Its
 `accountDelta()` is still **relative**, unlike the absolute
-`ExecutedTransaction.accountPatch()` below.
+`ExecutedTransaction.accountPatch()` below. Its `storage()` is the same
+absolute `AccountStoragePatch` in both: `valueSlots()` and `mapSlots()` name
+each changed slot with its `StoragePatchOperation` (`Create`, `Update`,
+`Remove`), its final `value` or, for a map, its changed `entries()`; `values()`
+returns only the bare final values. Every slot of a new account reads as
+`Create`.
 
 ### Reading output notes
 
