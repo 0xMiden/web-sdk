@@ -181,14 +181,20 @@ export declare class WasmWebClient extends WasmWebClientBase {
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
   /**
    * Terminates this WebClient: stops its Web Worker if there is one, and
-   * always releases the main-realm wasm client and, through it, its IndexedDB
-   * store connection, which closes once no other client in this realm holds
-   * the same store.
+   * releases the main-realm wasm client and, through it, its IndexedDB store
+   * connection, which closes once no other client in this realm holds the
+   * same store.
    *
-   * Calls already queued or running still finish against the attached client,
-   * and the release waits for them to settle; a call waiting on the stopped
-   * worker, and every call made after terminate(), fails with
-   * "WebClient terminated". Calling it again is harmless.
+   * A call already queued or running that executes against the main-realm
+   * wasm client still finishes. A call that needs the worker, whether in
+   * flight, waiting for the worker to be ready or still queued behind
+   * terminate(), rejects with "WebClient terminated". Every wasm call made
+   * after terminate() fails with it too: a synchronous member or an accessor
+   * throws, every other member rejects. The release waits until all of these
+   * calls have settled. Calling it again is harmless.
+   *
+   * The release and the rejections are browser-only: on the Node.js binding
+   * WasmWebClient.terminate() is a no-op.
    */
   terminate(): void;
 }

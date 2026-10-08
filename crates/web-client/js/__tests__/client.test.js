@@ -348,6 +348,27 @@ describe("WasmWebClient.terminate", () => {
     expect(worker.postMessage).not.toHaveBeenCalled();
   });
 
+  it("finishes a queued in-realm call and rejects a queued worker call with a worker attached", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const worker = attachWorker(client);
+    const inFlight = deferred();
+    client._serializeWasmCall(() => inFlight.promise);
+    const wallet = client.newWallet("private", "auth");
+    const submitted = client.submitNewTransaction(
+      { toString: () => "0xacc" },
+      { serialize: () => new Uint8Array() }
+    );
+
+    client.terminate();
+    const submitOutcome = outcomeAfterFlush(submitted);
+    inFlight.resolve();
+    await expect(wallet).resolves.toBe("wallet");
+    expect(await submitOutcome).toBe("WebClient terminated");
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    await client.waitForIdle();
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+  });
+
   it("settles a worker call in flight at terminate and still frees the client", async () => {
     const { client, wasmClient } = makeWebClient();
     const worker = attachWorker(client);
