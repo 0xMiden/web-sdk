@@ -8,11 +8,12 @@
  * 3. Package prebuilds directory
  * 4. Repo target directory (for local development)
  *
- * On Linux the platform package is chosen by the runtime C library: an
- * Alpine/musl host resolves the musl binary, a Debian/Ubuntu host the glibc
- * binary. When resolution fails, the thrown error reports the platform, the
- * package it looked for, and the real reason each step failed instead of a
- * generic "not found".
+ * On linux-x64 the process report decides which platform packages to try: a
+ * glibc version, or a glibc loader in the process image, picks the glibc
+ * binary, and a musl loader picks the musl binary. A report with none of
+ * these (or no report at all) tries both, glibc first. When resolution fails,
+ * the thrown error reports the platform, every package it tried, and the real
+ * reason each step failed instead of a generic "not found".
  */
 import { createRequire } from "module";
 import path from "path";
@@ -22,7 +23,9 @@ import os from "os";
 const require = createRequire(import.meta.url);
 
 let _sdk = null;
-let _libc = null;
+
+const LINUX_X64_GNU = "@miden-sdk/node-linux-x64-gnu";
+const LINUX_X64_MUSL = "@miden-sdk/node-linux-x64-musl";
 
 /**
  * Loads the napi SDK module. Caches the result after first load.
@@ -54,16 +57,17 @@ export function loadNativeModule(options) {
     }
   }
 
-  // 2. Platform-specific npm package (installed via optionalDependencies)
-  const platformPackage = getPlatformPackageName();
-  if (platformPackage) {
+  // 2. Platform-specific npm packages (installed via optionalDependencies)
+  const platformPackages = getPlatformPackages();
+  for (const platformPackage of platformPackages) {
     try {
       _sdk = require(platformPackage);
       return _sdk;
     } catch (err) {
       attempts.push(`require("${platformPackage}") -> ${firstLine(err)}`);
     }
-  } else {
+  }
+  if (platformPackages.length === 0) {
     attempts.push(`no prebuilt package published for ${platformLabel()}`);
   }
 
@@ -128,73 +132,45 @@ export function loadNativeModule(options) {
     }
   }
 
-  throw new Error(buildNotFoundMessage(platformPackage, attempts));
+  throw new Error(buildNotFoundMessage(platformPackages, attempts));
 }
 
 /**
- * Returns the platform-specific npm package name for the current OS/arch,
- * or null if the platform has no published binary. On Linux the choice also
- * depends on the runtime C library (glibc vs musl).
+ * Returns the platform-specific npm packages to try, in order; empty if the
+ * platform has no published binary.
  */
-function getPlatformPackageName() {
+function getPlatformPackages() {
   const key = `${os.platform()}-${os.arch()}`;
-  if (key === "linux-x64") {
-    return `@miden-sdk/node-linux-x64-${detectLibc().family}`;
-  }
+  if (key === "linux-x64") return linuxX64Packages();
   const platformMap = {
     "darwin-arm64": "@miden-sdk/node-darwin-arm64",
     "darwin-x64": "@miden-sdk/node-darwin-x64",
   };
-  return platformMap[key] || null;
+  return platformMap[key] ? [platformMap[key]] : [];
 }
 
 /**
- * Detects the runtime C library on Linux. glibc builds report a glibc
- * version in the process report; musl (Alpine) leaves it undefined. Returns
- * `{ family, label }` where `family` ("gnu" | "musl") selects the platform
- * package and `label` is a human-readable string for diagnostics. On
- * non-Linux platforms `family` is null (libc selection does not apply).
+ * Reads the runtime C library from the process report. Any confident reading
+ * picks one package, so an Alpine host with gcompat never falls back to the
+ * glibc binary. Some runtimes and shims give no report, a throwing one, or one
+ * without these fields; only then are both packages tried.
  */
-function detectLibc() {
-  if (_libc) return _libc;
-  if (os.platform() !== "linux") {
-    _libc = { family: null, label: os.platform() };
-    return _libc;
-  }
+function linuxX64Packages() {
+  let report;
   try {
-    const report = process.report.getReport();
-    const version = report.header.glibcVersionRuntime;
-    if (version) {
-      // Standard glibc Node reports its runtime version here.
-      _libc = { family: "gnu", label: `glibc ${version}` };
-    } else if (hasGlibcMarker(report)) {
-      // Unusual glibc build that hides glibcVersionRuntime but still links
-      // the glibc loader/libc -- keep it on the gnu binary, not musl.
-      _libc = { family: "gnu", label: "glibc" };
-    } else {
-      // No glibc runtime version and no glibc loader in the process image
-      // -> musl (Alpine). An absent glibcVersionRuntime is the primary musl
-      // signal; standard Alpine Node leaves it undefined.
-      _libc = { family: "musl", label: "musl" };
-    }
+    report = process.report.getReport();
   } catch {
-    // Detection unavailable -- assume the more common glibc.
-    _libc = { family: "gnu", label: "glibc (assumed)" };
+    return [LINUX_X64_GNU, LINUX_X64_MUSL];
   }
-  return _libc;
+  if (report?.header?.glibcVersionRuntime) return [LINUX_X64_GNU];
+  const objs = Array.isArray(report?.sharedObjects) ? report.sharedObjects : [];
+  if (objs.some((f) => /ld-musl-/.test(f))) return [LINUX_X64_MUSL];
+  if (objs.some((f) => /ld-linux|\/libc\.so/.test(f))) return [LINUX_X64_GNU];
+  return [LINUX_X64_GNU, LINUX_X64_MUSL];
 }
 
-/** True if the process image links the glibc dynamic loader / libc. */
-function hasGlibcMarker(report) {
-  const objs = report && report.sharedObjects;
-  return Array.isArray(objs) && objs.some((f) => /ld-linux|\/libc\.so/.test(f));
-}
-
-/** `${platform}-${arch}`, with the libc family appended on Linux. */
 function platformLabel() {
-  const base = `${os.platform()}-${os.arch()}`;
-  const libc = detectLibc();
-  return libc.family ? `${base} (${libc.label})` : base;
+  return `${os.platform()}-${os.arch()}`;
 }
 
 /** First line of an error's message, prefixed with its code when present. */
@@ -208,10 +184,10 @@ function firstLine(err) {
 
 /**
  * Builds an actionable "module not found" error: the platform we are on, the
- * package we looked for, the real failure of each attempt, and how to fix the
+ * packages we tried, the real failure of each attempt, and how to fix the
  * common deployment causes.
  */
-function buildNotFoundMessage(platformPackage, attempts) {
+function buildNotFoundMessage(platformPackages, attempts) {
   const lines = [
     `Miden napi module not found for ${platformLabel()}, Node ${process.version}.`,
     "",
@@ -220,9 +196,10 @@ function buildNotFoundMessage(platformPackage, attempts) {
     "",
   ];
 
-  if (platformPackage) {
+  if (platformPackages.length > 0) {
+    const names = platformPackages.map((p) => `"${p}"`).join(" or ");
     lines.push(
-      `Expected the optional dependency "${platformPackage}" to be installed ` +
+      `Expected the optional dependency ${names} to be installed ` +
         `and loadable. Common causes:`,
       "  - The optional dependency was skipped at install time (npm's " +
         "cross-platform lockfile bug, --omit=optional / --no-optional, or a " +
