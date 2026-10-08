@@ -386,7 +386,7 @@ jobs:
           WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
           DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
           for pkg in node-sdk-linux-x64-musl node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
-            name="@miden-sdk/${pkg##node-sdk-}"
+            name=$(jq -r .name "packages/${pkg}/package.json")
             if [ "$(npm view "${name}@${WEB_VERSION}" version 2>/dev/null)" = "$WEB_VERSION" ]; then
               echo "${name}@${WEB_VERSION} is already on npm; skipping."
               continue
