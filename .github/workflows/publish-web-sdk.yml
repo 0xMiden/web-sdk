@@ -218,13 +218,15 @@ jobs:
         # The image is pinned by digest (not the mutable :x86_64-musl tag): this
         # step runs in the provenance-signed publish pipeline, so the third-party
         # toolchain that produces the shipped binary must be immutable. Bump the
-        # digest deliberately after re-verifying a new image.
+        # digest deliberately after re-verifying a new image. The pinned nightly is
+        # installed by name from rust-toolchain.toml, which works whatever rustup
+        # version the image ships.
         run: |
           docker run --rm \
             -v "$PWD:/home/rust/src" -w /home/rust/src \
             -e RUSTFLAGS="-C target-feature=-crt-static" \
             messense/rust-musl-cross:x86_64-musl@sha256:ce75e9174325d4fbb3de85c309e2d7ca29f7500169bc4b5d2c611ff7e86d549a \
-            bash -c "rustup target add x86_64-unknown-linux-musl && cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked --target x86_64-unknown-linux-musl"
+            bash -c "rustup toolchain install \"\$(sed -n 's/^channel *= *\"\(.*\)\"/\1/p' rust-toolchain.toml)\" --profile minimal && rustup target add x86_64-unknown-linux-musl && cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked --target x86_64-unknown-linux-musl"
           git diff --exit-code -- Cargo.lock
 
       - name: Prepare .node binary
