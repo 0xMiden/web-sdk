@@ -119,6 +119,12 @@ Two long-lived branches:
 
 GitHub prereleases publish the tagged commit to npm `next`, including tags from a maintenance branch. Stable GitHub releases and workflow dispatch publish to `latest`; use a prerelease rather than dispatch for release candidates. Core SDK publication requires successful builds of the three required Node platform packages (`darwin-arm64`, `darwin-x64`, `linux-x64-gnu`), and the tagged `Cargo.lock` must remain unchanged. The fourth, `linux-x64-musl`, is best-effort: it builds in its own `build-native-nodejs-musl` job, which never gates the release, and a release whose musl build or publish fails ships without it.
 
+**One-time musl setup.** npm attaches a trusted publisher only to a package that already exists, and the workflow has no token fallback, so until this setup is done every release skips `@miden-sdk/node-linux-x64-musl` with a warning. Before the first release that should ship it, a maintainer with publish rights on the `@miden-sdk` scope runs these from a real terminal, because npm prints its 2FA browser URL redacted outside a TTY:
+
+1. Publish a placeholder version of `@miden-sdk/node-linux-x64-musl` that no release will use, such as `0.0.0-placeholder`, with `--access public`. npm points `latest` at a package's first version whatever `--tag` says; that is harmless here, because the SDK pins the exact version in `optionalDependencies`.
+2. Attach the trusted publisher: `npx --yes npm@12.0.2 trust github @miden-sdk/node-linux-x64-musl --file publish-web-sdk.yml --repo 0xMiden/web-sdk --allow-publish`. It needs npm 12 (npm 11 fails with a bare `400 Bad Request`) and accepts only browser 2FA (`--otp` is rejected).
+3. Deprecate the placeholder: `npm deprecate @miden-sdk/node-linux-x64-musl@0.0.0-placeholder "Placeholder, not a binary; install @miden-sdk/miden-sdk"`.
+
 Both branches have protection enabled; required status checks mirror across the two.
 
 The release-publish gate compares the local `package.json` version against the **npm registry**, not against the previous git commit. So a release tag publishes whichever packages have versions not yet on npm, and bumping a single package is a clean release of just that one. Three gating mechanisms are in play and they do not share code:

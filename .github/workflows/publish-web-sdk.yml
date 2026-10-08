@@ -398,9 +398,10 @@ jobs:
         # Never fails the release. No artifact (its build job failed, timed out
         # or was cancelled) or a failed publish leaves this release on the
         # three required binaries, and the next step then omits musl from the
-        # web-client's optionalDependencies. A first-ever publish of
-        # @miden-sdk/node-linux-x64-musl fails until its npm trusted publisher
-        # is registered, since this workflow has no token fallback.
+        # web-client's optionalDependencies. This workflow has no token
+        # fallback, so the publish fails until @miden-sdk/node-linux-x64-musl
+        # exists on npm with this workflow as its trusted publisher; the
+        # one-time setup is in AGENTS.md, Releases section.
         continue-on-error: true
         run: |
           pkg=node-sdk-linux-x64-musl
@@ -418,7 +419,7 @@ jobs:
           if (cd "packages/${pkg}" && npm publish --tag "$DIST_TAG" --access public --provenance); then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Publishing ${name}@${WEB_VERSION} failed; this release ships without the musl binary. On a first musl release, register the npm trusted publisher for ${name}."
+            echo "::warning::Publishing ${name}@${WEB_VERSION} failed; this release ships without the musl binary. If ${name} has never been published, do the one-time musl setup in AGENTS.md (Releases section) first."
           fi
 
       - name: Inject Node.js optionalDependencies before web-client publish
