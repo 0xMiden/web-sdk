@@ -67,13 +67,18 @@ impl NoteScript {
         StandardNote::PSWAP.script().into()
     }
 
-    /// Returns the well-known MINT script (instructs a network fungible faucet to mint a
-    /// fungible asset — MINT notes are consumable only by network faucets).
+    /// Returns the well-known MINT script. It asks the faucet named by the asset in the note's
+    /// storage, fungible or non-fungible, to mint that asset through its `mint_and_send`; the note
+    /// carries a `NetworkAccountTarget` naming the faucet only when the faucet is public. See
+    /// `miden_standards::note::MintNote`.
     pub fn mint() -> Self {
         StandardNote::MINT.script().into()
     }
 
-    /// Returns the well-known BURN script (instructs a faucet to burn a fungible asset).
+    /// Returns the well-known BURN script. The faucet that issued the asset the note carries,
+    /// fungible or non-fungible, destroys it through its `receive_and_burn`; the note carries a
+    /// `NetworkAccountTarget` naming the faucet only when the faucet is public. See
+    /// `miden_standards::note::BurnNote`.
     pub fn burn() -> Self {
         StandardNote::BURN.script().into()
     }

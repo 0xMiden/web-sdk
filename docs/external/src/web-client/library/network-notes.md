@@ -126,9 +126,15 @@ Who may consume a note depends on the note:
   compiled packages as custom `AccountComponent`s
   (`AccountComponent.fromPackage`). `constantFeePolicyConfig()` also needs its
   own root already allowlisted and priced on the account.
-- `p2id()`, `p2ide()`, `mint()` and `burn()` carry no attachment target: note
-  storage or the faucet decides who consumes them, and a network account that
-  consumes them still allowlists and prices their roots.
+- `p2id()` and `p2ide()` send their assets to the accounts named in note
+  storage, and their scripts check no attachment. A network account
+  auto-consumes one only when the note also carries a `NetworkAccountTarget`
+  naming that account (P2ID is allowlisted by default; P2IDE must be priced).
+- `mint()` and `burn()` act on the faucet named by the asset: its
+  `mint_and_send` or `receive_and_burn` decides who may consume them. Their
+  standard builders attach a `NetworkAccountTarget` naming the faucet when the
+  faucet is public, so the network can route the note, and a network faucet
+  allowlists and prices their roots.
 - `txFee()`, `swap()`, `pswap()` and `feeSponsorship()` can be consumed by any
   account.
 
