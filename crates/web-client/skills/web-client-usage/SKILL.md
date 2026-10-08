@@ -628,8 +628,9 @@ standards' default expiration delta, so the emitting transaction must be
 included within **20 blocks** of its reference block, roughly a minute at a
 three-second block interval. An expiration can only be lowered, never raised,
 so neither the SDK nor the caller can widen it. If proving is slow enough that
-the node rejects the submission as expired, re-execute against a fresh
-reference block and submit again.
+the node rejects the submission as expired, sync first and then call
+`createNetworkNote` again: without a sync it rebuilds against the same
+reference block and expires the same way.
 
 ### Consume
 
