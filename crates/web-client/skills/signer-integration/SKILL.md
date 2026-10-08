@@ -480,7 +480,9 @@ options. The transaction that emits the note must then declare the target as a f
 which `createNetworkNote` does for you: build it with
 `client.feeAwareTransactionRequestBuilder(sender)`, `.withOwnOutputNotes(...)` and
 `.withForeignAccounts(...)` holding `ForeignAccount.public(targetId, new AccountStorageRequirements())`,
-and get it included within 20 blocks of its reference block.
+and get it included within 20 blocks of its reference block. After an expiry rejection, sync,
+then build the request again from new `NoteArray` and `ForeignAccountArray` instances (the
+builder takes both by value) and submit it again.
 
 ### Creating the network account
 
