@@ -361,7 +361,7 @@ multisig resolves its auth args whatever the chain charges.
 | `toCommitment()` | `Word` | The value co-signers compare and sign over |
 | `blockCommitment()` | `Word` | Reference block, for checking a received anchor cheaply |
 | `expirationDelta()` | `u16` | 0 means no expiration was set, not expired |
-| `accountDelta()` | `AccountDelta` | Inspect before signing |
+| `accountDelta()` | `AccountDelta` | Inspect before signing; `.storage().valueSlots()` / `.mapSlots()` name the changed slots and map entries |
 | `inputNotes()` / `outputNotes()` | `InputNotes` / `OutputNotes` | Inspect before signing; `outputNotes()` includes the fee note |
 | `userParams()` | `Felt[]` | Seven elements; `signature.masm` puts the final nonce in `[0]`, multisig zeroes them |
 | `serialize()` / `TransactionSummary.deserialize(bytes)` | bytes / `TransactionSummary` | Transport |
