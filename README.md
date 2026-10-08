@@ -10,7 +10,7 @@ WASM-powered client, React hooks, and Vite tooling — sign, send, and prove tra
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xMiden/web-sdk/badges/coverage.json)](https://github.com/0xMiden/web-sdk/actions/workflows/test.yml?query=branch%3Amain)
 [![npm: @miden-sdk/miden-sdk](https://img.shields.io/npm/v/@miden-sdk/miden-sdk?label=%40miden-sdk%2Fmiden-sdk&color=cb3837)](https://www.npmjs.com/package/@miden-sdk/miden-sdk)
 [![npm: @miden-sdk/react](https://img.shields.io/npm/v/@miden-sdk/react?label=%40miden-sdk%2Freact&color=61dafb)](https://www.npmjs.com/package/@miden-sdk/react)
-[![Rust 1.93](https://img.shields.io/badge/rust-1.93-orange?logo=rust)](rust-toolchain.toml)
+[![Rust 1.96.1](https://img.shields.io/badge/rust-1.96.1-orange?logo=rust)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -26,9 +26,11 @@ This repo packages everything you need to interact with Miden from a browser, a 
 | **[`@miden-sdk/miden-sdk`](https://docs.miden.xyz/builder/tools/clients/web-client/)** | The Rust client compiled to WASM, with TypeScript bindings. The brains of the operation — accounts, notes, transactions, proving, RPC. | `pnpm add @miden-sdk/miden-sdk` | [Web Client docs ↗](https://docs.miden.xyz/builder/tools/clients/web-client/) |
 | **[`@miden-sdk/react`](https://docs.miden.xyz/builder/tools/clients/react-sdk/)** | React hooks (`useAccount`, `useNotes`, `useSend`, `useConsume`, ...) over the WASM client. Signer-agnostic — pluggable with MidenFi, Para, Turnkey. | `pnpm add @miden-sdk/react` | [React SDK docs ↗](https://docs.miden.xyz/builder/tools/clients/react-sdk/) |
 | **`@miden-sdk/vite-plugin`** | Drop-in Vite plugin that handles WASM dedup, the worker-context node polyfills, and a few footguns we're tired of stepping on. | `pnpm add -D @miden-sdk/vite-plugin` | — |
+| **`@miden-sdk/telemetry-sentry`** | Opt-in binding that turns SDK observations into `captureMessage` calls on a Sentry client you own. Does not depend on `@sentry/*`. | `pnpm add @miden-sdk/telemetry-sentry` | [README](packages/telemetry-sentry) |
+| **`@miden-sdk/telemetry-otel`** | Opt-in binding that turns SDK observations into spans on an OpenTelemetry tracer you own. Does not depend on `@opentelemetry/*`. | `pnpm add @miden-sdk/telemetry-otel` | [README](packages/telemetry-otel) |
 | **`miden-idxdb-store`** *(Rust crate)* | The IndexedDB-backed store the WASM client uses for persisting accounts, notes, MMR data, and sync state. Published to crates.io for Rust consumers building their own browser clients. | `cargo add miden-idxdb-store` | — |
 
-Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client).
+Everything is published from this monorepo, in lockstep with the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) from `0xMiden/rust-sdk`.
 
 ---
 
@@ -50,6 +52,9 @@ import { MidenClient } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create({
   endpoint: "https://rpc.testnet.miden.xyz",
+  // Required: the faucet the chain mints its fee asset from. Since 0.17 that
+  // lives in a protocol configuration the node does not serve over RPC.
+  feeFaucetId: FEE_FAUCET,
 });
 
 const account = await client.accounts.create({ storage: "public" });
@@ -219,7 +224,7 @@ import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
 await MidenClient.ready();
 await initThreadPool(navigator.hardwareConcurrency); // once, at startup
-const client = await MidenClient.createTestnet();     // prove calls now fan out across threads
+const client = await MidenClient.createTestnet({ feeFaucetId: FEE_FAUCET }); // prove calls now fan out across threads
 ```
 
 The [web-client README](crates/web-client/README.md#setting-cross-origin-isolation-headers) has the full header recipes (Vite, Next.js, Express, extension manifests), the COEP caveats, and a service-worker fallback for hosts where you can't add headers.
@@ -270,9 +275,10 @@ flowchart TB
 ```
 
 - **`miden-idxdb-store`** persists everything the client needs to survive a tab reload — accounts, notes, the partial MMR, sync state, key material.
-- **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/miden-client) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
+- **`@miden-sdk/miden-sdk`** wraps the upstream Rust [`miden-client`](https://github.com/0xMiden/rust-sdk) crate as a `wasm32-unknown-unknown` library with `wasm-bindgen` JS bindings. All the proving, signing, and tx execution lives here.
 - **`@miden-sdk/react`** is a thin layer on top: React hooks that call into the WASM client and a pluggable `SignerContext` so the same code works with MidenFi, Para, Turnkey, or your own signer.
 - **`@miden-sdk/vite-plugin`** smooths over the bundler-side WASM ergonomics (worker-context polyfills, COOP/COEP headers, dedup of the WASM module across imports).
+- **`@miden-sdk/telemetry-sentry`** and **`@miden-sdk/telemetry-otel`** sit *outside* that path. The WASM client reports each operation it runs to a callback you register, and never transports one itself; these two adapt those reports to a Sentry client or an OTel tracer you construct. Neither depends on its vendor, and the core depends on neither — see [Observability](crates/web-client/README.md#observability).
 
 ---
 
@@ -316,9 +322,9 @@ Two WASM artifacts are published: a **single-threaded** default built on stable 
 
 ## Versioning
 
-Every package in this repo (`@miden-sdk/miden-sdk`, `@miden-sdk/react`, `@miden-sdk/vite-plugin`, plus the Rust `miden-idxdb-store` crate) ships on the **same major.minor** as the upstream `miden-client` they bind to. Patch versions are independent — a fix in the React hooks does not need a WASM bump.
+Every package in this repo (`@miden-sdk/miden-sdk`, `@miden-sdk/react`, `@miden-sdk/vite-plugin`, `@miden-sdk/telemetry-sentry`, `@miden-sdk/telemetry-otel`, plus the Rust `miden-idxdb-store` crate) ships on the **same major.minor** as the upstream `miden-client` they bind to. Patch versions are independent — a fix in the React hooks does not need a WASM bump.
 
-A repo-wide `scripts/check-react-sdk-sync.js` enforces that React peer ranges and example dependencies pin to the exact patch version of the WASM client they were built against, so `npm install` resolves to a coherent set without surprises.
+A repo-wide `scripts/check-react-sdk-sync.js` enforces that every package pinning the WASM client — its peer ranges and the example app's dependency — resolves to the exact patch version it was built against, so `npm install` produces a coherent set without surprises. The packages it checks are discovered from the workspace rather than listed in the script, so a new package that builds against the client is covered from the moment it exists instead of when someone remembers to add it.
 
 ---
 
@@ -358,6 +364,8 @@ web-sdk/
     ├── react-sdk/         # @miden-sdk/react
     │   └── examples/
     │       └── wallet/    # Cross-signer example app
+    ├── telemetry-otel/    # @miden-sdk/telemetry-otel
+    ├── telemetry-sentry/  # @miden-sdk/telemetry-sentry
     └── vite-plugin/       # @miden-sdk/vite-plugin
 ```
 
@@ -369,13 +377,13 @@ Two long-lived branches:
 - **`main`** — released to npm under the `latest` tag. Stable.
 - **`next`** — pre-release integration. Released to npm under the `next` tag when a PR carries the `patch release` label.
 
-The publish workflow gates the WASM artifact with a 25 MB upper-bound check — if `wasm-opt` ever silently fails (the rollup plugin swallows errors), the bloated binary never reaches npm.
+The publish workflow gates the optimized WASM artifacts at 25 MiB for ST and 35 MiB for MT. These variant-specific limits reject both an optimizer failure and a skipped MASP debug strip before the package reaches npm.
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/miden-client` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
+See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo workflow with `0xMiden/rust-sdk` (`Client PR: #N` marker, auto-patch, readiness gate), and where to look first.
 
 ---
 
@@ -384,5 +392,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) — covers local setup, the cross-repo wo
 [MIT](LICENSE) © Miden contributors
 
 <div align="center">
-  <sub>Built with Rust 1.93, wasm-bindgen, and a healthy distrust of top-level await.</sub>
+  <sub>Built with Rust 1.96.1, wasm-bindgen, and a healthy distrust of top-level await.</sub>
 </div>

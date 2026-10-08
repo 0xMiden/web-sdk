@@ -3,11 +3,17 @@ use alloc::sync::Arc;
 #[cfg(feature = "browser")]
 use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
+use miden_client::block::BlockNumber;
+use miden_client::crypto::eddsa_25519_sha512::KeyExchangeKey;
+use miden_client::protocol_config::ProtocolConfig;
+use miden_client::rpc::encryption::TransactionEncryptionKey;
 use miden_client::store::Store;
 use miden_client::testing::MockChain;
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::{MockNoteTransportApi, MockNoteTransportNode};
 use miden_client::utils::{Deserializable, RwLock, Serializable};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 #[cfg(feature = "browser")]
 use crate::WebKeyStore;
@@ -46,23 +52,33 @@ impl WebClient {
         };
 
         let store_name = "mock_client_db".to_owned();
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| from_str_err("Failed to initialize IdxdbStore"))?,
         );
-        let keystore = WebKeyStore::new_with_callbacks(rng, store_name, None, None, None);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name,
+            None,
+            None,
+            None,
+        );
 
+        let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
             store,
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            None,
+            Some(protocol_config.fee_asset_id().faucet_id()),
         )
         .await?;
+
+        self.seed_mock_protocol_config(protocol_config).await?;
+        self.seed_mock_transaction_encryption_key().await?;
 
         *self.mock_rpc_api.lock().await = Some(mock_rpc_api);
         *self.mock_note_transport_api.lock().await = Some(mock_note_transport_api);
@@ -114,20 +130,81 @@ impl WebClient {
         let keystore = miden_client::keystore::FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
+        let protocol_config = mock_rpc_api.protocol_config();
         self.setup_client(
             mock_rpc_api.clone(),
             store,
             keystore,
             rng,
             Some(mock_note_transport_api.clone()),
-            None,
+            Some(protocol_config.fee_asset_id().faucet_id()),
         )
         .await?;
+
+        self.seed_mock_protocol_config(protocol_config).await?;
+        self.seed_mock_transaction_encryption_key().await?;
 
         *self.mock_rpc_api.lock().await = Some(mock_rpc_api);
         *self.mock_note_transport_api.lock().await = Some(mock_note_transport_api);
 
         Ok("Mock client created successfully".to_string())
+    }
+}
+
+impl WebClient {
+    /// Gives a mock-backed client the protocol configuration its chain commits to.
+    ///
+    /// A client gets its configurations from the node while syncing. The mock chain commits to
+    /// one no node serves and `MockRpcApi` delivers none, so the client is handed the mock
+    /// chain's own instead, ahead of the first execution that resolves it.
+    async fn seed_mock_protocol_config(&self, config: ProtocolConfig) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+        client.seed_protocol_config(config).await.map_err(|err| {
+            js_error_with_context(err, "failed to seed the mock protocol configuration")
+        })
+    }
+
+    /// Gives a mock-backed client the transaction encryption key that submission seals against.
+    ///
+    /// `MockRpcApi` refuses to serve a key, because attesting one needs a validator signature the
+    /// mock chain cannot produce. The mock also discards the sealed inputs it receives, so an
+    /// unattested key is enough: sealing still runs its real transcript and wire path, only the
+    /// attestation check is skipped.
+    ///
+    /// Must run after the client is in place and its genesis header stored, since the key is
+    /// scoped to the genesis commitment.
+    async fn seed_mock_transaction_encryption_key(&self) -> Result<(), JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let genesis_commitment = client
+            .get_block_header_by_num(BlockNumber::GENESIS)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the genesis block header"))?
+            .ok_or_else(|| {
+                from_str_err("genesis block header must be in place before the mock client can seal transaction inputs")
+            })?
+            .0
+            .commitment();
+
+        // Generated ahead of the call so the non-`Send` `ThreadRng` temporary is dropped
+        // before the await; the Node.js binding requires the future to be `Send`.
+        let public_key =
+            KeyExchangeKey::with_rng(&mut StdRng::from_rng(&mut rand::rng())).public_key();
+
+        client
+            .seed_transaction_encryption_key(TransactionEncryptionKey::new_unattested(
+                b"mock-key-id".to_vec(),
+                public_key,
+                genesis_commitment,
+            ))
+            .await
+            .map_err(|err| {
+                js_error_with_context(err, "failed to seed the mock transaction encryption key")
+            })?;
+
+        Ok(())
     }
 }
 

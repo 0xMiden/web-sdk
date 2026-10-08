@@ -4,47 +4,116 @@ import { logWebStoreError } from "./utils.js";
 
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
 
+/** The client-scope setting a 0.17.1 client queued undelivered private notes under. */
+export const NOTE_TRANSPORT_OUTBOX_SETTING_KEY = "note_transport_outbox";
+
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+interface RegistryEntry {
+  db: MidenDatabase;
+  holders: number;
+}
+
+interface PendingOpen {
+  holders: number;
+  opened: Promise<void>;
+}
+
 // Since we can't have a pointer to a JS Object from rust, we'll
 // use this instead to keep track of open DBs. A client can have
 // a DB for mainnet, devnet, testnet or a custom one, so this should be ok.
-const databaseRegistry = new Map<string, MidenDatabase>();
+// Each name has one connection, held by every live Rust `IdxdbStore` on it.
+const databaseRegistry = new Map<string, RegistryEntry>();
+const pendingOpens = new Map<string, PendingOpen>();
 
 /**
  * Get a database instance from the registry by its ID.
  * Throws if the database hasn't been opened yet.
  */
 export function getDatabase(dbId: string): MidenDatabase {
-  const db = databaseRegistry.get(dbId);
-  if (!db) {
+  const entry = databaseRegistry.get(dbId);
+  if (!entry) {
     throw new Error(
       `Database not found for id: ${dbId}. Call openDatabase first.`
     );
   }
-  return db;
+  return entry.db;
 }
 
 /**
- * Opens a database for the given network and registers it in the registry.
- * Returns the database ID (network name) which can be used to retrieve the database later.
+ * Releases one holder of the database registered for `network`, closing and
+ * unregistering it when the last holder is gone. No-op for an unknown name.
+ */
+export function closeDatabase(network: string): void {
+  const entry = databaseRegistry.get(network);
+  if (!entry) {
+    return;
+  }
+  entry.holders -= 1;
+  if (entry.holders > 0) {
+    return;
+  }
+  entry.db.dexie.close();
+  databaseRegistry.delete(network);
+}
+
+/**
+ * Opens the database for `network`, or joins the connection already open or
+ * opening under that name, and counts the caller as one holder until it calls
+ * `closeDatabase`. Returns the database ID (network name) which can be used to
+ * retrieve the database later.
  */
 export async function openDatabase(
   network: string,
   clientVersion: string
 ): Promise<string> {
-  const db = new MidenDatabase(network);
-  const success = await db.open(clientVersion);
-  /* v8 ignore next 3 — open() only returns false after logWebStoreError re-throws, so !success is unreachable */
-  if (!success) {
-    throw new Error(`Failed to open IndexedDB database: ${network}`);
+  const registered = databaseRegistry.get(network);
+  if (registered?.db.dexie.isOpen()) {
+    registered.holders += 1;
+    return network;
   }
-  databaseRegistry.set(network, db);
+  let pending = pendingOpens.get(network);
+  if (!pending) {
+    pending = { holders: 0, opened: Promise.resolve() };
+    pendingOpens.set(network, pending);
+    pending.opened = openAndRegister(network, clientVersion, pending);
+  }
+  pending.holders += 1;
+  await pending.opened;
   return network;
+}
+
+// Registers the connection and counts its waiting holders in one turn, so a
+// close landing in between cannot release it under them. An entry it replaces
+// was closed elsewhere, and that entry's holders now hold this connection.
+async function openAndRegister(
+  network: string,
+  clientVersion: string,
+  pending: PendingOpen
+): Promise<void> {
+  const db = new MidenDatabase(network);
+  try {
+    const success = await db.open(clientVersion);
+    /* v8 ignore next 3 - open() only returns false after logWebStoreError re-throws, so !success is unreachable */
+    if (!success) {
+      throw new Error(`Failed to open IndexedDB database: ${network}`);
+    }
+  } catch (err) {
+    db.dexie.close();
+    throw err;
+  } finally {
+    pendingOpens.delete(network);
+  }
+  const replaced = databaseRegistry.get(network);
+  replaced?.db.dexie.close();
+  databaseRegistry.set(network, {
+    db,
+    holders: (replaced?.holders ?? 0) + pending.holders,
+  });
 }
 
 enum Table {
@@ -65,13 +134,18 @@ enum Table {
   InputNotes = "inputNotes",
   OutputNotes = "outputNotes",
   NotesScripts = "notesScripts",
-  StateSync = "stateSync",
+  BlockchainCheckpoint = "blockchainCheckpoint",
   BlockHeaders = "blockHeaders",
   PartialBlockchainNodes = "partialBlockchainNodes",
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
+  AccountWitnesses = "accountWitnesses",
 }
+
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 
 export interface IAccountCode {
   root: string;
@@ -204,6 +278,7 @@ export interface IOutputNote {
   stateDiscriminant: number;
   nullifier?: string;
   expectedHeight: number;
+  scriptRoot?: string;
   state: Uint8Array;
 }
 
@@ -212,21 +287,15 @@ export interface INotesScript {
   serializedNoteScript: Uint8Array;
 }
 
-export interface IStateSync {
+export interface IBlockchainCheckpoint {
   id: number;
   blockNum: number;
+  partialBlockchainPeaks: Uint8Array;
 }
 
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  /** Serialized MMR peaks at this block's forest. Set only on rows that were
-   *  the chain tip when their corresponding sync ran — `applyStateSync`
-   *  writes peaks to the row where `blockNum === state_sync.block_num`.
-   *  Backfilled blocks (`insertBlockHeader` from `get_and_store_authenticated_block`)
-   *  leave this undefined. `getCurrentBlockchainPeaks` reads the row at
-   *  the current `stateSync.blockNum`. */
-  partialBlockchainPeaks?: Uint8Array;
   hasClientNotes: string;
 }
 
@@ -249,8 +318,15 @@ export interface IForeignAccountCode {
 }
 
 export interface ISetting {
+  scope: number;
   key: string;
   value: Uint8Array;
+}
+
+// `witness` stays null until the first sync refreshes it.
+export interface IAccountWitness {
+  accountId: string;
+  witness: Uint8Array | null;
 }
 
 export interface JsVaultAsset {
@@ -262,6 +338,7 @@ export interface JsStorageSlot {
   slotName: string;
   slotValue: string;
   slotType: number;
+  patchOperation?: number;
 }
 
 export interface JsStorageMapEntry {
@@ -321,6 +398,7 @@ export const V1_STORES: Record<string, string> = {
     "detailsCommitment",
     "noteId",
     "nullifier",
+    "scriptRoot",
     "stateDiscriminant",
     "[consumedBlockHeight+consumedTxOrder+noteId]"
   ),
@@ -332,7 +410,7 @@ export const V1_STORES: Record<string, string> = {
     "nullifier"
   ),
   [Table.NotesScripts]: indexes("scriptRoot"),
-  [Table.StateSync]: indexes("id"),
+  [Table.BlockchainCheckpoint]: indexes("id"),
   [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
   [Table.PartialBlockchainNodes]: indexes("id"),
   [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -363,11 +441,12 @@ declare module "dexie" {
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
-    stateSync: Table<IStateSync, number>;
+    blockchainCheckpoint: Table<IBlockchainCheckpoint, number>;
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
-    settings: Table<ISetting, string>;
+    settings: Table<ISetting, [number, string]>;
+    accountWitnesses: Table<IAccountWitness, string>;
   }
 }
 
@@ -389,12 +468,13 @@ export type MidenDexie = Dexie & {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
+  accountWitnesses: Dexie.Table<IAccountWitness, string>;
 };
 
 export class MidenDatabase {
@@ -416,12 +496,13 @@ export class MidenDatabase {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
+  accountWitnesses: Dexie.Table<IAccountWitness, string>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
@@ -511,6 +592,48 @@ export class MidenDatabase {
           .delete();
       });
 
+    // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+    // `detailsCommitment` instead of `noteId`, so the seek in
+    // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+    // carries and needs no lookup of the cursor's own note. Index-only, so
+    // Dexie rebuilds it without an upgrade hook.
+    this.dexie.version(3).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"
+      ),
+    });
+
+    // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+    // cannot change in place, hence the drop and the recreate; the rows it held are cached
+    // values the client re-fetches.
+    this.dexie.version(4).stores({ [Table.Settings]: null });
+    this.dexie.version(5).stores({
+      [Table.Settings]: indexes("[scope+key]", "scope"),
+    });
+
+    // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
+    // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+    this.dexie.version(6).stores({
+      [Table.AccountWitnesses]: indexes("&accountId"),
+    });
+
+    // v7 (miden-client 0.17.2): the client keeps no private-note relay queue, so a queue row a
+    // 0.17.1 client left behind would never be read or cleared. Mirrors sqlite-store migration
+    // `0002_drop_note_transport_outbox.sql`; a user-scope row of the same name is untouched.
+    this.dexie
+      .version(7)
+      .stores({})
+      .upgrade((tx) =>
+        tx
+          .table(Table.Settings)
+          .delete([SETTING_SCOPE_CLIENT, NOTE_TRANSPORT_OUTBOX_SETTING_KEY])
+      );
+
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
     );
@@ -562,7 +685,9 @@ export class MidenDatabase {
     this.notesScripts = this.dexie.table<INotesScript, string>(
       Table.NotesScripts
     );
-    this.stateSync = this.dexie.table<IStateSync, number>(Table.StateSync);
+    this.blockchainCheckpoint = this.dexie.table<IBlockchainCheckpoint, number>(
+      Table.BlockchainCheckpoint
+    );
     this.blockHeaders = this.dexie.table<IBlockHeader, number>(
       Table.BlockHeaders
     );
@@ -574,12 +699,21 @@ export class MidenDatabase {
     this.foreignAccountCode = this.dexie.table<IForeignAccountCode, string>(
       Table.ForeignAccountCode
     );
-    this.settings = this.dexie.table<ISetting, string>(Table.Settings);
+    this.settings = this.dexie.table<ISetting, [number, string]>(
+      Table.Settings
+    );
+    this.accountWitnesses = this.dexie.table<IAccountWitness, string>(
+      Table.AccountWitnesses
+    );
 
     this.dexie.on("populate", () => {
-      this.stateSync
-        .put({ id: 1, blockNum: 0 } as IStateSync)
-        /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+      this.blockchainCheckpoint
+        .put({
+          id: 1,
+          blockNum: 0,
+          partialBlockchainPeaks: new Uint8Array(),
+        } as IBlockchainCheckpoint)
+        /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
@@ -647,8 +781,13 @@ export class MidenDatabase {
     await this.persistClientVersion(clientVersion);
   }
 
+  // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+  // user-facing settings API never reaches.
   private async getStoredClientVersion(): Promise<string | null> {
-    const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const record = await this.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     if (!record) {
       return null;
     }
@@ -657,6 +796,7 @@ export class MidenDatabase {
 
   private async persistClientVersion(clientVersion: string): Promise<void> {
     await this.settings.put({
+      scope: SETTING_SCOPE_CLIENT,
       key: CLIENT_VERSION_SETTING_KEY,
       value: textEncoder.encode(clientVersion),
     });
