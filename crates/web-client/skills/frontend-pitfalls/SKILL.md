@@ -418,10 +418,11 @@ Set `useWorker: false` when:
 
 `MidenConfig.useWorker` is forwarded to both `createClient` and `createClientWithExternalKeystore`.
 
-Two companions to the same boundary:
+Three companions to the same boundary:
 
 - **`lastAuthError()` returns `null` under the worker.** The sign callback fires against the worker's WASM keystore while the accessor reads the main-thread instance, which never signed. It is meaningful only with `useWorker: false` - which is not a real constraint, since a JS sign callback needs that setting to be reachable at all. On the Node binding it always returns `null`, because signing goes through the filesystem keystore rather than a JS callback. Read it under your own lock: it is one of the raw-bound `SYNC_METHODS`, so unlike a forwarded async method it does not join `_serializeWasmCall`, and it takes a shared WASM borrow that can still lose the race against an in-flight call. The `keystore` getter has the same shape.
 - **`usePreview()` runs the VM on the main thread regardless.** It is not offloaded to the worker (matching the client's unanchored `executeForSummary`), so it blocks the UI for its whole duration and queues other client calls behind it. Budget for that in a confirmation flow; do not assume the worker is absorbing it.
+- **A batch proves on the main thread regardless.** `submitNewTransactionBatch` has no worker route, so `transactions.batch`, `submitBatch` and `useBatch` prove every transaction on the calling thread, which is the page's main thread even with `useWorker: true`, and block the UI until the batch settles. Keep batches small.
 
 **Config cannot carry a prover instance.** Neither `ClientOptions.proverUrl` nor the React
 SDK's `ProverTarget` / `ProverConfig` has an arm that accepts a `TransactionProver`. The

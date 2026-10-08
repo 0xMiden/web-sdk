@@ -457,6 +457,10 @@ impl WebClient {
     /// Unlike `submitNewTransactionWithProver`, this takes no prover, so a JS-side `proverUrl` or
     /// React `prover` setting does not apply to batches.
     ///
+    /// In the browser this method has no worker route: the batch proves on the calling thread,
+    /// which for a page is the main thread even with `useWorker` on, and blocks it until it
+    /// settles. Keep batches small.
+    ///
     /// Each [`BatchItem`] pairs the executing account with its transaction request, so the
     /// pairing is enforced at the type level — there's no way to call this with mismatched
     /// arrays.

@@ -850,6 +850,9 @@ producer-before-consumer. The underlying primitive returns a block number
 rather than per-tx ids, so the hook's result is `{ blockNumber }`.
 Each tx is proven inside that primitive by the client's built-in local prover,
 so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
+In the browser the batch has no worker route: it proves on the calling thread,
+which is the page's main thread even with `useWorker` on, and blocks the page
+until it settles, so keep batches small.
 
 Built-in features:
 - **Auto pre-sync** before submit (disable with `skipSync: true`)

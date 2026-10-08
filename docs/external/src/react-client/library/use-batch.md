@@ -63,6 +63,9 @@ block the batch was accepted into.
 - **Proving.** Each tx is proven inside the batch primitive by the client's
   built-in local prover, so `MidenProvider`'s `prover` setting and its fallback
   do not apply to batches.
+- **Threading.** In the browser the batch has no worker route: it proves on the
+  calling thread, which is the page's main thread even with `useWorker` on, and
+  blocks the page until it settles. Keep batches small.
 - **Stages.** `stage` goes `"executing"` → `"submitting"` → `"complete"`. There
   is no `"proving"` stage, because proving happens inside the batch primitive. A
   failure after the batch starts returns `stage` to `"idle"` and sets `error`;

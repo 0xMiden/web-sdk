@@ -590,6 +590,9 @@ export class TransactionsResource {
    * atomically — either every tx in the batch lands or none does.
    * Every proof runs inside the batch primitive on the client's built-in local
    * prover, so `proverUrl` does not apply to batches.
+   * In the browser a batch has no worker route: it proves on the calling
+   * thread (the main thread for a page, even with `useWorker` on) and blocks
+   * it until it settles, so keep batches small.
    *
    * @param {BatchOptions} opts - Batch options including the operations array and confirmation settings.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
@@ -669,6 +672,8 @@ export class TransactionsResource {
    *   Every transaction is proven inside the batch primitive by the client's
    *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
    *   no per-call prover override.
+   *   In the browser the batch proves on the calling thread, never the worker,
+   *   so it blocks the page's main thread until it settles; keep batches small.
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async submitBatch(items, options) {

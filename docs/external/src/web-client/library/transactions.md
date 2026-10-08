@@ -122,6 +122,7 @@ A later transaction may consume a note produced by an earlier transaction in the
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
 - **No duplicate input notes.** A note consumed by one transaction in the batch cannot be consumed by another — globally across accounts.
 - **Proving uses the built-in local prover.** Each transaction is proven inside the batch primitive by the client's built-in local prover, so `proverUrl` does not apply to `batch` or `submitBatch`, and neither takes a per-call prover.
+- **Proving runs on the calling thread.** In the browser a batch has no worker route: it proves on the calling thread (the main thread for a page, even with `useWorker` on) and blocks it until it settles, so keep batches small.
 
 ### `submitBatch` — pre-built requests
 

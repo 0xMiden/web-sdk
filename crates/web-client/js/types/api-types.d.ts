@@ -244,7 +244,9 @@ export interface ClientOptions {
     sign: SignCallback;
   };
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread.
+   * Enable the Web Worker shim that runs WASM calls off the main thread,
+   * except batch submission (`transactions.batch` / `submitBatch`), which
+   * always proves on the calling thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
@@ -1408,6 +1410,9 @@ export interface TransactionsResource {
    * either every tx in the batch lands or none does. Every proof runs inside
    * the batch primitive on the client's built-in local prover, so `proverUrl`
    * does not apply to batches.
+   * In the browser a batch has no worker route: it proves on the calling
+   * thread (the main thread for a page, even with `useWorker` on) and blocks
+   * it until it settles, so keep batches small.
    *
    * The named operations attach fee conversion info themselves; a request you
    * supply through the `custom` operation is subject to the fee checks
@@ -1436,6 +1441,8 @@ export interface TransactionsResource {
    *   There is no prover option: every transaction is proven inside the batch
    *   primitive by the client's built-in local prover, and `proverUrl` does not
    *   apply.
+   *   In the browser the batch proves on the calling thread, never the worker,
+   *   so it blocks the page's main thread until it settles; keep batches small.
    */
   submitBatch(
     items: { account: AccountRef; request: TransactionRequest }[],
