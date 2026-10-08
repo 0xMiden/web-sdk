@@ -141,10 +141,19 @@ pub(crate) async fn generate_faucet(
     let mut init_seed = [0u8; 32];
     rng.fill_bytes(&mut init_seed);
 
+    // `BasicWallet` rides along for its `receive_asset` procedure. `FungibleFaucet` exports no
+    // path that credits its own vault — `mint_and_send` credits the transaction's input vault and
+    // hands the asset straight to an output note, and `receive_and_burn` burns — while since 0.16
+    // `pay_fee` withdraws from the acting account's own vault. The kernel refuses a vault credit
+    // whose calling procedure is not in the account's code, so without this component nothing can
+    // ever fund the faucet: consuming a P2ID funding note aborts at `push_procedure_index` with
+    // `UnknownAccountProcedure`, before `pay_fee` is even reached. A faucet built here could then
+    // never mint on a chain that charges.
     let new_account = AccountBuilder::new(init_seed)
         .account_type(storage_mode.into())
         .with_component(auth_component)
         .with_component(faucet)
+        .with_component(BasicWallet)
         .with_components(policy_manager)
         .build_with_schema_commitment()
         .map_err(|err| js_error_with_context(err, "failed to create new faucet"))?;

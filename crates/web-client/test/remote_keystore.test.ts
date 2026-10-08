@@ -15,16 +15,11 @@ test.describe("remote keystore", () => {
       const signCb = async (_publicKeyCommitment: string, _message: string) => {
         return undefined;
       };
-      const client =
-        await window.WasmWebClient.createClientWithExternalKeystore(
-          window.rpcUrl!,
-          undefined,
-          undefined,
-          undefined,
-          getKeyCb,
-          insertKeyCb,
-          signCb
-        );
+      const client = await window.helpers.createClientWithKeystore(
+        getKeyCb,
+        insertKeyCb,
+        signCb
+      );
       return client;
     });
     expect(client).toBeDefined();
@@ -43,16 +38,11 @@ test.describe("remote keystore", () => {
         publicKeyCommitment = publicKeyCommitmentStr;
         secretKey = secretKeyStr;
       };
-      const client =
-        await window.WasmWebClient.createClientWithExternalKeystore(
-          window.rpcUrl!,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          insertKeyCb,
-          undefined
-        );
+      const client = await window.helpers.createClientWithKeystore(
+        undefined,
+        insertKeyCb,
+        undefined
+      );
       await client.newWallet(
         window.AccountStorageMode.private(),
         window.AuthScheme.AuthRpoFalcon512,
@@ -89,16 +79,11 @@ test.describe("remote keystore", () => {
         return undefined;
       };
 
-      const client =
-        await window.WasmWebClient.createClientWithExternalKeystore(
-          window.rpcUrl!,
-          undefined,
-          undefined,
-          undefined,
-          getKeyCb,
-          insertKeyCb,
-          undefined
-        );
+      const client = await window.helpers.createClientWithKeystore(
+        getKeyCb,
+        insertKeyCb,
+        undefined
+      );
 
       const wallet = await client.newWallet(
         window.AccountStorageMode.private(),
@@ -154,16 +139,11 @@ test.describe("remote keystore", () => {
         return serializedSig;
       };
 
-      const client =
-        await window.WasmWebClient.createClientWithExternalKeystore(
-          window.rpcUrl!,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          insertKeyCb,
-          signCb
-        );
+      const client = await window.helpers.createClientWithKeystore(
+        undefined,
+        insertKeyCb,
+        signCb
+      );
 
       // Create faucet first so insertKeyCb captures its public key
       const faucet = await client.newFaucet(

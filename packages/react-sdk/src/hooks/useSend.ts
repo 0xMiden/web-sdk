@@ -6,7 +6,6 @@ import {
   NoteAssets,
   NoteType,
   NoteArray,
-  TransactionRequestBuilder,
 } from "@miden-sdk/miden-sdk";
 import type { SendOptions, SendResult, TransactionStage } from "../types";
 import { DEFAULTS } from "../types";
@@ -17,6 +16,7 @@ import { MidenError } from "../utils/errors";
 import { getNoteType, waitForTransactionCommit } from "../utils/noteFilters";
 import type { ClientWithTransactions } from "../utils/noteFilters";
 import { proveWithFallback } from "../utils/prover";
+import { extractFullNote } from "../utils/transactions";
 import { useMidenStore } from "../store/MidenStore";
 
 export interface UseSendResult {
@@ -169,18 +169,20 @@ export function useSend(): UseSendResult {
             // to keep `p2idNote` valid so the caller can use the returned Note.
             const ownOutputs = new NoteArray();
             ownOutputs.push(p2idNote);
-            const txRequest = new TransactionRequestBuilder()
-              .withOwnOutputNotes(ownOutputs)
-              .build();
+            // The sender executes this transaction, so its auth procedure is
+            // what pays the fee; a bare builder would abort with
+            // ERR_FEE_CONVERSION_INFO_MISSING wherever the chain charges.
+            const builder =
+              await client.feeAwareTransactionRequestBuilder(fromId);
+            const txRequest = builder.withOwnOutputNotes(ownOutputs).build();
 
-            const execFromId = parseAccountId(options.from);
             const txId = prover
               ? await client.submitNewTransactionWithProver(
-                  execFromId,
+                  fromId,
                   txRequest,
                   prover
                 )
-              : await client.submitNewTransaction(execFromId, txRequest);
+              : await client.submitNewTransaction(fromId, txRequest);
 
             return { txId: txId.toHex(), note: p2idNote } as SendResult;
           });
@@ -216,7 +218,9 @@ export function useSend(): UseSendResult {
               noteType,
               attachment
             );
-            txRequest = new TransactionRequestBuilder()
+            const builder =
+              await client.feeAwareTransactionRequestBuilder(fromAccountId);
+            txRequest = builder
               .withOwnOutputNotes(new NoteArray([note]))
               .build();
           } else {
@@ -231,10 +235,7 @@ export function useSend(): UseSendResult {
             );
           }
 
-          // Fresh AccountId — the originals may have been consumed by
-          // createP2IDNote or newSendTransactionRequest above.
-          const execAccountId = parseAccountId(options.from);
-          return await client.executeTransaction(execAccountId, txRequest);
+          return await client.executeTransaction(fromAccountId, txRequest);
         });
 
         setStage("proving");
@@ -329,21 +330,4 @@ export function useSend(): UseSendResult {
     error,
     reset,
   };
-}
-
-function extractFullNote(txResult: unknown): Note | null {
-  try {
-    const executedTx = (
-      txResult as { executedTransaction?: () => unknown }
-    ).executedTransaction?.() as {
-      outputNotes?: () => {
-        notes?: () => Array<{ intoFull?: () => Note | null }>;
-      };
-    };
-    const notes = executedTx?.outputNotes?.().notes?.() ?? [];
-    const note = notes[0];
-    return note?.intoFull?.() ?? null;
-  } catch {
-    return null;
-  }
 }

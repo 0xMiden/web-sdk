@@ -41,15 +41,18 @@ export interface UseChainAnchorResult {
  * Hook to capture a {@link ChainAnchor} — a pinned reference block that a later
  * execution can replay against.
  *
- * Since protocol 0.16 a signed transaction summary binds the reference block
- * commitment, so signatures collected over a summary only authorize an
- * execution at that exact block. Any flow that collects signatures and executes
- * later — multisig, offline co-signing — captures an anchor next to the summary
- * and ships both, so the summary reproduces on a client at a different sync height, provided both
- * parties agree on the account state.
+ * A summary that binds the reference block commitment only authorizes an
+ * execution at that exact block, so a flow that collects such signatures and
+ * executes later (single-signature co-signing) captures an anchor next to the
+ * summary and ships both, so the summary reproduces on a client at a different
+ * sync height, provided both parties agree on the account state. A multisig
+ * proposal needs no anchor: build it with `feeAwareTransactionRequestBuilder`
+ * and preview and execute it at each party's tip, once that party has synced
+ * to its bound block.
  *
- * The anchor tracks the creation blocks of the request's authenticated input
- * notes, so it stays valid for that request once the chain advances. Serialize
+ * The anchor tracks the blocks the request declares through `withBlockNumbers`
+ * and the creation blocks of its authenticated input notes, so it stays valid
+ * for that request once the chain advances. Serialize
  * it with `anchor.serialize()` to send it to co-signers, and rebuild it with
  * `ChainAnchor.deserialize(bytes)` — importing the class itself from
  * `@miden-sdk/miden-sdk`, since this package re-exports it as a type only.
@@ -72,27 +75,37 @@ export interface UseChainAnchorResult {
  * appearing as a property; the napi bindings cannot attach one. `OPERATION_BUSY`
  * originates here and is always a property.
  *
- * Preview and execute against the returned `anchoredRequest`, not the value you
- * passed in. If `request` is a factory it resolves to a new object per call,
- * and any builder that mints an output note draws a fresh serial number from
- * the client's RNG — so a second call yields a transaction the anchor does not
- * pin and the co-signers did not approve.
+ * Preview and execute against the exact request the anchor was captured for,
+ * never a factory passed in twice. A factory resolves to a new object per call,
+ * and two draws from the client's RNG make that object differ each time: any
+ * builder that mints an output note takes a fresh serial number, and on a
+ * fee-charging chain the fee conversion info takes a fresh salt — which reaches
+ * every request, including one with no output notes at all. A second call
+ * therefore yields a transaction the anchor does not pin and the co-signers did
+ * not approve.
+ *
+ * Within the handler that captured, that means the object you resolved
+ * yourself: `anchoredRequest` is state, so it still holds the previous render's
+ * value there — `null` on a first capture. It is the right value one render
+ * later, when showing a summary and executing on a second interaction.
  *
  * @example
  * ```tsx
  * function ProposeButton({ accountId, buildRequest }: Props) {
- *   const { captureAnchor, anchoredRequest, isCapturing } = useChainAnchor();
+ *   const { client } = useMiden();
+ *   const { captureAnchor, isCapturing } = useChainAnchor();
  *   const { preview } = usePreview();
  *
  *   const propose = async () => {
- *     const anchor = await captureAnchor({ request: buildRequest });
- *     // anchoredRequest, not buildRequest: the anchor pins this exact object.
- *     const summary = await preview({
- *       accountId,
- *       request: anchoredRequest!,
- *       anchor,
- *     });
- *     await shipToCosigners(anchor.serialize(), summary.serialize());
+ *     // One object reaches all three calls; see the note above.
+ *     const request = await buildRequest(client);
+ *     const anchor = await captureAnchor({ request });
+ *     const summary = await preview({ accountId, request, anchor });
+ *     await shipToCosigners(
+ *       request.serialize(),
+ *       anchor.serialize(),
+ *       summary.serialize()
+ *     );
  *   };
  *
  *   return <button onClick={propose} disabled={isCapturing}>Propose</button>;

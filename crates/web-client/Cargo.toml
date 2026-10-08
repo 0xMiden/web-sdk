@@ -71,7 +71,8 @@ mt-threads = ["dep:rayon", "dep:wasm-bindgen-rayon", "miden-client/concurrent"]
 
 [dependencies]
 # Workspace dependencies
-miden-client = { features = ["testing"], workspace = true }
+miden-client   = { features = ["testing"], workspace = true }
+miden-protocol = { workspace = true }
 
 # Feature-only dependency: nothing in this crate uses it directly. Enabling its
 # `std` feature makes `miden-precompiles-prover` cache the preprocessed STARK

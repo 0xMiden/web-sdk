@@ -1,5 +1,25 @@
 # @miden-sdk/react
 
+## Start here
+
+```bash
+npm create @miden-sdk@latest
+```
+
+Run that once in your project. Miden is pre-1.0 and its API moves between minor
+versions, so an AI coding agent working from training data will write code for a
+version you are not on. Every `@miden-sdk/*` package ships an `AGENTS.md` and
+task-scoped `skills/` inside its tarball, matched to the exact version in your
+lockfile - this command is what points your agent at them, by writing the
+pointers into your own `AGENTS.md` and `CLAUDE.md`. It is idempotent, so re-run
+it after an upgrade.
+
+Prefer to wire it up by hand? The block to paste is [below](#for-ai-coding-agents).
+
+Starting from nothing rather than adding to an existing app?
+[`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
+scaffolds the whole stack with this already done.
+
 React hooks library for the Miden Web Client. Provides a simple, ergonomic interface for building React applications on the Miden rollup.
 
 ## Features
@@ -24,6 +44,42 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 npm install @miden-sdk/react @miden-sdk/miden-sdk
 # or
 pnpm add @miden-sdk/react @miden-sdk/miden-sdk
+```
+
+## For AI coding agents
+
+This package ships agent-facing documentation inside the tarball, so it is
+always version-matched to the code you have installed:
+
+- `node_modules/@miden-sdk/react/AGENTS.md` — hook-by-hook usage guide
+- `node_modules/@miden-sdk/react/skills/` — React patterns and testing patterns
+
+Agents do not look inside `node_modules` on their own. To make yours read these
+automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
+of your project:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date:
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
+
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
+
+Each guide indexes task-specific skills in that package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
+<!-- END:miden-agent-rules -->
 ```
 
 ## Testing
@@ -97,6 +153,12 @@ function App() {
       config={{
         // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
+
+        // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
+        // The client receives the chain's protocol configuration, which names the
+        // fee asset, from the node when it syncs; this only sets what
+        // `client.feeFaucetId()` reports before that first sync.
+        feeFaucetId: FEE_FAUCET,
 
         // Auto-sync interval in milliseconds (default: 15000)
         // Set to 0 to disable auto-sync
@@ -778,6 +840,64 @@ function MultiSendButton() {
 }
 ```
 
+#### `useBatch()`
+
+Submit multiple transactions across one or more tracked accounts as one atomic
+batch — every tx lands together or none does. Each item pairs a local account
+with a pre-built `TransactionRequest`. Later items may consume notes produced by
+earlier ones (even across accounts); push order must respect
+producer-before-consumer. The underlying primitive returns a block number
+rather than per-tx ids, so the hook's result is `{ blockNumber }`.
+Each tx is proven inside that primitive by the client's built-in local prover,
+so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
+In the browser the batch has no worker route: it proves on the calling thread,
+which is the page's main thread even with `useWorker` on, and blocks the page
+until it settles, so keep batches small.
+
+Built-in features:
+- **Auto pre-sync** before submit (disable with `skipSync: true`)
+- **Concurrency guard** rejects a second `batch()` while the first is still
+  in flight (`BATCH_BUSY`)
+- **Atomicity** — the batch path uses the same proven-batch RPC the underlying
+  `submitNewTransactionBatch` exposes; the store applies all per-tx updates
+  in one IndexedDB transaction
+
+```tsx
+import { useBatch, useMidenClient } from '@miden-sdk/react';
+import { BatchItem, NoteType } from '@miden-sdk/miden-sdk';
+
+function BatchButton() {
+  const { batch, isLoading, stage } = useBatch();
+  const client = useMidenClient();
+
+  const handleBatch = async () => {
+    const sendReq = await client.newSendTransactionRequest(
+      alice, bob, token, NoteType.Private, 50n, null, null,
+    );
+    const consumeReq = await client.newConsumeTransactionRequest([incomingNote], bob);
+
+    const { blockNumber } = await batch({
+      items: [
+        { account: alice, request: sendReq },
+        { account: bob,   request: consumeReq },  // can consume notes from earlier items
+      ],
+    });
+    console.log('Batch landed in block', blockNumber);
+  };
+
+  return (
+    <button onClick={handleBatch} disabled={isLoading}>
+      {isLoading ? `Submitting (${stage})...` : 'Submit batch'}
+    </button>
+  );
+}
+```
+
+Pass `skipSync: true` if you've already synced and want to avoid the pre-submit
+round-trip. The hook never serializes the requests — the WASM `BatchItem`
+constructor takes the `TransactionRequest` by reference, so there's no
+hidden `.serialize()` cost on the JS side.
+
 #### `useInternalTransfer()`
 
 Create a P2ID note and immediately consume it. This is useful for transfers
@@ -1212,37 +1332,82 @@ function CustomTransactionButton({ accountId }: { accountId: string }) {
 
 #### `useChainAnchor()` / `usePreview()`
 
-Capture a reference block, derive the summary pending authorization at it, and
-execute against it later — the pair behind multisig proposals and offline
-co-signing.
+`usePreview()` derives the summary pending authorization without submitting.
+`useChainAnchor()` pins the reference block that summary is derived at, for
+flows whose summary binds that block, such as single-signature co-signing.
 
-Since protocol 0.16 a signed transaction summary binds the reference block
-commitment, so signatures only authorize an execution at that exact block. In a
-flow that collects signatures and executes later, the proposer, co-signers, and
-executor are all at different sync heights — a `ChainAnchor` is what makes them
-agree on one summary.
+**Multisig proposals need no anchor.** Since protocol 0.17 a multisig summary
+binds a bound block named in its auth args. Build the request with
+`client.feeAwareTransactionRequestBuilder(accountId)`, which declares that
+block with `withBlockNumbers`, ship the request bytes, and let every party
+preview and execute at its own tip once its client has synced to at least the
+bound block (the largest of `request.blockNumbers()`); below it the call fails
+with `requested block N is after transaction reference block M`. `usePreview`
+does not sync, and `useTransaction` syncs through the provider's `sync()`, which
+returns early while another sync runs, so sync and then check the height before
+verifying or executing. Re-executing an older multisig proposal at an anchor
+fails once the node prunes that block's account state (50 blocks).
 
 ```tsx
-import { useChainAnchor, usePreview, useTransaction } from '@miden-sdk/react';
-import { ChainAnchor } from '@miden-sdk/miden-sdk';
+import { useMiden, usePreview } from '@miden-sdk/react';
+import { TransactionRequest } from '@miden-sdk/miden-sdk';
 
-// Proposer: capture the anchor, derive the summary at it, ship both.
-function Propose({ multisigId, buildRequest }) {
-  const { captureAnchor, anchoredRequest } = useChainAnchor();
+// Multisig co-signer: re-derive at the local tip from the proposer's bytes.
+function VerifyMultisig({ accountId, requestBytes, proposed }) {
+  const { client, sync } = useMiden();
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
-        const anchor = await captureAnchor({ request: buildRequest });
-        // anchoredRequest, not buildRequest: a factory resolves to a new
-        // request each call, and the anchor pins only the one it captured.
-        const summary = await preview({
-          accountId: multisigId,
-          request: anchoredRequest,
-          anchor,
-        });
-        await shipToCosigners(anchor.serialize(), summary.serialize());
+        const request = TransactionRequest.deserialize(requestBytes);
+        await sync();
+        // sync() returns early while another sync runs; confirm the height.
+        const bound = Math.max(0, ...request.blockNumbers());
+        if ((await client.getSyncHeight()) < bound) {
+          throw new Error("not synced to the proposal's bound block yet; retry");
+        }
+        const derived = await preview({ accountId, request });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+```
+
+A summary that binds the reference block only authorizes an execution at that
+exact block. In a flow that collects such signatures and executes later, the
+signer, co-signers and executor are all at different sync heights, and a
+`ChainAnchor` is what makes them agree on one summary.
+
+```tsx
+import { useChainAnchor, useMiden, usePreview, useTransaction } from '@miden-sdk/react';
+import { ChainAnchor } from '@miden-sdk/miden-sdk';
+
+// Signer: capture the anchor, derive the summary at it, ship both.
+function Propose({ accountId, buildRequest }) {
+  const { client } = useMiden();
+  const { captureAnchor } = useChainAnchor();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        // Resolve the factory once and pass that object to both calls. A
+        // factory builds a new request per call, and anchoredRequest is state,
+        // so inside this handler it still holds the previous value.
+        const request = await buildRequest(client);
+        const anchor = await captureAnchor({ request });
+        const summary = await preview({ accountId, request, anchor });
+        await shipToCosigners(
+          request.serialize(),
+          anchor.serialize(),
+          summary.serialize()
+        );
       }}
     >
       Propose
@@ -1250,16 +1415,16 @@ function Propose({ multisigId, buildRequest }) {
   );
 }
 
-// Co-signer: re-derive at the proposer's anchor and compare before signing.
-// Deriving at the local sync height yields a different summary every time.
-function Verify({ multisigId, request, anchorBytes, proposed }) {
+// Co-signer: re-derive at the signer's anchor and compare before signing.
+// Deriving such a summary at the local sync height yields a different one.
+function Verify({ accountId, request, anchorBytes, proposed }) {
   const { preview } = usePreview();
 
   return (
     <button
       onClick={async () => {
         const anchor = ChainAnchor.deserialize(anchorBytes);
-        const derived = await preview({ accountId: multisigId, request, anchor });
+        const derived = await preview({ accountId, request, anchor });
         if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
           await sign(derived);
         }
@@ -1271,10 +1436,10 @@ function Verify({ multisigId, request, anchorBytes, proposed }) {
 }
 
 // Executor: replay at the same anchor, whatever the local height is by now.
-function Execute({ multisigId, request, anchor }) {
+function Execute({ accountId, request, anchor }) {
   const { execute } = useTransaction();
   return (
-    <button onClick={() => execute({ accountId: multisigId, request, anchor })}>
+    <button onClick={() => execute({ accountId, request, anchor })}>
       Execute
     </button>
   );
@@ -1284,9 +1449,11 @@ function Execute({ multisigId, request, anchor }) {
 `useChainAnchor()` returns
 `{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
 `usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
-`anchoredRequest` is the exact request the anchor was captured for; preview and
-execute against it rather than re-resolving a factory, which would build a
-different transaction than the one the anchor pins.
+`anchoredRequest` is the exact request the anchor was captured for; on a later
+interaction, preview and execute against it rather than re-resolving a factory,
+which would build a different transaction than the one the anchor pins. Inside
+the handler that captured, it still holds the previous value, so pass the object
+you resolved there, as `Propose` does.
 `preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
 transaction needs no further signatures — submit it with `useTransaction`
 instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
@@ -1551,7 +1718,8 @@ try {
 } catch (e) {
   const wrapped = wrapWasmError(e);
   // MidenError with code: 'WASM_CLASS_MISMATCH' | 'WASM_POINTER_CONSUMED' |
-  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' | 'UNKNOWN'
+  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' |
+  //   'OPERATION_BUSY' | 'BATCH_BUSY' | 'STALE_CLIENT' | 'UNKNOWN'
   console.log(wrapped.message); // Human-readable with fix suggestions
 }
 ```
@@ -1639,10 +1807,18 @@ function MyFeature() {
 
 For wallets using external key management, wrap your app with a signer provider **above** `MidenProvider`. The signer provider populates a `SignerContext` with a `signCb` and an `accountConfig`; `MidenProvider` picks these up automatically to create the client and initialize the account.
 
+The React bindings ship in their own packages, separate from each integration's core package. Import the provider from the `-react` one:
+
+| Provider | Import from | Core package (not the provider) |
+| --- | --- | --- |
+| Para | `@miden-sdk/para-react` | `@miden-sdk/para` |
+| Turnkey | `@miden-sdk/turnkey-react` | `@miden-sdk/turnkey` |
+| MidenFi wallet | `@miden-sdk/miden-wallet-adapter-react` | `@miden-sdk/miden-wallet-adapter-base` |
+
 ### Para (EVM Wallets)
 
 ```tsx
-import { ParaSignerProvider } from '@miden-sdk/para';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
 
 function App() {
   return (
@@ -1661,13 +1837,17 @@ const { para, wallet, isConnected } = useParaSigner();
 ### Turnkey
 
 ```tsx
-import { TurnkeySignerProvider } from '@miden-sdk/miden-turnkey-react';
+import { TurnkeySignerProvider } from '@miden-sdk/turnkey-react';
 
 function App() {
   return (
-    // Config is optional — defaults to https://api.turnkey.com
-    // and reads VITE_TURNKEY_ORG_ID from environment
-    <TurnkeySignerProvider>
+    // `config` is REQUIRED and must carry `defaultOrganizationId`.
+    // Only `apiBaseUrl` has a default (https://api.turnkey.com).
+    // The provider does NOT read VITE_TURNKEY_ORG_ID or any other env var -
+    // read it yourself and pass it in.
+    <TurnkeySignerProvider
+      config={{ defaultOrganizationId: import.meta.env.VITE_TURNKEY_ORG_ID }}
+    >
       <MidenProvider config={{ rpcUrl: 'testnet' }}>
         <YourApp />
       </MidenProvider>
@@ -1675,7 +1855,7 @@ function App() {
   );
 }
 
-// Or with explicit config:
+// Or with the base URL set explicitly:
 <TurnkeySignerProvider config={{
   apiBaseUrl: 'https://api.turnkey.com',
   defaultOrganizationId: 'your-org-id',
@@ -1688,7 +1868,7 @@ Connect via passkey authentication:
 
 ```tsx
 import { useSigner } from '@miden-sdk/react';
-import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
+import { useTurnkeySigner } from '@miden-sdk/turnkey-react';
 
 const { isConnected, connect, disconnect } = useSigner();
 await connect(); // triggers passkey flow
@@ -1699,7 +1879,7 @@ const { client, account, setAccount } = useTurnkeySigner();
 ### MidenFi Wallet Adapter
 
 ```tsx
-import { MidenFiSignerProvider } from '@miden-sdk/wallet-adapter-react';
+import { MidenFiSignerProvider } from '@miden-sdk/miden-wallet-adapter-react';
 
 function App() {
   return (
@@ -1741,8 +1921,8 @@ import {
   SignerSlot,
   useMultiSigner,
 } from '@miden-sdk/react';
-import { ParaSignerProvider } from '@miden-sdk/use-miden-para-react';
-import { TurnkeySignerProvider } from '@miden-sdk/miden-turnkey-react';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
+import { TurnkeySignerProvider } from '@miden-sdk/turnkey-react';
 import { MidenFiSignerProvider } from '@miden-sdk/miden-wallet-adapter-react';
 
 function App() {
@@ -1751,7 +1931,9 @@ function App() {
       <ParaSignerProvider apiKey="your-api-key" environment="BETA">
         <SignerSlot />
       </ParaSignerProvider>
-      <TurnkeySignerProvider>
+      <TurnkeySignerProvider
+        config={{ defaultOrganizationId: import.meta.env.VITE_TURNKEY_ORG_ID }}
+      >
         <SignerSlot />
       </TurnkeySignerProvider>
       <MidenFiSignerProvider network="testnet">
@@ -1804,7 +1986,7 @@ Signer providers can include custom `AccountComponent` instances in the account 
 Pre-built signer providers (Para, Turnkey, MidenFi) accept `customComponents` as a prop and forward it into `accountConfig`:
 
 ```tsx
-import { ParaSignerProvider } from '@miden-sdk/para';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
 import type { AccountComponent } from '@miden-sdk/miden-sdk';
 
 const dexComponent: AccountComponent = await loadCompiledComponent();
@@ -1883,6 +2065,9 @@ import type {
   SendOptions,
   MultiSendRecipient,
   MultiSendOptions,
+  BatchItemInput,
+  BatchOptions,
+  BatchResult,
   InternalTransferOptions,
   InternalTransferChainOptions,
   InternalTransferResult,

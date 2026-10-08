@@ -1,12 +1,14 @@
 import loadWasm from "./wasm.js";
 import { CallbackType, MethodName, WorkerAction } from "./constants.js";
 import { withSyncLock } from "./syncLock.js";
+import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
 import {
   createP2IDNote,
   createP2IDENote,
   buildSwapTag,
+  buildNetworkNote,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -18,35 +20,18 @@ import {
 } from "./storageView.js";
 export * from "../Cargo.toml";
 
-export const AccountType = Object.freeze({
-  // Faucet-kind selectors for accounts.create({ type }).
-  FungibleFaucet: 0,
-  NonFungibleFaucet: 1,
-});
+export {
+  FaucetType,
+  AuthScheme,
+  NoteVisibility,
+  StorageMode,
+  Linking,
+} from "./enums.js";
 
-export const AuthScheme = Object.freeze({
-  Falcon: "falcon",
-  ECDSA: "ecdsa",
-});
-
-export const NoteVisibility = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const StorageMode = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const Linking = Object.freeze({
-  Dynamic: "dynamic",
-  Static: "static",
-});
-
+export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
-export { createP2IDNote, createP2IDENote, buildSwapTag };
+export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
 export { StorageView, StorageResult, wordToBigInt };
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
@@ -63,36 +48,53 @@ export {
 // Naming note: "SYNC_METHODS" is a historical misnomer. This set groups methods
 // that are forwarded transparently to the underlying WASM via the Proxy in
 // `createClientProxy` — meaning they don't need an explicit JS-class wrapper
-// here. It does NOT mean "the method is synchronous"; several entries
-// (e.g. newSwapTransactionRequest, newPswapCreateTransactionRequest) are
-// `async fn` in Rust because they take the client's RNG via an async lock.
+// here. It does NOT mean "the method is synchronous"; some entries are
+// `async fn` in Rust.
+//
+// What an entry DOES promise is that it takes no borrow of the client's
+// `AsyncCell` at all. Raw binding skips `_serializeWasmCall`, and the hazard
+// runs in both directions:
+//
+//   - An entry that awaits while holding the borrow can be polled concurrently
+//     with any other call and panics with `already borrowed: BorrowMutError`.
+//     The methods that read the store while holding the borrow — the eight
+//     request constructors and `feeAwareTransactionRequestBuilder`, which read
+//     the chain's fee parameters, and `buildPswapCancelByOrder`, which reads the
+//     order's lineage — are write methods for this reason.
+//   - An entry that takes the borrow only *synchronously* is still unsafe,
+//     because a serialized method holding the borrow across an await yields to
+//     the event loop with it outstanding. A raw call landing in that window
+//     borrows again and panics the same way. `createCodeBuilder` and
+//     `storeIdentifier` are serialized reads for this reason; they are awaited
+//     at every call site, so serializing them costs nothing.
+//
+// `scripts/check-method-classification.js` enforces this: it reads the Rust
+// sources and fails when a SYNC_METHODS entry calls `get_mut_inner`. Don't rely
+// on the comment alone when adding an entry — run the script.
+//
+// `lastAuthError` is the one accepted exception, and the script allowlists it by
+// name: it is synchronous by contract (`client.js` returns its value directly,
+// and `api-types.d.ts` declares it non-Promise), so it cannot be serialized
+// without a breaking change. The `keystore` getter has the same shape and is not
+// a method, so the classification script never sees it. Both take a shared
+// borrow, so both can still lose the race above — don't add a third.
 const SYNC_METHODS = new Set([
-  "buildPswapCancelByOrder",
   "buildSwapTag",
-  "createCodeBuilder",
   "lastAuthError",
-  "newB2AggTransactionRequest",
-  "newConsumeTransactionRequest",
-  "newMintTransactionRequest",
-  "newPswapCancelTransactionRequest",
-  "newPswapConsumeTransactionRequest",
-  "newPswapCreateTransactionRequest",
-  "newSendTransactionRequest",
-  "newSwapTransactionRequest",
   "proveBlock",
   "serializeMockChain",
   "serializeMockNoteTransportNode",
-  "storeIdentifier",
   "usesMockChain",
 ]);
 
 const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
   "addTag",
+  "buildPswapCancelByOrder",
   "chainAnchorForRequest",
   "executeForSummary",
   "executeForSummaryAt",
-  "executeProgram",
+  "feeAwareTransactionRequestBuilder",
   "fetchPrivateNotes",
   "forceImportStore",
   "importAccountById",
@@ -101,7 +103,16 @@ const WRITE_METHODS = new Set([
   "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
+  "newB2AggTransactionRequest",
+  "newConsumeTransactionRequest",
+  "newMintTransactionRequest",
+  "newPswapCancelTransactionRequest",
+  "newPswapConsumeTransactionRequest",
+  "newPswapCreateTransactionRequest",
+  "newSendTransactionRequest",
+  "newSwapTransactionRequest",
   "pruneAccountHistory",
+  "registerAccount",
   "removeAccountAddress",
   "removeTag",
   "removeSetting",
@@ -114,6 +125,7 @@ const WRITE_METHODS = new Set([
 
 const READ_METHODS = new Set([
   "accountReader",
+  "createCodeBuilder",
   "exportAccountFile",
   "getAccountAuthByPubKeyCommitment",
   "getAccountByKeyCommitment",
@@ -136,9 +148,12 @@ const READ_METHODS = new Set([
   "getSetting",
   "getSyncHeight",
   "getTransactions",
+  "isAccountAllowed",
   "listSettingKeys",
   "listTags",
   "executeProgram",
+  "feeFaucetId",
+  "storeIdentifier",
 ]);
 
 const MOCK_STORE_NAME = "mock_client_db";
@@ -252,6 +267,37 @@ export const getWasmOrThrow = async () => {
  * Create a Proxy that forwards missing properties to the underlying WASM
  * WebClient.
  */
+let sensitiveWarningEmitted = false;
+
+/**
+ * Apply the observability fields of `ClientOptions`. Enabling the
+ * high-fidelity channel warns once per process: routing account ids and raw
+ * error text into a third party should never happen by accident.
+ *
+ * The flag is deliberately `=== true` rather than truthy. A `"true"` from an
+ * env var, a query string, or a JSON round-trip is far likelier to be a
+ * wiring mistake than a decision to disclose user data, and the safe reading
+ * of an ambiguous value is "off".
+ *
+ * @param {{observer?: (o: object) => void, observeSensitive?: boolean}} [options]
+ * @returns {boolean} whether the high-fidelity channel is enabled
+ */
+function applyObserverOptions(options) {
+  if (typeof options?.observer === "function") {
+    setObserver(options.observer);
+  }
+  const observeSensitive = options?.observeSensitive === true;
+  if (observeSensitive && !sensitiveWarningEmitted) {
+    sensitiveWarningEmitted = true;
+    console.warn(
+      "[miden-sdk] observeSensitive is enabled: observations will carry account " +
+        "identifiers and raw error text. Do not enable this in an application " +
+        "that must not disclose user data to its telemetry provider."
+    );
+  }
+  return observeSensitive;
+}
+
 function createClientProxy(instance) {
   return new Proxy(instance, {
     get(target, prop, receiver) {
@@ -271,8 +317,9 @@ function createClientProxy(instance) {
             return value.bind(target.wasmWebClient);
           }
           return (...args) =>
-            target._serializeWasmCall(() =>
-              value.apply(target.wasmWebClient, args)
+            target._serializeWasmCall(
+              () => value.apply(target.wasmWebClient, args),
+              prop
             );
         }
         return value;
@@ -349,12 +396,22 @@ class WebClient {
    * @param {boolean} [useWorker=true] - When `false`, skip the Web Worker shim
    *   and call the wasm-bindgen `WebClient` directly on the current thread.
    *   The worker exists to keep the main thread responsive during WASM work
-   *   in browser/extension contexts, but it serializes the prover argument
+   *   in browser/extension contexts (batch submission still runs on the
+   *   calling thread), but it serializes the prover argument
    *   via `TransactionProver.serialize()` — a format that has no encoding
    *   for `newCallbackProver(jsFn)` and silently downgrades it to `"local"`.
    *   Consumers that hand a `CallbackProver` (e.g. native iOS/Android plug-in
    *   provers in Capacitor apps, or any other JS-side prover bridge) need
    *   `useWorker: false` so the prover handle reaches the WASM binding intact.
+   * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
+   *   - Observability fields of `ClientOptions`. `observer` is registered as
+   *   the process-wide observation sink; `observeSensitive` decides, for this
+   *   client and for its whole lifetime, whether observations carry the
+   *   high-fidelity `sensitive` channel. Both are construction-only.
+   * @param {string | undefined} [feeFaucetId] - Faucet of the chain's fee asset,
+   *   as a bech32 address or a hex account ID. Optional: the client receives the
+   *   protocol configuration, which names the fee asset, from the node when it
+   *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
    */
   constructor(
     rpcUrl,
@@ -365,7 +422,9 @@ class WebClient {
     insertKeyCb,
     signCb,
     logLevel,
-    useWorker = true
+    useWorker = true,
+    observability,
+    feeFaucetId
   ) {
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
@@ -375,6 +434,11 @@ class WebClient {
     this.insertKeyCb = insertKeyCb;
     this.signCb = signCb;
     this.logLevel = logLevel;
+    // Stored under a private name on purpose: `createClientProxy` forwards only
+    // properties MISSING from this instance (`prop in target` wins), so an own
+    // property called `feeFaucetId` would shadow the WASM accessor of that name
+    // and `client.feeFaucetId()` would return this string instead of calling it.
+    this._feeFaucetId = feeFaucetId;
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -544,6 +608,19 @@ class WebClient {
     // it on the chain — see the comment on `_serializeWasmCall` for the
     // safety contract.
     this._withInnerLockDepth = 0;
+
+    // The high-fidelity channel is decided here and nowhere else. Writing it
+    // as a non-writable, non-configurable property means no later assignment
+    // — by a consumer holding the inner client, by a plugin, or by our own
+    // code — can turn on the disclosure of account identifiers and raw error
+    // text for a client that was not constructed with it. Enabling it must
+    // be a deliberate, auditable act at one call site.
+    Object.defineProperty(this, "_observeSensitive", {
+      value: applyObserverOptions(observability),
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
   }
 
   /**
@@ -571,14 +648,70 @@ class WebClient {
    * the callback; without that, an external task running between two
    * awaits inside `fn` would race wasm-bindgen's borrow check.
    *
+   * Observability: when `opName` is supplied and a consumer has registered an
+   * observer, one observation (name, outcome, duration) is emitted after the
+   * call settles. The emission is additive — it never alters the value, the
+   * error, the ordering, or the chain — and a throwing observer is swallowed
+   * by the sink, so telemetry cannot fail an operation.
+   *
+   * The observation's safe fields carry no identifier and no error text, so
+   * they are fit to send anywhere. Verbatim error detail goes in `sensitive`,
+   * which is populated only on failure and only when this client was
+   * constructed with `observeSensitive: true`. There is deliberately no
+   * per-call way to ask for it: the flag comes from the instance, which
+   * sealed it at construction.
+   *
    * @param {() => Promise<any>} fn - The async function to execute.
+   * @param {string} [opName] - Operation name to observe this call under.
+   *   Omit to leave the call unobserved.
    * @returns {Promise<any>} The result of fn.
    */
-  _serializeWasmCall(fn) {
+  _serializeWasmCall(fn, opName) {
+    // Opt-in twice over: with no op name or nobody listening, `fn` is
+    // enqueued exactly as before and no timing work is done at all.
+    const observed = opName !== undefined && hasObserver();
+    const wrapped = observed
+      ? async () => {
+          const startedAt = performance.now();
+          try {
+            const value = await fn();
+            emitObservation({
+              op: opName,
+              outcome: "ok",
+              durationMs: performance.now() - startedAt,
+            });
+            return value;
+          } catch (error) {
+            // Built only when the channel is on, and left off the
+            // observation entirely otherwise — not as `undefined`, not as an
+            // empty object. A consumer branching on
+            // `"sensitive" in observation` has to be able to tell "not
+            // enabled" from "enabled but nothing to report".
+            const sensitive =
+              this._observeSensitive === true
+                ? {
+                    errorMessage:
+                      error instanceof Error ? error.message : String(error),
+                    ...(error instanceof Error && error.stack
+                      ? { errorStack: error.stack }
+                      : {}),
+                  }
+                : undefined;
+            emitObservation({
+              op: opName,
+              outcome: "error",
+              durationMs: performance.now() - startedAt,
+              ...(sensitive !== undefined ? { sensitive } : {}),
+            });
+            throw error;
+          }
+        }
+      : fn;
+
     if (this._withInnerLockDepth > 0) {
-      return Promise.resolve().then(fn);
+      return Promise.resolve().then(wrapped);
     }
-    const result = this._wasmCallChain.catch(() => {}).then(fn);
+    const result = this._wasmCallChain.catch(() => {}).then(wrapped);
     this._wasmCallChain = result.catch(() => {});
     return result;
   }
@@ -644,6 +777,7 @@ class WebClient {
         !!this.signCb,
         this.logLevel,
         numThreads,
+        this._feeFaucetId,
       ],
     });
   }
@@ -676,6 +810,12 @@ class WebClient {
    *   and run WASM calls on the current thread. Required for `CallbackProver`
    *   consumers (the worker path serializes the prover and loses the callback).
    * @returns {Promise<WebClient>} The fully initialized WebClient.
+   * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
+   *   - Observability fields of `ClientOptions`; see the constructor.
+   * @param {string | undefined} feeFaucetId - Fee faucet of the chain, as a bech32 address or a
+   *   hex account ID. Optional: the client receives the protocol configuration, which names the
+   *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
+   *   before the first sync.
    */
   static async createClient(
     rpcUrl,
@@ -683,7 +823,9 @@ class WebClient {
     seed,
     network,
     logLevel,
-    useWorker = true
+    useWorker = true,
+    observability,
+    feeFaucetId
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -695,7 +837,9 @@ class WebClient {
       undefined,
       undefined,
       logLevel,
-      useWorker
+      useWorker,
+      observability,
+      feeFaucetId
     );
 
     // Set up logging on the main thread before creating the client.
@@ -706,7 +850,13 @@ class WebClient {
 
     // Wait for the underlying wasmWebClient to be initialized.
     const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, network);
+    await wasmWebClient.createClient(
+      rpcUrl,
+      noteTransportUrl,
+      seed,
+      network,
+      feeFaucetId
+    );
 
     // Wait for the worker to be ready
     await instance.ready;
@@ -730,6 +880,8 @@ class WebClient {
    *   and run WASM calls on the current thread. Required for `CallbackProver`
    *   consumers (the worker path serializes the prover and loses the callback).
    * @returns {Promise<WebClient>} The fully initialized WebClient.
+   * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
+   *   - Observability fields of `ClientOptions`; see the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -740,7 +892,9 @@ class WebClient {
     insertKeyCb,
     signCb,
     logLevel,
-    useWorker = true
+    useWorker = true,
+    observability,
+    feeFaucetId
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -752,7 +906,9 @@ class WebClient {
       insertKeyCb,
       signCb,
       logLevel,
-      useWorker
+      useWorker,
+      observability,
+      feeFaucetId
     );
 
     // Set up logging on the main thread before creating the client.
@@ -768,6 +924,7 @@ class WebClient {
       noteTransportUrl,
       seed,
       storeName,
+      feeFaucetId,
       getKeyCb,
       insertKeyCb,
       signCb
@@ -806,7 +963,7 @@ class WebClient {
     return this._serializeWasmCall(async () => {
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
-    });
+    }, "newWallet");
   }
 
   async newFaucet(
@@ -829,21 +986,21 @@ class WebClient {
         maxSupply,
         authSchemeId
       );
-    });
+    }, "newFaucet");
   }
 
   async newAccount(account, overwrite) {
     return this._serializeWasmCall(async () => {
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newAccount(account, overwrite);
-    });
+    }, "newAccount");
   }
 
   async newAccountWithSecretKey(account, secretKey) {
     return this._serializeWasmCall(async () => {
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newAccountWithSecretKey(account, secretKey);
-    });
+    }, "newAccountWithSecretKey");
   }
 
   async submitNewTransaction(accountId, transactionRequest) {
@@ -874,7 +1031,7 @@ class WebClient {
         console.error("INDEX.JS: Error in submitNewTransaction:", error);
         throw error;
       }
-    });
+    }, MethodName.SUBMIT_NEW_TRANSACTION);
   }
 
   async submitNewTransactionWithProver(accountId, transactionRequest, prover) {
@@ -911,7 +1068,7 @@ class WebClient {
         );
         throw error;
       }
-    });
+    }, MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER);
   }
 
   async executeTransaction(accountId, transactionRequest) {
@@ -940,7 +1097,7 @@ class WebClient {
         console.error("INDEX.JS: Error in executeTransaction:", error);
         throw error;
       }
-    });
+    }, MethodName.EXECUTE_TRANSACTION);
   }
 
   async executeTransactionAt(accountId, transactionRequest, anchor) {
@@ -982,7 +1139,7 @@ class WebClient {
         console.error("INDEX.JS: Error in executeTransactionAt:", error);
         throw error;
       }
-    });
+    }, MethodName.EXECUTE_TRANSACTION_AT);
   }
 
   async proveTransaction(transactionResult, prover) {
@@ -1013,7 +1170,7 @@ class WebClient {
         console.error("INDEX.JS: Error in proveTransaction:", error);
         throw error;
       }
-    });
+    }, MethodName.PROVE_TRANSACTION);
   }
 
   async applyTransaction(transactionResult, submissionHeight) {
@@ -1042,7 +1199,7 @@ class WebClient {
         console.error("INDEX.JS: Error in applyTransaction:", error);
         throw error;
       }
-    });
+    }, MethodName.APPLY_TRANSACTION);
   }
 
   /**
@@ -1075,7 +1232,7 @@ class WebClient {
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        })
+        }, methodId)
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncState:", error);
@@ -1101,7 +1258,7 @@ class WebClient {
           } else {
             await this.callMethodWithWorker(methodId);
           }
-        })
+        }, methodId)
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncNoteTransport:", error);
@@ -1131,7 +1288,7 @@ class WebClient {
           return wasm.SyncSummary.deserialize(
             new Uint8Array(serializedSyncSummaryBytes)
           );
-        })
+        }, methodId)
       );
     } catch (error) {
       console.error("INDEX.JS: Error in syncChain:", error);
@@ -1492,3 +1649,40 @@ MidenClient._WasmWebClient = WebClient;
 MidenClient._MockWasmWebClient = MockWebClient;
 MidenClient._getWasmOrThrow = getWasmOrThrow;
 _setStandaloneWebClient(WebClient);
+
+/**
+ * @internal Test-only seam. Exercises `_serializeWasmCall`'s observation
+ * contract without constructing a real WASM-backed client. The host carries
+ * the flag exactly as the constructor would have sealed it — a normalized
+ * boolean — because `_serializeWasmCall` takes no per-call override.
+ */
+export function __serializeWasmCallForTest(fn, opName, observabilityConfig) {
+  const host = {
+    _withInnerLockDepth: 0,
+    _wasmCallChain: Promise.resolve(),
+    _observeSensitive: observabilityConfig?.observeSensitive === true,
+    _serializeWasmCall: WebClient.prototype._serializeWasmCall,
+  };
+  return host._serializeWasmCall(fn, opName);
+}
+
+/**
+ * @internal Test-only seam. `createClientProxy` is module-private, and its
+ * raw-bind branch for `SYNC_METHODS` is only observable through the proxy.
+ */
+export function __createClientProxyForTest(instance) {
+  return createClientProxy(instance);
+}
+
+/** @internal Test-only seam for `applyObserverOptions`. */
+export function __applyObserverOptionsForTest(options) {
+  return applyObserverOptions(options);
+}
+
+/**
+ * @internal Test-only seam. The high-fidelity warning fires once per process,
+ * so a test asserting that has to be able to return to a fresh process state.
+ */
+export function __resetSensitiveWarningForTest() {
+  sensitiveWarningEmitted = false;
+}

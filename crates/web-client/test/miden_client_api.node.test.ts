@@ -3,9 +3,64 @@ import { test, expect } from "./test-setup";
 import { createMidenClient } from "./test-helpers";
 import path from "path";
 
+test.describe("Node SDK deserialization", () => {
+  // The sdk fixture shares the SDK's class wrapper; importing the public entry
+  // here would rewire MidenClient for every later test in this worker.
+
+  // A plain Uint8Array view at a non-zero offset into 0xff padding, so a wrapper
+  // that reads the whole backing buffer decodes the padding instead.
+  const framed = (bytes) => {
+    const buffer = new Uint8Array(bytes.length + 16).fill(0xff);
+    buffer.set(bytes, 8);
+    return new Uint8Array(buffer.buffer, 8, bytes.length);
+  };
+
+  test("AuthSecretKey round-trips with Buffer, Uint8Array and offset views", async ({
+    sdk,
+  }) => {
+    const { AuthSecretKey } = sdk;
+    const key = AuthSecretKey.rpoFalconWithRNG(new Uint8Array(32));
+    const base64 = key.serialize().toString("base64");
+    const bytes = Buffer.from(base64, "base64");
+
+    for (const input of [bytes, new Uint8Array(bytes), framed(bytes)]) {
+      expect(AuthSecretKey.deserialize(input).serialize()).toEqual(bytes);
+    }
+  });
+
+  test("Word round-trips with Buffer, Uint8Array and offset views", async ({
+    sdk,
+  }) => {
+    const { Word } = sdk;
+    const word = new Word(new BigUint64Array([1n, 2n, 3n, 4n]));
+    const bytes = word.serialize();
+
+    for (const input of [bytes, new Uint8Array(bytes), framed(bytes)]) {
+      expect(Word.deserialize(input).serialize()).toEqual(bytes);
+    }
+  });
+});
+
 // ════════════════════════════════════════════════════════════════
 // Mock chain tests — no node needed, self-contained
 // ════════════════════════════════════════════════════════════════
+
+// The public entry's exports are covered by js/__tests__/account-type-exports.test.js;
+// importing it here would rewire MidenClient for every later test in this worker.
+test("native account visibility selects the builder's account type", async ({
+  sdk,
+}) => {
+  const { AccountBuilder, AccountType } = sdk;
+  expect(Object.getOwnPropertyNames(AccountType).sort()).toEqual([
+    "Private",
+    "Public",
+  ]);
+  expect([AccountType.Private, AccountType.Public]).toEqual([0, 1]);
+  for (const type of [AccountType.Private, AccountType.Public]) {
+    const builder = new AccountBuilder(new Uint8Array(32));
+    expect(builder.accountType(type)).toBeInstanceOf(AccountBuilder);
+  }
+});
 
 test.describe("MidenClient API - Mock Chain", () => {
   test("full flow: create accounts, mint, consume, check balance", async ({
@@ -124,6 +179,32 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     expect(result.fetchedId).toBe(result.insertedId);
     expect(result.isPublic).toBe(true);
+  });
+
+  test("accounts.isAllowed and accounts.register on a chain without an allowlist", async ({
+    sdk,
+  }) => {
+    const MidenClient = await createMidenClient(sdk);
+    test.skip(!MidenClient, "requires napi binary (Node.js only)");
+    const client = await MidenClient.createMock();
+
+    const wallet = await client.accounts.create();
+    const allowed = await client.accounts.isAllowed(wallet);
+
+    let message = null;
+    try {
+      await client.accounts.register({
+        account: wallet,
+        invitationCode: "invitation-code",
+      });
+    } catch (error) {
+      message = String(error.message ?? error);
+    }
+
+    // The mock node enforces no allowlist, so every account is allowed and the
+    // client keeps the invitation code rather than spending it.
+    expect(allowed).toBe(true);
+    expect(message).toContain("already allowed");
   });
 
   test("accounts.list returns created accounts", async ({ sdk }) => {
@@ -518,6 +599,27 @@ test.describe("MidenClient API - Mock Chain", () => {
 
     const available = await client.notes.listAvailable({ account: wallet });
     expect(available.length).toBeGreaterThanOrEqual(1);
+
+    // A consumable-now status has no unlock block, and both bindings must say
+    // so the same way: the declared type is `number | undefined`, so Node must
+    // not answer null here (napi-compat patches it).
+    const consumable = await client.notes.listConsumable({ account: wallet });
+    expect(consumable.length).toBeGreaterThanOrEqual(1);
+    const status = consumable[0].noteConsumability()[0].consumptionStatus();
+    expect(status.consumableAfterBlock()).toBeUndefined();
+    // What the missing block number cannot tell you on its own: a note that can
+    // never be consumed also reports no block.
+    expect(status.isConsumableNow()).toBe(true);
+    expect(
+      sdk.NoteConsumptionStatus.neverConsumable("x").isConsumableNow()
+    ).toBe(false);
+    expect(
+      sdk.NoteConsumptionStatus.neverConsumable("x").consumableAfterBlock()
+    ).toBeUndefined();
+
+    // Omitting the account lists notes consumable by any tracked account.
+    const allAccounts = await client.notes.listConsumable();
+    expect(allAccounts.length).toBeGreaterThanOrEqual(1);
   });
 
   test("terminate prevents resource operations", async ({ sdk }) => {

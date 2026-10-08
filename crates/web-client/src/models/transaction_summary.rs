@@ -44,6 +44,12 @@ impl TransactionSummary {
     }
 
     /// Returns the output notes referenced by the summary.
+    ///
+    /// NOTE: this includes the kernel's `TX_FEE` note on any chain whose `verification_base_fee` is
+    /// non-zero. Every standard auth procedure calls `fee::pay_fee` before building the summary, so
+    /// the fee note is inside what a co-signer signs over — which is the point, but it means a UI
+    /// rendering this list for confirmation shows the fee note alongside the notes the user asked
+    /// for, and should label it rather than present it as one of theirs.
     #[js_export(js_name = "outputNotes")]
     pub fn output_notes(&self) -> Result<OutputNotes, JsErr> {
         Ok(self.0.output_notes().into())
