@@ -66,7 +66,14 @@ jobs:
         id: event
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
-            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            # A pre-release must not take `latest`: it is the version every fresh
+            # `npm install` resolves to, and an rc client is rejected outright by a
+            # node on the stable line it does not match.
+            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+              echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+            else
+              echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            fi
             echo "checkout_ref=refs/tags/${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
             echo "version_check_arg=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             echo "version_mode=release" >> "$GITHUB_OUTPUT"
@@ -151,7 +158,9 @@ jobs:
         run: rustup update --no-self-update
 
       - name: Build napi binary
-        run: cargo build -p miden-client-web --no-default-features --features nodejs --release
+        run: |
+          cargo build -p miden-client-web --no-default-features --features nodejs,testing --release --locked
+          git diff --exit-code -- Cargo.lock
 
       - name: Prepare .node binary
         run: |
@@ -178,6 +187,10 @@ jobs:
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
+      (
+        needs.check-version.outputs.should_publish_web != 'true' ||
+        needs.build-native-nodejs.result == 'success'
+      ) &&
       (
         needs.check-version.outputs.should_publish_web == 'true' ||
         needs.check-version.outputs.should_publish_react == 'true' ||
@@ -268,7 +281,9 @@ jobs:
         if: >
           needs.check-version.outputs.should_publish_web == 'true' ||
           needs.check-version.outputs.should_publish_react == 'true'
-        run: pnpm --filter @miden-sdk/miden-sdk run build
+        run: |
+          pnpm --filter @miden-sdk/miden-sdk run build
+          git diff --exit-code -- Cargo.lock
 
       - name: Verify WASM is optimized
         if: needs.check-version.outputs.should_publish_web == 'true'

@@ -1,6 +1,6 @@
 {
   "name": "@miden-sdk/miden-sdk",
-  "version": "0.16.3",
+  "version": "0.17.1",
   "description": "Miden WASM SDK for browser and Node.js. Run `npm create @miden-sdk@latest` to point your AI coding agent at version-matched guidance.",
   "license": "MIT",
   "repository": {
@@ -53,6 +53,7 @@
     "dist",
     "lazy",
     "mt",
+    "js/enums.js",
     "js/node-index.js",
     "js/node",
     "js/client.js",

@@ -176,7 +176,7 @@ function patchSdkPrototypes(rawSdk) {
     // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
     // local chain, so the "no fee note" reading has to be the same on both bindings.
     [rawSdk.ExecutedTransaction, ["feeNote"]],
-    [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
     // `authArg` and `feeConversionSalt` are how a caller checks what a request
     // declared about paying its fee, so they have to read the same on both
     // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
@@ -214,7 +214,6 @@ function patchSdkPrototypes(rawSdk) {
 export const NODE_ARRAY_TYPES = Object.freeze([
   "AccountArray",
   "AccountIdArray",
-  "AccountInputsArray",
   "FeltArray",
   "ForeignAccountArray",
   "NoteAndArgsArray",

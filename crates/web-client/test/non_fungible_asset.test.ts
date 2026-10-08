@@ -13,7 +13,7 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.u64Array([
           11n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
@@ -61,7 +61,7 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.u64Array([
           12n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
@@ -93,38 +93,49 @@ test.describe("non-fungible asset vault entries", () => {
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const serialized = account.serialize();
-      // Account bytes start with a 15-byte ID and a variable-length vault count.
+      // Account bytes start with a version byte, a 15-byte ID, and a variable-length vault count.
       // An empty vault count is one byte (1). Three assets use one byte (7).
-      const issuerBytes = serialized.slice(0, 15);
+      const accountPrefix = serialized.slice(0, 16);
+      const issuerBytes = serialized.slice(1, 16);
       const values = [
         new sdk.Word(sdk.u64Array([11n, 22n, 9007199254740993n, 44n])),
         new sdk.Word(sdk.u64Array([55n, 66n, 77n, 88n])),
       ];
-      // Each asset starts with its composition byte and the 15-byte issuer ID.
-      // A fungible asset then stores a u64; a non-fungible asset stores a Word.
-      const amount = new Uint8Array(8);
-      new DataView(amount.buffer).setBigUint64(0, 10n, true);
-      const fungibleBytes = [1, ...issuerBytes, ...amount];
+      // Each 0.17 asset starts with its ID version, composition, and 15-byte issuer ID.
+      // Non-fungible IDs also serialize their two-limb class before the value word.
+      const assetVersion = 1;
+      const fungibleValue = new sdk.Word(sdk.u64Array([10n, 0n, 0n, 0n]));
+      const fungibleBytes = [
+        assetVersion,
+        1,
+        ...issuerBytes,
+        ...fungibleValue.serialize(),
+      ];
+      const nonFungibleBytes = values.flatMap((value) => {
+        const serializedValue = value.serialize();
+        return [
+          assetVersion,
+          0,
+          ...issuerBytes,
+          ...serializedValue.slice(0, 16),
+          ...serializedValue,
+        ];
+      });
       const restored = sdk.Account.deserialize(
         new Uint8Array([
-          ...issuerBytes,
+          ...accountPrefix,
           7,
           ...fungibleBytes,
-          0,
-          ...issuerBytes,
-          ...values[0].serialize(),
-          0,
-          ...issuerBytes,
-          ...values[1].serialize(),
-          ...serialized.slice(16),
+          ...nonFungibleBytes,
+          ...serialized.slice(17),
         ])
       );
       const fungibleOnly = sdk.Account.deserialize(
         new Uint8Array([
-          ...issuerBytes,
+          ...accountPrefix,
           3,
           ...fungibleBytes,
-          ...serialized.slice(16),
+          ...serialized.slice(17),
         ])
       );
       const vault = restored.vault();
@@ -139,7 +150,7 @@ test.describe("non-fungible asset vault entries", () => {
           sdk.u64Array([
             limbs[0],
             limbs[1],
-            account.id().suffix().asInt(),
+            account.id().suffix().asInt() | 1n,
             account.id().prefix().asInt(),
           ])
         );
@@ -150,7 +161,7 @@ test.describe("non-fungible asset vault entries", () => {
         };
       });
       return {
-        emptyCount: serialized[15],
+        emptyCount: serialized[16],
         actual,
         expected,
         fungibleCount: vault.fungibleAssets().length,
@@ -197,7 +208,7 @@ test.describe("unified note assets", () => {
         sdk.u64Array([
           11n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );
@@ -253,7 +264,7 @@ test.describe("unified note assets", () => {
           sdk.u64Array([
             limb,
             22n,
-            issuer.suffix().asInt(),
+            issuer.suffix().asInt() | 1n,
             issuer.prefix().asInt(),
           ])
         );
@@ -328,14 +339,14 @@ test.describe("unified note assets", () => {
   test("debits an NFA into a network note and restores it from a returned P2ID", async ({
     run,
   }) => {
-    const result = await run(async ({ client, sdk }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
       const owner = await client.newWallet(
         sdk.AccountStorageMode.private(),
         sdk.AuthScheme.AuthRpoFalcon512
       );
       const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
         [new sdk.NoteScriptFee(sdk.NoteScript.p2id().root(), sdk.u64(0))],
-        owner.id()
+        await client.feeFaucetId()
       );
       const registryBuilder = new sdk.AccountBuilder(new Uint8Array(32).fill(7))
         .storageMode(sdk.AccountStorageMode.public())
@@ -345,19 +356,25 @@ test.describe("unified note assets", () => {
       }
       const registry = registryBuilder.build().account;
       await client.newAccount(registry, false);
-      // Commit the public target so the mock node can load its account state.
-      await client.submitNewTransaction(
-        registry.id(),
-        new sdk.TransactionRequestBuilder().build()
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "FEE",
+        "FEE",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
       );
-      await client.proveBlock();
-      await client.syncState();
+      // Deploy through the allowed P2ID note script before pricing network notes.
+      await helpers.mockMintAndConsume(registry.id(), faucet.id(), {
+        publicNote: true,
+      });
       const issuer = owner.id();
       const key = new sdk.Word(
         sdk.u64Array([
           11n,
           22n,
-          issuer.suffix().asInt(),
+          issuer.suffix().asInt() | 1n,
           issuer.prefix().asInt(),
         ])
       );

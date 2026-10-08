@@ -20,7 +20,7 @@ impl AdviceInputs {
 
     /// Returns the stack inputs as a vector of felts.
     pub fn stack(&self) -> Vec<Felt> {
-        self.0.advice_stack().iter().map(Into::into).collect()
+        self.0.stack().iter().map(Into::into).collect()
     }
 
     /// Returns mapped values for a given key if present.
@@ -28,7 +28,7 @@ impl AdviceInputs {
     pub fn mapped_values(&self, key: &Word) -> Option<Vec<Felt>> {
         let native_key: miden_client::Word = key.into();
         self.0
-            .map
+            .map()
             .get(&native_key)
             .map(|arc| arc.iter().copied().map(Into::into).collect())
     }

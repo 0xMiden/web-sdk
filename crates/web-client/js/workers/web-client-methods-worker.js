@@ -461,6 +461,7 @@ async function processMessage(event) {
         hasSignCb,
         logLevel,
         numThreads,
+        feeFaucetId,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -494,6 +495,7 @@ async function processMessage(event) {
           noteTransportUrl,
           seed,
           storeName,
+          feeFaucetId,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined
@@ -503,7 +505,8 @@ async function processMessage(event) {
           rpcUrl,
           noteTransportUrl,
           seed,
-          storeName
+          storeName,
+          feeFaucetId
         );
       }
 

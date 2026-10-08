@@ -97,6 +97,8 @@ function makeNoteArray() {
   };
 }
 
+let lastBuilder = null;
+
 function makeTxRequestBuilder() {
   const self = {
     withOwnOutputNotes: vi.fn().mockReturnThis(),
@@ -144,7 +146,13 @@ function makeWasm(overrides = {}) {
     ForeignAccount: {
       public: vi.fn().mockReturnValue("foreignAcc"),
     },
-    ForeignAccountArray: vi.fn().mockReturnValue("foreignAccArray"),
+    // The real array is push-based and consumes what it is given, so the double
+    // records pushes: createNetworkNote has to declare the target network account,
+    // and a returned string would hide whether it did.
+    ForeignAccountArray: vi.fn().mockImplementation(function () {
+      const pushed = [];
+      return { pushed, push: (account) => pushed.push(account) };
+    }),
     AccountStorageRequirements: vi.fn().mockReturnValue("storageReqs"),
     AdviceInputs: vi.fn().mockReturnValue("adviceInputs"),
     NetworkAccountTarget: vi.fn().mockImplementation(() => networkTarget),
@@ -212,9 +220,12 @@ function makeInner(overrides = {}) {
     newMintTransactionRequest: vi.fn().mockResolvedValue("mintRequest"),
     newB2AggTransactionRequest: vi.fn().mockResolvedValue("b2aggRequest"),
     newConsumeTransactionRequest: vi.fn().mockResolvedValue("consumeRequest"),
-    feeAwareTransactionRequestBuilder: vi
-      .fn()
-      .mockImplementation(async () => makeTxRequestBuilder()),
+    // Keep the builder the resource actually used, so a test can assert what was
+    // declared on it rather than only that one was asked for.
+    feeAwareTransactionRequestBuilder: vi.fn().mockImplementation(async () => {
+      lastBuilder = makeTxRequestBuilder();
+      return lastBuilder;
+    }),
     newSwapTransactionRequest: vi.fn().mockResolvedValue("swapRequest"),
     newPswapCreateTransactionRequest: vi
       .fn()
@@ -268,63 +279,6 @@ function makeResource(
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe("TransactionsResource", () => {
-  describe("foreignAccountInputs", () => {
-    it.each(["browser", "node"])(
-      "preserves caller handles and result order on %s",
-      async (platform) => {
-        const foreignAccounts = ["z", "a"].map((id) => ({
-          id,
-          consumed: false,
-          accountId() {
-            if (this.consumed) throw new Error("account handle was consumed");
-            return this.id;
-          },
-        }));
-        class BrowserArray {
-          constructor(items = []) {
-            this.items = items.map((item) => {
-              const copy = { id: item.accountId() };
-              item.consumed = true;
-              return copy;
-            });
-          }
-          push(item) {
-            this.items.push({ id: item.accountId() });
-          }
-        }
-        const getForeignAccountInputs = vi.fn(async (accounts) => {
-          const inputs = (
-            platform === "browser" ? accounts.items : accounts
-          ).map((account) => ({ accountId: () => account.id }));
-          return platform === "browser"
-            ? { length: () => inputs.length, get: (i) => inputs[i] }
-            : inputs;
-        });
-        const { resource } = makeResource(
-          { getForeignAccountInputs },
-          {},
-          { ForeignAccountArray: platform === "browser" ? BrowserArray : Array }
-        );
-
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const inputs = await resource.foreignAccountInputs(
-            foreignAccounts,
-            42
-          );
-          expect(inputs.map((input) => input.accountId())).toEqual(["z", "a"]);
-          expect(foreignAccounts.map((account) => account.accountId())).toEqual(
-            ["z", "a"]
-          );
-        }
-        expect(getForeignAccountInputs).toHaveBeenCalledTimes(2);
-        expect(getForeignAccountInputs).toHaveBeenLastCalledWith(
-          expect.anything(),
-          42
-        );
-      }
-    );
-  });
-
   describe("send — default path", () => {
     it("builds send request and submits", async () => {
       const { resource, inner } = makeResource();
@@ -491,6 +445,18 @@ describe("TransactionsResource", () => {
         expect.anything(),
         undefined
       );
+      // Since 0.17 the kernel prices the note through a procedure call on the
+      // target, so the emitting request declares it as a foreign account, which
+      // pins that state at the reference block rather than depending on the
+      // client resolving the account lazily.
+      // `new AccountStorageRequirements()` returns the constructed double, not the
+      // mock's return value, so only the account is matched exactly here.
+      expect(wasm.ForeignAccount.public).toHaveBeenCalledWith(
+        "targetIdObj",
+        expect.anything()
+      );
+      const declared = lastBuilder.withForeignAccounts.mock.calls[0][0];
+      expect(declared.pushed).toEqual(["foreignAcc"]);
       expect(wasm.NoteTag.withAccountTarget).toHaveBeenCalledWith(
         "targetIdObj"
       );
@@ -801,6 +767,43 @@ describe("TransactionsResource", () => {
   });
 
   describe("consumeAll", () => {
+    // The account these tests consume for; entries are matched against it.
+    const ACC = "0xaccHex";
+
+    // A ConsumableNoteRecord: consumable now, or block-locked when a height is
+    // given (the screener's `ConsumableAfter`).
+    const consumableNote = (note, afterBlock = null) => ({
+      inputNoteRecord: vi
+        .fn()
+        .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
+      noteConsumability: vi.fn().mockReturnValue([
+        {
+          accountId: () => ({ toString: () => ACC }),
+          consumptionStatus: () => ({
+            isConsumableNow: () => afterBlock == null,
+            consumableAfterBlock: () => afterBlock,
+          }),
+        },
+      ]),
+    });
+
+    // A never-consumable status reports no unlock block either, so only the
+    // status reader keeps it out of the request.
+    const neverConsumableNote = (note) => ({
+      inputNoteRecord: vi
+        .fn()
+        .mockReturnValue({ toNote: vi.fn().mockReturnValue(note) }),
+      noteConsumability: vi.fn().mockReturnValue([
+        {
+          accountId: () => ({ toString: () => ACC }),
+          consumptionStatus: () => ({
+            isConsumableNow: () => false,
+            consumableAfterBlock: () => null,
+          }),
+        },
+      ]),
+    });
+
     it("returns empty result when no consumable notes", async () => {
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([]),
@@ -818,16 +821,8 @@ describe("TransactionsResource", () => {
     });
 
     it("consumes all notes and returns count", async () => {
-      const note1 = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
-      };
-      const note2 = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n2") }),
-      };
+      const note1 = consumableNote("n1");
+      const note2 = consumableNote("n2");
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note1, note2]),
       });
@@ -847,11 +842,7 @@ describe("TransactionsResource", () => {
       // constructor or to submit would be a use-after-free. Both of those take
       // `&AccountId` though, which borrows, so a single replacement serves both
       // — allocating a second wrapper would be waste, not safety.
-      const note = {
-        inputNoteRecord: vi
-          .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
-      };
+      const note = consumableNote("n1");
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note]),
       });
@@ -865,12 +856,88 @@ describe("TransactionsResource", () => {
       expect(requestAccountId.toString()).toBe("0xaccHex");
     });
 
-    it("respects maxNotes option", async () => {
-      const notes = Array.from({ length: 5 }, (_, i) => ({
+    it("skips block-locked notes, in the request and in the counts", async () => {
+      // A block-locked note cannot be consumed yet and would fail the whole
+      // transaction; notes.listAvailable hides it, so consumeAll must too.
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([
+            consumableNote("now"),
+            consumableNote("locked", 12345),
+          ]),
+      });
+      const result = await resource.consumeAll({ account: "0xaccHex" });
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["now"],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+      expect(result.consumed).toBe(1);
+      expect(result.remaining).toBe(0);
+    });
+
+    it("returns an empty result when every consumable note is block-locked", async () => {
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([consumableNote("locked", 999)]),
+      });
+      const result = await resource.consumeAll({ account: "0xaccHex" });
+      expect(result).toEqual({ txId: null, consumed: 0, remaining: 0 });
+      expect(inner.newConsumeTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("skips a never-consumable note, which reports no unlock block either", async () => {
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi
+          .fn()
+          .mockResolvedValue([
+            consumableNote("now"),
+            neverConsumableNote("never"),
+          ]),
+      });
+      const result = await resource.consumeAll({ account: "0xaccHex" });
+      expect(inner.newConsumeTransactionRequest).toHaveBeenCalledWith(
+        ["now"],
+        expect.objectContaining({ hex: "0xaccHex" })
+      );
+      expect(result.consumed).toBe(1);
+    });
+
+    it("reads the queried account's entry, not another account's", async () => {
+      const mixed = {
         inputNoteRecord: vi
           .fn()
-          .mockReturnValue({ toNote: vi.fn().mockReturnValue(`n${i}`) }),
-      }));
+          .mockReturnValue({ toNote: vi.fn().mockReturnValue("mixed") }),
+        noteConsumability: vi.fn().mockReturnValue([
+          {
+            accountId: () => ({ toString: () => ACC }),
+            consumptionStatus: () => ({
+              isConsumableNow: () => false,
+              consumableAfterBlock: () => 12345,
+            }),
+          },
+          {
+            accountId: () => ({ toString: () => "0xother" }),
+            consumptionStatus: () => ({
+              isConsumableNow: () => true,
+              consumableAfterBlock: () => null,
+            }),
+          },
+        ]),
+      };
+      const { resource, inner } = makeResource({
+        getConsumableNotes: vi.fn().mockResolvedValue([mixed]),
+      });
+      const result = await resource.consumeAll({ account: ACC });
+      expect(result).toEqual({ txId: null, consumed: 0, remaining: 0 });
+      expect(inner.newConsumeTransactionRequest).not.toHaveBeenCalled();
+    });
+
+    it("respects maxNotes option", async () => {
+      const notes = Array.from({ length: 5 }, (_, i) =>
+        consumableNote(`n${i}`)
+      );
       const { resource } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue(notes),
       });
@@ -883,13 +950,7 @@ describe("TransactionsResource", () => {
     });
 
     it("returns early when maxNotes=0 reduces toConsume to empty", async () => {
-      const notes = [
-        {
-          inputNoteRecord: vi
-            .fn()
-            .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
-        },
-      ];
+      const notes = [consumableNote("n1")];
       const { resource } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue(notes),
       });
@@ -1378,9 +1439,6 @@ describe("TransactionsResource", () => {
         "waitFor",
         // Receives the request directly and has no options bag.
         "captureAnchor",
-        // Takes its reference block as a positional argument, and fetches
-        // rather than executes, so there is no options bag and no tip.
-        "foreignAccountInputs",
       ]);
       const { declared, guarded } = analyzeResource(source);
 
@@ -2031,6 +2089,15 @@ describe("TransactionsResource", () => {
         inputNoteRecord: vi
           .fn()
           .mockReturnValue({ toNote: vi.fn().mockReturnValue("n1") }),
+        noteConsumability: vi.fn().mockReturnValue([
+          {
+            accountId: () => ({ toString: () => "0xaccHex" }),
+            consumptionStatus: () => ({
+              isConsumableNow: () => true,
+              consumableAfterBlock: () => null,
+            }),
+          },
+        ]),
       };
       const { resource, inner } = makeResource({
         getConsumableNotes: vi.fn().mockResolvedValue([note1]),

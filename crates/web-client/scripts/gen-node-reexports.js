@@ -31,10 +31,9 @@ const END = "// </generated:napi-reexports>";
 
 // napi exports the Node entry surfaces manually (so they are NOT generated):
 //   - WebClient:   re-exported as the wrapped `WasmWebClient`.
-//   - AccountType: shadowed by a plain-JS enum constant.
 //   - AuthScheme:  shadowed by a plain-JS enum constant (the napi class is
 //                  re-exported by hand as `AuthSchemeNative`).
-const MANUAL = new Set(["WebClient", "AccountType", "AuthScheme"]);
+const MANUAL = new Set(["WebClient", "AuthScheme"]);
 
 async function buildFile() {
   const napi = loadNativeModule();
@@ -70,18 +69,32 @@ async function buildFile() {
     ...prettierConfig,
     filepath: FILE,
   });
-  return { src, formatted, count: names.length };
+  return { src, formatted, count: names.length, names };
 }
 
 const check = process.argv.includes("--check");
-const { src, formatted, count } = await buildFile();
+const { src, formatted, count, names } = await buildFile();
 
 if (check) {
   if (formatted !== src) {
+    const committed = new Set(
+      [...src.matchAll(/_reexport\(\s*"([^"]+)"\s*\)/g)].map((m) => m[1])
+    );
+    const live = new Set(names);
+    const onlyNapi = names.filter((name) => !committed.has(name));
+    const onlyFile = [...committed].filter((name) => !live.has(name)).sort();
     console.error(
       "❌ js/node-index.js is out of sync with the napi surface.\n" +
         "   Run `pnpm --filter @miden-sdk/miden-sdk gen:node-reexports` and commit the result."
     );
+    if (onlyNapi.length === 0 && onlyFile.length === 0) {
+      console.error(
+        "   Class names match; prettier formatted the file differently."
+      );
+    } else {
+      console.error(`   napi only: ${onlyNapi.join(", ") || "(none)"}`);
+      console.error(`   file only: ${onlyFile.join(", ") || "(none)"}`);
+    }
     process.exit(1);
   }
   console.log(

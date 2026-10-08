@@ -64,37 +64,23 @@ function ensureInitialized() {
 // Initialize on import
 ensureInitialized();
 
-// ── Enum constants (matching browser entry point) ────────────────────
+// ── Enum constants (shared with the browser entry via enums.js) ─────
 
-export const AccountType = Object.freeze({
-  FungibleFaucet: "FungibleFaucet",
-  NonFungibleFaucet: "NonFungibleFaucet",
-});
-
-export const AuthScheme = Object.freeze({
-  Falcon: "falcon",
-  ECDSA: "ecdsa",
-});
-
-export const NoteVisibility = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const StorageMode = Object.freeze({
-  Public: "public",
-  Private: "private",
-});
-
-export const Linking = Object.freeze({
-  Dynamic: "dynamic",
-  Static: "static",
-});
+export {
+  FaucetType,
+  AuthScheme,
+  NoteVisibility,
+  StorageMode,
+  Linking,
+} from "./enums.js";
 
 // ── Re-exports ───────────────────────────────────────────────────────
 
 export { MidenClient };
 export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
+// Standalone helpers must be re-exported here too: this entry is what the
+// package's "node" condition resolves to, while both entries share one .d.ts.
+export { isConsumableNow } from "./utils.js";
 
 // Internal exports (matching browser entry point)
 export {
@@ -176,9 +162,6 @@ export const AccountFile = /* @__PURE__ */ _reexport("AccountFile");
 export const AccountHeader = /* @__PURE__ */ _reexport("AccountHeader");
 export const AccountId = /* @__PURE__ */ _reexport("AccountId");
 export const AccountIdArray = /* @__PURE__ */ _reexport("AccountIdArray");
-export const AccountInputs = /* @__PURE__ */ _reexport("AccountInputs");
-export const AccountInputsArray =
-  /* @__PURE__ */ _reexport("AccountInputsArray");
 export const AccountInterface = /* @__PURE__ */ _reexport("AccountInterface");
 export const AccountPatch = /* @__PURE__ */ _reexport("AccountPatch");
 export const AccountProof = /* @__PURE__ */ _reexport("AccountProof");
@@ -193,6 +176,7 @@ export const AccountStoragePatch = /* @__PURE__ */ _reexport(
 export const AccountStorageRequirements = /* @__PURE__ */ _reexport(
   "AccountStorageRequirements"
 );
+export const AccountType = /* @__PURE__ */ _reexport("AccountType");
 export const AccountVaultDelta = /* @__PURE__ */ _reexport("AccountVaultDelta");
 export const AccountVaultPatch = /* @__PURE__ */ _reexport("AccountVaultPatch");
 export const Address = /* @__PURE__ */ _reexport("Address");
@@ -232,11 +216,6 @@ export const ForeignAccountArray = /* @__PURE__ */ _reexport(
   "ForeignAccountArray"
 );
 export const FungibleAsset = /* @__PURE__ */ _reexport("FungibleAsset");
-export const FungibleAssetDelta =
-  /* @__PURE__ */ _reexport("FungibleAssetDelta");
-export const FungibleAssetDeltaItem = /* @__PURE__ */ _reexport(
-  "FungibleAssetDeltaItem"
-);
 export const GetProceduresResultItem = /* @__PURE__ */ _reexport(
   "GetProceduresResultItem"
 );

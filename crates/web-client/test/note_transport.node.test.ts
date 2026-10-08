@@ -1,27 +1,23 @@
 // @ts-nocheck
 import { test, expect } from "./test-setup";
 
-// Regression guard for the block-hint overshoot bug (web-sdk#262): a sender that
-// relays a private note AFTER syncing past the note's on-chain commitment must
-// still deliver it. `sendPrivateOutputNote` derives the recipient's scan-start
-// block from the note's stored expected_height (the submission tip, at or below the
-// commitment); a sync-height hint would sit ABOVE the commitment once the sender
-// advanced past it, and the recipient — which scans FORWARD from the hint — would
-// silently never bind the note.
+// A sender that relays a private output note AFTER syncing past the note's
+// commitment must still deliver it. `sendPrivateOutputNote` reads the inclusion
+// proof sync stored on the output note. That proof names the commitment block,
+// and the recipient scans forward from it.
 //
-// This is a CROSS-client test. A private note's details are not on-chain, so the
-// recipient can only obtain them through the transport layer (never by auto-import
-// from the chain), and a same-client mock chain auto-imports the committed note for
-// a tracked recipient, bypassing the transport entirely. So the recipient lives on a
-// second client that shares only the sender's post-relay mock chain + note-transport
-// node — exactly the sender→recipient split the bug affects.
+// This is a cross-client test. A private note's details are not on chain, so the
+// recipient can only obtain them through the transport layer, and a same-client
+// mock chain auto-imports the committed note for a tracked recipient. The
+// recipient lives on a second client that shares only the sender's post-relay
+// mock chain and note-transport node.
 //
-// It lives in a `.node.test.ts` file (node-only) on purpose. The behavior under test
-// is platform-independent Rust, so the napi client exercises the identical code path.
-// The browser mock harness serializes the whole mock chain through its worker on every
-// delegated op (see the note in test-setup's setupBrowserPage), and driving two full
-// mock clients plus chain/transport serialization through that path hangs — a harness
-// limitation unrelated to the SDK behavior this guards.
+// It lives in a `.node.test.ts` file (node-only) on purpose. The behavior under
+// test is platform-independent Rust, so the napi client exercises the same path.
+// The browser mock harness serializes the whole mock chain through its worker on
+// every delegated op (see the note in test-setup's setupBrowserPage), and driving
+// two full mock clients plus chain and transport serialization through that path
+// hangs.
 test("private-note recipient still receives after the sender syncs past the note's commitment", async ({
   run,
 }) => {
@@ -78,9 +74,9 @@ test("private-note recipient still receives after the sender syncs past the note
       recipientWallet.id(),
       "BasicWallet"
     );
-    // Relay via the convenience method: it derives the recipient's scan-start block from the
-    // output note's expected_height (the submission tip, at or below the commitment), NOT the
-    // sender's now-advanced sync height — so delivery survives the sync advance.
+    // Relay via the convenience method. It reads the output note's inclusion
+    // proof, which names the commitment block, rather than this client's
+    // now-advanced sync height.
     await sender.sendPrivateOutputNote(relayedNoteId, recipientAddress);
 
     // Snapshot the sender's chain + transport (post-relay) and export the
@@ -101,22 +97,21 @@ test("private-note recipient still receives after the sender syncs past the note
     // Sync the recipient to the shared chain tip BEFORE it starts tracking the
     // recipient account. This is the bug's precondition: the recipient's sync
     // height is already past the note's commitment block, so its own sync never
-    // re-scans that block for its tag — it must rely entirely on the transport's
-    // block hint to locate the commitment.
+    // re-scans that block for its tag. It locates the commitment from the block
+    // the transported proof names.
     await recipient.syncState();
     await recipient.importAccountFile(
       sdk.AccountFile.deserialize(recipientAccountBytes)
     );
 
     // The delivery path for a private note is the transport layer: fetch the
-    // details, then scan forward from the block hint for the on-chain commitment.
+    // details, then scan forward from the proof's block for the commitment.
     await recipient.fetchPrivateNotes();
     await recipient.syncState();
 
     // The discriminator is COMMITTED, not All: the transport always imports the
-    // details (so an uncommitted "expected" record appears under All in both the
-    // fixed and buggy cases). Only a hint at or below the commitment lets the
-    // recipient locate the on-chain commitment and bind the note as committed.
+    // details (so an uncommitted "expected" record appears under All either way).
+    // Only a proof whose block is the commitment lets the recipient bind the note.
     const committed = await recipient.getInputNotes(
       new sdk.NoteFilter(sdk.NoteFilterTypes.Committed)
     );
@@ -137,21 +132,17 @@ test("private-note recipient still receives after the sender syncs past the note
   // commitment block, so a naive sync-height hint would overshoot it.
   expect(result.heightAtRelay).toBeGreaterThan(result.heightAtCommit);
 
-  // The recipient — already synced past the commitment before it began tracking
-  // the account — must still bind the note via the transport's commitment-block
-  // hint. With the pre-fix sync-height hint the forward scan starts above the
-  // commitment, never reaches it, and the note stays uncommitted (count 0).
+  // The recipient, already synced past the commitment before it began tracking
+  // the account, must still bind the note from the proof's block.
   expect(result.committedCount).toBe(1);
   expect(result.committedNoteId).toBe(result.relayedNoteId);
 });
 
-// Companion guard for the agnostic low-level `sendPrivateNote(note, address,
-// scanAfterBlockNum)`: the explicit hint is honoured, so relaying with a hint ABOVE
-// the note's commitment block makes the recipient scan forward from above the
-// commitment and never bind the note. This is the failure mode the block hint exists
-// to prevent, and it's what a caller would hit if they passed the client's (advanced)
-// sync height — exactly why the API forces the caller to choose the block.
-test("agnostic sendPrivateNote does NOT deliver when the explicit hint overshoots the commitment", async ({
+// The agnostic `sendPrivateNote(note, address, inclusionProof)` delivers when
+// given the output note's real inclusion proof, including after the sender has
+// synced past the commitment. The proof is captured before that advance: the
+// `Note` handed to sendPrivateNote does not carry it (`toNote()` strips it).
+test("agnostic sendPrivateNote delivers the proof captured before the sender syncs past the commitment", async ({
   run,
 }) => {
   const result = await run(async ({ sdk, helpers }) => {
@@ -191,10 +182,14 @@ test("agnostic sendPrivateNote does NOT deliver when the explicit hint overshoot
     );
     const relayedNoteId = mintTxRecord.outputNotes().notes()[0].id().toString();
     const heightAtCommit = await sender.getSyncHeight();
+    const proof = (await sender.getOutputNote(relayedNoteId)).inclusionProof();
+    if (!proof) {
+      throw new Error("committed output note has no inclusion proof");
+    }
     const note = (await sender.getInputNote(relayedNoteId)).toNote();
 
-    // Advance PAST the commitment, then relay with a deliberately-too-high hint
-    // (the sender's now-advanced sync height) via the agnostic low-level method.
+    // Advance past the commitment, then relay the note with the proof captured
+    // above. A real proof still names the commitment block.
     for (let i = 0; i < 3; i++) {
       await sender.proveBlock();
       await sender.syncState();
@@ -204,7 +199,7 @@ test("agnostic sendPrivateNote does NOT deliver when the explicit hint overshoot
       recipientWallet.id(),
       "BasicWallet"
     );
-    await sender.sendPrivateNote(note, recipientAddress, heightAtRelay);
+    await sender.sendPrivateNote(note, recipientAddress, proof);
 
     const serializedChain = await sender.serializeMockChain();
     const serializedTransport = await sender.serializeMockNoteTransportNode();
@@ -239,8 +234,8 @@ test("agnostic sendPrivateNote does NOT deliver when the explicit hint overshoot
 
   if (result.skip) return;
 
-  // The hint overshoots the commitment...
+  // The sender relayed only after syncing past the commitment.
   expect(result.heightAtRelay).toBeGreaterThan(result.heightAtCommit);
-  // ...so the recipient never binds the note: the explicit hint is honoured.
-  expect(result.committedCount).toBe(0);
+  // The captured proof still names that block, so the recipient binds the note.
+  expect(result.committedCount).toBe(1);
 });

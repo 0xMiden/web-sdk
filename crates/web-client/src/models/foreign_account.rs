@@ -5,7 +5,6 @@ use miden_client::transaction::ForeignAccount as NativeForeignAccount;
 use crate::js_error_with_context;
 use crate::models::account::Account;
 use crate::models::account_id::AccountId;
-use crate::models::account_inputs::AccountInputs;
 use crate::models::account_storage_requirements::AccountStorageRequirements;
 use crate::platform::JsErr;
 
@@ -37,18 +36,14 @@ impl ForeignAccount {
         Ok(ForeignAccount(native_foreign_account))
     }
 
-    /// Creates a foreign account entry from already fetched inputs, valid only for a transaction
-    /// whose reference block is the block they were fetched at.
-    pub fn prefetched(inputs: &AccountInputs) -> ForeignAccount {
-        ForeignAccount(NativeForeignAccount::Prefetched(inputs.into()))
-    }
-
     /// Returns the required storage slots/keys for this foreign account.
+    #[js_export(js_name = "storageSlotRequirements")]
     pub fn storage_slot_requirements(&self) -> AccountStorageRequirements {
         self.0.storage_slot_requirements().into()
     }
 
     /// Returns the ID of the foreign account.
+    #[js_export(js_name = "accountId")]
     pub fn account_id(&self) -> AccountId {
         self.0.account_id().into()
     }
