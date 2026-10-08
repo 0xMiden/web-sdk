@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { WasmWebClient as WebClient } from "@miden-sdk/miden-sdk";
 import { MidenProvider, useMiden } from "../../context/MidenProvider";
@@ -56,6 +56,8 @@ describe("MidenProvider initialization", () => {
 });
 
 describe("MidenProvider client lifetime", () => {
+  const config = { rpcUrl: "https://rpc.testnet.miden.io" };
+
   it("terminates a client whose creation finishes after unmount", async () => {
     const late = { terminate: vi.fn() };
     let finishCreate!: (client: WebClient) => void;
@@ -83,7 +85,7 @@ describe("MidenProvider client lifetime", () => {
     expect(useMidenStore.getState().client).toBeNull();
   });
 
-  it("terminates and clears its client when it unmounts", async () => {
+  it("leaves the client it handed out alive when it unmounts", async () => {
     const { unmount } = render(
       <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
         <StatusDisplay />
@@ -93,15 +95,49 @@ describe("MidenProvider client lifetime", () => {
       expect(screen.getByTestId("ready").textContent).toBe("true");
     });
     const client = useMidenStore.getState().client!;
-    expect(client.terminate).not.toHaveBeenCalled();
 
     unmount();
-    expect(client.terminate).toHaveBeenCalledTimes(1);
-    expect(useMidenStore.getState().client).toBeNull();
+    expect(client.terminate).not.toHaveBeenCalled();
+    expect(useMidenStore.getState().client).toBe(client);
   });
 
-  it("leaves a client it does not own in the store when it unmounts", async () => {
-    const { unmount } = render(
+  it("leaves the client it replaces on an identity change alive", async () => {
+    const base = await (
+      WebClient.createClientWithExternalKeystore as ReturnType<typeof vi.fn>
+    )();
+    const firstClient = { ...base, terminate: vi.fn() } as unknown as WebClient;
+    const secondClient = {
+      ...base,
+      terminate: vi.fn(),
+    } as unknown as WebClient;
+    vi.mocked(WebClient.createClientWithExternalKeystore)
+      .mockResolvedValueOnce(firstClient)
+      .mockResolvedValueOnce(secondClient);
+    const Tree = ({ storeName }: { storeName: string }) => (
+      <SignerContext.Provider
+        value={createMockSignerContext({ isConnected: true, storeName })}
+      >
+        <MidenProvider config={config}>
+          <StatusDisplay />
+        </MidenProvider>
+      </SignerContext.Provider>
+    );
+
+    const { rerender } = render(<Tree storeName="wallet_A" />);
+    await waitFor(() => {
+      expect(useMidenStore.getState().client).toBe(firstClient);
+    });
+    rerender(<Tree storeName="wallet_B" />);
+    await waitFor(() => {
+      expect(useMidenStore.getState().client).toBe(secondClient);
+    });
+
+    expect(firstClient.terminate).not.toHaveBeenCalled();
+    expect(secondClient.terminate).not.toHaveBeenCalled();
+  });
+
+  it("leaves the client it replaces on a re-init alive", async () => {
+    const { rerender } = render(
       <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
         <StatusDisplay />
       </MidenProvider>
@@ -109,16 +145,24 @@ describe("MidenProvider client lifetime", () => {
     await waitFor(() => {
       expect(screen.getByTestId("ready").textContent).toBe("true");
     });
-    const owned = useMidenStore.getState().client!;
-    const other = { terminate: vi.fn() } as unknown as WebClient;
-    act(() => {
-      useMidenStore.getState().setClient(other);
+    const firstClient = useMidenStore.getState().client!;
+    const secondClient = {
+      ...firstClient,
+      terminate: vi.fn(),
+    } as unknown as WebClient;
+    vi.mocked(WebClient.createClient).mockResolvedValueOnce(secondClient);
+
+    rerender(
+      <MidenProvider config={{ rpcUrl: "https://rpc.testnet.miden.io" }}>
+        <StatusDisplay />
+      </MidenProvider>
+    );
+    await waitFor(() => {
+      expect(useMidenStore.getState().client).toBe(secondClient);
     });
 
-    unmount();
-    expect(owned.terminate).toHaveBeenCalledTimes(1);
-    expect(other.terminate).not.toHaveBeenCalled();
-    expect(useMidenStore.getState().client).toBe(other);
+    expect(firstClient.terminate).not.toHaveBeenCalled();
+    expect(secondClient.terminate).not.toHaveBeenCalled();
   });
 
   it("terminates a client whose init fails after creating it", async () => {

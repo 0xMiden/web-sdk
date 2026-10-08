@@ -298,15 +298,16 @@ describe("MidenProvider resilient disconnect handling", () => {
           ).mock.calls.length
         ).toBeGreaterThan(firstCreateCount);
       });
-      // The identity change releases the first client before the second exists.
-      expect(firstClient.terminate).toHaveBeenCalledTimes(1);
+      // The identity change clears the store but leaves the first client
+      // alive: a hook flow that captured it may still be running.
+      expect(firstClient.terminate).not.toHaveBeenCalled();
       expect(useMidenStore.getState().client).toBeNull();
 
       finishSecond(secondClient);
       await waitFor(() => {
         expect(useMidenStore.getState().client).toBe(secondClient);
       });
-      expect(firstClient.terminate).toHaveBeenCalledTimes(1);
+      expect(firstClient.terminate).not.toHaveBeenCalled();
       expect(secondClient.terminate).not.toHaveBeenCalled();
     });
   });
