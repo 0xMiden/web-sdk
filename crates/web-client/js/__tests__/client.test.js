@@ -204,7 +204,7 @@ describe("WasmWebClient.terminate", () => {
     lastAuthError() {
       return null;
     }
-    buildSwapTag() {
+    static buildSwapTag() {
       return "tag";
     }
     async proveBlock() {}
@@ -445,9 +445,11 @@ describe("WasmWebClient.terminate", () => {
   it("fails each member in its live call shape as soon as terminate returns", async () => {
     const { client, wasmClient } = makeWebClient();
     const proxy = createClientProxy(client);
+    // A static of the wasm class is not an instance member the proxy serves.
+    expect(proxy.buildSwapTag).toBeUndefined();
 
     client.terminate();
-    expect(() => proxy.buildSwapTag()).toThrow("WebClient terminated");
+    expect(proxy.buildSwapTag).toBeUndefined();
     expect(() => proxy.lastAuthError()).toThrow("WebClient terminated");
     expect(() => proxy.keystore).toThrow("WebClient terminated");
     expect(proxy.then).toBeUndefined();
@@ -464,7 +466,7 @@ describe("WasmWebClient.terminate", () => {
     client._withInnerLockDepth = 1;
 
     client.terminate();
-    expect(proxy.buildSwapTag()).toBe("tag");
+    expect(proxy.lastAuthError()).toBeNull();
     expect(proxy.keystore).toBe("keystore");
   });
 
@@ -543,7 +545,7 @@ describe("WasmWebClient.terminate", () => {
     await client.waitForIdle();
 
     expect(() => proxy.lastAuthError()).toThrow(/terminated/);
-    expect(() => proxy.buildSwapTag()).toThrow(/terminated/);
+    expect(proxy.buildSwapTag).toBeUndefined();
     expect(() => proxy.keystore).toThrow(/terminated/);
     const proving = proxy.proveBlock();
     expect(proving).toBeInstanceOf(Promise);

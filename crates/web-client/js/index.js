@@ -86,10 +86,11 @@ const SYNC_METHODS = new Set([
   "usesMockChain",
 ]);
 
-// The members whose live call returns a value rather than a Promise, so a
-// freed client's copy throws instead of rejecting. Not SYNC_METHODS: four of
-// its entries are `async fn` in Rust.
-const SYNCHRONOUS_METHODS = new Set(["buildSwapTag", "lastAuthError"]);
+// The instance members whose live call returns a value rather than a Promise,
+// so a terminated client's copy throws instead of rejecting. Not SYNC_METHODS:
+// four of its entries are `async fn` in Rust, and `buildSwapTag` is a static of
+// the class, which the proxy never serves.
+const SYNCHRONOUS_METHODS = new Set(["lastAuthError"]);
 
 const WRITE_METHODS = new Set([
   "addAccountSecretKeyToWebStore",
