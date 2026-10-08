@@ -17,7 +17,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
 
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -97,7 +97,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
 
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "TST",
         decimals: 6,
         maxSupply: 1_000_000n,
@@ -144,6 +144,44 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     expect(result.fetchedId).toBe(result.insertedId);
     expect(result.isPublic).toBe(true);
   });
+
+  mockTest(
+    "accounts.isAllowed and accounts.register on a chain without an allowlist",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const allowed = await client.accounts.isAllowed(wallet);
+        let code = null;
+        let message = null;
+        try {
+          await client.accounts.register({
+            account: wallet,
+            invitationCode: "invitation-code",
+          });
+        } catch (error) {
+          code = error.code ?? null;
+          message = String(error.message ?? error);
+        }
+        let emptyCodeMessage = null;
+        try {
+          await client.accounts.register({
+            account: wallet,
+            invitationCode: "",
+          });
+        } catch (error) {
+          emptyCodeMessage = String(error.message ?? error);
+        }
+        return { allowed, code, message, emptyCodeMessage };
+      });
+      // The mock node enforces no allowlist, so every account is allowed and
+      // the client keeps the invitation code rather than spending it.
+      expect(result.allowed).toBe(true);
+      expect(result.code).toBe("ACCOUNT_ALREADY_ALLOWED");
+      expect(result.message).toContain("already allowed");
+      expect(result.emptyCodeMessage).toContain("invitationCode");
+    }
+  );
 
   mockTest("accounts.list returns created accounts", async ({ page }) => {
     const result = await page.evaluate(async () => {
@@ -197,7 +235,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -221,7 +259,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -262,7 +300,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -303,7 +341,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const client = await window.MidenClient.createMock();
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -338,7 +376,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const client = await window.MidenClient.createMock();
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -382,6 +420,56 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     }
   );
 
+  mockTest(
+    "chain anchor: captureAnchor pins executeRequest to the anchor block",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.createMock();
+        const wallet = await client.accounts.create();
+        const faucet = await client.accounts.create({
+          type: window.FaucetType.FungibleFaucet,
+          symbol: "DAG",
+          decimals: 8,
+          maxSupply: 10_000_000n,
+        });
+
+        const lowLevel = await window.MockWasmWebClient.createClient();
+        const mintRequest = await lowLevel.newMintTransactionRequest(
+          wallet.id(),
+          faucet.id(),
+          window.NoteType.Public,
+          BigInt(500)
+        );
+
+        const anchor = await client.transactions.captureAnchor(mintRequest);
+        const anchorBlock = anchor.blockNum();
+
+        // Advance past the anchor so the tip no longer matches it. These must
+        // be awaited: the assertion below requires the tip to have actually
+        // moved, and proveBlock bypasses the serializing wrapper.
+        await client.proveBlock();
+        await client.proveBlock();
+        await client.sync();
+        const tip = await client.getSyncHeight();
+
+        const executed = await client.transactions.executeRequest(
+          faucet,
+          mintRequest,
+          { anchor }
+        );
+        const executedBlock = executed.result
+          .executedTransaction()
+          .blockHeader()
+          .blockNum();
+
+        return { anchorBlock, tip, executedBlock };
+      });
+
+      expect(result.tip).toBeGreaterThan(result.anchorBlock);
+      expect(result.executedBlock).toBe(result.anchorBlock);
+    }
+  );
+
   // Regression test for #2011: the JS wrapper was building OutputNoteArray
   // while the WASM binding for withOwnOutputNotes switched to NoteArray,
   // causing `expected instance of NoteArray` at runtime.
@@ -394,7 +482,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const sender = await client.accounts.create();
         const receiver = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -517,7 +605,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -557,7 +645,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -597,7 +685,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -680,7 +768,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const client = await window.MidenClient.createMock();
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -707,7 +795,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -722,10 +810,31 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       await client.sync();
 
       const available = await client.notes.listAvailable({ account: wallet });
-      return { availableCount: available.length };
+
+      // Same contract as the napi test: the status, not a missing block
+      // number, says whether a note is consumable now.
+      const consumable = await client.notes.listConsumable({ account: wallet });
+      const status = consumable[0]?.noteConsumability()[0].consumptionStatus();
+      // Omitting the account lists notes consumable by any tracked account.
+      const allAccounts = await client.notes.listConsumable();
+
+      return {
+        availableCount: available.length,
+        consumableCount: consumable.length,
+        isConsumableNow: status?.isConsumableNow(),
+        afterBlock: status?.consumableAfterBlock() ?? null,
+        neverIsConsumableNow:
+          window.NoteConsumptionStatus.neverConsumable("x").isConsumableNow(),
+        allAccountsCount: allAccounts.length,
+      };
     });
 
     expect(result.availableCount).toBeGreaterThanOrEqual(1);
+    expect(result.consumableCount).toBeGreaterThanOrEqual(1);
+    expect(result.isConsumableNow).toBe(true);
+    expect(result.afterBlock).toBeNull();
+    expect(result.neverIsConsumableNow).toBe(false);
+    expect(result.allAccountsCount).toBeGreaterThanOrEqual(1);
   });
 
   mockTest("terminate prevents resource operations", async ({ page }) => {
@@ -763,7 +872,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -846,7 +955,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -888,7 +997,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       const client = await window.MidenClient.createMock();
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -916,37 +1025,40 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
   });
 
   mockTest(
-    "transactions.preview returns a TransactionSummary",
+    "transactions.preview rejects when the transaction is already authorized",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.createMock();
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
         });
 
-        const summary = await client.transactions.preview({
-          operation: "mint",
-          account: faucet,
-          to: wallet,
-          amount: 1000n,
-        });
-
-        return {
-          hasSummary: summary != null,
-          hasOutputNotes: typeof summary.outputNotes === "function",
-          outputNotesCount: summary.outputNotes().numNotes(),
-          hasAccountDelta: typeof summary.accountDelta === "function",
-        };
+        // The faucet's key is in the keystore, so the mint executes
+        // successfully and no pending-authorization summary exists.
+        try {
+          await client.transactions.preview({
+            operation: "mint",
+            account: faucet,
+            to: wallet,
+            amount: 1000n,
+          });
+          return { threw: false, code: null, message: "" };
+        } catch (error) {
+          return {
+            threw: true,
+            code: (error as { code?: string }).code ?? null,
+            message: `${(error as Error).message ?? error}`,
+          };
+        }
       });
 
-      expect(result.hasSummary).toBe(true);
-      expect(result.hasOutputNotes).toBe(true);
-      expect(result.outputNotesCount).toBeGreaterThan(0);
-      expect(result.hasAccountDelta).toBe(true);
+      expect(result.threw).toBe(true);
+      expect(result.code).toBe("TRANSACTION_ALREADY_AUTHORIZED");
+      expect(result.message).toContain("already fully authorized");
     }
   );
 
@@ -957,7 +1069,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         const client = await window.MidenClient.createMock();
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -986,13 +1098,13 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.createMock();
       const faucetA = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "AAA",
         decimals: 8,
         maxSupply: 10_000_000n,
       });
       const faucetB = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "BBB",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -1075,7 +1187,7 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
 
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -1116,6 +1228,7 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_create_test",
       });
 
@@ -1132,19 +1245,97 @@ nodeTest.describe("MidenClient API - Integration", () => {
     expect(result.syncHeight).toBeGreaterThanOrEqual(0);
   });
 
+  // Pins the accessor to its input. Reading it twice and comparing cannot fail;
+  // comparing it to the faucet the client was created with fails the moment it
+  // reports any other valid id.
+  nodeTest(
+    "feeFaucetId reports the faucet the client was created with",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
+          storeName: "miden_client_api_fee_faucet_test",
+        });
+
+        // The configured id is whatever the harness was given - bech32 from a
+        // node's bootstrap log, hex from an override - so normalize both sides
+        // through the SDK's own parsers before comparing.
+        const canonical = (id) => {
+          try {
+            return window.AccountId.fromBech32(id).toString();
+          } catch {
+            return window.AccountId.fromHex(id).toString();
+          }
+        };
+
+        return {
+          configured: canonical(window.feeFaucetId),
+          reported: (await client.feeFaucetId()).toString(),
+        };
+      });
+
+      expect(result.configured).toBe(result.reported);
+    }
+  );
+
+  // The client gets the chain's protocol configuration from the node when it
+  // syncs, so a client created without `feeFaucetId` executes like any other
+  // and reports the chain's own faucet once synced.
+  nodeTest(
+    "a client without a fee faucet syncs the protocol configuration and reports the chain's faucet",
+    async ({ page }) => {
+      const result = await page.evaluate(async () => {
+        const client = await window.MidenClient.create({
+          rpcUrl: window.rpcUrl,
+          storeName: "miden_client_api_synced_fee_faucet_test",
+        });
+
+        let beforeSync = null;
+        try {
+          await client.feeFaucetId();
+        } catch (err) {
+          beforeSync = String(err?.message ?? err);
+        }
+
+        await client.sync();
+
+        const canonical = (id) => {
+          try {
+            return window.AccountId.fromBech32(id).toString();
+          } catch {
+            return window.AccountId.fromHex(id).toString();
+          }
+        };
+
+        return {
+          beforeSync,
+          configured: canonical(window.feeFaucetId),
+          reported: (await client.feeFaucetId()).toString(),
+        };
+      });
+
+      // Before the first sync nothing names the faucet, and the error says what
+      // to do about it.
+      expect(result.beforeSync).toContain("feeFaucetId");
+      expect(result.reported).toBe(result.configured);
+    }
+  );
+
   nodeTest(
     "accounts.create wallet and faucet via integration",
     async ({ page }) => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
           storeName: "miden_client_api_accounts_test",
         });
         await client.sync();
 
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -1172,13 +1363,14 @@ nodeTest.describe("MidenClient API - Integration", () => {
       const result = await page.evaluate(async () => {
         const client = await window.MidenClient.create({
           rpcUrl: window.rpcUrl,
+          feeFaucetId: window.feeFaucetId,
           storeName: "miden_client_api_send_test",
         });
         await client.sync();
 
         const wallet = await client.accounts.create();
         const faucet = await client.accounts.create({
-          type: window.AccountType.FungibleFaucet,
+          type: window.FaucetType.FungibleFaucet,
           symbol: "DAG",
           decimals: 8,
           maxSupply: 10_000_000n,
@@ -1236,13 +1428,14 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_txlist_test",
       });
       await client.sync();
 
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,
@@ -1284,13 +1477,14 @@ nodeTest.describe("MidenClient API - Integration", () => {
     const result = await page.evaluate(async () => {
       const client = await window.MidenClient.create({
         rpcUrl: window.rpcUrl,
+        feeFaucetId: window.feeFaucetId,
         storeName: "miden_client_api_notes_test",
       });
       await client.sync();
 
       const wallet = await client.accounts.create();
       const faucet = await client.accounts.create({
-        type: window.AccountType.FungibleFaucet,
+        type: window.FaucetType.FungibleFaucet,
         symbol: "DAG",
         decimals: 8,
         maxSupply: 10_000_000n,

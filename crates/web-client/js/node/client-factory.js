@@ -40,8 +40,8 @@ function normBytes(val) {
  * Creates the WasmWebClient factory for Node.js.
  *
  * Matches the browser interface:
- *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, debugMode)
- *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, debugMode)
+ *   WasmWebClient.createClient(rpcUrl, noteTransportUrl, seed, storeName, logLevel, useWorker, observability, feeFaucetId)
+ *   WasmWebClient.createClientWithExternalKeystore(rpcUrl, noteTransportUrl, seed, storeName, getKey, insertKey, sign, logLevel, useWorker, observability, feeFaucetId)
  *   WasmWebClient.buildSwapTag(...)
  *
  * @param {object} rawSdk - The raw napi SDK module.
@@ -53,12 +53,17 @@ export function createWasmWebClient(rawSdk, options) {
     buildSwapTag: (...args) =>
       rawSdk.WebClient.buildSwapTag(...args.map(normalizeArg)),
 
+    // The trailing parameters exist so this matches what `MidenClient.create`
+    // passes the browser factory; only `feeFaucetId` reaches the native client.
     createClient: async (
       rpcUrl,
       noteTransportUrl,
       seed,
       storeName,
-      debugMode
+      _logLevel,
+      _useWorker,
+      _observability,
+      feeFaucetId
     ) => {
       const dir = options?.dataDir
         ? path.join(options.dataDir, storeName || "default")
@@ -73,7 +78,7 @@ export function createWasmWebClient(rawSdk, options) {
         normBytes(seed) ?? null,
         path.join(dir, `${storeName || "store"}.db`),
         path.join(dir, "keystore"),
-        debugMode ?? false
+        feeFaucetId ?? null
       );
       return wrapClient(client, storeName);
     },

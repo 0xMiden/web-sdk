@@ -3,17 +3,23 @@ name: Publish Rust Crates on Release
 on:
   release:
     types: [published]
-  # Manual trigger to (re-)publish the crates from a chosen ref — used to recover when a release's
-  # crates-publish failed partway, or to catch crates.io up to a fix that landed after the tag.
+
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Git ref (branch/tag/sha) to publish from. Defaults to the branch this run is dispatched on."
-        required: false
-        default: ""
+      version:
+        description: "Release tag to publish (E.G. v0.16.0-alpha.1). Corresponding GitHub release must already exist."
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: "${{ github.workflow }} @ ${{ inputs.version || github.event.release.tag_name }}"
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.version || github.event.release.tag_name }}
 
 jobs:
   publish:
@@ -21,78 +27,145 @@ jobs:
     if: ${{ github.repository_owner == '0xMiden' }}
     env:
       CARGO_TERM_COLOR: always
+      # Important: use an absolute path so `cargo publish` verification builds
+      # (which happen from `target/package/...`) don't create nested `target/` dirs.
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
+      - name: Validate release tag
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Release tags must be semver-compatible (e.g. v1.2.3 or v1.2.3-rc.1)"
+            exit 1
+          fi
+
       - name: Check out code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # On a release event, the tag; on workflow_dispatch, the input ref (empty default falls
-          # back to the dispatched branch via the action's own default).
-          ref: ${{ github.event.release.tag_name || inputs.ref }}
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Cleanup large tools for build space
         uses: ./.github/actions/cleanup-runner
 
+      - name: Verify GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null; then
+            echo "::error::GitHub release ${RELEASE_TAG} does not exist. Refusing to publish crates."
+            exit 1
+          fi
+
       - name: Log release info
         run: |
-          echo "Trigger: ${{ github.event_name }}"
-          echo "Release tag (if any): ${{ github.event.release.tag_name }}"
+          echo "Publishing release $RELEASE_TAG"
           echo "Commit: $(git rev-parse HEAD)"
 
       - name: Update Rust toolchain
         run: |
           rustup update --no-self-update
+          # The preflight verifies the WASM crates against wasm32, so the
+          # target has to exist before it runs. Adding it here rather than
+          # inside the preflight keeps a rustup outage a hard failure instead
+          # of hiding behind the preflight's `continue-on-error`.
+          rustup target add wasm32-unknown-unknown
 
-      # Dry-run only the crates that resolve standalone. web-client is omitted: it depends on
-      # js-export-macro + idxdb-store, which aren't on crates.io until the publish steps below run,
-      # so it can't be dry-run before them.
+      # This is the only step that compiles a crate before it is uploaded: the
+      # publish step below passes --no-verify, because a workspace publish
+      # verifies on the host and the wasm32-only crates cannot build there.
+      # So this gates the release - it is deliberately not continue-on-error.
       - name: Preflight - publish dry run
-        continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cd crates/js-export-macro
-          cargo publish --dry-run
-          cd ../idxdb-store
-          cargo publish --dry-run
-          cd ../mobile-prover
-          cargo publish --dry-run
+          set -uo pipefail
+
+          # No single target verifies the whole workspace, so the dry run is
+          # split in two:
+          #
+          #   * `miden-idxdb-store` implements `miden_client`'s `Store` with
+          #     `#[async_trait(?Send)]`, which is correct for wasm32 and fails
+          #     every method with E0053 on the host. `miden-client-web` depends
+          #     on it. Both must be verified against wasm32.
+          #   * `miden-mobile-prover` is the mirror image: it pulls in tokio's
+          #     net stack, whose `mio` backend has no wasm32 support, so it
+          #     must be verified against the host.
+          #   * `js-export-macro` is `proc-macro = true`, and cargo builds proc
+          #     macros for the host whichever `--target` is in play, so it rides
+          #     along with the wasm32 invocation.
+          #
+          # Both legs run even if the first fails, so one broken crate does not
+          # hide the state of the others.
+          status=0
+
+          cargo publish --workspace --dry-run --locked \
+            --target wasm32-unknown-unknown \
+            --exclude miden-mobile-prover || status=1
+
+          cargo publish --package miden-mobile-prover --dry-run --locked || status=1
+
+          exit "${status}"
 
       - name: Cleanup cargo package artifacts (after dry-run)
         if: always()
         run: |
           rm -rf "$CARGO_TARGET_DIR/package" || true
 
-      # Publish in dependency order: js-export-macro and idxdb-store first, then web-client (which
-      # depends on both), then mobile-prover.
-      - name: Publish js-export-macro
+      - name: Publish unpublished crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cd crates/js-export-macro
-          cargo publish
+          set -euo pipefail
 
-      - name: Publish idxdb-store
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/idxdb-store
-          cargo publish
+          metadata="$(cargo metadata --no-deps --format-version 1)"
 
-      # --no-verify: web-client is a wasm `cdylib` that does not build for the host target (its
-      # miden-client dependency is configured for wasm), so cargo's default host verify build
-      # fails. The crate is verified for wasm32 by the build and clippy-wasm CI jobs instead.
-      - name: Publish web-client
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/web-client
-          cargo publish --no-verify
+          # Ask each crate for its OWN version rather than deriving one from the
+          # release tag. The two are decoupled: a release that ships only npm
+          # packages leaves the Cargo workspace version alone, so v0.16.2 tagged
+          # a tree whose crates are still 0.16.1. Checking `<crate>@0.16.2` then
+          # found nothing on crates.io, concluded all four crates were
+          # unpublished, and handed `cargo publish` a list it refused with
+          # "crate miden-idxdb-store@0.16.1 already exists" - failing the job on
+          # a release that had nothing to publish at all.
+          mapfile -t publishable_crates < <(
+            jq -r '[.packages[] | select(.publish != []) | "\(.name) \(.version)"] | sort | .[]' <<< "${metadata}"
+          )
 
-      - name: Publish mobile-prover
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/mobile-prover
-          cargo publish
+          # Neither errexit nor pipefail observes a process substitution, so a
+          # jq failure or a cargo metadata schema change would leave this array
+          # empty - and an empty array walks straight into the "nothing to do"
+          # exit 0 below, reporting a release that published nothing as success.
+          # This workspace always has publishable members, so empty is a bug.
+          if [[ "${#publishable_crates[@]}" -eq 0 ]]; then
+            echo "::error::cargo metadata yielded no publishable crates; refusing to report success"
+            exit 1
+          fi
+
+          exclude_args=()
+          remaining_crates=()
+
+          for entry in "${publishable_crates[@]}"; do
+            crate="${entry%% *}"
+            crate_version="${entry##* }"
+            if cargo info --quiet --registry crates-io "${crate}@${crate_version}" >/dev/null 2>&1; then
+              echo "${crate} ${crate_version} already exists on crates.io; excluding it."
+              exclude_args+=(--exclude "${crate}")
+            else
+              remaining_crates+=("${crate} ${crate_version}")
+            fi
+          done
+
+          if [[ "${#remaining_crates[@]}" -eq 0 ]]; then
+            echo "Every publishable crate is already on crates.io at its manifest version; nothing to do."
+            exit 0
+          fi
+
+          echo "Publishing crates that are not yet on crates.io:"
+          printf '  %s\n' "${remaining_crates[@]}"
+
+          cargo publish --workspace --no-verify --locked "${exclude_args[@]}"

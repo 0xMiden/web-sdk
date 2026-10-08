@@ -1,0 +1,19 @@
+[package]
+authors.workspace      = true
+description            = "Strips MASP debug_info sections from Miden packages embedded in a compiled WASM binary"
+edition.workspace      = true
+license.workspace      = true
+name                   = "strip-masp-debug"
+publish                = false
+repository.workspace   = true
+rust-version.workspace = true
+version.workspace      = true
+
+# These must name the VM version the WASM build embeds. Workspace membership alone does not
+# keep them there: a requirement of "0.29" against a client on 0.33 simply resolves a second,
+# older copy, and the tool then parses a format the binary no longer contains - it strips
+# nothing, exits 1, wasm-opt is skipped, and the artifact ships at several times its budget.
+# Bump these with `miden-client`.
+[dependencies]
+miden-core         = { default-features = false, features = ["std"], version = "0.33" }
+miden-mast-package = { default-features = false, features = ["std"], version = "0.33" }

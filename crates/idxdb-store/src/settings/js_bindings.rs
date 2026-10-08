@@ -8,20 +8,26 @@ use wasm_bindgen_futures::js_sys;
 #[wasm_bindgen(module = "/src/js/settings.js")]
 extern "C" {
     #[wasm_bindgen(js_name = getSetting)]
-    pub fn idxdb_get_setting(db_id: &str, key: String) -> js_sys::Promise;
+    pub fn idxdb_get_setting(db_id: &str, scope: u8, key: String) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = insertSetting)]
-    pub fn idxdb_insert_setting(db_id: &str, key: String, value: Vec<u8>) -> js_sys::Promise;
+    pub fn idxdb_insert_setting(
+        db_id: &str,
+        scope: u8,
+        key: String,
+        value: Vec<u8>,
+    ) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = removeSetting)]
-    pub fn idxdb_remove_setting(db_id: &str, key: String) -> js_sys::Promise;
+    pub fn idxdb_remove_setting(db_id: &str, scope: u8, key: String) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = listSettingKeys)]
-    pub fn idxdb_list_setting_keys(db_id: &str) -> js_sys::Promise;
+    pub fn idxdb_list_setting_keys(db_id: &str, scope: u8) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = applySettingsMutations)]
     pub fn idxdb_apply_settings_mutations(
         db_id: &str,
+        scope: u8,
         mutations: Vec<JsSettingMutation>,
     ) -> js_sys::Promise;
 }

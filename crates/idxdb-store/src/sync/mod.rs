@@ -2,9 +2,11 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use miden_client::Word;
-use miden_client::account::{AccountId, StorageMap, StorageSlotType};
+use miden_client::account::{Account, AccountId};
+use miden_client::crypto::{Forest, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
-use miden_client::store::{AccountStorageFilter, StoreError};
+use miden_client::protocol_config::protocol_config_setting_key;
+use miden_client::store::{SettingScope, StoreError};
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -13,9 +15,10 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use miden_client_proto::{decode_mmr_peaks, encode, encode_mmr_peaks};
 
 use super::IdxdbStore;
-use super::account::utils::{apply_transaction_delta, compute_storage_delta, compute_vault_delta};
+use super::account::utils::creation_account_from_patch;
 use super::chain_data::utils::{
     SerializedPartialBlockchainNodeData,
     serialize_partial_blockchain_node,
@@ -27,16 +30,18 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::JsAccountUpdate;
 use js_bindings::{
+    JsAccountWitnessUpdate,
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
+    idxdb_get_current_blockchain_peaks,
     idxdb_get_note_tags,
     idxdb_get_sync_height,
     idxdb_remove_note_tag,
 };
 
 mod models;
-use models::{NoteTagIdxdbObject, SyncHeightIdxdbObject};
+use models::{NoteTagIdxdbObject, PartialBlockchainPeaksIdxdbObject, SyncHeightIdxdbObject};
 
 mod flattened_vec;
 use flattened_vec::flatten_nested_u8_vec;
@@ -92,6 +97,21 @@ impl IdxdbStore {
         Ok(block_num_idxdb.block_num.into())
     }
 
+    pub(crate) async fn get_current_blockchain_peaks(&self) -> Result<MmrPeaks, StoreError> {
+        let promise = idxdb_get_current_blockchain_peaks(self.db_id());
+        let peaks_idxdb: PartialBlockchainPeaksIdxdbObject =
+            await_js(promise, "failed to get current blockchain peaks").await?;
+
+        if peaks_idxdb.peaks.is_empty() {
+            return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
+        }
+
+        let forest = Forest::new(
+            usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize"),
+        )?;
+        Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
+    }
+
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {
         if self.get_note_tags().await?.contains(&tag) {
             return Ok(false);
@@ -133,22 +153,24 @@ impl IdxdbStore {
         &self,
         state_sync_update: StateSyncUpdate,
     ) -> Result<(), StoreError> {
-        let StateSyncUpdate {
+        let (
             block_num,
             partial_blockchain_updates,
             note_updates,
             transaction_updates,
             account_updates,
-        } = state_sync_update;
+            protocol_config,
+        ) = state_sync_update.into_parts();
 
         let (
             block_headers_as_bytes,
-            partial_blockchain_peaks_as_bytes,
             block_nums,
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
         ) = serialize_partial_blockchain_updates(&partial_blockchain_updates)?;
+
+        let new_peaks_bytes = encode_mmr_peaks(&partial_blockchain_updates.new_peaks);
 
         let (serialized_input_notes, serialized_output_notes): (Vec<_>, Vec<_>) = {
             let input_notes = note_updates.updated_input_notes();
@@ -186,20 +208,9 @@ impl IdxdbStore {
             .map(|tx_record| tx_record.details.final_account_state)
             .collect::<Vec<_>>();
 
-        // Remove the account states and discard their SMT roots from the forest
-        self.rollback_account_states(&account_states_to_rollback).await?;
-
-        // Discard roots for rolled-back accounts
-        {
-            let mut smt_forest = self.smt_forest.write();
-            for tx_record in transaction_updates.discarded_transactions() {
-                smt_forest.discard_roots(tx_record.details.account_id);
-            }
-            // Commit roots for successfully committed transactions
-            for tx_record in transaction_updates.committed_transactions() {
-                smt_forest.commit_roots(tx_record.details.account_id);
-            }
-        }
+        // Restore the previous account states. The forest keeps the undone roots until a reader
+        // sees them differ from the tables and refreshes the account.
+        self.undo_account_states(&account_states_to_rollback).await?;
 
         let transaction_updates: Vec<_> = transaction_updates
             .committed_transactions()
@@ -207,143 +218,65 @@ impl IdxdbStore {
             .map(serialize_transaction_record)
             .collect();
 
-        // Separate full updates from delta updates.
-        //
-        // `PublicAccountUpdate::Delta` now wraps a single `PublicAccountDelta`
-        // carrying the per-block incremental updates from the RPC sync path.
-        // To apply it we load the local header / value-slot storage / vault,
-        // then call `PublicAccountDelta::compute_account_delta` to derive the
-        // same `AccountDelta` shape the existing apply logic consumes. (See
-        // sqlite-store's `apply_public_account_delta` for the canonical
-        // implementation of this redirect.)
-        let mut full_accounts = Vec::new();
-        let mut delta_updates = Vec::new();
+        // Separate full account updates from incremental absolute patches. An oversized newly
+        // created account (final nonce 1) arrives as a creation patch rather than a full account;
+        // rebuild it so it follows the same replacement path. Code on a later nonce is an upgrade
+        // and stays on the incremental path.
+        let mut full_accounts: Vec<Account> = Vec::new();
+        let mut patch_updates = Vec::new();
         for update in account_updates.updated_public_accounts() {
             match update {
-                PublicAccountUpdate::Full(account) => full_accounts.push(account),
-                PublicAccountUpdate::Delta(public_delta) => {
-                    delta_updates.push(public_delta);
+                PublicAccountUpdate::Full(account) => full_accounts.push(account.clone()),
+                PublicAccountUpdate::Patch { new_header, patch } => {
+                    if let Some(account) = creation_account_from_patch(patch, new_header)? {
+                        full_accounts.push(account);
+                    } else {
+                        patch_updates.push((new_header, patch));
+                    }
                 },
             }
         }
 
-        // Update SMT forest for full account updates (insert nodes + replace roots atomically)
-        {
-            let mut smt_forest = self.smt_forest.write();
-            for account in &full_accounts {
-                smt_forest.insert_and_register_account_state(
-                    account.id(),
-                    account.vault(),
-                    account.storage(),
-                )?;
-            }
-        }
-
-        // Apply delta updates incrementally
-        for public_delta in &delta_updates {
-            let new_header = public_delta.new_header();
+        // Apply partial patches incrementally. Their values are already absolute, so no account
+        // reconstruction is required.
+        for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
 
-            // `compute_account_delta` diffs the RPC-provided new state against
-            // the locally-stored account, anchoring the delta on the local
-            // nonce. The locally-stored header (not `new_header`) must be
-            // passed: it carries the old nonce the diff is computed from, and
-            // the call rejects a non-increasing nonce.
-            let local_header = self
+            // Sync patches must move the account state forward; a stale or replayed patch would
+            // otherwise silently rewind tracked state.
+            let (local_header, _) = self
                 .get_account_header(account_id)
                 .await?
-                .map(|(header, _)| header)
                 .ok_or(StoreError::AccountDataNotFound(account_id))?;
+            if new_header.nonce().as_canonical_u64() <= local_header.nonce().as_canonical_u64() {
+                return Err(StoreError::DatabaseError(format!(
+                    "sync account patch nonce {} is not greater than the local nonce {} for account {account_id}",
+                    new_header.nonce().as_canonical_u64(),
+                    local_header.nonce().as_canonical_u64(),
+                )));
+            }
 
-            // The RPC-side incremental updates address specific slot names so
-            // a narrowed `SlotNames` filter avoids round-tripping the whole
-            // storage tree.
-            let local_storage = self
-                .get_account_storage(
-                    account_id,
-                    AccountStorageFilter::SlotNames(public_delta.value_slot_names()),
-                )
-                .await?;
-            let local_vault = self.get_account_vault(account_id).await?;
-            let delta =
-                public_delta.compute_account_delta(&local_header, &local_storage, &local_vault)?;
+            self.apply_incremental_account_patch(new_header, patch).await?;
+        }
 
-            // Load targeted data for delta computation
-            let vault_keys: Vec<String> = delta
-                .vault()
-                .fungible()
-                .iter()
-                .map(|(vault_key, _)| vault_key.to_string())
-                .collect();
-            let old_vault_assets = self.get_vault_assets(account_id, vault_keys).await?;
-
-            let map_slot_names: Vec<String> =
-                delta.storage().maps().map(|(slot_name, _)| slot_name.to_string()).collect();
-            let old_map_roots = self.get_storage_map_roots(account_id, map_slot_names).await?;
-
-            let (updated_storage_slots, updated_assets, removed_vault_keys) = {
-                let mut smt_forest = self.smt_forest.write();
-
-                let mut final_roots = smt_forest
-                    .get_roots(&account_id)
-                    .cloned()
-                    .ok_or(StoreError::AccountDataNotFound(account_id))?;
-
-                // Storage: compute new map roots via SMT forest
-                let updated_storage_slots =
-                    compute_storage_delta(&mut smt_forest, &old_map_roots, &delta)?;
-
-                // Update map roots in final_roots with new values from the delta
-                let default_map_root = StorageMap::default().root();
-                for (slot_name, (new_root, slot_type)) in &updated_storage_slots {
-                    if *slot_type == StorageSlotType::Map {
-                        let old_root =
-                            old_map_roots.get(slot_name).copied().unwrap_or(default_map_root);
-                        if let Some(root) = final_roots.iter_mut().find(|r| **r == old_root) {
-                            *root = *new_root;
-                        } else {
-                            final_roots.push(*new_root);
-                        }
-                    }
-                }
-
-                // Vault: compute new asset values and update SMT forest
-                let old_vault_root = final_roots[0];
-                let (updated_assets, removed_vault_keys) =
-                    compute_vault_delta(&old_vault_assets, &delta)?;
-                let new_vault_root = smt_forest.update_asset_nodes(
-                    old_vault_root,
-                    updated_assets.iter().copied(),
-                    removed_vault_keys.iter().copied(),
-                )?;
-                final_roots[0] = new_vault_root;
-
-                // For sync updates, replace roots directly (not staged)
-                smt_forest.replace_roots(account_id, final_roots);
-
-                (updated_storage_slots, updated_assets, removed_vault_keys)
-            };
-
-            apply_transaction_delta(
-                self.db_id(),
-                account_id,
-                new_header,
-                &updated_storage_slots,
-                &updated_assets,
-                &removed_vault_keys,
-                &delta,
+        // Persist the protocol configuration the node sent before the chain state that commits to
+        // it lands. A failed write here fails the sync, which retries from the same height and is
+        // delivered the configuration again; a configuration stored ahead of a failed state write
+        // is only an unused row keyed by its commitment.
+        if let Some(config) = protocol_config {
+            self.set_setting(
+                SettingScope::Client,
+                protocol_config_setting_key(config.to_commitment()),
+                config.to_bytes(),
             )
-            .await
-            .map_err(|err| {
-                StoreError::DatabaseError(format!("failed to apply sync account delta: {err:?}"))
-            })?;
+            .await?;
         }
 
         let state_update = JsStateSyncUpdate {
             block_num: block_num.as_u32(),
             flattened_new_block_headers: flatten_nested_u8_vec(block_headers_as_bytes),
             new_block_nums: block_nums,
-            partial_blockchain_peaks: partial_blockchain_peaks_as_bytes,
+            new_peaks: new_peaks_bytes,
             block_has_relevant_notes,
             serialized_node_ids,
             serialized_nodes,
@@ -355,20 +288,24 @@ impl IdxdbStore {
                 .map(|account| JsAccountUpdate::from_account(account, None))
                 .collect(),
             transaction_updates,
+            account_witnesses: account_updates
+                .account_witnesses()
+                .iter()
+                .map(|(account_id, witness)| JsAccountWitnessUpdate {
+                    account_id: account_id.to_string(),
+                    witness: encode(witness),
+                })
+                .collect(),
         };
         let promise = idxdb_apply_state_sync(self.db_id(), state_update);
         await_js_value(promise, "failed to apply state sync").await?;
 
-        Ok(())
-    }
+        // Rebuild the forest for the accounts the write just replaced. Deferred until the write
+        // landed so a failed sync leaves the forest untouched instead of ahead of the tables.
+        for account in &full_accounts {
+            self.smt_forest.write().rebuild_account(account)?;
+        }
 
-    /// Rolls back account states by removing them from the DB.
-    /// SMT root cleanup is handled separately via `discard_roots`.
-    async fn rollback_account_states(
-        &self,
-        account_commitments: &[Word],
-    ) -> Result<(), StoreError> {
-        self.undo_account_states(account_commitments).await?;
         Ok(())
     }
 }
@@ -385,27 +322,25 @@ fn encode_tag_source(source: &NoteTagSource) -> (Option<String>, Option<String>,
     }
 }
 
-type SerializedBlockData = (Vec<Vec<u8>>, Vec<u8>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
+type SerializedBlockData = (Vec<Vec<u8>>, Vec<u32>, Vec<u8>, Vec<String>, Vec<String>);
 
 fn serialize_partial_blockchain_updates(
-    updates: &PartialBlockchainUpdates,
+    partial_blockchain_updates: &PartialBlockchainUpdates,
 ) -> Result<SerializedBlockData, StoreError> {
     let mut block_headers_as_bytes = Vec::new();
     let mut block_nums = Vec::new();
     let mut block_has_relevant_notes = Vec::new();
 
-    for (block_header, has_client_notes) in updates.block_headers() {
-        block_headers_as_bytes.push(block_header.to_bytes());
+    for (block_header, has_client_notes) in partial_blockchain_updates.block_headers() {
+        block_headers_as_bytes.push(encode(block_header));
         block_nums.push(block_header.block_num().as_u32());
         block_has_relevant_notes.push(u8::from(*has_client_notes));
     }
 
-    let partial_blockchain_peaks_as_bytes = updates.new_peaks.peaks().to_vec().to_bytes();
-
-    let auth_nodes_len = updates.new_authentication_nodes().len();
+    let auth_nodes_len = partial_blockchain_updates.new_authentication_nodes().len();
     let mut serialized_node_ids = Vec::with_capacity(auth_nodes_len);
     let mut serialized_nodes = Vec::with_capacity(auth_nodes_len);
-    for (id, node) in updates.new_authentication_nodes() {
+    for (id, node) in partial_blockchain_updates.new_authentication_nodes() {
         let SerializedPartialBlockchainNodeData { id, node } =
             serialize_partial_blockchain_node(*id, *node)?;
         serialized_node_ids.push(id);
@@ -414,7 +349,6 @@ fn serialize_partial_blockchain_updates(
 
     Ok((
         block_headers_as_bytes,
-        partial_blockchain_peaks_as_bytes,
         block_nums,
         block_has_relevant_notes,
         serialized_node_ids,

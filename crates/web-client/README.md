@@ -1,5 +1,25 @@
 # @miden-sdk/miden-sdk
 
+## Start here
+
+```bash
+npm create @miden-sdk@latest
+```
+
+Run that once in your project. Miden is pre-1.0 and its API moves between minor
+versions, so an AI coding agent working from training data will write code for a
+version you are not on. Every `@miden-sdk/*` package ships an `AGENTS.md` and
+task-scoped `skills/` inside its tarball, matched to the exact version in your
+lockfile - this command is what points your agent at them, by writing the
+pointers into your own `AGENTS.md` and `CLAUDE.md`. It is idempotent, so re-run
+it after an upgrade.
+
+Prefer to wire it up by hand? The block to paste is [below](#for-ai-coding-agents).
+
+Starting from nothing rather than adding to an existing app?
+[`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
+scaffolds the whole stack with this already done.
+
 ## Overview
 
 The `@miden-sdk/miden-sdk` is a comprehensive software development toolkit (SDK) for interacting with the Miden blockchain and virtual machine from within a web application. It provides developers with everything needed to:
@@ -13,7 +33,7 @@ The `@miden-sdk/miden-sdk` is a comprehensive software development toolkit (SDK)
 Whether you're building a wallet, dApp, or other blockchain-integrated application, this SDK provides the core functionality to bridge your frontend with Miden's powerful ZK architecture.
 
 > **Note:** This README provides a high-level overview of the web client SDK.
-> For more detailed documentation, API references, and usage examples, see the documentation [here](../../docs/src/web-client) (TBD).
+> For more detailed documentation, API references, and usage examples, see <https://docs.miden.xyz/builder/tools/clients/web-client/>.
 
 ### SDK Structure and Build Process
 
@@ -37,33 +57,71 @@ This setup allows the SDK to be seamlessly consumed in JavaScript environments, 
 
 ### Stable Version
 
-A non-stable version of the SDK is also maintained, which tracks the `next` branch of the Miden client repository (essentially the development branch). To install the pre-release version, run:
+The stable release tracks the `main` branch and is what most applications want:
 
-```javascript
+```bash
 npm i @miden-sdk/miden-sdk
 ```
 
-Or using Yarn:
+Or with pnpm:
 
-```javascript
+```bash
 pnpm add @miden-sdk/miden-sdk
 ```
 
 ### Pre-release ("next") Version
 
-A non-stable version is also maintained. To install the pre-release version, run:
+A non-stable version is also maintained, tracking the `next` branch of the Miden client repository (essentially the development branch). To install the pre-release version, run:
 
-```javascript
+```bash
 npm i @miden-sdk/miden-sdk@next
 ```
 
-Or with Yarn:
+Or with pnpm:
 
-```javascript
+```bash
 pnpm add @miden-sdk/miden-sdk@next
 ```
 
 > **Note:** The `next` version of the SDK must be used in conjunction with a locally running Miden node built from the `next` branch of the `miden-node` repository. This is necessary because the public testnet runs the stable `main` branch, which may not be compatible with the latest development features in `next`. Instructions to run a local node can be found [here](https://github.com/0xMiden/miden-node/tree/next) on the `next` branch of the `miden-node` repository. Additionally, if you plan to leverage delegated proving in your application, you may need to run a local prover (see [Remote prover instructions](https://github.com/0xMiden/miden-node/tree/next/bin/remote-prover)).
+
+## For AI coding agents
+
+This package ships agent-facing documentation inside the tarball, so it is
+always version-matched to the code you have installed:
+
+- `node_modules/@miden-sdk/miden-sdk/AGENTS.md` - start here
+- `node_modules/@miden-sdk/miden-sdk/skills/` - task-scoped guides: client
+  usage, production pitfalls, signer integration, chain-anchored execution
+  (multisig and offline co-signing), and a source map of the SDK itself
+
+Agents do not look inside `node_modules` on their own. To make yours read these
+automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
+of your project:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date:
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
+
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
+
+Each guide indexes task-specific skills in that package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
+<!-- END:miden-agent-rules -->
+```
 
 ## Entry Points: Eager / Lazy × ST / MT
 
@@ -163,18 +221,28 @@ app.use((_, res, next) => {
 
 If you cannot set these headers (CDN, hosting provider that doesn't allow header injection), the COI service-worker shim pattern (`gzuidhof/coi-serviceworker`) lets a small same-origin SW intercept fetches and re-inject the headers on the way back. We don't bundle this with the SDK because installing a service worker into a consumer's app is intrusive — adopt it deliberately if you need it.
 
-### `initThreadPool(n)` — required once for MT
+### `initThreadPool(n)` - only for a direct MT client
 
-Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon. **Consumers must `await` it once before any prove call** (typically at app startup, or just before the first transaction):
+Every MT entry re-exports `initThreadPool` from wasm-bindgen-rayon, but on the default
+worker-backed path you do not call it. The SDK runs every prove inside its own Worker, and
+that Worker initializes its own pool: the client forwards `navigator.hardwareConcurrency`
+when the page is cross-origin-isolated, and the Worker calls `initThreadPool` before it
+constructs its `WebClient`. rayon's global pool is per WASM instance, so a pool you bring
+up on the main thread is a different instance from the one that proves, and the call is
+inert rather than wrong.
+
+Call it yourself only for a direct MT client on the current thread (`useWorker: false`, or
+no Worker support), in that client's own realm:
 
 ```ts
 import { MidenClient, initThreadPool } from "@miden-sdk/miden-sdk/mt/lazy";
 
 await MidenClient.ready();
 await initThreadPool(navigator.hardwareConcurrency); // size to physical threads
+const client = await MidenClient.create({ useWorker: false });
 ```
 
-Without this call, the rayon global thread pool spawns zero workers on `wasm32` and every `par_iter(...)` falls through to a sequential loop — i.e. you've shipped multi-threaded WASM that runs single-threaded. The ST entries don't expose `initThreadPool` (no thread pool to bring up).
+The ST entries don't expose `initThreadPool` (no thread pool to bring up).
 
 ### Timing model — eager vs lazy
 
@@ -199,6 +267,11 @@ const felt = new Felt(42n); // sync
 
 const client = await MidenClient.createTestnet();
 ```
+
+`feeFaucetId` is optional. Since 0.17 the chain's fee asset lives in the
+protocol configuration, which the client receives from the node when it syncs,
+so execution never needs the option: it only sets what `client.feeFaucetId()`
+reports before the first sync. Snippets below leave it out.
 
 ### Lazy usage (`/lazy`)
 
@@ -310,8 +383,8 @@ This runs a suite of integration tests to verify the SDK’s functionality in a 
 Follow the steps below to produce the contents that get published to npm (`dist/` plus the license file). All commands are executed from `crates/web-client`.
 
 1. **Install prerequisites**
-   - Install the Rust toolchain version specified in `rust-toolchain.toml`.
-   - Install Node.js ≥18 and Yarn.
+   - Install the Rust toolchain specified in `rust-toolchain.toml`. Both the pinned nightly and stable are needed: the MT variant uses `-Z build-std` and atomics, and the ST variant is built with stable.
+   - Install Node.js >= 20 (see `.nvmrc`) and pnpm 9 (`corepack enable`).
 2. **Install dependencies**
    ```bash
    pnpm install
@@ -323,14 +396,15 @@ Follow the steps below to produce the contents that get published to npm (`dist/
    ```
    The `build` script (see `package.json`) performs the following:
    - Removes the previous `dist/` directory (`rimraf dist`).
-   - Runs `npm run build-rust-client-js`, which builds the `idxdb-store` TypeScript helper that the SDK imports.
-   - Invokes Rollup with `RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\""` so the Rust `getrandom` crate targets browser entropy and so that atomics/bulk-memory WebAssembly features are enabled.
-   - Copies the generated TypeScript declarations from `js/types` into `dist/`.
-   - Executes `node clean.js` to strip paths from the generated `.js` files, leaving only the artifacts needed on npm.
+   - Runs `build-rust-client-js`, which builds the `web_store` TypeScript helper (`crates/idxdb-store/src`) that the SDK imports.
+   - Runs Rollup **twice**, once per threading variant: `build-st` (`MIDEN_BUILD_VARIANT=st`, stable toolchain) produces `dist/st/`, and `build-mt` (`MIDEN_BUILD_VARIANT=mt`, pinned nightly plus `build-std` and atomics) produces `dist/mt/`. Both set `RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\""` so the Rust `getrandom` crate targets browser entropy.
+   - Runs `build-types`, which copies the generated TypeScript declarations from `js/types` into each dist subdirectory and then runs `node clean.js` to strip the `wasm.js` entry stub.
+   - Runs `node ./scripts/post-build.js`.
 4. **Inspect the artifacts**
-   - `dist/index.js` is the ESM entry point referenced by `"main"`/`"browser"`/`"exports"`.
-   - `dist/index.d.ts` and the rest of the `.d.ts` files provide the TypeScript surface.
-   Use `npm pack` if you want to preview the exact tarball that would be published.
+   - `dist/st/eager.js` is the ESM entry point referenced by `"main"`, `"browser"` and `exports["."].import`. `exports["."].node` resolves to `js/node-index.js` instead, so Node gets the napi binding rather than the WASM bundle.
+   - `dist/st/index.d.ts` is the TypeScript surface (`"types"`).
+   - The `/lazy`, `/mt` and `/mt/lazy` subpaths resolve into `dist/st/` and `dist/mt/` the same way. See [Entry Points](#entry-points-eager--lazy--st--mt) below.
+   Use `npm pack --dry-run` if you want to preview the exact file list that would be published.
 
 > Tip: during development you can set `MIDEN_WEB_DEV=true` before running `pnpm build` (or run `npm run build-dev`) to skip the clean step and keep extra debugging metadata in the bundled output. This debugging metadata also includes debug symbols for the generated wasm binary
 
@@ -342,16 +416,22 @@ The script at `crates/web-client/scripts/check-bindgen-types.js` verifies that e
 pnpm check:wasm-types
 ```
 
+`scripts/check-asset-types.js` type-checks a consumer fixture (with `skipLibCheck`) that imports `VaultAsset` and the `Asset` option type from all four entry points and `NoteAssets` from the root entry. It fails if an entry point stops exporting `VaultAsset`, or if `Asset` stops resolving to the `{ token, amount }` option type, for example because a generated class takes its name:
+
+```
+pnpm check:asset-types
+```
+
 `WebClient` is intentionally excluded because the wrapper defines its own implementation. If the check reports missing exports, update `js/types/index.d.ts` so consumers get the full generated surface.
 
 ## Usage
 
-The following are just a few simple examples to get started. For more details, see the [API Reference](../../docs/typedoc/web-client/README.md).
+The following are just a few simple examples to get started. For more details, see the [API Reference](https://docs.miden.xyz/builder/tools/clients/web-client/).
 
 ### Quick Start
 
 ```typescript
-import { MidenClient, AccountType } from "@miden-sdk/miden-sdk";
+import { MidenClient, FaucetType } from "@miden-sdk/miden-sdk";
 
 // 1. Create client (defaults to testnet, or use createTestnet()/createDevnet())
 const client = await MidenClient.createDevnet();
@@ -359,7 +439,7 @@ const client = await MidenClient.createDevnet();
 // 2. Create a wallet and a token (faucet account)
 const wallet = await client.accounts.create();
 const dagToken = await client.accounts.create({
-  type: AccountType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
+  type: FaucetType.FungibleFaucet, symbol: "DAG", decimals: 8, maxSupply: 10_000_000n
 });
 
 // 3. Mint tokens
@@ -385,20 +465,44 @@ console.log(`Balance: ${balance}`); // 900n
 client.terminate();
 ```
 
+### Account Visibility and Faucet Types
+
+`AccountType.Private` and `AccountType.Public` are the native visibility enum
+accepted by `AccountBuilder.accountType()` in both browser and Node.js:
+
+```typescript
+import { AccountBuilder, AccountType } from "@miden-sdk/miden-sdk";
+
+const builder = new AccountBuilder(new Uint8Array(32))
+  .accountType(AccountType.Public);
+```
+
+For `client.accounts.create()`, select visibility with `storage: "public"` or
+`"private"`, and create a fungible faucet with `type: FaucetType.FungibleFaucet`.
+Migrate previous `AccountType.FungibleFaucet` uses to `FaucetType.FungibleFaucet`.
+Omit `type` to create a wallet, or pass `components` to create a contract.
+The legacy selectors `0`, `1` and `"NonFungibleFaucet"` are still read as
+faucet types (non-fungible faucets are not supported yet and are rejected);
+`0` and `1` are also `AccountType.Private` / `AccountType.Public`, so never pass
+a visibility value as `type`. `create()` throws a `TypeError` for any other
+`type`, for faucet fields (`name`, `symbol`, `decimals`, `maxSupply`) without a
+faucet type, for `components` on a faucet, and for a faucet missing `symbol`,
+`decimals` or `maxSupply`, so a missed migration fails instead of creating a
+wallet.
+
 ### Create a New Wallet
 
 ```typescript
-import { MidenClient, AccountType, AuthScheme } from "@miden-sdk/miden-sdk";
+import { MidenClient, AuthScheme } from "@miden-sdk/miden-sdk";
 
 const client = await MidenClient.create();
 
-// Default wallet (private storage, mutable, Falcon auth)
+// Default wallet (private storage, Falcon auth)
 const wallet = await client.accounts.create();
 
 // Wallet with options
 const wallet2 = await client.accounts.create({
   storage: "public",
-  type: AccountType.ImmutableWallet,
   auth: AuthScheme.ECDSA,
   seed: "deterministic"
 });
@@ -406,21 +510,38 @@ const wallet2 = await client.accounts.create({
 console.log(wallet.id().toString()); // account id as hex
 console.log(wallet.isPublic()); // false
 console.log(wallet.isPrivate()); // true
-console.log(wallet.isFaucet()); // false
 ```
+
+### Register on an Allowlisted Network
+
+A network that enforces an account allowlist creates an account on chain only once the account is registered with an invitation code from the network operator. Register a new account before its first transaction:
+
+```typescript
+const wallet = await client.accounts.create();
+
+if (!(await client.accounts.isAllowed(wallet))) {
+  await client.accounts.register({ account: wallet, invitationCode });
+}
+
+// When the network funds registered accounts, the funding note arrives on the
+// next sync; consuming it is the transaction that creates the account on chain.
+await client.sync();
+await client.transactions.consumeAll({ account: wallet });
+```
+
+`register` fails with code `ACCOUNT_ALREADY_ALLOWED` for an account the node already allows, keeping the code, and a submission that would create an unregistered account fails with `ACCOUNT_NOT_ALLOWLISTED`. `RpcClient.registerAccount` and `RpcClient.isAccountAllowed` expose the node endpoints directly for flows that hold no account state. See [the allowlist guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/allowlist.md) for the full flow.
 
 ### Create a Faucet
 
 ```typescript
 const faucet = await client.accounts.create({
-  type: AccountType.FungibleFaucet,
+  type: FaucetType.FungibleFaucet,
   symbol: "DAG",
   decimals: 8,
   maxSupply: 10_000_000n
 });
 
 console.log(faucet.id().toString());
-console.log(faucet.isFaucet()); // true
 ```
 
 ### Read Faucet Metadata
@@ -460,9 +581,26 @@ const txId = await client.transactions.send({
 // Sync state to discover new notes
 await client.sync();
 
-// Consume all available notes for an account
+// Consume the notes this account can consume right now. Notes that unlock at a
+// later block are left alone, and are counted in neither number below.
 const result = await client.transactions.consumeAll({ account: wallet });
 console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
+
+// `remaining === 0` therefore means "nothing consumable now", not "no notes".
+// To see block-locked notes too, with their unlock block:
+const walletId = wallet.id().toString();
+const all = await client.notes.listConsumable({ account: wallet });
+for (const record of all) {
+  // Match the entry to the account you asked about rather than taking the
+  // first: a record can carry one status per account.
+  const entry = record
+    .noteConsumability()
+    .find((nc) => nc.accountId().toString() === walletId);
+  const status = entry?.consumptionStatus();
+  if (status && !status.isConsumableNow()) {
+    console.log(`locked until block ${status.consumableAfterBlock()}`);
+  }
+}
 ```
 
 ### Check Balance
@@ -471,6 +609,49 @@ console.log(`Consumed ${result.consumed} notes, ${result.remaining} remaining`);
 const balance = await client.accounts.getBalance(wallet, dagToken);
 console.log(`Balance: ${balance}`);
 ```
+
+### Read Non-Fungible Assets
+
+```typescript
+await client.sync();
+const { vault } = await client.accounts.getDetails(wallet);
+const assets = vault.nonFungibleAssets().map((asset) => ({
+  issuer: asset.faucetId().toString(),
+  key: asset.vaultKey().toHex(),
+  value: Array.from(asset.intoWord().toU64s()),
+}));
+```
+
+`nonFungibleAssets()` returns only non-fungible assets from the local vault
+snapshot. It returns an empty array when none are present. The order is not
+specified. `faucetId()` identifies the issuer, `vaultKey()` returns the complete
+asset key, and `intoWord().toU64s()` returns all four value limbs as `bigint`
+values. Keep these values as `bigint` or strings to prevent precision loss.
+
+Compare both the complete key and all four value limbs to verify an asset.
+The key alone does not contain the complete value. To reconstruct an asset,
+use `VaultAsset.nonFungible({ key, value })` with the two `Word` objects.
+
+### Build Notes with Either Asset Type
+
+```typescript
+const token = VaultAsset.fungible(faucetId, 100n);
+const name = VaultAsset.nonFungible({ key, value });
+const assets = new NoteAssets([name]);
+assets.push(token);
+```
+
+`NoteAssets` accepts one list of 0 to 16 assets. Existing `FungibleAsset`
+constructor and `push()` calls remain valid. Duplicate IDs and excess assets
+throw catchable errors; a failed push leaves the list unchanged. Inputs remain
+usable. `vault.assets()` and `note.assets().assets()` return both variants;
+use `kind()`, `asFungible()`, or `asNonFungible()` to inspect them.
+
+For registry publishing, use `Note.withAttachments()` with a single name asset,
+public metadata, the registry's approved script and inputs, and
+`[new NetworkAccountTarget(registryId).toAttachment()]`. The registry account
+must be public. A tag alone does not make a network note. Consume the returned P2ID note to put
+the asset back in the vault. See the [non-fungible asset guide](../../docs/external/src/web-client/library/non-fungible-assets.md).
 
 ### Batch Operations
 
@@ -517,7 +698,142 @@ await submitted.apply(); // persist + fire observers
 
 Nothing is persisted until `apply` runs — stopping after `submit()` leaves the local store unaware of the transaction until the next sync. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
 
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
 To submit a proof produced somewhere that shares nothing with this client (a detached prover), pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
+### Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, paid from inside the account's auth procedure rather than by the kernel. `fee::pay_fee` reads the asset and rate out of the transaction's auth argument, which has to be `hash(CONVERSION_INFO || SALT)` with the preimage in the advice map; a procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+Fees always settle in the chain's own fee asset at rate 1/1, so there is no conversion info to choose — miden-client builds it and commits it for you while preparing the transaction. The one thing it will not invent is the **salt** the commitment is computed under, because every multisig flavour reuses that salt as its transaction summary's replay guard. So single-sig, no-auth and network accounts need nothing at any base fee (the client commits under a fixed default salt, fixed so a signed summary stays reproducible), while a multisig that declares none fails with `FeeConversionInfoRequired` naming the component. A custom auth procedure that reads conversion info is not recognised, gets nothing committed, and hits the VM abort.
+
+Every `new*TransactionRequest` constructor declares a salt where the executing account needs one, and so does every `client.transactions` operation that builds its own request, so the common cases need no changes. The operations that take a finished request from you — `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview` — never do. When you assemble a request from a builder for a multisig, get one that already declares it:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+The argument is the account that will **execute** the request — the one whose auth procedure pays. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig the builder comes back untouched. A zero base fee is not a second condition: since 0.17 a multisig resolves its auth args whatever the chain charges, so a multisig gets them on a fee-free chain too.
+
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's bytes — pass it to `feeAwareTransactionRequestBuilder`, together with the block the summary binds: `client.feeAwareTransactionRequestBuilder(multisig, { feeConversionSalt: salt, boundBlockNum: block })`. Both are bound by the summary, so two parties who disagree on either can never derive the same one. Each call consumes the `Word`: it is moved across the WASM boundary, so a second build needs a freshly constructed one, and a spent handle arrives as "no salt given" rather than as an error. A co-signer who has the proposer's serialized request needs neither — it carries the auth argument and its advice-map preimage.
+
+Do **not** reach for `builder.withFeeConversionSalt(salt)` on that builder. `withAuthArg` and `withFeeConversionSalt` are mutually exclusive, and miden-client enforces that by having each setter clear the other, so calling it discards the three-word multisig auth args the builder already carries and the transaction aborts in the auth procedure. On a bare `new TransactionRequestBuilder()` the setter is still a declaration rather than a commitment — `request.feeConversionSalt()` reports it back, `request.authArg()` stays empty, and it survives serialization — which is what a single-sig or custom-auth caller wants. For a custom auth procedure that reads `AUTH_ARGS` as conversion info, compute the commitment yourself and attach it with `withAuthArg` plus `extendAdviceMap` — setting an auth argument opts the request out of the client's fee machinery, which commits only when the request carries none. Declaring a salt against such an account instead is rejected with `FeeConversionInfoUnsupported`.
+
+One path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` builds its request inside miden-client, so there is no builder. An ordinary creator has its conversion info committed and pays normally; a multisig creator fails with `FeeConversionInfoRequired`, so cancel by note with `client.transactions.pswapCancel` there. See the [transactions guide](https://docs.miden.xyz/builder/tools/clients/web-client/library/transactions) for the full narrative.
+
+### Multisig Proposals: Execute at the Tip
+
+Since protocol 0.17 a multisig summary binds a **bound block** named in the multisig auth args, not the reference block the transaction executes at. `feeAwareTransactionRequestBuilder` binds the current sync height and adds that block to the request with `withBlockNumbers`, so the proposer, every co-signer and the executor can all run the proposal at their own current tip and derive the same summary. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs. Do not re-execute a multisig proposal at an anchor: a node keeps account state for only 50 blocks and every fee-paying transaction loads the fee faucet as a foreign account, so anchored re-execution of an older proposal fails with `block N has been pruned`, and a transaction executed at an older reference block expires 20 blocks after it anyway.
+
+```typescript
+// Proposer
+const request = (await client.feeAwareTransactionRequestBuilder(multisig))
+  .withCustomScript(script)
+  .build();
+const summary = await client.transactions.preview({ operation: "custom", account: multisig, request });
+// Co-signer: `await client.sync()`, then preview the proposer's request bytes at
+// the local tip and compare `toCommitment()`. Executor:
+await client.transactions.submit(multisig, request);
+```
+
+Available from `0.17.0-rc.4`. See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#multisig-proposals-bind-a-block-execute-at-the-tip) for verification details.
+
+### Chain-Anchored Execution
+
+For a multisig, use the tip flow above. This section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over it only authorize an execution at that exact block, which breaks any flow that collects signatures and executes later.
+
+A `ChainAnchor` pins the reference block so the same summary reproduces on a client at a different sync height:
+
+```typescript
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
+
+// Proposer: capture, derive the summary at the anchor, ship all three.
+const anchor = await client.transactions.captureAnchor(request);
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account,
+  request,
+  anchor,
+});
+await shipToCosigners(
+  request.serialize(),
+  anchor.serialize(),
+  summary.serialize()
+);
+
+// Co-signer: re-derive at the proposer's anchor and compare before signing.
+// Re-derive from the proposer's request bytes, never from a locally rebuilt
+// request: on a fee-charging chain its fee conversion info carries a salt drawn
+// fresh on every build, and output notes draw fresh serial numbers, so a rebuilt
+// request yields a different summary and the check below fails as if the
+// proposal had been tampered with.
+const received = ChainAnchor.deserialize(anchorBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account,
+  request: proposedRequest,
+  anchor: received,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+await client.transactions.submit(account, request, { anchor: received });
+```
+
+The `anchor` option is available on `preview({ operation: "custom" })`, `executeRequest`, and `submit` — the methods that take a caller-built request.
+
+The re-derivation above proves the request, anchor and summary agree with each other. It does not prove the transaction does what you want — all three came from the proposer, so they agree by construction for any request the proposer chose. A cheap consistency check on top:
+
+```typescript
+// A summary that binds the reference block signs that block, so a mismatched
+// anchor is detectable without paying for an execution. (A multisig summary
+// binds its bound block instead and takes no anchor.)
+if (received.commitment().toHex() !== proposed.blockCommitment().toHex()) {
+  throw new Error("anchor is not the block this summary was built at");
+}
+```
+
+Before signing, inspect what the transaction actually does — `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()`, and `summary.expirationDelta()` for how long the authorization stays live (`0` means no expiration was set, not that it has already expired) — and confirm it matches what you agreed to. `ChainAnchor` enforces only that its header and partial blockchain are consistent with each other, which is computable over an invented chain; fetch the header for `anchor.blockNum()` with `RpcClient.getBlockHeaderByNumber` and compare commitments to confirm the block is real.
+
+An anchor pins the **reference block and chain data only**. Account state and authenticated input-note records still come from each participant's own local store, so every party must also agree on the account state. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
+
+A match, however, does not prove the two parties agree on account state. The summary binds the account *delta*, not the state it applies to, so divergence that leaves the delta and note sets unchanged — an unrelated nonce bump, assets arriving, or a change to a multisig's signer set or threshold — yields an identical commitment and passes verification. Signatures gathered under one threshold stay valid after it is lowered. Check the state you care about directly.
+
+See [the transactions guide](https://github.com/0xMiden/web-sdk/blob/main/docs/external/src/web-client/library/transactions.md#chain-anchored-execution) for the full flow.
+
+### Foreign Accounts
+
+A transaction that invokes a procedure on another account declares it as a `ForeignAccount`. Two kinds:
+
+```typescript
+import { ForeignAccount, AccountStorageRequirements } from "@miden-sdk/miden-sdk";
+
+// Public — state and code fetched from the network at execution time.
+ForeignAccount.public(oracleAccountId, new AccountStorageRequirements());
+
+// Private — the caller supplies the state; only an inclusion proof is fetched.
+ForeignAccount.private(account);
+```
+
+A public entry's inputs are fetched against the transaction's reference block, and the vault and storage maps the foreign code actually reads are resolved during execution as per-asset and per-key witnesses rather than up front. A transaction pinned to a block the node no longer serves account state for therefore cannot execute: pin it to a recent block instead.
 
 ### Partial-Swap (PSWAP) Orders
 
@@ -594,15 +910,27 @@ Provide exactly one of `script` or `recipient`. Notes are always Public — the 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 
 ```typescript
-const auth = AccountComponent.createNetworkAuth([myNoteScript.root()]);
-const { account } = new AccountBuilder(seed)
+// Each allowed note script carries the fee charged to consume it, in the
+// chain's fee asset. Zero is a valid price. The fee faucet must be the chain's
+// own: the node never runs network transactions for an account whose fee asset
+// differs from the chain's protocol configuration, and says nothing to the
+// client - the account's notes are simply never consumed.
+const feeFaucetId = await client.feeFaucetId();
+const components = AccountComponent.createNetworkAuthComponents(
+  [new NoteScriptFee(myNoteScript.root(), 0n)],
+  feeFaucetId
+);
+
+const builder = new AccountBuilder(seed)
   .storageMode(AccountStorageMode.public())
-  .withComponent(myComponent)
-  .withAuthComponent(auth)
-  .build();
+  .withComponent(myComponent);
+// The call returns the auth component plus the components backing its fee
+// policy; the account needs all of them.
+for (const component of components) builder.withComponent(component);
+const { account } = builder.build();
 ```
 
-The allowlist must be non-empty. Transaction scripts are forbidden unless allowlisted via the optional second argument (`TransactionScript.root()`); the component bumps the nonce itself, so the account deploys via a scriptless transaction. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
+The allowlist must be non-empty. The canonical expiration transaction script is always allowlisted, since the node attaches it to every network transaction; any other transaction script is forbidden unless allowlisted via the optional third argument (`TransactionScript.root()`). Deploying the account needs an effect: since 0.17 the auth component asserts the transaction consumed an input note, created an output note, or changed account state before it pays the fee, so an empty transaction aborts. Consume a note the account allowlists, or run an allowlisted transaction script that changes its state. Readback: `account.isNetworkAccount()` and `account.networkNoteAllowlist()`.
 
 ### Cleanup
 
@@ -617,6 +945,105 @@ client.terminate();
   // ... use client ...
 } // client.terminate() called automatically
 ```
+
+## Observability
+
+The client reports every operation it runs — name, outcome, how long it took — to a callback you register when you construct it:
+
+```typescript
+import { MidenClient, type MidenObservation } from "@miden-sdk/miden-sdk";
+
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observer: (o: MidenObservation) => {
+    console.log(o.op, o.outcome, Math.round(o.durationMs));
+  },
+});
+```
+
+`observer` is a field on `ClientOptions`, so it works on `create`, `createTestnet`, and `createDevnet` alike.
+
+**The SDK never transports an observation.** It hands the object to your callback and forgets about it. There is no telemetry dependency in `@miden-sdk/miden-sdk` — not a direct one, not a peer, not an optional one — and the module that delivers observations has no egress primitive in it and imports nothing at all. Both halves are enforced on every CI run by `js/__tests__/no-telemetry-dependency.test.js`, which parses the module rather than grepping it: it asserts the module reaches for no global object, builds no code at runtime, constructs nothing, and calls nothing but your observer. Where the observations go is entirely your decision, made in your code.
+
+If you'd rather not write that forwarding yourself, two opt-in binding packages do it for a vendor you already run — and they hand data to a client or tracer **you** construct and configure, so they are not a transport the SDK owns either:
+
+| Package | Turns observations into |
+|---|---|
+| [`@miden-sdk/telemetry-sentry`](https://github.com/0xMiden/web-sdk/tree/main/packages/telemetry-sentry) | `captureMessage` calls on a Sentry client you own |
+| [`@miden-sdk/telemetry-otel`](https://github.com/0xMiden/web-sdk/tree/main/packages/telemetry-otel) | spans on an OpenTelemetry tracer you own |
+
+Neither package depends on its vendor, not even as a peer — both are typed against the shape they call, so you keep control of the version, the configuration and the lifecycle.
+
+### What an observation contains
+
+```typescript
+interface MidenObservation {
+  op: string;                             // "syncState", "proveTransaction", …
+  outcome: "ok" | "error";
+  durationMs: number;                     // wall time the caller waited
+  sensitive?: MidenObservationSensitive;  // absent by default — see below
+}
+```
+
+`op` is the name of the underlying client method, not the name of the high-level call you made. One call into a resource API usually produces **several** observations: `client.transactions.send(...)` builds the request and then runs execute → prove → submit → apply, so it reports `newSendTransactionRequest`, `executeTransaction`, `proveTransaction`, `submitProvenTransaction`, and `applyTransaction` as five separate observations. Aggregate by `op` rather than assuming a one-to-one mapping with your own call sites.
+
+`durationMs` is measured with `performance.now()` around the awaited call, so it is a fractional millisecond value, not an integer. Round it yourself if your backend wants integers.
+
+Two properties are worth relying on:
+
+- **Your observer cannot fail an operation.** It is invoked inside a `try`/`catch` that swallows everything it throws. A broken observer degrades to silence, never to a failed transaction.
+- **Your observer cannot slow an operation down or change its shape.** It is called synchronously, after the operation has already settled, on the path that was going to resolve or reject anyway. Nothing is queued, batched, or deferred. Keep the callback cheap — it runs on the caller's critical path.
+
+A mock client (`MidenClient.createMock()`) can neither register an observer nor enable the sensitive channel — `MockOptions` carries neither field, so nothing you pass to `createMock` reaches the sink. It is not silent, though: registration is process-wide (see below), so if a real client registered an observer earlier in the same process, a mock client's operations report to it as well. The three sync methods the mock overrides — `syncState`, `syncChain`, and `syncNoteTransport` — are the exception and emit nothing.
+
+### The sink is process-wide, and there is one of it
+
+Registration is global to the module, not scoped to the client instance. Constructing a second client with an `observer` **replaces** the first one's — both clients then report to the newest callback. If you need to fan out to more than one destination, do it inside your own callback.
+
+There is no public way to unregister: `observer` is a construction-time option, and passing a non-function (including `null`) leaves any previously registered observer in place rather than clearing it. Register the sink you want for the life of the process.
+
+### Sensitive detail — read this before enabling it
+
+By default, the `sensitive` key is **absent from the observation object entirely**. Not `undefined`, not an empty object — absent, so `"sensitive" in observation` is a truthful test of whether the channel is on, and a consumer can distinguish "not enabled" from "enabled but nothing to report".
+
+Passing `observeSensitive: true` at construction turns it on:
+
+```typescript
+const client = await MidenClient.create({
+  rpcUrl: "testnet",
+  observeSensitive: true, // discloses raw error text — read on before setting
+  observer: (o) => myErrorReporter(o),
+});
+```
+
+What that actually exposes:
+
+```typescript
+interface MidenObservationSensitive {
+  errorMessage?: string; // verbatim error message, exactly as thrown
+  errorStack?: string;   // verbatim stack trace
+  accountId?: string;    // declared; not currently populated by the SDK
+}
+```
+
+Be clear-eyed about what "verbatim" means. `errorMessage` is the untouched `error.message` coming out of the client and, below it, the Rust core — it is not classified, redacted, allow-listed, or truncated, and no filter stands between it and your observer. Whatever a failure happens to say about the account, note, or asset it was working on is what you receive, and error text is not a stable interface: a client upgrade can widen it without warning. `errorStack` is the untouched stack. Anything you would be uncomfortable seeing in your telemetry vendor's UI, in its search index, and in its retention window is something you should assume will end up there.
+
+The rest of the shape, so you can plan around it:
+
+- The channel is populated **only on failure**. A successful operation has no `sensitive` key even with the flag on, so this is not a way to see which accounts a user touched — only which ones produced errors.
+- `accountId` is declared in the type but the SDK does not currently populate it. Do not write code that depends on it being present; treat it as reserved. (The OTel binding already reads it defensively, so it will start working if a later version fills it in.)
+- The safe fields never carry any of this. `op` and `outcome` are drawn from a fixed vocabulary and `durationMs` is a number, so an observation with the channel off is fit to send anywhere.
+
+The flag is deliberately hard to switch on by accident:
+
+- **Only the literal boolean `true` enables it.** A truthy `"true"` from an environment variable, a query string, or a JSON round-trip reads as *off*. An ambiguous value is far likelier to be a wiring mistake than a decision to disclose user data, so it is read the safe way.
+- **It is sealed at construction.** The resolved value is written once with `Object.defineProperty` as non-writable and non-configurable, so no later assignment — by your code, by a plugin, or by ours — can turn disclosure on for a client that was built without it. Enabling it has to be a deliberate, greppable act at one call site.
+- **It is per-client, while the observer is global.** If you run one client with the flag and one without, observations from both arrive at the same callback and whether `sensitive` is present depends on which client ran that operation.
+- **Enabling it logs a console warning**, once per process.
+
+Leave it unset in any application with confidentiality obligations to its users. A wallet, for example, must never enable it.
+
+Both binding packages then require the disclosure a *second* time — `includeSensitive: true` — and drop the channel by default even when the SDK supplies it. Leaving either end alone is enough to keep it out of your vendor.
 
 ## License
 

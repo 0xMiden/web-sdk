@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use miden_client::Word;
 use miden_client::account::{Account, StorageSlotContent};
 use miden_client::utils::Serializable;
+use miden_client_proto::encode;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 
@@ -20,6 +21,9 @@ extern "C" {
 
     #[wasm_bindgen(js_name = getSyncHeight)]
     pub fn idxdb_get_sync_height(db_id: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(js_name = getCurrentBlockchainPeaks)]
+    pub fn idxdb_get_current_blockchain_peaks(db_id: &str) -> js_sys::Promise;
 
     #[wasm_bindgen(js_name = getNoteTags)]
     pub fn idxdb_get_note_tags(db_id: &str) -> js_sys::Promise;
@@ -74,11 +78,10 @@ pub struct JsStateSyncUpdate {
     #[wasm_bindgen(js_name = "newBlockNums")]
     pub new_block_nums: Vec<u32>,
 
-    /// Serialized MMR peaks at the new sync height (single set for the whole update).
-    /// Written onto the chain-tip block's `blockHeaders` row (the one whose
-    /// `blockNum` matches `block_num`) and read back by `getCurrentBlockchainPeaks`.
-    #[wasm_bindgen(js_name = "partialBlockchainPeaks")]
-    pub partial_blockchain_peaks: Vec<u8>,
+    /// Serialized MMR peaks at the new sync height. The only peaks persisted by the
+    /// client (peaks for intermediate note blocks are never read, so they are not stored).
+    #[wasm_bindgen(js_name = "newPeaks")]
+    pub new_peaks: Vec<u8>,
 
     /// For each block in this update, stores a boolean (as u8) indicating whether
     /// that block contains notes relevant to this client. Index i corresponds to
@@ -114,6 +117,21 @@ pub struct JsStateSyncUpdate {
     /// Transaction data for transactions included in this update.
     #[wasm_bindgen(js_name = "transactionUpdates")]
     pub transaction_updates: Vec<SerializedTransactionData>,
+
+    /// Witnesses validated at the sync's target block. Updates land only for accounts already
+    /// registered with `track_account_witness`; the rest are ignored.
+    #[wasm_bindgen(js_name = "accountWitnesses")]
+    pub account_witnesses: Vec<JsAccountWitnessUpdate>,
+}
+
+/// One cached account witness to write during a sync.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct JsAccountWitnessUpdate {
+    #[wasm_bindgen(js_name = "accountId")]
+    pub account_id: String,
+    #[wasm_bindgen(js_name = "witness")]
+    pub witness: Vec<u8>,
 }
 
 /// Represents an update to a single account's state.
@@ -178,6 +196,10 @@ pub struct JsAccountUpdate {
     /// Optional seed data for the account.
     #[wasm_bindgen(js_name = "accountSeed")]
     pub account_seed: Option<Vec<u8>>,
+
+    /// Serialized account code. Empty when this update does not carry code.
+    #[wasm_bindgen(js_name = "code")]
+    pub code: Vec<u8>,
 }
 
 impl JsAccountUpdate {
@@ -207,6 +229,7 @@ impl JsAccountUpdate {
             nonce: account.nonce().to_string(),
             account_commitment: account.to_commitment().to_string(),
             account_seed: account_seed.map(|seed| seed.to_bytes()),
+            code: encode(account.code()),
         }
     }
 }
