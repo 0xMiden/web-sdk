@@ -1,0 +1,13 @@
+diff --git a/Makefile b/Makefile
+index 47ad396..217f138 100644
+--- a/Makefile
++++ b/Makefile
+@@ -102,7 +102,7 @@ SHARD_PARAMETER ?= ""
+ # positional file regex. Splitting the steps in Make keeps args clean.
+ integration-test-web-client: ## Run integration tests for the web client (with a chromium browser)
+ 	pnpm install --no-frozen-lockfile
+-	cross-env MIDEN_WEB_DEV=true pnpm --filter @miden-sdk/miden-sdk run build
++	pnpm --filter @miden-sdk/miden-sdk exec cross-env MIDEN_WEB_DEV=true pnpm --filter @miden-sdk/miden-sdk run build
+ 	pnpm --filter @miden-sdk/miden-sdk run test:install
+ 	pnpm --filter @miden-sdk/miden-sdk run test:clean --project=chromium $(SHARD_PARAMETER)
+ 

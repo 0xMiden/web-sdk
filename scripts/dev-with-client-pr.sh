@@ -2,15 +2,15 @@
 # Local-dev mirror of .github/actions/inject-linked-client-pr.
 #
 # Appends a [patch] block to Cargo.toml that retargets miden-client (and
-# miden-client-sqlite-store) at a linked miden-client PR's head branch,
+# miden-client-sqlite-store) at a linked rust-sdk PR's head branch,
 # wrapped in begin/end markers so it can be removed cleanly with --clear.
 # A pre-commit hook (lefthook.yml) blocks committing while the marked
 # block is present, so you can't accidentally ship the patch.
 #
 # Usage:
 #   scripts/dev-with-client-pr.sh                # auto-detect: read 'Client PR: #N' from current branch's PR body
-#   scripts/dev-with-client-pr.sh 1234           # use miden-client#1234
-#   scripts/dev-with-client-pr.sh 0xMiden/miden-client#1234   # explicit cross-repo form
+#   scripts/dev-with-client-pr.sh 1234           # use rust-sdk#1234
+#   scripts/dev-with-client-pr.sh 0xMiden/rust-sdk#1234       # explicit cross-repo form
 #   scripts/dev-with-client-pr.sh --clear        # remove the patch block + restore Cargo.lock
 #
 # Requirements: gh (for PR lookup), cargo, awk.
@@ -20,6 +20,11 @@ set -euo pipefail
 CARGO_TOML="$(git rev-parse --show-toplevel)/Cargo.toml"
 MARK_BEGIN="# >>>>>>> linked-client-pr (auto-injected by scripts/dev-with-client-pr.sh) >>>>>>>"
 MARK_END="# <<<<<<< linked-client-pr <<<<<<<"
+# A dependency's own [patch] tables do not apply to this workspace. The second
+# marker copies them from the linked Cargo.toml; lefthook matches the same
+# ">>>>>>> linked-client-pr" token, and --clear deletes the range.
+PATCH_BEGIN="# >>>>>>> linked-client-pr patches (auto-injected by scripts/dev-with-client-pr.sh) >>>>>>>"
+PATCH_END="# <<<<<<< linked-client-pr patches <<<<<<<"
 
 # We CAN'T use [patch."<url>"] when the patched dep URL matches the
 # original dep URL — Cargo errors with `patches must point to different
@@ -27,7 +32,7 @@ MARK_END="# <<<<<<< linked-client-pr <<<<<<<"
 # original in a marker block so --clear can restore it byte-for-byte.
 
 clear_block() {
-  if ! grep -qF "$MARK_BEGIN" "$CARGO_TOML"; then
+  if ! grep -qF "$MARK_BEGIN" "$CARGO_TOML" && ! grep -qF "$PATCH_BEGIN" "$CARGO_TOML"; then
     return 0
   fi
   # Restore originals: extract everything between the markers (lines
@@ -42,13 +47,16 @@ clear_block() {
   #   miden-client = { rev = "<linked head sha>", ... }     <-- patched
   #   miden-client-sqlite-store = { rev = "<linked head sha>", ... }  <-- patched (if present)
   #
-  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
+  awk -v b="$MARK_BEGIN" -v e="$MARK_END" -v pb="$PATCH_BEGIN" -v pe="$PATCH_END" '
     function restore() {
       for (i=1; i<=n_orig; i++) print orig[i]
       # Skip the same number of patched lines that immediately follow.
       to_skip = n_orig
     }
-    BEGIN { state="scan"; n_orig=0; to_skip=0 }
+    BEGIN { state="scan"; n_orig=0; to_skip=0; skip_patch=0 }
+    $0 == pb { skip_patch=1; next }
+    skip_patch && $0 == pe { skip_patch=0; next }
+    skip_patch { next }
     state == "scan" && $0 == b { state="capturing"; next }
     state == "capturing" && $0 == e {
       state="post"
@@ -113,12 +121,12 @@ fi
 
 # Parse arg into repo + num.
 if printf '%s' "$arg" | grep -qE '^[0-9]+$'; then
-  repo="0xMiden/miden-client"
+  repo="0xMiden/rust-sdk"
   num="$arg"
 else
   repo=$(printf '%s' "$arg" | grep -oE '[0-9a-zA-Z._-]+/[0-9a-zA-Z._-]+' | head -1 || true)
   num=$(printf '%s' "$arg" | grep -oE '[0-9]+$')
-  [ -z "$repo" ] && repo="0xMiden/miden-client"
+  [ -z "$repo" ] && repo="0xMiden/rust-sdk"
   [ -z "$num" ] && { echo "Could not parse '$arg' — expected '#N' or 'owner/repo#N'."; exit 1; }
 fi
 
@@ -205,8 +213,66 @@ with open(path, 'w') as f:
     f.writelines(out2)
 PY
 
+# The linked workspace patches sources this repo never declares (today,
+# miden-node-proto-build's protocol git branch). Cargo ignores a dependency's
+# [patch] table, so copy those tables into a marker --clear removes.
+upstream_toml=$(mktemp)
+gh api -H "Accept: application/vnd.github.raw" \
+  "repos/${head_owner}/${head_repo}/contents/Cargo.toml?ref=${head_sha}" > "$upstream_toml"
+python3 - "$CARGO_TOML" "$upstream_toml" "$PATCH_BEGIN" "$PATCH_END" <<'PY'
+import sys
+
+cargo_path, upstream_path, mark_begin, mark_end = sys.argv[1:5]
+
+def patch_tables(text):
+    lines = text.splitlines()
+    blocks = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip().startswith("[patch"):
+            start = i
+            j = i - 1
+            while j >= 0 and lines[j].strip().startswith("#"):
+                start = j
+                j -= 1
+            i += 1
+            while i < len(lines):
+                stripped = lines[i].strip()
+                if stripped.startswith("[") and not stripped.startswith("[patch"):
+                    break
+                i += 1
+            blocks.append("\n".join(lines[start:i]).rstrip())
+            continue
+        i += 1
+    return "\n\n".join(blocks)
+
+with open(upstream_path) as f:
+    patches = patch_tables(f.read())
+if not patches:
+    sys.exit(0)
+
+with open(cargo_path) as f:
+    current = f.read()
+if not current.endswith("\n"):
+    current += "\n"
+current += (
+    "\n"
+    + mark_begin
+    + "\n"
+    + "# Copied from the linked workspace Cargo.toml. A dependency's [patch]\n"
+    + "# does not apply in this workspace. Removed by --clear; never commit.\n"
+    + patches
+    + "\n"
+    + mark_end
+    + "\n"
+)
+with open(cargo_path, "w") as f:
+    f.write(current)
+PY
+rm -f "$upstream_toml"
+
 # shellcheck disable=SC2086
-cargo update $(build_cargo_update_args) --quiet
+bash "$(git rev-parse --show-toplevel)/scripts/cargo-update-linked-patches.sh" $(build_cargo_update_args)
 
 echo "✓ Cargo.toml dep rewritten: miden-client → ${head_owner}/${head_repo}@${head_ref} (${head_sha:0:8})"
 echo "  Originals stashed in a marker block; restore with: $0 --clear"

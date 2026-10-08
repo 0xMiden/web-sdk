@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
-import { openDatabase, getDatabase } from "./schema.js";
+import { openDatabase, getDatabase, SETTING_SCOPE_USER } from "./schema.js";
 import { exportStore, transformForExport } from "./export.js";
 import { uint8ArrayToBase64 } from "./utils.js";
 
@@ -134,17 +134,17 @@ describe("exportStore", () => {
     const jsonStr = await exportStore(dbId);
     const parsed = JSON.parse(jsonStr);
 
-    // stateSync gets one row on populate and settings gets the clientVersion row.
+    // blockchainCheckpoint gets one row on populate and settings gets the clientVersion row.
     // Everything else should be empty.
     const db = getDatabase(dbId);
     const tableNames = db.dexie.tables.map((t) => t.name);
     const nonEmptyTables = tableNames.filter((name) => parsed[name].length > 0);
     expect(nonEmptyTables).toEqual(
-      expect.arrayContaining(["stateSync", "settings"])
+      expect.arrayContaining(["blockchainCheckpoint", "settings"])
     );
     // tables other than these two must be empty
     const otherNonEmpty = nonEmptyTables.filter(
-      (n) => n !== "stateSync" && n !== "settings"
+      (n) => n !== "blockchainCheckpoint" && n !== "settings"
     );
     expect(otherNonEmpty).toHaveLength(0);
   });
@@ -207,6 +207,7 @@ describe("exportStore", () => {
     });
 
     await db.settings.put({
+      scope: SETTING_SCOPE_USER,
       key: "test-key",
       value: new Uint8Array([3, 4]),
     });
@@ -221,7 +222,6 @@ describe("exportStore", () => {
       data: uint8ArrayToBase64(new Uint8Array([1, 2])),
     });
 
-    // settings has the initial clientVersion row + our test-key
     const settingsKeys = parsed.settings.map((s: any) => s.key);
     expect(settingsKeys).toContain("test-key");
   });

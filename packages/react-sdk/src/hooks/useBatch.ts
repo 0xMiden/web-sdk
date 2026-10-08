@@ -38,7 +38,7 @@ export interface UseBatchResult {
  *     const reqSend = await client.newSendTransactionRequest(
  *       alice, bob, token, NoteType.Private, 50n, null, null
  *     );
- *     const reqConsume = await client.newConsumeTransactionRequest([note]);
+ *     const reqConsume = await client.newConsumeTransactionRequest([note], bob);
  *     const { blockNumber } = await batch({
  *       items: [
  *         { account: alice, request: reqSend },

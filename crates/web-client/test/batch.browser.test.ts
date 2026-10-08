@@ -141,9 +141,10 @@ const submitCrossAccountBatch = async (
       const inBatchNote = expectedNotes[0];
 
       // tx2 (B): consume the in-batch note produced by tx1.
-      const consumeRequest = await client.newConsumeTransactionRequest([
-        inBatchNote,
-      ]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [inBatchNote],
+        idB
+      );
 
       const blockNum = await client.submitNewTransactionBatch([
         new window.BatchItem(window.AccountId.fromHex(_accountA), sendRequest),
@@ -342,12 +343,14 @@ const submitDuplicateNoteBatch = async (
       // Both consume requests target the same note id. The batch must reject
       // the second push with a DuplicateInputNote error before reaching the
       // node.
-      const reqA = await client.newConsumeTransactionRequest([
-        inputRecord.toNote(),
-      ]);
-      const reqB = await client.newConsumeTransactionRequest([
-        inputRecord.toNote(),
-      ]);
+      const reqA = await client.newConsumeTransactionRequest(
+        [inputRecord.toNote()],
+        idA
+      );
+      const reqB = await client.newConsumeTransactionRequest(
+        [inputRecord.toNote()],
+        idB
+      );
 
       try {
         await client.submitNewTransactionBatch([

@@ -65,13 +65,18 @@ enum Table {
   InputNotes = "inputNotes",
   OutputNotes = "outputNotes",
   NotesScripts = "notesScripts",
-  StateSync = "stateSync",
+  BlockchainCheckpoint = "blockchainCheckpoint",
   BlockHeaders = "blockHeaders",
   PartialBlockchainNodes = "partialBlockchainNodes",
   Tags = "tags",
   ForeignAccountCode = "foreignAccountCode",
   Settings = "settings",
+  AccountWitnesses = "accountWitnesses",
 }
+
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 
 export interface IAccountCode {
   root: string;
@@ -204,6 +209,7 @@ export interface IOutputNote {
   stateDiscriminant: number;
   nullifier?: string;
   expectedHeight: number;
+  scriptRoot?: string;
   state: Uint8Array;
 }
 
@@ -212,21 +218,15 @@ export interface INotesScript {
   serializedNoteScript: Uint8Array;
 }
 
-export interface IStateSync {
+export interface IBlockchainCheckpoint {
   id: number;
   blockNum: number;
+  partialBlockchainPeaks: Uint8Array;
 }
 
 export interface IBlockHeader {
   blockNum: number;
   header: Uint8Array;
-  /** Serialized MMR peaks at this block's forest. Set only on rows that were
-   *  the chain tip when their corresponding sync ran — `applyStateSync`
-   *  writes peaks to the row where `blockNum === state_sync.block_num`.
-   *  Backfilled blocks (`insertBlockHeader` from `get_and_store_authenticated_block`)
-   *  leave this undefined. `getCurrentBlockchainPeaks` reads the row at
-   *  the current `stateSync.blockNum`. */
-  partialBlockchainPeaks?: Uint8Array;
   hasClientNotes: string;
 }
 
@@ -249,8 +249,15 @@ export interface IForeignAccountCode {
 }
 
 export interface ISetting {
+  scope: number;
   key: string;
   value: Uint8Array;
+}
+
+// `witness` stays null until the first sync refreshes it.
+export interface IAccountWitness {
+  accountId: string;
+  witness: Uint8Array | null;
 }
 
 export interface JsVaultAsset {
@@ -262,6 +269,7 @@ export interface JsStorageSlot {
   slotName: string;
   slotValue: string;
   slotType: number;
+  patchOperation?: number;
 }
 
 export interface JsStorageMapEntry {
@@ -275,8 +283,10 @@ function indexes(...items: string[]): string {
 }
 
 /** V1 baseline schema. Extracted as a constant because once migrations are enabled, this must
- *  never be modified — all schema changes should go through new version blocks instead. */
-const V1_STORES: Record<string, string> = {
+ *  never be modified — all schema changes should go through new version blocks instead.
+ *  Exported for migration tests, which seed a physical v1 database before opening it with the
+ *  current version chain. */
+export const V1_STORES: Record<string, string> = {
   [Table.AccountCode]: indexes("root"),
   [Table.LatestAccountStorage]: indexes("[accountId+slotName]", "accountId"),
   [Table.HistoricalAccountStorage]: indexes(
@@ -319,6 +329,7 @@ const V1_STORES: Record<string, string> = {
     "detailsCommitment",
     "noteId",
     "nullifier",
+    "scriptRoot",
     "stateDiscriminant",
     "[consumedBlockHeight+consumedTxOrder+noteId]"
   ),
@@ -330,7 +341,7 @@ const V1_STORES: Record<string, string> = {
     "nullifier"
   ),
   [Table.NotesScripts]: indexes("scriptRoot"),
-  [Table.StateSync]: indexes("id"),
+  [Table.BlockchainCheckpoint]: indexes("id"),
   [Table.BlockHeaders]: indexes("blockNum", "hasClientNotes"),
   [Table.PartialBlockchainNodes]: indexes("id"),
   [Table.Tags]: indexes("id++", "tag", "sourceNoteId", "sourceAccountId"),
@@ -361,11 +372,12 @@ declare module "dexie" {
     accountAuths: Table<IAccountAuth, string>;
     accountKeyMappings: Table<IAccountKeyMapping, string>;
     addresses: Table<IAddress, string>;
-    stateSync: Table<IStateSync, number>;
+    blockchainCheckpoint: Table<IBlockchainCheckpoint, number>;
     blockHeaders: Table<IBlockHeader, number>;
     partialBlockchainNodes: Table<IPartialBlockchainNode, number>;
     foreignAccountCode: Table<IForeignAccountCode, string>;
-    settings: Table<ISetting, string>;
+    settings: Table<ISetting, [number, string]>;
+    accountWitnesses: Table<IAccountWitness, string>;
   }
 }
 
@@ -387,12 +399,13 @@ export type MidenDexie = Dexie & {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
+  accountWitnesses: Dexie.Table<IAccountWitness, string>;
 };
 
 export class MidenDatabase {
@@ -414,23 +427,25 @@ export class MidenDatabase {
   inputNotes: Dexie.Table<IInputNote, string>;
   outputNotes: Dexie.Table<IOutputNote, string>;
   notesScripts: Dexie.Table<INotesScript, string>;
-  stateSync: Dexie.Table<IStateSync, number>;
+  blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
   blockHeaders: Dexie.Table<IBlockHeader, number>;
   partialBlockchainNodes: Dexie.Table<IPartialBlockchainNode, number>;
   tags: Dexie.Table<ITag, number>;
   foreignAccountCode: Dexie.Table<IForeignAccountCode, string>;
-  settings: Dexie.Table<ISetting, string>;
+  settings: Dexie.Table<ISetting, [number, string]>;
+  accountWitnesses: Dexie.Table<IAccountWitness, string>;
 
   constructor(network: string) {
     this.dexie = new Dexie(network) as MidenDexie;
 
     // --- Schema versioning ---
     //
-    // NOTE: The migration system is not currently in use. The Miden network
-    // resets on every upgrade, so the database is nuked whenever the client
-    // version changes (see ensureClientVersion). Once the network stabilizes
-    // and data can be preserved across upgrades, the version-change nuke will
-    // be removed and migrations will take over.
+    // NOTE: Migrations coexist with the client-version nuke: the database is
+    // still nuked on major/minor client-version changes (network resets — see
+    // ensureClientVersion), while Dexie version blocks below handle schema and
+    // data fixes for stores that survive patch upgrades. Once the network
+    // stabilizes and data can be preserved across all upgrades, the
+    // version-change nuke will be removed and migrations alone will take over.
     //
     // v1 is the baseline schema. To add a migration:
     //   1. Add a .version(N+1).stores({...}).upgrade(tx => {...}) block below.
@@ -462,12 +477,81 @@ export class MidenDatabase {
     // Note: The `populate` hook (below the version blocks) only fires on
     // first database creation, NOT during upgrades.
     //
-    // To enable migrations (stop nuking the DB on version change):
-    //   1. Remove the nuke logic in ensureClientVersion (close/delete/open).
-    //      Just persist the new version instead.
-    //   2. Freeze V1_STORES — never modify it again.
-    //   3. Add version(2+) blocks below for all schema changes going forward.
+    // Version blocks exist below, so V1_STORES is frozen — never modify it;
+    // add a new version block instead. To retire the nuke entirely (once data
+    // must survive major/minor upgrades), remove the close/delete/open logic
+    // in ensureClientVersion and just persist the new version there.
     this.dexie.version(1).stores(V1_STORES);
+
+    // v2 (miden-client 0.15.4): prune note tags leaked by output-note
+    // registration. Mirrors sqlite-store migration
+    // `0002_prune_output_note_tags.sql`. Clients built against miden-client
+    // < 0.15.4 registered a `Note`-sourced tag for every output note a
+    // transaction created, but sync cleanup only removes tags of committed
+    // *input* notes — leaking one `tags` row per created note. The client no
+    // longer registers those tags; this upgrade deletes the rows already
+    // leaked. A tag is kept while an inclusion-pending input note
+    // (Expected = 0, Unverified = 1 — the mirror of
+    // `InputNoteRecord::is_inclusion_pending`) still needs it.
+    //
+    // This data-only fix coexists with the version-change nuke above: the
+    // nuke covers major/minor client upgrades (network resets), while this
+    // upgrade runs for stores preserved across patch upgrades.
+    this.dexie
+      .version(2)
+      .stores({})
+      .upgrade(async (tx) => {
+        const outputNoteCommitments = new Set<string>(
+          await tx.outputNotes.toCollection().primaryKeys()
+        );
+        if (outputNoteCommitments.size === 0) {
+          return;
+        }
+        const pendingInputNoteCommitments = new Set<string>(
+          await tx.inputNotes
+            .where("stateDiscriminant")
+            .anyOf([0, 1])
+            .primaryKeys()
+        );
+        await tx.tags
+          .filter(
+            (tag) =>
+              !!tag.sourceNoteId &&
+              outputNoteCommitments.has(tag.sourceNoteId) &&
+              !pendingInputNoteCommitments.has(tag.sourceNoteId)
+          )
+          .delete();
+      });
+
+    // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+    // `detailsCommitment` instead of `noteId`, so the seek in
+    // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+    // carries and needs no lookup of the cursor's own note. Index-only, so
+    // Dexie rebuilds it without an upgrade hook.
+    this.dexie.version(3).stores({
+      [Table.InputNotes]: indexes(
+        "detailsCommitment",
+        "noteId",
+        "nullifier",
+        "scriptRoot",
+        "stateDiscriminant",
+        "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"
+      ),
+    });
+
+    // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+    // cannot change in place, hence the drop and the recreate; the rows it held are cached
+    // values the client re-fetches.
+    this.dexie.version(4).stores({ [Table.Settings]: null });
+    this.dexie.version(5).stores({
+      [Table.Settings]: indexes("[scope+key]", "scope"),
+    });
+
+    // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
+    // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+    this.dexie.version(6).stores({
+      [Table.AccountWitnesses]: indexes("&accountId"),
+    });
 
     this.accountCodes = this.dexie.table<IAccountCode, string>(
       Table.AccountCode
@@ -520,7 +604,9 @@ export class MidenDatabase {
     this.notesScripts = this.dexie.table<INotesScript, string>(
       Table.NotesScripts
     );
-    this.stateSync = this.dexie.table<IStateSync, number>(Table.StateSync);
+    this.blockchainCheckpoint = this.dexie.table<IBlockchainCheckpoint, number>(
+      Table.BlockchainCheckpoint
+    );
     this.blockHeaders = this.dexie.table<IBlockHeader, number>(
       Table.BlockHeaders
     );
@@ -532,12 +618,21 @@ export class MidenDatabase {
     this.foreignAccountCode = this.dexie.table<IForeignAccountCode, string>(
       Table.ForeignAccountCode
     );
-    this.settings = this.dexie.table<ISetting, string>(Table.Settings);
+    this.settings = this.dexie.table<ISetting, [number, string]>(
+      Table.Settings
+    );
+    this.accountWitnesses = this.dexie.table<IAccountWitness, string>(
+      Table.AccountWitnesses
+    );
 
     this.dexie.on("populate", () => {
-      this.stateSync
-        .put({ id: 1, blockNum: 0 } as IStateSync)
-        /* v8 ignore next 2 — populate stateSync failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
+      this.blockchainCheckpoint
+        .put({
+          id: 1,
+          blockNum: 0,
+          partialBlockchainPeaks: new Uint8Array(),
+        } as IBlockchainCheckpoint)
+        /* v8 ignore next 2 — populate blockchainCheckpoint failure requires fake-indexeddb to simulate a write error, not modelable in unit tests */
         .catch((err: unknown) =>
           logWebStoreError(err, "Failed to populate DB")
         );
@@ -605,8 +700,13 @@ export class MidenDatabase {
     await this.persistClientVersion(clientVersion);
   }
 
+  // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+  // user-facing settings API never reaches.
   private async getStoredClientVersion(): Promise<string | null> {
-    const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+    const record = await this.settings.get([
+      SETTING_SCOPE_CLIENT,
+      CLIENT_VERSION_SETTING_KEY,
+    ]);
     if (!record) {
       return null;
     }
@@ -615,6 +715,7 @@ export class MidenDatabase {
 
   private async persistClientVersion(clientVersion: string): Promise<void> {
     await this.settings.put({
+      scope: SETTING_SCOPE_CLIENT,
       key: CLIENT_VERSION_SETTING_KEY,
       value: textEncoder.encode(clientVersion),
     });

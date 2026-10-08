@@ -12,6 +12,7 @@ import {
   AccountStorageMode,
   AccountStorageRequirements,
   AccountType,
+  FaucetType,
   Address,
   AddressInterface,
   AdviceMap,
@@ -31,8 +32,10 @@ import {
   Note,
   NoteAssets,
   NoteConsumability,
+  NoteConsumptionStatus,
   NoteExecutionHint,
   NoteExportFormat,
+  NoteScriptFee,
   NoteFilter,
   NoteFile,
   NoteFilterTypes,
@@ -91,6 +94,8 @@ declare global {
     MockWasmWebClient: typeof MockWasmWebClient;
     remoteProverUrl?: string;
     remoteProverInstance: TransactionProver;
+    /** The test node's own prover, exposed whether or not the run opted into one. */
+    localTxProverUrl: string;
     Account: typeof Account;
     AccountFile: typeof AccountFile;
     AccountBuilder: typeof AccountBuilder;
@@ -99,10 +104,10 @@ declare global {
     AccountHeader: typeof AccountHeader;
     AccountId: typeof AccountId;
     AccountInterface: typeof AccountInterface;
-    AccountStorageDelta: typeof AccountStorageDelta;
     AccountStorageMode: typeof AccountStorageMode;
     AccountStorageRequirements: typeof AccountStorageRequirements;
     AccountType: typeof AccountType;
+    FaucetType: typeof FaucetType;
     AccountVaultDelta: typeof AccountVaultDelta;
     Address: typeof Address;
     AddressInterface: typeof AddressInterface;
@@ -117,7 +122,6 @@ declare global {
     FeltArray: typeof FeltArray;
     ForeignAccount: typeof ForeignAccount;
     FungibleAsset: typeof FungibleAsset;
-    FungibleAssetDelta: typeof FungibleAssetDelta;
     InputNoteRecord: typeof InputNoteRecord;
     Library: typeof Library;
     NetworkId: typeof NetworkId;
@@ -126,8 +130,10 @@ declare global {
     NoteAndArgsArray: typeof NoteAndArgsArray;
     NoteAssets: typeof NoteAssets;
     NoteConsumability: typeof NoteConsumability;
+    NoteConsumptionStatus: typeof NoteConsumptionStatus;
     NoteExecutionHint: typeof NoteExecutionHint;
     NoteExportFormat: typeof NoteExportFormat;
+    NoteScriptFee: typeof NoteScriptFee;
     NoteFilter: typeof NoteFilter;
     NoteFile: typeof NoteFile;
     NoteFilterTypes: typeof NoteFilterTypes;
@@ -179,6 +185,9 @@ declare global {
     createClient: () => Promise<void>;
 
     rpcUrl: string;
+    // The chain's fee faucet, so `refreshClient` can rebuild a client that can
+    // still execute. Undefined when the SDK already knows one for the network.
+    feeFaucetId: string | undefined;
 
     // Add the helpers namespace
     helpers: {
@@ -189,6 +198,15 @@ declare global {
       ) => Promise<void>;
       waitForBlocks: (amountOfBlocks: number) => Promise<void>;
       refreshClient: (initSeed?: Uint8Array) => Promise<void>;
+      // Build another client against the node under test. Keeps the wrapper's
+      // positional list, and the fee faucet it ends with, in one place.
+      createClient: (storeName?: string, seed?: Uint8Array) => Promise<any>;
+      createClientWithKeystore: (
+        getKeyCb?: unknown,
+        insertKeyCb?: unknown,
+        signCb?: unknown,
+        storeName?: string
+      ) => Promise<any>;
       parseNetworkId: (networkId: string) => NetworkId;
       generateKeyWithScheme: (signatureScheme: string) => AuthSecretKey;
     };

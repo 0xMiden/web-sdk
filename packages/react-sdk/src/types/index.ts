@@ -1,5 +1,6 @@
 import { AuthScheme } from "@miden-sdk/miden-sdk";
 import type { AccountRef } from "../utils/accountParsing";
+import type { TransactionRequestInput } from "../utils/transactions";
 import type {
   WasmWebClient as WebClient,
   Account,
@@ -13,6 +14,8 @@ import type {
   TransactionRecord,
   TransactionRequest,
   TransactionScript,
+  TransactionSummary,
+  ChainAnchor,
   AdviceInputs,
   AccountStorageRequirements,
   NoteType,
@@ -21,6 +24,9 @@ import type {
   Note,
   NoteInput,
   NoteVisibility,
+  NoteExecutionHint,
+  NoteRecipient,
+  NoteScript,
   StorageMode,
   PswapLineageRecord,
 } from "@miden-sdk/miden-sdk";
@@ -39,6 +45,8 @@ export type {
   TransactionId,
   TransactionRecord,
   TransactionRequest,
+  TransactionSummary,
+  ChainAnchor,
   NoteType,
   Note,
   AccountStorageMode,
@@ -98,6 +106,14 @@ export interface MidenConfig {
   rpcUrl?: RpcUrlConfig;
   /** Note transport URL for streaming notes. */
   noteTransportUrl?: string;
+  /**
+   * Faucet of the chain's fee asset, as a bech32 address or a hex account ID.
+   *
+   * Optional. Since 0.17 the fee asset lives in the protocol configuration, which the client
+   * receives from the node when it syncs, so execution does not need this. It only sets what
+   * `client.feeFaucetId()` reports before the first sync.
+   */
+  feeFaucetId?: string;
   /** Auto-sync interval in milliseconds. Set to 0 to disable. Default: 15000ms */
   autoSyncInterval?: number;
   /** Initial seed for deterministic RNG (must be 32 bytes if provided) */
@@ -414,6 +430,34 @@ export interface MintOptions {
   noteType?: NoteVisibility;
 }
 
+// Create-network-note options
+export interface CreateNetworkNoteOptions {
+  /** Account that creates, funds, and submits the note (executing sender). */
+  accountId: AccountRef;
+  /** The network account the note targets. */
+  target: AccountRef;
+  /** Execution hint. Defaults to `always`. */
+  executionHint?: NoteExecutionHint;
+  /** Recipient carrying the custom script (advanced; else pass `script`). */
+  recipient?: NoteRecipient;
+  /** Custom consumption script; the recipient is built for you. */
+  script?: NoteScript;
+  /** Note storage / inputs the script reads (used with `script`). */
+  inputs?: bigint[];
+  /** Single asset to lock into the note. Optional — omit for a zero-asset note. */
+  assetId?: AccountRef;
+  /** Amount for `assetId`. */
+  amount?: bigint | number;
+  /** Extra attachment payload appended after the NetworkAccountTarget. */
+  attachment?: bigint[] | Uint8Array | number[];
+}
+
+// Create-network-note result — mirrors SendResult (txId + built note)
+export interface NetworkNoteResult {
+  txId: string;
+  note: Note;
+}
+
 // Bridge (AggLayer bridge-out) options
 export interface BridgeOptions {
   /** Account that creates and funds the bridge note (the sender) */
@@ -545,9 +589,7 @@ export interface ExecuteTransactionOptions {
   /** Account ID the transaction applies to */
   accountId: AccountRef;
   /** Transaction request or builder */
-  request:
-    | TransactionRequest
-    | ((client: WebClient) => TransactionRequest | Promise<TransactionRequest>);
+  request: TransactionRequestInput;
   /** Skip auto-sync before transaction. Default: false */
   skipSync?: boolean;
   /**
@@ -556,6 +598,38 @@ export interface ExecuteTransactionOptions {
    * AccountRef form (hex string, bech32, AccountId, Account, AccountHeader).
    */
   privateNoteTarget?: AccountRef;
+  /**
+   * Execute against a pinned reference block instead of the current sync
+   * height, so a summary signed at that block reproduces exactly. Capture one
+   * with {@link useChainAnchor}. Leave it out for a multisig request built by
+   * `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+   * client has synced to its bound block.
+   */
+  anchor?: ChainAnchor;
+}
+
+// Chain anchor
+
+/** Options for capturing a {@link ChainAnchor}. */
+export interface CaptureAnchorOptions {
+  /** The request the anchor is captured for. */
+  request: TransactionRequestInput;
+}
+
+/** Options for deriving a {@link TransactionSummary} without submitting. */
+export interface PreviewTransactionOptions {
+  /** Account ID the transaction applies to */
+  accountId: AccountRef;
+  /** Transaction request or builder */
+  request: TransactionRequestInput;
+  /**
+   * Derive the summary at a pinned reference block. Required when verifying a
+   * summary that binds the reference block commitment, since deriving it at the
+   * local sync height produces a different summary. Leave it out for a multisig
+   * request built by `feeAwareTransactionRequestBuilder`, which previews at the
+   * tip once the client has synced to its bound block.
+   */
+  anchor?: ChainAnchor;
 }
 
 // Transaction result
