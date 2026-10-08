@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A stand-in for the native module: the array polyfills and the entry's own
 // wiring must work without it, and Account/Word let the StorageView install run.
-// AuthScheme has the napi shape (names to values only) and WebClient records
-// what the client wrapper forwards.
+// AuthScheme has the napi shape (names to values only, none of them
+// enumerable) and WebClient records what the client wrapper forwards.
 const fakeNative = vi.hoisted(() => {
   const rawStorage = {};
   class Account {
@@ -28,7 +28,13 @@ const fakeNative = vi.hoisted(() => {
       this.storePath = storePath;
     }
   }
-  const AuthScheme = { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 };
+  const AuthScheme = Object.defineProperties(
+    {},
+    {
+      AuthEcdsaK256Keccak: { value: 1 },
+      AuthRpoFalcon512: { value: 2 },
+    }
+  );
   return { Account, Word, WebClient, AuthScheme, rawStorage };
 });
 vi.mock("../node/loader.js", () => ({
@@ -188,6 +194,11 @@ describe.each(["WasmWebClient", "MockWasmWebClient"])(
 
     it("newWallet hands the native client the Falcon enum value", async () => {
       await expect(client.newWallet("mode", "falcon")).resolves.toBe("wallet");
+      expect(native.newWallet).toHaveBeenCalledWith("mode", 2, null);
+    });
+
+    it("newWallet forwards a numeric enum value unchanged", async () => {
+      await expect(client.newWallet("mode", 2)).resolves.toBe("wallet");
       expect(native.newWallet).toHaveBeenCalledWith("mode", 2, null);
     });
 

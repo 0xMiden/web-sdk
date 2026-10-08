@@ -132,7 +132,9 @@ export function resolveStorageMode(mode, wasm) {
  * `wasm.AuthScheme`'s values, so callers that receive a pre-resolved value
  * (e.g. `AccountsResource.create`, which resolves before forwarding to the
  * low-level `newWallet`/`newFaucet`) don't get double-processed, while any
- * other number is rejected here rather than at the WASM boundary.
+ * other number is rejected here rather than at the WASM boundary. Members are
+ * read by name because the napi-rs enum on the Node entry defines them
+ * non-enumerable, so `Object.values` sees none of them there.
  *
  * @param {string | number | undefined} scheme - "falcon" or "ecdsa" (or an
  *   already-resolved numeric enum value). Defaults to "falcon".
@@ -142,7 +144,9 @@ export function resolveStorageMode(mode, wasm) {
 export function resolveAuthScheme(scheme, wasm) {
   if (
     typeof scheme === "number" &&
-    Object.values(wasm.AuthScheme).includes(scheme)
+    Object.getOwnPropertyNames(wasm.AuthScheme).some(
+      (name) => wasm.AuthScheme[name] === scheme
+    )
   ) {
     return scheme;
   }
