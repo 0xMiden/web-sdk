@@ -1,19 +1,23 @@
 # Changelog
 
-## 0.17.2 (TBD)
+## 0.18.0-rc.0 (TBD)
 
 ### Enhancements
 
 * [FEATURE][web,react] Transaction batches can span several local accounts. Every `client.transactions.batch` operation names its own executing `account`, so one atomic batch can mix any tracked accounts, and a later transaction may consume a note an earlier one produced, including across accounts. `submitBatch` takes `{ account, request }` pairs, backed by a new `BatchItem` (`new BatchItem(accountId, request)`) that the WASM `submitNewTransactionBatch` accepts as an array. The React SDK adds `useBatch()`, whose `batch({ items, skipSync? })` submits pre-built requests as one batch and resolves to `{ blockNumber }` ([#161](https://github.com/0xMiden/web-sdk/pull/161), [rust-sdk#2177](https://github.com/0xMiden/rust-sdk/pull/2177)).
 
+### Changes
+
+* [CHANGE][web] Start the 0.18 prerelease development line across SDK packages and Rust wrapper crates. Upstream Rust SDK dependencies remain pinned to exactly 0.17.1 ([#458](https://github.com/0xMiden/web-sdk/pull/458)).
+* [BREAKING][web] On Node.js the array containers (`NoteArray`, `FeltArray`, `AccountIdArray` and the other declared containers) are no longer `Array`s: `length()` is a method, as in the browser, and `get`, `replaceAt`, `push` and `free()` exist under the browser's names, while index access and `for...of` still work. Code that read the `length` property or called Array methods such as `map` or `slice` must use `length()`, `get(i)`, `for...of` or `Array.from(container)`. Results the browser types as a container, such as `SigningInputs.toElements()` and `TransactionScriptInputPair.felts()`, come back as one too. Some behaviour still differs from the browser on Node.js: `get` returns the stored object rather than a copy, `replaceAt` and `push` return the container and keep the caller's reference, `free()` does nothing, and `instanceof` and per-type constructor identity do not hold ([#427](https://github.com/0xMiden/web-sdk/issues/427)) ([#435](https://github.com/0xMiden/web-sdk/pull/435)).
+* [BREAKING][web] `client.transactions.batch` no longer takes a batch-level `account`; put `account` on each operation instead. `submitBatch(account, requests, options?)` becomes `submitBatch(items, options?)` with `items` as `{ account, request }[]`, and the WASM `submitNewTransactionBatch(accountId, serializedRequests)` becomes `submitNewTransactionBatch(items: BatchItem[])` ([#161](https://github.com/0xMiden/web-sdk/pull/161)).
+
+## 0.17.2 (TBD)
+
 ### Fixes
 
 * [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#401](https://github.com/0xMiden/web-sdk/pull/401), [#388](https://github.com/0xMiden/web-sdk/issues/388)).
 * [FIX][web] For an account whose header names a code root with no stored code row, `WebClient.getAccountCode`, `feeAwareTransactionRequestBuilder` and the `new*TransactionRequest` constructors that build through it now fail with `account code with root <root> not found` instead of a serde `invalid type: unit value, expected struct AccountCodeIdxdbObject` error ([#241](https://github.com/0xMiden/web-sdk/pull/241)).
-
-### Changes
-
-* [BREAKING][web] `client.transactions.batch` no longer takes a batch-level `account`; put `account` on each operation instead. `submitBatch(account, requests, options?)` becomes `submitBatch(items, options?)` with `items` as `{ account, request }[]`, and the WASM `submitNewTransactionBatch(accountId, serializedRequests)` becomes `submitNewTransactionBatch(items: BatchItem[])` ([#161](https://github.com/0xMiden/web-sdk/pull/161)).
 
 ## 0.17.1 (2026-10-07)
 

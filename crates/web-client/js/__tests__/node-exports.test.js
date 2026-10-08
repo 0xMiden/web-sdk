@@ -7,18 +7,94 @@ import { describe, expect, it, vi } from "vitest";
 // wiring must work without it, and Account/Word let the StorageView install run.
 const fakeNative = vi.hoisted(() => {
   const rawStorage = {};
+  // What the native side was handed, last call last.
+  const received = [];
   class Account {
     storage() {
       return rawStorage;
     }
+    toCommitment(arg) {
+      received.push(arg);
+      return "commitment";
+    }
+  }
+  // napi names the statics p2Id/p2Ide; the browser's p2id/p2ide are aliases.
+  class NoteScript {
+    static p2Id() {
+      return "p2id";
+    }
+    static p2Ide() {
+      return "p2ide";
+    }
   }
   class Word {}
-  return { Account, Word, rawStorage };
+  class TransactionRequestBuilder {
+    withOwnOutputNotes(notes) {
+      received.push(notes);
+      return this;
+    }
+  }
+  class NoteStorage {
+    constructor(felts) {
+      received.push(felts);
+    }
+  }
+  class SigningInputs {
+    toElements() {
+      return ["a", "b"];
+    }
+    arbitraryPayload() {
+      return ["p"];
+    }
+  }
+  class TransactionScriptInputPair {
+    felts() {
+      return ["f"];
+    }
+  }
+  class EthAddress {
+    static fromBytes(bytes) {
+      received.push(bytes);
+      return new EthAddress();
+    }
+  }
+  class WebClient {
+    async executeProgram() {
+      return ["x", "y"];
+    }
+  }
+  // A plain native function export (not a class) also carries a prototype.
+  function exportStore(items) {
+    received.push(items);
+    return "exported";
+  }
+  return {
+    Account,
+    Word,
+    TransactionRequestBuilder,
+    NoteStorage,
+    SigningInputs,
+    TransactionScriptInputPair,
+    EthAddress,
+    WebClient,
+    exportStore,
+    NoteScript,
+    rawStorage,
+    received,
+  };
 });
 vi.mock("../node/loader.js", () => ({
   loadNativeModule: () => ({
     Account: fakeNative.Account,
     Word: fakeNative.Word,
+    TransactionRequestBuilder: fakeNative.TransactionRequestBuilder,
+    NoteStorage: fakeNative.NoteStorage,
+    SigningInputs: fakeNative.SigningInputs,
+    TransactionScriptInputPair: fakeNative.TransactionScriptInputPair,
+    EthAddress: fakeNative.EthAddress,
+    WebClient: fakeNative.WebClient,
+    exportStore: fakeNative.exportStore,
+    NoteScript: fakeNative.NoteScript,
   }),
 }));
 
@@ -47,13 +123,14 @@ describe("Node array exports", () => {
     const ArrayType = nodeIndex[name];
     expect(ArrayType).toBeTypeOf("function");
     expect(nodeIndex.MidenArrays[name]).toBe(ArrayType);
-    expect(new ArrayType()).toHaveLength(0);
-    expect(new ArrayType([])).toHaveLength(0);
+    expect(new ArrayType().length()).toBe(0);
+    expect(new ArrayType([]).length()).toBe(0);
     const item = {};
     const items = new ArrayType([item]);
 
-    expect(Array.isArray(items)).toBe(true);
-    expect(items).toHaveLength(1);
+    expect(Array.isArray(items)).toBe(false);
+    expect(typeof items.length).toBe("function");
+    expect(items.length()).toBe(1);
     expect(items[0]).toBe(item);
     expect(items.get(0)).toBe(item);
   });
@@ -80,6 +157,11 @@ describe("Node array container contract", () => {
       expect(items.replaceAt(1, replacement)).toBe(items);
       expect(items[0]).toBe(first);
       expect(items[1]).toBe(replacement);
+
+      const third = {};
+      expect(items.push(third)).toBe(items);
+      expect(items.length()).toBe(3);
+      expect(items[2]).toBe(third);
     }
   );
 
@@ -88,6 +170,109 @@ describe("Node array container contract", () => {
 
     expect(items.free()).toBeUndefined();
     expect(items[Symbol.dispose]()).toBeUndefined();
+  });
+});
+
+describe("Node napi boundary", () => {
+  it("hands a raw native method a real array of the container's items", () => {
+    const first = {};
+    const second = {};
+    new nodeIndex.TransactionRequestBuilder().withOwnOutputNotes(
+      new nodeIndex.NoteArray([first, second])
+    );
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([first, second]);
+    expect(received[0]).toBe(first);
+  });
+
+  it("hands a native constructor a real array of the container's items", () => {
+    const felt = {};
+    new nodeIndex.NoteStorage(new nodeIndex.FeltArray([felt]));
+
+    const received = fakeNative.received.at(-1);
+    expect(Array.isArray(received)).toBe(true);
+    expect(received).toEqual([felt]);
+  });
+
+  it("calls a plain native function as a function, with a real array", () => {
+    const item = {};
+
+    expect(nodeIndex.exportStore(new nodeIndex.NoteArray([item]))).toBe(
+      "exported"
+    );
+    expect(fakeNative.received.at(-1)).toEqual([item]);
+  });
+
+  it("keeps the NoteScript.p2id and p2ide aliases", () => {
+    expect(nodeIndex.NoteScript.p2id()).toBe("p2id");
+    expect(nodeIndex.NoteScript.p2ide()).toBe("p2ide");
+  });
+
+  it("unwraps containers passed to a snake_case alias", () => {
+    const item = {};
+    new fakeNative.Account().to_commitment(new nodeIndex.NoteArray([item]));
+
+    expect(fakeNative.received.at(-1)).toEqual([item]);
+  });
+
+  it("lets a subclass of an exported native class keep its own methods", () => {
+    class Sub extends nodeIndex.NoteStorage {
+      tag() {
+        return 1;
+      }
+    }
+    const sub = new Sub(new nodeIndex.FeltArray([]));
+    expect(sub).toBeInstanceOf(Sub);
+    expect(sub.tag()).toBe(1);
+
+    class W extends nodeIndex.Word {
+      tag() {
+        return 2;
+      }
+    }
+    expect(new W().tag()).toBe(2);
+  });
+
+  it("keeps each wrapped export's class or function name", () => {
+    expect(nodeIndex.TransactionRequestBuilder.name).toBe(
+      "TransactionRequestBuilder"
+    );
+    expect(new nodeIndex.Word().constructor.name).toBe("Word");
+    expect(nodeIndex.exportStore.name).toBe("exportStore");
+  });
+
+  it("reports the export as an instance's constructor", () => {
+    expect(new nodeIndex.TransactionRequestBuilder().constructor).toBe(
+      nodeIndex.TransactionRequestBuilder
+    );
+    expect(new nodeIndex.Word().constructor).toBe(nodeIndex.Word);
+    expect(nodeIndex.Word()).toBeInstanceOf(nodeIndex.Word);
+  });
+
+  it("leaves byte arguments to native methods untouched", () => {
+    const bytes = new Uint8Array(20);
+    nodeIndex.EthAddress.fromBytes(bytes);
+
+    expect(fakeNative.received.at(-1)).toBe(bytes);
+  });
+
+  it.each([
+    ["SigningInputs", "toElements", ["a", "b"]],
+    ["SigningInputs", "arbitraryPayload", ["p"]],
+    ["TransactionScriptInputPair", "felts", ["f"]],
+  ])("returns %s.%s as a container", (cls, method, items) => {
+    const result = new nodeIndex[cls]()[method]();
+
+    expect(result.length()).toBe(items.length);
+    expect(result.get(0)).toBe(items[0]);
+  });
+
+  it("returns executeProgram's felts as a container", async () => {
+    const result = await new fakeNative.WebClient().executeProgram();
+    expect(result.length()).toBe(2);
+    expect(result.get(1)).toBe("y");
   });
 });
 
