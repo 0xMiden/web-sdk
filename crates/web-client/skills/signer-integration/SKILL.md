@@ -414,7 +414,7 @@ namespace yourself rather than from the package's named export, and verify the v
 not `undefined` before passing it.
 
 
-**Do not compile equivalent MASM through `AccountComponent.compile` instead.** Doing so links the standards package *dynamically*, which yields a different `auth_tx` procedure root. `AccountComponentInterface::from_procedures` then cannot classify the account, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
+**Build it with `createAuthGuardedMultisig`, the supported way to install the standard guarded multisig.** The client recognises an auth component only by its procedure root. If the account's auth procedure matches no standard component, for example MASM that differs from the bundled standard source, the client treats it as having no recognised auth component, declines to attach fee conversion info, and **every transaction from the account fails on a fee-charging chain**. Nothing warns you at account-creation time; the failure arrives later, at the first send.
 
 ## Network Accounts and Network Notes
 

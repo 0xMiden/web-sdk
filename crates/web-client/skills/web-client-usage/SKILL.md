@@ -430,17 +430,15 @@ visibility matters.
 
 ### Standard auth components
 
-Two auth components must come from the SDK rather than from your own MASM,
-because the client identifies an auth component by its procedure root and
-declines to attach fee conversion info to one it cannot classify:
+Build these two auth components with the SDK's factories, the supported way to
+install them. The client identifies an auth component by its procedure root and
+declines to attach fee conversion info to one it cannot classify, and a factory
+builds exactly the code the Rust client builds:
 
-- `createAuthGuardedMultisig(config)` builds the standard guarded multisig,
-  statically linked exactly as the Rust client builds it. Configure it with
+- `createAuthGuardedMultisig(config)` builds the standard guarded multisig.
+  Configure it with
   `new AuthGuardedMultisigConfig(approvers, defaultThreshold, guardian, authScheme)`
-  (optionally `.withProcThresholds([...])`). Compiling equivalent MASM through
-  `AccountComponent.compile` links the standards package dynamically, yields a
-  different `auth_tx` root, and every transaction from the account then fails
-  on a fee-charging chain.
+  (optionally `.withProcThresholds([...])`).
 - `AccountComponent.createNetworkAuthComponents(allowedNoteScriptFees, feeFaucetId, allowedTxScriptRoots?)`
   builds a network account's auth. Each `new NoteScriptFee(noteScript.root(), amount)`
   pairs an allowlisted note script root with the fee the account charges to
