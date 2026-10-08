@@ -35,7 +35,7 @@
     "url": "https://github.com/0xMiden/web-sdk/issues"
   },
   "peerDependencies": {
-    "@miden-sdk/miden-sdk": "^0.17.0"
+    "@miden-sdk/miden-sdk": "^0.17.1"
   },
   "homepage": "https://github.com/0xMiden/web-sdk"
 }

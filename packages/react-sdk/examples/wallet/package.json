@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@miden-sdk/miden-sdk": "^0.17.0",
+    "@miden-sdk/miden-sdk": "^0.17.1",
     "@miden-sdk/miden-wallet-adapter-react": "^0.17.0",
     "@miden-sdk/para-react": "^0.17.0",
     "@miden-sdk/react": "^0.17.0",
