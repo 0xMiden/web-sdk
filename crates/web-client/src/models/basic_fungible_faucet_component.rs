@@ -1,18 +1,22 @@
 use js_export_macro::js_export;
 use miden_client::Felt as NativeFelt;
-use miden_client::account::Account as NativeAccount;
 use miden_client::account::component::FungibleFaucet as NativeFungibleFaucet;
+use miden_client::account::{Account as NativeAccount, AccountStorage as NativeAccountStorage};
 
 use super::account::Account;
 use super::felt::Felt;
 use super::token_symbol::TokenSymbol;
 use crate::js_error_with_context;
+use crate::models::account_storage::AccountStorage;
 use crate::platform::JsErr;
 
-/// Provides metadata for a basic fungible faucet account component.
+/// Provides metadata for a fungible faucet account component.
 ///
-/// Reads the on-chain [`FungibleFaucet`] component for the account, which holds the
-/// per-token info (symbol/decimals/maxSupply).
+/// Reads the on-chain `FungibleFaucet` component for the account, which holds the per-token
+/// info (symbol, decimals, supply, and the descriptive metadata). The same component backs both
+/// "basic" public faucets and network-style faucets — in the current protocol the distinction is
+/// a function of the surrounding account configuration (account type, auth, access control), not
+/// of the faucet component itself — so this reads metadata from either kind of faucet account.
 #[js_export]
 pub struct BasicFungibleFaucetComponent(NativeFungibleFaucet);
 
@@ -29,9 +33,35 @@ impl BasicFungibleFaucetComponent {
         Ok(Self(faucet))
     }
 
+    /// Extracts faucet metadata from an account's storage.
+    ///
+    /// Unlike [`Self::from_account`], this reads the metadata straight from the storage slots
+    /// without checking that the account exposes the basic fungible faucet interface. This makes
+    /// it work for faucets built from custom components that reuse the standards storage layout
+    /// (e.g. `AggLayer` bridged-asset faucets), but it also means a non-faucet account whose
+    /// storage happens to use the same slot names would yield bogus metadata without an error.
+    #[js_export(js_name = "fromAccountStorage")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn from_account_storage(account_storage: AccountStorage) -> Result<Self, JsErr> {
+        let native_account_storage: NativeAccountStorage = account_storage.into();
+        let faucet = NativeFungibleFaucet::try_from(&native_account_storage).map_err(|e| {
+            js_error_with_context(
+                e,
+                "failed to get basic fungible faucet details from account storage",
+            )
+        })?;
+        Ok(Self(faucet))
+    }
+
     /// Returns the faucet's token symbol.
     pub fn symbol(&self) -> TokenSymbol {
         self.0.symbol().into()
+    }
+
+    /// Returns the human-readable token name.
+    #[js_export(js_name = "tokenName")]
+    pub fn token_name(&self) -> String {
+        self.0.token_name().as_str().to_string()
     }
 
     /// Returns the number of decimal places for the token.
@@ -43,5 +73,28 @@ impl BasicFungibleFaucetComponent {
     #[js_export(js_name = "maxSupply")]
     pub fn max_supply(&self) -> Felt {
         NativeFelt::from(self.0.max_supply()).into()
+    }
+
+    /// Returns the current token supply (the amount minted so far).
+    #[js_export(js_name = "tokenSupply")]
+    pub fn token_supply(&self) -> Felt {
+        NativeFelt::from(self.0.token_supply()).into()
+    }
+
+    /// Returns the optional free-form token description, or `undefined` when unset.
+    pub fn description(&self) -> Option<String> {
+        self.0.description().map(|d| d.as_str().to_string())
+    }
+
+    /// Returns the optional token logo URI, or `undefined` when unset.
+    #[js_export(js_name = "logoUri")]
+    pub fn logo_uri(&self) -> Option<String> {
+        self.0.logo_uri().map(|uri| uri.as_str().to_string())
+    }
+
+    /// Returns the optional external link (e.g. project website), or `undefined` when unset.
+    #[js_export(js_name = "externalLink")]
+    pub fn external_link(&self) -> Option<String> {
+        self.0.external_link().map(|link| link.as_str().to_string())
     }
 }

@@ -656,7 +656,32 @@ describe("sync", () => {
       expect(node!.node).toBe("node-data-42");
     });
 
-    it("overwrites an existing partial blockchain node (bulkPut)", async () => {
+    it("accepts re-writing an existing node with the same value", async () => {
+      const dbId = await openTestDb();
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 2,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+
+      const db = getDatabase(dbId);
+      const node = await db.partialBlockchainNodes.get(10);
+      expect(node!.node).toBe("same-data");
+    });
+
+    it("rejects a conflicting node write and keeps the stored value", async () => {
       const dbId = await openTestDb();
 
       await applyStateSync(
@@ -667,18 +692,53 @@ describe("sync", () => {
           serializedNodes: ["first-data"],
         })
       );
-      await applyStateSync(
-        dbId,
-        minimalStateUpdate({
-          blockNum: 2,
-          serializedNodeIds: ["10"],
-          serializedNodes: ["second-data"],
-        })
-      );
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 2,
+            serializedNodeIds: ["10"],
+            serializedNodes: ["second-data"],
+          })
+        )
+      ).rejects.toThrow("Refusing to overwrite partial blockchain node 10");
 
       const db = getDatabase(dbId);
       const node = await db.partialBlockchainNodes.get(10);
-      expect(node!.node).toBe("second-data");
+      expect(node!.node).toBe("first-data");
+    });
+
+    it("deduplicates identical node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10", "10"],
+          serializedNodes: ["node-data", "node-data"],
+        })
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(1);
+      expect((await db.partialBlockchainNodes.get(10))!.node).toBe("node-data");
+    });
+
+    it("rejects conflicting node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 1,
+            serializedNodeIds: ["10", "10"],
+            serializedNodes: ["first-data", "second-data"],
+          })
+        )
+      ).rejects.toThrow(
+        "Conflicting partial blockchain node 10 within the same write"
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(0);
     });
 
     it("is a no-op when serializedNodeIds is empty", async () => {
@@ -1002,6 +1062,7 @@ describe("sync", () => {
   describe("applyStateSync — account updates", () => {
     it("applies a full account state during sync", async () => {
       const dbId = await openTestDb();
+      const code = new Uint8Array([0x01, 0x02, 0x03]);
 
       await applyStateSync(
         dbId,
@@ -1017,6 +1078,7 @@ describe("sync", () => {
               vaultRoot: "vault-root-1",
               assets: [],
               codeRoot: "code-root-1",
+              code,
               committed: true,
               accountCommitment: "commitment-1",
               accountSeed: undefined,
@@ -1034,10 +1096,15 @@ describe("sync", () => {
       expect(account!.nonce).toBe("1");
       expect(account!.committed).toBe(true);
       expect(account!.codeRoot).toBe("code-root-1");
+
+      const storedCode = await db.accountCodes.get(account!.codeRoot);
+      expect(storedCode?.code).toEqual(code);
     });
 
     it("applies multiple account updates in one sync call", async () => {
       const dbId = await openTestDb();
+      const codeA = new Uint8Array([0x0a]);
+      const codeB = new Uint8Array([0x0b]);
 
       await applyStateSync(
         dbId,
@@ -1053,6 +1120,7 @@ describe("sync", () => {
               vaultRoot: "vr-A",
               assets: [],
               codeRoot: "cr-A",
+              code: codeA,
               committed: true,
               accountCommitment: "com-A",
               accountSeed: undefined,
@@ -1066,6 +1134,7 @@ describe("sync", () => {
               vaultRoot: "vr-B",
               assets: [],
               codeRoot: "cr-B",
+              code: codeB,
               committed: false,
               accountCommitment: "com-B",
               accountSeed: new Uint8Array([0xca, 0xfe]),
@@ -1079,6 +1148,9 @@ describe("sync", () => {
       const ids = all.map((a) => a.id);
       expect(ids).toContain("acct-sync-A");
       expect(ids).toContain("acct-sync-B");
+
+      expect((await db.accountCodes.get("cr-A"))?.code).toEqual(codeA);
+      expect((await db.accountCodes.get("cr-B"))?.code).toEqual(codeB);
     });
   });
 });

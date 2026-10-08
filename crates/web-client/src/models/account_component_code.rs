@@ -14,7 +14,7 @@ impl AccountComponentCode {
     /// Returns the underlying Library
     #[js_export(js_name = "asLibrary")]
     pub fn as_library(&self) -> Result<Library, JsErr> {
-        let native_library = self.0.as_library();
+        let native_library = self.0.as_package();
         Ok(native_library.into())
     }
 }
@@ -31,6 +31,12 @@ impl From<NativeAccountComponentCode> for AccountComponentCode {
 impl From<AccountComponentCode> for NativeAccountComponentCode {
     fn from(native_account_component: AccountComponentCode) -> Self {
         native_account_component.0
+    }
+}
+
+impl From<&AccountComponentCode> for NativeAccountComponentCode {
+    fn from(native_account_component: &AccountComponentCode) -> Self {
+        native_account_component.0.clone()
     }
 }
 

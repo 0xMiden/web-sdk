@@ -1,0 +1,176 @@
+// @ts-nocheck
+import { test, expect } from "./test-setup";
+
+// NETWORK_NOTE TEST
+// =======================================================================================================
+//
+// Load-bearing gate for the network-note-attachments feature: proves that a
+// `NetworkAccountTarget` attachment on a Public note survives the full
+// own-output-note submission path (submit -> proveBlock -> syncState ->
+// fetch) against the real WASM/napi client, not a mocked unit test.
+
+test.describe("network note tests", () => {
+  test.describe.configure({ timeout: 720000 });
+
+  test("custom-script note carries a NetworkAccountTarget and it survives submit", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client, sdk, helpers }) => {
+      await client.syncState();
+
+      // The note script is reused for the allowlist root and the note itself.
+      const p2idScript = sdk.NoteScript.p2id();
+
+      // Creating a note that carries a `NetworkAccountTarget` prices the note by
+      // calling `estimate_note_fee` on the target, so the target must be a real
+      // network account — a plain wallet does not expose that procedure — and it
+      // must be committed on-chain at the transaction's reference block.
+      // This faucet only mints the note that deploys the account; the account's
+      // own fee faucet is the chain's, below.
+      const faucet = await client.newFaucet(
+        sdk.AccountStorageMode.public(),
+        false,
+        "FEE",
+        "FEE",
+        8,
+        sdk.u64(10000000),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+
+      // Each allowed note carries its own price; this one is free.
+      const allowedNotes = [
+        new sdk.NoteScriptFee(p2idScript.root(), sdk.u64(0)),
+      ];
+      // Yields the auth component plus the components backing its fee policy.
+      // The fee faucet must be the chain's: a 0.17 node never serves a network
+      // account whose fee asset differs from its protocol configuration's.
+      const networkAuth = sdk.AccountComponent.createNetworkAuthComponents(
+        allowedNotes,
+        await client.feeFaucetId()
+      );
+
+      const seed = new Uint8Array(32);
+      crypto.getRandomValues(seed);
+      const networkAccountBuilder = new sdk.AccountBuilder(seed).storageMode(
+        sdk.AccountStorageMode.public()
+      );
+      for (const component of networkAuth) {
+        networkAccountBuilder.withComponent(component);
+      }
+      const networkAccount = networkAccountBuilder.build().account;
+      await client.newAccount(networkAccount, false);
+
+      // Deploy by consuming a note, not by an empty transaction: since 0.17 the
+      // network auth component asserts the transaction had an effect before fee
+      // payment (`ERR_NETWORK_ACCOUNT_TRANSACTION_HAS_NO_EFFECT` - an input note,
+      // an output note, or a changed account state), and a scriptless deploy has
+      // none. A minted P2ID note is the cheapest effect the account's own
+      // allowlist already permits: `allowedNotes` above carries that script root.
+      await helpers.mockMintAndConsume(networkAccount.id(), faucet.id(), {
+        publicNote: true,
+      });
+      await client.proveBlock();
+      await client.syncState();
+
+      // The sender/creator.
+      const sender = await client.newWallet(
+        sdk.AccountStorageMode.public(),
+        sdk.AuthScheme.AuthRpoFalcon512
+      );
+
+      // Build a Public custom-script network note (P2ID script reused here as a
+      // stand-in "custom" script; the point is Note.withAttachments + the target).
+      const target = new sdk.NetworkAccountTarget(networkAccount.id());
+      const recipient = sdk.NoteRecipient.fromScript(
+        p2idScript,
+        new sdk.NoteStorage(new sdk.FeltArray([]))
+      );
+
+      // Regression guard for the resource/standalone builders: a non-empty
+      // `inputs` list must marshal bigints into `Felt` handles before
+      // `FeltArray` — a raw bigint throws `expected instance of Felt` against
+      // real WASM. Exercised here end-to-end, not through a mock.
+      const nonEmptyInputsRecipient = sdk.NoteRecipient.fromScript(
+        sdk.NoteScript.p2id(),
+        new sdk.NoteStorage(
+          new sdk.FeltArray([1n, 2n].map((v) => new sdk.Felt(v)))
+        )
+      );
+      const note = sdk.Note.withAttachments(
+        new sdk.NoteAssets([]),
+        new sdk.NoteMetadata(
+          sender.id(),
+          sdk.NoteType.Public,
+          sdk.NoteTag.withAccountTarget(networkAccount.id())
+        ),
+        recipient,
+        [target.toAttachment()]
+      );
+
+      const builtIsNetworkNote = note.isNetworkNote();
+      const builtAttachmentCount = note.attachments().length;
+
+      // Submit as an own output note, declaring the target as a foreign
+      // account. Since 0.17 the kernel prices a NetworkAccountTarget note by
+      // calling `estimate_note_fee` on the target; this client happens to hold
+      // that account locally, so it would resolve either way, but a consumer
+      // whose client does not must declare it, and this gate should exercise
+      // the shape they need. `client.transactions.createNetworkNote` does it
+      // for you.
+      const ownOutputs = new sdk.NoteArray();
+      ownOutputs.push(note);
+      const targetAccounts = new sdk.ForeignAccountArray();
+      targetAccounts.push(
+        sdk.ForeignAccount.public(
+          networkAccount.id(),
+          new sdk.AccountStorageRequirements()
+        )
+      );
+      const request = new sdk.TransactionRequestBuilder()
+        .withOwnOutputNotes(ownOutputs)
+        .withForeignAccounts(targetAccounts)
+        .build();
+      const txId = await client.submitNewTransaction(sender.id(), request);
+      await client.proveBlock();
+      await client.syncState();
+
+      // Read the output note back off the persisted transaction record
+      // (fetched fresh from the store via getTransactions, not the
+      // in-memory `note` object above) and re-check it survived submission.
+      const [record] = await client.getTransactions(
+        sdk.TransactionFilter.ids([txId])
+      );
+      const outNote = record.outputNotes().notes()[0];
+      const submittedNoteId = outNote.id().toString();
+      const fetchedNote = outNote.intoFull();
+
+      return {
+        builtIsNetworkNote,
+        builtAttachmentCount,
+        nonEmptyInputsMarshaled: nonEmptyInputsRecipient != null,
+        submittedNoteId,
+        fetchedNoteIsPresent: fetchedNote != null,
+        fetchedIsNetworkNote: fetchedNote ? fetchedNote.isNetworkNote() : null,
+        fetchedAttachmentCount: fetchedNote
+          ? fetchedNote.attachments().length
+          : null,
+      };
+    });
+
+    // The built note is a valid network note before it ever touches the chain.
+    expect(result.builtIsNetworkNote).toBe(true);
+    expect(result.builtAttachmentCount).toBe(1);
+    // Non-empty `inputs` marshaled through Felt/FeltArray without throwing.
+    expect(result.nonEmptyInputsMarshaled).toBe(true);
+    expect(typeof result.submittedNoteId).toBe("string");
+    expect(result.submittedNoteId.length).toBeGreaterThan(0);
+
+    // The load-bearing assertions: the note read back off the persisted
+    // transaction record after submit -> proveBlock -> syncState still
+    // carries its full data (attachments survive submission), and still
+    // reports as a network note.
+    expect(result.fetchedNoteIsPresent).toBe(true);
+    expect(result.fetchedIsNetworkNote).toBe(true);
+    expect(result.fetchedAttachmentCount).toBe(1);
+  });
+});

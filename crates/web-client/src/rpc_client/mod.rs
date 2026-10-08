@@ -12,7 +12,13 @@ use miden_client::builder::DEFAULT_GRPC_TIMEOUT_MS;
 use miden_client::note::{NoteId as NativeNoteId, Nullifier};
 use miden_client::rpc::domain::account::{GetAccountRequest, StorageMapFetch, VaultFetch};
 use miden_client::rpc::domain::note::FetchedNote as NativeFetchedNote;
-use miden_client::rpc::{AccountStateAt, GrpcClient, NodeRpcClient};
+use miden_client::rpc::{
+    AccountStateAt,
+    Endpoint as NativeEndpoint,
+    GrpcClient,
+    NodeRpcClient,
+    VerifyingRpcClient,
+};
 use note::FetchedNote;
 
 use crate::js_error_with_context;
@@ -37,6 +43,7 @@ mod note;
 #[js_export]
 pub struct RpcClient {
     inner: Arc<dyn NodeRpcClient>,
+    endpoint: String,
 }
 
 #[js_export]
@@ -46,16 +53,21 @@ impl RpcClient {
     /// @param endpoint - Endpoint to connect to.
     #[js_export(constructor)]
     pub fn new(endpoint: Endpoint) -> Result<RpcClient, JsErr> {
-        let rpc_client = Arc::new(GrpcClient::new(&endpoint.into(), DEFAULT_GRPC_TIMEOUT_MS));
+        let endpoint = NativeEndpoint::from(endpoint);
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
-        Ok(RpcClient { inner: rpc_client })
+        Ok(RpcClient {
+            inner: rpc_client,
+            endpoint: endpoint.to_string(),
+        })
     }
 
-    /// Returns the endpoint URL this RPC client is configured to talk to, or `undefined` if its
-    /// transport doesn't track one.
+    /// Returns the URL of the node this RPC client was created against, in the form
+    /// `Endpoint.toString()` gives, for example `https://rpc.devnet.miden.io`.
     #[js_export(js_name = "endpoint")]
-    pub fn endpoint(&self) -> Option<String> {
-        self.inner.endpoint().map(str::to_string)
+    pub fn endpoint(&self) -> String {
+        self.endpoint.clone()
     }
 
     /// Fetches notes by their IDs from the connected Miden node.
@@ -362,5 +374,43 @@ impl RpcClient {
             .and_then(|(_, height)| height);
 
         Ok(height.map(|height| height.as_u32()))
+    }
+
+    /// Binds an invitation code to an account on the network allowlist, through the node's
+    /// `RegisterAccount` endpoint.
+    ///
+    /// Unlike `WebClient.registerAccount`, this sends the request as given: the account does not
+    /// have to be tracked by a client, and the node is not asked first whether it already allows
+    /// the account. A registration consumes the code. The node rejects an unknown code
+    /// (`INVITATION_NOT_FOUND`), a code or account that is already registered
+    /// (`ALREADY_REGISTERED`) and a malformed request (`INVALID_REGISTRATION_REQUEST`); a network
+    /// that does not enforce the allowlist ignores the code but still registers the account.
+    ///
+    /// When the network operator runs a funding service, the node pays the registered account a
+    /// public P2ID note and answers once that note is committed, so this call can take a few
+    /// blocks.
+    #[js_export(js_name = "registerAccount")]
+    pub async fn register_account(
+        &self,
+        account_id: &AccountId,
+        invitation_code: String,
+    ) -> Result<(), JsErr> {
+        self.inner
+            .register_account(&invitation_code, account_id.into())
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to register account"))
+    }
+
+    /// Returns whether the node lets the account be created on chain, through the
+    /// `IsAccountAllowed` endpoint.
+    ///
+    /// `true` when the node does not enforce an account allowlist, or when the account is
+    /// registered. Only account creation is gated, so the answer says nothing about an account
+    /// that already exists on chain.
+    #[js_export(js_name = "isAccountAllowed")]
+    pub async fn is_account_allowed(&self, account_id: &AccountId) -> Result<bool, JsErr> {
+        self.inner.is_account_allowed(account_id.into()).await.map_err(|err| {
+            js_error_with_context(err, "failed to check whether the account is allowed")
+        })
     }
 }

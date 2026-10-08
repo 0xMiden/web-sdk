@@ -1,5 +1,25 @@
 # @miden-sdk/react
 
+## Start here
+
+```bash
+npm create @miden-sdk@latest
+```
+
+Run that once in your project. Miden is pre-1.0 and its API moves between minor
+versions, so an AI coding agent working from training data will write code for a
+version you are not on. Every `@miden-sdk/*` package ships an `AGENTS.md` and
+task-scoped `skills/` inside its tarball, matched to the exact version in your
+lockfile - this command is what points your agent at them, by writing the
+pointers into your own `AGENTS.md` and `CLAUDE.md`. It is idempotent, so re-run
+it after an upgrade.
+
+Prefer to wire it up by hand? The block to paste is [below](#for-ai-coding-agents).
+
+Starting from nothing rather than adding to an existing app?
+[`0xMiden/agentic-template`](https://github.com/0xMiden/agentic-template)
+scaffolds the whole stack with this already done.
+
 React hooks library for the Miden Web Client. Provides a simple, ergonomic interface for building React applications on the Miden rollup.
 
 ## Features
@@ -12,6 +32,8 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 - **Note Attachments** - Send and read arbitrary data payloads on notes via `useSend()` and `readNoteAttachment()`
 - **Temporal Note Tracking** - `useNoteStream()` tracks when notes first appear, with built-in filtering, handled-note exclusion, and phase snapshots
 - **Session Wallets** - `useSessionAccount()` manages the create-fund-consume lifecycle for temporary wallets
+- **AggLayer Bridge-Out** - `useBridge()` emits a B2AGG note to bridge a fungible asset out to another network via the AggLayer
+- **Network Notes** - `useCreateNetworkNote()` creates custom-script network notes
 - **Concurrency Safety** - Transaction hooks prevent double-sends with built-in concurrency guards
 - **Auto Pre-Sync** - Transaction hooks sync before executing by default (opt out with `skipSync`)
 - **WASM Error Wrapping** - Cryptic WASM errors are intercepted and replaced with actionable messages
@@ -22,6 +44,42 @@ React hooks library for the Miden Web Client. Provides a simple, ergonomic inter
 npm install @miden-sdk/react @miden-sdk/miden-sdk
 # or
 pnpm add @miden-sdk/react @miden-sdk/miden-sdk
+```
+
+## For AI coding agents
+
+This package ships agent-facing documentation inside the tarball, so it is
+always version-matched to the code you have installed:
+
+- `node_modules/@miden-sdk/react/AGENTS.md` — hook-by-hook usage guide
+- `node_modules/@miden-sdk/react/skills/` — React patterns and testing patterns
+
+Agents do not look inside `node_modules` on their own. To make yours read these
+automatically, paste this block into the `AGENTS.md` or `CLAUDE.md` at the root
+of your project:
+
+```markdown
+<!-- BEGIN:miden-agent-rules -->
+## Miden
+
+This project uses the Miden web SDK. Your training data is likely out of date:
+Miden is pre-1.0 and its API changes between minor versions.
+
+Before writing or reviewing Miden code, read the version-matched guide that
+ships inside the package you are touching:
+
+- `node_modules/@miden-sdk/<package>/AGENTS.md`, for any `@miden-sdk/*` package
+  you import. Start with `miden-sdk` (core client), `react` (hooks) and
+  `vite-plugin` (bundler setup).
+
+Each guide indexes task-specific skills in that package's `skills/` directory.
+Read the relevant skill before implementing, not after.
+
+These files ship in the published tarball, so they describe the exact version
+you have installed. The version is in the same directory's `package.json`; if a
+guide disagrees with what you expected, the guide is right and your assumption
+is stale.
+<!-- END:miden-agent-rules -->
 ```
 
 ## Testing
@@ -95,6 +153,12 @@ function App() {
       config={{
         // RPC endpoint (defaults to testnet). You can also use 'devnet' or 'testnet'.
         rpcUrl: 'devnet',
+
+        // Optional: the faucet the chain mints its fee asset from, bech32 or hex.
+        // The client receives the chain's protocol configuration, which names the
+        // fee asset, from the node when it syncs; this only sets what
+        // `client.feeFaucetId()` reports before that first sync.
+        feeFaucetId: FEE_FAUCET,
 
         // Auto-sync interval in milliseconds (default: 15000)
         // Set to 0 to disable auto-sync
@@ -639,7 +703,9 @@ interface StreamedNote {
 Fetch asset symbols/decimals for a list of asset IDs. This is the lightweight
 way to enrich balances and note lists with human-friendly token info.
 It batches lookups and caches results for reuse across components. That avoids
-repeated RPC calls and inconsistent labels.
+repeated RPC calls and inconsistent labels. Lookups go to the node the
+provider's client was created against (`client.endpoint()`), so nothing is
+fetched until `MidenProvider` is ready.
 
 ```tsx
 import { useAssetMetadata } from '@miden-sdk/react';
@@ -740,7 +806,7 @@ function SendForm() {
 
 Create multiple P2ID output notes in a single transaction. This is ideal for
 batched payouts or airdrops; with `noteType: 'private'`, the hook also delivers
-each note to recipients via `sendPrivateNote`.
+each note to recipients via `sendPrivateOutputNote`.
 It builds the request and executes the full pipeline in one go. That means
 fewer chances to handle batching incorrectly or forget private note delivery.
 
@@ -775,6 +841,65 @@ function MultiSendButton() {
   );
 }
 ```
+
+#### `useBatch()`
+
+Submit multiple transactions across one or more tracked accounts as one atomic
+batch — every tx lands together or none does. Each item pairs a local account
+with a pre-built `TransactionRequest`. Later items may consume notes produced by
+earlier ones (even across accounts); push order must respect
+producer-before-consumer. The underlying primitive returns a block number
+rather than per-tx ids, so the hook's result is `{ blockNumber }`.
+Each tx is proven inside that primitive by the client's built-in local prover,
+so `MidenProvider`'s `prover` setting and its fallback do not apply to batches.
+In the browser the batch runs in the client's Web Worker, so the page stays
+responsive while it proves; with `useWorker: false`, or without `Worker`
+support, it proves on the calling thread and blocks the page until it settles,
+so keep batches small there.
+
+Built-in features:
+- **Auto pre-sync** before submit (disable with `skipSync: true`)
+- **Concurrency guard** rejects a second `batch()` while the first is still
+  in flight (`BATCH_BUSY`)
+- **Atomicity** — the batch path uses the same proven-batch RPC the underlying
+  `submitNewTransactionBatch` exposes; the store applies all per-tx updates
+  in one IndexedDB transaction
+
+```tsx
+import { useBatch, useMidenClient } from '@miden-sdk/react';
+import { BatchItem, NoteType } from '@miden-sdk/miden-sdk';
+
+function BatchButton() {
+  const { batch, isLoading, stage } = useBatch();
+  const client = useMidenClient();
+
+  const handleBatch = async () => {
+    const sendReq = await client.newSendTransactionRequest(
+      alice, bob, token, NoteType.Private, 50n, null, null,
+    );
+    const consumeReq = await client.newConsumeTransactionRequest([incomingNote], bob);
+
+    const { blockNumber } = await batch({
+      items: [
+        { account: alice, request: sendReq },
+        { account: bob,   request: consumeReq },  // can consume notes from earlier items
+      ],
+    });
+    console.log('Batch submitted at chain tip', blockNumber);
+  };
+
+  return (
+    <button onClick={handleBatch} disabled={isLoading}>
+      {isLoading ? `Submitting (${stage})...` : 'Submit batch'}
+    </button>
+  );
+}
+```
+
+Pass `skipSync: true` if you've already synced and want to avoid the pre-submit
+round-trip. The hook itself never serializes the requests: the WASM `BatchItem`
+constructor takes the `TransactionRequest` by reference. A client running a
+Web Worker serializes each request once to hand the batch to the worker.
 
 #### `useInternalTransfer()`
 
@@ -1105,6 +1230,64 @@ function CancelPswapButton({ accountId, note }: Props) {
 }
 ```
 
+#### `usePswapLineages()` / `usePswapLineagesFor()` / `usePswapLineage()`
+
+Read the partial-swap orders this client is tracking. As a PSWAP note is filled
+round by round, the client follows the chain — original note → remainder →
+remainder — and records each step as a **lineage** keyed by a stable `orderId`.
+These query hooks expose that tracked state and refresh after every successful
+sync. They return `{ lineages | lineage, isLoading, error, refetch }`.
+
+```tsx
+import {
+  usePswapLineages,
+  usePswapLineagesFor,
+  usePswapLineage,
+} from '@miden-sdk/react';
+
+// Every lineage tracked by this client
+const { lineages } = usePswapLineages();
+
+// Only the lineages created by one account
+const { lineages: mine } = usePswapLineagesFor('0xmywallet...');
+
+// A single order by its stable id
+const { lineage } = usePswapLineage(orderId);
+
+function OrderRow({ orderId }: { orderId: string }) {
+  const { lineage, isLoading } = usePswapLineage(orderId);
+  if (isLoading) return <span>Loading…</span>;
+  if (!lineage) return <span>Not tracked</span>;
+  return (
+    <span>
+      {lineage.orderId()} — {lineage.remainingOffered().toString()} left,
+      state {lineage.state()}
+    </span>
+  );
+}
+```
+
+#### `usePswapCancelByOrder()`
+
+Cancel a tracked PSWAP by its stable `orderId` and reclaim the unfilled offered
+asset on the lineage's current tip. Unlike `usePswapCancel`, you don't need to
+hold the tip note — the creator account and tip are resolved from the locally
+tracked lineage, so only the order id is required.
+
+```tsx
+import { usePswapCancelByOrder } from '@miden-sdk/react';
+
+function CancelOrderButton({ orderId }: { orderId: string }) {
+  const { pswapCancelByOrder, isLoading, stage } = usePswapCancelByOrder();
+
+  return (
+    <button onClick={() => pswapCancelByOrder({ orderId })} disabled={isLoading}>
+      {isLoading ? stage : 'Cancel order'}
+    </button>
+  );
+}
+```
+
 #### `useTransaction()`
 
 Execute a custom `TransactionRequest` or build one with the client. This is the
@@ -1116,6 +1299,7 @@ yourself.
 Built-in features:
 - **Auto pre-sync** before executing (disable with `skipSync: true`)
 - **Concurrency guard** prevents double-executions while a transaction is in-flight
+- **Anchored execution** via `anchor` — pins the reference block so a summary signed at that block reproduces exactly (see [`useChainAnchor()`](#usechainanchor--usepreview))
 
 ```tsx
 import { useTransaction } from '@miden-sdk/react';
@@ -1148,6 +1332,167 @@ function CustomTransactionButton({ accountId }: { accountId: string }) {
   );
 }
 ```
+
+#### `useChainAnchor()` / `usePreview()`
+
+`usePreview()` derives the summary pending authorization without submitting.
+`useChainAnchor()` pins the reference block that summary is derived at, for
+flows whose summary binds that block, such as single-signature co-signing.
+
+**Multisig proposals need no anchor.** Since protocol 0.17 a multisig summary
+binds a bound block named in its auth args. Build the request with
+`client.feeAwareTransactionRequestBuilder(accountId)`, which declares that
+block with `withBlockNumbers`, ship the request bytes, and let every party
+preview and execute at its own tip once its client has synced to at least the
+bound block (the largest of `request.blockNumbers()`); below it the call fails
+with `requested block N is after transaction reference block M`. `usePreview`
+does not sync, and `useTransaction` syncs through the provider's `sync()`, which
+returns early while another sync runs, so sync and then check the height before
+verifying or executing. Re-executing an older multisig proposal at an anchor
+fails once the node prunes that block's account state (50 blocks).
+
+```tsx
+import { useMiden, usePreview } from '@miden-sdk/react';
+import { TransactionRequest } from '@miden-sdk/miden-sdk';
+
+// Multisig co-signer: re-derive at the local tip from the proposer's bytes.
+function VerifyMultisig({ accountId, requestBytes, proposed }) {
+  const { client, sync } = useMiden();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        const request = TransactionRequest.deserialize(requestBytes);
+        await sync();
+        // sync() returns early while another sync runs; confirm the height.
+        const bound = Math.max(0, ...request.blockNumbers());
+        if ((await client.getSyncHeight()) < bound) {
+          throw new Error("not synced to the proposal's bound block yet; retry");
+        }
+        const derived = await preview({ accountId, request });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+```
+
+A summary that binds the reference block only authorizes an execution at that
+exact block. In a flow that collects such signatures and executes later, the
+signer, co-signers and executor are all at different sync heights, and a
+`ChainAnchor` is what makes them agree on one summary.
+
+```tsx
+import { useChainAnchor, useMiden, usePreview, useTransaction } from '@miden-sdk/react';
+import { ChainAnchor } from '@miden-sdk/miden-sdk';
+
+// Signer: capture the anchor, derive the summary at it, ship both.
+function Propose({ accountId, buildRequest }) {
+  const { client } = useMiden();
+  const { captureAnchor } = useChainAnchor();
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        // Resolve the factory once and pass that object to both calls. A
+        // factory builds a new request per call, and anchoredRequest is state,
+        // so inside this handler it still holds the previous value.
+        const request = await buildRequest(client);
+        const anchor = await captureAnchor({ request });
+        const summary = await preview({ accountId, request, anchor });
+        await shipToCosigners(
+          request.serialize(),
+          anchor.serialize(),
+          summary.serialize()
+        );
+      }}
+    >
+      Propose
+    </button>
+  );
+}
+
+// Co-signer: re-derive at the signer's anchor and compare before signing.
+// Deriving such a summary at the local sync height yields a different one.
+function Verify({ accountId, request, anchorBytes, proposed }) {
+  const { preview } = usePreview();
+
+  return (
+    <button
+      onClick={async () => {
+        const anchor = ChainAnchor.deserialize(anchorBytes);
+        const derived = await preview({ accountId, request, anchor });
+        if (derived.toCommitment().toHex() === proposed.toCommitment().toHex()) {
+          await sign(derived);
+        }
+      }}
+    >
+      Verify and sign
+    </button>
+  );
+}
+
+// Executor: replay at the same anchor, whatever the local height is by now.
+function Execute({ accountId, request, anchor }) {
+  const { execute } = useTransaction();
+  return (
+    <button onClick={() => execute({ accountId, request, anchor })}>
+      Execute
+    </button>
+  );
+}
+```
+
+`useChainAnchor()` returns
+`{ captureAnchor, anchor, anchoredRequest, isCapturing, error, reset }` and
+`usePreview()` returns `{ preview, summary, isPreviewing, error, reset }`.
+`anchoredRequest` is the exact request the anchor was captured for; on a later
+interaction, preview and execute against it rather than re-resolving a factory,
+which would build a different transaction than the one the anchor pins. Inside
+the handler that captured, it still holds the previous value, so pass the object
+you resolved there, as `Propose` does.
+`preview` rejects with `code: "TRANSACTION_ALREADY_AUTHORIZED"` when the
+transaction needs no further signatures — submit it with `useTransaction`
+instead. Both reject with `code: "OPERATION_BUSY"` if called while a previous
+call is in flight. Codes originating in the client rather than this package
+(`TRANSACTION_ALREADY_AUTHORIZED`, `INVALID_CHAIN_ANCHOR`) prefix the message on
+Node instead of appearing as a property. An anchor and a summary are both bound to one chain, so
+changing clients clears `anchor`, `summary` and `error`, and a call in flight
+across the swap rejects instead of resolving — with `code: "STALE_CLIENT"` if
+it would otherwise have succeeded. Those rejections never reach `error` state,
+so handle them at the call site.
+
+An anchor validates its own internal consistency on `deserialize`, so it can
+never be malformed — but it can be pinned to the wrong block, or to a block that
+never existed. When it came from an untrusted party, re-derive the summary at
+the received anchor with `usePreview` and compare `toCommitment()` against the
+summary you were asked to sign, and fetch the header for `anchor.blockNum()`
+with `RpcClient.getBlockHeaderByNumber` to confirm the block is real — the
+anchor's own invariants are computable over an invented chain.
+
+A match proves the request, anchor and summary agree with each other. It does
+not prove intent, and it does not cover the transaction script: the commitment
+is built from the account delta, the note commitments, the reference block, the
+expiration delta and the user params, so two requests with identical effects
+share one commitment. Inspect the effects before signing.
+
+An anchor pins chain data, not account state — account records and
+authenticated input notes still come from each participant's local store. If the
+account moved in a way that changes the transaction's effects, the re-derived
+summary will not match even though the anchor is correct. The converse does not
+hold: because the summary binds the *delta* rather than the state it applies to,
+an unrelated nonce bump, arriving assets, or a change to a multisig's signer set
+or threshold leaves the commitment identical and passes verification. Check the
+state you care about directly.
+
+Note that `usePreview` and `useChainAnchor` run their VM execution on the main
+thread — only `useTransaction().execute` is worker-backed.
 
 #### `useCompile()`
 
@@ -1376,7 +1721,8 @@ try {
 } catch (e) {
   const wrapped = wrapWasmError(e);
   // MidenError with code: 'WASM_CLASS_MISMATCH' | 'WASM_POINTER_CONSUMED' |
-  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' | 'UNKNOWN'
+  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' |
+  //   'OPERATION_BUSY' | 'BATCH_BUSY' | 'STALE_CLIENT' | 'UNKNOWN'
   console.log(wrapped.message); // Human-readable with fix suggestions
 }
 ```
@@ -1464,10 +1810,18 @@ function MyFeature() {
 
 For wallets using external key management, wrap your app with a signer provider **above** `MidenProvider`. The signer provider populates a `SignerContext` with a `signCb` and an `accountConfig`; `MidenProvider` picks these up automatically to create the client and initialize the account.
 
+The React bindings ship in their own packages, separate from each integration's core package. Import the provider from the `-react` one:
+
+| Provider | Import from | Core package (not the provider) |
+| --- | --- | --- |
+| Para | `@miden-sdk/para-react` | `@miden-sdk/para` |
+| Turnkey | `@miden-sdk/turnkey-react` | `@miden-sdk/turnkey` |
+| MidenFi wallet | `@miden-sdk/miden-wallet-adapter-react` | `@miden-sdk/miden-wallet-adapter-base` |
+
 ### Para (EVM Wallets)
 
 ```tsx
-import { ParaSignerProvider } from '@miden-sdk/para';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
 
 function App() {
   return (
@@ -1486,13 +1840,17 @@ const { para, wallet, isConnected } = useParaSigner();
 ### Turnkey
 
 ```tsx
-import { TurnkeySignerProvider } from '@miden-sdk/miden-turnkey-react';
+import { TurnkeySignerProvider } from '@miden-sdk/turnkey-react';
 
 function App() {
   return (
-    // Config is optional — defaults to https://api.turnkey.com
-    // and reads VITE_TURNKEY_ORG_ID from environment
-    <TurnkeySignerProvider>
+    // `config` is REQUIRED and must carry `defaultOrganizationId`.
+    // Only `apiBaseUrl` has a default (https://api.turnkey.com).
+    // The provider does NOT read VITE_TURNKEY_ORG_ID or any other env var -
+    // read it yourself and pass it in.
+    <TurnkeySignerProvider
+      config={{ defaultOrganizationId: import.meta.env.VITE_TURNKEY_ORG_ID }}
+    >
       <MidenProvider config={{ rpcUrl: 'testnet' }}>
         <YourApp />
       </MidenProvider>
@@ -1500,7 +1858,7 @@ function App() {
   );
 }
 
-// Or with explicit config:
+// Or with the base URL set explicitly:
 <TurnkeySignerProvider config={{
   apiBaseUrl: 'https://api.turnkey.com',
   defaultOrganizationId: 'your-org-id',
@@ -1513,7 +1871,7 @@ Connect via passkey authentication:
 
 ```tsx
 import { useSigner } from '@miden-sdk/react';
-import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
+import { useTurnkeySigner } from '@miden-sdk/turnkey-react';
 
 const { isConnected, connect, disconnect } = useSigner();
 await connect(); // triggers passkey flow
@@ -1524,7 +1882,7 @@ const { client, account, setAccount } = useTurnkeySigner();
 ### MidenFi Wallet Adapter
 
 ```tsx
-import { MidenFiSignerProvider } from '@miden-sdk/wallet-adapter-react';
+import { MidenFiSignerProvider } from '@miden-sdk/miden-wallet-adapter-react';
 
 function App() {
   return (
@@ -1566,8 +1924,8 @@ import {
   SignerSlot,
   useMultiSigner,
 } from '@miden-sdk/react';
-import { ParaSignerProvider } from '@miden-sdk/use-miden-para-react';
-import { TurnkeySignerProvider } from '@miden-sdk/miden-turnkey-react';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
+import { TurnkeySignerProvider } from '@miden-sdk/turnkey-react';
 import { MidenFiSignerProvider } from '@miden-sdk/miden-wallet-adapter-react';
 
 function App() {
@@ -1576,7 +1934,9 @@ function App() {
       <ParaSignerProvider apiKey="your-api-key" environment="BETA">
         <SignerSlot />
       </ParaSignerProvider>
-      <TurnkeySignerProvider>
+      <TurnkeySignerProvider
+        config={{ defaultOrganizationId: import.meta.env.VITE_TURNKEY_ORG_ID }}
+      >
         <SignerSlot />
       </TurnkeySignerProvider>
       <MidenFiSignerProvider network="testnet">
@@ -1629,7 +1989,7 @@ Signer providers can include custom `AccountComponent` instances in the account 
 Pre-built signer providers (Para, Turnkey, MidenFi) accept `customComponents` as a prop and forward it into `accountConfig`:
 
 ```tsx
-import { ParaSignerProvider } from '@miden-sdk/para';
+import { ParaSignerProvider } from '@miden-sdk/para-react';
 import type { AccountComponent } from '@miden-sdk/miden-sdk';
 
 const dexComponent: AccountComponent = await loadCompiledComponent();
@@ -1708,6 +2068,9 @@ import type {
   SendOptions,
   MultiSendRecipient,
   MultiSendOptions,
+  BatchItemInput,
+  BatchOptions,
+  BatchResult,
   InternalTransferOptions,
   InternalTransferChainOptions,
   InternalTransferResult,

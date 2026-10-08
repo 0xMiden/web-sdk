@@ -1,8 +1,80 @@
 import {
+  isConsumableNow,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
 } from "../utils.js";
+
+/** Preview operations that build their own request, and so cannot be anchored. */
+export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
+  "send",
+  "mint",
+  "bridge",
+  "consume",
+  "swap",
+  "pswapCreate",
+  "pswapConsume",
+  "pswapCancel",
+]);
+
+/**
+ * Reject an `anchor` that is present but falsy — except `undefined`, which is
+ * how an optional property spells "absent".
+ *
+ * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
+ * otherwise fall through and execute at the current tip: the one outcome
+ * anchoring exists to prevent. It is easy to hit, because an anchor usually
+ * lives in a state slot that holds `null` until the capture resolves, and
+ * `cond && anchor` yields `false`.
+ */
+function assertAnchorValueUsable(opts) {
+  const anchor = opts?.anchor;
+  if (anchor === undefined || anchor) return;
+  // String() rather than JSON.stringify: the latter throws on a BigInt and
+  // renders NaN as "null", and this is an error path that must not itself fail.
+  throw new Error(
+    `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
+      "passing it, or omit the option entirely to execute at the current tip"
+  );
+}
+
+/**
+ * Reject an `anchor` passed to a method that cannot honor one.
+ *
+ * Only the request-taking methods can be anchored, because an anchor is
+ * captured for a specific request. Everywhere else the option is meaningless —
+ * but silently ignoring it executes at the tip while the caller believes their
+ * transaction is pinned, which is the failure anchoring exists to prevent. The
+ * names are close enough to confuse (`execute` vs `executeRequest`,
+ * `submitBatch` vs `submit`) that this has to be loud.
+ */
+function rejectUnexpectedAnchor(opts, method, alternative) {
+  if (opts?.anchor === undefined) return;
+  throw new Error(
+    `${method}() does not accept an anchor because it builds its own ` +
+      `request; use ${alternative} with a request you captured the anchor for`
+  );
+}
+
+/**
+ * Prove an executed transaction, resolving the prover exactly the way the
+ * one-shot `submit()` pipeline does: the per-call prover if given, else the
+ * client's default prover, else the built-in local prover. Shared by
+ * {@link TransactionExecution.prove} and the internal pipeline so the two can
+ * never drift.
+ *
+ * @param {*} inner - The WASM WebClient.
+ * @param {*} defaultProver - The client's configured default prover, or null.
+ * @param {*} result - The execution result to prove.
+ * @param {{ prover?: * }} [opts] - Optional per-call prover override.
+ * @returns {Promise<*>} The proven transaction.
+ */
+async function proveResult(inner, defaultProver, result, opts) {
+  const prover = opts?.prover ?? defaultProver;
+  return prover
+    ? await inner.proveTransaction(result, prover)
+    : await inner.proveTransaction(result);
+}
 
 export class TransactionsResource {
   #inner;
@@ -16,6 +88,7 @@ export class TransactionsResource {
   }
 
   async send(opts) {
+    rejectUnexpectedAnchor(opts, "send", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -47,9 +120,9 @@ export class TransactionsResource {
       // `note` valid so we can return it to the caller below.
       const ownOutputs = new wasm.NoteArray();
       ownOutputs.push(note);
-      const request = new wasm.TransactionRequestBuilder()
-        .withOwnOutputNotes(ownOutputs)
-        .build();
+      const builder =
+        await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+      const request = builder.withOwnOutputNotes(ownOutputs).build();
 
       const { txId, result } = await this.#submitOrSubmitWithProver(
         senderId,
@@ -79,7 +152,120 @@ export class TransactionsResource {
     return { txId, note: null, result };
   }
 
+  /**
+   * Builds a Public custom-script note carrying a NetworkAccountTarget
+   * attachment, submits it as an own output note, and optionally waits for
+   * confirmation. Provide exactly one of `recipient` or `script`.
+   */
+  async createNetworkNote(opts) {
+    rejectUnexpectedAnchor(opts, "createNetworkNote", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (opts.recipient && opts.script) {
+      throw new Error(
+        "createNetworkNote requires exactly one of `recipient` or `script`, not both."
+      );
+    }
+
+    const senderId = resolveAccountRef(opts.account, wasm);
+
+    const target =
+      opts.target instanceof wasm.NetworkAccountTarget
+        ? opts.target
+        : new wasm.NetworkAccountTarget(
+            resolveAccountRef(opts.target, wasm),
+            opts.executionHint
+          );
+
+    const noteAssets = opts.assets
+      ? new wasm.NoteAssets(
+          (Array.isArray(opts.assets) ? opts.assets : [opts.assets]).map(
+            (a) =>
+              new wasm.FungibleAsset(
+                resolveAccountRef(a.token, wasm),
+                BigInt(a.amount)
+              )
+          )
+        )
+      : new wasm.NoteAssets();
+
+    const metadata = new wasm.NoteMetadata(
+      senderId,
+      wasm.NoteType.Public,
+      wasm.NoteTag.withAccountTarget(target.targetId())
+    );
+
+    let recipient = opts.recipient;
+    if (!recipient) {
+      if (!opts.script) {
+        throw new Error(
+          "createNetworkNote requires either `recipient` or `script`."
+        );
+      }
+      const storage = new wasm.NoteStorage(
+        new wasm.FeltArray(
+          (opts.inputs ?? []).map((value) => new wasm.Felt(value))
+        )
+      );
+      recipient = wasm.NoteRecipient.fromScript(opts.script, storage);
+    }
+
+    const attachments = [target.toAttachment()];
+    if (opts.attachment) {
+      attachments.push(new wasm.NoteAttachment(opts.attachment));
+    }
+
+    const note = wasm.Note.withAttachments(
+      noteAssets,
+      metadata,
+      recipient,
+      attachments
+    );
+
+    // NoteArray constructor consumes its elements; use push(&note) to keep
+    // `note` valid so we can return it to the caller.
+    const ownOutputs = new wasm.NoteArray();
+    ownOutputs.push(note);
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+    // `estimate_note_fee` on the target, so the emitting transaction reads
+    // foreign state. Declaring the account pins that state at the reference
+    // block instead of leaving the client to resolve it lazily, which it can
+    // only do for a public account it can reach.
+    //
+    // Pricing also caps this transaction at 20 blocks: `estimate_note_fee`
+    // applies the standards' default expiration delta, and an expiration can
+    // only be lowered, so it must be included within 20 blocks of its
+    // reference block or the node rejects it as expired.
+    const targetAccounts = new wasm.ForeignAccountArray();
+    targetAccounts.push(
+      wasm.ForeignAccount.public(
+        target.targetId(),
+        new wasm.AccountStorageRequirements()
+      )
+    );
+    const builder =
+      await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+    const request = builder
+      .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(targetAccounts)
+      .build();
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      senderId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, note, result };
+  }
+
   async mint(opts) {
+    rejectUnexpectedAnchor(opts, "mint", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildMintRequest(opts, wasm);
@@ -97,7 +283,27 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  async bridge(opts) {
+    rejectUnexpectedAnchor(opts, "bridge", "submit()");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
   async consume(opts) {
+    rejectUnexpectedAnchor(opts, "consume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildConsumeRequest(opts, wasm);
@@ -116,6 +322,7 @@ export class TransactionsResource {
   }
 
   async consumeAll(opts) {
+    rejectUnexpectedAnchor(opts, "consumeAll", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -123,9 +330,14 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    const consumable = await this.#inner.getConsumableNotes(accountId);
+    // Block-locked notes cannot be consumed yet and would fail the whole
+    // transaction, so they are not "available" here either (notes.listAvailable
+    // applies the same rule).
+    const consumable = (
+      (await this.#inner.getConsumableNotes(accountId)) ?? []
+    ).filter((c) => isConsumableNow(c, accountIdHex));
 
-    if (!consumable || consumable.length === 0) {
+    if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
     }
 
@@ -139,10 +351,16 @@ export class TransactionsResource {
 
     const notes = toConsume.map((c) => c.inputNoteRecord().toNote());
 
-    const request = await this.#inner.newConsumeTransactionRequest(notes);
+    // `accountId` is gone — getConsumableNotes took it by value. Both calls
+    // below take `&AccountId`, which borrows, so one replacement serves both.
+    const consumingAccountId = wasm.AccountId.fromHex(accountIdHex);
+    const request = await this.#inner.newConsumeTransactionRequest(
+      notes,
+      consumingAccountId
+    );
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
-      wasm.AccountId.fromHex(accountIdHex),
+      consumingAccountId,
       request,
       opts.prover
     );
@@ -160,6 +378,7 @@ export class TransactionsResource {
   }
 
   async swap(opts) {
+    rejectUnexpectedAnchor(opts, "swap", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildSwapRequest(opts, wasm);
@@ -179,6 +398,7 @@ export class TransactionsResource {
 
   /** Create a partial-swap (PSWAP) note. See {@link PswapCreateOptions}. */
   async pswapCreate(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCreate", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCreateRequest(
@@ -201,6 +421,7 @@ export class TransactionsResource {
 
   /** Consume (fully or partially fill) a PSWAP note. See {@link PswapConsumeOptions}. */
   async pswapConsume(opts) {
+    rejectUnexpectedAnchor(opts, "pswapConsume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapConsumeRequest(
@@ -223,6 +444,7 @@ export class TransactionsResource {
 
   /** Cancel a PSWAP note as its creator and reclaim the offered asset. See {@link PswapCancelOptions}. */
   async pswapCancel(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCancel", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCancelRequest(
@@ -243,9 +465,45 @@ export class TransactionsResource {
     return { txId, result };
   }
 
+  /**
+   * Dry-run a transaction to obtain the TransactionSummary pending
+   * authorization (e.g. a multisig below its signing threshold). Rejects
+   * with an error carrying `code: "TRANSACTION_ALREADY_AUTHORIZED"` (on
+   * Node.js the code prefixes the message instead) when the transaction
+   * executes successfully, since a fully authorized transaction produces
+   * no summary. See {@link PreviewOptions}.
+   *
+   * With `operation: "custom"` you may pass an `anchor` from
+   * {@link captureAnchor} to derive the summary at a pinned reference block
+   * rather than the current sync height. A co-signer verifying a summary that
+   * binds the reference block commitment must use the proposer's anchor:
+   * deriving such a summary locally at a different height produces a
+   * different summary and the comparison fails.
+   *
+   * The exception is a multisig request built by
+   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
+   * auth args name, which the request declares, so previewing it without an
+   * anchor reproduces the proposal's summary at the current tip, once this
+   * client has synced to at least that block (the largest of
+   * `request.blockNumbers()`).
+   */
   async preview(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+
+    assertAnchorValueUsable(opts);
+
+    // Only `custom` can be anchored. Every other operation builds its request
+    // here, so the caller cannot hold an anchor captured for it — accepting one
+    // would execute against a request the anchor never tracked, surfacing as an
+    // opaque error from deep inside the executor. An unrecognized operation
+    // falls through to the switch, so it reports that rather than the anchor.
+    if (opts.anchor && PREVIEW_BUILT_IN_OPERATIONS.has(opts.operation)) {
+      throw new Error(
+        `preview does not accept an anchor for operation "${opts.operation}"; ` +
+          `capture one with captureAnchor(request) and use operation: "custom"`
+      );
+    }
 
     let accountId;
     let request;
@@ -257,6 +515,10 @@ export class TransactionsResource {
       }
       case "mint": {
         ({ accountId, request } = await this.#buildMintRequest(opts, wasm));
+        break;
+      }
+      case "bridge": {
+        ({ accountId, request } = await this.#buildB2AggRequest(opts, wasm));
         break;
       }
       case "consume": {
@@ -297,17 +559,215 @@ export class TransactionsResource {
         throw new Error(`Unknown preview operation: ${opts.operation}`);
     }
 
-    return await this.#inner.executeForSummary(accountId, request);
+    return opts.anchor
+      ? await this.#inner.executeForSummaryAt(accountId, request, opts.anchor)
+      : await this.#inner.executeForSummary(accountId, request);
   }
 
   async execute(opts) {
+    rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+    const { accountId, request } = await this.#buildExecuteRequest(opts, wasm);
+
+    const { txId, result } = await this.#submitOrSubmitWithProver(
+      accountId,
+      request,
+      opts.prover
+    );
+
+    if (opts.waitForConfirmation) {
+      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
+    }
+
+    return { txId, result };
+  }
+
+  /**
+   * Submit a heterogeneous batch of operations across one or more local
+   * accounts. Each operation specifies which account it targets via `account`.
+   * Each operation is executed and proven individually, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all.
+   * Every proof runs inside the batch primitive on the client's built-in local
+   * prover, so `proverUrl` does not apply to batches.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
+   *
+   * @param {BatchOptions} opts - Batch options: the operations array, and
+   *   `timeout` / `waitForConfirmation` (the latter does not currently work,
+   *   see `submitBatch`).
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
+   */
+  async batch(opts) {
+    rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (
+      !opts ||
+      !Array.isArray(opts.operations) ||
+      opts.operations.length === 0
+    ) {
+      throw new Error("batch: `operations` must be a non-empty array");
+    }
+
+    // Build each TransactionRequest. Every operation carries its own
+    // `account` — same-account batches just repeat the same value.
+    const items = [];
+    for (let i = 0; i < opts.operations.length; i++) {
+      const op = opts.operations[i];
+      if (!op?.account) {
+        throw new Error(`batch: operation[${i}] is missing \`account\``);
+      }
+      let built;
+      switch (op?.kind) {
+        case "send":
+          built = await this.#buildSendRequest(op, wasm);
+          break;
+        case "mint":
+          built = await this.#buildMintRequest(op, wasm);
+          break;
+        case "consume":
+          built = await this.#buildConsumeRequest(op, wasm);
+          break;
+        case "swap":
+          built = await this.#buildSwapRequest(op, wasm);
+          break;
+        case "execute":
+          built = await this.#buildExecuteRequest(op, wasm);
+          break;
+        case "custom":
+          if (!op.request) {
+            throw new Error(
+              `batch: operation[${i}] of kind "custom" is missing \`request\``
+            );
+          }
+          built = { request: op.request };
+          break;
+        default:
+          throw new Error(
+            `batch: operation[${i}] has unknown kind "${op?.kind}"`
+          );
+      }
+      items.push({ account: op.account, request: built.request });
+    }
+
+    return this.submitBatch(items, opts);
+  }
+
+  /**
+   * Submit pre-built TransactionRequests as an atomic batch. Lower-level
+   * counterpart of `batch()` — for callers that already have built requests
+   * paired with their target accounts.
+   *
+   * No fee conversion salt is declared here. miden-client commits the chain's
+   * native conversion info while preparing each transaction, so requests against
+   * ordinary accounts pay normally; a multisig account needs a salt declared on
+   * the request itself, or the push fails with `FeeConversionInfoRequired`.
+   * Because a batch proves each transaction as it is pushed, such a rejection
+   * has already cost the proofs ahead of it — build multisig requests from
+   * `client.feeAwareTransactionRequestBuilder`.
+   *
+   * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
+   * @param {object} [options] - Optional settings (timeout, and
+   *   `waitForConfirmation`, which does not currently work, see #314).
+   *   Every transaction is proven inside the batch primitive by the client's
+   *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
+   *   no per-call prover override.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one, so the page's main thread stays responsive; see `batch()` for when
+   *   it runs in-thread instead.
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's 30s ceiling, and since signing happens at
+   *   push time and this wrapper treats a failed push as fatal, one timeout
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`)
+   *   loses its reason and surfaces as the generic
+   *   `sign callback must return a Uint8Array`. Both are shared with every
+   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
+   *   reads the main-thread instance, so it does not report a forwarded
+   *   batch's auth error.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
+   */
+  async submitBatch(items, options) {
+    rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("submitBatch: `items` must be a non-empty array");
+    }
+
+    const wasmItems = items.map((item, i) => {
+      if (!item?.account) {
+        throw new Error(`submitBatch: items[${i}] is missing \`account\``);
+      }
+      if (!item?.request) {
+        throw new Error(`submitBatch: items[${i}] is missing \`request\``);
+      }
+      return new wasm.BatchItem(
+        resolveAccountRef(item.account, wasm),
+        item.request
+      );
+    });
+
+    const blockNumber = await this.#inner.submitNewTransactionBatch(wasmItems);
+
+    if (options?.waitForConfirmation) {
+      await this.#waitForBlock(blockNumber, options);
+    }
+
+    return { blockNumber };
+  }
+
+  /**
+   * Polls until the local sync height reaches `blockNumber` or the timeout
+   * expires. The Rust V1 batch API returns only a block number — there are no
+   * per-tx ids to poll on, so we wait on the chain height instead.
+   *
+   * This does not currently work: `syncStateWithTimeout` below does not exist,
+   * so the call throws, the bare catch swallows it, and nothing here advances
+   * the height — the loop times out unless the client is already at or past
+   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
+   * looks, since `blockNumber` is the tip as of submission rather than the
+   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
+   *
+   * @param {number} blockNumber - The block height to wait for.
+   * @param {object} [opts] - Polling options (timeout, interval).
+   */
+  async #waitForBlock(blockNumber, opts) {
+    const timeout = opts?.timeout ?? 60_000;
+    const interval = opts?.interval ?? 5_000;
+    const start = Date.now();
+
+    while (true) {
+      if (timeout > 0 && Date.now() - start >= timeout) {
+        throw new Error(
+          `Batch confirmation timed out after ${timeout}ms (waiting for block ${blockNumber})`
+        );
+      }
+      try {
+        await this.#inner.syncStateWithTimeout(0);
+      } catch {
+        // sync may fail transiently; continue polling
+      }
+      const height = await this.#inner.getSyncHeight();
+      if (height >= blockNumber) return;
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+  }
+
+  async #buildExecuteRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
 
-    let builder = new wasm.TransactionRequestBuilder().withCustomScript(
-      opts.script
-    );
+    let builder = (
+      await this.#inner.feeAwareTransactionRequestBuilder(accountId)
+    ).withCustomScript(opts.script);
 
     if (opts.foreignAccounts?.length) {
       const accounts = opts.foreignAccounts.map((fa) => {
@@ -330,18 +790,7 @@ export class TransactionsResource {
       );
     }
 
-    const request = builder.build();
-    const { txId, result } = await this.#submitOrSubmitWithProver(
-      accountId,
-      request,
-      opts.prover
-    );
-
-    if (opts.waitForConfirmation) {
-      await this.waitFor(txId.toHex(), { timeout: opts.timeout });
-    }
-
-    return { txId, result };
+    return { accountId, request: builder.build() };
   }
 
   async executeProgram(opts) {
@@ -375,17 +824,127 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Capture a {@link ChainAnchor} at the current sync height for `request`,
+   * pinning the reference block that a later execution can replay against.
+   *
+   * The anchor tracks the blocks the request declares through
+   * `withBlockNumbers` and the creation blocks of its authenticated input
+   * notes, so it stays valid for that request once the chain advances. Pass it
+   * back to {@link preview}, {@link executeRequest}, or {@link submit} via
+   * their `anchor` option. Serialize it with `anchor.serialize()` to ship it
+   * alongside a summary awaiting signatures.
+   *
+   * @param {TransactionRequest} request - The request the anchor is captured for.
+   * @returns {Promise<ChainAnchor>} An anchor pinned to the current sync height.
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` (on Node.js the code
+   * prefixes the message instead) if a sync lands mid-capture and leaves the
+   * anchor internally inconsistent. Retry.
+   */
+  async captureAnchor(request) {
+    this.#client.assertNotTerminated();
+    if (!request) {
+      throw new Error(
+        `captureAnchor requires a request, received ${String(request)}; an ` +
+          "anchor is captured for the notes a specific request consumes"
+      );
+    }
+    return await this.#inner.chainAnchorForRequest(request);
+  }
+
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     return await this.#submitOrSubmitWithProver(
       accountId,
       request,
-      opts?.prover
+      opts?.prover,
+      opts?.anchor
     );
   }
 
+  /**
+   * Execute a transaction request locally — nothing is proven, submitted, or
+   * persisted. Returns a {@link TransactionExecution} handle; advance the
+   * lifecycle by chaining `.prove()` → `.submit()` → `.apply()`, benchmarking
+   * or error-handling each stage independently. Use {@link submit} to run every
+   * stage in one call.
+   *
+   * ```ts
+   * const executed  = await client.transactions.executeRequest(account, request);
+   * const proven    = await executed.prove({ prover });
+   * const submitted = await proven.submit();
+   * await submitted.apply();
+   * ```
+   *
+   * The stages are NOT atomic as a group: awaiting other mutating calls on the
+   * same account between them can interleave state. Drive the chain as an
+   * uninterrupted sequence per account.
+   *
+   * @param {AccountRef} account - The account executing the transaction.
+   * @param {TransactionRequest} request - The pre-built transaction request.
+   * @param {{ anchor?: ChainAnchor }} [opts] - Pass `anchor` to execute against
+   *   a pinned reference block instead of the current sync height, reproducing
+   *   the summary that was signed at that block.
+   * @returns {Promise<TransactionExecution>} A handle to the executed
+   *   transaction, ready to prove.
+   */
+  async executeRequest(account, request, opts) {
+    this.#client.assertNotTerminated();
+    assertAnchorValueUsable(opts);
+    const wasm = await this.#getWasm();
+    const accountId = resolveAccountRef(account, wasm);
+    const result = opts?.anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, opts.anchor)
+      : await this.#inner.executeTransaction(accountId, request);
+    return new TransactionExecution(this.#inner, this.#client, this, result);
+  }
+
+  /**
+   * Submit a proof produced somewhere that shares nothing with this client —
+   * e.g. a detached prover that never saw the local store. Returns a
+   * {@link TransactionSubmission} handle; call `.apply()` on it to persist
+   * locally. For the in-process flow prefer
+   * `executeRequest(...)` → `.prove()` → `.submit()`, which threads the proof
+   * and result for you.
+   *
+   * @param {ProvenTransaction} proof - A proof for `result`, proven elsewhere.
+   * @param {TransactionResult} result - The matching execution result.
+   * @returns {Promise<TransactionSubmission>} A handle to the submitted
+   *   transaction, ready to apply.
+   */
+  async submitProven(proof, result) {
+    this.#client.assertNotTerminated();
+    const blockNumber = await this.#inner.submitProvenTransaction(
+      proof,
+      result
+    );
+    return new TransactionSubmission(
+      this.#inner,
+      this.#client,
+      this,
+      result,
+      blockNumber
+    );
+  }
+
+  /**
+   * Lists transactions, optionally narrowed by status or by id.
+   *
+   * Omitting `query`, or passing a shape this method does not recognise, returns every stored
+   * transaction. The one exception is `{ expiredBefore }`: it was a valid filter until the
+   * upstream client stopped deciding expiry in the store, and silently widening it to the
+   * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
+   * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * @returns {Promise<TransactionRecord[]>}
+   * @throws {Error} If `query` carries a defined `expiredBefore` and neither
+   * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
+   * before it was removed, and still do.
+   */
   async list(query) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -401,7 +960,15 @@ export class TransactionsResource {
       );
       filter = wasm.TransactionFilter.ids(txIds);
     } else if (query.expiredBefore !== undefined) {
-      filter = wasm.TransactionFilter.expiredBefore(query.expiredBefore);
+      // Sits exactly where the expiry filter used to be built, so it throws on the queries
+      // that actually applied it and on no others: `status` and `ids` still win, as they
+      // always did, and an undefined value still means "no filter" rather than an error.
+      // The unknown-shape fallback below is `all()`, so without this branch a stale caller
+      // would silently receive every transaction instead of the subset it asked for.
+      throw new Error(
+        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+          "during state sync; read expiry from the transaction record instead."
+      );
     } else {
       filter = wasm.TransactionFilter.all();
     }
@@ -514,6 +1081,24 @@ export class TransactionsResource {
     return { accountId, request };
   }
 
+  async #buildB2AggRequest(opts, wasm) {
+    const accountId = resolveAccountRef(opts.account, wasm);
+    const bridgeAccountId = resolveAccountRef(opts.bridgeAccount, wasm);
+    const faucetId = resolveAccountRef(opts.token, wasm);
+    const amount = BigInt(opts.amount);
+    const destinationAddress = wasm.EthAddress.fromHex(opts.destinationAddress);
+
+    const request = await this.#inner.newB2AggTransactionRequest(
+      accountId,
+      bridgeAccountId,
+      faucetId,
+      amount,
+      opts.destinationNetwork,
+      destinationAddress
+    );
+    return { accountId, request };
+  }
+
   async #buildConsumeRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
     const noteInputs = Array.isArray(opts.notes) ? opts.notes : [opts.notes];
@@ -541,7 +1126,9 @@ export class TransactionsResource {
       const noteAndArgsArr = resolvedNotes.map(
         (note) => new wasm.NoteAndArgs(note, null)
       );
-      const request = new wasm.TransactionRequestBuilder()
+      const builder =
+        await this.#inner.feeAwareTransactionRequestBuilder(accountId);
+      const request = builder
         .withInputNotes(new wasm.NoteAndArgsArray(noteAndArgsArr))
         .build();
       return { accountId, request };
@@ -551,7 +1138,10 @@ export class TransactionsResource {
     const notes = await Promise.all(
       noteInputs.map((input) => this.#resolveNoteInput(input))
     );
-    const request = await this.#inner.newConsumeTransactionRequest(notes);
+    const request = await this.#inner.newConsumeTransactionRequest(
+      notes,
+      accountId
+    );
     return { accountId, request };
   }
 
@@ -656,15 +1246,189 @@ export class TransactionsResource {
     return input;
   }
 
-  async #submitOrSubmitWithProver(accountId, request, perCallProver) {
-    const result = await this.#inner.executeTransaction(accountId, request);
-    const prover = perCallProver ?? this.#client.defaultProver;
-    const proven = prover
-      ? await this.#inner.proveTransaction(result, prover)
-      : await this.#inner.proveTransaction(result);
+  async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
+    const result = anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, anchor)
+      : await this.#inner.executeTransaction(accountId, request);
+    const proven = await proveResult(
+      this.#inner,
+      this.#client.defaultProver,
+      result,
+      { prover: perCallProver }
+    );
     const txId = result.id();
     const height = await this.#inner.submitProvenTransaction(proven, result);
     await this.#inner.applyTransaction(result, height);
     return { txId, result };
+  }
+}
+
+/**
+ * A locally-executed transaction — nothing proven, submitted, or persisted yet.
+ * First stage of the manual transaction lifecycle, returned by
+ * {@link TransactionsResource.executeRequest}. Advance it with {@link prove}.
+ */
+class TransactionExecution {
+  #inner;
+  #client;
+  #resource;
+  #result;
+
+  constructor(inner, client, resource, result) {
+    this.#inner = inner;
+    this.#client = client;
+    this.#resource = resource;
+    this.#result = result;
+  }
+
+  /** The raw execution artifact (account delta, output notes, …). */
+  get result() {
+    return this.#result;
+  }
+
+  /** The executed transaction's id. */
+  get id() {
+    return this.#result.id();
+  }
+
+  /**
+   * Prove this execution. Uses the per-call prover when provided, falling back
+   * to the client's default prover (or the built-in local prover). Pure
+   * computation — touches neither the network nor the local store.
+   *
+   * A `TransactionProver` is consumed by the call: build (or clone) a fresh
+   * prover per `prove()`. Reusing an already-passed prover silently falls back
+   * to the built-in local prover.
+   *
+   * @param {ProveOptions} [opts] - Optional per-call prover override.
+   * @returns {Promise<TransactionProof>} A handle to the proven transaction,
+   *   ready to submit.
+   */
+  async prove(opts) {
+    this.#client.assertNotTerminated();
+    const proven = await proveResult(
+      this.#inner,
+      this.#client.defaultProver,
+      this.#result,
+      opts
+    );
+    return new TransactionProof(
+      this.#inner,
+      this.#client,
+      this.#resource,
+      proven,
+      this.#result
+    );
+  }
+}
+
+/**
+ * A proven transaction, ready for the network. Second stage of the manual
+ * transaction lifecycle, returned by {@link TransactionExecution.prove}.
+ * Advance it with {@link submit}.
+ */
+class TransactionProof {
+  #inner;
+  #client;
+  #resource;
+  #proof;
+  #result;
+
+  constructor(inner, client, resource, proof, result) {
+    this.#inner = inner;
+    this.#client = client;
+    this.#resource = resource;
+    this.#proof = proof;
+    this.#result = result;
+  }
+
+  /** The raw proof — e.g. to serialize and submit from a different client. */
+  get proof() {
+    return this.#proof;
+  }
+
+  /** The execution result this proof was produced from. */
+  get result() {
+    return this.#result;
+  }
+
+  /**
+   * Submit the proof to the network. Does NOT persist locally — call
+   * {@link TransactionSubmission.apply} on the returned handle; skipping it
+   * leaves the local store out of sync until the next full sync.
+   *
+   * @returns {Promise<TransactionSubmission>} A handle to the submitted
+   *   transaction, ready to apply.
+   */
+  async submit() {
+    this.#client.assertNotTerminated();
+    const blockNumber = await this.#inner.submitProvenTransaction(
+      this.#proof,
+      this.#result
+    );
+    return new TransactionSubmission(
+      this.#inner,
+      this.#client,
+      this.#resource,
+      this.#result,
+      blockNumber
+    );
+  }
+}
+
+/**
+ * A submitted transaction. Final stage of the manual transaction lifecycle,
+ * returned by {@link TransactionProof.submit}. Persist it locally with
+ * {@link apply}, or block until it commits with {@link waitForConfirmation}.
+ */
+class TransactionSubmission {
+  #inner;
+  #client;
+  #resource;
+  #result;
+  #blockNumber;
+
+  constructor(inner, client, resource, result, blockNumber) {
+    this.#inner = inner;
+    this.#client = client;
+    this.#resource = resource;
+    this.#result = result;
+    this.#blockNumber = blockNumber;
+  }
+
+  /** The block height the transaction was submitted at. */
+  get blockNumber() {
+    return this.#blockNumber;
+  }
+
+  /** The execution result that was submitted. */
+  get result() {
+    return this.#result;
+  }
+
+  /**
+   * Persist the transaction into the local store, firing registered
+   * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
+   * local store is unaware of the transaction.
+   *
+   * Browser stores require the stored account to match the execution input;
+   * a mismatch rejects before changing account state or transaction history.
+   * Check network status before resubmitting after a local apply failure.
+   *
+   * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
+   */
+  async apply() {
+    this.#client.assertNotTerminated();
+    return await this.#inner.applyTransaction(this.#result, this.#blockNumber);
+  }
+
+  /**
+   * Poll local sync height until the transaction commits on-chain. Convenience
+   * wrapper over {@link TransactionsResource.waitFor}.
+   *
+   * @param {WaitOptions} [opts] - Polling options (timeout, interval, onProgress).
+   */
+  async waitForConfirmation(opts) {
+    return await this.#resource.waitFor(this.#result.id().toHex(), opts);
   }
 }

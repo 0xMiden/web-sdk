@@ -31,10 +31,14 @@ describe("MethodName", () => {
     expect(MethodName.CREATE_CLIENT).toBe("createClient");
     expect(MethodName.APPLY_TRANSACTION).toBe("applyTransaction");
     expect(MethodName.EXECUTE_TRANSACTION).toBe("executeTransaction");
+    expect(MethodName.EXECUTE_TRANSACTION_AT).toBe("executeTransactionAt");
     expect(MethodName.PROVE_TRANSACTION).toBe("proveTransaction");
     expect(MethodName.SUBMIT_NEW_TRANSACTION).toBe("submitNewTransaction");
     expect(MethodName.SUBMIT_NEW_TRANSACTION_MOCK).toBe(
       "submitNewTransactionMock"
+    );
+    expect(MethodName.SUBMIT_NEW_TRANSACTION_BATCH).toBe(
+      "submitNewTransactionBatch"
     );
     expect(MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER).toBe(
       "submitNewTransactionWithProver"

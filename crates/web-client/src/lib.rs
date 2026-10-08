@@ -20,25 +20,25 @@ use idxdb_store::IdxdbStore;
 use js_export_macro::js_export;
 #[cfg(feature = "browser")]
 use js_sys::{Function, Reflect};
+use miden_client::account::AccountId as NativeAccountId;
 use miden_client::builder::{ClientBuilder, DEFAULT_GRPC_TIMEOUT_MS};
-use miden_client::crypto::RandomCoin;
 #[cfg(feature = "nodejs")]
 use miden_client::keystore::FilesystemKeyStore;
 use miden_client::note_transport::NoteTransportClient;
 use miden_client::note_transport::grpc::GrpcNoteTransportClient;
-use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient};
-use miden_client::store::Store;
+use miden_client::rpc::{Endpoint, GrpcClient, NodeRpcClient, RpcError, VerifyingRpcClient};
+use miden_client::store::{Store, StoreError};
 use miden_client::testing::mock::MockRpcApi;
 use miden_client::testing::note_transport::MockNoteTransportApi;
-use miden_client::{Client, ClientError, DebugMode, ErrorHint, Felt};
+use miden_client::{Client, ClientError, ErrorHint};
 use models::code_builder::CodeBuilder;
 #[cfg(feature = "nodejs")]
 use napi_derive::napi;
 #[cfg(feature = "nodejs")]
 use platform::maybe_wrap_send;
 use platform::{AsyncCell, ClientAuth, JsErr, from_str_err};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 #[cfg(feature = "browser")]
 use tracing::Level;
 #[cfg(feature = "browser")]
@@ -59,6 +59,7 @@ pub mod new_transactions;
 pub mod note_transport;
 pub mod notes;
 pub(crate) mod platform;
+pub mod pswap;
 pub mod rpc_client;
 pub mod settings;
 pub mod sync;
@@ -219,10 +220,14 @@ pub fn setup_logging(log_level: &str) {
 #[js_export]
 pub struct WebClient {
     inner: AsyncCell<Option<Client<ClientAuth>>>,
+    /// Fee faucet the caller declared at creation, or the mock chain's own. What `feeFaucetId()`
+    /// reports until the first sync stores the protocol configuration the chain commits to.
+    fee_faucet: AsyncCell<Option<NativeAccountId>>,
     mock_rpc_api: AsyncCell<Option<Arc<MockRpcApi>>>,
     mock_note_transport_api: AsyncCell<Option<Arc<MockNoteTransportApi>>>,
-    // Cached at client creation from the RPC client's endpoint so page-side consumers can read it
-    // synchronously, without locking the async `inner` cell.
+    /// Node endpoint the client was created against, kept outside `inner` so `endpoint()` can
+    /// answer synchronously without borrowing the client. `None` until creation succeeds, and for
+    /// a mock client, which talks to no node.
     endpoint: std::sync::RwLock<Option<String>>,
 }
 
@@ -230,7 +235,7 @@ pub struct WebClient {
 // functions run on worker threads. This is sound because the concrete types behind
 // trait objects (`SqliteStore`, `GrpcClient`, `FilesystemKeyStore`) are all Send + Sync
 // — only the `dyn Trait` bounds lack Send. All mutable state is behind `AsyncCell`
-// (tokio::sync::Mutex), which serializes access.
+// (tokio::sync::Mutex) or, for `endpoint`, a `std::sync::RwLock`, which serialize access.
 #[cfg(feature = "nodejs")]
 unsafe impl Send for WebClient {}
 #[cfg(feature = "nodejs")]
@@ -269,10 +274,54 @@ impl WebClient {
 
         WebClient {
             inner: AsyncCell::new(None),
+            fee_faucet: AsyncCell::new(None),
             mock_rpc_api: AsyncCell::new(None),
             mock_note_transport_api: AsyncCell::new(None),
             endpoint: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Returns the faucet of the chain's fee asset.
+    ///
+    /// Before 0.17 any block header carried it, so a consumer could discover the chain's native
+    /// asset by reading one. The header no longer does: the fee asset lives in the protocol
+    /// configuration, which the client receives from the node when it syncs. After the first sync
+    /// this reports the faucet named by the configuration the block at the sync height commits
+    /// to. Before it, this falls back to the `feeFaucetId` the client was created with, or, for a
+    /// mock client, the one the mock chain itself commits to, and fails when neither is set.
+    #[js_export(js_name = "feeFaucetId")]
+    pub async fn fee_faucet_id(&self) -> Result<models::account_id::AccountId, JsErr> {
+        let mut guard = self.get_mut_inner().await;
+        let client = guard.as_mut().ok_or_else(|| from_str_err("Client not initialized"))?;
+
+        let sync_height = client
+            .get_sync_height()
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the sync height"))?;
+        let header = client
+            .get_block_header_by_num(sync_height)
+            .await
+            .map_err(|err| js_error_with_context(err, "failed to read the synced block header"))?;
+        if let Some((header, _)) = header {
+            match client.get_protocol_config(header.protocol_config_commitment()).await {
+                Ok(config) => return Ok(config.fee_asset_id().faucet_id().into()),
+                // Nothing has been synced yet, so no configuration is stored for the header.
+                Err(ClientError::StoreError(StoreError::ProtocolConfigNotFound(_))) => {},
+                Err(err) => {
+                    return Err(js_error_with_context(
+                        err,
+                        "failed to read the protocol configuration",
+                    ));
+                },
+            }
+        }
+
+        (*self.fee_faucet.lock().await).map(Into::into).ok_or_else(|| {
+            from_str_err(
+                "the chain's fee faucet is not known yet: sync the client so it receives the \
+                 protocol configuration from the node, or pass `feeFaucetId` when creating it",
+            )
+        })
     }
 
     /// Returns the identifier of the underlying store (e.g. `IndexedDB` database name, file path).
@@ -283,11 +332,16 @@ impl WebClient {
         Ok(client.store_identifier().to_string())
     }
 
-    /// Returns the node endpoint URL this client is configured to talk to, or `undefined` if the
-    /// client has not been created yet (or its transport doesn't track an endpoint).
+    /// Returns the URL of the node this client was created against, for example
+    /// `https://rpc.devnet.miden.io`. A client created without a node URL reports the testnet
+    /// endpoint it defaulted to. Returns `undefined` before the client is created and for a mock
+    /// client, which talks to no node.
+    ///
+    /// Synchronous: the value is stored at creation, so reading it never waits on an in-flight
+    /// call.
     #[js_export(js_name = "endpoint")]
     pub fn endpoint(&self) -> Option<String> {
-        self.endpoint.read().expect("endpoint lock poisoned").clone()
+        self.endpoint.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     #[js_export(js_name = "createCodeBuilder")]
@@ -372,13 +426,16 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. When enabled,
-    ///   the transaction executor records additional information useful for debugging. Defaults to
-    ///   disabled.
+    /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
+    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
+    ///   configuration from the node; execution does not need it.
     #[wasm_bindgen(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -386,13 +443,14 @@ impl WebClient {
         node_note_transport_url: Option<String>,
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
-        debug_mode: Option<bool>,
+        fee_faucet_id: Option<String>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -402,16 +460,32 @@ impl WebClient {
         let store_name =
             store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
 
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
         );
-        let keystore = WebKeyStore::new_with_callbacks(rng, store_name.clone(), None, None, None);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name.clone(),
+            None,
+            None,
+            None,
+        );
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
-            .await?;
+        let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
+
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
@@ -421,15 +495,19 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `store_name`: Optional name for the web store. If `None`, the store name defaults to
     ///   `MidenClientDB_{network_id}`, where `network_id` is derived from the `node_url`.
     ///   Explicitly setting this allows for creating multiple isolated clients.
+    /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
+    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
+    ///   configuration from the node; execution does not need it.
     /// * `get_key_cb`: Callback to retrieve the secret key bytes for a given public key.
     /// * `insert_key_cb`: Callback to persist a secret key.
     /// * `sign_cb`: Callback to produce serialized signature bytes for the provided inputs.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. Defaults to
-    ///   disabled.
     #[wasm_bindgen(js_name = "createClientWithExternalKeystore")]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_client_with_external_keystore(
@@ -438,16 +516,17 @@ impl WebClient {
         node_note_transport_url: Option<String>,
         seed: Option<Vec<u8>>,
         store_name: Option<String>,
+        fee_faucet_id: Option<String>,
         get_key_cb: Option<Function>,
         insert_key_cb: Option<Function>,
         sign_cb: Option<Function>,
-        debug_mode: Option<bool>,
     ) -> Result<JsValue, JsValue> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| JsValue::from_str("Invalid node URL"))
         })?;
 
-        let web_rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let web_rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = node_note_transport_url.map(|url| {
             Arc::new(GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS))
@@ -457,43 +536,52 @@ impl WebClient {
         let store_name =
             store_name.unwrap_or(format!("{}_{}", BASE_STORE_NAME, endpoint.to_network_id()));
 
-        let rng = create_rng(seed)?;
+        let mut rng = create_rng(seed)?;
         let store: Arc<dyn Store> = Arc::new(
             IdxdbStore::new(store_name.clone())
                 .await
                 .map_err(|_| JsValue::from_str("Failed to initialize IdxdbStore"))?,
         );
-        let keystore =
-            WebKeyStore::new_with_callbacks(rng, store_name, get_key_cb, insert_key_cb, sign_cb);
+        let keystore = WebKeyStore::new_with_callbacks(
+            StdRng::from_rng(&mut rng),
+            store_name,
+            get_key_cb,
+            insert_key_cb,
+            sign_cb,
+        );
 
-        self.setup_client(web_rpc_client, store, keystore, rng, note_transport_client, debug_mode)
-            .await?;
+        let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
+
+        self.setup_client(
+            web_rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok(JsValue::from_str("Client created successfully"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
-        keystore: WebKeyStore<RandomCoin>,
-        rng: RandomCoin,
+        keystore: WebKeyStore<StdRng>,
+        rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        debug_mode: Option<bool>,
+        fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsValue> {
-        *self.endpoint.write().expect("endpoint lock poisoned") =
-            rpc_client.endpoint().map(str::to_string);
-
         let mut builder = ClientBuilder::new()
             .rpc(rpc_client)
             .rng(Box::new(rng))
             .store(store)
-            .authenticator(Arc::new(keystore))
-            .in_debug_mode(if debug_mode.unwrap_or(false) {
-                DebugMode::Enabled
-            } else {
-                DebugMode::Disabled
-            });
+            .authenticator(Arc::new(keystore));
 
         if let Some(transport) = note_transport_client {
             builder = builder.note_transport(transport);
@@ -509,6 +597,10 @@ impl WebClient {
             .await
             .map_err(|err| js_error_with_context(err, "Failed to ensure genesis in place"))?;
 
+        // Published together with `inner`, so a creation that fails leaves none of them set: the
+        // accessors report the faucet and endpoint of a client that exists, or nothing.
+        *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
@@ -524,11 +616,15 @@ impl WebClient {
     /// # Arguments
     /// * `node_url`: The URL of the node RPC endpoint. If `None`, defaults to the testnet endpoint.
     /// * `node_note_transport_url`: Optional URL of the note transport service.
-    /// * `seed`: Optional seed for account initialization.
+    /// * `seed`: Optional 32-byte seed for the client's RNG. Despite the name it is not scoped to
+    ///   account initialization — it seeds every random value the client draws, including
+    ///   output-note serial numbers and the fee conversion info salt, so passing one makes those
+    ///   reproducible too. Any other length is rejected.
     /// * `db_path`: Path to the SQLite database file.
     /// * `keystore_path`: Path to the directory for storing keys.
-    /// * `debug_mode`: Optional flag to enable debug mode for transaction execution. Defaults to
-    ///   disabled.
+    /// * `fee_faucet_id`: Optional fee faucet of the chain, as a bech32 address or a hex account
+    ///   ID. Only what `feeFaucetId()` reports before the first sync delivers the protocol
+    ///   configuration from the node; execution does not need it.
     #[napi(js_name = "createClient")]
     pub async fn create_client(
         &self,
@@ -537,13 +633,14 @@ impl WebClient {
         seed: Option<Vec<u8>>,
         db_path: String,
         keystore_path: String,
-        debug_mode: Option<bool>,
+        fee_faucet_id: Option<String>,
     ) -> Result<String, JsErr> {
         let endpoint = node_url.map_or(Ok(Endpoint::testnet()), |url| {
             Endpoint::try_from(url.as_str()).map_err(|_| from_str_err("Invalid node URL"))
         })?;
 
-        let rpc_client = Arc::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS));
+        let rpc_client =
+            Arc::new(VerifyingRpcClient::new(GrpcClient::new(&endpoint, DEFAULT_GRPC_TIMEOUT_MS)));
 
         let note_transport_client = if let Some(url) = node_note_transport_url {
             let client = GrpcNoteTransportClient::new(url, DEFAULT_GRPC_TIMEOUT_MS);
@@ -563,35 +660,39 @@ impl WebClient {
         let keystore = FilesystemKeyStore::new(keystore_path.into())
             .map_err(|e| from_str_err(&format!("Failed to initialize keystore: {e}")))?;
 
-        self.setup_client(rpc_client, store, keystore, rng, note_transport_client, debug_mode)
-            .await?;
+        let fee_faucet = fee_faucet_id.map(|id| parse_fee_faucet_id(&id)).transpose()?;
+
+        self.setup_client(
+            rpc_client,
+            Some(endpoint.to_string()),
+            store,
+            keystore,
+            rng,
+            note_transport_client,
+            fee_faucet,
+        )
+        .await?;
 
         Ok("Client created successfully".to_string())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn setup_client(
         &self,
         rpc_client: Arc<dyn NodeRpcClient>,
+        endpoint: Option<String>,
         store: Arc<dyn Store>,
         keystore: FilesystemKeyStore,
-        rng: RandomCoin,
+        rng: StdRng,
         note_transport_client: Option<Arc<dyn NoteTransportClient>>,
-        debug_mode: Option<bool>,
+        fee_faucet: Option<NativeAccountId>,
     ) -> Result<(), JsErr> {
-        *self.endpoint.write().expect("endpoint lock poisoned") =
-            rpc_client.endpoint().map(str::to_string);
-
         let client = maybe_wrap_send(async move {
             let mut builder = ClientBuilder::new()
                 .rpc(rpc_client)
                 .rng(Box::new(rng))
                 .store(store)
-                .authenticator(Arc::new(keystore))
-                .in_debug_mode(if debug_mode.unwrap_or(false) {
-                    DebugMode::Enabled
-                } else {
-                    DebugMode::Disabled
-                });
+                .authenticator(Arc::new(keystore));
 
             if let Some(transport) = note_transport_client {
                 builder = builder.note_transport(transport);
@@ -611,29 +712,43 @@ impl WebClient {
         })
         .await?;
 
+        *self.fee_faucet.lock().await = fee_faucet;
+        *self.endpoint.write().unwrap_or_else(std::sync::PoisonError::into_inner) = endpoint;
         *self.inner.lock().await = Some(client);
 
         Ok(())
     }
 }
 
-pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<RandomCoin, JsErr> {
-    let mut rng = match seed {
+// FEE FAUCET
+// ================================================================================================
+
+/// Reads a fee faucet written either as a bech32 address or as a hex account ID, the two spellings
+/// the rest of the JS surface accepts for an account.
+fn parse_fee_faucet_id(id: &str) -> Result<NativeAccountId, JsErr> {
+    if let Ok(account_id) = models::account_id::AccountId::from_bech32(id.to_string()) {
+        return Ok((&account_id).into());
+    }
+
+    models::account_id::AccountId::from_hex(id.to_string())
+        .map(|account_id| (&account_id).into())
+        .map_err(|_| {
+            from_str_err(&format!(
+                "`{id}` is not a fee faucet: expected a bech32 address or a hex account ID"
+            ))
+        })
+}
+
+pub(crate) fn create_rng(seed: Option<Vec<u8>>) -> Result<StdRng, JsErr> {
+    match seed {
         Some(seed_bytes) => {
-            if seed_bytes.len() == 32 {
-                let mut seed_array = [0u8; 32];
-                seed_array.copy_from_slice(&seed_bytes);
-                StdRng::from_seed(seed_array)
-            } else {
-                return Err(from_str_err("Seed must be exactly 32 bytes"));
-            }
+            let seed_array: [u8; 32] = seed_bytes
+                .try_into()
+                .map_err(|_| from_str_err("Seed must be exactly 32 bytes"))?;
+            Ok(StdRng::from_seed(seed_array))
         },
-        None => StdRng::from_os_rng(),
-    };
-    let coin_seed: [u64; 4] = rng.random();
-    // `coin_seed` is freshly drawn `u64`s; the probability of hitting the modulus is
-    // vanishing and `new_unchecked` matches the upstream Rust client's usage.
-    Ok(RandomCoin::new(coin_seed.map(Felt::new_unchecked).into()))
+        None => Ok(StdRng::from_rng(&mut rand::rng())),
+    }
 }
 
 // ERROR HANDLING HELPERS
@@ -654,7 +769,7 @@ where
         }
         // Stable, machine-readable code for the ClientError variants JS callers
         // branch on, so they don't have to match the (changeable) message text.
-        // The worker shim's serializeError already forwards `code`.
+        // The worker shim's serializeError forwards both `code` and `help`.
         if let Some(code) = code_from_error(&err) {
             let _ = Reflect::set(&js_error, &JsValue::from_str("code"), &JsValue::from_str(code));
         }
@@ -700,9 +815,38 @@ fn code_from_error(err: &(dyn Error + 'static)) -> Option<&'static str> {
         return match client_error {
             ClientError::AccountNotFoundOnChain(_) => Some("ACCOUNT_NOT_FOUND_ON_CHAIN"),
             ClientError::AccountAlreadyTracked(_) => Some("ACCOUNT_ALREADY_TRACKED"),
+            ClientError::AccountNotAllowlisted(_) => Some("ACCOUNT_NOT_ALLOWLISTED"),
+            ClientError::AccountAlreadyAllowed(_) => Some("ACCOUNT_ALREADY_ALLOWED"),
+            // The node's verdict on a registration travels inside the RPC error rather than as
+            // a `ClientError` variant of its own.
+            ClientError::RpcError(rpc_error) => registration_code(rpc_error),
             _ => None,
         };
     }
 
+    if let Some(rpc_error) = err.downcast_ref::<RpcError>() {
+        return registration_code(rpc_error);
+    }
+
     err.source().and_then(code_from_error)
+}
+
+/// Maps the reasons a node rejects an account registration to stable string codes, for the
+/// `registerAccount` callers that branch on them. `None` for every other RPC error.
+#[cfg(feature = "browser")]
+fn registration_code(err: &RpcError) -> Option<&'static str> {
+    use miden_client::rpc::{EndpointError, RegisterAccountError};
+
+    let RpcError::RequestError {
+        endpoint_error: Some(EndpointError::RegisterAccount(reason)),
+        ..
+    } = err
+    else {
+        return None;
+    };
+    Some(match reason {
+        RegisterAccountError::InvitationNotFound => "INVITATION_NOT_FOUND",
+        RegisterAccountError::AlreadyRegistered => "ALREADY_REGISTERED",
+        RegisterAccountError::InvalidRequest(_) => "INVALID_REGISTRATION_REQUEST",
+    })
 }

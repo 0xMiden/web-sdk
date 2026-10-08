@@ -12,11 +12,10 @@ type AccountPrototype = {
   bech32id?: () => string;
 };
 
-// Derive the bech32 network from the live client's endpoint (single source of truth).
-// A real client always carries an endpoint (testnet by default), so the only
-// undetermined cases are: no client yet (provider still initializing) or a configured
-// custom endpoint we can't map — both return `null` so callers fall back to the raw
-// account id rather than tagging it for the wrong network.
+// The network comes from the endpoint the provider's client was created against.
+// A real client always reports one (testnet when none was configured), so `null`
+// means no client yet, a mock client, or an endpoint naming no known network.
+// Callers then show the raw account id rather than a wrong-network address.
 const resolveNetworkId = (): NetworkId | null => {
   const url = useMidenStore.getState().client?.endpoint()?.toLowerCase();
   if (!url) {
@@ -32,7 +31,7 @@ const resolveNetworkId = (): NetworkId | null => {
     return NetworkId.testnet();
   }
   if (url.includes("localhost") || url.includes("127.0.0.1")) {
-    // Local nodes run a devnet genesis by default.
+    // A local node is a development chain, so it takes the devnet prefix.
     return NetworkId.devnet();
   }
   return null;
@@ -40,8 +39,6 @@ const resolveNetworkId = (): NetworkId | null => {
 
 const toBech32FromAccountId = (id: AccountId): string => {
   const networkId = resolveNetworkId();
-  // Network not yet determinable (provider initializing, or a custom endpoint):
-  // return the raw id rather than risk a wrong-network bech32 address.
   if (!networkId) {
     return id.toString();
   }

@@ -1,10 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useMiden } from "../context/MidenProvider";
 import type {
-  TransactionRequest,
-  WasmWebClient as WebClient,
-} from "@miden-sdk/miden-sdk";
-import type {
   TransactionStage,
   TransactionResult,
   ExecuteTransactionOptions,
@@ -17,6 +13,8 @@ import { useMidenStore } from "../store/MidenStore";
 import {
   waitForTransactionCommit,
   extractFullNotes,
+  assertAnchorValueUsable,
+  resolveTransactionRequest,
 } from "../utils/transactions";
 
 export interface UseTransactionResult {
@@ -34,16 +32,41 @@ export interface UseTransactionResult {
   reset: () => void;
 }
 
-type TransactionRequestFactory = (
-  client: WebClient
-) => TransactionRequest | Promise<TransactionRequest>;
-
 /**
  * Hook to execute arbitrary transaction requests.
  *
  * Always uses the 4-step pipeline (execute → prove → submit → apply)
  * with prover fallback support. When `privateNoteTarget` is set,
  * additionally waits for commit and delivers private output notes.
+ *
+ * Pass `anchor` to execute against a pinned reference block instead of the
+ * current sync height, so a summary signed at that block reproduces exactly.
+ * Capture one with `useChainAnchor`. Leave it out for a multisig request built
+ * by `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+ * client has synced to its bound block.
+ *
+ * Fees: the request is yours to build, so paying the verification fee is yours
+ * too. A request assembled from `new TransactionRequestBuilder()` aborts with
+ * `ERR_FEE_CONVERSION_INFO_MISSING` on a chain that charges one. The factory
+ * form of `request` receives the client, which is where you get a builder that
+ * already carries the chain's fee conversion info:
+ *
+ * ```tsx
+ * await execute({
+ *   accountId,
+ *   request: async (client) =>
+ *     (
+ *       await client.feeAwareTransactionRequestBuilder(
+ *         AccountId.fromHex(accountId)
+ *       )
+ *     )
+ *       .withCustomScript(script)
+ *       .build(),
+ * });
+ * ```
+ *
+ * The `new*TransactionRequest` constructors attach it themselves, so a factory
+ * that delegates to one of those — like the example below — needs nothing extra.
  *
  * @example
  * ```tsx
@@ -98,6 +121,8 @@ export function useTransaction(): UseTransactionResult {
         );
       }
 
+      assertAnchorValueUsable(options);
+
       isBusyRef.current = true;
       setIsLoading(true);
       setStage("executing");
@@ -111,12 +136,21 @@ export function useTransaction(): UseTransactionResult {
 
         // Resolve request outside runExclusiveSafe so the "executing" stage
         // is observable before transitioning to "proving"
-        const txRequest = await resolveRequest(options.request, client);
+        const txRequest = await resolveTransactionRequest(
+          options.request,
+          client
+        );
 
         // Step 1: Execute
         const txResult = await runExclusiveSafe(() => {
           const accountIdObj = parseAccountId(options.accountId);
-          return client.executeTransaction(accountIdObj, txRequest);
+          return options.anchor
+            ? client.executeTransactionAt(
+                accountIdObj,
+                txRequest,
+                options.anchor
+              )
+            : client.executeTransaction(accountIdObj, txRequest);
         });
 
         // Step 2: Prove (with fallback)
@@ -149,8 +183,11 @@ export function useTransaction(): UseTransactionResult {
           const targetAddress = parseAddress(options.privateNoteTarget);
           const fullNotes = extractFullNotes(txResult);
           for (const note of fullNotes) {
+            // Relay via the output-note convenience: it reads the inclusion proof
+            // sync stored once the note committed, so the call has to follow the
+            // commit wait.
             await runExclusiveSafe(() =>
-              client.sendPrivateNote(note, targetAddress)
+              client.sendPrivateOutputNote(note.id().toString(), targetAddress)
             );
           }
         }
@@ -188,14 +225,4 @@ export function useTransaction(): UseTransactionResult {
     error,
     reset,
   };
-}
-
-async function resolveRequest(
-  request: TransactionRequest | TransactionRequestFactory,
-  client: WebClient
-): Promise<TransactionRequest> {
-  if (typeof request === "function") {
-    return await request(client);
-  }
-  return request;
 }

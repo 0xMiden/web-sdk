@@ -34,6 +34,10 @@ const serializeError = (error) => {
       stack: error.stack,
       cause: error.cause ? serializeError(error.cause) : undefined,
       code: error.code,
+      // Remediation text the Rust layer attaches alongside `code`. Without it
+      // here, a worker-backed failure is less diagnosable than the identical
+      // failure on the main thread.
+      help: error.help,
     };
   }
 
@@ -203,6 +207,32 @@ const methodHandlers = {
     const serializedResult = result.serialize();
     return serializedResult.buffer;
   },
+  [MethodName.EXECUTE_TRANSACTION_AT]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [accountIdHex, serializedTransactionRequest, serializedAnchor] = args;
+    const accountId = wasm.AccountId.fromHex(accountIdHex);
+    const transactionRequest = wasm.TransactionRequest.deserialize(
+      new Uint8Array(serializedTransactionRequest)
+    );
+    const anchor = wasm.ChainAnchor.deserialize(
+      new Uint8Array(serializedAnchor)
+    );
+    try {
+      const result = await wasmWebClient.executeTransactionAt(
+        accountId,
+        transactionRequest,
+        anchor
+      );
+      const serializedResult = result.serialize();
+      return serializedResult.buffer;
+    } finally {
+      // Rebuilt from bytes on every anchored execution and the largest
+      // transient here, since it carries a partial blockchain. The binding
+      // borrows it, so it is dead once the call settles; waiting for the
+      // finalizer would let linear memory track GC pressure on a tiny wrapper.
+      anchor.free();
+    }
+  },
   [MethodName.PROVE_TRANSACTION]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [serializedTransactionResult, proverPayload] = args;
@@ -256,6 +286,24 @@ const methodHandlers = {
       serializedTransactionResult: result.serialize().buffer,
       serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
+  },
+  [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [serializedItems] = args;
+    // Rebuild each (account, request) pair in this instance, in order, so the
+    // batch runs exactly as the main-thread path runs it. This returns a plain
+    // block number, so unlike the single-submit handlers there is no result
+    // object to serialize back across the boundary.
+    const items = serializedItems.map(
+      ([accountIdHex, serializedTransactionRequest]) =>
+        new wasm.BatchItem(
+          wasm.AccountId.fromHex(accountIdHex),
+          wasm.TransactionRequest.deserialize(
+            new Uint8Array(serializedTransactionRequest)
+          )
+        )
+    );
+    return await wasmWebClient.submitNewTransactionBatch(items);
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -431,6 +479,7 @@ async function processMessage(event) {
         hasSignCb,
         logLevel,
         numThreads,
+        feeFaucetId,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -439,10 +488,10 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's thread pool inside THIS worker's WASM instance.
-      // The SDK runs every prove call here (NOT on the main thread), so a
-      // pool initialized only in main-thread WASM does not parallelize the
-      // prove. Without this, par_iter()/par_chunks() in miden-crypto +
-      // p3-maybe-rayon return rayon::current_num_threads() == 1 and fall
+      // The SDK runs proving here rather than on the main thread wherever a
+      // worker is in use, so a pool initialized only in main-thread WASM does
+      // not parallelize the prove. Without this, par_iter()/par_chunks() in
+      // miden-crypto + p3-maybe-rayon return current_num_threads() == 1 and fall
       // through to sequential code despite the parallel features being on.
       if (
         numThreads &&
@@ -464,6 +513,7 @@ async function processMessage(event) {
           noteTransportUrl,
           seed,
           storeName,
+          feeFaucetId,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined
@@ -473,7 +523,8 @@ async function processMessage(event) {
           rpcUrl,
           noteTransportUrl,
           seed,
-          storeName
+          storeName,
+          feeFaucetId
         );
       }
 
@@ -490,8 +541,9 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's pool inside THIS worker's WASM instance — same
-      // rationale as the INIT path above: all proving executes here, and a
-      // pool initialized in any other instance does not parallelize it.
+      // rationale as the INIT path above: any proving that happens here uses
+      // this instance, and a pool initialized in another one does not
+      // parallelize it.
       if (
         numThreads &&
         numThreads > 1 &&

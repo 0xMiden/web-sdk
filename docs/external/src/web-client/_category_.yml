@@ -1,0 +1,5 @@
+label: Web Client
+# Position relative to siblings under the Builder → Client section. Rust
+# sits at position 1; Web Client takes 2 so it lands directly after.
+position: 2
+collapsed: true
