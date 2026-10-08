@@ -106,6 +106,21 @@ Two consequences worth planning for:
 so charging for it is a deliberate act —
 `new NoteScriptFee(NoteScript.feeSponsorship().root(), amount)`.
 
+Every other standard note has a constructor too (`NoteScript.pauseConfig()`,
+`NoteScript.ownerConfig()`, `NoteScript.upgrade()`, `NoteScript.txFee()` and the
+rest). Each returns the note's script so you can read its root, to allowlist the
+note on a network account or to recognize one. An account built with
+`AccountComponent.createNetworkAuthComponents` allowlists only
+`NETWORK_ACCOUNT_CONFIG`, `FEE_SPONSORSHIP` and `P2ID` by default; to accept
+another note, price its root in the allowlist, for example
+`new NoteScriptFee(NoteScript.pauseConfig().root(), fee)`. Allowlisting is not
+enough on its own: the note only runs on an account that also installs the
+component it drives, here `PausableManager` together with `Authority`.
+`createNetworkAuthComponents` installs only the auth component, the wallet and
+the fee policy, so build that component from a compiled package as a custom
+`AccountComponent` (`AccountComponent.fromPackage`). The note must also be
+public and carry a `NetworkAccountTarget` naming the account.
+
 ## Creating a network account
 
 A network account is a **public** account carrying the network-account auth
