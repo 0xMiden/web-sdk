@@ -239,13 +239,22 @@ export interface ClientOptions {
    * How many times a private note send is retried after a transient note
    * transport failure, within the same `notes.sendPrivate` /
    * `notes.sendPrivateOutput` call. An integer from 0 to 10; defaults to 3.
-   * Pass `0` to bound a send to a single attempt.
+   * Together with {@link ClientOptions.noteTransportRetryIntervalMs} the total
+   * computed backoff, `interval * (2^retries - 1)` with an omitted value taken
+   * at its default, may not exceed 120000 ms.
    *
    * Retried: a failed connection, and the service answering `Unavailable`,
    * `DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value.
    * Nothing else is, since a retry would get the same answer. In the browser a
    * failed `fetch` (network down, CORS, DNS) reaches the client as an
    * `Unknown` status and is **not** retried; a request that times out is.
+   *
+   * The retries run inside the client's serialized call, so a slow or
+   * rate-limiting transport blocks every other call on this client until the
+   * send finishes. A non-zero `retry-after` from the service replaces the
+   * computed delay with no upper bound; a zero one falls back to the computed
+   * delay. Pass `0` to bound a send to a single attempt, which suits a
+   * latency-sensitive UI.
    *
    * Validated before the client is built: anything else throws a `TypeError`.
    * Ignored by `MidenClient.createMock()`, whose note transport is in-process.
@@ -254,12 +263,16 @@ export interface ClientOptions {
   /**
    * Delay before the first of those retries, in milliseconds; each later retry
    * waits twice as long as the one before. An integer from 0 to 60000;
-   * defaults to 250. With both options at their maximum the longest wait is
-   * 60000 * 2^9 ms.
+   * defaults to 250. Together with
+   * {@link ClientOptions.noteTransportMaxRetries} the total computed backoff,
+   * `interval * (2^retries - 1)` with an omitted value taken at its default,
+   * may not exceed 120000 ms, which is also the longest computed wait.
    *
-   * A `retry-after` value from the service replaces the computed delay and is
-   * not capped, so a rate-limited send can wait longer than this bound; use
-   * `noteTransportMaxRetries: 0` to rule that out.
+   * The retries run inside the client's serialized call, blocking every other
+   * call on this client until the send finishes. A non-zero `retry-after` from
+   * the service replaces the computed delay with no upper bound, so a
+   * rate-limited send can wait longer than this bound; a zero one falls back to
+   * the computed delay. Use `noteTransportMaxRetries: 0` to rule that out.
    *
    * Validated before the client is built: anything else throws a `TypeError`.
    * Ignored by `MidenClient.createMock()`.

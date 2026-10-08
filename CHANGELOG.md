@@ -4,7 +4,7 @@
 
 ### Enhancements
 
-* [FEATURE][web] `ClientOptions.noteTransportMaxRetries` (integer 0 to 10, default 3) and `ClientOptions.noteTransportRetryIntervalMs` (integer 0 to 60000, default 250, doubling per retry) set how a private-note send retries a transient transport failure within the call; `MidenConfig` in `@miden-sdk/react` takes the same two fields. An out-of-range value throws a `TypeError` before the client is built. A service `retry-after` replaces the delay uncapped, so pass `noteTransportMaxRetries: 0` to bound a send to one attempt ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
+* [FEATURE][web] `ClientOptions.noteTransportMaxRetries` (integer 0 to 10, default 3) and `ClientOptions.noteTransportRetryIntervalMs` (integer 0 to 60000, default 250, doubling per retry) set how a private-note send retries a transient transport failure within the call; `MidenConfig` in `@miden-sdk/react` takes the same two fields. Together they may not exceed 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default; an out-of-range value or total throws a `TypeError` before the client is built. The retries run inside the client's serialized call (and under the provider lock in the React hooks), so a slow or rate-limiting transport blocks other client calls until the send finishes. A non-zero service `retry-after` replaces the delay with no upper bound (a zero one falls back to it), so pass `noteTransportMaxRetries: 0` to bound a send to one attempt in a latency-sensitive UI ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
 
 ### Fixes
 

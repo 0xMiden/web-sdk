@@ -274,11 +274,17 @@ so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
 `noteTransportMaxRetries` (0 to 10, default 3) and
-`noteTransportRetryIntervalMs` (0 to 60000, default 250) set how
+`noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
+backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
 `notes.sendPrivate` / `notes.sendPrivateOutput` retry a transient note
-transport failure within the call. A send that still fails rejects, and the
-rejection is final: the client keeps no queue and no sync sends the note again,
-so send the same note again to retry (delivery is idempotent by note id).
+transport failure within the call. The retries run inside the client's
+serialized call, so a slow or rate-limiting transport blocks other client calls
+until the send finishes; a non-zero service `retry-after` replaces the computed
+delay with no upper bound, and a zero one falls back to it. Pass
+`noteTransportMaxRetries: 0` to bound a send to one attempt in a
+latency-sensitive UI. A send that still fails rejects, and the rejection is
+final: the client keeps no queue and no sync sends the note again, so send the
+same note again to retry (delivery is idempotent by note id).
 
 ### Lazy usage (`/lazy`)
 

@@ -127,11 +127,16 @@ If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
 later retry) set how a private note send retries a transient transport failure
 **within the same call**: a failed connection, `Unavailable`,
 `DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value. In the
-browser a failed `fetch` reaches the client as `Unknown` and is not retried. A
-service `retry-after` replaces the computed delay and is not capped, so pass
-`noteTransportMaxRetries: 0` to bound a send to one attempt. Anything outside
-the ranges throws a `TypeError` before the client is built. `createMock()`
-ignores both.
+browser a failed `fetch` reaches the client as `Unknown` and is not retried.
+Together the two may not exceed 120000 ms of total computed backoff,
+`interval * (2^retries - 1)` with an omitted value taken at its default. The
+retries run inside the client's serialized call, so a slow or rate-limiting
+transport blocks every other call on the client until the send finishes. A
+non-zero service `retry-after` replaces the computed delay with no upper bound
+(a zero one falls back to it), so pass `noteTransportMaxRetries: 0` to bound a
+send to one attempt; that suits a latency-sensitive UI. Anything outside the
+ranges or the total throws a `TypeError` before the client is built.
+`createMock()` ignores both.
 
 `seed` is `string | Uint8Array`. A string is legal: `hashSeed()` SHA-256s it to
 32 bytes before it reaches WASM, and a `Uint8Array` passes through unchanged.
@@ -1006,8 +1011,10 @@ A rejected `sendPrivate` / `sendPrivateOutput` means the note did not reach the
 transport or the outcome is not known, and it is final. The SDK keeps no queue,
 and neither `sync()` nor `syncNoteTransport()` sends the note again. Transient
 transport failures are retried inside the call (`noteTransportMaxRetries` and
-`noteTransportRetryIntervalMs` on `ClientOptions`; in the browser a failed
-`fetch` is not one of them). To try again, call it again with the same note:
+`noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff
+in total; in the browser a failed `fetch` is not one of them), and the retries
+hold the client's serialized call, so other calls wait for them. To try again,
+call it again with the same note:
 delivery is idempotent by note id, so a repeat cannot duplicate it.
 
 `fetchPrivate()` takes no arguments. The `{ mode: "all" }` full re-scan was

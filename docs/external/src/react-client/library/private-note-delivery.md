@@ -130,5 +130,13 @@ Tune this on the provider:
 </MidenProvider>
 ```
 
-A `retry-after` from the service replaces the computed delay and is not capped;
-`noteTransportMaxRetries: 0` bounds a send to a single attempt.
+Besides each value's range, the two together may not exceed 120000 ms of total
+computed backoff, `interval * (2^retries - 1)` with an omitted value taken at
+its default; anything else throws a `TypeError` when the client is built.
+
+The retries run inside the client's serialized call and, in these hooks, under
+the provider lock, so a slow or rate-limiting transport blocks every other
+client call until the send finishes. A non-zero `retry-after` from the service
+replaces the computed delay with no upper bound, while a zero one falls back to
+the computed delay. `noteTransportMaxRetries: 0` bounds a send to a single
+attempt, which suits a latency-sensitive UI.

@@ -413,13 +413,19 @@ class WebClient {
    *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
    * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private
    *   note send after a transient transport failure, an integer from 0 to 10.
-   *   Defaults to 3.
+   *   Defaults to 3. `0` bounds a send to one attempt, which suits a
+   *   latency-sensitive UI: the retries run inside this client's serialized
+   *   call, so a slow or rate-limiting transport blocks every other call until
+   *   the send finishes. A non-zero service `retry-after` replaces the computed
+   *   delay with no upper bound; a zero one falls back to it.
    * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before
    *   the first such retry, doubling for each later one, an integer from 0 to
-   *   60000. Defaults to 250.
-   * @throws {TypeError} If either retry option is out of range. Checked here,
-   *   before any worker or WASM call, so every way of building a client
-   *   rejects the same values.
+   *   60000. Defaults to 250. With the retries, the total computed backoff
+   *   `interval * (2^retries - 1)`, an omitted value taken at its default, may
+   *   not exceed 120000 ms.
+   * @throws {TypeError} If either retry option is out of range or their total
+   *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
+   *   so every way of building a client rejects the same values.
    */
   constructor(
     rpcUrl,

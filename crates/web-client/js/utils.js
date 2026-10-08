@@ -227,13 +227,19 @@ export async function hashSeed(seed) {
 
 /**
  * Bounds for the note transport send-retry options. A retry waits
- * `noteTransportRetryIntervalMs * 2^n` before attempt `n + 1`, and the browser
- * timer that sleeps it throws inside WASM once a delay passes `2^31 - 1` ms, so
- * the two caps are chosen together: the longest delay they allow is
- * `60000 * 2^9` ms (about 8.5 hours).
+ * `noteTransportRetryIntervalMs * 2^n` before attempt `n + 1`, so a send can
+ * spend `interval * (2^maxRetries - 1)` ms in backoff. Each value has its own
+ * cap, and the two together may not exceed a 120000 ms total: a send's retries
+ * run inside the client's serialized call, so every other call on the client
+ * waits for them. That also keeps each single delay far below the `2^31 - 1` ms
+ * at which the browser timer throws inside WASM. The defaults are the transport's
+ * own, used for an omitted value.
  */
 const NOTE_TRANSPORT_MAX_RETRIES_CAP = 10;
 const NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP = 60_000;
+const NOTE_TRANSPORT_TOTAL_BACKOFF_MS_CAP = 120_000;
+const NOTE_TRANSPORT_DEFAULT_MAX_RETRIES = 3;
+const NOTE_TRANSPORT_DEFAULT_RETRY_INTERVAL_MS = 250;
 
 /**
  * Validates the note transport send-retry options before any worker or WASM
@@ -241,11 +247,12 @@ const NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP = 60_000;
  * number to `u32` with `>>> 0` (so `-1` silently becomes `4294967295`), while
  * the napi binding throws; checking first makes both builds agree.
  *
- * `undefined` means "use the default" and is accepted.
+ * `undefined` means "use the default" (3 retries, 250 ms) and is accepted.
  *
  * @param {unknown} noteTransportMaxRetries - Integer from 0 to 10, or undefined.
  * @param {unknown} noteTransportRetryIntervalMs - Integer from 0 to 60000, or undefined.
- * @throws {TypeError} Naming the option that is out of range.
+ * @throws {TypeError} Naming the option that is out of range, or the total
+ *   backoff `interval * (2^maxRetries - 1)` when it exceeds 120000 ms.
  */
 export function validateNoteTransportRetryOptions(
   noteTransportMaxRetries,
@@ -261,6 +268,18 @@ export function validateNoteTransportRetryOptions(
     noteTransportRetryIntervalMs,
     NOTE_TRANSPORT_RETRY_INTERVAL_MS_CAP
   );
+  const maxRetries =
+    noteTransportMaxRetries ?? NOTE_TRANSPORT_DEFAULT_MAX_RETRIES;
+  const intervalMs =
+    noteTransportRetryIntervalMs ?? NOTE_TRANSPORT_DEFAULT_RETRY_INTERVAL_MS;
+  const totalMs = intervalMs * (2 ** maxRetries - 1);
+  if (totalMs > NOTE_TRANSPORT_TOTAL_BACKOFF_MS_CAP) {
+    throw new TypeError(
+      `noteTransportMaxRetries ${maxRetries} with noteTransportRetryIntervalMs ` +
+        `${intervalMs} allows ${totalMs} ms of retry backoff in total; the most ` +
+        `is ${NOTE_TRANSPORT_TOTAL_BACKOFF_MS_CAP} ms`
+    );
+  }
 }
 
 function checkRetryOption(name, value, cap) {

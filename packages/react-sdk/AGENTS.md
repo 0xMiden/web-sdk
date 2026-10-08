@@ -57,7 +57,11 @@ leave it out to keep the point they make legible; every real provider needs it.
     noteTransportMaxRetries: 3, // optional: in-call retries of a private note send
                                 //   after a transient transport failure. 0..10, default 3
     noteTransportRetryIntervalMs: 250, // optional: delay before the first retry, doubling
-                                //   for each later one. 0..60000 ms, default 250
+                                //   for each later one. 0..60000 ms, default 250.
+                                //   Together: at most 120000 ms of total backoff,
+                                //   interval * (2^retries - 1). Retries hold the
+                                //   provider lock, blocking other client calls;
+                                //   0 retries suits a latency-sensitive UI
     useWorker: true,            // default true; see the warning below before changing
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs

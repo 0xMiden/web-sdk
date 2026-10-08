@@ -69,10 +69,17 @@ const client = await MidenClient.create({
 });
 ```
 
-A value outside those ranges throws a `TypeError` before the client is built. A
-`retry-after` from the service replaces the computed delay and is not capped;
-`noteTransportMaxRetries: 0` bounds a send to a single attempt.
-`MidenClient.createMock()` ignores both options.
+Besides each value's range, the two together may not exceed 120000 ms of total
+computed backoff, `interval * (2^retries - 1)` with an omitted value taken at
+its default. A value outside those bounds throws a `TypeError` before the client
+is built.
+
+The retries run inside the client's serialized call, so a slow or rate-limiting
+transport blocks every other call on the client until the send finishes. A
+non-zero `retry-after` from the service replaces the computed delay with no
+upper bound, while a zero one falls back to the computed delay.
+`noteTransportMaxRetries: 0` bounds a send to a single attempt, which suits a
+latency-sensitive UI. `MidenClient.createMock()` ignores both options.
 
 `@miden-sdk/react` relays private notes for you in `useSend`, `useMultiSend`
 and `useTransaction`, and reports a note it could not deliver as a

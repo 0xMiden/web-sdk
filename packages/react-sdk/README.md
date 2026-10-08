@@ -167,7 +167,12 @@ function App() {
 
         // Optional: in-call retries of a private note send after a transient
         // note transport failure (0 to 10, default 3) and the delay before the
-        // first one in ms, doubling for each later retry (0 to 60000, default 250).
+        // first one in ms, doubling for each later retry (0 to 60000, default 250),
+        // with at most 120000 ms of total backoff, interval * (2^retries - 1).
+        // The retries run under the provider lock, so a slow or rate-limiting
+        // transport blocks other client calls until the send finishes; a
+        // non-zero service retry-after replaces the delay with no upper bound
+        // (a zero one falls back to it). 0 retries suits a latency-sensitive UI.
         // noteTransportMaxRetries: 3,
         // noteTransportRetryIntervalMs: 250,
 

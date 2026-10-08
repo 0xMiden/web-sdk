@@ -309,7 +309,7 @@ WasmWebClient.createClientWithExternalKeystore(
 ): Promise<WebClient>
 ```
 
-`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The last three mirror the `ClientOptions` fields of the same names; the two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000).
+`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The last three mirror the `ClientOptions` fields of the same names; the two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000, and at most 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default). The retries run inside the client's serialized call, so a slow or rate-limiting transport blocks other client calls until the send finishes; a non-zero service `retry-after` replaces the computed delay with no upper bound and a zero one falls back to it. `noteTransportMaxRetries: 0` bounds a send to one attempt, which suits a latency-sensitive UI.
 
 ## FP10: outputNotes() Includes the Fee Note (CRITICAL - fails silently)
 
@@ -361,7 +361,7 @@ await client.notes.sendPrivate({ note, to, inclusionProof });
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
 
-A rejection from either is final. The SDK keeps no queue, and neither `sync()` nor `syncNoteTransport()` sends the note again; only transient transport failures are retried, inside the call (`noteTransportMaxRetries` / `noteTransportRetryIntervalMs` on `ClientOptions`). Keep the note id and send the same note again: delivery is idempotent by note id. The React hooks report the same situation as a `PrivateNoteDeliveryError` and retry it with `useResendPrivateNotes`.
+A rejection from either is final. The SDK keeps no queue, and neither `sync()` nor `syncNoteTransport()` sends the note again; only transient transport failures are retried, inside the call (`noteTransportMaxRetries` / `noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff in total). Those retries hold the client's serialized call, and the React provider lock in the hooks, so other calls wait until the send finishes. Keep the note id and send the same note again: delivery is idempotent by note id. The React hooks report the same situation as a `PrivateNoteDeliveryError` and retry it with `useResendPrivateNotes`.
 
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 

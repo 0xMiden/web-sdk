@@ -21,20 +21,17 @@ afterEach(() => {
 });
 
 describe("validateNoteTransportRetryOptions", () => {
-  it.each([0, 3, 10])("accepts noteTransportMaxRetries %s", (value) => {
+  it.each([0, 3])("accepts noteTransportMaxRetries %s", (value) => {
     expect(() =>
       validateNoteTransportRetryOptions(value, undefined)
     ).not.toThrow();
   });
 
-  it.each([0, 250, 60_000])(
-    "accepts noteTransportRetryIntervalMs %s",
-    (value) => {
-      expect(() =>
-        validateNoteTransportRetryOptions(undefined, value)
-      ).not.toThrow();
-    }
-  );
+  it.each([0, 250])("accepts noteTransportRetryIntervalMs %s", (value) => {
+    expect(() =>
+      validateNoteTransportRetryOptions(undefined, value)
+    ).not.toThrow();
+  });
 
   it("accepts both omitted", () => {
     expect(() =>
@@ -75,6 +72,38 @@ describe("validateNoteTransportRetryOptions", () => {
       );
     }
   );
+
+  // The total is `interval * (2^maxRetries - 1)`, an omitted value taken at its
+  // default (3 retries, 250 ms).
+  const validate = (options) =>
+    validateNoteTransportRetryOptions(
+      options.noteTransportMaxRetries,
+      options.noteTransportRetryIntervalMs
+    );
+
+  it.each([
+    [
+      { noteTransportMaxRetries: 10, noteTransportRetryIntervalMs: 60_000 },
+      61_380_000,
+    ],
+    [{ noteTransportMaxRetries: 10 }, 255_750],
+    [{ noteTransportRetryIntervalMs: 60_000 }, 420_000],
+    [
+      { noteTransportMaxRetries: 2, noteTransportRetryIntervalMs: 60_000 },
+      180_000,
+    ],
+  ])("rejects %o, a total backoff of %i ms", (options, total) => {
+    expect(() => validate(options)).toThrow(TypeError);
+    expect(() => validate(options)).toThrow(String(total));
+  });
+
+  it.each([
+    { noteTransportMaxRetries: 8 },
+    { noteTransportRetryIntervalMs: 60_000, noteTransportMaxRetries: 1 },
+    {},
+  ])("accepts %o, within the total backoff bound", (options) => {
+    expect(() => validate(options)).not.toThrow();
+  });
 });
 
 /** A stub wasm-bindgen `WebClient` that records each create call. */
