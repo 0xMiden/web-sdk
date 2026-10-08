@@ -341,6 +341,72 @@ test("a targeted Cargo refresh selects the newer patch without updating unrelate
   assert.doesNotMatch(f.read("Cargo.lock"), /\[\[patch\.unused\]\]/);
 });
 
+test("a patched crate locked at two versions is selected by version and its other copy stays locked", (t) => {
+  const f = fixture(t);
+  f.write(
+    ".cargo/config.toml",
+    `[source.crates-io]\nreplace-with = "fixture"\n[source.fixture]\nlocal-registry = "${f.root}/registry"\n`
+  );
+  f.write(
+    "Cargo.toml",
+    `[package]\nname = "root-pkg"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nleft-dep = "1"\nright-dep = "1"\n`
+  );
+  f.write("src/lib.rs", "");
+  f.write(
+    "patched-dupe/Cargo.toml",
+    `[package]\nname = "dupe-crate"\nversion = "0.1.1"\nedition = "2021"\n`
+  );
+  f.write("patched-dupe/src/lib.rs", "");
+  for (const args of [
+    ["init", "-q", "patched-dupe"],
+    ["-C", "patched-dupe", "add", "."],
+    [
+      "-C",
+      "patched-dupe",
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.com",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "commit",
+      "-qm",
+      "Fixture",
+    ],
+  ]) {
+    assert.equal(f.run("git", args).status, 0);
+  }
+  publish(f, "left-dep", "1.0.0", { "dupe-crate": "0.1" });
+  publish(f, "right-dep", "1.0.0", { "dupe-crate": "1" });
+  publish(f, "dupe-crate", "0.1.0");
+  publish(f, "dupe-crate", "1.0.0");
+  const initial = f.run("cargo", ["generate-lockfile", "--offline"]);
+  assert.equal(initial.status, 0, initial.stderr);
+  publish(f, "dupe-crate", "1.0.1");
+  fs.appendFileSync(
+    path.join(f.root, "Cargo.toml"),
+    `\n[patch.crates-io]\ndupe-crate = { git = "file://${f.root}/patched-dupe" }\n`
+  );
+  const result = f.run("bash", [
+    "scripts/cargo-update-linked-patches.sh",
+    "-p",
+    "root-pkg",
+  ]);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.doesNotMatch(result.stdout + result.stderr, /is ambiguous/);
+  const metadata = f.run("cargo", [
+    "metadata",
+    "--format-version=1",
+    "--offline",
+  ]);
+  assert.equal(metadata.status, 0, metadata.stderr);
+  const copies = JSON.parse(metadata.stdout)
+    .packages.filter((pkg) => pkg.name === "dupe-crate")
+    .map((pkg) => `${pkg.version} ${pkg.source.split("+")[0]}`)
+    .sort();
+  assert.deepEqual(copies, ["0.1.1 git", "1.0.0 registry"]);
+});
+
 test("the prerelease-hold retry keeps the targeted package arguments", (t) => {
   const f = fixture(t);
   f.write(

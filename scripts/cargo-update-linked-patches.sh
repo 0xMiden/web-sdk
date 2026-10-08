@@ -27,12 +27,12 @@ import re, sys
 from pathlib import Path
 
 manifest, lock, *args = sys.argv[1:]
-locked = set()
+locked = {}
 if Path(lock).exists():
     for block in re.findall(r'^\[\[package\]\]\n(.*?)(?=^\[\[|\Z)', Path(lock).read_text(), re.M | re.S):
         match = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
         if match:
-            locked.add(match.group(1))
+            locked[match.group(1)] = locked.get(match.group(1), 0) + 1
 selected = {args[i + 1] for i, arg in enumerate(args[:-1]) if arg in ('-p', '--package')}
 patches = set()
 in_patch = False
@@ -47,7 +47,10 @@ for line in Path(manifest).read_text().splitlines():
             package = re.search(r'\bpackage\s*=\s*"([^"]+)"', stripped)
             patches.add(package.group(1) if package else match.group(1))
 family = {'miden-client', 'miden-client-proto', 'miden-client-sqlite-store'}
-for name in sorted((patches | family) & locked - selected):
+# A name locked at several versions has no unambiguous `-p name`; finish_update
+# selects it by version instead.
+single = {name for name, count in locked.items() if count == 1}
+for name in sorted((patches | family) & single - selected):
     print(name)
 PY
 )"
@@ -78,7 +81,7 @@ import re, sys
 from pathlib import Path
 
 text = Path(sys.argv[1]).read_text()
-locked = set()
+locked = {}
 unused = []
 for kind, block in re.findall(r'^\[\[(package|patch\.unused)\]\]\n(.*?)(?=^\[\[|\Z)', text, re.M | re.S):
     name = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
@@ -86,20 +89,39 @@ for kind, block in re.findall(r'^\[\[(package|patch\.unused)\]\]\n(.*?)(?=^\[\[|
     if not name or not version:
         continue
     if kind == 'package':
-        locked.add(name.group(1))
+        locked.setdefault(name.group(1), []).append(version.group(1))
     else:
         unused.append((name.group(1), version.group(1)))
+
+def nums(version):
+    return tuple(int(n) for n in re.findall(r'\d+', version.split('-')[0])[:3])
+
+def compatible(locked_version, patch_version):
+    a, b = nums(locked_version), nums(patch_version)
+    if b[0] > 0:
+        return a[0] == b[0]
+    if b[1] > 0:
+        return a[:2] == b[:2]
+    return a == b
+
 for name, version in unused:
-    if name in locked:
-        print(name, version)
+    if name not in locked:
+        continue
+    spec = name
+    if len(locked[name]) > 1:
+        # Cargo's caret rule picks the copy the patch can replace; none
+        # fits: the highest, so cargo's own rejection reaches the check below.
+        fits = [v for v in locked[name] if compatible(v, version)]
+        spec = name + '@' + max(fits or locked[name], key=nums)
+    print(name, version, spec)
 PY
 )"
-  while read -r name version; do
+  while read -r name version spec; do
     if [ -z "$name" ]; then
       continue
     fi
     echo "cargo update: selecting linked patch $name $version" >&2
-    if ! cargo update -p "$name" --precise "$version" >"$precise_log" 2>&1; then
+    if ! cargo update -p "$spec" --precise "$version" >"$precise_log" 2>&1; then
       if python3 - "$name" "$precise_log" <<'PY'
 import re, sys
 from pathlib import Path
