@@ -31,7 +31,7 @@ returns `{ txId, note, result }`. Provide exactly one of `script` or
 `recipient` — passing both, or neither, throws. Notes are always Public — the
 attachment, not the tag, is what a network account matches on.
 
-Pricing the note calls `estimate_note_fee` on the target, and that procedure applies the standards' default expiration delta, so the emitting transaction must be included within **20 blocks** of its reference block - about a minute at a three-second block interval. An expiration can only be lowered, never raised, so this cannot be widened: if proving is slow enough that the node rejects the submission as expired, re-execute against a fresh reference block and submit again.
+Pricing the note calls `estimate_note_fee` on the target, and that procedure applies the standards' default expiration delta, so the emitting transaction must be included within **20 blocks** of its reference block - about a minute at a three-second block interval. An expiration can only be lowered, never raised, so this cannot be widened. If proving is slow enough that the node rejects the submission as expired, sync first and then call `createNetworkNote` again: called again without a sync, it rebuilds against the same reference block and expires the same way.
 
 ## Targeting a network account
 
@@ -92,13 +92,11 @@ Two consequences worth planning for:
 
 - **The pricing is an FPI call into the target**, so the target account must be
   provisioned as a foreign account on the sender's transaction. It is made for
-  every network output note before the price is known, so a zero-priced script
-  does not avoid it — anywhere the sender's auth procedure pays a fee at all,
-  the provisioning is required. `createNetworkNote` does not add it, so on a
-  fee-charging chain assemble the request yourself: take a builder from
-  `client.feeAwareTransactionRequestBuilder(sender)` (which also declares a fee
-  conversion salt where the sender needs one), add the target with
-  `withForeignAccounts`, and submit it through `client.transactions.execute`.
+  every network output note before the price is known, so neither a zero-priced
+  script nor a chain that charges no fees avoids it. `createNetworkNote`
+  declares the target for you; if you build the note with `buildNetworkNote`,
+  declare it yourself as shown in
+  [Building without submitting](#building-without-submitting).
 - **The sender's vault must cover the sponsorship**, not just its own fee. An
   underfunded sender aborts rather than emitting an unsponsored note, and a
   target whose fee policy is unset or unreachable aborts the same way.
@@ -181,20 +179,48 @@ slot; `account.networkNoteAllowlist()` returns the allowed note-script roots
 
 ## Building without submitting
 
-The standalone `buildNetworkNote(opts)` builds the same `Note` without
-submitting — useful when you need to inspect, batch, or otherwise hold onto
-the note before sending it via `client.transactions.submit(...)` or
-`client.transactions.batch(...)`:
+The standalone `buildNetworkNote(opts)` takes the same options and builds the
+same `Note` without submitting, for when you need to inspect it or hold onto it
+first. Its caller then owns what `createNetworkNote` does for you: since 0.17
+the kernel prices a network note by calling the target account, so the
+transaction that emits the note must declare that account as a foreign
+account, on a fee-free chain too. Build the request with the fee-aware builder
+(which also declares a fee conversion salt where the sender needs one) and
+submit it with `client.transactions.submit`, as `createNetworkNote` does:
 
 ```typescript
-import { buildNetworkNote } from "@miden-sdk/miden-sdk";
+import {
+  AccountStorageRequirements,
+  ForeignAccount,
+  ForeignAccountArray,
+  NoteArray,
+  buildNetworkNote,
+} from "@miden-sdk/miden-sdk";
 
 const note = buildNetworkNote({
   account: senderId,
   target: networkAccountId,
   script: myNoteScript,
 });
+
+const outputs = new NoteArray();
+outputs.push(note);
+const targets = new ForeignAccountArray();
+targets.push(
+  ForeignAccount.public(networkAccountId, new AccountStorageRequirements())
+);
+const request = (await client.feeAwareTransactionRequestBuilder(senderId))
+  .withOwnOutputNotes(outputs)
+  .withForeignAccounts(targets)
+  .build();
+await client.transactions.submit(senderId, request);
 ```
+
+Pricing the note also applies the standards' default expiration delta, so the
+transaction must be included within 20 blocks of its reference block. If the
+node rejects it as expired, sync first, then build the request again from new
+`NoteArray` and `ForeignAccountArray` instances (the builder takes both by
+value) and submit it again.
 
 ## See also
 
