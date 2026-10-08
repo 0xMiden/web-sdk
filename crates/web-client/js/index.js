@@ -891,24 +891,30 @@ class WebClient {
       feeFaucetId
     );
 
-    // Set up logging on the main thread before creating the client.
-    if (logLevel) {
-      const wasm = await getWasmOrThrow();
-      wasm.setupLogging(logLevel);
+    try {
+      // Set up logging on the main thread before creating the client.
+      if (logLevel) {
+        const wasm = await getWasmOrThrow();
+        wasm.setupLogging(logLevel);
+      }
+
+      // Wait for the underlying wasmWebClient to be initialized.
+      const wasmWebClient = await instance.getWasmWebClient();
+      await wasmWebClient.createClient(
+        rpcUrl,
+        noteTransportUrl,
+        seed,
+        network,
+        feeFaucetId
+      );
+
+      // Wait for the worker to be ready
+      await instance.ready;
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      instance.terminate();
+      throw error;
     }
-
-    // Wait for the underlying wasmWebClient to be initialized.
-    const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClient(
-      rpcUrl,
-      noteTransportUrl,
-      seed,
-      network,
-      feeFaucetId
-    );
-
-    // Wait for the worker to be ready
-    await instance.ready;
 
     return createClientProxy(instance);
   }
@@ -960,26 +966,32 @@ class WebClient {
       feeFaucetId
     );
 
-    // Set up logging on the main thread before creating the client.
-    if (logLevel) {
-      const wasm = await getWasmOrThrow();
-      wasm.setupLogging(logLevel);
+    try {
+      // Set up logging on the main thread before creating the client.
+      if (logLevel) {
+        const wasm = await getWasmOrThrow();
+        wasm.setupLogging(logLevel);
+      }
+
+      // Wait for the underlying wasmWebClient to be initialized.
+      const wasmWebClient = await instance.getWasmWebClient();
+      await wasmWebClient.createClientWithExternalKeystore(
+        rpcUrl,
+        noteTransportUrl,
+        seed,
+        storeName,
+        feeFaucetId,
+        getKeyCb,
+        insertKeyCb,
+        signCb
+      );
+
+      await instance.ready;
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      instance.terminate();
+      throw error;
     }
-
-    // Wait for the underlying wasmWebClient to be initialized.
-    const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createClientWithExternalKeystore(
-      rpcUrl,
-      noteTransportUrl,
-      seed,
-      storeName,
-      feeFaucetId,
-      getKeyCb,
-      insertKeyCb,
-      signCb
-    );
-
-    await instance.ready;
     return createClientProxy(instance);
   }
 
@@ -1494,22 +1506,28 @@ class MockWebClient extends WebClient {
     // Construct the instance (synchronously).
     const instance = new MockWebClient(seed, logLevel);
 
-    // Set up logging on the main thread before creating the client.
-    if (logLevel) {
-      const wasm = await getWasmOrThrow();
-      wasm.setupLogging(logLevel);
+    try {
+      // Set up logging on the main thread before creating the client.
+      if (logLevel) {
+        const wasm = await getWasmOrThrow();
+        wasm.setupLogging(logLevel);
+      }
+
+      // Wait for the underlying wasmWebClient to be initialized.
+      const wasmWebClient = await instance.getWasmWebClient();
+      await wasmWebClient.createMockClient(
+        seed ?? null,
+        serializedMockChain ?? null,
+        serializedMockNoteTransportNode ?? null
+      );
+
+      // Wait for the worker to be ready
+      await instance.ready;
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      instance.terminate();
+      throw error;
     }
-
-    // Wait for the underlying wasmWebClient to be initialized.
-    const wasmWebClient = await instance.getWasmWebClient();
-    await wasmWebClient.createMockClient(
-      seed ?? null,
-      serializedMockChain ?? null,
-      serializedMockNoteTransportNode ?? null
-    );
-
-    // Wait for the worker to be ready
-    await instance.ready;
 
     return createClientProxy(instance);
   }

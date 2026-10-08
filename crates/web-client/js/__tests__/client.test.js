@@ -4,19 +4,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // the node test environment cannot load, and reaches the wasm module through
 // `../wasm.js`. Both are stubbed; the stand-in module's `WebClient` counts the
 // clients built, so a test can tell that a terminated wrapper builds none, keeps
-// the last one built, and lets a test hold `createMockClient` open.
+// the last one built, lets a test hold `createMockClient` open, and fails every
+// create call with `createFailure` when a test sets it.
 const fakeWasm = vi.hoisted(() => {
   class WebClient {
     static constructed = 0;
     static latest = null;
     static pendingCreateMockClient = null;
+    static createFailure = null;
     constructor() {
       WebClient.constructed += 1;
       WebClient.latest = this;
       this.free = vi.fn();
-      this.createMockClient = vi.fn(
-        async () => WebClient.pendingCreateMockClient
-      );
+      const create = async () => {
+        if (WebClient.createFailure) throw WebClient.createFailure;
+      };
+      this.createClient = vi.fn(create);
+      this.createClientWithExternalKeystore = vi.fn(create);
+      this.createMockClient = vi.fn(async () => {
+        if (WebClient.createFailure) throw WebClient.createFailure;
+        return WebClient.pendingCreateMockClient;
+      });
     }
   }
   return {
@@ -806,6 +814,114 @@ describe("WasmWebClient.terminate", () => {
       expect(await disposing).toBe(1);
       await expect(submitted).resolves.toBe("tx-id");
       expect(created.free).toHaveBeenCalledTimes(1);
+    }
+  );
+});
+
+describe("WebClient factories", () => {
+  // Node has no Worker; a stand-in lets the factories take the worker path.
+  class StubWorker {
+    static instances = [];
+    constructor() {
+      this.listeners = [];
+      this.postMessage = vi.fn();
+      this.terminate = vi.fn();
+      StubWorker.instances.push(this);
+    }
+    addEventListener(type, listener) {
+      if (type === "message") this.listeners.push(listener);
+    }
+    emit(data) {
+      for (const listener of this.listeners) listener({ data });
+    }
+  }
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  beforeEach(() => {
+    StubWorker.instances = [];
+    vi.stubGlobal("Worker", StubWorker);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    fakeWasm.WebClient.createFailure = null;
+    fakeWasm.WebClient.latest = null;
+  });
+
+  const factories = [
+    [
+      "WebClient.createClient",
+      "createClient",
+      () => WasmWebClient.createClient("rpc", undefined, undefined, "store"),
+    ],
+    [
+      "WebClient.createClientWithExternalKeystore",
+      "createClientWithExternalKeystore",
+      () =>
+        WasmWebClient.createClientWithExternalKeystore(
+          "rpc",
+          undefined,
+          undefined,
+          "store"
+        ),
+    ],
+    [
+      "MockWebClient.createClient",
+      "createMockClient",
+      () => MockWasmWebClient.createClient(),
+    ],
+  ];
+
+  it.each(factories)(
+    "%s terminates the instance it built when the wasm %s rejects",
+    async (_name, method, create) => {
+      const failure = new Error("create failed");
+      fakeWasm.WebClient.createFailure = failure;
+
+      await expect(create()).rejects.toBe(failure);
+      const [worker] = StubWorker.instances;
+      const wasmClient = fakeWasm.WebClient.latest;
+      expect(wasmClient[method]).toHaveBeenCalledTimes(1);
+      await flush();
+      expect(worker.terminate).toHaveBeenCalledTimes(1);
+      expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(factories)(
+    "%s terminates the instance it built when the worker fails to start",
+    async (_name, _method, create) => {
+      const failure = new Error("worker init failed");
+      const creating = create();
+      const [worker] = StubWorker.instances;
+      worker.emit({ error: failure });
+
+      await expect(creating).rejects.toBe(failure);
+      const wasmClient = fakeWasm.WebClient.latest;
+      await flush();
+      expect(worker.terminate).toHaveBeenCalledTimes(1);
+      expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(factories)(
+    "%s returns a live client once the worker is ready",
+    async (_name, method, create) => {
+      const creating = create();
+      const [worker] = StubWorker.instances;
+      worker.emit({ ready: true });
+
+      const client = await creating;
+      const wasmClient = fakeWasm.WebClient.latest;
+      expect(wasmClient[method]).toHaveBeenCalledTimes(1);
+      expect(client.wasmWebClient).toBe(wasmClient);
+      await flush();
+      expect(worker.terminate).not.toHaveBeenCalled();
+      expect(wasmClient.free).not.toHaveBeenCalled();
     }
   );
 });
