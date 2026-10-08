@@ -139,6 +139,11 @@ vi.mock("@miden-sdk/miden-sdk", () => {
       Falcon: "falcon",
       ECDSA: "ecdsa",
     },
+    // The numeric enum lives on the wasm module, which the package hands out
+    // through getWasmOrThrow.
+    getWasmOrThrow: vi.fn(async () => ({
+      AuthScheme: { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 },
+    })),
     // The real rule, so hooks are tested filtering rather than plumbing.
     isConsumableNow: (
       record: {
