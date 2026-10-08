@@ -62,6 +62,29 @@ export function resolveAddress(ref, wasm) {
 }
 
 /**
+ * True when `record` can be consumed right now, as of the client's last sync.
+ *
+ * Reads each entry's status rather than inferring it: a missing
+ * `consumableAfterBlock()` alone would also match a note that is never
+ * consumable. With `accountIdHex`, only that account's entry counts, so a note
+ * locked for it is excluded even when another tracked account could spend it;
+ * without one (a listing that spans accounts), any account's entry counts.
+ *
+ * @param {ConsumableNoteRecord} record - A record from `getConsumableNotes`.
+ * @param {string} [accountIdHex] - The account the record was screened for.
+ * @returns {boolean} True when a counted entry reports a consumable-now status.
+ */
+export function isConsumableNow(record, accountIdHex) {
+  return record
+    .noteConsumability()
+    .some(
+      (nc) =>
+        (accountIdHex == null || nc.accountId().toString() === accountIdHex) &&
+        nc.consumptionStatus().isConsumableNow()
+    );
+}
+
+/**
  * Resolves a NoteVisibility string to a WASM NoteType value.
  *
  * @param {string | undefined} type - "public" or "private". Defaults to "public".
@@ -203,66 +226,28 @@ export async function hashSeed(seed) {
 }
 
 /**
- * Coerce batch request bytes into the `Uint8Array[]` WASM expects.
+ * Check that `items` is an array of `BatchItem`s before a batch is routed.
  *
- * Shared by `WebClient` and `MockWebClient` so routing is the only thing that
- * differs between them, and applied before the worker branch so a given input
- * behaves the same whether or not a worker exists.
+ * Shared by `WebClient` and `MockWebClient`, and applied before the worker
+ * branch, so a given input fails the same way whether or not a worker exists.
+ * In-thread, wasm-bindgen would reject a wrong element itself, but with a
+ * generic "array contains a value of the wrong type" naming no index; on the
+ * worker path the element would fail later, while being serialized.
  *
- * @param {unknown} serializedTransactionRequests
- * @returns {Uint8Array[]}
+ * @param {unknown} items
+ * @param {Function} BatchItem - The `BatchItem` class of this thread's WASM
+ *   module, the same `instanceof` check wasm-bindgen applies.
  */
-export function normalizeSerializedRequests(serializedTransactionRequests) {
-  if (!Array.isArray(serializedTransactionRequests)) {
-    throw new TypeError("expected an array of serialized transaction requests");
+export function assertBatchItems(items, BatchItem) {
+  if (!Array.isArray(items)) {
+    throw new TypeError("expected an array of BatchItem");
   }
 
-  const { length } = serializedTransactionRequests;
-  const requests = new Array(length);
-
-  // Indexed rather than `.map`, which skips holes: a sparse array would
-  // otherwise pass unvalidated and reach WASM as `undefined` entries.
-  for (let index = 0; index < length; index++) {
-    const bytes = serializedTransactionRequests[index];
-
-    // wasm-bindgen would itself reject anything that is not a `Uint8Array`,
-    // but with a generic "array contains a value of the wrong type" that names
-    // no index. Checking here names the offending entry, and `isView` is a
-    // realm-independent brand check, so it also accepts byte views from
-    // another realm that wasm-bindgen's `instanceof`-based `dyn_into` refuses.
-    // A wider typed array is excluded because its lanes would be reinterpreted
-    // as raw bytes; a `DataView` only because the contract is a byte view.
-    if (!ArrayBuffer.isView(bytes) || bytes.BYTES_PER_ELEMENT !== 1) {
-      throw new TypeError(
-        `serialized transaction request at index ${index} is not a single-byte typed-array view`
-      );
+  // Indexed rather than `.every`, which skips holes: a sparse array would
+  // otherwise pass and reach WASM with `undefined` entries.
+  for (let index = 0; index < items.length; index++) {
+    if (!(items[index] instanceof BatchItem)) {
+      throw new TypeError(`batch item at index ${index} is not a BatchItem`);
     }
-
-    // Also catches a detached buffer, which presents as zero-length. No
-    // serialized request is empty, so this can only be a caller mistake.
-    if (bytes.byteLength === 0) {
-      throw new TypeError(
-        `serialized transaction request at index ${index} is empty`
-      );
-    }
-
-    // Structured clone copies a view's ENTIRE backing buffer and then restores
-    // the offset, so a request sliced out of one large buffer would ship that
-    // whole buffer to the worker. Copy anything that does not span its buffer
-    // exactly; the common case — a `serialize()` result, which owns its buffer
-    // — passes through untouched.
-    requests[index] =
-      bytes instanceof Uint8Array &&
-      bytes.byteOffset === 0 &&
-      bytes.byteLength === bytes.buffer.byteLength
-        ? bytes
-        : new Uint8Array(
-            bytes.buffer.slice(
-              bytes.byteOffset,
-              bytes.byteOffset + bytes.byteLength
-            )
-          );
   }
-
-  return requests;
 }

@@ -8,7 +8,7 @@ import {
   resolveNoteIdHex,
   resolveTransactionIdHex,
   hashSeed,
-  normalizeSerializedRequests,
+  assertBatchItems,
 } from "../utils.js";
 
 // ── WASM mock helpers ──────────────────────────────────────────────────────────
@@ -349,112 +349,45 @@ describe("hashSeed", () => {
   });
 });
 
-describe("normalizeSerializedRequests", () => {
-  it("passes through a Uint8Array that owns its buffer, without copying", () => {
-    const bytes = new Uint8Array([1, 2, 3]);
-    const [out] = normalizeSerializedRequests([bytes]);
-    expect(out).toBe(bytes);
-  });
+describe("assertBatchItems", () => {
+  class BatchItem {}
 
-  it("preserves order and contents across several requests", () => {
-    const a = new Uint8Array([1, 2]);
-    const b = new Uint8Array([3, 4, 5]);
-    expect(normalizeSerializedRequests([a, b])).toEqual([a, b]);
-  });
-
-  it("returns an empty array for empty input", () => {
-    expect(normalizeSerializedRequests([])).toEqual([]);
+  it("accepts an array of BatchItem instances, including an empty one", () => {
+    expect(() =>
+      assertBatchItems([new BatchItem(), new BatchItem()], BatchItem)
+    ).not.toThrow();
+    // An empty batch is Rust's to reject, identically on both paths.
+    expect(() => assertBatchItems([], BatchItem)).not.toThrow();
   });
 
   it("rejects a non-array argument", () => {
-    expect(() => normalizeSerializedRequests(null)).toThrow(TypeError);
-    expect(() => normalizeSerializedRequests(new Uint8Array([1]))).toThrow(
-      /expected an array/
+    expect(() => assertBatchItems(null, BatchItem)).toThrow(
+      /expected an array of BatchItem/
     );
-    expect(() => normalizeSerializedRequests({ length: 1, 0: null })).toThrow(
+    expect(() => assertBatchItems(new BatchItem(), BatchItem)).toThrow(
+      TypeError
+    );
+    expect(() => assertBatchItems({ length: 1, 0: null }, BatchItem)).toThrow(
       TypeError
     );
   });
 
-  it("names the offending index when an element is not a byte view", () => {
-    const good = new Uint8Array([1]);
-    expect(() => normalizeSerializedRequests([good, null])).toThrow(/index 1/);
-    expect(() => normalizeSerializedRequests([good, [1, 2, 3]])).toThrow(
-      /index 1/
+  it("names the offending index when an element is not a BatchItem", () => {
+    const good = new BatchItem();
+    expect(() => assertBatchItems([good, null], BatchItem)).toThrow(
+      /index 1 is not a BatchItem/
     );
-    expect(() =>
-      normalizeSerializedRequests([{ serialize: () => new Uint8Array() }])
-    ).toThrow(/index 0/);
-  });
-
-  it("rejects a bare ArrayBuffer, which carries no view", () => {
-    expect(() => normalizeSerializedRequests([new ArrayBuffer(4)])).toThrow(
-      /index 0/
-    );
-  });
-
-  it("rejects views whose elements are not single bytes", () => {
-    // A wider typed array's lanes would be reinterpreted as raw bytes. A
-    // DataView's bytes would be fine; it is excluded to keep the contract to
-    // a single accepted shape.
-    expect(() => normalizeSerializedRequests([new Float64Array([1])])).toThrow(
-      /index 0/
-    );
-    expect(() =>
-      normalizeSerializedRequests([new DataView(new ArrayBuffer(8))])
-    ).toThrow(/index 0/);
-    expect(() => normalizeSerializedRequests([new Uint16Array([1])])).toThrow(
+    // A look-alike carrying the accessors is still refused: wasm-bindgen's
+    // own in-thread check is `instanceof`, and the worker path must match it.
+    const lookAlike = { accountId: () => ({}), request: () => ({}) };
+    expect(() => assertBatchItems([lookAlike, good], BatchItem)).toThrow(
       /index 0/
     );
   });
 
   it("rejects a hole in a sparse array rather than skipping it", () => {
     const sparse = new Array(2);
-    sparse[0] = new Uint8Array([1]);
-    expect(() => normalizeSerializedRequests(sparse)).toThrow(/index 1/);
-  });
-
-  it("rejects an empty request", () => {
-    expect(() => normalizeSerializedRequests([new Uint8Array(0)])).toThrow(
-      /index 0 is empty/
-    );
-  });
-
-  it("copies a view that does not span its buffer, so postMessage cannot ship the whole buffer", () => {
-    const backing = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-    const view = backing.subarray(2, 5);
-    const [out] = normalizeSerializedRequests([view]);
-
-    expect(out).not.toBe(view);
-    expect(Array.from(out)).toEqual([3, 4, 5]);
-    expect(out.byteOffset).toBe(0);
-    expect(out.buffer.byteLength).toBe(3);
-  });
-
-  it("accepts a byte view from another realm, which wasm-bindgen would refuse", async () => {
-    const vm = await import("node:vm");
-    const foreign = vm.runInNewContext("new Uint8Array([7, 8, 9])");
-    expect(foreign instanceof Uint8Array).toBe(false);
-
-    const [out] = normalizeSerializedRequests([foreign]);
-    expect(out).toBeInstanceOf(Uint8Array);
-    expect(Array.from(out)).toEqual([7, 8, 9]);
-  });
-
-  it("copies a prefix view, which starts at zero but does not span its buffer", () => {
-    const buffer = new ArrayBuffer(8);
-    new Uint8Array(buffer).set([1, 2, 3, 4, 5, 6, 7, 8]);
-    const prefix = new Uint8Array(buffer, 0, 3);
-
-    const [out] = normalizeSerializedRequests([prefix]);
-    expect(out).not.toBe(prefix);
-    expect(out.buffer.byteLength).toBe(3);
-    expect(Array.from(out)).toEqual([1, 2, 3]);
-  });
-
-  it("converts a single-byte view of another type to a Uint8Array", () => {
-    const [out] = normalizeSerializedRequests([new Int8Array([1, -1])]);
-    expect(out).toBeInstanceOf(Uint8Array);
-    expect(Array.from(out)).toEqual([1, 255]);
+    sparse[0] = new BatchItem();
+    expect(() => assertBatchItems(sparse, BatchItem)).toThrow(/index 1/);
   });
 });

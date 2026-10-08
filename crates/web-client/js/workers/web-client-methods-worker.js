@@ -289,16 +289,21 @@ const methodHandlers = {
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
     const wasm = await getWasmOrThrow();
-    const [accountIdHex, serializedTransactionRequests] = args;
-    const accountId = wasm.AccountId.fromHex(accountIdHex);
-    // Unlike the single-submit handlers, the requests need no re-wrapping: they
-    // were normalized to `Uint8Array`s on the main thread and structured clone
-    // preserves that. This also returns a plain block number, so unlike those there
-    // is no result object to serialize back across the boundary.
-    return await wasmWebClient.submitNewTransactionBatch(
-      accountId,
-      serializedTransactionRequests
+    const [serializedItems] = args;
+    // Rebuild each (account, request) pair in this instance, in order, so the
+    // batch runs exactly as the main-thread path runs it. This returns a plain
+    // block number, so unlike the single-submit handlers there is no result
+    // object to serialize back across the boundary.
+    const items = serializedItems.map(
+      ([accountIdHex, serializedTransactionRequest]) =>
+        new wasm.BatchItem(
+          wasm.AccountId.fromHex(accountIdHex),
+          wasm.TransactionRequest.deserialize(
+            new Uint8Array(serializedTransactionRequest)
+          )
+        )
     );
+    return await wasmWebClient.submitNewTransactionBatch(items);
   },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
@@ -474,6 +479,7 @@ async function processMessage(event) {
         hasSignCb,
         logLevel,
         numThreads,
+        feeFaucetId,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -507,6 +513,7 @@ async function processMessage(event) {
           noteTransportUrl,
           seed,
           storeName,
+          feeFaucetId,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
           hasSignCb ? callbackProxies.sign : undefined
@@ -516,7 +523,8 @@ async function processMessage(event) {
           rpcUrl,
           noteTransportUrl,
           seed,
-          storeName
+          storeName,
+          feeFaucetId
         );
       }
 

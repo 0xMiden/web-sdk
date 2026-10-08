@@ -150,6 +150,23 @@ test.describe("fpi test", () => {
         storageRequirements
       );
 
+      // Pins the JS-facing spelling of ForeignAccount's two accessors, which
+      // carry an explicit js_name; without a reader, dropping the attribute
+      // would silently reintroduce the snake_case/camelCase split between the
+      // wasm and napi builds. Read here, not at the end: ForeignAccountArray
+      // below takes ownership of this handle, and touching it afterwards is
+      // "null pointer passed to rust".
+      const foreignAccountIdFromAccessor = foreignAccount
+        .accountId()
+        .toString();
+      const hasStorageSlotRequirements =
+        !!foreignAccount.storageSlotRequirements();
+
+      // The account's state and witness are fetched against the transaction's
+      // own reference block, and the vault and storage-map entries the foreign
+      // code reads are resolved during execution.
+      const referenceBlock = await intClient.getSyncHeight();
+
       let txRequest2 = new sdk.TransactionRequestBuilder()
         .withCustomScript(compiledTxScript)
         .withForeignAccounts(new sdk.ForeignAccountArray([foreignAccount]))
@@ -177,6 +194,9 @@ test.describe("fpi test", () => {
       return {
         skip: false,
         foreignAccountIdStr,
+        foreignAccountIdFromAccessor,
+        hasStorageSlotRequirements,
+        referenceBlock,
         proofAccountId: accountProof.accountId().toString(),
         proofBlockNum: accountProof.blockNum(),
         proofCommitmentHex: accountProof.accountCommitment().toHex(),
@@ -191,7 +211,14 @@ test.describe("fpi test", () => {
       test.skip(true, "requires running node");
       return;
     }
+    expect(result.referenceBlock).toBeGreaterThan(0);
     expect(result.proofAccountId).toEqual(result.foreignAccountIdStr);
+    // Asserts on the value, not just that the call returned: an accessor
+    // rewired to the wrong field would still be defined.
+    expect(result.foreignAccountIdFromAccessor).toEqual(
+      result.foreignAccountIdStr
+    );
+    expect(result.hasStorageSlotRequirements).toBe(true);
     expect(result.proofBlockNum).toBeGreaterThan(0);
     expect(result.proofCommitmentHex).toMatch(/^0x[0-9a-fA-F]+$/);
     expect(result.hasAccountHeader).toBe(true);

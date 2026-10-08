@@ -69,13 +69,47 @@ jobs:
       - name: Update Rust toolchain
         run: |
           rustup update --no-self-update
+          # The preflight verifies the WASM crates against wasm32, so the
+          # target has to exist before it runs. Adding it here rather than
+          # inside the preflight keeps a rustup outage a hard failure instead
+          # of hiding behind the preflight's `continue-on-error`.
+          rustup target add wasm32-unknown-unknown
 
+      # This is the only step that compiles a crate before it is uploaded: the
+      # publish step below passes --no-verify, because a workspace publish
+      # verifies on the host and the wasm32-only crates cannot build there.
+      # So this gates the release - it is deliberately not continue-on-error.
       - name: Preflight - publish dry run
-        continue-on-error: true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish --workspace --dry-run
+          set -uo pipefail
+
+          # No single target verifies the whole workspace, so the dry run is
+          # split in two:
+          #
+          #   * `miden-idxdb-store` implements `miden_client`'s `Store` with
+          #     `#[async_trait(?Send)]`, which is correct for wasm32 and fails
+          #     every method with E0053 on the host. `miden-client-web` depends
+          #     on it. Both must be verified against wasm32.
+          #   * `miden-mobile-prover` is the mirror image: it pulls in tokio's
+          #     net stack, whose `mio` backend has no wasm32 support, so it
+          #     must be verified against the host.
+          #   * `js-export-macro` is `proc-macro = true`, and cargo builds proc
+          #     macros for the host whichever `--target` is in play, so it rides
+          #     along with the wasm32 invocation.
+          #
+          # Both legs run even if the first fails, so one broken crate does not
+          # hide the state of the others.
+          status=0
+
+          cargo publish --workspace --dry-run --locked \
+            --target wasm32-unknown-unknown \
+            --exclude miden-mobile-prover || status=1
+
+          cargo publish --package miden-mobile-prover --dry-run --locked || status=1
+
+          exit "${status}"
 
       - name: Cleanup cargo package artifacts (after dry-run)
         if: always()
@@ -88,27 +122,46 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="${RELEASE_TAG#v}"
           metadata="$(cargo metadata --no-deps --format-version 1)"
 
+          # Ask each crate for its OWN version rather than deriving one from the
+          # release tag. The two are decoupled: a release that ships only npm
+          # packages leaves the Cargo workspace version alone, so v0.16.2 tagged
+          # a tree whose crates are still 0.16.1. Checking `<crate>@0.16.2` then
+          # found nothing on crates.io, concluded all four crates were
+          # unpublished, and handed `cargo publish` a list it refused with
+          # "crate miden-idxdb-store@0.16.1 already exists" - failing the job on
+          # a release that had nothing to publish at all.
           mapfile -t publishable_crates < <(
-            jq -r '[.packages[] | select(.publish != []) | .name] | sort | .[]' <<< "${metadata}"
+            jq -r '[.packages[] | select(.publish != []) | "\(.name) \(.version)"] | sort | .[]' <<< "${metadata}"
           )
+
+          # Neither errexit nor pipefail observes a process substitution, so a
+          # jq failure or a cargo metadata schema change would leave this array
+          # empty - and an empty array walks straight into the "nothing to do"
+          # exit 0 below, reporting a release that published nothing as success.
+          # This workspace always has publishable members, so empty is a bug.
+          if [[ "${#publishable_crates[@]}" -eq 0 ]]; then
+            echo "::error::cargo metadata yielded no publishable crates; refusing to report success"
+            exit 1
+          fi
 
           exclude_args=()
           remaining_crates=()
 
-          for crate in "${publishable_crates[@]}"; do
-            if cargo info --quiet --registry crates-io "${crate}@${version}" >/dev/null 2>&1; then
-              echo "${crate} ${version} already exists on crates.io; excluding it."
+          for entry in "${publishable_crates[@]}"; do
+            crate="${entry%% *}"
+            crate_version="${entry##* }"
+            if cargo info --quiet --registry crates-io "${crate}@${crate_version}" >/dev/null 2>&1; then
+              echo "${crate} ${crate_version} already exists on crates.io; excluding it."
               exclude_args+=(--exclude "${crate}")
             else
-              remaining_crates+=("${crate}")
+              remaining_crates+=("${crate} ${crate_version}")
             fi
           done
 
           if [[ "${#remaining_crates[@]}" -eq 0 ]]; then
-            echo "All publishable crates already exist on crates.io for ${version}."
+            echo "Every publishable crate is already on crates.io at its manifest version; nothing to do."
             exit 0
           fi
 

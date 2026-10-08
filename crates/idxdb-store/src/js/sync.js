@@ -2,6 +2,7 @@ import { getDatabase, } from "./schema.js";
 import { upsertTransactionRecord, insertTransactionScript, } from "./transactions.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 import { applyFullAccountState } from "./accounts.js";
+import { updateAccountWitness } from "./witnesses.js";
 import { logWebStoreError, putPartialBlockchainNodesNoOverwrite, uint8ArrayToBase64, } from "./utils.js";
 export async function getNoteTags(dbId) {
     try {
@@ -102,6 +103,7 @@ export async function removeNoteTag(dbId, tag, sourceNoteId, sourceAccountId, so
 export async function applyStateSync(dbId, stateUpdate) {
     const db = getDatabase(dbId);
     const { blockNum, flattenedNewBlockHeaders, newPeaks, newBlockNums, blockHasRelevantNotes, serializedNodeIds, serializedNodes, committedNoteTagSources, serializedInputNotes, serializedOutputNotes, accountUpdates, transactionUpdates, } = stateUpdate;
+    const accountWitnesses = stateUpdate.accountWitnesses ?? [];
     const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
     const tablesToAccess = [
         db.blockchainCheckpoint,
@@ -121,6 +123,8 @@ export async function applyStateSync(dbId, stateUpdate) {
         db.historicalStorageMapEntries,
         db.latestAccountAssets,
         db.historicalAccountAssets,
+        db.accountCodes,
+        db.accountWitnesses,
     ];
     return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
         await Promise.all([
@@ -128,7 +132,7 @@ export async function applyStateSync(dbId, stateUpdate) {
                 return upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight, note.consumedTxOrder, note.consumerAccountId);
             })),
             Promise.all(serializedOutputNotes.map((note) => {
-                return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                return upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state, note.noteScriptRoot, note.noteScript);
             })),
             Promise.all(transactionUpdates.map((transactionRecord) => {
                 let promises = [
@@ -151,7 +155,9 @@ export async function applyStateSync(dbId, stateUpdate) {
                 committed: accountUpdate.committed,
                 accountCommitment: accountUpdate.accountCommitment,
                 accountSeed: accountUpdate.accountSeed,
+                code: accountUpdate.code,
             }))),
+            Promise.all(accountWitnesses.map((entry) => updateAccountWitness(dbId, entry.accountId, entry.witness))),
             updateSyncHeight(tx, blockNum, newPeaks),
             updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
             updateCommittedNoteTags(tx, committedNoteTagSources),

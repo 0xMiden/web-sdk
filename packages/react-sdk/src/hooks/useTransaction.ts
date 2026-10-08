@@ -41,7 +41,32 @@ export interface UseTransactionResult {
  *
  * Pass `anchor` to execute against a pinned reference block instead of the
  * current sync height, so a summary signed at that block reproduces exactly.
- * Capture one with `useChainAnchor`.
+ * Capture one with `useChainAnchor`. Leave it out for a multisig request built
+ * by `feeAwareTransactionRequestBuilder`, which executes at the tip once the
+ * client has synced to its bound block.
+ *
+ * Fees: the request is yours to build, so paying the verification fee is yours
+ * too. A request assembled from `new TransactionRequestBuilder()` aborts with
+ * `ERR_FEE_CONVERSION_INFO_MISSING` on a chain that charges one. The factory
+ * form of `request` receives the client, which is where you get a builder that
+ * already carries the chain's fee conversion info:
+ *
+ * ```tsx
+ * await execute({
+ *   accountId,
+ *   request: async (client) =>
+ *     (
+ *       await client.feeAwareTransactionRequestBuilder(
+ *         AccountId.fromHex(accountId)
+ *       )
+ *     )
+ *       .withCustomScript(script)
+ *       .build(),
+ * });
+ * ```
+ *
+ * The `new*TransactionRequest` constructors attach it themselves, so a factory
+ * that delegates to one of those — like the example below — needs nothing extra.
  *
  * @example
  * ```tsx
@@ -158,10 +183,9 @@ export function useTransaction(): UseTransactionResult {
           const targetAddress = parseAddress(options.privateNoteTarget);
           const fullNotes = extractFullNotes(txResult);
           for (const note of fullNotes) {
-            // Relay via the output-note convenience: it derives the recipient's
-            // scan-start block from the note's expected height, so delivery is
-            // correct even though we relay after waiting for the commit (which has
-            // advanced this client's sync height past the note's commitment block).
+            // Relay via the output-note convenience: it reads the inclusion proof
+            // sync stored once the note committed, so the call has to follow the
+            // commit wait.
             await runExclusiveSafe(() =>
               client.sendPrivateOutputNote(note.id().toString(), targetAddress)
             );

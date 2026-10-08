@@ -30,7 +30,7 @@ use miden_client::account::{
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
-use miden_client::block::BlockHeader;
+use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
@@ -39,11 +39,13 @@ use miden_client::store::{
     AccountStorageFilter,
     BlockRelevance,
     ClientAccountType,
+    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
     PartialBlockchainFilter,
     SettingMutation,
+    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
@@ -106,66 +108,10 @@ impl IdxdbStore {
         let smt_forest = AccountForest::new()
             .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
 
-        let store = IdxdbStore {
+        Ok(IdxdbStore {
             database_id: database_name,
             smt_forest: RwLock::new(smt_forest),
-        };
-
-        // Initialize SMT forest
-        store.build_smt_forest().await?;
-
-        Ok(store)
-    }
-
-    /// Builds the SMT forest by loading all existing account vault and storage data.
-    ///
-    /// This ensures that the forest contains all necessary Merkle nodes for generating
-    /// witnesses when creating partial accounts or executing transactions.
-    async fn build_smt_forest(&self) -> Result<(), JsValue> {
-        let account_ids = self
-            .get_account_ids()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to get account IDs: {e:?}")))?;
-
-        for account_id in account_ids {
-            self.rebuild_account_forest(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to insert account state for {account_id}: {e:?}"
-                ))
-            })?;
-        }
-
-        Ok(())
-    }
-
-    /// Rebuilds an account's forest lineages from the store tables, which are the source of truth.
-    ///
-    /// Used on store open, and to recover from a write that did not land: forest updates are
-    /// forward-only, so a caller that advanced the forest and then failed (or undid) the write
-    /// rebuilds rather than rolling back.
-    ///
-    /// An account the tables no longer track is reduced to an empty vault.
-    pub(crate) async fn rebuild_account_forest(
-        &self,
-        account_id: AccountId,
-    ) -> Result<(), StoreError> {
-        let state = match self.get_account_header(account_id).await? {
-            Some(_) => {
-                let vault = self.get_account_vault(account_id).await?;
-                let storage =
-                    self.get_account_storage(account_id, AccountStorageFilter::All).await?;
-                Some((vault, storage))
-            },
-            None => None,
-        };
-
-        let mut smt_forest = self.smt_forest.write();
-        match &state {
-            Some((vault, storage)) => {
-                smt_forest.rebuild(account_id, vault.assets(), storage.slots().iter())
-            },
-            None => smt_forest.rebuild(account_id, core::iter::empty(), [].iter()),
-        }
+        })
     }
 
     /// Returns the database ID as a string slice for passing to JS functions.
@@ -244,15 +190,15 @@ impl Store for IdxdbStore {
         self.get_output_notes(note_filter).await
     }
 
-    async fn get_input_note_by_offset(
+    async fn get_input_note_after(
         &self,
         filter: NoteFilter,
         consumer: AccountId,
         block_start: Option<BlockNumber>,
         block_end: Option<BlockNumber>,
-        offset: u32,
+        cursor: Option<InputNoteCursor>,
     ) -> Result<Option<InputNoteRecord>, StoreError> {
-        self.get_input_note_by_offset(filter, consumer, block_start, block_end, offset)
+        self.get_input_note_after(filter, consumer, block_start, block_end, cursor)
             .await
     }
 
@@ -455,30 +401,70 @@ impl Store for IdxdbStore {
         self.remove_address(address).await
     }
 
+    // ACCOUNT WITNESSES
+    // --------------------------------------------------------------------------------------------
+
+    async fn track_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.track_account_witness(account_id).await
+    }
+
+    async fn untrack_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.untrack_account_witness(account_id).await
+    }
+
+    async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, StoreError> {
+        self.tracked_account_witnesses().await
+    }
+
+    async fn get_account_witness(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<AccountWitness>, StoreError> {
+        self.get_account_witness(account_id).await
+    }
+
+    async fn update_account_witness(
+        &self,
+        account_id: AccountId,
+        witness: &AccountWitness,
+    ) -> Result<bool, StoreError> {
+        self.update_account_witness(account_id, witness).await
+    }
+
     // SETTINGS
     // --------------------------------------------------------------------------------------------
 
-    async fn set_setting(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
-        self.set_setting(key, value).await
+    async fn set_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.set_setting(scope, key, value).await
     }
 
-    async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, StoreError> {
-        self.get_setting(key).await
+    async fn get_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_setting(scope, key).await
     }
 
-    async fn remove_setting(&self, key: String) -> Result<bool, StoreError> {
-        self.remove_setting(key).await
+    async fn remove_setting(&self, scope: SettingScope, key: String) -> Result<bool, StoreError> {
+        self.remove_setting(scope, key).await
     }
 
-    async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
-        self.list_setting_keys().await
+    async fn list_setting_keys(&self, scope: SettingScope) -> Result<Vec<String>, StoreError> {
+        self.list_setting_keys(scope).await
     }
 
     async fn apply_settings_mutations(
         &self,
+        scope: SettingScope,
         mutations: Vec<SettingMutation>,
     ) -> Result<(), StoreError> {
-        self.apply_settings_mutations(mutations).await
+        self.apply_settings_mutations(scope, mutations).await
     }
 }
 

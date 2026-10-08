@@ -31,6 +31,7 @@ import {
   createMockAccountId,
   createMockInputNoteRecord,
   createMockTransactionId,
+  createMockConsumableNoteRecord,
 } from "../mocks/miden-sdk";
 
 vi.mock("../../context/MidenProvider", () => ({
@@ -334,14 +335,15 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
     const mockWallet = createMockAccount({
       id: vi.fn(() => createMockAccountId("0xprivate_wallet")),
     });
-    const consumable = {
-      inputNoteRecord: vi.fn(() => ({ toNote: vi.fn(() => ({})) })),
-    };
+    const consumable = createMockConsumableNoteRecord(
+      "0xnote1",
+      "0xprivate_wallet"
+    );
     const newWallet = vi.fn().mockResolvedValue(mockWallet);
     const mockClient = createMockWebClient({
       newWallet,
       getConsumableNotes: vi.fn().mockResolvedValue([consumable]),
-      newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+      newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_priv",
       }),
@@ -460,14 +462,15 @@ describe("useSessionAccount — storage mode + timeout branches", () => {
     const mockWallet = createMockAccount({
       id: vi.fn(() => createMockAccountId("0xfallback_wallet")),
     });
-    const consumable = {
-      inputNoteRecord: vi.fn(() => ({ toNote: vi.fn(() => ({})) })),
-    };
+    const consumable = createMockConsumableNoteRecord(
+      "0xnote1",
+      "0xfallback_wallet"
+    );
     const newWallet = vi.fn().mockResolvedValue(mockWallet);
     const mockClient = createMockWebClient({
       newWallet,
       getConsumableNotes: vi.fn().mockResolvedValue([consumable]),
-      newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+      newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
       submitNewTransaction: vi.fn().mockResolvedValue({
         toString: () => "0xtx_default",
       }),
@@ -622,7 +625,7 @@ describe("useConsume — prover + length-mismatch branches", () => {
     const mockClient = createMockWebClient({
       submitNewTransactionWithProver: submitWithProver,
       submitNewTransaction: submitWithout,
-      newConsumeTransactionRequest: vi.fn().mockReturnValue({}),
+      newConsumeTransactionRequest: vi.fn().mockResolvedValue({}),
     });
 
     const fakeProver = { kind: "remote-prover" } as never;

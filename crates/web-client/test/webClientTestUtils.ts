@@ -383,7 +383,10 @@ export const swapTransaction = async (
       }
 
       let note = inputNoteRecord.toNote();
-      let txRequest1 = client.newConsumeTransactionRequest([note]);
+      let txRequest1 = await client.newConsumeTransactionRequest(
+        [note],
+        accountBId
+      );
 
       let consumeTransaction1Result =
         await window.helpers.executeAndApplyTransaction(
@@ -411,7 +414,10 @@ export const swapTransaction = async (
       }
 
       note = inputNoteRecord.toNote();
-      let txRequest2 = client.newConsumeTransactionRequest([note]);
+      let txRequest2 = await client.newConsumeTransactionRequest(
+        [note],
+        accountAId
+      );
 
       let consumeTransaction2Result =
         await window.helpers.executeAndApplyTransaction(
@@ -686,9 +692,8 @@ export const consumeTransaction = async (
       }
 
       const note = inputNoteRecord.toNote();
-      const consumeTransactionRequest = client.newConsumeTransactionRequest([
-        note,
-      ]);
+      const consumeTransactionRequest =
+        await client.newConsumeTransactionRequest([note], targetAccountId);
       const prover =
         _withRemoteProver && window.remoteProverUrl != null
           ? window.remoteProverInstance
