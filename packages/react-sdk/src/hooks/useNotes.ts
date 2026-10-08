@@ -11,8 +11,22 @@ import type { NotesFilter, NotesResult, NoteSummary } from "../types";
 import { getNoteSummary } from "../utils/notes";
 import { useAssetMetadata } from "./useAssetMetadata";
 import { parseAccountId } from "../utils/accountParsing";
-import { normalizeAccountId } from "../utils/accountId";
 import { getNoteFilterType } from "../utils/noteFilters";
+
+// Senders are matched by account id, not by display string: the bech32 form
+// carries the network of the provider's client, which a sender filter computed
+// before that client existed would not.
+const accountIdKey = (value: string): string => {
+  let id: ReturnType<typeof parseAccountId> | undefined;
+  try {
+    id = parseAccountId(value);
+    return id.toString();
+  } catch {
+    return value;
+  } finally {
+    (id as { free?: () => void } | undefined)?.free?.();
+  }
+};
 
 /**
  * Hook to list notes.
@@ -141,15 +155,11 @@ export function useNotes(options?: NotesFilter): NotesResult {
     [assetMetadata]
   );
 
-  // Normalize sender once outside the loop to avoid per-note WASM allocations
-  const normalizedSender = useMemo(() => {
-    if (!options?.sender) return null;
-    try {
-      return normalizeAccountId(options.sender);
-    } catch {
-      return options.sender;
-    }
-  }, [options?.sender]);
+  // Resolve the sender once outside the loop to avoid per-note WASM allocations
+  const senderId = useMemo(
+    () => (options?.sender ? accountIdKey(options.sender) : null),
+    [options?.sender]
+  );
 
   // Serialize excludeIds to a stable string key so array literals don't defeat memoization
   const excludeIdsKey = useMemo(() => {
@@ -157,23 +167,19 @@ export function useNotes(options?: NotesFilter): NotesResult {
     return [...options.excludeIds].sort().join("\0");
   }, [options?.excludeIds]);
 
-  // Helper: normalize a sender string with a cache to avoid repeated WASM allocations.
-  // normalizeAccountId calls parseAccountId (WASM) + toBech32 per invocation.
+  // Helper: resolve each sender string once per pass; parseAccountId is a WASM
+  // call per invocation.
   const filterBySender = useCallback(
     (summaries: NoteSummary[], target: string): NoteSummary[] => {
       const cache = new Map<string, string>();
       return summaries.filter((s) => {
         if (!s.sender) return false;
-        let normalized = cache.get(s.sender);
-        if (normalized === undefined) {
-          try {
-            normalized = normalizeAccountId(s.sender);
-          } catch {
-            normalized = s.sender;
-          }
-          cache.set(s.sender, normalized);
+        let id = cache.get(s.sender);
+        if (id === undefined) {
+          id = accountIdKey(s.sender);
+          cache.set(s.sender, id);
         }
-        return normalized === target;
+        return id === target;
       });
     },
     []
@@ -185,8 +191,8 @@ export function useNotes(options?: NotesFilter): NotesResult {
       .map((note) => getNoteSummary(note, getMetadata))
       .filter(Boolean) as NoteSummary[];
 
-    if (normalizedSender) {
-      summaries = filterBySender(summaries, normalizedSender);
+    if (senderId) {
+      summaries = filterBySender(summaries, senderId);
     }
 
     if (excludeIdsKey) {
@@ -195,15 +201,15 @@ export function useNotes(options?: NotesFilter): NotesResult {
     }
 
     return summaries;
-  }, [notes, getMetadata, normalizedSender, excludeIdsKey, filterBySender]);
+  }, [notes, getMetadata, senderId, excludeIdsKey, filterBySender]);
 
   const consumableNoteSummaries = useMemo(() => {
     let summaries = consumableNotes
       .map((note) => getNoteSummary(note, getMetadata))
       .filter(Boolean) as NoteSummary[];
 
-    if (normalizedSender) {
-      summaries = filterBySender(summaries, normalizedSender);
+    if (senderId) {
+      summaries = filterBySender(summaries, senderId);
     }
 
     if (excludeIdsKey) {
@@ -212,13 +218,7 @@ export function useNotes(options?: NotesFilter): NotesResult {
     }
 
     return summaries;
-  }, [
-    consumableNotes,
-    getMetadata,
-    normalizedSender,
-    excludeIdsKey,
-    filterBySender,
-  ]);
+  }, [consumableNotes, getMetadata, senderId, excludeIdsKey, filterBySender]);
 
   return {
     notes,
