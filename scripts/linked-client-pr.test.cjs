@@ -430,6 +430,36 @@ test("an incompatible unused patch leaves the compatible registry package select
     /keeping incompatible unused patch miden-objects 0.18.0 inactive/
   );
   assert.doesNotMatch(result.stdout + result.stderr, /^error:/m);
+  assert.match(metadata.stderr, /patch `miden-objects v0\.18\.0` was not used/);
+  assert.match(f.read("Cargo.lock"), /\[\[patch\.unused\]\]/);
+});
+
+test("the precise refresh keeps the main update output ahead of its own", (t) => {
+  const f = fixture(t);
+  f.write("Cargo.toml", '[package]\nname = "fixture"\nversion = "1.0.0"\n');
+  f.write(
+    "Cargo.lock",
+    '[[package]]\nname = "miden-objects"\nversion = "0.17.0"\n\n[[patch.unused]]\nname = "miden-objects"\nversion = "0.18.0"\n'
+  );
+  f.write(
+    "bin/cargo",
+    `#!/usr/bin/env python3\nimport sys\nprint('PRECISE-MARKER' if '--precise' in sys.argv else 'MAIN-UPDATE-MARKER')\n`,
+    0o755
+  );
+  const result = f.run(
+    "bash",
+    ["scripts/cargo-update-linked-patches.sh", "-p", "fixture"],
+    {
+      env: {
+        ...process.env,
+        PATH: `${path.join(f.root, "bin")}:${process.env.PATH}`,
+      },
+    }
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const main = result.stdout.indexOf("MAIN-UPDATE-MARKER");
+  assert.ok(main >= 0, result.stdout);
+  assert.ok(result.stdout.indexOf("PRECISE-MARKER") > main, result.stdout);
 });
 
 for (const [kind, error] of [

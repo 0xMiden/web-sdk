@@ -58,9 +58,10 @@ while IFS= read -r target; do
 done <<< "$targets"
 
 log="$(mktemp)"
+precise_log="$(mktemp)"
 stub_root=""
 cleanup() {
-  rm -f "$log"
+  rm -f "$log" "$precise_log"
   if [ -n "$stub_root" ]; then
     rm -rf "$stub_root"
   fi
@@ -98,8 +99,8 @@ PY
       continue
     fi
     echo "cargo update: selecting linked patch $name $version" >&2
-    if ! cargo update -p "$name" --precise "$version" >"$log" 2>&1; then
-      if python3 - "$name" "$log" <<'PY'
+    if ! cargo update -p "$name" --precise "$version" >"$precise_log" 2>&1; then
+      if python3 - "$name" "$precise_log" <<'PY'
 import re, sys
 from pathlib import Path
 
@@ -116,12 +117,12 @@ sys.exit(0 if rejected else 1)
 PY
       then
         echo "cargo update: keeping incompatible unused patch $name $version inactive" >&2
-        : >"$log"
         continue
       fi
-      cat "$log" >&2
+      cat "$precise_log" >&2
       exit 1
     fi
+    cat "$precise_log" >>"$log"
   done <<< "$unused"
   cat "$log"
   local holds hold_root manifest name version archive spec
