@@ -219,6 +219,8 @@ cp "$CARGO_TOML" "$BACKUP_DIR/Cargo.toml"
 if [ -f "${CARGO_TOML%.toml}.lock" ]; then
   cp "${CARGO_TOML%.toml}.lock" "$BACKUP_DIR/Cargo.lock"
 fi
+# Every stop point, failed or not, records the state it left for --clear to compare.
+trap 'state_hash >"$BACKUP_DIR/applied.sha"' EXIT
 
 url="https://github.com/${head_owner}/${head_repo}.git"
 
@@ -379,7 +381,6 @@ rm -f "$upstream_toml" "$upstream_lock"
 
 # shellcheck disable=SC2086
 bash "$(git rev-parse --show-toplevel)/scripts/cargo-update-linked-patches.sh" $(build_cargo_update_args)
-state_hash >"$BACKUP_DIR/applied.sha"
 
 echo "✓ Cargo.toml dep rewritten: miden-client → ${head_owner}/${head_repo}@${head_ref} (${head_sha:0:8})"
 echo "  Originals stashed in a marker block; restore with: $0 --clear"

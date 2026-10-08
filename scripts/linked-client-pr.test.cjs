@@ -219,6 +219,39 @@ test("a re-apply after an edit never snapshots the earlier linked resolution", (
   assert.equal(f.calls().length, 3, "an untouched apply restores its snapshot");
 });
 
+function failedApply(t) {
+  const f = injectionFixture(t);
+  fs.rmSync(path.join(f.root, "upstream.lock"));
+  const result = f.local("123");
+  assert.notEqual(result.status, 0, "the apply must fail");
+  assert.ok(f.read("Cargo.toml").includes("linked-client-pr"));
+  return f;
+}
+
+test("--clear keeps an edit made after a failed apply", (t) => {
+  const f = failedApply(t);
+  fs.appendFileSync(path.join(f.root, "Cargo.toml"), editedLine);
+  assert.equal(f.local("--clear").status, 0);
+  assert.ok(f.read("Cargo.toml").includes(editedLine));
+  assert.ok(!f.read("Cargo.toml").includes("linked-client-pr"));
+});
+
+test("a re-apply after a failed apply and an edit keeps the edit", (t) => {
+  const f = failedApply(t);
+  fs.appendFileSync(path.join(f.root, "Cargo.toml"), editedLine);
+  fs.writeFileSync(path.join(f.root, "upstream.lock"), "");
+  assert.equal(f.local("123").status, 0);
+  assert.ok(f.read("Cargo.toml").includes(editedLine));
+});
+
+test("--clear restores the original bytes after a failed apply with no edit", (t) => {
+  const f = failedApply(t);
+  assert.equal(f.local("--clear").status, 0);
+  assert.equal(f.read("Cargo.toml"), f.original);
+  assert.equal(f.read("Cargo.lock"), f.lock);
+  assert.ok(!fs.existsSync(path.join(f.root, "cargo-calls.jsonl")));
+});
+
 test("local clear preserves a missing lockfile and is a no-op when already clear", (t) => {
   const f = injectionFixture(t);
   const original = '[workspace.dependencies]\nmiden-client = "0.17"';
