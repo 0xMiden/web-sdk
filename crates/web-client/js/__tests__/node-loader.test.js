@@ -139,4 +139,23 @@ describe("loadNativeModule on linux-x64", () => {
     expect(error?.message).toContain(`"${GNU}" or "${MUSL}"`);
     expect(copyFileSync).not.toHaveBeenCalled();
   });
+
+  it("reads the report without network data and restores the setting", async () => {
+    const previous = process.report.excludeNetwork;
+    process.report.excludeNetwork = false;
+    let seen;
+    try {
+      await loadOnLinuxX64({
+        report: () => {
+          seen = process.report.excludeNetwork;
+          return glibcReport();
+        },
+        resolvable: [GNU],
+      });
+      expect(seen).toBe(true);
+      expect(process.report.excludeNetwork).toBe(false);
+    } finally {
+      process.report.excludeNetwork = previous;
+    }
+  });
 });

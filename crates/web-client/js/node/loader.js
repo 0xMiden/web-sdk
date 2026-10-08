@@ -156,11 +156,18 @@ function getPlatformPackages() {
  * without these fields; only then are both packages tried.
  */
 function linuxX64Packages() {
+  // Network interface enumeration is the slow part of a report and says
+  // nothing about the C library, so leave it out (as detect-libc does).
   let report;
+  let previousExcludeNetwork;
   try {
+    previousExcludeNetwork = process.report.excludeNetwork;
+    process.report.excludeNetwork = true;
     report = process.report.getReport();
   } catch {
     return [LINUX_X64_GNU, LINUX_X64_MUSL];
+  } finally {
+    if (process.report) process.report.excludeNetwork = previousExcludeNetwork;
   }
   if (report?.header?.glibcVersionRuntime) return [LINUX_X64_GNU];
   const objs = Array.isArray(report?.sharedObjects) ? report.sharedObjects : [];
