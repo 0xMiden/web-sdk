@@ -185,6 +185,40 @@ test("local --clear restores the manifest and lock bytes after repeated apply", 
   );
 });
 
+const markBegin =
+  "# >>>>>>> linked-client-pr (auto-injected by scripts/dev-with-client-pr.sh) >>>>>>>";
+const editedLine = 'edited-while-linked = "1"\n';
+
+test("local --clear keeps an edit made while the patch was applied", (t) => {
+  const f = injectionFixture(t);
+  assert.equal(f.local("123").status, 0);
+  fs.appendFileSync(path.join(f.root, "Cargo.toml"), editedLine);
+  const result = f.local("--clear");
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(f.read("Cargo.toml").includes(editedLine));
+  assert.ok(!f.read("Cargo.toml").includes(markBegin));
+  assert.ok(!f.read("Cargo.toml").includes("linked-client-pr"));
+  assert.ok(
+    !fs.existsSync(path.join(f.root, ".git/linked-client-pr-original"))
+  );
+  assert.equal(f.calls().length, 2, "the fallback refreshes the lock once");
+  assert.match(result.stderr, /edited/);
+});
+
+test("a re-apply after an edit never snapshots the earlier linked resolution", (t) => {
+  const f = injectionFixture(t);
+  assert.equal(f.local("123").status, 0);
+  fs.appendFileSync(path.join(f.root, "Cargo.toml"), editedLine);
+  assert.equal(f.local("123").status, 0);
+  const calls = f.calls();
+  assert.equal(calls.length, 3, "apply, fallback refresh, apply");
+  assert.ok(calls[1].includes("-p") && calls[1].includes("miden-client"));
+  assert.equal(f.local("--clear").status, 0);
+  assert.ok(f.read("Cargo.toml").includes(editedLine));
+  assert.ok(!f.read("Cargo.toml").includes("linked-client-pr"));
+  assert.equal(f.calls().length, 3, "an untouched apply restores its snapshot");
+});
+
 test("local clear preserves a missing lockfile and is a no-op when already clear", (t) => {
   const f = injectionFixture(t);
   const original = '[workspace.dependencies]\nmiden-client = "0.17"';

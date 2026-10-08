@@ -32,20 +32,46 @@ PATCH_END="# <<<<<<< linked-client-pr patches <<<<<<<"
 # sources`. Instead we rewrite the dep line in place and stash the
 # original in a marker block so --clear can restore it byte-for-byte.
 
+# Fingerprint of Cargo.toml and Cargo.lock, recorded when an apply finishes so
+# a later clear can tell whether either file was edited since.
+state_hash() {
+  local f
+  for f in "$CARGO_TOML" "${CARGO_TOML%.toml}.lock"; do
+    if [ ! -f "$f" ]; then
+      echo absent
+    elif command -v shasum >/dev/null 2>&1; then
+      shasum -a 256 <"$f"
+    else
+      sha256sum <"$f"
+    fi
+  done
+}
+
+# Set when the lock may still hold the linked resolution, so the caller runs
+# the targeted cargo update.
+LOCK_REFRESH=false
+
 clear_block() {
   if [ -f "$BACKUP_DIR/Cargo.toml" ]; then
-    cp "$BACKUP_DIR/Cargo.toml" "$CARGO_TOML"
-    if [ -f "$BACKUP_DIR/Cargo.lock" ]; then
-      cp "$BACKUP_DIR/Cargo.lock" "${CARGO_TOML%.toml}.lock"
-    else
-      rm -f "${CARGO_TOML%.toml}.lock"
+    if [ ! -f "$BACKUP_DIR/applied.sha" ] || [ "$(state_hash)" = "$(cat "$BACKUP_DIR/applied.sha")" ]; then
+      cp "$BACKUP_DIR/Cargo.toml" "$CARGO_TOML"
+      if [ -f "$BACKUP_DIR/Cargo.lock" ]; then
+        cp "$BACKUP_DIR/Cargo.lock" "${CARGO_TOML%.toml}.lock"
+      else
+        rm -f "${CARGO_TOML%.toml}.lock"
+      fi
+      rm -rf "$BACKUP_DIR"
+      return 0
     fi
+    # Restoring the snapshot would discard the edit; strip only what the apply added.
+    echo "⚠ Cargo.toml or Cargo.lock was edited while the linked patch was applied; keeping the edits and removing only the patch." >&2
     rm -rf "$BACKUP_DIR"
-    return 0
+    LOCK_REFRESH=true
   fi
   if ! grep -qF "$MARK_BEGIN" "$CARGO_TOML" && ! grep -qF "$PATCH_BEGIN" "$CARGO_TOML"; then
     return 0
   fi
+  LOCK_REFRESH=true
   # Restore originals: extract everything between the markers (lines
   # starting with "#  " carry the original dep line — strip the prefix),
   # then drop both the marker block and any auto-injected dep lines that
@@ -88,6 +114,30 @@ clear_block() {
     { print }
   ' "$CARGO_TOML" > "$CARGO_TOML.tmp"
   mv "$CARGO_TOML.tmp" "$CARGO_TOML"
+  # Prerelease holds are appended to [patch.crates-io] as path entries into a
+  # temp directory; an emptied table header goes with them.
+  python3 - "$CARGO_TOML" <<'PY'
+import re, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+with open(path, newline="") as f:
+    lines = f.read().splitlines(keepends=True)
+hold = re.compile(r'^[A-Za-z0-9_-]+\s*=\s*\{\s*path\s*=\s*"[^"]*/[^"/]+-\d+\.\d+\.\d+[^"/]*"\s*\}\s*$')
+out = []
+in_patch = False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("["):
+        in_patch = stripped == "[patch.crates-io]"
+    elif in_patch and hold.match(stripped):
+        continue
+    out.append(line)
+text = "".join(out)
+text = re.sub(r'(?:\r?\n)*\[patch\.crates-io\]\r?\n(?=\s*(?:\[|\Z))', "\n", text)
+with open(path, "w", newline="") as f:
+    f.write(text)
+PY
 }
 
 # cargo update with -p needs the package to actually be in the dep tree.
@@ -110,15 +160,9 @@ build_cargo_update_args() {
 }
 
 if [ "${1:-}" = "--clear" ] || [ "${1:-}" = "-c" ]; then
-  restored_exact=false
-  if [ -f "$BACKUP_DIR/Cargo.toml" ] || {
-    ! grep -qF "$MARK_BEGIN" "$CARGO_TOML" && ! grep -qF "$PATCH_BEGIN" "$CARGO_TOML"
-  }; then
-    restored_exact=true
-  fi
   clear_block
-  if [ "$restored_exact" = false ]; then
-    # Preserve cleanup for blocks written before original files were saved.
+  if [ "$LOCK_REFRESH" = true ]; then
+    # Legacy blocks and edited trees have no exact snapshot to restore.
     # shellcheck disable=SC2086
     cargo update $(build_cargo_update_args) --quiet 2>/dev/null || true
   fi
@@ -165,6 +209,11 @@ fi
 
 # Idempotent: clear any prior block first.
 clear_block
+if [ "$LOCK_REFRESH" = true ]; then
+  # The snapshot below must not hold the earlier linked resolution.
+  # shellcheck disable=SC2086
+  cargo update $(build_cargo_update_args) --quiet 2>/dev/null || true
+fi
 mkdir -p "$BACKUP_DIR"
 cp "$CARGO_TOML" "$BACKUP_DIR/Cargo.toml"
 if [ -f "${CARGO_TOML%.toml}.lock" ]; then
@@ -330,6 +379,7 @@ rm -f "$upstream_toml" "$upstream_lock"
 
 # shellcheck disable=SC2086
 bash "$(git rev-parse --show-toplevel)/scripts/cargo-update-linked-patches.sh" $(build_cargo_update_args)
+state_hash >"$BACKUP_DIR/applied.sha"
 
 echo "✓ Cargo.toml dep rewritten: miden-client → ${head_owner}/${head_repo}@${head_ref} (${head_sha:0:8})"
 echo "  Originals stashed in a marker block; restore with: $0 --clear"
