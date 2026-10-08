@@ -183,17 +183,13 @@ jobs:
           path: packages/${{ matrix.platform-package }}/miden_client_web.node
 
   # The musl (Alpine) binary is built by its own job, outside the matrix above,
-  # so it can never fail or cancel the three required legs. It is best-effort:
-  # `publish` waits for it but does not gate on its result, and publishes the
-  # musl package only if this job uploaded an artifact.
+  # because it cross-compiles in a container. It is required like the other
+  # three: `publish` runs the web-client path only when this job succeeded, so
+  # a release ships all four native packages or none.
   build-native-nodejs-musl:
     needs: check-version
     if: needs.check-version.outputs.should_publish_web == 'true'
     runs-on: ubuntu-24.04
-    continue-on-error: true
-    # Bounded so a stalled musl build cannot hold `publish` far past the
-    # slowest required leg.
-    timeout-minutes: 30
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -241,10 +237,9 @@ jobs:
       - name: Verify musl binary loads on Alpine
         # A cross-compiled musl cdylib can link "successfully" yet fail to
         # dlopen on a real musl runtime. Load the built addon inside
-        # node:alpine before publishing: if it can't load, this job fails, the
-        # artifact is not uploaded, and the publish job skips musl instead of
-        # shipping a broken binary that reintroduces "module not found" on
-        # Alpine.
+        # node:alpine before publishing: if it can't load, this job fails and
+        # so does the release, instead of shipping a broken binary that
+        # reintroduces "module not found" on Alpine.
         run: |
           docker run --rm \
             -v "$PWD/packages/node-sdk-linux-x64-musl:/pkg:ro" \
@@ -258,15 +253,16 @@ jobs:
           path: packages/node-sdk-linux-x64-musl/miden_client_web.node
 
   publish:
-    # Waits for build-native-nodejs-musl so its artifact can be downloaded, but
-    # the condition below never reads its result.
     needs: [check-version, build-native-nodejs, build-native-nodejs-musl]
     if: >
       !cancelled() &&
       needs.check-version.result == 'success' &&
       (
         needs.check-version.outputs.should_publish_web != 'true' ||
-        needs.build-native-nodejs.result == 'success'
+        (
+          needs.build-native-nodejs.result == 'success' &&
+          needs.build-native-nodejs-musl.result == 'success'
+        )
       ) &&
       (
         needs.check-version.outputs.should_publish_web == 'true' ||
@@ -381,53 +377,31 @@ jobs:
 
       - name: Sync platform package versions and publish
         if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
+        # musl goes first: until @miden-sdk/node-linux-x64-musl has its one-time
+        # npm setup (AGENTS.md, Releases section) its publish fails, and going
+        # first means it fails before any other package is published. A version
+        # already on npm is skipped, so a re-run of a partially published
+        # release finishes the rest.
         run: |
           WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
           DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
-          for pkg in node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+          for pkg in node-sdk-linux-x64-musl node-sdk-darwin-arm64 node-sdk-darwin-x64 node-sdk-linux-x64-gnu; do
+            name="@miden-sdk/${pkg##node-sdk-}"
+            if [ "$(npm view "${name}@${WEB_VERSION}" version 2>/dev/null)" = "$WEB_VERSION" ]; then
+              echo "${name}@${WEB_VERSION} is already on npm; skipping."
+              continue
+            fi
             cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
             jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
             mv /tmp/pkg.json "packages/${pkg}/package.json"
-            echo "Publishing @miden-sdk/${pkg##node-sdk-}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
+            echo "Publishing ${name}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
             cd "packages/${pkg}"
             npm publish --tag "$DIST_TAG" --access public --provenance
             cd ../..
           done
 
-      - name: Publish the musl platform package (best-effort)
-        id: musl
-        if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
-        # Never fails the release. No artifact (its build job failed, timed out
-        # or was cancelled) or a failed publish leaves this release on the
-        # three required binaries, and the next step then omits musl from the
-        # web-client's optionalDependencies. This workflow has no token
-        # fallback, so the publish fails until @miden-sdk/node-linux-x64-musl
-        # exists on npm with this workflow as its trusted publisher; the
-        # one-time setup is in AGENTS.md, Releases section.
-        continue-on-error: true
-        run: |
-          pkg=node-sdk-linux-x64-musl
-          name=@miden-sdk/node-linux-x64-musl
-          if [ ! -f "artifacts/${pkg}/miden_client_web.node" ]; then
-            echo "::warning::No ${pkg} artifact (see build-native-nodejs-musl); this release ships without the musl binary."
-            exit 0
-          fi
-          WEB_VERSION=$(jq -r '.version' crates/web-client/package.json)
-          DIST_TAG="${{ needs.check-version.outputs.dist_tag }}"
-          cp "artifacts/${pkg}/miden_client_web.node" "packages/${pkg}/miden_client_web.node"
-          jq --arg v "$WEB_VERSION" '.version = $v' "packages/${pkg}/package.json" > /tmp/pkg.json
-          mv /tmp/pkg.json "packages/${pkg}/package.json"
-          echo "Publishing ${name}@${WEB_VERSION} (--tag ${DIST_TAG}) ..."
-          if (cd "packages/${pkg}" && npm publish --tag "$DIST_TAG" --access public --provenance); then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Publishing ${name}@${WEB_VERSION} failed; this release ships without the musl binary. If ${name} has never been published, do the one-time musl setup in AGENTS.md (Releases section) first."
-          fi
-
       - name: Inject Node.js optionalDependencies before web-client publish
         if: needs.check-version.outputs.should_publish_web == 'true' && needs.build-native-nodejs.result == 'success'
-        env:
-          MUSL_PUBLISHED: ${{ steps.musl.outputs.published }}
         run: |
           cd crates/web-client
           node -e "
@@ -437,10 +411,8 @@ jobs:
               '@miden-sdk/node-darwin-arm64': v,
               '@miden-sdk/node-darwin-x64': v,
               '@miden-sdk/node-linux-x64-gnu': v,
+              '@miden-sdk/node-linux-x64-musl': v,
             };
-            if (process.env.MUSL_PUBLISHED === 'true') {
-              pkg.optionalDependencies['@miden-sdk/node-linux-x64-musl'] = v;
-            }
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             console.log('Injected optionalDependencies with version ' + v);
           "

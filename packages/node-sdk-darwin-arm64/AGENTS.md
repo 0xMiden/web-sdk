@@ -39,9 +39,8 @@ Do not try to require this package directly, and do not add it to your
 - **`--no-optional`, or a lockfile pinned on another platform.** Optional
   dependencies are how this is delivered; skipping them skips the binary.
 - **musl rather than glibc.** On Linux the loader picks the glibc or the musl
-  package by the runtime C library. The musl one,
-  `@miden-sdk/node-linux-x64-musl`, is best-effort, so a release may ship
-  without it.
+  package by the runtime C library. The musl one is
+  `@miden-sdk/node-linux-x64-musl`.
 
 In the browser none of this applies: the browser build runs WASM and never
 loads a native module.

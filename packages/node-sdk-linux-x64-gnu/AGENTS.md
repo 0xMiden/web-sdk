@@ -42,8 +42,7 @@ Do not try to require this package directly, and do not add it to your
   dependencies are how this is delivered; skipping them skips the binary.
 - **musl rather than glibc.** This package links against glibc and does not
   load on Alpine or other musl distributions. Those use
-  `@miden-sdk/node-linux-x64-musl`, which is best-effort, so a release may ship
-  without it.
+  `@miden-sdk/node-linux-x64-musl`.
 
 In the browser none of this applies: the browser build runs WASM and never
 loads a native module.

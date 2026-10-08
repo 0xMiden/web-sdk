@@ -41,10 +41,10 @@ why it failed; read it first. A failure here is almost always one of:
   binary you supply.
 - **`--no-optional`, or a lockfile pinned on another platform.** Optional
   dependencies are how this is delivered; skipping them skips the binary.
-- **No musl binary in this release.** This package is published on a
-  best-effort basis: a release whose musl build fails ships without it, and
-  that version of `@miden-sdk/miden-sdk` does not list it. Use a glibc base
-  image such as `node:22-bookworm-slim`, or set `MIDEN_MODULE_PATH`.
+- **An SDK release older than this package.** Versions of
+  `@miden-sdk/miden-sdk` published before this package existed do not list
+  it. Upgrade the SDK, use a glibc base image such as `node:22-bookworm-slim`,
+  or set `MIDEN_MODULE_PATH`.
 
 In the browser none of this applies: the browser build runs WASM and never
 loads a native module.
