@@ -1715,7 +1715,8 @@ try {
 } catch (e) {
   const wrapped = wrapWasmError(e);
   // MidenError with code: 'WASM_CLASS_MISMATCH' | 'WASM_POINTER_CONSUMED' |
-  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' | 'UNKNOWN'
+  //   'WASM_NOT_INITIALIZED' | 'WASM_SYNC_REQUIRED' | 'SEND_BUSY' |
+  //   'OPERATION_BUSY' | 'BATCH_BUSY' | 'STALE_CLIENT' | 'UNKNOWN'
   console.log(wrapped.message); // Human-readable with fix suggestions
 }
 ```

@@ -400,8 +400,8 @@ multisig flavour reuses that salt as its transaction summary's replay guard.
 So hooks that build their own request (`useSend`, `useMultiSend`, `useConsume`,
 `useMint`, `useCreateNetworkNote`, `usePswapCreate`, `usePswapConsume`,
 `usePswapCancel`) declare a salt for you where the executing account needs one.
-The hooks that take a request *from you* - `useTransaction`, `usePreview`,
-`useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
+The hooks that take a request *from you* - `useTransaction`, `useBatch`,
+`usePreview`, `useChainAnchor` - cannot. A bare `new TransactionRequestBuilder()` is fine for
 an ordinary account at any base fee; against a multisig on a fee-charging chain
 it fails with `FeeConversionInfoRequired` naming the component. So this matters
 for multisig, and for controlling the salt.

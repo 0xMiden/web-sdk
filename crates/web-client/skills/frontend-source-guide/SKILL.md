@@ -167,7 +167,8 @@ Platform-native binaries consumed through `optionalDependencies`, and the native
 | Foreign-account (FPI) reads | `crates/web-client/js/resources/transactions.js` (`executeRequest`, `submit`) | ForeignAccount.public/private, reference-block pinning |
 | Custom MASM component | `src/hooks/useCompile.ts`, `useExecuteProgram.ts` | `@account_procedure`, `@transaction_script pub proc main` |
 | Network note | `src/hooks/useCreateNetworkNote.ts` | NetworkAccountTarget, createNetworkAuthComponents |
-| Batch send | `src/hooks/useMultiSend.ts` | feeAwareTransactionRequestBuilder |
+| Many recipients, one transaction | `src/hooks/useMultiSend.ts` | feeAwareTransactionRequestBuilder |
+| Atomic batch of transactions across accounts | `src/hooks/useBatch.ts` | `BatchItem`, `submitNewTransactionBatch`, the `BATCH_BUSY` guard |
 | Store export / import | `src/hooks/useExportStore.ts`, `useImportStore.ts` | Backup and restore |
 | Live note feed | `src/hooks/useNoteStream.ts`, `useSyncControl.ts` | Subscription and sync gating |
 | Prover selection and fallback | `src/utils/prover.ts` | `resolveTransactionProver`, `proveWithFallback` - what a `ProverTarget` / `ProverConfig` resolves to |
