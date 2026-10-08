@@ -49,7 +49,7 @@ export async function initializeSignerAccount(
   client: WebClient,
   config: SignerAccountConfig
 ): Promise<string> {
-  const { AccountBuilder, AccountComponent, AuthScheme, Word } =
+  const { AccountBuilder, AccountComponent, Word, getWasmOrThrow } =
     await import("@miden-sdk/miden-sdk");
 
   // Sync first to get latest state
@@ -102,11 +102,21 @@ export async function initializeSignerAccount(
   // `storageMode`. The field is retained on the config for back-compat.
   const seed = config.accountSeed ?? crypto.getRandomValues(new Uint8Array(32));
 
+  // The package's `AuthScheme` export is the friendly string const; the auth
+  // component takes the numeric enum, so read it from the wasm module.
+  const ecdsaAuthScheme = (await getWasmOrThrow()).AuthScheme
+    .AuthEcdsaK256Keccak;
+  if (ecdsaAuthScheme === undefined) {
+    throw new Error(
+      "The Miden SDK wasm module has no AuthScheme.AuthEcdsaK256Keccak, so the signer account's auth component cannot be built."
+    );
+  }
+
   let builder = new AccountBuilder(seed)
     .withAuthComponent(
       AccountComponent.createAuthComponentFromCommitment(
         commitmentWord,
-        AuthScheme.AuthEcdsaK256Keccak
+        ecdsaAuthScheme
       )
     )
     .storageMode(config.storageMode)

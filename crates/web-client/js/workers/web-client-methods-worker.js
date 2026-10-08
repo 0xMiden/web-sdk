@@ -462,6 +462,8 @@ async function processMessage(event) {
         logLevel,
         numThreads,
         feeFaucetId,
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs,
       ] = args;
       const wasm = await getWasmOrThrow();
 
@@ -498,7 +500,9 @@ async function processMessage(event) {
           feeFaucetId,
           hasGetKeyCb ? callbackProxies.getKey : undefined,
           hasInsertKeyCb ? callbackProxies.insertKey : undefined,
-          hasSignCb ? callbackProxies.sign : undefined
+          hasSignCb ? callbackProxies.sign : undefined,
+          noteTransportMaxRetries,
+          noteTransportRetryIntervalMs
         );
       } else {
         await wasmWebClient.createClient(
@@ -506,7 +510,9 @@ async function processMessage(event) {
           noteTransportUrl,
           seed,
           storeName,
-          feeFaucetId
+          feeFaucetId,
+          noteTransportMaxRetries,
+          noteTransportRetryIntervalMs
         );
       }
 

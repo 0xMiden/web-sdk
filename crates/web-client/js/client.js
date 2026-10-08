@@ -6,7 +6,11 @@ import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
-import { hashSeed, resolveAccountRef } from "./utils.js";
+import {
+  hashSeed,
+  resolveAccountRef,
+  validateNoteTransportRetryOptions,
+} from "./utils.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -125,10 +129,18 @@ export class MidenClient {
    * configuration, which names the fee asset, from the node when it syncs. The
    * option only sets what `feeFaucetId()` reports before that first sync.
    *
+   * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
+   * before anything is created; an out-of-range value throws a `TypeError`.
+   *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
   static async create(options) {
+    validateNoteTransportRetryOptions(
+      options?.noteTransportMaxRetries,
+      options?.noteTransportRetryIntervalMs
+    );
+
     if (!options?.rpcUrl) {
       return MidenClient.createTestnet(options);
     }
@@ -169,7 +181,9 @@ export class MidenClient {
         undefined,
         useWorker,
         options,
-        options?.feeFaucetId
+        options?.feeFaucetId,
+        options?.noteTransportMaxRetries,
+        options?.noteTransportRetryIntervalMs
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -180,7 +194,9 @@ export class MidenClient {
         undefined,
         useWorker,
         options,
-        options?.feeFaucetId
+        options?.feeFaucetId,
+        options?.noteTransportMaxRetries,
+        options?.noteTransportRetryIntervalMs
       );
     }
 

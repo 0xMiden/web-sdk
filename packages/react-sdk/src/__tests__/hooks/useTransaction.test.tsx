@@ -3,13 +3,18 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTransaction } from "../../hooks/useTransaction";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
-import { NoteType } from "@miden-sdk/miden-sdk";
+import {
+  NoteType,
+  TransactionFilter,
+  TransactionId,
+} from "@miden-sdk/miden-sdk";
 import {
   createMockWebClient,
   createMockTransactionId,
   createMockTransactionRequest,
   createMockTransactionResult,
   createMockNote,
+  createMockOutputNote,
   createMockChainAnchor,
 } from "../mocks/miden-sdk";
 
@@ -430,16 +435,13 @@ describe("useTransaction", () => {
       const mockNote = createMockNote("0xprivate_note");
       return {
         id: vi.fn(() => createMockTransactionId(id)),
-        executedTransaction: vi.fn(() => ({
-          outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [
-              {
-                noteType: vi.fn(() => NoteType.Private),
-                intoFull: vi.fn(() => mockNote),
-              },
-            ]),
-          })),
-        })),
+        executedTransaction: vi.fn(() => {
+          const outputs = [createMockOutputNote(mockNote)];
+          return {
+            outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+            userOutputNotes: vi.fn(() => outputs),
+          };
+        }),
         serialize: vi.fn(() => new Uint8Array()),
       };
     };
@@ -491,19 +493,105 @@ describe("useTransaction", () => {
       expect(mockSync).toHaveBeenCalled();
     });
 
+    it("builds a fresh TransactionId from the snapshot hex for every commit poll", async () => {
+      const mockTxResult = createMockTxResultWithPrivateNotes("0xtx_twopolls");
+      const recordWith = (committed: boolean) => ({
+        id: vi.fn(() => ({ toHex: () => "0xtx_twopolls" })),
+        transactionStatus: vi.fn(() => ({
+          isPending: vi.fn(() => !committed),
+          isCommitted: vi.fn(() => committed),
+          isDiscarded: vi.fn(() => false),
+        })),
+      });
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+        getTransactions: vi
+          .fn()
+          .mockResolvedValueOnce([recordWith(false)])
+          .mockResolvedValue([recordWith(true)]),
+        sendPrivateOutputNote: vi.fn().mockResolvedValue(undefined),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+
+      let txResult: any;
+      await act(async () => {
+        txResult = await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          privateNoteTarget: "0xrecipient",
+        });
+      });
+
+      expect(txResult.transactionId).toBe("0xtx_twopolls");
+      expect(mockClient.getTransactions).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(TransactionId.fromHex).mock.calls).toEqual([
+        ["0xtx_twopolls"],
+        ["0xtx_twopolls"],
+      ]);
+      const polled = vi
+        .mocked(TransactionFilter.ids)
+        .mock.calls.map(([ids]) => ids[0]);
+      expect(polled).toHaveLength(2);
+      expect(polled[0]).not.toBe(polled[1]);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledTimes(1);
+    });
+
+    it("relays only the user note when outputNotes() lists the fee note first", async () => {
+      const userNote = createMockOutputNote(createMockNote("0xuser"));
+      const feeNote = createMockOutputNote(createMockNote("0xfee"));
+      const mockTxResult = {
+        id: vi.fn(() => createMockTransactionId("0xtx_fee")),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({
+            notes: vi.fn(() => [feeNote, userNote]),
+          })),
+          userOutputNotes: vi.fn(() => [userNote]),
+        })),
+      };
+      const mockClient = createMockWebClient({
+        executeTransaction: vi.fn().mockResolvedValue(mockTxResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useTransaction());
+      await act(async () => {
+        await result.current.execute({
+          accountId: "0xaccount",
+          request: createMockTransactionRequest(),
+          privateNoteTarget: "0xrecipient",
+        });
+      });
+
+      const relayed = mockClient.sendPrivateOutputNote.mock.calls.map(
+        ([noteId]) => noteId
+      );
+      expect(relayed).toEqual(["0xuser"]);
+    });
+
     it("should not deliver notes when there are no private output notes", async () => {
       const mockTxResult = {
         id: vi.fn(() => createMockTransactionId("0xtx_noprivate")),
-        executedTransaction: vi.fn(() => ({
-          outputNotes: vi.fn(() => ({
-            notes: vi.fn(() => [
-              {
-                noteType: vi.fn(() => NoteType.Public),
-                intoFull: vi.fn(() => null),
-              },
-            ]),
-          })),
-        })),
+        executedTransaction: vi.fn(() => {
+          const outputs = [
+            createMockOutputNote(createMockNote(), NoteType.Public),
+          ];
+          return {
+            outputNotes: vi.fn(() => ({ notes: vi.fn(() => outputs) })),
+            userOutputNotes: vi.fn(() => outputs),
+          };
+        }),
         serialize: vi.fn(() => new Uint8Array()),
       };
 

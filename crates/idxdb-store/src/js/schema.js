@@ -2,6 +2,8 @@ import Dexie from "dexie";
 import * as semver from "semver";
 import { logWebStoreError } from "./utils.js";
 export const CLIENT_VERSION_SETTING_KEY = "clientVersion";
+/** The client-scope setting a 0.17.1 client queued undelivered private notes under. */
+export const NOTE_TRANSPORT_OUTBOX_SETTING_KEY = "note_transport_outbox";
 /** Mirrors `StorageSlotType::Map`, originally defined in miden-protocol. */
 export const STORAGE_SLOT_TYPE_MAP = 1;
 const textEncoder = new TextEncoder();
@@ -273,6 +275,15 @@ export class MidenDatabase {
         this.dexie.version(6).stores({
             [Table.AccountWitnesses]: indexes("&accountId"),
         });
+        // v7 (miden-client 0.17.2): the client keeps no private-note relay queue, so a queue row a
+        // 0.17.1 client left behind would never be read or cleared. Mirrors sqlite-store migration
+        // `0002_drop_note_transport_outbox.sql`; a user-scope row of the same name is untouched.
+        this.dexie
+            .version(7)
+            .stores({})
+            .upgrade((tx) => tx
+            .table(Table.Settings)
+            .delete([SETTING_SCOPE_CLIENT, NOTE_TRANSPORT_OUTBOX_SETTING_KEY]));
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);

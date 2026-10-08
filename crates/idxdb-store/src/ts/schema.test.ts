@@ -253,6 +253,60 @@ describe("MidenDatabase migrations", () => {
       witness: null,
     });
   });
+
+  // v7: drops the private-note relay queue a 0.17.1 client could leave behind. See the
+  // version(7) block in schema.ts.
+  it("v7 migration deletes only the client-scope note transport outbox row", async () => {
+    const name = uniqueDbName();
+    const outboxKey = "note_transport_outbox";
+
+    const dbV6 = trackDb(new Dexie(name));
+    dbV6.version(6).stores({
+      ...V1_STORES,
+      inputNotes:
+        "detailsCommitment,noteId,nullifier,scriptRoot,stateDiscriminant,[consumedBlockHeight+consumedTxOrder+detailsCommitment]",
+      settings: "[scope+key],scope",
+      accountWitnesses: "&accountId",
+    });
+    await dbV6.open();
+    await dbV6.table("settings").bulkPut([
+      // Same minor as the version opened below, so ensureClientVersion keeps the store.
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: CLIENT_VERSION_SETTING_KEY,
+        value: new TextEncoder().encode("0.17.1"),
+      },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: outboxKey,
+        value: new Uint8Array([1]),
+      },
+      { scope: SETTING_SCOPE_USER, key: outboxKey, value: new Uint8Array([2]) },
+      {
+        scope: SETTING_SCOPE_CLIENT,
+        key: "note_transport_cursors",
+        value: new Uint8Array([3]),
+      },
+    ]);
+    dbV6.close();
+
+    const mdb = trackMidenDb(new MidenDatabase(name));
+    expect(await mdb.open("0.17.2")).toBe(true);
+
+    expect(await mdb.settings.get([SETTING_SCOPE_CLIENT, outboxKey])).toBe(
+      undefined
+    );
+    expect(
+      (await mdb.settings.get([SETTING_SCOPE_USER, outboxKey]))!.value
+    ).toEqual(new Uint8Array([2]));
+    expect(
+      (await mdb.settings.get([
+        SETTING_SCOPE_CLIENT,
+        "note_transport_cursors",
+      ]))!.value
+    ).toEqual(new Uint8Array([3]));
+    expect(await mdb.settings.count()).toBe(3);
+  });
 });
 
 // ============================================================

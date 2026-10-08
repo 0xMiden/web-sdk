@@ -30,6 +30,14 @@ const fakeWasm = vi.hoisted(() => {
   return {
     WebClient,
     TransactionResult: { deserialize: () => ({ id: () => "tx-id" }) },
+    // The AuthScheme enum in the shape wasm-bindgen emits (each value also
+    // maps back to its name), read by the WebClient wrapper's scheme resolution.
+    AuthScheme: Object.freeze({
+      AuthEcdsaK256Keccak: 1,
+      1: "AuthEcdsaK256Keccak",
+      AuthRpoFalcon512: 2,
+      2: "AuthRpoFalcon512",
+    }),
   };
 });
 vi.mock("../../Cargo.toml", () => ({}));
@@ -184,6 +192,70 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
   });
 });
 
+describe("WebClient AuthScheme resolution", () => {
+  let client;
+  let inner;
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    inner = {
+      newWallet: vi.fn().mockResolvedValue("wallet"),
+      newFaucet: vi.fn().mockResolvedValue("faucet"),
+      importPublicAccountFromSeed: vi.fn().mockResolvedValue("account"),
+    };
+    const instance = new WasmWebClient(
+      null,
+      null,
+      undefined,
+      "auth-scheme-store",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false
+    );
+    instance.wasmWebClient = inner;
+    client = createClientProxy(instance);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("newWallet hands the wasm client the ECDSA enum value", async () => {
+    await expect(client.newWallet("mode", "ecdsa")).resolves.toBe("wallet");
+    expect(inner.newWallet).toHaveBeenCalledWith("mode", 1, undefined);
+  });
+
+  it("newFaucet hands the wasm client the Falcon enum value", async () => {
+    await expect(
+      client.newFaucet("mode", false, "Token", "TOK", 8, 1000n, "falcon")
+    ).resolves.toBe("faucet");
+    expect(inner.newFaucet).toHaveBeenCalledWith(
+      "mode",
+      false,
+      "Token",
+      "TOK",
+      8,
+      1000n,
+      2
+    );
+  });
+
+  it("importPublicAccountFromSeed hands the wasm client the Falcon enum value", async () => {
+    const seed = new Uint8Array(32);
+    await expect(
+      client.importPublicAccountFromSeed(seed, "falcon")
+    ).resolves.toBe("account");
+    expect(inner.importPublicAccountFromSeed).toHaveBeenCalledWith(seed, 2);
+  });
+
+  it("importPublicAccountFromSeed rejects a number that is not an AuthScheme value", async () => {
+    await expect(
+      client.importPublicAccountFromSeed(new Uint8Array(32), 99)
+    ).rejects.toThrow('Unknown auth scheme: "99"');
+    expect(inner.importPublicAccountFromSeed).not.toHaveBeenCalled();
+  });
+});
+
 describe("WasmWebClient.terminate", () => {
   const wasmSymbol = Symbol("wasm method");
 
@@ -314,7 +386,7 @@ describe("WasmWebClient.terminate", () => {
     const { client, wasmClient } = makeWebClient();
     const inFlight = deferred();
     client._serializeWasmCall(() => inFlight.promise);
-    const queued = client.newWallet("private", "auth");
+    const queued = client.newWallet("private", "falcon");
 
     client.terminate();
     inFlight.resolve();
@@ -333,7 +405,7 @@ describe("WasmWebClient.terminate", () => {
     await expect(client.callMethodWithWorker("syncState")).rejects.toThrow(
       /terminated/
     );
-    await expect(client.newWallet("private", "auth")).rejects.toThrow(
+    await expect(client.newWallet("private", "falcon")).rejects.toThrow(
       /terminated/
     );
     expect(fakeWasm.WebClient.constructed).toBe(constructed);
@@ -361,7 +433,7 @@ describe("WasmWebClient.terminate", () => {
     const worker = attachWorker(client);
     const inFlight = deferred();
     client._serializeWasmCall(() => inFlight.promise);
-    const wallet = client.newWallet("private", "auth");
+    const wallet = client.newWallet("private", "falcon");
     const submitted = client.submitNewTransaction(
       { toString: () => "0xacc" },
       { serialize: () => new Uint8Array() }

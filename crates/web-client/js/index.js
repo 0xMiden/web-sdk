@@ -4,10 +4,12 @@ import { withSyncLock } from "./syncLock.js";
 import { emitObservation, hasObserver, setObserver } from "./observability.js";
 import { MidenClient } from "./client.js";
 import { CompilerResource } from "./resources/compiler.js";
+import { validateNoteTransportRetryOptions } from "./utils.js";
 import {
   createP2IDNote,
   createP2IDENote,
   buildSwapTag,
+  buildNetworkNote,
   _setWasm as _setStandaloneWasm,
   _setWebClient as _setStandaloneWebClient,
 } from "./standalone.js";
@@ -17,6 +19,7 @@ import {
   StorageResult,
   wordToBigInt,
 } from "./storageView.js";
+import { resolveAuthScheme } from "./utils.js";
 export * from "../Cargo.toml";
 
 export {
@@ -30,7 +33,7 @@ export {
 export { isConsumableNow } from "./utils.js";
 export { MidenClient };
 export { CompilerResource };
-export { createP2IDNote, createP2IDENote, buildSwapTag };
+export { createP2IDNote, createP2IDENote, buildSwapTag, buildNetworkNote };
 export { StorageView, StorageResult, wordToBigInt };
 
 // Internal exports — used by integration tests that need direct access to the low-level WebClient proxy.
@@ -105,7 +108,6 @@ const WRITE_METHODS = new Set([
   "importAccountById",
   "importAccountFile",
   "importNoteFile",
-  "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
   "newB2AggTransactionRequest",
@@ -453,6 +455,21 @@ class WebClient {
    *   as a bech32 address or a hex account ID. Optional: the client receives the
    *   protocol configuration, which names the fee asset, from the node when it
    *   syncs, so this only sets what `feeFaucetId()` reports before the first sync.
+   * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private
+   *   note send after a transient transport failure, an integer from 0 to 10.
+   *   Defaults to 3. `0` bounds a send to one attempt, which suits a
+   *   latency-sensitive UI: the retries run inside this client's serialized
+   *   call, so a slow or rate-limiting transport blocks every other call until
+   *   the send finishes. A non-zero service `retry-after` replaces the computed
+   *   delay with no upper bound; a zero one falls back to it.
+   * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before
+   *   the first such retry, doubling for each later one, an integer from 0 to
+   *   60000. Defaults to 250. With the retries, the total computed backoff
+   *   `interval * (2^retries - 1)`, an omitted value taken at its default, may
+   *   not exceed 120000 ms.
+   * @throws {TypeError} If either retry option is out of range or their total
+   *   backoff exceeds 120000 ms. Checked here, before any worker or WASM call,
+   *   so every way of building a client rejects the same values.
    */
   constructor(
     rpcUrl,
@@ -465,8 +482,14 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    noteTransportMaxRetries,
+    noteTransportRetryIntervalMs
   ) {
+    validateNoteTransportRetryOptions(
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
+    );
     this.rpcUrl = rpcUrl;
     this.noteTransportUrl = noteTransportUrl;
     this.seed = seed;
@@ -480,6 +503,8 @@ class WebClient {
     // property called `feeFaucetId` would shadow the WASM accessor of that name
     // and `client.feeFaucetId()` would return this string instead of calling it.
     this._feeFaucetId = feeFaucetId;
+    this._noteTransportMaxRetries = noteTransportMaxRetries;
+    this._noteTransportRetryIntervalMs = noteTransportRetryIntervalMs;
     this.useWorker = useWorker !== false;
 
     // Check if Web Workers are available AND the caller didn't opt out via
@@ -824,6 +849,8 @@ class WebClient {
         this.logLevel,
         numThreads,
         this._feeFaucetId,
+        this._noteTransportMaxRetries,
+        this._noteTransportRetryIntervalMs,
       ],
     });
   }
@@ -865,6 +892,10 @@ class WebClient {
    *   hex account ID. Optional: the client receives the protocol configuration, which names the
    *   fee asset, from the node when it syncs, so this only sets what `feeFaucetId()` reports
    *   before the first sync.
+   * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private note send
+   *   after a transient transport failure; see the constructor.
+   * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
+   *   retry; see the constructor.
    */
   static async createClient(
     rpcUrl,
@@ -874,7 +905,9 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    noteTransportMaxRetries,
+    noteTransportRetryIntervalMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -888,7 +921,9 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
     );
 
     try {
@@ -905,7 +940,9 @@ class WebClient {
         noteTransportUrl,
         seed,
         network,
-        feeFaucetId
+        feeFaucetId,
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs
       );
 
       // Wait for the worker to be ready
@@ -937,6 +974,11 @@ class WebClient {
    * @returns {Promise<WebClient>} The fully initialized WebClient.
    * @param {{observer?: (observation: object) => void, observeSensitive?: boolean}} [observability]
    *   - Observability fields of `ClientOptions`; see the constructor.
+   * @param {string | undefined} [feeFaucetId] - Fee faucet of the chain; see `createClient`.
+   * @param {number | undefined} [noteTransportMaxRetries] - Retries of a private note send
+   *   after a transient transport failure; see the constructor.
+   * @param {number | undefined} [noteTransportRetryIntervalMs] - Delay before the first such
+   *   retry; see the constructor.
    */
   static async createClientWithExternalKeystore(
     rpcUrl,
@@ -949,7 +991,9 @@ class WebClient {
     logLevel,
     useWorker = true,
     observability,
-    feeFaucetId
+    feeFaucetId,
+    noteTransportMaxRetries,
+    noteTransportRetryIntervalMs
   ) {
     // Construct the instance (synchronously).
     const instance = new WebClient(
@@ -963,7 +1007,9 @@ class WebClient {
       logLevel,
       useWorker,
       observability,
-      feeFaucetId
+      feeFaucetId,
+      noteTransportMaxRetries,
+      noteTransportRetryIntervalMs
     );
 
     try {
@@ -983,7 +1029,9 @@ class WebClient {
         feeFaucetId,
         getKeyCb,
         insertKeyCb,
-        signCb
+        signCb,
+        noteTransportMaxRetries,
+        noteTransportRetryIntervalMs
       );
 
       await instance.ready;
@@ -1030,8 +1078,13 @@ class WebClient {
 
   async newWallet(storageMode, authSchemeId, seed) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
-      return await wasmWebClient.newWallet(storageMode, authSchemeId, seed);
+      return await wasmWebClient.newWallet(
+        storageMode,
+        resolveAuthScheme(authSchemeId, wasm),
+        seed
+      );
     }, "newWallet");
   }
 
@@ -1045,6 +1098,7 @@ class WebClient {
     authSchemeId
   ) {
     return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
       const wasmWebClient = await this.getWasmWebClient();
       return await wasmWebClient.newFaucet(
         storageMode,
@@ -1053,9 +1107,20 @@ class WebClient {
         tokenSymbol,
         decimals,
         maxSupply,
-        authSchemeId
+        resolveAuthScheme(authSchemeId, wasm)
       );
     }, "newFaucet");
+  }
+
+  async importPublicAccountFromSeed(seed, authSchemeId) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.importPublicAccountFromSeed(
+        seed,
+        resolveAuthScheme(authSchemeId, wasm)
+      );
+    }, "importPublicAccountFromSeed");
   }
 
   async newAccount(account, overwrite) {

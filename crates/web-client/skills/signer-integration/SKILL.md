@@ -233,7 +233,7 @@ The two shipped providers are the best worked examples of this contract: read `p
 ## How the Account Gets Initialized
 
 `MidenProvider` calls `initializeSignerAccount(client, accountConfig)`
-(`packages/react-sdk/src/utils/signerAccount.ts:48-164`) right after creating the
+(`packages/react-sdk/src/utils/signerAccount.ts:48-174`) right after creating the
 external-keystore client. There are two paths.
 
 **Fast path - `importAccountId` is set.** The builder is skipped and `client.importAccountById()`
@@ -246,14 +246,21 @@ runs. It tolerates exactly two machine-readable error codes and rethrows everyth
   only refreshes accounts the store already tracks; it never discovers one by ID.
 - `ACCOUNT_ALREADY_TRACKED` - already imported locally; harmless.
 
-**Slow path - build from the commitment** (`signerAccount.ts:105-113`):
+**Slow path - build from the commitment** (`signerAccount.ts:105-123`):
 
 ```ts
+// The package's `AuthScheme` export is the friendly string const; the auth
+// component takes the numeric enum, so read it from the wasm module.
+const ecdsaAuthScheme = (await getWasmOrThrow()).AuthScheme.AuthEcdsaK256Keccak;
+if (ecdsaAuthScheme === undefined) {
+  throw new Error("The Miden SDK wasm module has no AuthScheme.AuthEcdsaK256Keccak, ...");
+}
+
 new AccountBuilder(seed)
   .withAuthComponent(
     AccountComponent.createAuthComponentFromCommitment(
       commitmentWord,
-      AuthScheme.AuthEcdsaK256Keccak  // see the AuthScheme trap below
+      ecdsaAuthScheme  // see the AuthScheme trap below
     )
   )
   .storageMode(config.storageMode)
@@ -268,8 +275,11 @@ never reached. Only when the import throws does it fall through to checking
 `client.getAccount(accountId)` for a local copy and finally `client.newAccount(account, false)`.
 
 Note the hard-coded ECDSA-K256/Keccak auth scheme: an external signer's commitment is registered
-as an ECDSA key, not Falcon. The `AuthScheme` symbol here is the numeric WASM enum, not the frozen
-string const the package exports - see "The `AuthScheme` trap" under Guarded Multisig below.
+as an ECDSA key, not Falcon. The value is the numeric WASM enum, read from the wasm module that the
+package's `getWasmOrThrow()` returns, never from the frozen string const the package exports as
+`AuthScheme` (that const has no `AuthEcdsaK256Keccak` member). If the wasm enum lacks the value,
+initialization throws instead of building an account - see "The `AuthScheme` trap" under Guarded
+Multisig below.
 
 **`withAuthComponent` validates nothing.** Its body is `with_component` verbatim
 (`crates/web-client/src/models/account_builder.rs:81-85`), so the name is documentation,
@@ -358,7 +368,7 @@ const accountConfig: SignerAccountConfig = {
 
 Each entry must be a real `AccountComponent` - created via `AccountComponent.compile()`,
 `.fromPackage()` or `.fromLibrary()`. The initializer duck-checks for a `getProcedures` method and
-throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:116-128`):
+throws otherwise (`packages/react-sdk/src/utils/signerAccount.ts:126-138`):
 
 > Each entry in customComponents must be an AccountComponent instance created via AccountComponent.compile(), AccountComponent.fromPackage(), or AccountComponent.fromLibrary().
 
@@ -474,13 +484,15 @@ Passing both `recipient` and `script`, or neither, throws
 `CreateNetworkNoteOptions` / `NetworkNoteResult` in `packages/react-sdk/src/types/index.ts:406-431`.
 From the raw client the equivalent is `client.transactions.createNetworkNote(options)`.
 
-> **`buildNetworkNote` is declared but not importable at this pin.** It builds the same note without
-> submitting, lives in `crates/web-client/js/standalone.js:121` and is declared in
-> `js/types/api-types.d.ts:1838` - but neither package entry re-exports it. Both `js/index.js:7-13`
-> and `js/node-index.js:19-25` pull only `createP2IDNote`, `createP2IDENote` and `buildSwapTag` out
-> of `standalone.js`, and `standalone.js` has no subpath in the package's `exports` map. A reader
-> trusting the `.d.ts` gets a runtime failure. Treat the declaration as aspirational until an entry
-> exports it.
+To build the same note without submitting it, import `buildNetworkNote(opts)` from
+`@miden-sdk/miden-sdk`; both the browser and the node entry export it, and it takes the same
+options. The transaction that emits the note must then declare the target as a foreign account,
+which `createNetworkNote` does for you: build it with
+`client.feeAwareTransactionRequestBuilder(sender)`, `.withOwnOutputNotes(...)` and
+`.withForeignAccounts(...)` holding `ForeignAccount.public(targetId, new AccountStorageRequirements())`,
+and get it included within 20 blocks of its reference block. After an expiry rejection, sync,
+then build the request again from new `NoteArray` and `ForeignAccountArray` instances (the
+builder takes both by value) and submit it again.
 
 ### Creating the network account
 

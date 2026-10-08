@@ -51,6 +51,7 @@ async function openTestDb(version = "0.1.0"): Promise<string> {
 // ============================================================
 const ACC = "0xacc1";
 const CODE_ROOT = "0xcode1";
+const CODE_BYTES = new Uint8Array([1, 2, 3, 4]);
 const STORAGE_ROOT = "0xsroot1";
 const VAULT_ROOT = "0xvroot1";
 const COMMITMENT = "0xcommit1";
@@ -740,6 +741,7 @@ describe("applyFullAccountState", () => {
       storageMapEntries: [{ slotName: "map1", key: "k1", value: "vnew" }],
       assets: [{ vaultKey: "vk1", asset: "0xnewasset" }],
       codeRoot: CODE_ROOT,
+      code: CODE_BYTES,
       storageRoot: "0xsroot2",
       vaultRoot: "0xvroot2",
       committed: true,
@@ -785,6 +787,7 @@ describe("applyFullAccountState", () => {
       storageMapEntries: [],
       assets: [],
       codeRoot: "0xcodeNew",
+      code: CODE_BYTES,
       storageRoot: "0xsrootNew",
       vaultRoot: "0xvrootNew",
       committed: false,
@@ -815,6 +818,7 @@ describe("applyFullAccountState", () => {
       storageMapEntries: [{ slotName: "brand-new-map", key: "k", value: "v" }],
       assets: [{ vaultKey: "brand-new-key", asset: "0xa" }],
       codeRoot: CODE_ROOT,
+      code: CODE_BYTES,
       storageRoot: STORAGE_ROOT,
       vaultRoot: VAULT_ROOT,
       committed: false,
@@ -843,6 +847,40 @@ describe("applyFullAccountState", () => {
       .toArray();
     expect(histAssets.length).toBeGreaterThan(0);
     expect(histAssets[0].oldAsset).toBeNull();
+  });
+});
+
+// ============================================================
+// applyFullAccountState - account-code persistence
+// ============================================================
+describe("applyFullAccountState - account-code persistence", () => {
+  it("writes the code row for a code root the store has never seen", async () => {
+    // An account known only through sync has no code row until a full-state
+    // apply writes one; without it getAccountCode cannot resolve the header.
+    const dbId = await openTestDb();
+    const NEW_ROOT = "0xcode-never-seen";
+
+    expect(await getAccountCode(dbId, NEW_ROOT)).toBeNull();
+
+    await applyFullAccountState(dbId, {
+      accountId: "0xsync-only",
+      nonce: "1",
+      storageSlots: [],
+      storageMapEntries: [],
+      assets: [],
+      codeRoot: NEW_ROOT,
+      code: CODE_BYTES,
+      storageRoot: STORAGE_ROOT,
+      vaultRoot: VAULT_ROOT,
+      committed: true,
+      accountCommitment: "0xcommit-sync",
+      accountSeed: undefined,
+    });
+
+    const code = await getAccountCode(dbId, NEW_ROOT);
+    expect(code).not.toBeNull();
+    expect(code?.root).toBe(NEW_ROOT);
+    expect(code?.code).toBe("AQIDBA==");
   });
 });
 
@@ -1395,6 +1433,7 @@ describe("error paths: unregistered dbId re-throws", () => {
         storageMapEntries: [],
         assets: [],
         codeRoot: "0xcode",
+        code: CODE_BYTES,
         storageRoot: "0xsr",
         vaultRoot: "0xvr",
         committed: false,

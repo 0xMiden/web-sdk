@@ -62,13 +62,11 @@ describe("entry parity", () => {
     const browser = exportedNames(read("index.js"));
     const node = exportedNames(read("node-index.js"));
 
-    // Symmetric, so browser-only and node-only are both caught: either entry
-    // exporting a helper obliges the other, since they share one .d.ts.
-    // A helper neither entry exports is a different defect (a declaration no
-    // consumer can import) and is tracked separately in #388.
+    // Every declared helper implemented in JS must be exported by both
+    // entries, since they share one .d.ts: a helper either entry lacks is a
+    // declaration that consumer cannot import.
     const missing = declared
       .filter((name) => implemented.has(name))
-      .filter((name) => browser.has(name) || node.has(name))
       .flatMap((name) => [
         browser.has(name) ? null : `browser:${name}`,
         node.has(name) ? null : `node:${name}`,

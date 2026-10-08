@@ -33,6 +33,7 @@ import {
   RUN_ID,
 } from "./playwright.global.setup";
 import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
+import { resolveAuthScheme } from "../js/utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -192,17 +193,34 @@ export function wrapNodeClient(rawClient: any, rawSdk: any): any {
           return guard;
         };
       }
+      // The AuthScheme arguments of these three resolve against the native
+      // enum, as the shipped Node entry (js/node/napi-compat.js) does.
       if (prop === "newWallet") {
         return (mode: any, authScheme: any, seed?: any) => {
           const normSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          const result = target.newWallet(mode, authScheme, normSeed ?? null);
+          const result = target.newWallet(
+            mode,
+            resolveAuthScheme(authScheme, rawSdk),
+            normSeed ?? null
+          );
           if (result && typeof result.then === "function") {
             return result.then((v: any) => (v === null ? undefined : v));
           }
           return result === null ? undefined : result;
+        };
+      }
+      if (prop === "newFaucet" || prop === "importPublicAccountFromSeed") {
+        const authSchemeIndex = prop === "newFaucet" ? 6 : 1;
+        return (...args: any[]) => {
+          const normalizedArgs = args.map(normalizeArg);
+          normalizedArgs[authSchemeIndex] = resolveAuthScheme(
+            normalizedArgs[authSchemeIndex],
+            rawSdk
+          );
+          return target[prop](...normalizedArgs);
         };
       }
       const val = target[prop];

@@ -292,22 +292,24 @@ useEffect(() => {
 <MidenProvider config={{ rpcUrl: "testnet" }}>
 ```
 
-If you genuinely need the low-level constructors, these are the current signatures. Note the trailing `observability` bag, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
+If you genuinely need the low-level constructors, these are the current signatures. Note the `observability` bag and the arguments after it, and that there is **no debug-mode argument** anywhere (nor a `ClientOptions.debugMode`):
 
 ```ts
 WasmWebClient.createClient(
   rpcUrl, noteTransportUrl, seed, network,
-  logLevel, useWorker = true, observability
+  logLevel, useWorker = true, observability,
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
 ): Promise<WebClient>
 
 WasmWebClient.createClientWithExternalKeystore(
   rpcUrl, noteTransportUrl, seed, storeName,
   getKeyCb, insertKeyCb, signCb,
-  logLevel, useWorker = true, observability
+  logLevel, useWorker = true, observability,
+  feeFaucetId, noteTransportMaxRetries, noteTransportRetryIntervalMs
 ): Promise<WebClient>
 ```
 
-`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser.
+`observability` is `{ observer?: (observation: object) => void, observeSensitive?: boolean }`. The fourth positional argument is the store name in both; `createClient` documents it as `network` and `createClientWithExternalKeystore` as `storeName`, but it is the same slot and the same meaning - set it when several clients share one browser. The last three mirror the `ClientOptions` fields of the same names; the two retry options throw a `TypeError` when out of range (0 to 10 and 0 to 60000, and at most 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default). The retries run inside the client's serialized call, so a slow or rate-limiting transport blocks other client calls until the send finishes; a non-zero service `retry-after` replaces the computed delay with no upper bound and a zero one falls back to it. `noteTransportMaxRetries: 0` bounds a send to one attempt, which suits a latency-sensitive UI.
 
 ## FP10: outputNotes() Includes the Fee Note (CRITICAL - fails silently)
 
@@ -358,6 +360,8 @@ await client.notes.sendPrivate({ note, to, inclusionProof });
 
 await client.notes.sendPrivateOutput({ noteId, to });
 ```
+
+A rejection from either is final. The SDK keeps no queue, and neither `sync()` nor `syncNoteTransport()` sends the note again; only transient transport failures are retried, inside the call (`noteTransportMaxRetries` / `noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff in total). Those retries hold the client's serialized call, and the React provider lock in the hooks, so other calls wait until the send finishes. Keep the note id and send the same note again: delivery is idempotent by note id. The React hooks report the same situation as a `PrivateNoteDeliveryError` and retry it with `useResendPrivateNotes`.
 
 Related: `notes.fetchPrivate({ mode: "all" })` is gone. `fetchPrivate()` takes no arguments and always fetches incrementally from the stored cursor; historical notes for a newly tracked tag are backfilled by `sync()`, so after adding a tag just sync.
 
@@ -497,7 +501,7 @@ Verify: `crates/web-client/js/eager.js`.
 | FP9 | StrictMode | LOW | Use MidenProvider, not manual `WasmWebClient.createClient()`; there is no debug-mode argument |
 | FP10 | Fee note in `outputNotes()` | CRITICAL | The list is one longer on a fee-charging chain; use `userOutputNotes()` / `feeNote()` on `ExecutedTransaction`, filter manually elsewhere |
 | FP11 | `expiredBefore` removed | HIGH | `transactions.list({ expiredBefore })` throws; use `{ status: "uncommitted" }` + `expirationBlockNum()` |
-| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits |
+| FP12 | `sendPrivate` inclusion proof | HIGH | Pass a `NoteInclusionProof`, or `sendPrivateOutput` after the note commits; a rejected send is final, so send it again yourself |
 | FP13 | Foreign-account inputs | HIGH | Pinned to one block; do not sync between fetching and executing |
 | FP14 | `preview` already authorized | MEDIUM | Summary only while auth is pending; otherwise rejects `TRANSACTION_ALREADY_AUTHORIZED` |
 | FP15 | `useAccounts().faucets` | MEDIUM | Always empty; classify from `accounts` with `isFaucet()` |

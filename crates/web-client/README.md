@@ -273,6 +273,19 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`noteTransportMaxRetries` (0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
+backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
+`notes.sendPrivate` / `notes.sendPrivateOutput` retry a transient note
+transport failure within the call. The retries run inside the client's
+serialized call, so a slow or rate-limiting transport blocks other client calls
+until the send finishes; a non-zero service `retry-after` replaces the computed
+delay with no upper bound, and a zero one falls back to it. Pass
+`noteTransportMaxRetries: 0` to bound a send to one attempt in a
+latency-sensitive UI. A send that still fails rejects, and the rejection is
+final: the client keeps no queue and no sync sends the note again, so send the
+same note again to retry (delivery is idempotent by note id).
+
 ### Lazy usage (`/lazy`)
 
 ```typescript
@@ -905,7 +918,7 @@ const { txId, note } = await client.transactions.createNetworkNote({
 console.log(note.isNetworkNote()); // true
 ```
 
-Provide exactly one of `script` or `recipient`. Notes are always Public — the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting.
+Provide exactly one of `script` or `recipient`. Notes are always Public - the attachment, not the tag, is what a network account matches on. The standalone `buildNetworkNote(opts)` builds the same note without submitting; the transaction that emits it must then declare the target as a foreign account (`withForeignAccounts`), which `createNetworkNote` does for you (see the network notes guide for the full request).
 
 To create the receiving account, build a **public** account carrying the network-account auth component — its note-script allowlist tells the node which notes the account may auto-consume:
 

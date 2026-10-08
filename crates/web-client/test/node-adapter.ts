@@ -18,6 +18,7 @@ import fs from "fs";
 import os from "os";
 import { FaucetType } from "../js/enums.js";
 import { normalizeArg, wrapClass } from "../js/node/napi-compat.js";
+import { resolveAuthScheme } from "../js/utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -169,15 +170,28 @@ function wrapClient(client: any, storeName?: string): any {
       if (prop === "wasmWebClient") {
         return target;
       }
-      // newWallet: convert Uint8Array/Buffer seed to plain Array for napi's Vec<u8>
+      // newWallet: convert Uint8Array/Buffer seed to plain Array for napi's Vec<u8>.
+      // The AuthScheme arguments here and below resolve against the native
+      // enum, as the shipped Node entry (js/node/napi-compat.js) does.
       if (prop === "newWallet") {
         return (mode: any, authScheme: any, seed?: any) => {
           const normalizedSeed =
             seed instanceof Uint8Array || Buffer.isBuffer(seed)
               ? Array.from(seed)
               : seed;
-          return target.newWallet(mode, authScheme, normalizedSeed ?? null);
+          return target.newWallet(
+            mode,
+            resolveAuthScheme(authScheme, sdk),
+            normalizedSeed ?? null
+          );
         };
+      }
+      if (prop === "importPublicAccountFromSeed") {
+        return (seed: any, authScheme: any) =>
+          target.importPublicAccountFromSeed(
+            normalizeArg(seed),
+            resolveAuthScheme(authScheme, sdk)
+          );
       }
       // Methods that take JsU64 (BigInt in browser, Number in Node.js)
       if (prop === "newFaucet") {
@@ -198,7 +212,7 @@ function wrapClient(client: any, storeName?: string): any {
             symbol,
             decimals,
             toNum(maxSupply),
-            auth,
+            resolveAuthScheme(auth, sdk),
             seed
           );
       }

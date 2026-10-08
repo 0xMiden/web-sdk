@@ -5,6 +5,8 @@ import { useSend } from "../../hooks/useSend";
 import { useMiden } from "../../context/MidenProvider";
 import { useMidenStore } from "../../store/MidenStore";
 import {
+  createMockNote,
+  createMockOutputNote,
   createMockWebClient,
   createMockTransactionRequest,
   createMockTransactionResult,
@@ -773,16 +775,18 @@ describe("useSend", () => {
   });
 
   describe("private note branch coverage", () => {
-    it("should throw Missing full note when extractFullNote returns null (lines 276-277)", async () => {
-      // Return a txResult whose executedTransaction throws so extractFullNote catches and returns null
+    it("reports a note the relay rejects without details as undelivered, with the transaction id", async () => {
+      const partialNote = createMockOutputNote(createMockNote("0xpartial"));
+      partialNote.intoFull.mockReturnValue(null as never);
       const brokenTxResult = {
         id: vi.fn(() => ({
           toHex: vi.fn(() => "0xtxbad"),
           toString: vi.fn(() => "0xtxbad"),
         })),
-        executedTransaction: vi.fn(() => {
-          throw new Error("no output notes");
-        }),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({ notes: vi.fn(() => [partialNote]) })),
+          userOutputNotes: vi.fn(() => [partialNote]),
+        })),
       };
 
       const record = {
@@ -804,6 +808,11 @@ describe("useSend", () => {
         applyTransaction: vi.fn().mockResolvedValue({}),
         getTransactions: vi.fn().mockResolvedValue([record]),
         sendPrivateNote: vi.fn().mockResolvedValue(undefined),
+        sendPrivateOutputNote: vi
+          .fn()
+          .mockRejectedValue(
+            new Error("output note has no details to relay (recipient unknown)")
+          ),
       });
 
       mockUseMiden.mockReturnValue({
@@ -823,8 +832,61 @@ describe("useSend", () => {
             amount: 100n,
             noteType: "private",
           })
-        ).rejects.toThrow("Missing full note for private send");
+        ).rejects.toMatchObject({
+          code: "PRIVATE_NOTE_DELIVERY_FAILED",
+          transactionId: "0xtxbad",
+          commitment: "committed",
+          undelivered: [{ noteId: "0xpartial", to: "0x2" }],
+          message: expect.stringContaining("no details to relay"),
+        });
       });
+      expect(mockClient.applyTransaction).toHaveBeenCalledTimes(1);
+      expect(mockClient.sendPrivateOutputNote).toHaveBeenCalledWith(
+        "0xpartial",
+        expect.anything()
+      );
+    });
+
+    it("relays the user note's id, never the fee note listed first in outputNotes()", async () => {
+      const userNote = createMockOutputNote(createMockNote("0xuser"));
+      const feeNote = createMockOutputNote(createMockNote("0xfee"));
+      const txResult = {
+        id: vi.fn(() => ({ toHex: vi.fn(() => "0xtxfee") })),
+        executedTransaction: vi.fn(() => ({
+          outputNotes: vi.fn(() => ({
+            notes: vi.fn(() => [feeNote, userNote]),
+          })),
+          userOutputNotes: vi.fn(() => [userNote]),
+        })),
+      };
+      const mockClient = createMockWebClient({
+        newSendTransactionRequest: vi
+          .fn()
+          .mockReturnValue(createMockTransactionRequest()),
+        executeTransaction: vi.fn().mockResolvedValue(txResult),
+        submitProvenTransaction: vi.fn().mockResolvedValue(100),
+      });
+      mockUseMiden.mockReturnValue({
+        client: mockClient,
+        isReady: true,
+        sync: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const { result } = renderHook(() => useSend());
+      await act(async () => {
+        await result.current.send({
+          from: "0x1",
+          to: "0x2",
+          assetId: "0x3",
+          amount: 100n,
+          noteType: "private",
+        });
+      });
+
+      const relayed = mockClient.sendPrivateOutputNote.mock.calls.map(
+        ([noteId]) => noteId
+      );
+      expect(relayed).toEqual(["0xuser"]);
     });
 
     it("should use submitNewTransactionWithProver in returnNote path (line 183)", async () => {

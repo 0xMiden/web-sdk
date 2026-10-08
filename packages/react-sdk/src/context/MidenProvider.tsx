@@ -272,7 +272,9 @@ export function MidenProvider({
               undefined,
               resolvedConfig.useWorker,
               undefined,
-              resolvedConfig.feeFaucetId
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.noteTransportMaxRetries,
+              resolvedConfig.noteTransportRetryIntervalMs
             );
             unowned = webClient;
 
@@ -301,7 +303,9 @@ export function MidenProvider({
               undefined,
               resolvedConfig.useWorker,
               undefined,
-              resolvedConfig.feeFaucetId
+              resolvedConfig.feeFaucetId,
+              resolvedConfig.noteTransportMaxRetries,
+              resolvedConfig.noteTransportRetryIntervalMs
             );
             unowned = webClient;
             if (cancelled) return;
