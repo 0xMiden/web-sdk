@@ -401,13 +401,30 @@ describe("addresses", () => {
     expect(result).toHaveLength(1);
   });
 
-  it("removes an address", async () => {
+  it("removes an address, reporting that it was tracked", async () => {
     const dbId = await openTestDb();
     const addr = new Uint8Array([0xaa, 0xbb]);
     await insertAccountAddress(dbId, ACC, addr);
-    await removeAccountAddress(dbId, addr);
+    expect(await removeAccountAddress(dbId, addr)).toBe(true);
     const result = await getAccountAddresses(dbId, ACC);
     expect(result).toEqual([]);
+  });
+
+  it("reports false for an address that was never tracked", async () => {
+    const dbId = await openTestDb();
+    // `Store::remove_address` returns this verbatim; callers use it to tell an
+    // untracked address from one they just stopped tracking.
+    expect(await removeAccountAddress(dbId, new Uint8Array([0xde, 0xad]))).toBe(
+      false
+    );
+  });
+
+  it("reports false on a second removal of the same address", async () => {
+    const dbId = await openTestDb();
+    const addr = new Uint8Array([0xaa, 0xbb]);
+    await insertAccountAddress(dbId, ACC, addr);
+    expect(await removeAccountAddress(dbId, addr)).toBe(true);
+    expect(await removeAccountAddress(dbId, addr)).toBe(false);
   });
 });
 
@@ -1455,5 +1472,58 @@ describe("undoAccountStates: multiple nonces for same account (sort comparator)"
       .equals(ACC)
       .toArray();
     expect(slots[0].slotValue).toBe("0xv1");
+  });
+});
+
+describe("account code on a patch", () => {
+  it("stores code before the header records the new commitment", async () => {
+    const dbId = await openTestDb();
+    const db = getDatabase(dbId);
+    await seedAccount(dbId);
+    const code = new Uint8Array([9, 8, 7]);
+
+    await applyAccountPatch(
+      dbId,
+      ACC,
+      "2",
+      [],
+      [],
+      [],
+      "0xcode2",
+      STORAGE_ROOT,
+      VAULT_ROOT,
+      false,
+      "0xcommit2",
+      code
+    );
+
+    expect(await db.accountCodes.get("0xcode2")).toEqual({
+      root: "0xcode2",
+      code,
+    });
+    expect(
+      (await db.latestAccountHeaders.where("id").equals(ACC).first())?.codeRoot
+    ).toBe("0xcode2");
+  });
+
+  it("rejects a changed code commitment that arrives without code", async () => {
+    const dbId = await openTestDb();
+    await seedAccount(dbId);
+
+    await expect(
+      applyAccountPatch(
+        dbId,
+        ACC,
+        "2",
+        [],
+        [],
+        [],
+        "0xcode2",
+        STORAGE_ROOT,
+        VAULT_ROOT,
+        false,
+        "0xcommit2"
+      )
+    ).rejects.toThrow(/without the new code/);
   });
 });

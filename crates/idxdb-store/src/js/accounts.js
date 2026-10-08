@@ -63,6 +63,33 @@ export async function getAccountHeader(dbId, accountId) {
         logWebStoreError(error, `Error while fetching account header for id: ${accountId}`);
     }
 }
+export async function getAccountSnapshot(dbId, accountId, maps, assets) {
+    const db = getDatabase(dbId);
+    return db.dexie.transaction("r", [
+        db.latestAccountHeaders,
+        db.accountCodes,
+        db.latestAccountStorages,
+        db.latestStorageMapEntries,
+        db.latestAccountAssets,
+    ], async () => {
+        const header = await getAccountHeader(dbId, accountId);
+        if (!header)
+            return null;
+        const [code, storage, mapEntries, vaultAssets] = await Promise.all([
+            getAccountCode(dbId, header.codeRoot),
+            getAccountStorage(dbId, accountId, []),
+            maps ? getAccountStorageMaps(dbId, accountId) : [],
+            assets ? getAccountVaultAssets(dbId, accountId, []) : [],
+        ]);
+        return {
+            header,
+            code,
+            storage,
+            maps: mapEntries,
+            assets: vaultAssets,
+        };
+    });
+}
 export async function getAccountHeaderByCommitment(dbId, accountCommitment) {
     try {
         const db = getDatabase(dbId);
@@ -259,7 +286,19 @@ export async function upsertVaultAssets(dbId, accountId, assets) {
         logWebStoreError(error, `Error inserting assets`);
     }
 }
-export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment) {
+// The header names code by commitment, so the code row has to land before the header.
+// An empty `code` means the patch carries none: a changed commitment is then an error,
+// unless there is no previous header to compare against.
+async function persistAccountCode(db, codeRoot, code, previousCodeRoot) {
+    if (code && code.length > 0) {
+        await db.accountCodes.put({ root: codeRoot, code });
+        return;
+    }
+    if (previousCodeRoot !== undefined && previousCodeRoot !== codeRoot) {
+        throw new Error(`account code commitment changed from ${previousCodeRoot} to ${codeRoot} without the new code`);
+    }
+}
+export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, changedMapEntries, changedAssets, codeRoot, storageRoot, vaultRoot, committed, commitment, code, initialAccountCommitment) {
     try {
         const db = getDatabase(dbId);
         await db.dexie.transaction("rw", [
@@ -271,7 +310,14 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
             db.historicalAccountAssets,
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
+            db.accountCodes,
         ], async () => {
+            if (initialAccountCommitment !== undefined) {
+                const current = await db.latestAccountHeaders.get(accountId);
+                if (current?.accountCommitment !== initialAccountCommitment) {
+                    throw new Error(`account patch input commitment does not match persisted state for ${accountId}`);
+                }
+            }
             const resetMapSlots = new Set();
             // Apply storage patch: read old → archive → write/delete final state.
             for (const slot of updatedSlots) {
@@ -418,6 +464,7 @@ export async function applyAccountPatch(dbId, accountId, nonce, updatedSlots, ch
                     watched: oldHeader.watched ?? false,
                 });
             }
+            await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
             await db.latestAccountHeaders.put({
                 id: accountId,
                 codeRoot,
@@ -621,7 +668,7 @@ async function restoreAssetsFromHistorical(db, accountId, nonce) {
 export async function applyFullAccountState(dbId, accountState) {
     try {
         const db = getDatabase(dbId);
-        const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, } = accountState;
+        const { accountId, nonce, storageSlots, storageMapEntries, assets, codeRoot, storageRoot, vaultRoot, committed, accountCommitment, accountSeed, code, } = accountState;
         await db.dexie.transaction("rw", [
             db.latestAccountStorages,
             db.historicalAccountStorages,
@@ -631,6 +678,7 @@ export async function applyFullAccountState(dbId, accountState) {
             db.historicalAccountAssets,
             db.latestAccountHeaders,
             db.historicalAccountHeaders,
+            db.accountCodes,
         ], async () => {
             // Archive: save current latest values to historical (so they can be
             // restored on undo), then replace latest with the new state.
@@ -657,6 +705,7 @@ export async function applyFullAccountState(dbId, accountState) {
                     watched: oldHeader.watched ?? false,
                 });
             }
+            await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
             await db.latestAccountHeaders.put({
                 id: accountId,
                 codeRoot,
@@ -710,13 +759,23 @@ export async function insertAccountAddress(dbId, accountId, address) {
         logWebStoreError(error, `Error inserting address with value: ${String(address)} for the account ID ${accountId}`);
     }
 }
+// Reports whether the address was tracked, which the `Store` trait requires of
+// `remove_address`. Dexie's `Collection.delete()` resolves to the number of
+// records it removed, so the answer needs no extra read.
 export async function removeAccountAddress(dbId, address) {
     try {
         const db = getDatabase(dbId);
-        await db.addresses.where("address").equals(address).delete();
+        const deleted = await db.addresses
+            .where("address")
+            .equals(address)
+            .delete();
+        return deleted > 0;
     }
     catch (error) {
         logWebStoreError(error, `Error removing address with value: ${String(address)}`);
+        // Unreachable: logWebStoreError rethrows. Present so the compiler can see
+        // that no path returns undefined.
+        throw error;
     }
 }
 export async function upsertForeignAccountCode(dbId, accountId, code, codeRoot) {

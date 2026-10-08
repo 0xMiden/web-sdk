@@ -14,7 +14,7 @@ impl AccountComponentCode {
     /// Returns the underlying Library
     #[js_export(js_name = "asLibrary")]
     pub fn as_library(&self) -> Result<Library, JsErr> {
-        let native_library = self.0.as_library();
+        let native_library = self.0.as_package();
         Ok(native_library.into())
     }
 }

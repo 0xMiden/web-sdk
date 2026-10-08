@@ -85,7 +85,10 @@ test.describe("send transaction tests", () => {
       // Receiver consumes by note ID
       const inputNote = await client.getInputNote(sentNoteId);
       const note = inputNote.toNote();
-      const consumeRequest = client.newConsumeTransactionRequest([note]);
+      const consumeRequest = await client.newConsumeTransactionRequest(
+        [note],
+        receiver.id()
+      );
       await client.submitNewTransaction(receiver.id(), consumeRequest);
       await client.proveBlock();
       await client.syncState();
@@ -218,7 +221,7 @@ test.describe("custom transaction tests", () => {
             exec.account_id::eq assert.err="P2ID's target account address and transaction address do not match"
             # => []
 
-            exec.basic_wallet::add_assets_to_account
+            exec.basic_wallet::move_note_assets_to_account
             # => []
         end
       `;
@@ -378,7 +381,7 @@ test.describe("custom transaction tests", () => {
             dup add.1 mem_load swap mem_load
             exec.active_account::get_id
             exec.account_id::eq assert.err="P2ID's target account address and transaction address do not match"
-            exec.basic_wallet::add_assets_to_account
+            exec.basic_wallet::move_note_assets_to_account
         end
       `;
 

@@ -5,7 +5,8 @@ use miden_client::Word;
 use miden_client::account::{Account, AccountId};
 use miden_client::crypto::{Forest, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteDetailsCommitment, NoteTag};
-use miden_client::store::StoreError;
+use miden_client::protocol_config::protocol_config_setting_key;
+use miden_client::store::{SettingScope, StoreError};
 use miden_client::sync::{
     NoteTagRecord,
     NoteTagSource,
@@ -14,10 +15,10 @@ use miden_client::sync::{
     StateSyncUpdate,
 };
 use miden_client::utils::{Deserializable, Serializable};
+use miden_client_proto::{decode_mmr_peaks, encode, encode_mmr_peaks};
 
 use super::IdxdbStore;
-use super::account::RootsUpdateMode;
-use super::account::utils::account_from_full_state_patch;
+use super::account::utils::creation_account_from_patch;
 use super::chain_data::utils::{
     SerializedPartialBlockchainNodeData,
     serialize_partial_blockchain_node,
@@ -29,6 +30,7 @@ use crate::promise::{await_js, await_js_value};
 mod js_bindings;
 pub use js_bindings::JsAccountUpdate;
 use js_bindings::{
+    JsAccountWitnessUpdate,
     JsStateSyncUpdate,
     idxdb_add_note_tag,
     idxdb_apply_state_sync,
@@ -104,11 +106,10 @@ impl IdxdbStore {
             return Ok(MmrPeaks::new(Forest::empty(), Vec::new())?);
         }
 
-        let mmr_peaks_nodes: Vec<Word> = Vec::<Word>::read_from_bytes(&peaks_idxdb.peaks)?;
         let forest = Forest::new(
             usize::try_from(peaks_idxdb.block_num).expect("u32 block_num should fit in usize"),
         )?;
-        MmrPeaks::new(forest, mmr_peaks_nodes).map_err(StoreError::MmrError)
+        Ok(decode_mmr_peaks(forest, &peaks_idxdb.peaks)?)
     }
 
     pub(super) async fn add_note_tag(&self, tag: NoteTagRecord) -> Result<bool, StoreError> {
@@ -152,13 +153,14 @@ impl IdxdbStore {
         &self,
         state_sync_update: StateSyncUpdate,
     ) -> Result<(), StoreError> {
-        let StateSyncUpdate {
+        let (
             block_num,
             partial_blockchain_updates,
             note_updates,
             transaction_updates,
             account_updates,
-        } = state_sync_update;
+            protocol_config,
+        ) = state_sync_update.into_parts();
 
         let (
             block_headers_as_bytes,
@@ -168,7 +170,7 @@ impl IdxdbStore {
             serialized_nodes,
         ) = serialize_partial_blockchain_updates(&partial_blockchain_updates)?;
 
-        let new_peaks_bytes = partial_blockchain_updates.new_peaks.peaks().to_vec().to_bytes();
+        let new_peaks_bytes = encode_mmr_peaks(&partial_blockchain_updates.new_peaks);
 
         let (serialized_input_notes, serialized_output_notes): (Vec<_>, Vec<_>) = {
             let input_notes = note_updates.updated_input_notes();
@@ -206,21 +208,9 @@ impl IdxdbStore {
             .map(|tx_record| tx_record.details.final_account_state)
             .collect::<Vec<_>>();
 
-        // Remove the account states from the DB; their SMT roots are discarded from the forest
-        // below.
+        // Restore the previous account states. The forest keeps the undone roots until a reader
+        // sees them differ from the tables and refreshes the account.
         self.undo_account_states(&account_states_to_rollback).await?;
-
-        // Discard roots for rolled-back accounts
-        {
-            let mut smt_forest = self.smt_forest.write();
-            for tx_record in transaction_updates.discarded_transactions() {
-                smt_forest.discard_roots(tx_record.details.account_id);
-            }
-            // Commit roots for successfully committed transactions
-            for tx_record in transaction_updates.committed_transactions() {
-                smt_forest.commit_roots(tx_record.details.account_id);
-            }
-        }
 
         let transaction_updates: Vec<_> = transaction_updates
             .committed_transactions()
@@ -228,37 +218,27 @@ impl IdxdbStore {
             .map(serialize_transaction_record)
             .collect();
 
-        // Separate full account updates from incremental absolute patches. A full-state patch can
-        // also occur when a newly-created account is too large for the node's full-state response;
-        // convert it back into an account so it follows the same replacement path.
+        // Separate full account updates from incremental absolute patches. An oversized newly
+        // created account (final nonce 1) arrives as a creation patch rather than a full account;
+        // rebuild it so it follows the same replacement path. Code on a later nonce is an upgrade
+        // and stays on the incremental path.
         let mut full_accounts: Vec<Account> = Vec::new();
         let mut patch_updates = Vec::new();
         for update in account_updates.updated_public_accounts() {
             match update {
                 PublicAccountUpdate::Full(account) => full_accounts.push(account.clone()),
-                PublicAccountUpdate::Patch { new_header, patch } if patch.is_full_state() => {
-                    full_accounts.push(account_from_full_state_patch(patch, new_header)?);
-                },
                 PublicAccountUpdate::Patch { new_header, patch } => {
-                    patch_updates.push((new_header, patch));
+                    if let Some(account) = creation_account_from_patch(patch, new_header)? {
+                        full_accounts.push(account);
+                    } else {
+                        patch_updates.push((new_header, patch));
+                    }
                 },
             }
         }
 
-        // Update SMT forest for full account updates (insert nodes + replace roots atomically)
-        {
-            let mut smt_forest = self.smt_forest.write();
-            for account in &full_accounts {
-                smt_forest.insert_and_register_account_state(
-                    account.id(),
-                    account.vault(),
-                    account.storage(),
-                )?;
-            }
-        }
-
-        // Apply partial patches incrementally. Their storage and vault values are already absolute,
-        // so no full account or relative-delta reconstruction is required.
+        // Apply partial patches incrementally. Their values are already absolute, so no account
+        // reconstruction is required.
         for (new_header, patch) in patch_updates {
             let account_id = new_header.id();
 
@@ -276,8 +256,20 @@ impl IdxdbStore {
                 )));
             }
 
-            self.apply_incremental_account_patch(new_header, patch, RootsUpdateMode::Replace)
-                .await?;
+            self.apply_incremental_account_patch(new_header, patch).await?;
+        }
+
+        // Persist the protocol configuration the node sent before the chain state that commits to
+        // it lands. A failed write here fails the sync, which retries from the same height and is
+        // delivered the configuration again; a configuration stored ahead of a failed state write
+        // is only an unused row keyed by its commitment.
+        if let Some(config) = protocol_config {
+            self.set_setting(
+                SettingScope::Client,
+                protocol_config_setting_key(config.to_commitment()),
+                config.to_bytes(),
+            )
+            .await?;
         }
 
         let state_update = JsStateSyncUpdate {
@@ -296,9 +288,23 @@ impl IdxdbStore {
                 .map(|account| JsAccountUpdate::from_account(account, None))
                 .collect(),
             transaction_updates,
+            account_witnesses: account_updates
+                .account_witnesses()
+                .iter()
+                .map(|(account_id, witness)| JsAccountWitnessUpdate {
+                    account_id: account_id.to_string(),
+                    witness: encode(witness),
+                })
+                .collect(),
         };
         let promise = idxdb_apply_state_sync(self.db_id(), state_update);
         await_js_value(promise, "failed to apply state sync").await?;
+
+        // Rebuild the forest for the accounts the write just replaced. Deferred until the write
+        // landed so a failed sync leaves the forest untouched instead of ahead of the tables.
+        for account in &full_accounts {
+            self.smt_forest.write().rebuild_account(account)?;
+        }
 
         Ok(())
     }
@@ -326,7 +332,7 @@ fn serialize_partial_blockchain_updates(
     let mut block_has_relevant_notes = Vec::new();
 
     for (block_header, has_client_notes) in partial_blockchain_updates.block_headers() {
-        block_headers_as_bytes.push(block_header.to_bytes());
+        block_headers_as_bytes.push(encode(block_header));
         block_nums.push(block_header.block_num().as_u32());
         block_has_relevant_notes.push(u8::from(*has_client_notes));
     }

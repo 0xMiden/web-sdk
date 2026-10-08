@@ -1,23 +1,15 @@
 use js_export_macro::js_export;
-use miden_client::account::AccountId as NativeAccountId;
-use miden_client::asset::{
-    AccountVaultDelta as NativeAccountVaultDelta,
-    AssetId,
-    FungibleAsset as NativeFungibleAsset,
-    FungibleAssetDelta as NativeFungibleAssetDelta,
-};
+use miden_client::asset::{AccountVaultDelta as NativeAccountVaultDelta, Asset};
 
-use crate::models::account_id::AccountId;
 use crate::models::fungible_asset::FungibleAsset;
 use crate::platform::{JsBytes, JsErr};
 use crate::utils::{deserialize_from_bytes, serialize_to_bytes};
 
 /// `AccountVaultDelta` stores the difference between the initial and final account vault states.
 ///
-/// The difference is represented as follows:
-/// - `fungible`: a binary tree map of fungible asset balance changes in the account vault.
-/// - `non_fungible`: a binary tree map of non-fungible assets that were added to or removed from
-///   the account vault.
+/// The difference is a set of whole assets added to or removed from the vault, keyed by asset ID.
+/// An asset appears at most once, on one side or the other: a delta carrying the same asset ID
+/// twice is rejected when it is built.
 #[derive(Clone)]
 #[js_export]
 pub struct AccountVaultDelta(NativeAccountVaultDelta);
@@ -40,122 +32,30 @@ impl AccountVaultDelta {
         self.0.is_empty()
     }
 
-    /// Returns the fungible portion of the delta.
-    pub fn fungible(&self) -> FungibleAssetDelta {
-        self.0.fungible().into()
-    }
-
-    /// Returns the fungible assets that increased.
-    #[js_export(js_name = "addedFungibleAssets")]
-    pub fn added_fungible_assets(&self) -> Vec<FungibleAsset> {
-        self.0
-            .fungible()
-            .iter()
-            .filter(|&(_, &value)| value > 0)
-            .filter_map(|(vault_key, &diff)| {
-                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
-            })
-            .collect()
-    }
-
-    /// Returns the fungible assets that decreased.
-    #[js_export(js_name = "removedFungibleAssets")]
-    pub fn removed_fungible_assets(&self) -> Vec<FungibleAsset> {
-        self.0
-            .fungible()
-            .iter()
-            .filter(|&(_, &value)| value < 0)
-            .filter_map(|(vault_key, &diff)| {
-                fungible_asset_from_delta(vault_key, diff.unsigned_abs())
-            })
-            .collect()
-    }
-}
-
-/// Rebuilds a fungible asset from a vault-delta entry, preserving the vault key's callback flag.
-///
-/// The callback flag is part of the asset's vault-key and value encoding, so dropping it would
-/// report an asset that differs from the one the kernel encoded (e.g. for agglayer-minted assets).
-fn fungible_asset_from_delta(asset_id: &AssetId, amount: u64) -> Option<FungibleAsset> {
-    NativeFungibleAsset::new(asset_id.faucet_id(), amount).ok().map(Into::into)
-}
-
-/// A single fungible asset change in the vault delta.
-#[derive(Clone)]
-#[js_export]
-pub struct FungibleAssetDeltaItem {
-    faucet_id: AccountId,
-    amount: i64,
-}
-
-#[js_export]
-impl FungibleAssetDeltaItem {
-    /// Returns the faucet ID this delta refers to.
-    #[js_export(getter, js_name = "faucetId")]
-    pub fn faucet_id(&self) -> AccountId {
-        self.faucet_id
-    }
-
-    /// Returns the signed amount change (positive adds assets, negative removes).
-    #[js_export(getter)]
-    pub fn amount(&self) -> i64 {
-        self.amount
-    }
-}
-
-impl From<(&miden_client::asset::AssetId, &i64)> for FungibleAssetDeltaItem {
-    fn from(native_fungible_asset_delta_item: (&miden_client::asset::AssetId, &i64)) -> Self {
-        Self {
-            faucet_id: native_fungible_asset_delta_item.0.faucet_id().into(),
-            amount: *native_fungible_asset_delta_item.1,
-        }
-    }
-}
-
-/// Aggregated fungible deltas keyed by faucet ID.
-#[derive(Clone)]
-#[js_export]
-pub struct FungibleAssetDelta(NativeFungibleAssetDelta);
-
-#[js_export]
-impl FungibleAssetDelta {
-    /// Serializes the fungible delta into bytes.
-    pub fn serialize(&self) -> JsBytes {
-        serialize_to_bytes(&self.0)
-    }
-
-    /// Deserializes a fungible delta from bytes.
-    pub fn deserialize(bytes: JsBytes) -> Result<FungibleAssetDelta, JsErr> {
-        deserialize_from_bytes::<NativeFungibleAssetDelta>(&bytes).map(FungibleAssetDelta)
-    }
-
-    /// Returns true if no fungible assets are affected.
-    #[js_export(js_name = "isEmpty")]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Returns the delta amount for a given faucet, if present.
-    ///
-    /// Matches by faucet id so the delta is found regardless of the asset's
-    /// callback flag.
-    pub fn amount(&self, faucet_id: &AccountId) -> Option<i64> {
-        let native_faucet_id: NativeAccountId = faucet_id.into();
-        self.0
-            .iter()
-            .find(|(vault_key, _)| vault_key.faucet_id() == native_faucet_id)
-            .map(|(_, &amount)| amount)
-    }
-
-    /// Returns the number of distinct fungible assets in the delta.
+    /// Returns the number of assets changed by this delta, added and removed together.
     #[js_export(js_name = "numAssets")]
     pub fn num_assets(&self) -> usize {
         self.0.num_assets()
     }
 
-    /// Returns all fungible asset deltas as a list.
-    pub fn assets(&self) -> Vec<FungibleAssetDeltaItem> {
-        self.0.iter().map(Into::into).collect()
+    /// Returns the fungible assets this delta adds to the vault.
+    #[js_export(js_name = "addedFungibleAssets")]
+    pub fn added_fungible_assets(&self) -> Vec<FungibleAsset> {
+        self.0
+            .added_assets()
+            .filter(Asset::is_fungible)
+            .map(|asset| asset.unwrap_fungible().into())
+            .collect()
+    }
+
+    /// Returns the fungible assets this delta removes from the vault.
+    #[js_export(js_name = "removedFungibleAssets")]
+    pub fn removed_fungible_assets(&self) -> Vec<FungibleAsset> {
+        self.0
+            .removed_assets()
+            .filter(Asset::is_fungible)
+            .map(|asset| asset.unwrap_fungible().into())
+            .collect()
     }
 }
 
@@ -183,43 +83,5 @@ impl From<AccountVaultDelta> for NativeAccountVaultDelta {
 impl From<&AccountVaultDelta> for NativeAccountVaultDelta {
     fn from(account_vault_delta: &AccountVaultDelta) -> Self {
         account_vault_delta.0.clone()
-    }
-}
-
-impl From<NativeFungibleAssetDelta> for FungibleAssetDelta {
-    fn from(native_fungible_asset_delta: NativeFungibleAssetDelta) -> Self {
-        Self(native_fungible_asset_delta)
-    }
-}
-
-impl From<&NativeFungibleAssetDelta> for FungibleAssetDelta {
-    fn from(native_fungible_asset_delta: &NativeFungibleAssetDelta) -> Self {
-        Self(native_fungible_asset_delta.clone())
-    }
-}
-
-impl From<FungibleAssetDelta> for NativeFungibleAssetDelta {
-    fn from(fungible_asset_delta: FungibleAssetDelta) -> Self {
-        fungible_asset_delta.0
-    }
-}
-
-impl From<&FungibleAssetDelta> for NativeFungibleAssetDelta {
-    fn from(fungible_asset_delta: &FungibleAssetDelta) -> Self {
-        fungible_asset_delta.0.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn fungible_delta_sign_classification_excludes_zero() {
-        let deltas = [10_i64, 0_i64, -5_i64];
-
-        let added: Vec<i64> = deltas.iter().copied().filter(|&v| v > 0).collect();
-        let removed: Vec<i64> = deltas.iter().copied().filter(|&v| v < 0).collect();
-
-        assert_eq!(added, vec![10]);
-        assert_eq!(removed, vec![-5]);
     }
 }

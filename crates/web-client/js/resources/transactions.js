@@ -1,8 +1,60 @@
 import {
+  isConsumableNow,
   resolveAccountRef,
   resolveNoteType,
   resolveTransactionIdHex,
 } from "../utils.js";
+
+/** Preview operations that build their own request, and so cannot be anchored. */
+export const PREVIEW_BUILT_IN_OPERATIONS = new Set([
+  "send",
+  "mint",
+  "bridge",
+  "consume",
+  "swap",
+  "pswapCreate",
+  "pswapConsume",
+  "pswapCancel",
+]);
+
+/**
+ * Reject an `anchor` that is present but falsy — except `undefined`, which is
+ * how an optional property spells "absent".
+ *
+ * Every anchored branch is selected by truthiness, so `{ anchor: null }` would
+ * otherwise fall through and execute at the current tip: the one outcome
+ * anchoring exists to prevent. It is easy to hit, because an anchor usually
+ * lives in a state slot that holds `null` until the capture resolves, and
+ * `cond && anchor` yields `false`.
+ */
+function assertAnchorValueUsable(opts) {
+  const anchor = opts?.anchor;
+  if (anchor === undefined || anchor) return;
+  // String() rather than JSON.stringify: the latter throws on a BigInt and
+  // renders NaN as "null", and this is an error path that must not itself fail.
+  throw new Error(
+    `anchor was ${String(anchor)}; await captureAnchor(request) before ` +
+      "passing it, or omit the option entirely to execute at the current tip"
+  );
+}
+
+/**
+ * Reject an `anchor` passed to a method that cannot honor one.
+ *
+ * Only the request-taking methods can be anchored, because an anchor is
+ * captured for a specific request. Everywhere else the option is meaningless —
+ * but silently ignoring it executes at the tip while the caller believes their
+ * transaction is pinned, which is the failure anchoring exists to prevent. The
+ * names are close enough to confuse (`execute` vs `executeRequest`,
+ * `submitBatch` vs `submit`) that this has to be loud.
+ */
+function rejectUnexpectedAnchor(opts, method, alternative) {
+  if (opts?.anchor === undefined) return;
+  throw new Error(
+    `${method}() does not accept an anchor because it builds its own ` +
+      `request; use ${alternative} with a request you captured the anchor for`
+  );
+}
 
 /**
  * Prove an executed transaction, resolving the prover exactly the way the
@@ -36,6 +88,7 @@ export class TransactionsResource {
   }
 
   async send(opts) {
+    rejectUnexpectedAnchor(opts, "send", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -67,9 +120,9 @@ export class TransactionsResource {
       // `note` valid so we can return it to the caller below.
       const ownOutputs = new wasm.NoteArray();
       ownOutputs.push(note);
-      const request = new wasm.TransactionRequestBuilder()
-        .withOwnOutputNotes(ownOutputs)
-        .build();
+      const builder =
+        await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+      const request = builder.withOwnOutputNotes(ownOutputs).build();
 
       const { txId, result } = await this.#submitOrSubmitWithProver(
         senderId,
@@ -105,6 +158,7 @@ export class TransactionsResource {
    * confirmation. Provide exactly one of `recipient` or `script`.
    */
   async createNetworkNote(opts) {
+    rejectUnexpectedAnchor(opts, "createNetworkNote", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -173,8 +227,28 @@ export class TransactionsResource {
     // `note` valid so we can return it to the caller.
     const ownOutputs = new wasm.NoteArray();
     ownOutputs.push(note);
-    const request = new wasm.TransactionRequestBuilder()
+    // Since 0.17 the kernel prices a NetworkAccountTarget note by calling
+    // `estimate_note_fee` on the target, so the emitting transaction reads
+    // foreign state. Declaring the account pins that state at the reference
+    // block instead of leaving the client to resolve it lazily, which it can
+    // only do for a public account it can reach.
+    //
+    // Pricing also caps this transaction at 20 blocks: `estimate_note_fee`
+    // applies the standards' default expiration delta, and an expiration can
+    // only be lowered, so it must be included within 20 blocks of its
+    // reference block or the node rejects it as expired.
+    const targetAccounts = new wasm.ForeignAccountArray();
+    targetAccounts.push(
+      wasm.ForeignAccount.public(
+        target.targetId(),
+        new wasm.AccountStorageRequirements()
+      )
+    );
+    const builder =
+      await this.#inner.feeAwareTransactionRequestBuilder(senderId);
+    const request = builder
       .withOwnOutputNotes(ownOutputs)
+      .withForeignAccounts(targetAccounts)
       .build();
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
@@ -191,6 +265,7 @@ export class TransactionsResource {
   }
 
   async mint(opts) {
+    rejectUnexpectedAnchor(opts, "mint", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildMintRequest(opts, wasm);
@@ -209,6 +284,7 @@ export class TransactionsResource {
   }
 
   async bridge(opts) {
+    rejectUnexpectedAnchor(opts, "bridge", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildB2AggRequest(opts, wasm);
@@ -227,6 +303,7 @@ export class TransactionsResource {
   }
 
   async consume(opts) {
+    rejectUnexpectedAnchor(opts, "consume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildConsumeRequest(opts, wasm);
@@ -245,6 +322,7 @@ export class TransactionsResource {
   }
 
   async consumeAll(opts) {
+    rejectUnexpectedAnchor(opts, "consumeAll", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -252,9 +330,14 @@ export class TransactionsResource {
     // Save hex so we can reconstruct for submitNewTransaction.
     const accountId = resolveAccountRef(opts.account, wasm);
     const accountIdHex = accountId.toString();
-    const consumable = await this.#inner.getConsumableNotes(accountId);
+    // Block-locked notes cannot be consumed yet and would fail the whole
+    // transaction, so they are not "available" here either (notes.listAvailable
+    // applies the same rule).
+    const consumable = (
+      (await this.#inner.getConsumableNotes(accountId)) ?? []
+    ).filter((c) => isConsumableNow(c, accountIdHex));
 
-    if (!consumable || consumable.length === 0) {
+    if (consumable.length === 0) {
       return { txId: null, consumed: 0, remaining: 0 };
     }
 
@@ -268,10 +351,16 @@ export class TransactionsResource {
 
     const notes = toConsume.map((c) => c.inputNoteRecord().toNote());
 
-    const request = await this.#inner.newConsumeTransactionRequest(notes);
+    // `accountId` is gone — getConsumableNotes took it by value. Both calls
+    // below take `&AccountId`, which borrows, so one replacement serves both.
+    const consumingAccountId = wasm.AccountId.fromHex(accountIdHex);
+    const request = await this.#inner.newConsumeTransactionRequest(
+      notes,
+      consumingAccountId
+    );
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
-      wasm.AccountId.fromHex(accountIdHex),
+      consumingAccountId,
       request,
       opts.prover
     );
@@ -289,6 +378,7 @@ export class TransactionsResource {
   }
 
   async swap(opts) {
+    rejectUnexpectedAnchor(opts, "swap", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildSwapRequest(opts, wasm);
@@ -308,6 +398,7 @@ export class TransactionsResource {
 
   /** Create a partial-swap (PSWAP) note. See {@link PswapCreateOptions}. */
   async pswapCreate(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCreate", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCreateRequest(
@@ -330,6 +421,7 @@ export class TransactionsResource {
 
   /** Consume (fully or partially fill) a PSWAP note. See {@link PswapConsumeOptions}. */
   async pswapConsume(opts) {
+    rejectUnexpectedAnchor(opts, "pswapConsume", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapConsumeRequest(
@@ -352,6 +444,7 @@ export class TransactionsResource {
 
   /** Cancel a PSWAP note as its creator and reclaim the offered asset. See {@link PswapCancelOptions}. */
   async pswapCancel(opts) {
+    rejectUnexpectedAnchor(opts, "pswapCancel", "submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const { accountId, request } = await this.#buildPswapCancelRequest(
@@ -379,10 +472,38 @@ export class TransactionsResource {
    * Node.js the code prefixes the message instead) when the transaction
    * executes successfully, since a fully authorized transaction produces
    * no summary. See {@link PreviewOptions}.
+   *
+   * With `operation: "custom"` you may pass an `anchor` from
+   * {@link captureAnchor} to derive the summary at a pinned reference block
+   * rather than the current sync height. A co-signer verifying a summary that
+   * binds the reference block commitment must use the proposer's anchor:
+   * deriving such a summary locally at a different height produces a
+   * different summary and the comparison fails.
+   *
+   * The exception is a multisig request built by
+   * `client.feeAwareTransactionRequestBuilder`: its summary binds the block its
+   * auth args name, which the request declares, so previewing it without an
+   * anchor reproduces the proposal's summary at the current tip, once this
+   * client has synced to at least that block (the largest of
+   * `request.blockNumbers()`).
    */
   async preview(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
+
+    assertAnchorValueUsable(opts);
+
+    // Only `custom` can be anchored. Every other operation builds its request
+    // here, so the caller cannot hold an anchor captured for it — accepting one
+    // would execute against a request the anchor never tracked, surfacing as an
+    // opaque error from deep inside the executor. An unrecognized operation
+    // falls through to the switch, so it reports that rather than the anchor.
+    if (opts.anchor && PREVIEW_BUILT_IN_OPERATIONS.has(opts.operation)) {
+      throw new Error(
+        `preview does not accept an anchor for operation "${opts.operation}"; ` +
+          `capture one with captureAnchor(request) and use operation: "custom"`
+      );
+    }
 
     let accountId;
     let request;
@@ -438,13 +559,16 @@ export class TransactionsResource {
         throw new Error(`Unknown preview operation: ${opts.operation}`);
     }
 
-    return await this.#inner.executeForSummary(accountId, request);
+    return opts.anchor
+      ? await this.#inner.executeForSummaryAt(accountId, request, opts.anchor)
+      : await this.#inner.executeForSummary(accountId, request);
   }
 
   async execute(opts) {
+    rejectUnexpectedAnchor(opts, "execute", "executeRequest() or submit()");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
-    const { accountId, request } = this.#buildExecuteRequest(opts, wasm);
+    const { accountId, request } = await this.#buildExecuteRequest(opts, wasm);
 
     const { txId, result } = await this.#submitOrSubmitWithProver(
       accountId,
@@ -468,6 +592,7 @@ export class TransactionsResource {
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async batch(opts) {
+    rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -513,7 +638,7 @@ export class TransactionsResource {
           );
           break;
         case "execute":
-          built = this.#buildExecuteRequest(
+          built = await this.#buildExecuteRequest(
             { ...op, account: opts.account },
             wasm
           );
@@ -542,6 +667,14 @@ export class TransactionsResource {
    * counterpart of `batch()` — for callers that already have built requests in
    * hand. Equivalent to `submit()` but plural.
    *
+   * No fee conversion salt is declared here. miden-client commits the chain's
+   * native conversion info while preparing each transaction, so requests against
+   * ordinary accounts pay normally; a multisig account needs a salt declared on
+   * the request itself, or the push fails with `FeeConversionInfoRequired`.
+   * Because a batch proves each transaction as it is pushed, such a rejection
+   * has already cost the proofs ahead of it — build multisig requests from
+   * `client.feeAwareTransactionRequestBuilder`.
+   *
    * @param {AccountRef} account - The account executing the batch.
    * @param {TransactionRequest[]} requests - Pre-built transaction requests.
    * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
@@ -550,6 +683,7 @@ export class TransactionsResource {
    * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
    */
   async submitBatch(account, requests, options) {
+    rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
@@ -600,12 +734,12 @@ export class TransactionsResource {
     }
   }
 
-  #buildExecuteRequest(opts, wasm) {
+  async #buildExecuteRequest(opts, wasm) {
     const accountId = resolveAccountRef(opts.account, wasm);
 
-    let builder = new wasm.TransactionRequestBuilder().withCustomScript(
-      opts.script
-    );
+    let builder = (
+      await this.#inner.feeAwareTransactionRequestBuilder(accountId)
+    ).withCustomScript(opts.script);
 
     if (opts.foreignAccounts?.length) {
       const accounts = opts.foreignAccounts.map((fa) => {
@@ -662,14 +796,44 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Capture a {@link ChainAnchor} at the current sync height for `request`,
+   * pinning the reference block that a later execution can replay against.
+   *
+   * The anchor tracks the blocks the request declares through
+   * `withBlockNumbers` and the creation blocks of its authenticated input
+   * notes, so it stays valid for that request once the chain advances. Pass it
+   * back to {@link preview}, {@link executeRequest}, or {@link submit} via
+   * their `anchor` option. Serialize it with `anchor.serialize()` to ship it
+   * alongside a summary awaiting signatures.
+   *
+   * @param {TransactionRequest} request - The request the anchor is captured for.
+   * @returns {Promise<ChainAnchor>} An anchor pinned to the current sync height.
+   * @throws An error with `code` `"INVALID_CHAIN_ANCHOR"` (on Node.js the code
+   * prefixes the message instead) if a sync lands mid-capture and leaves the
+   * anchor internally inconsistent. Retry.
+   */
+  async captureAnchor(request) {
+    this.#client.assertNotTerminated();
+    if (!request) {
+      throw new Error(
+        `captureAnchor requires a request, received ${String(request)}; an ` +
+          "anchor is captured for the notes a specific request consumes"
+      );
+    }
+    return await this.#inner.chainAnchorForRequest(request);
+  }
+
   async submit(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
     return await this.#submitOrSubmitWithProver(
       accountId,
       request,
-      opts?.prover
+      opts?.prover,
+      opts?.anchor
     );
   }
 
@@ -693,14 +857,20 @@ export class TransactionsResource {
    *
    * @param {AccountRef} account - The account executing the transaction.
    * @param {TransactionRequest} request - The pre-built transaction request.
+   * @param {{ anchor?: ChainAnchor }} [opts] - Pass `anchor` to execute against
+   *   a pinned reference block instead of the current sync height, reproducing
+   *   the summary that was signed at that block.
    * @returns {Promise<TransactionExecution>} A handle to the executed
    *   transaction, ready to prove.
    */
-  async executeRequest(account, request) {
+  async executeRequest(account, request, opts) {
     this.#client.assertNotTerminated();
+    assertAnchorValueUsable(opts);
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(account, wasm);
-    const result = await this.#inner.executeTransaction(accountId, request);
+    const result = opts?.anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, opts.anchor)
+      : await this.#inner.executeTransaction(accountId, request);
     return new TransactionExecution(this.#inner, this.#client, this, result);
   }
 
@@ -732,6 +902,21 @@ export class TransactionsResource {
     );
   }
 
+  /**
+   * Lists transactions, optionally narrowed by status or by id.
+   *
+   * Omitting `query`, or passing a shape this method does not recognise, returns every stored
+   * transaction. The one exception is `{ expiredBefore }`: it was a valid filter until the
+   * upstream client stopped deciding expiry in the store, and silently widening it to the
+   * unfiltered query would hand a stale caller a superset of what it asked for, so it throws
+   * instead. Read `TransactionRecord.expirationBlockNum()` and compare it yourself.
+   *
+   * @param {object} [query] - `{ status: "uncommitted" }` or `{ ids: [...] }`.
+   * @returns {Promise<TransactionRecord[]>}
+   * @throws {Error} If `query` carries a defined `expiredBefore` and neither
+   * `status: "uncommitted"` nor `ids` — the two shapes that outranked the expiry filter
+   * before it was removed, and still do.
+   */
   async list(query) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
@@ -747,7 +932,15 @@ export class TransactionsResource {
       );
       filter = wasm.TransactionFilter.ids(txIds);
     } else if (query.expiredBefore !== undefined) {
-      filter = wasm.TransactionFilter.expiredBefore(query.expiredBefore);
+      // Sits exactly where the expiry filter used to be built, so it throws on the queries
+      // that actually applied it and on no others: `status` and `ids` still win, as they
+      // always did, and an undefined value still means "no filter" rather than an error.
+      // The unknown-shape fallback below is `all()`, so without this branch a stale caller
+      // would silently receive every transaction instead of the subset it asked for.
+      throw new Error(
+        "The { expiredBefore } transaction query was removed. Transaction expiry is decided " +
+          "during state sync; read expiry from the transaction record instead."
+      );
     } else {
       filter = wasm.TransactionFilter.all();
     }
@@ -905,7 +1098,9 @@ export class TransactionsResource {
       const noteAndArgsArr = resolvedNotes.map(
         (note) => new wasm.NoteAndArgs(note, null)
       );
-      const request = new wasm.TransactionRequestBuilder()
+      const builder =
+        await this.#inner.feeAwareTransactionRequestBuilder(accountId);
+      const request = builder
         .withInputNotes(new wasm.NoteAndArgsArray(noteAndArgsArr))
         .build();
       return { accountId, request };
@@ -915,7 +1110,10 @@ export class TransactionsResource {
     const notes = await Promise.all(
       noteInputs.map((input) => this.#resolveNoteInput(input))
     );
-    const request = await this.#inner.newConsumeTransactionRequest(notes);
+    const request = await this.#inner.newConsumeTransactionRequest(
+      notes,
+      accountId
+    );
     return { accountId, request };
   }
 
@@ -1020,8 +1218,10 @@ export class TransactionsResource {
     return input;
   }
 
-  async #submitOrSubmitWithProver(accountId, request, perCallProver) {
-    const result = await this.#inner.executeTransaction(accountId, request);
+  async #submitOrSubmitWithProver(accountId, request, perCallProver, anchor) {
+    const result = anchor
+      ? await this.#inner.executeTransactionAt(accountId, request, anchor)
+      : await this.#inner.executeTransaction(accountId, request);
     const proven = await proveResult(
       this.#inner,
       this.#client.defaultProver,
@@ -1182,6 +1382,10 @@ class TransactionSubmission {
    * Persist the transaction into the local store, firing registered
    * transaction observers (e.g. PSWAP lineage tracking). Until this runs the
    * local store is unaware of the transaction.
+   *
+   * Browser stores require the stored account to match the execution input;
+   * a mismatch rejects before changing account state or transaction history.
+   * Check network status before resubmitting after a local apply failure.
    *
    * @returns {Promise<TransactionStoreUpdate>} The pre-apply store update.
    */
