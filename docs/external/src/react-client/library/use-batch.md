@@ -30,7 +30,7 @@ function BatchButton() {
         { account: bob, request: consumeReq }, // can consume notes from earlier items
       ],
     });
-    console.log("Batch landed in block", blockNumber);
+    console.log("Batch submitted at chain tip", blockNumber);
   };
 
   return (
@@ -39,15 +39,16 @@ function BatchButton() {
       <button onClick={handleBatch} disabled={isLoading}>
         {isLoading ? `Submitting (${stage})...` : "Submit batch"}
       </button>
-      {result && <div>Landed in block {result.blockNumber}</div>}
+      {result && <div>Submitted at chain tip {result.blockNumber}</div>}
     </div>
   );
 }
 ```
 
 `batch({ items, skipSync? }) → { blockNumber }`. The underlying primitive
-returns a block number rather than per-tx ids, so the result carries only the
-block the batch was accepted into.
+returns a block number rather than per-tx ids, so the result carries only that
+number: the node's chain tip as of submission, not the block the batch commits
+in. Sync to learn where it landed.
 
 ## Options
 
@@ -63,9 +64,10 @@ block the batch was accepted into.
 - **Proving.** Each tx is proven inside the batch primitive by the client's
   built-in local prover, so `MidenProvider`'s `prover` setting and its fallback
   do not apply to batches.
-- **Threading.** In the browser the batch has no worker route: it proves on the
-  calling thread, which is the page's main thread even with `useWorker` on, and
-  blocks the page until it settles. Keep batches small.
+- **Threading.** In the browser the batch runs in the client's Web Worker, so
+  the page stays responsive while it proves. With `useWorker: false`, or without
+  `Worker` support, it proves on the calling thread and blocks the page until it
+  settles, so keep batches small there.
 - **Stages.** `stage` goes `"executing"` → `"submitting"` → `"complete"`. There
   is no `"proving"` stage, because proving happens inside the batch primitive. A
   failure after the batch starts returns `stage` to `"idle"` and sets `error`;

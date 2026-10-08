@@ -224,3 +224,30 @@ export async function hashSeed(seed) {
     `Invalid seed type: expected string or Uint8Array, got ${typeof seed}`
   );
 }
+
+/**
+ * Check that `items` is an array of `BatchItem`s before a batch is routed.
+ *
+ * Shared by `WebClient` and `MockWebClient`, and applied before the worker
+ * branch, so a given input fails the same way whether or not a worker exists.
+ * In-thread, wasm-bindgen would reject a wrong element itself, but with a
+ * generic "array contains a value of the wrong type" naming no index; on the
+ * worker path the element would fail later, while being serialized.
+ *
+ * @param {unknown} items
+ * @param {Function} BatchItem - The `BatchItem` class of this thread's WASM
+ *   module, the same `instanceof` check wasm-bindgen applies.
+ */
+export function assertBatchItems(items, BatchItem) {
+  if (!Array.isArray(items)) {
+    throw new TypeError("expected an array of BatchItem");
+  }
+
+  // Indexed rather than `.every`, which skips holes: a sparse array would
+  // otherwise pass and reach WASM with `undefined` entries.
+  for (let index = 0; index < items.length; index++) {
+    if (!(items[index] instanceof BatchItem)) {
+      throw new TypeError(`batch item at index ${index} is not a BatchItem`);
+    }
+  }
+}

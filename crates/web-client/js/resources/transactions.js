@@ -586,16 +586,21 @@ export class TransactionsResource {
   /**
    * Submit a heterogeneous batch of operations across one or more local
    * accounts. Each operation specifies which account it targets via `account`.
-   * Operations are executed, proven individually and as a batch, and submitted
-   * atomically — either every tx in the batch lands or none does.
+   * Each operation is executed and proven individually, then a single batch
+   * proof is produced over all of them and submitted as one batch; the node
+   * commits them together or not at all.
    * Every proof runs inside the batch primitive on the client's built-in local
    * prover, so `proverUrl` does not apply to batches.
-   * In the browser a batch has no worker route: it proves on the calling
-   * thread (the main thread for a page, even with `useWorker` on) and blocks
-   * it until it settles, so keep batches small.
+   * In the browser the batch is forwarded to the client's Web Worker, so the
+   * page's main thread stays responsive; without a worker (`useWorker: false`,
+   * or no `Worker` in the environment), and on a mock client, it proves on the
+   * calling thread and blocks it until it settles.
    *
-   * @param {BatchOptions} opts - Batch options including the operations array and confirmation settings.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   * @param {BatchOptions} opts - Batch options: the operations array, and
+   *   `timeout` / `waitForConfirmation` (the latter does not currently work,
+   *   see `submitBatch`).
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
    */
   async batch(opts) {
     rejectUnexpectedAnchor(opts, "batch", "submit() per transaction");
@@ -668,13 +673,26 @@ export class TransactionsResource {
    * `client.feeAwareTransactionRequestBuilder`.
    *
    * @param {Array<{ account: AccountRef, request: TransactionRequest }>} items - Per-tx (account, request) pairs.
-   * @param {object} [options] - Optional settings (waitForConfirmation, timeout).
+   * @param {object} [options] - Optional settings (timeout, and
+   *   `waitForConfirmation`, which does not currently work, see #314).
    *   Every transaction is proven inside the batch primitive by the client's
    *   built-in local prover, so `proverUrl` does not apply; the V1 batch API has
    *   no per-call prover override.
-   *   In the browser the batch proves on the calling thread, never the worker,
-   *   so it blocks the page's main thread until it settles; keep batches small.
-   * @returns {Promise<BatchSubmitResult>} The block number the batch was accepted into.
+   *   In the browser the batch runs in the client's Web Worker where it has
+   *   one, so the page's main thread stays responsive; see `batch()` for when
+   *   it runs in-thread instead.
+   *   With an external keystore and a worker, each of the batch's signature
+   *   callbacks has the worker's 30s ceiling, and since signing happens at
+   *   push time and this wrapper treats a failed push as fatal, one timeout
+   *   fails the whole batch. A rejection thrown as a non-nullish value with no
+   *   truthy `.message` (a bare string, `{ code }`)
+   *   loses its reason and surfaces as the generic
+   *   `sign callback must return a Uint8Array`. Both are shared with every
+   *   worker-forwarded method; tracked in #316. Relatedly, `lastAuthError()`
+   *   reads the main-thread instance, so it does not report a forwarded
+   *   batch's auth error.
+   * @returns {Promise<BatchSubmitResult>} The node's chain tip as of
+   *   submission, not the block the batch commits in.
    */
   async submitBatch(items, options) {
     rejectUnexpectedAnchor(options, "submitBatch", "submit() per transaction");
@@ -711,6 +729,13 @@ export class TransactionsResource {
    * Polls until the local sync height reaches `blockNumber` or the timeout
    * expires. The Rust V1 batch API returns only a block number — there are no
    * per-tx ids to poll on, so we wait on the chain height instead.
+   *
+   * This does not currently work: `syncStateWithTimeout` below does not exist,
+   * so the call throws, the bare catch swallows it, and nothing here advances
+   * the height — the loop times out unless the client is already at or past
+   * `blockNumber`. Even once that is fixed the guarantee is weaker than it
+   * looks, since `blockNumber` is the tip as of submission rather than the
+   * batch's commit block. See https://github.com/0xMiden/web-sdk/issues/314.
    *
    * @param {number} blockNumber - The block height to wait for.
    * @param {object} [opts] - Polling options (timeout, interval).

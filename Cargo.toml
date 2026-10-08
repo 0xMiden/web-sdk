@@ -55,6 +55,13 @@ miden-client-sqlite-store = { default-features = false, version = "=0.17.1" }
 miden-protocol            = { default-features = false, version = "=0.17.1" }
 
 
+# VM crates
+# Declared here only so crates/web-client can depend on it and turn `std` on.
+# No code imports it, and this stanza does not enable the feature itself; the
+# rationale and blast radius are in crates/web-client/Cargo.toml.
+# 0.35.0 is the version already locked via the miden-client =0.17.1 (VM 0.35) graph.
+miden-precompiles-air = { default-features = false, version = "0.35.0" }
+
 # External dependencies
 async-trait = { version = "0.1" }
 chrono      = { version = "0.4" }

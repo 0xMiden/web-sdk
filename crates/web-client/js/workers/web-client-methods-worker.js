@@ -287,6 +287,24 @@ const methodHandlers = {
       serializedTransactionUpdate: transactionUpdate.serialize().buffer,
     };
   },
+  [MethodName.SUBMIT_NEW_TRANSACTION_BATCH]: async (args) => {
+    const wasm = await getWasmOrThrow();
+    const [serializedItems] = args;
+    // Rebuild each (account, request) pair in this instance, in order, so the
+    // batch runs exactly as the main-thread path runs it. This returns a plain
+    // block number, so unlike the single-submit handlers there is no result
+    // object to serialize back across the boundary.
+    const items = serializedItems.map(
+      ([accountIdHex, serializedTransactionRequest]) =>
+        new wasm.BatchItem(
+          wasm.AccountId.fromHex(accountIdHex),
+          wasm.TransactionRequest.deserialize(
+            new Uint8Array(serializedTransactionRequest)
+          )
+        )
+    );
+    return await wasmWebClient.submitNewTransactionBatch(items);
+  },
   [MethodName.SUBMIT_NEW_TRANSACTION_WITH_PROVER]: async (args) => {
     const wasm = await getWasmOrThrow();
     const [accountIdHex, serializedTransactionRequest, proverPayload] = args;
@@ -470,10 +488,10 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's thread pool inside THIS worker's WASM instance.
-      // The SDK runs every prove call here (NOT on the main thread), so a
-      // pool initialized only in main-thread WASM does not parallelize the
-      // prove. Without this, par_iter()/par_chunks() in miden-crypto +
-      // p3-maybe-rayon return rayon::current_num_threads() == 1 and fall
+      // The SDK runs proving here rather than on the main thread wherever a
+      // worker is in use, so a pool initialized only in main-thread WASM does
+      // not parallelize the prove. Without this, par_iter()/par_chunks() in
+      // miden-crypto + p3-maybe-rayon return current_num_threads() == 1 and fall
       // through to sequential code despite the parallel features being on.
       if (
         numThreads &&
@@ -523,8 +541,9 @@ async function processMessage(event) {
       }
 
       // Initialize rayon's pool inside THIS worker's WASM instance — same
-      // rationale as the INIT path above: all proving executes here, and a
-      // pool initialized in any other instance does not parallelize it.
+      // rationale as the INIT path above: any proving that happens here uses
+      // this instance, and a pool initialized in another one does not
+      // parallelize it.
       if (
         numThreads &&
         numThreads > 1 &&
