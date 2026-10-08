@@ -351,6 +351,8 @@ export class MidenDatabase {
         await this.dexie.open();
         await this.persistClientVersion(clientVersion);
     }
+    // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+    // user-facing settings API never reaches.
     async getStoredClientVersion() {
         const record = await this.settings.get([
             SETTING_SCOPE_CLIENT,
