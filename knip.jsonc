@@ -279,8 +279,8 @@
         // scripts/bench-order.test.mjs — none of which knip can follow.
         "scripts/**/*.{js,mjs}",
       ],
-      // The `/eager.js`, `./eager.js`, `./index.js`, and `/index.js` strings
-      // inside `page.evaluate(...)` blocks are dynamic imports executed in the
+      // The `/eager.js`, `./eager.js`, and `./index.js` strings inside
+      // `page.evaluate(...)` blocks are dynamic imports executed in the
       // *browser* against a local test server — they resolve to files in
       // dist/{st,mt}/ at test runtime, not relative to the Playwright test
       // files. `./crates/miden_client_web` is the wasm-bindgen module
@@ -290,14 +290,10 @@
       // The root-absolute `/eager.js` has a second consumer: bench-proving.mjs
       // serves dist/mt at the root of its own throwaway HTTP server, so its
       // `page.evaluate` import is root-absolute rather than relative.
-      // Likewise the root-absolute `/index.js` in
-      // crates/web-client/scripts/bench-precompile-cache.mjs, which serves
-      // dist/st at the root of its own server.
       "ignoreUnresolved": [
         "/eager.js",
         "./eager.js",
         "./index.js",
-        "/index.js",
         "./crates/miden_client_web",
       ],
     },

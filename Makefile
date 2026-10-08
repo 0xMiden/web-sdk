@@ -196,17 +196,6 @@ integration-test-web-client-webkit: require-fee-faucet ## Run web client tests (
 	pnpm --filter @miden-sdk/miden-sdk run test:install
 	pnpm --filter @miden-sdk/miden-sdk run test --project=webkit
 
-.PHONY: bench-precompile-cache
-BENCH_ARGS ?=
-bench-precompile-cache: ## Benchmark the precompile preprocessed-table cache (needs a built dist/st)
-	# Manual, not part of any CI gate — it launches Chromium and each prove
-	# takes seconds. Pass flags through BENCH_ARGS, e.g.
-	# `make bench-precompile-cache BENCH_ARGS="--pages 5 --variants ecdsa"`.
-	# To isolate the cache itself rather than generic first-prove warm-up,
-	# build dist/st with and without the feature and point the script at each
-	# saved copy — the first positional argument is the dist dir.
-	pnpm --filter @miden-sdk/miden-sdk exec node scripts/bench-precompile-cache.mjs $(BENCH_ARGS)
-
 .PHONY: integration-test-remote-prover-web-client
 integration-test-remote-prover-web-client: require-fee-faucet ## Run integration tests for the web client with remote prover
 	pnpm --filter @miden-sdk/miden-sdk run test:install
