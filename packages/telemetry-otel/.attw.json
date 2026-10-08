@@ -1,0 +1,4 @@
+{
+  "$schema": "https://raw.githubusercontent.com/arethetypeswrong/arethetypeswrong.github.io/main/docs/configuration.md",
+  "profile": "esm-only"
+}

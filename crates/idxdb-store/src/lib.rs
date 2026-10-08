@@ -6,6 +6,11 @@
 //!
 //! **Note:** This implementation is only available when targeting WebAssembly
 
+// `#[wasm_bindgen(getter_with_clone)]` generates a `self.field.clone()` getter for every field,
+// including Copy ones (u8/u32/bool/Option<u32>), which clippy's `clone_on_copy` flags. The clones
+// are macro-generated and harmless, so the lint is allowed crate-wide.
+#![allow(clippy::clone_on_copy)]
+
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -25,21 +30,22 @@ use miden_client::account::{
     StorageSlotName,
 };
 use miden_client::asset::{Asset, AssetId, AssetVault, AssetWitness, StorageMapWitness};
-use miden_client::block::BlockHeader;
+use miden_client::block::{AccountWitness, BlockHeader};
 use miden_client::crypto::{InOrderIndex, MmrPeaks};
 use miden_client::note::{BlockNumber, NoteScript, Nullifier};
 use miden_client::store::{
     AccountRecord,
-    AccountSmtForest,
     AccountStatus,
     AccountStorageFilter,
     BlockRelevance,
     ClientAccountType,
+    InputNoteCursor,
     InputNoteRecord,
     NoteFilter,
     OutputNoteRecord,
     PartialBlockchainFilter,
     SettingMutation,
+    SettingScope,
     Store,
     StoreError,
     TransactionFilter,
@@ -57,12 +63,15 @@ pub mod account;
 pub mod auth;
 pub mod chain_data;
 pub mod export;
+mod forest;
 pub mod import;
 pub mod note;
 mod promise;
 pub mod settings;
 pub mod sync;
 pub mod transaction;
+
+use forest::AccountForest;
 
 pub(crate) const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -88,7 +97,7 @@ extern "C" {
 /// which would prevent the struct from being Send + Sync.
 pub struct IdxdbStore {
     database_id: String,
-    smt_forest: RwLock<AccountSmtForest>,
+    smt_forest: RwLock<AccountForest>,
 }
 
 impl IdxdbStore {
@@ -96,52 +105,13 @@ impl IdxdbStore {
         let promise = open_database(database_name.as_str(), CLIENT_VERSION);
         let _db_id = JsFuture::from(promise).await?;
 
-        let store = IdxdbStore {
+        let smt_forest = AccountForest::new()
+            .map_err(|e| JsValue::from_str(&format!("Failed to create SMT forest: {e:?}")))?;
+
+        Ok(IdxdbStore {
             database_id: database_name,
-            smt_forest: RwLock::new(AccountSmtForest::new()),
-        };
-
-        // Initialize SMT forest
-        store.build_smt_forest().await?;
-
-        Ok(store)
-    }
-
-    /// Builds the SMT forest by loading all existing account vault and storage data.
-    ///
-    /// This ensures that the forest contains all necessary Merkle nodes for generating
-    /// witnesses when creating partial accounts or executing transactions.
-    async fn build_smt_forest(&self) -> Result<(), JsValue> {
-        let account_ids = self
-            .get_account_ids()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to get account IDs: {e:?}")))?;
-
-        for account_id in account_ids {
-            let vault = self.get_account_vault(account_id).await.map_err(|e| {
-                JsValue::from_str(&format!("Failed to get vault for account {account_id}: {e:?}"))
-            })?;
-
-            let storage = self
-                .get_account_storage(account_id, AccountStorageFilter::All)
-                .await
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to get storage for account {account_id}: {e:?}"
-                    ))
-                })?;
-
-            self.smt_forest
-                .write()
-                .insert_and_register_account_state(account_id, &vault, &storage)
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "Failed to insert account state for {account_id}: {e:?}"
-                    ))
-                })?;
-        }
-
-        Ok(())
+            smt_forest: RwLock::new(smt_forest),
+        })
     }
 
     /// Returns the database ID as a string slice for passing to JS functions.
@@ -220,15 +190,15 @@ impl Store for IdxdbStore {
         self.get_output_notes(note_filter).await
     }
 
-    async fn get_input_note_by_offset(
+    async fn get_input_note_after(
         &self,
         filter: NoteFilter,
         consumer: AccountId,
         block_start: Option<BlockNumber>,
         block_end: Option<BlockNumber>,
-        offset: u32,
+        cursor: Option<InputNoteCursor>,
     ) -> Result<Option<InputNoteRecord>, StoreError> {
-        self.get_input_note_by_offset(filter, consumer, block_start, block_end, offset)
+        self.get_input_note_after(filter, consumer, block_start, block_end, cursor)
             .await
     }
 
@@ -425,36 +395,76 @@ impl Store for IdxdbStore {
         self.insert_address(address, &account_id).await
     }
 
-    async fn remove_address(&self, address: Address) -> Result<(), StoreError> {
+    async fn remove_address(&self, address: Address) -> Result<bool, StoreError> {
         // Tag removal moved upstream — `Self::remove_note_tag` is the
         // caller's responsibility per the new trait contract.
         self.remove_address(address).await
     }
 
+    // ACCOUNT WITNESSES
+    // --------------------------------------------------------------------------------------------
+
+    async fn track_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.track_account_witness(account_id).await
+    }
+
+    async fn untrack_account_witness(&self, account_id: AccountId) -> Result<bool, StoreError> {
+        self.untrack_account_witness(account_id).await
+    }
+
+    async fn tracked_account_witnesses(&self) -> Result<Vec<AccountId>, StoreError> {
+        self.tracked_account_witnesses().await
+    }
+
+    async fn get_account_witness(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<AccountWitness>, StoreError> {
+        self.get_account_witness(account_id).await
+    }
+
+    async fn update_account_witness(
+        &self,
+        account_id: AccountId,
+        witness: &AccountWitness,
+    ) -> Result<bool, StoreError> {
+        self.update_account_witness(account_id, witness).await
+    }
+
     // SETTINGS
     // --------------------------------------------------------------------------------------------
 
-    async fn set_setting(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
-        self.set_setting(key, value).await
+    async fn set_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.set_setting(scope, key, value).await
     }
 
-    async fn get_setting(&self, key: String) -> Result<Option<Vec<u8>>, StoreError> {
-        self.get_setting(key).await
+    async fn get_setting(
+        &self,
+        scope: SettingScope,
+        key: String,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get_setting(scope, key).await
     }
 
-    async fn remove_setting(&self, key: String) -> Result<(), StoreError> {
-        self.remove_setting(key).await
+    async fn remove_setting(&self, scope: SettingScope, key: String) -> Result<bool, StoreError> {
+        self.remove_setting(scope, key).await
     }
 
-    async fn list_setting_keys(&self) -> Result<Vec<String>, StoreError> {
-        self.list_setting_keys().await
+    async fn list_setting_keys(&self, scope: SettingScope) -> Result<Vec<String>, StoreError> {
+        self.list_setting_keys(scope).await
     }
 
     async fn apply_settings_mutations(
         &self,
+        scope: SettingScope,
         mutations: Vec<SettingMutation>,
     ) -> Result<(), StoreError> {
-        self.apply_settings_mutations(mutations).await
+        self.apply_settings_mutations(scope, mutations).await
     }
 }
 

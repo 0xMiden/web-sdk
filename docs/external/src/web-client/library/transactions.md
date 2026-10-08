@@ -13,7 +13,7 @@ This guide demonstrates how to send, batch, and retrieve transactions using the 
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-    const client = await MidenClient.create();
+    const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
     // List all transactions
     const allTransactions = await client.transactions.list();
@@ -53,7 +53,7 @@ try {
 import { MidenClient } from "@miden-sdk/miden-sdk";
 
 try {
-    const client = await MidenClient.create();
+    const client = await MidenClient.create({ feeFaucetId: FEE_FAUCET });
 
     // Get uncommitted transactions
     const uncommitted = await client.transactions.list({ status: "uncommitted" });
@@ -63,9 +63,6 @@ try {
 
     // Get specific transactions by ID
     const specific = await client.transactions.list({ ids: [txId1, txId2] });
-
-    // Get expired transactions
-    const expired = await client.transactions.list({ expiredBefore: 1000 });
 } catch (error) {
     console.error("Failed to filter transactions:", error.message);
 }
@@ -87,15 +84,14 @@ Check status using methods on the `TransactionStatus` object:
 
 ## Batch Operations
 
-Submit multiple operations against a single account as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
+Submit multiple operations across one or more local accounts as one atomic batch — every transaction in the batch lands together or none does. Each operation builds its own `TransactionRequest` internally, so consumers don't have to assemble or serialize them by hand.
 
 ```typescript
 const { blockNumber } = await client.transactions.batch({
-  account: wallet,
   operations: [
-    { kind: "send", to: alice, token: dagToken, amount: 50n, type: "public" },
-    { kind: "send", to: bob, token: dagToken, amount: 30n, type: "public" },
-    { kind: "consume", notes: pendingNotes },
+    { kind: "send", account: alice, to: bob, token: dagToken, amount: 50n, type: "public" },
+    { kind: "send", account: alice, to: carol, token: dagToken, amount: 30n, type: "public" },
+    { kind: "consume", account: bob, notes: pendingNotes },
   ],
   waitForConfirmation: true,
 });
@@ -104,31 +100,38 @@ console.log(`Batch landed in block ${blockNumber}`);
 
 ### Operation kinds
 
-`BatchOperation` is a discriminated union on `kind`. Each shape mirrors the singular options object (`SendOptions`, `MintOptions`, …) minus the `account` field, which is set once at the batch level:
+`BatchOperation` is a discriminated union on `kind`. Each shape mirrors the singular options object (`SendOptions`, `MintOptions`, …). Every operation specifies which local account executes it via `account`:
 
 | `kind` | Fields |
 |---|---|
-| `"send"` | `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
-| `"mint"` | `to`, `amount`, `type?` |
-| `"consume"` | `notes` (single `NoteInput` or array) |
-| `"swap"` | `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
-| `"execute"` | `script`, `foreignAccounts?` |
-| `"custom"` | `request: TransactionRequest` (escape hatch for pre-built requests) |
+| `"send"` | `account`, `to`, `token`, `amount`, `type?`, `reclaimAfter?`, `timelockUntil?` |
+| `"mint"` | `account`, `to`, `amount`, `type?` |
+| `"consume"` | `account`, `notes` (single `NoteInput` or array) |
+| `"swap"` | `account`, `offer: { token, amount }`, `request: { token, amount }`, `type?`, `paybackType?` |
+| `"execute"` | `account`, `script`, `foreignAccounts?` |
+| `"custom"` | `account`, `request: TransactionRequest` (escape hatch for pre-built requests) |
 
-### V1 constraints
+### Cross-account flows
 
-- **Single account.** Every operation runs against the `account` passed at the top level. Mixing accounts across operations throws — V2 will lift this constraint.
+A later transaction may consume a note produced by an earlier transaction in the same batch — even when the producer and consumer target different accounts. Push order must respect producer-before-consumer.
+
+### Constraints
+
+- **All accounts must be tracked.** Every `account` referenced by an operation must be registered with the client. Pushing for an unknown account fails at submit time with `AccountDataNotFound`.
 - **No per-tx ids in the result.** `batch` returns `{ blockNumber }`. To inspect individual transactions in the batch, sync state and query with `client.transactions.list()` after `waitForConfirmation` succeeds.
 - **Atomicity is at the batch level.** Either all transactions in the batch land or none do — this differs from `Promise.all([send, send, send])` of singular calls (which can partially succeed).
+- **No duplicate input notes.** A note consumed by one transaction in the batch cannot be consumed by another — globally across accounts.
+- **Proving uses the built-in local prover.** Each transaction is proven inside the batch primitive by the client's built-in local prover, so `proverUrl` does not apply to `batch` or `submitBatch`, and neither takes a per-call prover.
+- **Proving runs on the calling thread.** In the browser a batch has no worker route: it proves on the calling thread (the main thread for a page, even with `useWorker` on) and blocks it until it settles, so keep batches small.
 
 ### `submitBatch` — pre-built requests
 
-For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders:
+For callers that already hold pre-built `TransactionRequest`s, `submitBatch` skips the high-level builders. Each item pairs the executing account with its request:
 
 ```typescript
-const { blockNumber } = await client.transactions.submitBatch(wallet, [
-  request1,
-  request2,
+const { blockNumber } = await client.transactions.submitBatch([
+  { account: alice, request: request1 },
+  { account: bob, request: request2 },
 ]);
 ```
 
@@ -136,7 +139,7 @@ This is the plural counterpart of `client.transactions.submit(account, request)`
 
 ### `waitForConfirmation` semantics
 
-The V1 batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
+The batch primitive returns only a block number — there are no per-tx ids to poll. Setting `waitForConfirmation: true` polls the local sync height until it reaches `blockNumber` (rather than per-transaction polling like singular `send` / `consume` do). The `timeout` option still applies; default is 60 seconds.
 
 ## Manual Transaction Lifecycle
 
@@ -164,3 +167,268 @@ Notes on the staged form:
 - **`apply` fires transaction observers** (e.g. PSWAP lineage tracking), the same as the one-shot `submit` path. `submitted.waitForConfirmation()` blocks until the transaction commits on-chain.
 - **`submit` is equivalent** to running the stages back to back — prefer it unless you need the seams.
 - **Proving elsewhere:** to submit a proof produced on a client that shares nothing with the executing one, pass it back in with `client.transactions.submitProven(proof, result)`, which returns the same submitted handle.
+
+Clients sharing a browser database read coherent persisted account state.
+Account witnesses refresh when another client changes that state, preserving
+untouched vault assets and storage maps. This does not fetch new chain state;
+continue to sync before relying on on-chain balances.
+
+For browser stores, `apply` requires the stored account to match the
+transaction's execution input. A mismatch rejects before changing account state
+or transaction history. A submitted transaction may already be on-chain when
+local apply fails; check its status before submitting again.
+
+## Pinning How Input Notes Are Consumed
+
+`withInputNotes` adds notes and leaves the executing client to decide how each one is consumed: authenticated when its store holds the note's inclusion proof, unauthenticated otherwise. That is what you want for a request you build and execute yourself. It is not what you want for a request that travels — two clients with different stores produce different transaction summaries for the same request, and a multisig flow comparing summaries then fails for no visible reason.
+
+`withExplicitInputNote` pins the mode on the request instead. Each note is consumed in the mode its `InputNote` carries, whatever the executing client's store holds:
+
+```typescript
+import { InputNote, TransactionRequestBuilder } from "@miden-sdk/miden-sdk";
+
+const request = new TransactionRequestBuilder()
+  // Consumed with its proof and optional arguments.
+  .withExplicitInputNote(InputNote.authenticated(note, inclusionProof), args)
+  // Consumed as unauthenticated, even if the executing client has a proof for it.
+  .withExplicitInputNote(InputNote.unauthenticated(otherNote))
+  .build();
+```
+
+Each call adds one note. The optional second argument is the note's arguments, the same value `withInputNotes` takes; omit it or pass `null` for none. The input note remains usable after the call.
+
+To consume an authenticated note, the executing client must be able to serve the header of the note's creation block, from its store or from the [chain anchor](#chain-anchored-execution) the request executes against.
+
+## Paying Transaction Fees
+
+Since protocol 0.16 a chain can charge a verification fee, and the fee is paid from inside the account's auth procedure rather than by the transaction kernel. `fee::pay_fee` reads the asset and rate to pay in out of the transaction's auth argument: `AUTH_ARGS` has to be `hash(CONVERSION_INFO || SALT)`, with the preimage reachable in the advice map. A procedure that reaches `pay_fee` without that commitment aborts with `ERR_FEE_CONVERSION_INFO_MISSING`.
+
+**Fees are always settled in the chain's own fee asset at rate 1/1**, so there is no conversion info for you to choose — miden-client builds it and commits it through the auth args while preparing the transaction. The one thing it will not invent is the **salt** the commitment is computed under, because every multisig flavour reuses that salt as its transaction summary's replay guard, and only the caller can choose a value the co-signers will agree on.
+
+So how much of this you have to think about depends on the account:
+
+- **Single-sig, no-auth and network accounts** — nothing to do, at any base fee. miden-client commits under a fixed default salt. It is fixed deliberately: the signed transaction summary covers the auth args, so a fresh salt per execution would change the summary and break any flow that reproduces one to verify a signature over it.
+- **Multisig, smart multisig and guarded multisig** — miden-client refuses to guess the salt, and the transaction fails with `FeeConversionInfoRequired` naming the component. Declaring a salt is what makes those accounts work at all.
+- **A custom auth procedure that reads conversion info** — miden-client does not recognise the component, commits nothing, and the transaction hits the VM abort above. Attach the commitment yourself; see [Custom auth procedures](#custom-auth-procedures).
+
+Whether any of this applies is a property of the chain, and `BlockHeader.verificationBaseFee()` is how you ask. A block header is reachable from a chain anchor; the fee asset itself comes from the client, since 0.17 keeps it in the protocol configuration rather than in the header:
+
+```typescript
+const anchor = await client.transactions.captureAnchor(request);
+const header = anchor.blockHeader();
+
+const chargesFees = header.verificationBaseFee() > 0;
+const feeFaucet = await client.feeFaucetId();
+```
+
+On a chain that charges nothing, a request for an account that is not a multisig is byte-identical to what earlier versions produced — no auth argument, no declared salt, no advice entry. A multisig is the exception at any base fee: since 0.17 its auth procedure resolves its auth args unconditionally, so the request carries them even on a fee-free chain.
+
+### The convenience constructors handle it
+
+`newSendTransactionRequest`, `newMintTransactionRequest`, `newConsumeTransactionRequest`, `newSwapTransactionRequest`, `newB2AggTransactionRequest`, `newPswapCreateTransactionRequest`, `newPswapConsumeTransactionRequest` and `newPswapCancelTransactionRequest` declare a salt themselves where the executing account needs one. Each returns a finished `TransactionRequest` with no way to declare one afterwards, so there would otherwise be no way for a multisig caller to pay the fee at all.
+
+The `client.transactions` operations that build their own request — `send`, `mint`, `consume`, `consumeAll`, `swap`, `bridge`, `createNetworkNote`, `execute`, `pswapCreate`, `pswapConsume`, `pswapCancel`, and the named operations of `batch` and `preview` — declare it too. The ones that take a finished request **from you** never do: `submit`, `executeRequest`, `submitBatch`, and the `custom` operation of `batch` / `preview`. Those are the paths the next section is for.
+
+`submitBatch` is worth calling out because a batch proves each transaction as it is pushed, on the client's built-in local prover rather than `proverUrl`. A multisig request that declares no salt is rejected by miden-client during preparation, after the proofs of everything ahead of it in the batch have already been paid for. Build multisig requests from `feeAwareTransactionRequestBuilder` before batching them.
+
+### Assembling a request yourself
+
+When you build a request from a builder, ask the client for one that already declares a salt where the executing account needs one:
+
+```typescript
+const builder = await client.feeAwareTransactionRequestBuilder(wallet);
+const request = builder.withCustomScript(script).build();
+```
+
+`feeAwareTransactionRequestBuilder` takes the account that will **execute** the request — the one whose auth procedure pays the fee — not the recipient or the note's sender. It is a safe drop-in for `new TransactionRequestBuilder()`: for an account that is not a multisig it returns an untouched builder. A zero base fee is not a second condition — since 0.17 a multisig resolves its auth args whatever the chain charges.
+
+To set the salt yourself — which co-signers must do when they need to agree on it without transporting the proposer's request bytes — declare it directly:
+
+```typescript
+import { TransactionRequestBuilder, Word } from "@miden-sdk/miden-sdk";
+
+// Co-signers must all derive the same summary, so they must agree on both the
+// salt and the block it binds.
+const salt = new Word([1n, 2n, 3n, 4n]);
+
+const request = (
+  await client.feeAwareTransactionRequestBuilder(multisig, {
+    feeConversionSalt: salt,
+    boundBlockNum: agreedBlock,
+  })
+)
+  .withCustomScript(script)
+  .build();
+```
+
+Each call **consumes** the `Word` you pass: it is moved across the WASM boundary, so a second call needs a freshly built one. Reusing a spent handle is not an error - it arrives as "no salt given" and one is drawn for you, which is the divergence pinning the salt exists to prevent.
+
+The salt is a *declaration*, not a commitment: `request.feeConversionSalt()` reports it back, `request.authArg()` is still empty, and miden-client computes `hash(CONVERSION_INFO || SALT)` from it during preparation. It survives serialization, so a proposal transported to its co-signers still names the salt its summary was derived under.
+
+`withAuthArg` and `withFeeConversionSalt` are **mutually exclusive**, and miden-client enforces that by having each setter clear the other — so whichever you call last simply wins, rather than producing an error. That makes either setter destructive on a builder from `feeAwareTransactionRequestBuilder` for a multisig: it already carries the component's three-word auth args, and clearing them leaves the auth procedure piping a preimage that was never written. Pass `feeConversionSalt` to the builder instead, as above.
+
+### Custom auth procedures
+
+miden-client only commits conversion info for auth components it recognises. If you have written your own, which way out applies depends on the procedure:
+
+- **It reads the conversion info from `AUTH_ARGS`** (it calls `fee::load_conversion_info`, like the standard signature components). Compute the commitment yourself and attach it with `TransactionRequestBuilder.withAuthArg`, plus `extendAdviceMap` for the preimage. Setting an auth argument opts the request out of the client's fee machinery entirely — it commits only when the request carries none — so the word you set is the one the procedure reads.
+- **It is still yours to write.** Read the chain's native conversion info in the procedure instead, the way the no-auth and network-account components do, and the transaction needs no auth argument at all.
+
+Note that declaring a *salt* against such an account does not work: miden-client rejects a salt whose auth component it cannot see reading it, with `FeeConversionInfoUnsupported` naming the component.
+
+One request-building path the SDK cannot declare a salt on: `client.pswap.cancelByOrder` resolves the order and builds the request inside miden-client, so the SDK never sees a builder. On a fee-charging chain that leaves the outcome to the creator's auth component — an ordinary creator has its conversion info committed and pays normally, while a multisig creator fails with `FeeConversionInfoRequired`. Cancel by note with `client.transactions.pswapCancel` there, which declares a salt against the creator first.
+
+## Multisig Proposals: Bind a Block, Execute at the Tip
+
+Since protocol 0.17 a multisig proposal does not need a `ChainAnchor`. The multisig auth args name a **bound block**, and the transaction summary binds that block rather than the reference block the transaction executes at. A proposal can therefore be verified and submitted at whatever block is current, provided the transaction can authenticate the bound block. `withBlockNumbers([boundBlock])` adds it to the transaction's partial blockchain, and `feeAwareTransactionRequestBuilder` does that for you when it builds a multisig request. Each party's client must first have synced to at least the bound block (the largest of `request.blockNumbers()`, by default the proposer's sync height when it built the request); a client below it fails with `requested block N is after transaction reference block M` until it syncs.
+
+Use this flow for multisig. Re-executing at an anchor breaks down twice as a proposal ages:
+
+- A node serves account state for only the last 50 blocks, and every fee-paying transaction loads the chain's fee faucet as a foreign account. Re-execution at an older anchor fails with `block N has been pruned`, on every co-signer's verification as well as at submit.
+- A transaction expires 20 blocks after its reference block, so a transaction executed at an older anchor is rejected at submission even when it executes.
+
+```typescript
+import { TransactionRequest, TransactionSummary } from "@miden-sdk/miden-sdk";
+
+// ── Proposer ──────────────────────────────────────────────
+// The fee-aware builder binds the current sync height and adds it to the
+// request's block numbers.
+const builder = await client.feeAwareTransactionRequestBuilder(multisig);
+const request = builder.withCustomScript(script).build();
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request,
+});
+await shipToCosigners({
+  request: request.serialize(),
+  summary: summary.serialize(),
+});
+
+// ── Co-signer ─────────────────────────────────────────────
+// Sync to the tip, which is at or past the bound block, then re-derive from the
+// proposer's request bytes.
+await client.sync();
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account: multisig,
+  request: proposedRequest,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// ── Executor ──────────────────────────────────────────────
+// At the tip, with the collected signatures in the request's advice map.
+await client.transactions.submit(multisig, proposedRequest);
+```
+
+Notes:
+
+- **The request still travels.** The salt in the multisig auth args is drawn fresh on every build and bound into the summary, so a co-signer must re-derive from the proposer's request bytes, exactly as in the anchored flow below.
+- **Confirm the bound block is real.** For a multisig, `summary.blockCommitment()` is the bound block's commitment. Fetch that block's header from a node you trust (`RpcClient.getBlockHeaderByNumber`, with the number from `request.blockNumbers()`) and compare commitments.
+- **Approvals can expire.** `approvalExpirationDelta` on `feeAwareTransactionRequestBuilder` counts from the bound block, and the multisig rejects execution at or after that reference block. Omitted, the approval does not expire.
+- **A match still does not prove agreement on account state.** Everything under "Notes on anchors" about what the summary covers, and what it does not, applies unchanged.
+
+Available from `0.17.0-rc.4`.
+
+## Chain-Anchored Execution
+
+For a multisig proposal, use the flow in the previous section instead. The rest of this section applies when the summary binds the **reference block**, as a single-signature (`signature.masm`) account's does: signatures collected over that summary only authorize an execution whose reference block is the one the summary was built at.
+
+That is a problem for any flow that collects such signatures and executes later, such as offline co-signing, because the signer and the eventual executor are at different heights. Re-deriving the summary locally produces a different summary, and the signatures no longer match.
+
+A `ChainAnchor` pins execution to a specific reference block, so the same summary reproduces on a client at a different sync height:
+
+```typescript
+import {
+  ChainAnchor,
+  TransactionRequest,
+  TransactionSummary,
+} from "@miden-sdk/miden-sdk";
+
+// ── Proposer ──────────────────────────────────────────────
+const anchor = await client.transactions.captureAnchor(request);
+
+// `preview` derives the summary the account is being asked to authorize.
+const summary = await client.transactions.preview({
+  operation: "custom",
+  account,
+  request,
+  anchor,
+});
+
+// Ship the request too — a co-signer must re-derive from these exact bytes,
+// not from a request they build themselves. See "The request travels with the
+// anchor" below.
+await shipToCosigners({
+  request: request.serialize(),
+  anchor: anchor.serialize(),
+  summary: summary.serialize(),
+});
+
+// ── Co-signer ─────────────────────────────────────────────
+const received = ChainAnchor.deserialize(anchorBytes);
+const proposed = TransactionSummary.deserialize(summaryBytes);
+const proposedRequest = TransactionRequest.deserialize(requestBytes);
+
+// Re-derive at the proposer's anchor and compare before signing. Deriving at
+// the local sync height would produce a different summary every time.
+const derived = await client.transactions.preview({
+  operation: "custom",
+  account,
+  request: proposedRequest,
+  anchor: received,
+});
+if (derived.toCommitment().toHex() !== proposed.toCommitment().toHex()) {
+  throw new Error("proposal does not match the summary presented for signing");
+}
+
+// ── Executor ──────────────────────────────────────────────
+// The proposer's request, carrying the collected signatures in its advice map;
+// attaching them is part of the signing protocol, not the anchor.
+await client.transactions.submit(account, proposedRequest, {
+  anchor: received,
+});
+```
+
+Notes on anchors:
+
+- **The request travels with the anchor.** A co-signer has to re-derive the summary from the proposer's request bytes, not from a request they build themselves. On a fee-charging chain a multisig request carries fee conversion info whose salt is drawn fresh on every build, and the multisig auth procedure uses that auth argument as the summary's replay-guard salt — so two independently built requests produce two different summaries even when they describe the identical transfer. Rebuilding locally therefore fails the comparison below and reads as tampering when nothing is wrong. `TransactionRequest.serialize()` / `.deserialize()` are the transport.
+
+- **Signature collection is a separate concern.** An anchor makes signatures *reproducible* across heights; it does not transport them. Signatures are returned to the executor and attached to the request with `request.extendAdviceMap(...)` before submission, which is unchanged by anchoring.
+
+- **What the summary actually covers.** The signed commitment is built from exactly six things: the account delta, the input-note commitment, the output-note commitment, the reference block commitment, the expiration delta, and the user params. The transaction script root, the advice map, note arguments and foreign-account inputs are **not** among them. Two different requests that produce the same delta and the same note sets therefore produce the same commitment, and one set of signatures authorizes both. Do not rely on "a different request would be rejected" — it would not be. Accounts that need the script itself bound should use the transaction-script allowlist component from `miden-standards`.
+- **A co-signer must already track the account.** Verification runs a real execution, so the account has to exist in that participant's local store: a public account can be pulled in with `accounts.getOrImport`, but a private account requires its state to be transferred out of band. Without it, `preview` fails to find the account rather than returning a mismatch.
+
+- **Re-deriving a summary proves consistency, not intent.** When a proposer sends you a request, an anchor and a summary, all three come from them. Checking `anchor.commitment()` against `summary.blockCommitment()`, and re-deriving the summary at that anchor to compare `toCommitment()`, proves only that the three agree with each other — which they will, for any request the proposer chose, including one that drains the account. These checks catch a corrupted or substituted *component*; they say nothing about what the transaction does.
+
+  Before signing, inspect the effects: `summary.accountDelta()`, `summary.inputNotes()`, `summary.outputNotes()` and `summary.expirationDelta()`, and confirm they are what you meant to approve.
+
+  **Confirm the anchor names a real block.** `ChainAnchor` enforces only two internal invariants — that the chain length matches the header's block number, and that the peaks hash to the header's chain commitment. Both are computable over an entirely invented chain, so a proposer can hand you a well-formed anchor for a block that never existed. Its header then supplies the block number, timestamp and fee parameters your execution runs against. A transaction on a fabricated block cannot be submitted and the signature cannot be moved onto a real one, so the cost is a wasted proof and a misleading preview rather than loss of funds — but the check is one call, so make it a standard step:
+
+  ```js
+  import { RpcClient } from "@miden-sdk/miden-sdk";
+
+  const rpc = new RpcClient(endpoint);
+  const real = await rpc.getBlockHeaderByNumber(received.blockNum());
+  if (real.commitment().toHex() !== received.commitment().toHex()) {
+    throw new Error("anchor does not name a block on this chain");
+  }
+  ```
+- **An anchor pins chain data, not account state.** Account records and authenticated input notes still come from each participant's own local store, so all parties must agree on the account state too. If the account moved in a way that changes the transaction's effects, the re-derived summary will not match even though the anchor is correct - the most common reason a co-signing flow fails.
+
+  **A match does not mean the two parties agree on account state.** The summary binds the account *delta* — the change — not the state it applies to. Divergence that leaves the delta and the note sets identical produces a byte-identical commitment and passes verification: an unrelated nonce bump, assets arriving, or, for a multisig, a change to the signer set or threshold. That last one matters most, because signatures gathered under one threshold remain valid after it is lowered. A `signature.masm` account additionally binds the final nonce as `summary.userParams()[0]`, which does pin the absolute pre-state; the multisig component discards it and zeroes those params, so it has no such binding. Check whatever state you actually care about — nonce, signer set, threshold, balances — directly, rather than inferring it from a matching summary.
+- **An anchor is captured for a specific request, but it is not an identity for one.** It tracks the blocks that request declares through `withBlockNumbers` and the creation blocks of its authenticated input notes, which is why `captureAnchor` takes the request. A different request executes against it as long as every block it needs is tracked. What binds a request to a summary is the summary commitment, not the anchor.
+- **The `anchor` option is only on the request-taking methods** — `preview({ operation: "custom" })`, `executeRequest`, and `submit`. `send`, `mint`, `consume` and friends build their request internally, so there is no request to have captured an anchor for.
+- **Anchored execution skips the recency check**, since it deliberately references a block older than the tip.
+- **An anchor does not extend a transaction's lifetime.** It keeps a summary reproducible however far the chain advances, but a transaction that sets an expiration still expires that many blocks after the anchored reference block. A signing round that takes longer produces a transaction the network will not accept, and because the recency check is skipped it will execute and prove locally before being rejected at submission. For a flow that may take a while, check the deadline before spending a proof — noting that `expirationDelta()` returns **0 to mean no expiration was set**, not that it expires immediately:
+
+  ```js
+  const delta = summary.expirationDelta();
+  const expiresAt = delta === 0 ? null : anchor.blockNum() + delta;
+  ```
+- **Foreign account proofs are fetched at the anchor's block**, so requests with foreign accounts additionally need the node to serve account state at that height.
+- **The anchor handle is reusable.** Unlike a `TransactionProver`, it is borrowed rather than consumed, so one anchor can drive the preview and the execution.

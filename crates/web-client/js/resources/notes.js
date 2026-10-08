@@ -1,4 +1,5 @@
 import {
+  isConsumableNow,
   resolveAccountRef,
   resolveAddress,
   resolveNoteIdHex,
@@ -35,12 +36,25 @@ export class NotesResource {
     return await this.#inner.getOutputNotes(filter);
   }
 
+  // Drops block-locked notes; `listConsumable` returns them.
   async listAvailable(opts) {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
     const accountId = resolveAccountRef(opts.account, wasm);
+    // getConsumableNotes takes AccountId by value, so read the hex first.
+    const accountIdHex = accountId.toString();
     const consumable = await this.#inner.getConsumableNotes(accountId);
-    return consumable.map((c) => c.inputNoteRecord());
+    return consumable
+      .filter((c) => isConsumableNow(c, accountIdHex))
+      .map((c) => c.inputNoteRecord());
+  }
+
+  async listConsumable(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const accountId =
+      opts?.account == null ? undefined : resolveAccountRef(opts.account, wasm);
+    return await this.#inner.getConsumableNotes(accountId);
   }
 
   async import(noteFile) {
@@ -64,6 +78,15 @@ export class NotesResource {
     this.#client.assertNotTerminated();
     const wasm = await this.#getWasm();
 
+    if (!opts?.inclusionProof) {
+      throw new Error(
+        "sendPrivate requires inclusionProof: a NoteInclusionProof the transport verifies. " +
+          "The recipient scans from the block the proof names. " +
+          "For one of this client's own output notes, use sendPrivateOutput({ noteId, to }), " +
+          "which reads the proof sync stored on the note."
+      );
+    }
+
     let note;
     const input = opts.note;
     // Check if input is a Note object (has .id() and .assets() but not .toNote())
@@ -85,7 +108,15 @@ export class NotesResource {
     }
 
     const address = resolveAddress(opts.to, wasm);
-    await this.#inner.sendPrivateNote(note, address);
+    await this.#inner.sendPrivateNote(note, address, opts.inclusionProof);
+  }
+
+  async sendPrivateOutput(opts) {
+    this.#client.assertNotTerminated();
+    const wasm = await this.#getWasm();
+    const noteHex = resolveNoteIdHex(opts.noteId);
+    const address = resolveAddress(opts.to, wasm);
+    await this.#inner.sendPrivateOutputNote(noteHex, address);
   }
 }
 
@@ -99,6 +130,17 @@ function buildNoteFilter(query, wasm) {
       wasm.NoteId.fromHex(resolveNoteIdHex(id))
     );
     return new wasm.NoteFilter(wasm.NoteFilterTypes.List, noteIds);
+  }
+
+  if (query.scriptRoots) {
+    const scriptRoots = query.scriptRoots.map((root) =>
+      typeof root === "string" ? wasm.Word.fromHex(root) : root
+    );
+    return new wasm.NoteFilter(
+      wasm.NoteFilterTypes.ScriptRoots,
+      undefined,
+      scriptRoots
+    );
   }
 
   if (query.status) {

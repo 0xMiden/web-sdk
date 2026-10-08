@@ -55,8 +55,13 @@ test("transport basic", async ({ run }) => {
     );
     const notesBeforeSending = notes.length;
 
-    // Send note
-    await mockClient.sendPrivateNote(note, recipientAddress);
+    // The note is uncommitted here (never minted), so it has no real inclusion
+    // proof. mockAtBlock records block 0 and does not authenticate the path:
+    // the mock transport accepts it and the recipient scans from that block. A
+    // real node rejects the empty path. A committed note on this same client
+    // would be auto-imported and would not isolate the transport.
+    const proof = sdk.NoteInclusionProof.mockAtBlock(0);
+    await mockClient.sendPrivateNote(note, recipientAddress, proof);
 
     // 1 note stored
     await mockClient.fetchPrivateNotes();

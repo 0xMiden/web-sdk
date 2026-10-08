@@ -10,6 +10,7 @@ function makeWasm(overrides = {}) {
     Processing: "Processing",
     Unverified: "Unverified",
     List: "List",
+    ScriptRoots: "ScriptRoots",
   };
   const filterInstance = { type: "filter" };
   return {
@@ -18,10 +19,13 @@ function makeWasm(overrides = {}) {
     NoteId: {
       fromHex: vi.fn((hex) => ({ hex })),
     },
+    Word: {
+      fromHex: vi.fn((hex) => ({ hex })),
+    },
     NoteExportFormat: { Full: "Full" },
     AccountId: {
-      fromHex: vi.fn((hex) => ({ hex })),
-      fromBech32: vi.fn((b) => ({ bech32: b })),
+      fromHex: vi.fn((hex) => ({ hex, toString: () => hex })),
+      fromBech32: vi.fn((b) => ({ bech32: b, toString: () => b })),
     },
     Address: {
       fromBech32: vi.fn((b) => ({ bech32: b })),
@@ -41,6 +45,7 @@ function makeInner() {
     exportNoteFile: vi.fn(),
     fetchPrivateNotes: vi.fn(),
     sendPrivateNote: vi.fn(),
+    sendPrivateOutputNote: vi.fn(),
   };
 }
 
@@ -125,6 +130,19 @@ describe("NotesResource", () => {
       expect(wasm.NoteFilter).toHaveBeenCalledWith("List", expect.any(Array));
     });
 
+    it("builds NoteFilter with script roots when query.scriptRoots provided", async () => {
+      inner.getInputNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      const wordRoot = { word: true };
+      await resource.list({ scriptRoots: ["0xabc", wordRoot] });
+      expect(wasm.Word.fromHex).toHaveBeenCalledTimes(1);
+      expect(wasm.Word.fromHex).toHaveBeenCalledWith("0xabc");
+      expect(wasm.NoteFilter).toHaveBeenCalledWith("ScriptRoots", undefined, [
+        { hex: "0xabc" },
+        wordRoot,
+      ]);
+    });
+
     it("falls back to All when empty query object", async () => {
       inner.getInputNotes.mockResolvedValue([]);
       const resource = makeResource();
@@ -175,16 +193,92 @@ describe("NotesResource", () => {
     });
   });
 
+  // A ConsumableNoteRecord whose consumability for the queried account is
+  // consumable-now (afterBlock null) or block-locked (afterBlock = a height).
+  // The account listAvailable resolves "0xacc"/"0xaccountHex" to; entries are
+  // matched against it.
+  const ACC = "0xacc";
+  const entry = (accountIdHex, afterBlock = null, consumableNow = null) => ({
+    accountId: () => ({ toString: () => accountIdHex }),
+    consumptionStatus: () => ({
+      isConsumableNow: () =>
+        consumableNow == null ? afterBlock == null : consumableNow,
+      consumableAfterBlock: () => afterBlock,
+    }),
+  });
+
+  const consumableNote = (record, afterBlock = null) => ({
+    inputNoteRecord: vi.fn().mockReturnValue(record),
+    noteConsumability: vi.fn().mockReturnValue([
+      {
+        accountId: () => ({ toString: () => ACC }),
+        consumptionStatus: () => ({
+          isConsumableNow: () => afterBlock == null,
+          consumableAfterBlock: () => afterBlock,
+        }),
+      },
+    ]),
+  });
+
+  // Never-consumable and unconsumable-conditions statuses report no unlock
+  // block either, so only the status reader tells them from consumable-now.
+  const neverConsumableNote = (record) => ({
+    inputNoteRecord: vi.fn().mockReturnValue(record),
+    noteConsumability: vi.fn().mockReturnValue([
+      {
+        accountId: () => ({ toString: () => ACC }),
+        consumptionStatus: () => ({
+          isConsumableNow: () => false,
+          consumableAfterBlock: () => null,
+        }),
+      },
+    ]),
+  });
+
   describe("listAvailable", () => {
-    it("resolves account and returns inputNoteRecord for each consumable", async () => {
-      const mockNote = { inputNoteRecord: vi.fn().mockReturnValue("record1") };
-      inner.getConsumableNotes.mockResolvedValue([mockNote]);
+    it("resolves account and returns inputNoteRecord for each consumable-now note", async () => {
+      inner.getConsumableNotes.mockResolvedValue([consumableNote("record1")]);
       const resource = makeResource();
       const result = await resource.listAvailable({
-        account: "0xaccountHex",
+        account: ACC,
       });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(result).toEqual(["record1"]);
+    });
+
+    it("excludes block-locked (consumableAfter) notes", async () => {
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("nowRecord"),
+        consumableNote("lockedRecord", 12345),
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: ACC });
+      expect(result).toEqual(["nowRecord"]);
+    });
+
+    it("excludes a never-consumable note, which reports no unlock block either", async () => {
+      inner.getConsumableNotes.mockResolvedValue([
+        consumableNote("nowRecord"),
+        neverConsumableNote("neverRecord"),
+      ]);
+      const resource = makeResource();
+      const result = await resource.listAvailable({ account: ACC });
+      expect(result).toEqual(["nowRecord"]);
+    });
+
+    it("reads the queried account's entry, not another account's", async () => {
+      // getConsumableNotes(account) screens one account today, so a record
+      // carrying a second account's status is defensive: the note is locked for
+      // the caller and must not be listed because someone else could spend it.
+      const mixed = {
+        inputNoteRecord: vi.fn().mockReturnValue("mixedRecord"),
+        noteConsumability: vi
+          .fn()
+          .mockReturnValue([entry(ACC, 12345), entry("0xother")]),
+      };
+      inner.getConsumableNotes.mockResolvedValue([mixed]);
+      const resource = makeResource();
+      expect(await resource.listAvailable({ account: ACC })).toEqual([]);
     });
 
     it("resolves bech32 account ref", async () => {
@@ -197,8 +291,64 @@ describe("NotesResource", () => {
     it("returns empty array when no consumable notes", async () => {
       inner.getConsumableNotes.mockResolvedValue([]);
       const resource = makeResource();
-      const result = await resource.listAvailable({ account: "0xacc" });
+      const result = await resource.listAvailable({ account: ACC });
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("listConsumable", () => {
+    it("returns the consumable records unmapped (consumability preserved)", async () => {
+      const record = {
+        inputNoteRecord: vi.fn(),
+        noteConsumability: vi.fn(),
+      };
+      inner.getConsumableNotes.mockResolvedValue([record]);
+      const resource = makeResource();
+      const result = await resource.listConsumable({ account: "0xacc" });
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+      // Unlike listAvailable, the record itself is returned so callers can read
+      // noteConsumability(), so it must not be mapped to inputNoteRecord().
+      expect(result).toEqual([record]);
+      expect(record.inputNoteRecord).not.toHaveBeenCalled();
+    });
+
+    it("returns block-locked notes, which listAvailable drops", async () => {
+      // The reason this method exists, and the escape hatch the breaking
+      // listAvailable change points at.
+      const now = consumableNote("nowRecord");
+      const locked = consumableNote("lockedRecord", 12345);
+      inner.getConsumableNotes.mockResolvedValue([now, locked]);
+      const resource = makeResource();
+      expect(await resource.listConsumable({ account: ACC })).toEqual([
+        now,
+        locked,
+      ]);
+      // Same input, opposite contract.
+      inner.getConsumableNotes.mockResolvedValue([now, locked]);
+      expect(await resource.listAvailable({ account: ACC })).toEqual([
+        "nowRecord",
+      ]);
+    });
+
+    it("passes undefined to getConsumableNotes when account is omitted", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable();
+      expect(inner.getConsumableNotes).toHaveBeenCalledWith(undefined);
+    });
+
+    it("treats null account as 'all accounts' (matches underlying API)", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable({ account: null });
+      expect(inner.getConsumableNotes).toHaveBeenCalledWith(undefined);
+    });
+
+    it("resolves the account ref when provided", async () => {
+      inner.getConsumableNotes.mockResolvedValue([]);
+      const resource = makeResource();
+      await resource.listConsumable({ account: "mBech32Account" });
+      expect(wasm.AccountId.fromBech32).toHaveBeenCalledWith("mBech32Account");
     });
   });
 
@@ -285,18 +435,24 @@ describe("NotesResource", () => {
   });
 
   describe("sendPrivate", () => {
-    it("sends a Note object directly (has id() and assets(), no toNote())", async () => {
+    it("sends a Note object directly with its inclusion proof", async () => {
       inner.sendPrivateNote.mockResolvedValue(undefined);
       const noteObj = {
         id: vi.fn().mockReturnValue({ toString: () => "noteid" }),
         assets: vi.fn(),
       };
+      const proof = { block: 7 };
       const resource = makeResource();
-      await resource.sendPrivate({ note: noteObj, to: "0xrecipient" });
+      await resource.sendPrivate({
+        note: noteObj,
+        to: "0xrecipient",
+        inclusionProof: proof,
+      });
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(inner.sendPrivateNote).toHaveBeenCalledWith(
         noteObj,
-        expect.anything()
+        expect.anything(),
+        proof
       );
     });
 
@@ -305,23 +461,45 @@ describe("NotesResource", () => {
       const record = {
         toNote: vi.fn().mockReturnValue(note),
       };
+      const proof = { block: 3 };
       inner.getInputNote.mockResolvedValue(record);
       inner.sendPrivateNote.mockResolvedValue(undefined);
       const resource = makeResource();
-      await resource.sendPrivate({ note: "0xnoteHex", to: "0xrecipient" });
+      await resource.sendPrivate({
+        note: "0xnoteHex",
+        to: "0xrecipient",
+        inclusionProof: proof,
+      });
       expect(inner.getInputNote).toHaveBeenCalledWith("0xnoteHex");
       expect(record.toNote).toHaveBeenCalledOnce();
       expect(inner.sendPrivateNote).toHaveBeenCalledWith(
         note,
-        expect.anything()
+        expect.anything(),
+        proof
       );
+    });
+
+    it("throws when inclusionProof is missing", async () => {
+      const resource = makeResource();
+      await expect(
+        resource.sendPrivate({
+          note: { id: vi.fn(), assets: vi.fn() },
+          to: "0xrec",
+        })
+      ).rejects.toThrow("inclusionProof");
+      expect(inner.sendPrivateNote).not.toHaveBeenCalled();
     });
 
     it("throws when note not found by hex", async () => {
       inner.getInputNote.mockResolvedValue(undefined);
       const resource = makeResource();
+      const proof = { block: 1 };
       await expect(
-        resource.sendPrivate({ note: "0xmissing", to: "0xrec" })
+        resource.sendPrivate({
+          note: "0xmissing",
+          to: "0xrec",
+          inclusionProof: proof,
+        })
       ).rejects.toThrow("Note not found: 0xmissing");
     });
 
@@ -331,9 +509,37 @@ describe("NotesResource", () => {
         id: vi.fn(),
         assets: vi.fn(),
       };
+      const proof = { block: 0 };
       const resource = makeResource();
       await resource.sendPrivate({
         note: noteObj,
+        to: "mBech32Address",
+        inclusionProof: proof,
+      });
+      expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Address");
+    });
+  });
+
+  describe("sendPrivateOutput", () => {
+    it("relays an output note by id (the client reads the stored inclusion proof)", async () => {
+      inner.sendPrivateOutputNote.mockResolvedValue(undefined);
+      const resource = makeResource();
+      await resource.sendPrivateOutput({
+        noteId: "0xoutputNote",
+        to: "0xrecipient",
+      });
+      expect(client.assertNotTerminated).toHaveBeenCalledOnce();
+      expect(inner.sendPrivateOutputNote).toHaveBeenCalledWith(
+        "0xoutputNote",
+        expect.anything()
+      );
+    });
+
+    it("resolves bech32 'to' address", async () => {
+      inner.sendPrivateOutputNote.mockResolvedValue(undefined);
+      const resource = makeResource();
+      await resource.sendPrivateOutput({
+        noteId: "0xoutputNote",
         to: "mBech32Address",
       });
       expect(wasm.Address.fromBech32).toHaveBeenCalledWith("mBech32Address");

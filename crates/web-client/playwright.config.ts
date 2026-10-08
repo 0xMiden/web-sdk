@@ -64,6 +64,7 @@ const ciShardProjects = process.env.CI
           "test/network_transaction.test.ts",
           "test/swap_transactions.test.ts",
           "test/pswap_transactions.test.ts",
+          "test/batch.browser.test.ts",
         ],
         testIgnore: browserTestIgnore,
       },
@@ -83,7 +84,9 @@ const ciShardProjects = process.env.CI
         use: { ...devices["Desktop Chrome"] },
         testMatch: [
           "test/account.test.ts",
+          "test/account_code_dangling.test.ts",
           "test/account_component.test.ts",
+          "test/allowlist.test.ts",
           "test/account_file.test.ts",
           "test/account_reader.test.ts",
           "test/new_account.test.ts",
@@ -102,7 +105,9 @@ const ciShardProjects = process.env.CI
         testMatch: [
           "test/eager_entry.test.ts",
           "test/fpi.test.ts",
+          "test/explicit_input_note.test.ts",
           "test/compile_and_contract.test.ts",
+          "test/faucet_policy_v2.browser.test.ts",
           "test/package.test.ts",
           "test/mockchain.test.ts",
           "test/no_auth_consume.test.ts",
@@ -111,11 +116,15 @@ const ciShardProjects = process.env.CI
           "test/address.test.ts",
           "test/basic_fungible_faucet_component.test.ts",
           "test/fungible_asset.test.ts",
+          "test/non_fungible_asset.test.ts",
           "test/prune_account_history.test.ts",
           "test/settings.test.ts",
           "test/token_symbol.test.ts",
           "test/note_script.test.ts",
           "test/transactions.test.ts",
+          "test/chain_anchor.test.ts",
+          "test/fee_conversion_salt.test.ts",
+          "test/direct_call_serialization.test.ts",
           "test/with_inner_web_client_reentrancy.test.ts",
         ],
         testIgnore: browserTestIgnore,
@@ -191,6 +200,7 @@ export default defineConfig({
       // Skip browser-only and WASM-specific tests
       testIgnore: [
         "test/store_isolation*",
+        "test/account_code_dangling.test.ts", // IndexedDB corruption regression
         "test/sync_lock*",
         "test/import_export*",
         "test/remote_keystore*",
@@ -260,9 +270,9 @@ export default defineConfig({
   // single-threaded variant). Integration tests that go through
   // `page.evaluate(() => import('./index.js'))` resolve against
   // dist/st/index.js, the same JS bundle consumers get when they
-  // import `@miden-sdk/miden-sdk/lazy`. The MT variant (dist/mt/) is
-  // covered by separate eager_entry / mt-specific tests when they
-  // exist; running the full integration suite against dist/mt/ would
+  // import `@miden-sdk/miden-sdk/lazy`. The optimized MT variant
+  // (dist/mt/) is covered by scripts/verify-release-mt.mjs in the release
+  // build job; running the full integration suite against dist/mt/ would
   // require a cross-origin-isolated test page (COOP+COEP headers via
   // http-server flags), out of scope for this round.
   //

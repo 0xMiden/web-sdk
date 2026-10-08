@@ -60,7 +60,11 @@ var Table;
     Table["Tags"] = "tags";
     Table["ForeignAccountCode"] = "foreignAccountCode";
     Table["Settings"] = "settings";
+    Table["AccountWitnesses"] = "accountWitnesses";
 })(Table || (Table = {}));
+/** Mirrors `SettingScope`, whose discriminants are part of a store's schema. */
+export const SETTING_SCOPE_CLIENT = 0;
+export const SETTING_SCOPE_USER = 1;
 function indexes(...items) {
     return items.join(",");
 }
@@ -83,7 +87,7 @@ export const V1_STORES = {
     [Table.Addresses]: indexes("address", "id"),
     [Table.Transactions]: indexes("id", "statusVariant"),
     [Table.TransactionScripts]: indexes("scriptRoot"),
-    [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
+    [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+noteId]"),
     [Table.OutputNotes]: indexes("detailsCommitment", "noteId", "recipientDigest", "stateDiscriminant", "nullifier"),
     [Table.NotesScripts]: indexes("scriptRoot"),
     [Table.BlockchainCheckpoint]: indexes("id"),
@@ -118,6 +122,7 @@ export class MidenDatabase {
     tags;
     foreignAccountCode;
     settings;
+    accountWitnesses;
     constructor(network) {
         this.dexie = new Dexie(network);
         // --- Schema versioning ---
@@ -196,6 +201,26 @@ export class MidenDatabase {
                 !pendingInputNoteCommitments.has(tag.sourceNoteId))
                 .delete();
         });
+        // v3 (miden-client 0.16.0-rc.4): key the input-note consumption index by
+        // `detailsCommitment` instead of `noteId`, so the seek in
+        // `Store::get_input_note_after` compares the values an `InputNoteCursor`
+        // carries and needs no lookup of the cursor's own note. Index-only, so
+        // Dexie rebuilds it without an upgrade hook.
+        this.dexie.version(3).stores({
+            [Table.InputNotes]: indexes("detailsCommitment", "noteId", "nullifier", "scriptRoot", "stateDiscriminant", "[consumedBlockHeight+consumedTxOrder+detailsCommitment]"),
+        });
+        // v4/v5 (miden-client 0.16.0-rc.4): `settings` is keyed by `[scope+key]`. A primary key
+        // cannot change in place, hence the drop and the recreate; the rows it held are cached
+        // values the client re-fetches.
+        this.dexie.version(4).stores({ [Table.Settings]: null });
+        this.dexie.version(5).stores({
+            [Table.Settings]: indexes("[scope+key]", "scope"),
+        });
+        // v6: accounts whose witness the sync keeps fresh. The witness column is null until the
+        // first refresh. A minor client bump still nukes the database; this covers patch upgrades.
+        this.dexie.version(6).stores({
+            [Table.AccountWitnesses]: indexes("&accountId"),
+        });
         this.accountCodes = this.dexie.table(Table.AccountCode);
         this.latestAccountStorages = this.dexie.table(Table.LatestAccountStorage);
         this.historicalAccountStorages = this.dexie.table(Table.HistoricalAccountStorage);
@@ -219,6 +244,7 @@ export class MidenDatabase {
         this.tags = this.dexie.table(Table.Tags);
         this.foreignAccountCode = this.dexie.table(Table.ForeignAccountCode);
         this.settings = this.dexie.table(Table.Settings);
+        this.accountWitnesses = this.dexie.table(Table.AccountWitnesses);
         this.dexie.on("populate", () => {
             this.blockchainCheckpoint
                 .put({
@@ -278,8 +304,13 @@ export class MidenDatabase {
         await this.dexie.open();
         await this.persistClientVersion(clientVersion);
     }
+    // This store is the client, so its own bookkeeping belongs to the `Client` scope, which the
+    // user-facing settings API never reaches.
     async getStoredClientVersion() {
-        const record = await this.settings.get(CLIENT_VERSION_SETTING_KEY);
+        const record = await this.settings.get([
+            SETTING_SCOPE_CLIENT,
+            CLIENT_VERSION_SETTING_KEY,
+        ]);
         if (!record) {
             return null;
         }
@@ -287,6 +318,7 @@ export class MidenDatabase {
     }
     async persistClientVersion(clientVersion) {
         await this.settings.put({
+            scope: SETTING_SCOPE_CLIENT,
             key: CLIENT_VERSION_SETTING_KEY,
             value: textEncoder.encode(clientVersion),
         });
