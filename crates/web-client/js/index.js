@@ -979,6 +979,11 @@ class WebClient {
       throw new Error("WebClient terminated");
     }
     await this.ready;
+    // terminate() can land while this awaits a settled `ready`; the stopped
+    // worker would never answer a request posted now.
+    if (this._terminated) {
+      throw new Error("WebClient terminated");
+    }
     // Create a unique request ID.
     const requestId = `${methodName}-${Date.now()}-${Math.random()}`;
     return new Promise((resolve, reject) => {
@@ -1341,14 +1346,21 @@ class WebClient {
    *
    * Call this method when you're done using a WebClient to free up browser
    * resources. Serialized calls already queued still run against the
-   * attached client, and the release waits for them to settle; every call
-   * made after terminate() rejects with "WebClient terminated". Calling it
-   * again is harmless.
+   * attached client, and the release waits for them to settle; a call
+   * waiting on the stopped worker, and every call made after terminate(),
+   * rejects with "WebClient terminated". Calling it again is harmless.
    */
   terminate() {
     this._terminated = true;
     if (this.worker) {
       this.worker.terminate();
+      // The stopped worker answers nothing, so a call still waiting on it
+      // would hold the call chain, and the release queued behind it, forever.
+      this.readyRejecter(new Error("WebClient terminated"));
+      for (const { reject } of this.pendingRequests.values()) {
+        reject(new Error("WebClient terminated"));
+      }
+      this.pendingRequests.clear();
     }
     this._afterQueuedWasmCalls(() => {
       const client = this.wasmWebClient;

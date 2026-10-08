@@ -221,11 +221,24 @@ describe("WasmWebClient.terminate", () => {
 
   const deferred = () => {
     let resolve;
-    const promise = new Promise((r) => {
-      resolve = r;
+    let reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
     });
-    return { promise, resolve };
+    return { promise, resolve, reject };
   };
+
+  // What a promise has come to once the microtask queue drains: "resolved",
+  // its rejection message, or "pending".
+  const outcomeAfterFlush = (promise) =>
+    Promise.race([
+      promise.then(
+        () => "resolved",
+        (error) => error.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 0)),
+    ]);
 
   // Node has no Worker, so the wrapper is built in-realm; a test that needs a
   // worker attaches a stand-in for one.
@@ -246,10 +259,15 @@ describe("WasmWebClient.terminate", () => {
     return { client, wasmClient };
   };
 
-  const attachWorker = (client) => {
+  const attachWorker = (client, { ready = true } = {}) => {
     const worker = { postMessage: vi.fn(), terminate: vi.fn() };
     client.worker = worker;
     client.pendingRequests = new Map();
+    client.ready = new Promise((resolve, reject) => {
+      client.readyRejecter = reject;
+      if (ready) resolve();
+    });
+    client.ready.catch(() => {});
     return worker;
   };
 
@@ -325,6 +343,51 @@ describe("WasmWebClient.terminate", () => {
     inFlight.resolve();
     await expect(queued).rejects.toThrow(/terminated/);
     expect(worker.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("settles a worker call in flight at terminate and still frees the client", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const worker = attachWorker(client);
+    const inFlight = client.submitNewTransaction(
+      { toString: () => "0xacc" },
+      { serialize: () => new Uint8Array() }
+    );
+    await vi.waitFor(() => expect(worker.postMessage).toHaveBeenCalled());
+
+    client.terminate();
+    const call = outcomeAfterFlush(inFlight);
+    expect(await outcomeAfterFlush(client.waitForIdle())).toBe("resolved");
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    expect(await call).toBe("WebClient terminated");
+    expect(client.pendingRequests.size).toBe(0);
+  });
+
+  it("settles a worker call still waiting for the worker to be ready", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const worker = attachWorker(client, { ready: false });
+    const waiting = client.submitNewTransaction(
+      { toString: () => "0xacc" },
+      { serialize: () => new Uint8Array() }
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    client.terminate();
+    const call = outcomeAfterFlush(waiting);
+    expect(await outcomeAfterFlush(client.waitForIdle())).toBe("resolved");
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    expect(await call).toBe("WebClient terminated");
+    expect(worker.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("never posts a worker call that terminate overtakes", async () => {
+    const { client } = makeWebClient();
+    const worker = attachWorker(client);
+    const call = client.callMethodWithWorker("syncChain");
+
+    client.terminate();
+    expect(await outcomeAfterFlush(call)).toBe("WebClient terminated");
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    expect(client.pendingRequests.size).toBe(0);
   });
 
   it("still runs a call nested in an in-flight _withInnerWebClient inline", async () => {
