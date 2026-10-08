@@ -2419,9 +2419,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16be0855c2e56e5ec461976527f1d1ee65a70546f2fbd46d7a5df33ad37b199e"
+checksum = "35579ec11e02e43ffcb5e3a8248edf5eca9bb583565d5ac82c0d4fc1a5769854"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,9 +2460,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-proto"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d88b0bc141dacd2cea704d7735a09ca6b5d2dfd5644b8c136a4405e28a31d02d"
+checksum = "c9653499f04b636a59d1d1b02af8bad5583f189dec720801d7f71fb59d53cf86"
 dependencies = [
  "miden-client",
  "miden-objects",
@@ -2475,9 +2475,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.17.2"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c180aeec918e74bf84e7c03b44be81a3bebeed8859dba931490020ee53e1477c"
+checksum = "6ed14aea81ded38beb8f8759df00caef5721bcc3419d58469e10991f48e48371"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2967,9 +2967,9 @@ dependencies = [
 
 [[package]]
 name = "miden-node-proto-build"
-version = "0.17.0"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dff2108180c527d2257bbf75601c8753d9b35ee06238e8ff7048d9d8dc2fc06e"
+checksum = "c9c8e64c1dae7548d86aa455e96544265bc522e70c4f09b2193c406e4226e2d3"
 dependencies = [
  "build-rs",
  "codegen",
@@ -2982,9 +2982,9 @@ dependencies = [
 
 [[package]]
 name = "miden-objects"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a6c7e22f10c86e499b8ead031da5b89a2e61bd8fbc7886e8d4bf604d9b1fb00"
+checksum = "4367246c604af0a36e2d55637ee262d09a3ec2a3845616e5539182a618b507fa"
 dependencies = [
  "miden-protobuf",
  "miden-protocol",
@@ -3118,9 +3118,9 @@ dependencies = [
 
 [[package]]
 name = "miden-protobuf"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78c413453ee552611d3a45e06e43d64436fcea61d17ba45709d0b0caf5a49e5d"
+checksum = "a0985b31fe13de01430c23690f3367ce5f3702a726e6a70622abfefecafdda24"
 dependencies = [
  "miden-protobuf-derive",
  "proc-macro-crate",
@@ -3131,9 +3131,9 @@ dependencies = [
 
 [[package]]
 name = "miden-protobuf-derive"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cadf573070d3b2aab3bfb39ce3441342439c2004aab0a718fca4e7f5c1bed8b"
+checksum = "68484c6f59a68657e515133b9e74276e26340d955bf718222705b15dd4d4a4cd"
 dependencies = [
  "heck",
  "proc-macro-crate",
