@@ -6,7 +6,11 @@ import { SettingsResource } from "./resources/settings.js";
 import { CompilerResource } from "./resources/compiler.js";
 import { KeystoreResource } from "./resources/keystore.js";
 import { PswapResource } from "./resources/pswap.js";
-import { hashSeed, resolveAccountRef } from "./utils.js";
+import {
+  hashSeed,
+  resolveAccountRef,
+  validateNoteTransportRetryOptions,
+} from "./utils.js";
 
 /**
  * MidenClient wraps the existing proxy-wrapped WebClient with a resource-based API.
@@ -125,10 +129,18 @@ export class MidenClient {
    * configuration, which names the fee asset, from the node when it syncs. The
    * option only sets what `feeFaucetId()` reports before that first sync.
    *
+   * `noteTransportMaxRetries` and `noteTransportRetryIntervalMs` are checked
+   * before anything is created; an out-of-range value throws a `TypeError`.
+   *
    * @param {ClientOptions} [options] - Client configuration options.
    * @returns {Promise<MidenClient>} A fully initialized client.
    */
   static async create(options) {
+    validateNoteTransportRetryOptions(
+      options?.noteTransportMaxRetries,
+      options?.noteTransportRetryIntervalMs
+    );
+
     if (!options?.rpcUrl) {
       return MidenClient.createTestnet(options);
     }
@@ -169,7 +181,9 @@ export class MidenClient {
         undefined,
         useWorker,
         options,
-        options?.feeFaucetId
+        options?.feeFaucetId,
+        options?.noteTransportMaxRetries,
+        options?.noteTransportRetryIntervalMs
       );
     } else {
       inner = await WebClientClass.createClient(
@@ -180,20 +194,33 @@ export class MidenClient {
         undefined,
         useWorker,
         options,
-        options?.feeFaucetId
+        options?.feeFaucetId,
+        options?.noteTransportMaxRetries,
+        options?.noteTransportRetryIntervalMs
       );
     }
 
-    let defaultProver = null;
-    if (options?.proverUrl) {
-      const wasm = await getWasm();
-      defaultProver = resolveProver(options.proverUrl, wasm);
-    }
+    let client;
+    try {
+      let defaultProver = null;
+      if (options?.proverUrl) {
+        const wasm = await getWasm();
+        defaultProver = resolveProver(options.proverUrl, wasm);
+      }
 
-    const client = new MidenClient(inner, getWasm, defaultProver);
+      client = new MidenClient(inner, getWasm, defaultProver);
 
-    if (options?.autoSync) {
-      await client.sync();
+      if (options?.autoSync) {
+        await client.sync();
+      }
+    } catch (error) {
+      // Never handed to the caller, so nothing else would terminate it.
+      if (client) {
+        client.terminate();
+      } else {
+        inner.terminate?.();
+      }
+      throw error;
     }
 
     return client;
@@ -402,19 +429,36 @@ export class MidenClient {
   }
 
   /**
-   * Terminates the underlying Web Worker. After this, all method calls will throw.
+   * Terminates the underlying client: stops its Web Worker if there is one,
+   * and releases the main-realm wasm client and, through it, its IndexedDB
+   * store connection once the calls already queued or running have settled.
+   * After this, all method calls will throw. To wait for the release, use
+   * `await using` or `await client[Symbol.asyncDispose]()`. The release is
+   * browser-only: on the Node.js binding nothing is released.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
    */
   terminate() {
     this.#terminated = true;
     this.#inner.terminate?.();
   }
 
+  /** Terminates the client without waiting for the release; see `terminate()`. */
   [Symbol.dispose]() {
     this.terminate();
   }
 
+  /**
+   * Terminates the client, then waits until its wasm client is freed and its
+   * store connection released, so the store can be deleted or reopened once
+   * this settles. On the Node.js binding it releases nothing and resolves at
+   * once.
+   * A store handle you obtain yourself, such as an AccountReader from
+   * `accountReader`, keeps the connection open until you free it.
+   */
   async [Symbol.asyncDispose]() {
     this.terminate();
+    await this.#inner.waitForIdle?.();
   }
 
   /**

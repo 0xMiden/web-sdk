@@ -50,6 +50,7 @@ function makeInner(overrides = {}) {
     removeAccountAddress: vi.fn().mockResolvedValue(undefined),
     accountReader: vi.fn().mockReturnValue({
       getBalance: vi.fn().mockResolvedValue(BigInt(100)),
+      free: vi.fn(),
     }),
     keystore: {
       getCommitments: vi.fn().mockResolvedValue(["key1"]),
@@ -441,6 +442,38 @@ describe("AccountsResource", () => {
       expect(client.assertNotTerminated).toHaveBeenCalledOnce();
       expect(reader.getBalance).toHaveBeenCalled();
       expect(result).toBe(BigInt(50));
+    });
+
+    it("frees the reader once it has read the balance", async () => {
+      const resource = makeResource();
+      const result = await resource.getBalance("0xaccHex", "0xfaucetHex");
+      const reader = inner.accountReader.mock.results[0].value;
+      expect(result).toBe(BigInt(100));
+      expect(reader.free).toHaveBeenCalledOnce();
+    });
+
+    it("frees the reader once and keeps the error when reading fails", async () => {
+      const failure = new Error("read failed");
+      const reader = {
+        getBalance: vi.fn().mockRejectedValue(failure),
+        free: vi.fn(),
+      };
+      inner.accountReader.mockReturnValue(reader);
+      const resource = makeResource();
+      await expect(resource.getBalance("0xaccHex", "0xfaucetHex")).rejects.toBe(
+        failure
+      );
+      expect(reader.free).toHaveBeenCalledOnce();
+    });
+
+    it("still resolves to the balance with a reader that has no free", async () => {
+      inner.accountReader.mockReturnValue({
+        getBalance: vi.fn().mockResolvedValue(BigInt(7)),
+      });
+      const resource = makeResource();
+      await expect(
+        resource.getBalance("0xaccHex", "0xfaucetHex")
+      ).resolves.toBe(BigInt(7));
     });
   });
 

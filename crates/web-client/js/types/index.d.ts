@@ -4,12 +4,19 @@ export * from "./crates/miden_client_web";
 // Re-export all simplified API types
 export * from "./api-types";
 
+// Both star exports above provide an `AuthScheme`; the runtime exports the
+// friendly const, so name it explicitly to keep the wasm enum from winning.
+export { AuthScheme } from "./api-types";
+
 // Import types needed for the @internal class declarations below
 import type {
+  Account,
+  AccountStorageMode,
   WebClient as WasmWebClientBase,
   SyncSummary,
 } from "./crates/miden_client_web";
 import type {
+  AuthSchemeType,
   GetKeyCallback,
   InsertKeyCallback,
   MidenObservation,
@@ -157,7 +164,9 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    noteTransportMaxRetries?: number,
+    noteTransportRetryIntervalMs?: number
   ): Promise<WasmWebClient>;
 
   static createClientWithExternalKeystore(
@@ -171,14 +180,54 @@ export declare class WasmWebClient extends WasmWebClientBase {
     logLevel?: LogLevel,
     useWorker?: boolean,
     observability?: ClientObservabilityOptions,
-    feeFaucetId?: string
+    feeFaucetId?: string,
+    noteTransportMaxRetries?: number,
+    noteTransportRetryIntervalMs?: number
   ): Promise<WasmWebClient>;
+
+  // The wrapper resolves a friendly scheme to the wasm enum and passes a
+  // numeric enum value through, so these accept both.
+  newWallet(
+    storage_mode: AccountStorageMode,
+    auth_scheme: AuthSchemeType | number,
+    init_seed?: Uint8Array | null
+  ): Promise<Account>;
+  newFaucet(
+    storage_mode: AccountStorageMode,
+    non_fungible: boolean,
+    token_name: string,
+    token_symbol: string,
+    decimals: number,
+    max_supply: bigint,
+    auth_scheme: AuthSchemeType | number
+  ): Promise<Account>;
+  importPublicAccountFromSeed(
+    init_seed: Uint8Array,
+    auth_scheme: AuthSchemeType | number
+  ): Promise<Account>;
 
   syncState(): Promise<SyncSummary>;
   syncChain(): Promise<SyncSummary>;
   syncNoteTransport(): Promise<void>;
   setSignCb(signCb: SignCallback | null | undefined): void;
   onStateChanged(callback: (event: any) => void): (() => void) | undefined;
+  /**
+   * Terminates this WebClient: stops its Web Worker if there is one, and
+   * releases the main-realm wasm client and, through it, its IndexedDB store
+   * connection, which closes once no other client in this realm holds the
+   * same store.
+   *
+   * A call already queued or running that executes against the main-realm
+   * wasm client still finishes. A call that needs the worker, whether in
+   * flight, waiting for the worker to be ready or still queued behind
+   * terminate(), rejects with "WebClient terminated". Every wasm call made
+   * after terminate() fails with it too: a synchronous member or an accessor
+   * throws, every other member rejects. The release waits until all of these
+   * calls have settled. Calling it again is harmless.
+   *
+   * The release and the rejections are browser-only: on the Node.js binding
+   * WasmWebClient.terminate() is a no-op.
+   */
   terminate(): void;
 }
 

@@ -98,6 +98,8 @@ const client = await MidenClient.create({
   rpcUrl: "https://rpc.testnet.miden.io", // string URL or "testnet"/"devnet"/"localhost"/"local"
   feeFaucetId: FEE_FAUCET, // required - the chain's fee faucet, bech32 or hex
   noteTransportUrl: "https://transport.miden.io",
+  noteTransportMaxRetries: 3, // optional - in-call retries of a private note send; see below
+  noteTransportRetryIntervalMs: 250, // optional - delay before the first retry, in ms
   storeName: "my-store",
   seed: new Uint8Array(32), // optional - string or Uint8Array; see below
   proverUrl: "testnet", // optional - sets a default prover
@@ -119,6 +121,22 @@ const client = await MidenClient.create({
 ```
 
 If `rpcUrl` is omitted, `create()` delegates to `createTestnet()`.
+
+`noteTransportMaxRetries` (an integer from 0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250, doubling for each
+later retry) set how a private note send retries a transient transport failure
+**within the same call**: a failed connection, `Unavailable`,
+`DeadlineExceeded`, or `ResourceExhausted` with a `retry-after` value. In the
+browser a failed `fetch` reaches the client as `Unknown` and is not retried.
+Together the two may not exceed 120000 ms of total computed backoff,
+`interval * (2^retries - 1)` with an omitted value taken at its default. The
+retries run inside the client's serialized call, so a slow or rate-limiting
+transport blocks every other call on the client until the send finishes. A
+non-zero service `retry-after` replaces the computed delay with no upper bound
+(a zero one falls back to it), so pass `noteTransportMaxRetries: 0` to bound a
+send to one attempt; that suits a latency-sensitive UI. Anything outside the
+ranges or the total throws a `TypeError` before the client is built.
+`createMock()` ignores both.
 
 `seed` is `string | Uint8Array`. A string is legal: `hashSeed()` SHA-256s it to
 32 bytes before it reaches WASM, and a `Uint8Array` passes through unchanged.
@@ -204,8 +222,14 @@ client.terminate(); // free WASM resources, close the store handle
 After `terminate()`, nearly every method throws `Client terminated` - guard
 against late callbacks on unmount. The exceptions are `usesMockChain()`, the
 `defaultProver` getter and `terminate()` itself, which is idempotent.
-`MidenClient` also implements `[Symbol.dispose]` and `[Symbol.asyncDispose]`,
-both of which just call `terminate()`, so `using client = ...` works.
+`MidenClient` also implements `[Symbol.dispose]`, which calls `terminate()`,
+so `using client = ...` works, and `[Symbol.asyncDispose]`, which calls it and
+then waits until the wasm client is freed and its store connection released.
+The release waits for calls already queued or running to settle. Use
+`await using client = ...` when the code after the block deletes or reopens
+the same store. The release is browser-only: on the Node.js binding
+`terminate()` releases nothing (its inner client's `terminate()` is a no-op)
+and `[Symbol.asyncDispose]` resolves at once.
 
 ## Sync - Always Sync First
 
@@ -568,7 +592,8 @@ const { txId, note } = await client.transactions.send({
 });
 
 // Stream the note via the note-transport service. sendPrivateOutput reads the
-// inclusion proof sync stored once the note has committed.
+// inclusion proof sync stored once the note has committed. A rejection is final
+// (nothing re-sends it); call it again with the same note id to retry.
 await client.notes.sendPrivateOutput({ noteId: note.id(), to: "mtst1..." });
 ```
 
@@ -1002,6 +1027,16 @@ because the published build enables the `testing` feature. `to` accepts a
 bech32 string, a 0x-hex string, an `Account`, or an `AccountId`; it does **not**
 accept a pre-parsed `Address` object.
 
+A rejected `sendPrivate` / `sendPrivateOutput` means the note did not reach the
+transport or the outcome is not known, and it is final. The SDK keeps no queue,
+and neither `sync()` nor `syncNoteTransport()` sends the note again. Transient
+transport failures are retried inside the call (`noteTransportMaxRetries` and
+`noteTransportRetryIntervalMs` on `ClientOptions`, at most 120000 ms of backoff
+in total; in the browser a failed `fetch` is not one of them), and the retries
+hold the client's serialized call, so other calls wait for them. To try again,
+call it again with the same note:
+delivery is idempotent by note id, so a repeat cannot duplicate it.
+
 `fetchPrivate()` takes no arguments. The `{ mode: "all" }` full re-scan was
 removed; after adding a tag, just `sync()`.
 
@@ -1040,10 +1075,24 @@ slots to a `StorageResult`. Reach the protocol-level `AccountStorage` through
 not tracked.
 
 For a single asset balance without loading the full vault, prefer
-`client.accounts.getBalance(account, token)` (returns `bigint`). It wraps the
-WASM client's `accountReader(id)` lazy reader, which lives on the low-level
-client: reach it through `client._withInnerWebClient(async (inner) => inner.accountReader(id))`,
-not through the private `#inner` field.
+`client.accounts.getBalance(account, token)` (returns `bigint`), which frees
+the reader it uses. It wraps the WASM client's `accountReader(id)` lazy reader,
+which lives on the low-level client: reach it through
+`client._withInnerWebClient(async (inner) => inner.accountReader(id))`, not
+through the private `#inner` field. A reader you obtain yourself holds the
+client's store, so free it when you are done; an unfreed one keeps the store
+open after `terminate()` and `await using`:
+
+```typescript
+const balance = await client._withInnerWebClient(async (inner) => {
+  const reader = await inner.accountReader(accountId);
+  try {
+    return await reader.getBalance(faucetId);
+  } finally {
+    reader.free?.();
+  }
+});
+```
 
 ## Storage - slots are named, not indexed
 
@@ -1222,6 +1271,8 @@ while (true) {
 4. **`notes.sendPrivate()` without `inclusionProof`.** It throws. For your own
    output notes, wait until the transaction commits and call
    `notes.sendPrivateOutput({ noteId, to })`, which reads the stored proof.
+   Either call's rejection is final: no `sync()` re-sends the note, so retry by
+   sending the same note again.
 5. **`number` literals above 2^53 for amounts.** Amount fields accept
    `number | bigint` and coerce via `BigInt()` (no `TypeError`), but a numeric
    literal above `Number.MAX_SAFE_INTEGER` loses precision _before_ coercion.
@@ -1243,14 +1294,19 @@ while (true) {
     the faucet account, not the target.
 13. **Private notes without transport** - must call `notes.sendPrivateOutput()`
     / `notes.sendPrivate()` (or pass `returnNote: true` to `transactions.send`
-    and deliver out-of-band).
+    and deliver out-of-band). A failed send is not queued and no `sync()`
+    retries it; keep the note id and send it again.
 14. **Holding WASM-owned objects across `terminate()`** - every `Account`,
     `Note`, `AccountId`, `NoteAndArgsArray` etc. owns Rust memory through the
     WASM ArrayBuffer. After `terminate()` they panic with "null pointer
-    passed to rust" - drop references on unmount.
+    passed to rust" - drop references on unmount. A handle that holds the
+    client's store, such as an `AccountReader`, must be freed, not just
+    dropped: an unfreed one keeps the store open after `terminate()` and
+    `await using`.
 15. **Calling `accountReader(...)` in parallel with a write** - the readers
     share the WASM client. Wrap concurrent flows with `client.waitForIdle()`
-    or rely on the React SDK's `runExclusive`.
+    or rely on the React SDK's `runExclusive`, and release each reader in a
+    `finally` (`try { ... } finally { reader.free?.() }`).
 16. **Assuming `TransactionProver.newLocalProver()` is cheap.** It now produces
     Poseidon2 proofs, matching the client's default prover, and is roughly
     1.6-2.6x slower than the old Blake3 default.

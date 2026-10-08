@@ -54,6 +54,14 @@ leave it out to keep the point they make legible; every real provider needs it.
                                 //   | { primary, fallback, disableFallback?, onFallback? }
     autoSyncInterval: 15000,    // ms, set to 0 to disable. Default: 15000
     noteTransportUrl: "...",    // optional: for private note delivery
+    noteTransportMaxRetries: 3, // optional: in-call retries of a private note send
+                                //   after a transient transport failure. 0..10, default 3
+    noteTransportRetryIntervalMs: 250, // optional: delay before the first retry, doubling
+                                //   for each later one. 0..60000 ms, default 250.
+                                //   Together: at most 120000 ms of total backoff,
+                                //   interval * (2^retries - 1). Retries hold the
+                                //   provider lock, blocking other client calls;
+                                //   0 retries suits a latency-sensitive UI
     useWorker: true,            // default true; see the warning below before changing
     proverTimeoutMs: 10000,     // optional: remote-prover request timeout
     proverUrls: { testnet: "...", devnet: "..." },  // optional: override network prover URLs
@@ -170,7 +178,9 @@ in-progress flag, and only the transaction family has a `stage`:
 
 Two more sit outside the pattern entirely: `useWaitForCommit()` returns
 `{ waitForCommit }` and nothing else, and `useCompile()` is not a write hook at
-all (see [Hook Reference](#hook-reference)).
+all (see [Hook Reference](#hook-reference)). `useResendPrivateNotes()` returns
+`{ resend, isLoading, error }`: it has the busy flag but no `result`, `stage` or
+`reset`.
 
 Destructuring `isLoading` off a hook that doesn't return one yields `undefined`,
 which disables no button and reports no error. **The exported `Use*Result`
@@ -184,7 +194,7 @@ const { createWallet, wallet, isCreating, error, reset } = useCreateWallet();
 
 const account = await createWallet({
   storageMode: "private",  // "private" | "public". Default: "private"
-  authScheme: 2,           // 2 = Falcon, 1 = ECDSA. Pass the number - see the trap below
+  authScheme: AuthScheme.Falcon, // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
   initSeed: seedBytes,     // optional: Uint8Array for a deterministic account id
 });
 ```
@@ -193,15 +203,13 @@ const account = await createWallet({
 no `"network"` storage mode for a wallet - network accounts are built through
 the network-account auth component, not this flag.
 
-> **Pass `authScheme` as a number, and always pass it.** `web-sdk#223` is open:
-> the create/import hooks forward `authScheme` straight to the wasm calls, which
-> expect the numeric enum (`2` Falcon, `1` ECDSA). The friendly `AuthScheme`
-> re-exported from this package is the string const `{ Falcon: "falcon",
-> ECDSA: "ecdsa" }`, so the hooks' own default, `AuthScheme.AuthRpoFalcon512`,
-> resolves to `undefined`. wasm-bindgen then throws `invalid enum value passed`
-> inside a worker closure, where it does not reject the promise - **the call
-> hangs instead of failing.** Omitting `authScheme` hits exactly that default.
-> `skills/react-sdk-patterns/SKILL.md` has the full write-up.
+`authScheme` takes `AuthScheme.Falcon` or `AuthScheme.ECDSA`, the string const
+`{ Falcon: "falcon", ECDSA: "ecdsa" }` this package re-exports, and the same
+holds for `useCreateFaucet`, the seed import of `useImportAccount` and
+`useSessionAccount`'s `walletOptions`. Omitting it uses `DEFAULTS.AUTH_SCHEME`,
+which is `AuthScheme.Falcon`. The numeric wasm enum values `2` (Falcon) and `1`
+(ECDSA) still pass through unchanged; any other value rejects with
+`Unknown auth scheme`.
 
 ### Send Tokens
 ```tsx
@@ -216,6 +224,14 @@ await send({
 });
 ```
 
+A private send relays the note to the recipient once the transaction commits.
+If that does not happen after the transaction was submitted, `send` rejects with
+a `PrivateNoteDeliveryError` (code `PRIVATE_NOTE_DELIVERY_FAILED`) carrying
+`transactionId`, `commitment` (`"committed"` or `"unknown"`), `delivered`,
+`undelivered` and `cause`. The transaction is not undone and the SDK keeps no
+queue, so nothing re-sends the note unless you do; see
+[Retry Undelivered Private Notes](#retry-undelivered-private-notes).
+
 ### Send to Multiple Recipients
 ```tsx
 const { multiSend } = useMultiSend();
@@ -228,6 +244,11 @@ await multiSend({
   ],
 });
 ```
+
+Every private recipient is attempted even if an earlier relay fails; any note
+not delivered rejects the call with the same `PrivateNoteDeliveryError`.
+`useTransaction` behaves the same way for the notes it relays to
+`privateNoteTarget`, which it checks before anything executes.
 
 ### Claim Notes
 ```tsx
@@ -292,7 +313,7 @@ const account = await createFaucet({
   decimals: 8,              // Default: 8
   maxSupply: 1000000n,      // required. bigint | number
   storageMode: "public",    // "private" | "public". Default: "private"
-  authScheme: 2,            // 2 = Falcon. Pass the number - see the trap above
+  authScheme: AuthScheme.Falcon, // AuthScheme.Falcon | AuthScheme.ECDSA. Default: Falcon
 });
 ```
 
@@ -321,6 +342,33 @@ function SendButton() {
   );
 }
 ```
+
+### Retry Undelivered Private Notes
+```tsx
+import {
+  PrivateNoteDeliveryError,
+  useResendPrivateNotes,
+  useSend,
+} from "@miden-sdk/react";
+
+const { send } = useSend();
+const { resend, isLoading, error } = useResendPrivateNotes();
+
+try {
+  await send({ from, to, assetId, amount: 100n, noteType: "private" });
+} catch (err) {
+  if (err instanceof PrivateNoteDeliveryError) {
+    // The transaction went through; only the delivery is outstanding.
+    await resend({ transactionId: err.transactionId, notes: err.undelivered });
+  }
+}
+```
+
+`resend` syncs once and then relays every note through `runExclusive`. A note
+whose transaction has not committed yet still fails and comes back in a new
+`PrivateNoteDeliveryError` with `commitment: "unknown"`; repeating a resend is
+safe because delivery is idempotent by note id. A note whose transaction this
+client could not apply is not in its store, so it cannot be resent from here.
 
 ### Format Token Amounts
 ```tsx
@@ -644,7 +692,8 @@ Query hooks return `{ ...data, isLoading, error, refetch }`. Most mutation hooks
 | `usePswapConsume()` | `pswapConsume({ accountId, note, fillAmount, noteFillAmount? })` - `note` accepts hex string \| `NoteId` \| `InputNoteRecord` \| `Note` | `TransactionResult` (fills PSWAP fully or partially) |
 | `usePswapCancel()` | `pswapCancel({ accountId, note })` - creator only, reclaims unfilled offered asset | `TransactionResult` |
 | `usePswapCancelByOrder()` | `pswapCancelByOrder({ orderId })` - creator only, resolves the current tip + creator from the tracked lineage | `TransactionResult` |
-| `useTransaction()` | `execute({ ..., anchor? })` | `TransactionResult` (custom tx; `anchor` pins the reference block) |
+| `useTransaction()` | `execute({ ..., anchor?, privateNoteTarget? })` | `TransactionResult` (custom tx; `anchor` pins the reference block; `privateNoteTarget` relays the private output notes) |
+| `useResendPrivateNotes()` | `resend({ transactionId, notes })` | `void`; rejects with `PrivateNoteDeliveryError` for notes still undelivered. Returns `{ resend, isLoading, error }` only |
 | `useChainAnchor()` | `captureAnchor({ request })` | `ChainAnchor` (pins the current reference block for later replay) |
 | `usePreview()` | `preview({ accountId, request, anchor? })` | `TransactionSummary` awaiting authorization; rejects `TRANSACTION_ALREADY_AUTHORIZED` when none is pending |
 | `useExecuteProgram()` | `execute(...)` | program output |

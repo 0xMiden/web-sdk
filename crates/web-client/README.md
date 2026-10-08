@@ -273,6 +273,19 @@ protocol configuration, which the client receives from the node when it syncs,
 so execution never needs the option: it only sets what `client.feeFaucetId()`
 reports before the first sync. Snippets below leave it out.
 
+`noteTransportMaxRetries` (0 to 10, default 3) and
+`noteTransportRetryIntervalMs` (0 to 60000, default 250), with a total computed
+backoff `interval * (2^retries - 1)` of at most 120000 ms, set how
+`notes.sendPrivate` / `notes.sendPrivateOutput` retry a transient note
+transport failure within the call. The retries run inside the client's
+serialized call, so a slow or rate-limiting transport blocks other client calls
+until the send finishes; a non-zero service `retry-after` replaces the computed
+delay with no upper bound, and a zero one falls back to it. Pass
+`noteTransportMaxRetries: 0` to bound a send to one attempt in a
+latency-sensitive UI. A send that still fails rejects, and the rejection is
+final: the client keeps no queue and no sync sends the note again, so send the
+same note again to retry (delivery is idempotent by note id).
+
 ### Lazy usage (`/lazy`)
 
 ```typescript
@@ -938,7 +951,7 @@ The allowlist must be non-empty. The canonical expiration transaction script is 
 
 ### Cleanup
 
-When you're finished using a MidenClient instance, call `terminate()` to release its Web Worker:
+When you're finished using a MidenClient instance, call `terminate()`. In the browser it stops the client's Web Worker if there is one, and releases its main-realm wasm client and, through it, its IndexedDB connection once the calls already queued or running have settled. On the Node.js binding it releases nothing.
 
 ```typescript
 client.terminate();
@@ -948,7 +961,15 @@ client.terminate();
   using client = await MidenClient.create();
   // ... use client ...
 } // client.terminate() called automatically
+
+// To wait for the release, e.g. before deleting or reopening the store:
+{
+  await using client = await MidenClient.create();
+  // ... use client ...
+} // terminates, then resolves once the wasm client is freed and its store released
 ```
+
+A store that several clients share stays open until the last of them is terminated. A store handle you obtain yourself, such as an `AccountReader` from `accountReader`, keeps the connection open until you call its `free()`.
 
 ## Observability
 

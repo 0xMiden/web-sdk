@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.17.2 (TBD)
+## 0.17.3 (TBD)
 
 ### Enhancements
 
@@ -8,8 +8,25 @@
 
 ### Fixes
 
+* [FIX][web,react] `WebClient.newWallet`, `newFaucet` and `importPublicAccountFromSeed` now resolve a friendly `AuthScheme` (`AuthScheme.Falcon` / `AuthScheme.ECDSA`) to the wasm enum on both the browser and the Node.js entry, as `client.accounts.create()` already does. The numeric enum values `2` (Falcon) and `1` (ECDSA) still pass through, and any other value rejects with `Unknown auth scheme`. `@miden-sdk/react`'s `useCreateWallet`, `useCreateFaucet`, `useImportAccount` (seed import) and `useSessionAccount` accept `AuthScheme.Falcon` / `AuthScheme.ECDSA` and default to `AuthScheme.Falcon`; their previous default resolved to `undefined` and hung the call instead of rejecting. Accounts that `MidenProvider` builds for an external signer from its public key commitment now get the wasm ECDSA enum value for their auth component instead of `undefined`. The published types now match the runtime: `AuthScheme` is the friendly const as a value and its `"falcon" | "ecdsa"` union as a type, the three methods take that union or a numeric enum value, and TypeScript code that used `AuthScheme.AuthRpoFalcon512` (`undefined` at runtime) now gets a type error; use `AuthScheme.Falcon`. ([web-sdk#223](https://github.com/0xMiden/web-sdk/issues/223), [#276](https://github.com/0xMiden/web-sdk/pull/276))
+* [FIX][web,react] `terminate()` now frees the client's main-realm wasm object and releases its IndexedDB connection, so creating and terminating clients no longer leaks open database handles, and `await using` (`MidenClient`'s `[Symbol.asyncDispose]`) resolves once that release is done. A store shared by several clients stays open until the last of them is terminated. A call already queued that runs in the main realm still finishes; a call that needs the worker (in flight, waiting for it to start or still queued) rejects with `WebClient terminated`, and so does every later wasm call on a terminated `WebClient`, except that `lastAuthError` and the accessors throw it. The release and these rejections are browser-only: on the Node.js binding `terminate()` releases nothing. `MidenProvider` now terminates a client whose initialization was cancelled or failed after creating it, and never a client it has handed out ([#377](https://github.com/0xMiden/web-sdk/issues/377)) ([#410](https://github.com/0xMiden/web-sdk/pull/410)).
+
+## 0.17.2 (2026-10-08)
+
+### Enhancements
+
+* [FEATURE][web] `ClientOptions.noteTransportMaxRetries` (integer 0 to 10, default 3) and `ClientOptions.noteTransportRetryIntervalMs` (integer 0 to 60000, default 250, doubling per retry) set how a private-note send retries a transient transport failure within the call; `MidenConfig` in `@miden-sdk/react` takes the same two fields. Together they may not exceed 120000 ms of total computed backoff, `interval * (2^retries - 1)` with an omitted value at its default; an out-of-range value or total throws a `TypeError` before the client is built. The retries run inside the client's serialized call (and under the provider lock in the React hooks), so a slow or rate-limiting transport blocks other client calls until the send finishes. A non-zero service `retry-after` replaces the delay with no upper bound (a zero one falls back to it), so pass `noteTransportMaxRetries: 0` to bound a send to one attempt in a latency-sensitive UI ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
+
+### Fixes
+
+* [FIX][react] `useSend`, `useMultiSend` and `useTransaction` (with `privateNoteTarget`) no longer lose the transaction id when a private note is not delivered after the transaction was submitted. They reject with `PrivateNoteDeliveryError` (new `MidenErrorCode` member `PRIVATE_NOTE_DELIVERY_FAILED`) carrying `transactionId`, `commitment` (`"committed"` or `"unknown"`), `delivered` and `undelivered`; a discarded transaction is still a plain error. Every owed note is attempted, so `useMultiSend` no longer stops at the first failed recipient, and the new `useResendPrivateNotes()` sends the undelivered notes again: `resend({ transactionId: err.transactionId, notes: err.undelivered })`. `useTransaction` now checks `privateNoteTarget` before executing, finds the request's private output notes (it relayed none before), and no longer fails with a consumed transaction id when the commit takes more than one poll; `useWaitForCommit` and `useTransactionHistory` likewise keep a caller's `TransactionId` usable ([#460](https://github.com/0xMiden/web-sdk/issues/460)).
 * [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#401](https://github.com/0xMiden/web-sdk/pull/401), [#388](https://github.com/0xMiden/web-sdk/issues/388)).
 * [FIX][web] For an account whose header names a code root with no stored code row, `WebClient.getAccountCode`, `feeAwareTransactionRequestBuilder` and the `new*TransactionRequest` constructors that build through it now fail with `account code with root <root> not found` instead of a serde `invalid type: unit value, expected struct AccountCodeIdxdbObject` error ([#241](https://github.com/0xMiden/web-sdk/pull/241)).
+
+### Changes
+
+* [BREAKING][behavior][web] The bundled Rust SDK 0.17.2 no longer queues a private-note send that fails, and `sync()` / `syncNoteTransport()` no longer re-send it. A rejected `notes.sendPrivate` / `notes.sendPrivateOutput` is final: keep the note id and send the same note again, which is idempotent by note id. Transient transport errors are retried within the call (in the browser: timeouts, and the service answering `Unavailable` or rate-limiting with `retry-after`; a failed `fetch` is not retried). The IndexedDB store drops the queue row a 0.17.1 client may have left, on upgrade and on importing an older export ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
+* [CHANGE][web] Pin Rust SDK client, proto and SQLite store to exactly 0.17.2 ([rust-sdk#2663](https://github.com/0xMiden/rust-sdk/pull/2663)).
 
 ## 0.17.1 (2026-10-07)
 

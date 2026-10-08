@@ -100,11 +100,18 @@ impl WebClient {
     /// # Arguments
     /// * `account_id` - The ID of the account to read.
     ///
+    /// The reader holds the client's store until it is freed, so `terminate()` and `await using`
+    /// cannot release the store while one is alive.
+    ///
     /// # Example
     /// ```javascript
-    /// const reader = client.accountReader(accountId);
-    /// const nonce = await reader.nonce();
-    /// const balance = await reader.getBalance(faucetId);
+    /// const reader = await client.accountReader(accountId);
+    /// try {
+    ///   const nonce = await reader.nonce();
+    ///   const balance = await reader.getBalance(faucetId);
+    /// } finally {
+    ///   reader.free?.(); // the Node.js reader has no free()
+    /// }
     /// ```
     #[js_export(js_name = "accountReader")]
     pub async fn account_reader(&self, account_id: &AccountId) -> Result<AccountReader, JsErr> {
