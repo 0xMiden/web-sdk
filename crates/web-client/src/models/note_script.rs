@@ -111,9 +111,9 @@ impl NoteScript {
     }
 
     /// Returns the well-known `CONSTANT_FEE_POLICY_CONFIG` script. It runs on a network account
-    /// with `ConstantFeeManager` and an owner- or role-controlled `Authority`, from a public note
-    /// whose `NetworkAccountTarget` names that account. See
-    /// `miden_standards::note::config::ConstantFeePolicyConfigNote`.
+    /// with `ConstantFeeManager` and an owner- or role-controlled `Authority` that already
+    /// allowlists and prices this note's own root, from a public note whose `NetworkAccountTarget`
+    /// names that account. See `miden_standards::note::config::ConstantFeePolicyConfigNote`.
     #[js_export(js_name = "constantFeePolicyConfig")]
     pub fn constant_fee_policy_config() -> Self {
         StandardNote::CONSTANT_FEE_POLICY_CONFIG.script().into()
@@ -155,7 +155,8 @@ impl NoteScript {
     }
 
     /// Returns the well-known `UPGRADE` script. It runs on an account with `UpgradeManager` and
-    /// `Authority`, from a public note whose `NetworkAccountTarget` names that account. See
+    /// `Authority`, from a public note whose `NetworkAccountTarget` names that account and that
+    /// carries the new code in an `AccountCodeUpgradeAttachment`. See
     /// `miden_standards::note::UpgradeNote`.
     pub fn upgrade() -> Self {
         StandardNote::UPGRADE.script().into()

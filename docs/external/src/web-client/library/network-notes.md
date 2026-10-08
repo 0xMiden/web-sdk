@@ -111,15 +111,26 @@ Every other standard note has a constructor too (`NoteScript.pauseConfig()`,
 rest). Each returns the note's script so you can read its root, to allowlist the
 note on a network account or to recognize one. An account built with
 `AccountComponent.createNetworkAuthComponents` allowlists only
-`NETWORK_ACCOUNT_CONFIG`, `FEE_SPONSORSHIP` and `P2ID` by default; to accept
-another note, price its root in the allowlist, for example
-`new NoteScriptFee(NoteScript.pauseConfig().root(), fee)`. Allowlisting is not
-enough on its own: the note only runs on an account that also installs the
-components it drives, here `PausableManager`, `Pausable` and `Authority`.
-`createNetworkAuthComponents` installs only the auth component, the wallet and
-the fee policy, so build those components from compiled packages as custom
-`AccountComponent`s (`AccountComponent.fromPackage`). The note must also be
-public and carry a `NetworkAccountTarget` naming the account.
+`NETWORK_ACCOUNT_CONFIG`, `FEE_SPONSORSHIP` and `P2ID` by default; to have it
+consume any other note, price that note's root in the allowlist, for example
+`new NoteScriptFee(NoteScript.pauseConfig().root(), fee)`.
+
+Who may consume a note depends on the note:
+
+- The `*Config()` notes (`networkAccountConfig()` included) and `upgrade()` run
+  only on the account their `NetworkAccountTarget` attachment names, from a
+  public note. Allowlisting is not enough on its own: the account must also
+  install the components the note drives, for `pauseConfig()` `PausableManager`,
+  `Pausable` and `Authority`. `createNetworkAuthComponents` installs only the
+  auth component, the wallet and the fee policy, so build those components from
+  compiled packages as custom `AccountComponent`s
+  (`AccountComponent.fromPackage`). `constantFeePolicyConfig()` also needs its
+  own root already allowlisted and priced on the account.
+- `p2id()`, `p2ide()`, `mint()` and `burn()` carry no attachment target: note
+  storage or the faucet decides who consumes them, and a network account that
+  consumes them still allowlists and prices their roots.
+- `txFee()`, `swap()`, `pswap()` and `feeSponsorship()` can be consumed by any
+  account.
 
 ## Creating a network account
 
