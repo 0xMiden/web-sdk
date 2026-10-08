@@ -15,6 +15,10 @@
 * [BREAKING][web] `client.transactions.batch` no longer takes a batch-level `account`; put `account` on each operation instead. `submitBatch(account, requests, options?)` becomes `submitBatch(items, options?)` with `items` as `{ account, request }[]`, and the WASM `submitNewTransactionBatch(accountId, serializedRequests)` becomes `submitNewTransactionBatch(items: BatchItem[])` ([#161](https://github.com/0xMiden/web-sdk/pull/161)).
 * [CHANGE][web] Corrected the documented meaning of the number `batch()` and `submitBatch()` return: it is the node's chain tip as of submission, not the block the batch commits in. Behaviour is unchanged, but every public copy of the docs said the opposite. Separately documented that `waitForConfirmation` does not currently work on a batch at all: its poll calls a sync method that does not exist, so it times out unless the client is already at that height. The batch's own effects are already in the local store when the call returns; for chain inclusion, sync and check `transactions.list()` status. Tracked in [#314](https://github.com/0xMiden/web-sdk/issues/314) ([#313](https://github.com/0xMiden/web-sdk/pull/313)).
 
+### Fixes
+
+* [FIX][web] The single-threaded WASM build now caches the precompile preprocessed data for the lifetime of the WASM instance, as the multi-threaded build already did, so repeat local batch proofs (`client.transactions.batch`, `useBatch`) that settle a precompile claim, such as one raised by an ECDSA-authenticated transaction, no longer rebuild it. Single-transaction proving defers those claims and is unaffected, as are Falcon-authenticated transactions, which raise none. The cache holds one bundle per hash function, about 50 MiB each; a local batch uses one (Blake3) ([#319](https://github.com/0xMiden/web-sdk/pull/319), [#318](https://github.com/0xMiden/web-sdk/issues/318)).
+
 ## 0.17.2 (TBD)
 
 ### Fixes
