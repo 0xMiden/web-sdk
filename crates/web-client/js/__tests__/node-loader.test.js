@@ -22,8 +22,9 @@ const realExistsSync = fs.existsSync;
 
 // Loads a fresh copy of the loader (empty module cache) on linux-x64 with
 // the given process report, where only `resolvable` packages can be required
-// and no prebuild or target binary exists on disk.
-async function loadOnLinuxX64({ report, resolvable = [] }) {
+// and no prebuild or target binary exists on disk. `processReport` replaces
+// the whole process.report object instead.
+async function loadOnLinuxX64({ report, processReport, resolvable = [] }) {
   requireState.required = [];
   requireState.modules = new Map(resolvable.map((id) => [id, { id }]));
   vi.resetModules();
@@ -31,7 +32,11 @@ async function loadOnLinuxX64({ report, resolvable = [] }) {
 
   vi.spyOn(os, "platform").mockReturnValue("linux");
   vi.spyOn(os, "arch").mockReturnValue("x64");
-  vi.spyOn(process.report, "getReport").mockImplementation(report);
+  if (report) {
+    vi.spyOn(process.report, "getReport").mockImplementation(report);
+  } else {
+    vi.spyOn(process, "report", "get").mockReturnValue(processReport);
+  }
   vi.spyOn(fs, "existsSync").mockImplementation((p) =>
     /miden_client_web\.(node|so|dylib)$/.test(String(p))
       ? false
@@ -157,5 +162,38 @@ describe("loadNativeModule on linux-x64", () => {
     } finally {
       process.report.excludeNetwork = previous;
     }
+  });
+
+  it("restores the network setting when the report cannot be read", async () => {
+    const previous = process.report.excludeNetwork;
+    process.report.excludeNetwork = false;
+    try {
+      await loadOnLinuxX64({ report: throwingReport });
+      expect(process.report.excludeNetwork).toBe(false);
+      expect(requireState.required).toEqual([GNU, MUSL]);
+    } finally {
+      process.report.excludeNetwork = previous;
+    }
+  });
+
+  it("tries glibc then musl when the network setting is read-only", async () => {
+    const { error } = await loadOnLinuxX64({
+      processReport: Object.freeze({
+        excludeNetwork: false,
+        getReport: glibcReport,
+      }),
+    });
+
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect(requireState.required).toEqual([GNU, MUSL]);
+    expect(error?.message).toContain(`"${GNU}" or "${MUSL}"`);
+  });
+
+  it("tries glibc then musl when there is no process report", async () => {
+    const { error } = await loadOnLinuxX64({ processReport: undefined });
+
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect(requireState.required).toEqual([GNU, MUSL]);
+    expect(error?.message).toContain(`"${GNU}" or "${MUSL}"`);
   });
 });
