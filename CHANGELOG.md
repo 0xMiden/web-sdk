@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.2 (TBD)
+
+### Fixes
+
+* [FIX][web] `buildNetworkNote` was declared in the shipped types and implemented in `standalone.js`, but neither the browser nor the node entry point re-exported it, so `import { buildNetworkNote } from "@miden-sdk/miden-sdk"` failed at runtime while `tsc` accepted it. Both entries now export it ([#401](https://github.com/0xMiden/web-sdk/pull/401), [#388](https://github.com/0xMiden/web-sdk/issues/388)).
+
 ## 0.17.1 (2026-10-07)
 
 ### Fixes
