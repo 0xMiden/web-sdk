@@ -100,7 +100,6 @@ const WRITE_METHODS = new Set([
   "importAccountById",
   "importAccountFile",
   "importNoteFile",
-  "importPublicAccountFromSeed",
   "insertAccountAddress",
   "newAccount",
   "newB2AggTransactionRequest",
@@ -992,6 +991,17 @@ class WebClient {
         resolveAuthScheme(authSchemeId, wasm)
       );
     }, "newFaucet");
+  }
+
+  async importPublicAccountFromSeed(seed, authSchemeId) {
+    return this._serializeWasmCall(async () => {
+      const wasm = await getWasmOrThrow();
+      const wasmWebClient = await this.getWasmWebClient();
+      return await wasmWebClient.importPublicAccountFromSeed(
+        seed,
+        resolveAuthScheme(authSchemeId, wasm)
+      );
+    }, "importPublicAccountFromSeed");
   }
 
   async newAccount(account, overwrite) {

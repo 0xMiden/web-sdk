@@ -1,5 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MidenClient } from "../client.js";
+
+// `js/index.js` re-exports the wasm-bindgen surface from "../Cargo.toml", which
+// the node test environment cannot parse. The WebClient wrapper reads the wasm
+// module through `loadWasm`, stubbed here with the AuthScheme enum in the shape
+// wasm-bindgen emits (each value also maps back to its name).
+const wasmModule = vi.hoisted(() => ({
+  AuthScheme: Object.freeze({
+    AuthEcdsaK256Keccak: 1,
+    1: "AuthEcdsaK256Keccak",
+    AuthRpoFalcon512: 2,
+    2: "AuthRpoFalcon512",
+  }),
+}));
+vi.mock("../../Cargo.toml", () => ({}));
+vi.mock("../wasm.js", () => ({ default: async () => wasmModule }));
+
+import {
+  WasmWebClient,
+  __createClientProxyForTest as createClientProxy,
+} from "../index.js";
 
 // `MidenClient` is constructible without a real WASM module as long as the test
 // supplies the two things its constructor takes: the proxied inner client and a
@@ -140,5 +160,69 @@ describe("MidenClient.feeAwareTransactionRequestBuilder", () => {
       client.feeAwareTransactionRequestBuilder("0xabc")
     ).rejects.toThrow("Client terminated");
     expect(inner.feeAwareTransactionRequestBuilder).not.toHaveBeenCalled();
+  });
+});
+
+describe("WebClient AuthScheme resolution", () => {
+  let client;
+  let inner;
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    inner = {
+      newWallet: vi.fn().mockResolvedValue("wallet"),
+      newFaucet: vi.fn().mockResolvedValue("faucet"),
+      importPublicAccountFromSeed: vi.fn().mockResolvedValue("account"),
+    };
+    const instance = new WasmWebClient(
+      null,
+      null,
+      undefined,
+      "auth-scheme-store",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false
+    );
+    instance.wasmWebClient = inner;
+    client = createClientProxy(instance);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("newWallet hands the wasm client the ECDSA enum value", async () => {
+    await expect(client.newWallet("mode", "ecdsa")).resolves.toBe("wallet");
+    expect(inner.newWallet).toHaveBeenCalledWith("mode", 1, undefined);
+  });
+
+  it("newFaucet hands the wasm client the Falcon enum value", async () => {
+    await expect(
+      client.newFaucet("mode", false, "Token", "TOK", 8, 1000n, "falcon")
+    ).resolves.toBe("faucet");
+    expect(inner.newFaucet).toHaveBeenCalledWith(
+      "mode",
+      false,
+      "Token",
+      "TOK",
+      8,
+      1000n,
+      2
+    );
+  });
+
+  it("importPublicAccountFromSeed hands the wasm client the Falcon enum value", async () => {
+    const seed = new Uint8Array(32);
+    await expect(
+      client.importPublicAccountFromSeed(seed, "falcon")
+    ).resolves.toBe("account");
+    expect(inner.importPublicAccountFromSeed).toHaveBeenCalledWith(seed, 2);
+  });
+
+  it("importPublicAccountFromSeed rejects a number that is not an AuthScheme value", async () => {
+    await expect(
+      client.importPublicAccountFromSeed(new Uint8Array(32), 99)
+    ).rejects.toThrow('Unknown auth scheme: "99"');
+    expect(inner.importPublicAccountFromSeed).not.toHaveBeenCalled();
   });
 });

@@ -128,10 +128,11 @@ export function resolveStorageMode(mode, wasm) {
 /**
  * Resolves an auth scheme string to a WASM AuthScheme enum value.
  *
- * Already-resolved numeric enum values pass through unchanged, so callers
- * that receive a pre-resolved value (e.g. `AccountsResource.create`, which
- * resolves before forwarding to the low-level `newWallet`/`newFaucet`) don't
- * get double-processed.
+ * A number passes through unchanged only when it is one of
+ * `wasm.AuthScheme`'s values, so callers that receive a pre-resolved value
+ * (e.g. `AccountsResource.create`, which resolves before forwarding to the
+ * low-level `newWallet`/`newFaucet`) don't get double-processed, while any
+ * other number is rejected here rather than at the WASM boundary.
  *
  * @param {string | number | undefined} scheme - "falcon" or "ecdsa" (or an
  *   already-resolved numeric enum value). Defaults to "falcon".
@@ -139,7 +140,10 @@ export function resolveStorageMode(mode, wasm) {
  * @returns {number} The AuthScheme enum value.
  */
 export function resolveAuthScheme(scheme, wasm) {
-  if (typeof scheme === "number") {
+  if (
+    typeof scheme === "number" &&
+    Object.values(wasm.AuthScheme).includes(scheme)
+  ) {
     return scheme;
   }
   if (scheme === "ecdsa") {

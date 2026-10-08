@@ -1,10 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A stand-in for the native module: the array polyfills and the entry's own
 // wiring must work without it, and Account/Word let the StorageView install run.
+// AuthScheme has the napi shape (names to values only) and WebClient records
+// what the client wrapper forwards.
 const fakeNative = vi.hoisted(() => {
   const rawStorage = {};
   class Account {
@@ -13,12 +15,28 @@ const fakeNative = vi.hoisted(() => {
     }
   }
   class Word {}
-  return { Account, Word, rawStorage };
+  class WebClient {
+    constructor() {
+      this.newWallet = vi.fn(async () => "wallet");
+      this.newFaucet = vi.fn(async () => "faucet");
+      this.importPublicAccountFromSeed = vi.fn(async () => "account");
+    }
+    async createClient(_rpcUrl, _noteTransportUrl, _seed, storePath) {
+      this.storePath = storePath;
+    }
+    async createMockClient(storePath) {
+      this.storePath = storePath;
+    }
+  }
+  const AuthScheme = { AuthEcdsaK256Keccak: 1, AuthRpoFalcon512: 2 };
+  return { Account, Word, WebClient, AuthScheme, rawStorage };
 });
 vi.mock("../node/loader.js", () => ({
   loadNativeModule: () => ({
     Account: fakeNative.Account,
     Word: fakeNative.Word,
+    WebClient: fakeNative.WebClient,
+    AuthScheme: fakeNative.AuthScheme,
   }),
 }));
 
@@ -152,3 +170,57 @@ describe("Node entry parity with the browser entry", () => {
     expect([...seen].filter((file) => !shipped(file))).toEqual([]);
   });
 });
+
+describe.each(["WasmWebClient", "MockWasmWebClient"])(
+  "Node %s AuthScheme resolution",
+  (factory) => {
+    let client;
+    let native;
+
+    beforeEach(async () => {
+      client = await nodeIndex[factory].createClient();
+      native = client.wasmWebClient;
+    });
+
+    afterEach(() => {
+      rmSync(path.dirname(native.storePath), { recursive: true, force: true });
+    });
+
+    it("newWallet hands the native client the Falcon enum value", async () => {
+      await expect(client.newWallet("mode", "falcon")).resolves.toBe("wallet");
+      expect(native.newWallet).toHaveBeenCalledWith("mode", 2, null);
+    });
+
+    it("newFaucet hands the native client the ECDSA enum value", async () => {
+      await expect(
+        client.newFaucet("mode", false, "Token", "TOK", 8, 1000n, "ecdsa")
+      ).resolves.toBe("faucet");
+      expect(native.newFaucet).toHaveBeenCalledWith(
+        "mode",
+        false,
+        "Token",
+        "TOK",
+        8,
+        1000n,
+        1
+      );
+    });
+
+    it("importPublicAccountFromSeed hands the native client the Falcon enum value", async () => {
+      await expect(
+        client.importPublicAccountFromSeed(new Uint8Array([1, 2, 3]), "falcon")
+      ).resolves.toBe("account");
+      expect(native.importPublicAccountFromSeed).toHaveBeenCalledWith(
+        [1, 2, 3],
+        2
+      );
+    });
+
+    it("rejects a number that is not a native AuthScheme value", async () => {
+      await expect(client.newWallet("mode", 99)).rejects.toThrow(
+        'Unknown auth scheme: "99"'
+      );
+      expect(native.newWallet).not.toHaveBeenCalled();
+    });
+  }
+);
