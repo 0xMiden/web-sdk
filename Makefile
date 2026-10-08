@@ -37,7 +37,8 @@ check-wasm-features: ## Verify the ST WASM build still resolves the dependency f
 	# miden_precompiles_air::preprocessed caches its preprocessed STARK bundle
 	# only under air's `std` feature, which crates/web-client turns on via a
 	# feature-only dependency. Nothing else fails if that regresses: the cache
-	# goes quiet and every precompile-raising prove gets slow again (issue #318).
+	# goes quiet and every local batch proof that settles a precompile claim
+	# gets slow again (issue #318).
 	# Two copies of the crate would be as bad as zero. The ST build must also
 	# keep miden-processor and miden-prover without `std`: it un-gates a threaded
 	# trace build that traps on wasm32.

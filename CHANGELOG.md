@@ -15,7 +15,7 @@
 
 ### Fixes
 
-* [FIX][web] The single-threaded WASM build now caches the precompile preprocessed data for the lifetime of the WASM instance, as the multi-threaded build already did, so repeat proofs that raise a precompile claim no longer rebuild it. The cache holds one bundle per hash function, about 50 MiB each; transaction proving uses one (Poseidon2). Falcon-authenticated transactions raise no precompile claim and are unaffected ([#319](https://github.com/0xMiden/web-sdk/pull/319), [#318](https://github.com/0xMiden/web-sdk/issues/318)).
+* [FIX][web] The single-threaded WASM build now caches the precompile preprocessed data for the lifetime of the WASM instance, as the multi-threaded build already did, so repeat local batch proofs (`client.transactions.batch`, `useBatch`) that settle a precompile claim, such as one raised by an ECDSA-authenticated transaction, no longer rebuild it. Single-transaction proving defers those claims and is unaffected, as are Falcon-authenticated transactions, which raise none. The cache holds one bundle per hash function, about 50 MiB each; a local batch uses one (Blake3) ([#319](https://github.com/0xMiden/web-sdk/pull/319), [#318](https://github.com/0xMiden/web-sdk/issues/318)).
 
 ## 0.17.2 (TBD)
 

@@ -77,18 +77,19 @@ miden-protocol = { workspace = true }
 # Feature-only dependency: nothing in this crate uses it directly. Enabling its
 # `std` feature turns on the `OnceLock` in `miden_precompiles_air::preprocessed`
 # that caches the preprocessed STARK bundle (2^16-row BytePairLut table, coset
-# LDE and Merkle commitment). Without `std` every prove or verify that raises a
-# precompile claim (e.g. an ECDSA-authenticated transaction) rebuilds it. The MT
-# build already gets `std` transitively via `miden-client/concurrent`; this
-# makes the ST build match.
+# LDE and Merkle commitment). Without `std` every precompile proof rebuilds it.
+# The MT build already gets `std` transitively via `miden-client/concurrent`;
+# this makes the ST build match.
 #
-# The cache keeps one bundle per hash function, about 50 MiB each, until the
-# wasm instance is torn down; there is no eviction API. Transaction proving
-# through either the client's default prover or `TransactionProver.newLocalProver()`
-# uses Poseidon2 (both are `LocalTransactionProver::default()`), so it fills one
-# slot. A Blake3 bundle is built only by a path that proves or verifies a
-# Blake3 proof carrying a precompile claim; the batch prover still uses
-# `ProvingOptions::default()`.
+# Single-transaction proving builds no bundle: `LocalTransactionProver` (the
+# client's default prover and `TransactionProver.newLocalProver()`) proves the
+# VM only and leaves precompile claims deferred. A local batch settles them
+# with one precompile proof through
+# `LocalBatchProver::new(miden_tx::Prover::default())`, whose hash function is
+# Blake3_256, so a batch carrying a precompile claim (e.g. from an
+# ECDSA-authenticated transaction) builds the Blake3 bundle. The cache keeps one
+# bundle per hash function, about 50 MiB each, until the wasm instance is torn
+# down; there is no eviction API.
 #
 # Deliberately NOT `miden-prover/std` or `miden-processor/std`: they un-gate a
 # call site that reaches miden-processor's std-gated threaded trace build, which
