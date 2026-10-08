@@ -106,6 +106,38 @@ Two consequences worth planning for:
 so charging for it is a deliberate act —
 `new NoteScriptFee(NoteScript.feeSponsorship().root(), amount)`.
 
+Every other standard note has a constructor too (`NoteScript.pauseConfig()`,
+`NoteScript.ownerConfig()`, `NoteScript.upgrade()`, `NoteScript.txFee()` and the
+rest). Each returns the note's script so you can read its root, to allowlist the
+note on a network account or to recognize one. An account built with
+`AccountComponent.createNetworkAuthComponents` allowlists only
+`NETWORK_ACCOUNT_CONFIG`, `FEE_SPONSORSHIP` and `P2ID` by default; to have it
+consume any other note, price that note's root in the allowlist, for example
+`new NoteScriptFee(NoteScript.pauseConfig().root(), fee)`.
+
+Who may consume a note depends on the note:
+
+- The `*Config()` notes (`networkAccountConfig()` included) and `upgrade()` run
+  only on the account their `NetworkAccountTarget` attachment names, from a
+  public note. Allowlisting is not enough on its own: the account must also
+  install the components the note drives, for `pauseConfig()` `PausableManager`,
+  `Pausable` and `Authority`. `createNetworkAuthComponents` installs only the
+  auth component, the wallet and the fee policy, so build those components from
+  compiled packages as custom `AccountComponent`s
+  (`AccountComponent.fromPackage`). `constantFeePolicyConfig()` also needs its
+  own root already allowlisted and priced on the account.
+- `p2id()` and `p2ide()` send their assets to the accounts named in note
+  storage, and their scripts check no attachment. A network account
+  auto-consumes one only when the note also carries a `NetworkAccountTarget`
+  naming that account (P2ID is allowlisted by default; P2IDE must be priced).
+- `mint()` and `burn()` act on the faucet named by the asset: its
+  `mint_and_send` or `receive_and_burn` decides who may consume them. Their
+  standard builders attach a `NetworkAccountTarget` naming the faucet when the
+  faucet is public, so the network can route the note, and a network faucet
+  allowlists and prices their roots.
+- `txFee()`, `swap()`, `pswap()` and `feeSponsorship()` can be consumed by any
+  account.
+
 ## Creating a network account
 
 A network account is a **public** account carrying the network-account auth
