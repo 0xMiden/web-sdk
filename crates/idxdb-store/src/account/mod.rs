@@ -326,10 +326,9 @@ impl IdxdbStore {
         // into a clear, diagnosable store error instead of a cryptic crash.
         let account_code_idxdb: Option<AccountCodeIdxdbObject> =
             await_js(promise, "failed to fetch account code").await?;
-        let account_code_idxdb =
-            account_code_idxdb.ok_or_else(|| {
-                StoreError::DatabaseError(format!("account code with root {root} not found"))
-            })?;
+        let account_code_idxdb = account_code_idxdb.ok_or_else(|| {
+            StoreError::DatabaseError(format!("account code with root {root} not found"))
+        })?;
 
         Ok(decode_unchecked(&account_code_idxdb.code)?)
     }
