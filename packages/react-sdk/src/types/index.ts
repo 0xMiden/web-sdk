@@ -125,9 +125,8 @@ export interface MidenConfig {
   /** Default timeout for remote prover requests in milliseconds. */
   proverTimeoutMs?: number | bigint;
   /**
-   * Enable the Web Worker shim that runs WASM calls off the main thread,
-   * except batch submission (`useBatch`), which always proves on the calling
-   * thread.
+   * Enable the Web Worker shim that runs WASM calls, batch submission
+   * (`useBatch`) included, off the main thread.
    * Defaults to `true` — leave it that way in browsers/extensions so the UI
    * stays responsive while WASM is busy.
    *
