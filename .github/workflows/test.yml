@@ -698,6 +698,17 @@ jobs:
           name: coverage-vite-plugin
           path: packages/vite-plugin/coverage
 
+  test-linked-client-scripts:
+    name: linked client script unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run linked dependency regressions
+        run: node --test scripts/linked-client-pr.test.cjs
+
   test-bench-scripts:
     name: benchmark script unit tests
     runs-on: ubuntu-24.04

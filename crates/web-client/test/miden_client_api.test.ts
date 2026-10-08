@@ -172,7 +172,22 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
         } catch (error) {
           emptyCodeMessage = String(error.message ?? error);
         }
-        return { allowed, code, message, emptyCodeMessage };
+        const codeValid =
+          await client.accounts.isInvitationCodeValid("invitation-code");
+        let emptyCheckMessage = null;
+        try {
+          await client.accounts.isInvitationCodeValid("");
+        } catch (error) {
+          emptyCheckMessage = String(error.message ?? error);
+        }
+        return {
+          allowed,
+          code,
+          message,
+          emptyCodeMessage,
+          codeValid,
+          emptyCheckMessage,
+        };
       });
       // The mock node enforces no allowlist, so every account is allowed and
       // the client keeps the invitation code rather than spending it.
@@ -180,6 +195,9 @@ mockTest.describe("MidenClient API - Mock Chain", () => {
       expect(result.code).toBe("ACCOUNT_ALREADY_ALLOWED");
       expect(result.message).toContain("already allowed");
       expect(result.emptyCodeMessage).toContain("invitationCode");
+      // A node without an allowlist accepts every code.
+      expect(result.codeValid).toBe(true);
+      expect(result.emptyCheckMessage).toContain("invitationCode");
     }
   );
 

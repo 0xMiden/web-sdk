@@ -487,6 +487,19 @@ declines to attach fee conversion info to one it cannot classify:
 
   The older `AccountComponent.createNetworkAuth` no longer exists.
 
+### Check an invitation before registration
+
+```typescript
+if (await client.accounts.isInvitationCodeValid(invitationCode)) {
+  await client.accounts.register({ account: wallet, invitationCode });
+}
+```
+
+The check requires a non-empty string and does not consume or reserve the
+code. Unknown or already registered codes return `false`. A node without an
+allowlist returns `true`. Handle registration errors even after a successful
+check, because another registration can consume the code between calls.
+
 ## Fees
 
 Since protocol 0.16 the verification fee is paid inside the account's auth

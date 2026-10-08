@@ -156,6 +156,7 @@ const READ_METHODS = new Set([
   "getSyncHeight",
   "getTransactions",
   "isAccountAllowed",
+  "isInvitationCodeValid",
   "listSettingKeys",
   "listTags",
   "executeProgram",

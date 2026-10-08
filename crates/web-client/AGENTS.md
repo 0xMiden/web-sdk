@@ -59,6 +59,12 @@ and `pswap`. Client-level methods cover the lifecycle around them - `sync`,
 
 ## Rules that are easy to get wrong
 
+**Invitation checks do not reserve codes.** Use
+`client.accounts.isInvitationCodeValid(code)` to check whether a non-empty
+code can register an account. It returns `false` for unknown or used codes,
+and `true` when the node does not enforce an allowlist. Registration can still
+fail after a successful check; only `accounts.register()` consumes the code.
+
 **Sync before you read.** Local state is a cache of chain state. Calling
 `client.sync()` first is the difference between correct balances and confusing
 ones. `skills/web-client-usage/SKILL.md` documents where in each flow it belongs.

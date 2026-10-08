@@ -20,6 +20,15 @@ test.describe("account allowlist", () => {
     expect(result.allowed).toBe(true);
   });
 
+  test("isInvitationCodeValid answers true when the node enforces no allowlist", async ({
+    run,
+  }) => {
+    const result = await run(async ({ client }) => {
+      return { valid: await client.isInvitationCodeValid("invitation-code") };
+    });
+    expect(result.valid).toBe(true);
+  });
+
   test("registerAccount keeps the code for an account the node already allows", async ({
     run,
   }) => {
