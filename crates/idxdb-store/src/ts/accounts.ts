@@ -79,6 +79,42 @@ export async function getAccountHeader(dbId: string, accountId: string) {
   }
 }
 
+export async function getAccountSnapshot(
+  dbId: string,
+  accountId: string,
+  maps: boolean,
+  assets: boolean
+) {
+  const db = getDatabase(dbId);
+  return db.dexie.transaction(
+    "r",
+    [
+      db.latestAccountHeaders,
+      db.accountCodes,
+      db.latestAccountStorages,
+      db.latestStorageMapEntries,
+      db.latestAccountAssets,
+    ],
+    async () => {
+      const header = await getAccountHeader(dbId, accountId);
+      if (!header) return null;
+      const [code, storage, mapEntries, vaultAssets] = await Promise.all([
+        getAccountCode(dbId, header.codeRoot),
+        getAccountStorage(dbId, accountId, []),
+        maps ? getAccountStorageMaps(dbId, accountId) : [],
+        assets ? getAccountVaultAssets(dbId, accountId, []) : [],
+      ]);
+      return {
+        header,
+        code,
+        storage,
+        maps: mapEntries,
+        assets: vaultAssets,
+      };
+    }
+  );
+}
+
 export async function getAccountHeaderByCommitment(
   dbId: string,
   accountCommitment: string
@@ -336,7 +372,27 @@ export async function upsertVaultAssets(
   }
 }
 
-export async function applyTransactionDelta(
+// The header names code by commitment, so the code row has to land before the header.
+// An empty `code` means the patch carries none: a changed commitment is then an error,
+// unless there is no previous header to compare against.
+async function persistAccountCode(
+  db: MidenDatabase,
+  codeRoot: string,
+  code: Uint8Array | undefined,
+  previousCodeRoot: string | undefined
+) {
+  if (code && code.length > 0) {
+    await db.accountCodes.put({ root: codeRoot, code });
+    return;
+  }
+  if (previousCodeRoot !== undefined && previousCodeRoot !== codeRoot) {
+    throw new Error(
+      `account code commitment changed from ${previousCodeRoot} to ${codeRoot} without the new code`
+    );
+  }
+}
+
+export async function applyAccountPatch(
   dbId: string,
   accountId: string,
   nonce: string,
@@ -347,7 +403,9 @@ export async function applyTransactionDelta(
   storageRoot: string,
   vaultRoot: string,
   committed: boolean,
-  commitment: string
+  commitment: string,
+  code?: Uint8Array,
+  initialAccountCommitment?: string
 ) {
   try {
     const db = getDatabase(dbId);
@@ -363,9 +421,20 @@ export async function applyTransactionDelta(
         db.historicalAccountAssets,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
+        db.accountCodes,
       ],
       async () => {
-        // Apply storage delta: read old → archive → write new
+        if (initialAccountCommitment !== undefined) {
+          const current = await db.latestAccountHeaders.get(accountId);
+          if (current?.accountCommitment !== initialAccountCommitment) {
+            throw new Error(
+              `account patch input commitment does not match persisted state for ${accountId}`
+            );
+          }
+        }
+        const resetMapSlots = new Set<string>();
+
+        // Apply storage patch: read old → archive → write/delete final state.
         for (const slot of updatedSlots) {
           const oldSlot = await db.latestAccountStorages
             .where("[accountId+slotName]")
@@ -380,12 +449,48 @@ export async function applyTransactionDelta(
             slotType: slot.slotType,
           });
 
-          await db.latestAccountStorages.put({
-            accountId,
-            slotName: slot.slotName,
-            slotValue: slot.slotValue,
-            slotType: slot.slotType,
-          });
+          // A created map is a replacement (a remove followed by create can merge to Create),
+          // while a removed map must drop every persisted entry. Archive those entries so account
+          // rollback can restore them.
+          if (
+            slot.slotType === 1 &&
+            (slot.patchOperation === 0 || slot.patchOperation === 2)
+          ) {
+            resetMapSlots.add(slot.slotName);
+            const oldMapEntries = await db.latestStorageMapEntries
+              .where("[accountId+slotName]")
+              .equals([accountId, slot.slotName])
+              .toArray();
+
+            for (const entry of oldMapEntries) {
+              await db.historicalStorageMapEntries.put({
+                accountId,
+                replacedAtNonce: nonce,
+                slotName: entry.slotName,
+                key: entry.key,
+                oldValue: entry.value,
+              });
+            }
+
+            await db.latestStorageMapEntries
+              .where("[accountId+slotName]")
+              .equals([accountId, slot.slotName])
+              .delete();
+          }
+
+          if (slot.patchOperation === 2) {
+            await db.latestAccountStorages
+              .where("[accountId+slotName]")
+              .equals([accountId, slot.slotName])
+              .delete();
+          } else {
+            await db.latestAccountStorages.put({
+              accountId,
+              slotName: slot.slotName,
+              slotValue: slot.slotValue,
+              slotType: slot.slotType,
+            });
+          }
         }
 
         // Process map entries: read old → archive → update latest
@@ -395,13 +500,29 @@ export async function applyTransactionDelta(
             .equals([accountId, entry.slotName, entry.key])
             .first();
 
-          await db.historicalStorageMapEntries.put({
-            accountId,
-            replacedAtNonce: nonce,
-            slotName: entry.slotName,
-            key: entry.key,
-            oldValue: oldEntry?.value ?? null,
-          });
+          if (resetMapSlots.has(entry.slotName)) {
+            const archivedEntry = await db.historicalStorageMapEntries
+              .where("[accountId+replacedAtNonce+slotName+key]")
+              .equals([accountId, nonce, entry.slotName, entry.key])
+              .first();
+            if (archivedEntry === undefined) {
+              await db.historicalStorageMapEntries.put({
+                accountId,
+                replacedAtNonce: nonce,
+                slotName: entry.slotName,
+                key: entry.key,
+                oldValue: null,
+              });
+            }
+          } else {
+            await db.historicalStorageMapEntries.put({
+              accountId,
+              replacedAtNonce: nonce,
+              slotName: entry.slotName,
+              key: entry.key,
+              oldValue: oldEntry?.value ?? null,
+            });
+          }
 
           // "" means removal
           if (entry.value === "") {
@@ -469,6 +590,8 @@ export async function applyTransactionDelta(
             watched: oldHeader.watched ?? false,
           });
         }
+
+        await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
 
         await db.latestAccountHeaders.put({
           id: accountId,
@@ -728,12 +851,12 @@ export async function applyFullAccountState(
     storageMapEntries: JsStorageMapEntry[];
     assets: JsVaultAsset[];
     codeRoot: string;
-    code: Uint8Array;
     storageRoot: string;
     vaultRoot: string;
     committed: boolean;
     accountCommitment: string;
     accountSeed: Uint8Array | undefined;
+    code?: Uint8Array;
   }
 ) {
   try {
@@ -745,18 +868,17 @@ export async function applyFullAccountState(
       storageMapEntries,
       assets,
       codeRoot,
-      code,
       storageRoot,
       vaultRoot,
       committed,
       accountCommitment,
       accountSeed,
+      code,
     } = accountState;
 
     await db.dexie.transaction(
       "rw",
       [
-        db.accountCodes,
         db.latestAccountStorages,
         db.historicalAccountStorages,
         db.latestStorageMapEntries,
@@ -765,15 +887,9 @@ export async function applyFullAccountState(
         db.historicalAccountAssets,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
+        db.accountCodes,
       ],
       async () => {
-        // Persist the account code so the header's `codeRoot` always resolves.
-        // `put` is idempotent: it safely replaces an existing row and fills the
-        // gap for an unseen root (e.g. an account observed only through sync,
-        // never locally inserted) that would otherwise leave getAccountCode
-        // unable to resolve the header.
-        await db.accountCodes.put({ root: codeRoot, code });
-
         // Archive: save current latest values to historical (so they can be
         // restored on undo), then replace latest with the new state.
         await archiveAndReplaceStorageSlots(db, accountId, nonce, storageSlots);
@@ -806,6 +922,8 @@ export async function applyFullAccountState(
             watched: oldHeader.watched ?? false,
           });
         }
+
+        await persistAccountCode(db, codeRoot, code, oldHeader?.codeRoot);
 
         await db.latestAccountHeaders.put({
           id: accountId,
@@ -881,15 +999,28 @@ export async function insertAccountAddress(
   }
 }
 
-export async function removeAccountAddress(dbId: string, address: Uint8Array) {
+// Reports whether the address was tracked, which the `Store` trait requires of
+// `remove_address`. Dexie's `Collection.delete()` resolves to the number of
+// records it removed, so the answer needs no extra read.
+export async function removeAccountAddress(
+  dbId: string,
+  address: Uint8Array
+): Promise<boolean> {
   try {
     const db = getDatabase(dbId);
-    await db.addresses.where("address").equals(address).delete();
+    const deleted = await db.addresses
+      .where("address")
+      .equals(address)
+      .delete();
+    return deleted > 0;
   } catch (error) {
     logWebStoreError(
       error,
       `Error removing address with value: ${String(address)}`
     );
+    // Unreachable: logWebStoreError rethrows. Present so the compiler can see
+    // that no path returns undefined.
+    throw error;
   }
 }
 

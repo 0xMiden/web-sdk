@@ -8,7 +8,7 @@ import {
 } from "./schema.js";
 import { logWebStoreError, mapOption, uint8ArrayToBase64 } from "./utils.js";
 import type { Transaction } from "dexie";
-import { applyFullAccountState, applyTransactionDelta } from "./accounts.js";
+import { applyAccountPatch, applyFullAccountState } from "./accounts.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 
 interface ProcessedTransaction {
@@ -22,11 +22,8 @@ interface ProcessedTransaction {
 }
 
 const IDS_FILTER_PREFIX = "Ids:";
-const EXPIRED_BEFORE_FILTER_PREFIX = "ExpiredPending:";
 
 const STATUS_PENDING_VARIANT = 0;
-const STATUS_COMMITTED_VARIANT = 1;
-const STATUS_DISCARDED_VARIANT = 2;
 
 export async function getTransactions(dbId: string, filter: string) {
   let transactionRecords: ITransaction[] = [];
@@ -49,20 +46,6 @@ export async function getTransactions(dbId: string, filter: string) {
       } else {
         transactionRecords = [];
       }
-    } else if (filter.startsWith(EXPIRED_BEFORE_FILTER_PREFIX)) {
-      const blockNumString = filter.substring(
-        EXPIRED_BEFORE_FILTER_PREFIX.length
-      );
-      const blockNum = parseInt(blockNumString);
-
-      transactionRecords = await db.transactions
-        .filter(
-          (tx) =>
-            tx.blockNum < blockNum &&
-            tx.statusVariant !== STATUS_COMMITTED_VARIANT &&
-            tx.statusVariant !== STATUS_DISCARDED_VARIANT
-        )
-        .toArray();
     } else {
       transactionRecords = await db.transactions.toArray();
     }
@@ -195,12 +178,12 @@ interface JsFullAccountState {
   storageMapEntries: JsStorageMapEntry[];
   assets: JsVaultAsset[];
   codeRoot: string;
-  code: Uint8Array;
   storageRoot: string;
   vaultRoot: string;
   committed: boolean;
   accountCommitment: string;
   accountSeed: Uint8Array | undefined;
+  code?: Uint8Array;
 }
 
 interface JsDeltaAccountState {
@@ -214,6 +197,7 @@ interface JsDeltaAccountState {
   vaultRoot: string;
   committed: boolean;
   commitment: string;
+  code?: Uint8Array;
 }
 
 type JsBatchAccountState =
@@ -252,6 +236,8 @@ interface SerializedOutputNoteData {
   attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
+  noteScriptRoot?: string;
+  noteScript?: Uint8Array;
   nullifier?: string;
   expectedHeight: number;
   stateDiscriminant: number;
@@ -259,6 +245,7 @@ interface SerializedOutputNoteData {
 }
 
 interface JsBatchUpdatePayload {
+  initialAccountCommitment: string;
   transactionRecord: SerializedTransactionRecord;
   accountState: JsBatchAccountState;
   inputNotes: SerializedInputNoteData[];
@@ -290,11 +277,9 @@ export async function applyTransactionBatch(
       db.historicalStorageMapEntries,
       db.latestAccountAssets,
       db.historicalAccountAssets,
-      // Full account updates persist code in a nested transaction, so the
-      // parent batch must include accountCodes in its scope as well.
-      db.accountCodes,
       db.latestAccountHeaders,
       db.historicalAccountHeaders,
+      db.accountCodes,
       db.inputNotes,
       db.outputNotes,
       db.notesScripts,
@@ -302,6 +287,15 @@ export async function applyTransactionBatch(
     ],
     async () => {
       for (const payload of payloads) {
+        const acct = payload.accountState;
+        const accountId =
+          acct.kind === "full" ? acct.account.accountId : acct.accountId;
+        const current = await db.latestAccountHeaders.get(accountId);
+        if (current?.accountCommitment !== payload.initialAccountCommitment) {
+          throw new Error(
+            `transaction input account commitment does not match persisted state for ${accountId}`
+          );
+        }
         // 1. Insert the transaction record (script first, then record)
         const rec = payload.transactionRecord;
         if (rec.scriptRoot && rec.txScript) {
@@ -318,11 +312,10 @@ export async function applyTransactionBatch(
         );
 
         // 2. Apply account state (full or delta)
-        const acct = payload.accountState;
         if (acct.kind === "full") {
           await applyFullAccountState(dbId, acct.account);
         } else {
-          await applyTransactionDelta(
+          await applyAccountPatch(
             dbId,
             acct.accountId,
             acct.nonce,
@@ -333,7 +326,8 @@ export async function applyTransactionBatch(
             acct.storageRoot,
             acct.vaultRoot,
             acct.committed,
-            acct.commitment
+            acct.commitment,
+            acct.code
           );
         }
 
@@ -370,7 +364,9 @@ export async function applyTransactionBatch(
             note.nullifier,
             note.expectedHeight,
             note.stateDiscriminant,
-            note.state
+            note.state,
+            note.noteScriptRoot,
+            note.noteScript
           );
         }
 

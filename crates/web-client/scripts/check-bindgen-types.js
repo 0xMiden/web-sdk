@@ -34,7 +34,7 @@ for (const filePath of requiredFiles) {
 
 if (missingFiles.length > 0) {
   console.error(
-    "Bindgen type check failed because expected files are missing. Run `yarn build` first."
+    "Bindgen type check failed because expected files are missing. Run `make build-web-client` first."
   );
   for (const filePath of missingFiles) {
     console.error(`- ${filePath}`);

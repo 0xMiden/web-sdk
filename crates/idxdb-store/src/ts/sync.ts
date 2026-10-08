@@ -4,7 +4,7 @@ import {
   JsStorageSlot,
   JsStorageMapEntry,
   IBlockHeader,
-  IStateSync,
+  IBlockchainCheckpoint,
 } from "./schema.js";
 
 import {
@@ -15,7 +15,12 @@ import {
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 
 import { applyFullAccountState } from "./accounts.js";
-import { logWebStoreError, uint8ArrayToBase64 } from "./utils.js";
+import { updateAccountWitness } from "./witnesses.js";
+import {
+  logWebStoreError,
+  putPartialBlockchainNodesNoOverwrite,
+  uint8ArrayToBase64,
+} from "./utils.js";
 import { Transaction } from "dexie";
 import Dexie from "dexie";
 
@@ -45,7 +50,7 @@ export async function getNoteTags(dbId: string) {
 export async function getSyncHeight(dbId: string) {
   try {
     const db = getDatabase(dbId);
-    const record = await db.stateSync.get(1);
+    const record = await db.blockchainCheckpoint.get(1);
     if (record) {
       let data = {
         blockNum: record.blockNum,
@@ -56,6 +61,25 @@ export async function getSyncHeight(dbId: string) {
     }
   } catch (error) {
     logWebStoreError(error, "Error fetching sync height");
+  }
+}
+
+export async function getCurrentBlockchainPeaks(dbId: string) {
+  try {
+    const db = getDatabase(dbId);
+    const record = await db.blockchainCheckpoint.get(1);
+    if (!record || record.partialBlockchainPeaks.length === 0) {
+      return {
+        blockNum: record?.blockNum ?? 0,
+        peaks: uint8ArrayToBase64(new Uint8Array()),
+      };
+    }
+    return {
+      blockNum: record.blockNum,
+      peaks: uint8ArrayToBase64(record.partialBlockchainPeaks),
+    };
+  } catch (error) {
+    logWebStoreError(error, "Error fetching current blockchain peaks");
   }
 }
 
@@ -140,6 +164,8 @@ interface SerializedOutputNoteData {
   attachments: Uint8Array;
   recipientDigest: string;
   metadata: Uint8Array;
+  noteScriptRoot?: string;
+  noteScript?: Uint8Array;
   nullifier?: string;
   expectedHeight: number;
   stateDiscriminant: number;
@@ -164,19 +190,22 @@ interface JsAccountUpdate {
   assets: JsVaultAsset[];
   accountId: string;
   codeRoot: string;
-  code: Uint8Array;
   committed: boolean;
   nonce: string;
   accountCommitment: string;
   accountSeed?: Uint8Array;
+  code?: Uint8Array;
+}
+
+interface JsAccountWitnessUpdate {
+  accountId: string;
+  witness: Uint8Array;
 }
 
 interface JsStateSyncUpdate {
   blockNum: number;
   flattenedNewBlockHeaders: FlattenedU8Vec;
-  /** Serialized MMR peaks at the new sync height. A single set per sync update,
-   *  written onto the chain-tip block's blockHeaders row. */
-  partialBlockchainPeaks: Uint8Array;
+  newPeaks: Uint8Array;
   newBlockNums: number[];
   blockHasRelevantNotes: Uint8Array;
   serializedNodeIds: string[];
@@ -186,6 +215,7 @@ interface JsStateSyncUpdate {
   serializedOutputNotes: SerializedOutputNoteData[];
   accountUpdates: JsAccountUpdate[];
   transactionUpdates: SerializedTransactionData[];
+  accountWitnesses?: JsAccountWitnessUpdate[];
 }
 
 export async function applyStateSync(
@@ -196,7 +226,7 @@ export async function applyStateSync(
   const {
     blockNum,
     flattenedNewBlockHeaders,
-    partialBlockchainPeaks,
+    newPeaks,
     newBlockNums,
     blockHasRelevantNotes,
     serializedNodeIds,
@@ -207,11 +237,12 @@ export async function applyStateSync(
     accountUpdates,
     transactionUpdates,
   } = stateUpdate;
+  const accountWitnesses = stateUpdate.accountWitnesses ?? [];
 
   const newBlockHeaders = reconstructFlattenedVec(flattenedNewBlockHeaders);
 
   const tablesToAccess = [
-    db.stateSync,
+    db.blockchainCheckpoint,
     db.inputNotes,
     db.outputNotes,
     db.notesScripts,
@@ -220,9 +251,6 @@ export async function applyStateSync(
     db.blockHeaders,
     db.partialBlockchainNodes,
     db.tags,
-    // applyFullAccountState (called per account update below) opens a nested
-    // transaction that writes accountCodes; Dexie requires it in the parent scope.
-    db.accountCodes,
     db.latestAccountHeaders,
     db.historicalAccountHeaders,
     db.latestAccountStorages,
@@ -231,6 +259,8 @@ export async function applyStateSync(
     db.historicalStorageMapEntries,
     db.latestAccountAssets,
     db.historicalAccountAssets,
+    db.accountCodes,
+    db.accountWitnesses,
   ];
 
   return await db.dexie.transaction("rw", tablesToAccess, async (tx) => {
@@ -270,7 +300,9 @@ export async function applyStateSync(
             note.nullifier,
             note.expectedHeight,
             note.stateDiscriminant,
-            note.state
+            note.state,
+            note.noteScriptRoot,
+            note.noteScript
           );
         })
       ),
@@ -310,34 +342,30 @@ export async function applyStateSync(
             storageMapEntries: accountUpdate.storageMapEntries,
             assets: accountUpdate.assets,
             codeRoot: accountUpdate.codeRoot,
-            code: accountUpdate.code,
             storageRoot: accountUpdate.storageRoot,
             vaultRoot: accountUpdate.vaultRoot,
             committed: accountUpdate.committed,
             accountCommitment: accountUpdate.accountCommitment,
             accountSeed: accountUpdate.accountSeed,
+            code: accountUpdate.code,
           })
         )
       ),
-      updateSyncHeight(tx, blockNum),
+      Promise.all(
+        accountWitnesses.map((entry) =>
+          updateAccountWitness(dbId, entry.accountId, entry.witness)
+        )
+      ),
+      updateSyncHeight(tx, blockNum, newPeaks),
       updatePartialBlockchainNodes(tx, serializedNodeIds, serializedNodes),
       updateCommittedNoteTags(tx, committedNoteTagSources),
       Promise.all(
         newBlockHeaders.map((newBlockHeader, i) => {
-          // Peaks are attached only to the chain-tip block (the one whose
-          // blockNum matches the new sync height). That row is always
-          // present in this iteration because `partial_blockchain_updates`
-          // includes the chain tip header by construction.
-          // TODO: potentially move this to be under the sync state info table
-          // as currently done in SQLite
-          const peaks =
-            newBlockNums[i] === blockNum ? partialBlockchainPeaks : undefined;
           return updateBlockHeader(
             tx,
             newBlockNums[i],
             newBlockHeader,
-            blockHasRelevantNotes[i] == 1,
-            peaks
+            blockHasRelevantNotes[i] == 1
           );
         })
       ),
@@ -345,23 +373,34 @@ export async function applyStateSync(
   });
 }
 
-/**
- * Advances `stateSync.blockNum` only when moving forward. Mirrors SQLite's
- * `UPDATE blockchain_checkpoint ... WHERE block_num < ?`.
- */
-async function updateSyncHeight(tx: Transaction, blockNum: number) {
+async function updateSyncHeight(
+  tx: Transaction,
+  blockNum: number,
+  newPeaks: Uint8Array
+) {
   try {
+    // Only update if moving forward to prevent race conditions.
+    // Peaks travel with blockNum: skipping the height update also skips the
+    // peaks update, by design — a backward-going sync must not overwrite the
+    // newer peaks with older ones.
     const current = await (
-      tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
-    ).stateSync.get(1);
+      tx as Transaction & {
+        blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+      }
+    ).blockchainCheckpoint.get(1);
     if (!current || current.blockNum < blockNum) {
       await (
-        tx as Transaction & { stateSync: Dexie.Table<IStateSync, number> }
-      ).stateSync.update(1, {
+        tx as Transaction & {
+          blockchainCheckpoint: Dexie.Table<IBlockchainCheckpoint, number>;
+        }
+      ).blockchainCheckpoint.update(1, {
         blockNum: blockNum,
+        partialBlockchainPeaks: newPeaks,
       });
     }
   } catch (error) {
+    // logWebStoreError always re-throws, so a failure here aborts the whole
+    // Dexie rw transaction rather than silently committing a partial update.
     logWebStoreError(error, "Failed to update sync height");
   }
 }
@@ -370,15 +409,13 @@ async function updateBlockHeader(
   tx: Transaction,
   blockNum: number,
   blockHeader: Uint8Array,
-  hasClientNotes: boolean,
-  partialBlockchainPeaks: Uint8Array | undefined
+  hasClientNotes: boolean
 ) {
   try {
-    const data: IBlockHeader = {
+    const data = {
       blockNum: blockNum,
       header: blockHeader,
       hasClientNotes: hasClientNotes.toString(),
-      ...(partialBlockchainPeaks !== undefined && { partialBlockchainPeaks }),
     };
 
     const existingBlockHeader = await (
@@ -416,10 +453,12 @@ async function updatePartialBlockchainNodes(
       id: Number(nodeIndexes[index]),
       node: node,
     }));
-    // Use bulkPut to add/overwrite the entries
-    await (
-      tx as Transaction & { partialBlockchainNodes: Dexie.Table }
-    ).partialBlockchainNodes.bulkPut(data);
+    // Insert missing nodes and reject conflicting writes
+    await putPartialBlockchainNodesNoOverwrite(
+      (tx as Transaction & { partialBlockchainNodes: Dexie.Table })
+        .partialBlockchainNodes,
+      data
+    );
   } catch (err) {
     logWebStoreError(err, "Failed to update partial blockchain nodes");
   }

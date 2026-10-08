@@ -1,0 +1,41 @@
+{
+  "name": "@miden-sdk/miden-wallet-adapter-miden",
+  "version": "0.17.0",
+  "description": "Miden wallet adapter for the Miden Wallet.",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "AGENTS.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xMiden/web-sdk.git",
+    "directory": "packages/adapter/miden"
+  },
+  "author": "Miden Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@miden-sdk/miden-wallet-adapter-base": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "clean": "rimraf dist/ node_modules/",
+    "doc": "typedoc --disableSources --plugin typedoc-plugin-markdown index.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@miden-sdk/miden-sdk": "workspace:*",
+    "jsdom": "^24.0.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "@miden-sdk/miden-sdk": "^0.17.0",
+    "typescript": "^5.0.0"
+  },
+  "bugs": {
+    "url": "https://github.com/0xMiden/web-sdk/issues"
+  },
+  "homepage": "https://github.com/0xMiden/web-sdk"
+}

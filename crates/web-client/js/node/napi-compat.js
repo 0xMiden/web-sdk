@@ -5,7 +5,8 @@
  * SDK surfaces so the shared MidenClient wrapper works on both platforms.
  *
  * Key normalizations:
- * - Uint8Array/Buffer -> Array (napi's Vec<u8> expects plain arrays)
+ * - Uint8Array/Buffer -> Array for Vec<u8> parameters (e.g. RNG seeds)
+ * - deserialize args pass through: napi's JsBytes accepts any Uint8Array view
  * - BigUint64Array/BigInt64Array -> Array (napi's Vec<u64>/Vec<BigInt> expects plain arrays)
  * - null -> undefined (napi returns null for Option::None, wasm-bindgen returns undefined)
  * - camelCase -> snake_case aliases (napi uses camelCase, wasm-bindgen uses snake_case)
@@ -31,9 +32,10 @@ export function normalizeArg(val) {
 // ── Class wrapping ───────────────────────────────────────────────────
 
 /**
- * Wraps a napi class so constructor and static method args are normalized.
+ * Wraps a napi class so constructor and static method args are normalized,
+ * except `deserialize`, whose JsBytes argument passes through unchanged.
  */
-function wrapClass(Cls) {
+export function wrapClass(Cls) {
   if (!Cls) return Cls;
   const Wrapper = function (...args) {
     return new Cls(...args.map(normalizeArg));
@@ -43,7 +45,12 @@ function wrapClass(Cls) {
     if (key === "prototype" || key === "length" || key === "name") continue;
     const desc = Object.getOwnPropertyDescriptor(Cls, key);
     if (desc && typeof desc.value === "function") {
-      Wrapper[key] = (...args) => desc.value.apply(Cls, args.map(normalizeArg));
+      // deserialize takes JsBytes, which reads a Buffer or any Uint8Array view
+      // at its own offset; flattening it to an Array (as for Vec<u8>) fails.
+      Wrapper[key] =
+        key === "deserialize"
+          ? desc.value.bind(Cls)
+          : (...args) => desc.value.apply(Cls, args.map(normalizeArg));
     } else if (desc) {
       try {
         Object.defineProperty(Wrapper, key, desc);
@@ -163,8 +170,18 @@ function patchSdkPrototypes(rawSdk) {
 
   // null -> undefined for Option<T> return methods
   for (const [cls, methods] of [
+    [rawSdk.AccountPatch, ["finalNonce"]],
     [rawSdk.AccountStorage, ["getItem", "getMapEntries", "getMapItem"]],
-    [rawSdk.NoteConsumability, ["consumableAfterBlock"]],
+    [rawSdk.AdviceMap, ["get", "insert"]],
+    // `feeNote` is absent whenever the chain charges nothing, which is the common case on a
+    // local chain, so the "no fee note" reading has to be the same on both bindings.
+    [rawSdk.ExecutedTransaction, ["feeNote"]],
+    [rawSdk.NoteConsumptionStatus, ["consumableAfterBlock"]],
+    // `authArg` and `feeConversionSalt` are how a caller checks what a request
+    // declared about paying its fee, so they have to read the same on both
+    // bindings — the salt tests in `fee_conversion_salt.test.ts` compare with
+    // `== null` for exactly this reason.
+    [rawSdk.TransactionRequest, ["authArg", "feeConversionSalt", "scriptArg"]],
   ]) {
     if (!cls?.prototype) continue;
     for (const method of methods) {
@@ -190,6 +207,26 @@ function patchSdkPrototypes(rawSdk) {
 // ── Array polyfills ──────────────────────────────────────────────────
 
 /**
+ * Array containers declared by `declare_js_miden_arrays!` in src/models/mod.rs.
+ * On Node they are JS polyfills, so node-index.js re-exports them from this
+ * list (see scripts/gen-node-reexports.js).
+ */
+export const NODE_ARRAY_TYPES = Object.freeze([
+  "AccountArray",
+  "AccountIdArray",
+  "FeltArray",
+  "ForeignAccountArray",
+  "NoteAndArgsArray",
+  "NoteArray",
+  "NoteDetailsAndTagArray",
+  "NoteIdAndArgsArray",
+  "NoteRecipientArray",
+  "OutputNoteArray",
+  "StorageSlotArray",
+  "TransactionScriptInputPairArray",
+]);
+
+/**
  * Creates polyfill constructors for WASM typed array types.
  * napi accepts plain JS arrays directly, but the browser SDK requires
  * typed wrappers (NoteAndArgsArray, FeltArray, etc.). These polyfills
@@ -203,33 +240,31 @@ function makeArrayPolyfills() {
         : Array.isArray(items)
           ? [...items]
           : [items];
-    arr.get = (i) => arr[i];
+    // Match the browser containers (miden_array.rs), which reject any index
+    // outside the array instead of reading undefined or growing it.
+    const checkIndex = (i) => {
+      if (!Number.isInteger(i) || i < 0 || i >= arr.length) {
+        throw new RangeError(
+          `out of bounds access -- tried to access at index: ${i} with length ${arr.length}`
+        );
+      }
+    };
+    arr.get = (i) => {
+      checkIndex(i);
+      return arr[i];
+    };
     arr.replaceAt = (i, val) => {
+      checkIndex(i);
       arr[i] = val;
       return arr;
     };
+    // A plain array owns no native memory, but callers written against the
+    // wasm-bindgen classes free them.
+    arr.free = () => {};
+    if (Symbol.dispose) arr[Symbol.dispose] = arr.free;
     return arr;
   }
-  const names = [
-    "AccountArray",
-    "AccountIdArray",
-    "FeltArray",
-    "ForeignAccountArray",
-    "NoteAndArgsArray",
-    "NoteArray",
-    "NoteDetailsAndTagArray",
-    "NoteIdAndArgsArray",
-    "NoteRecipientArray",
-    "OutputNoteArray",
-    "OutputNotesArray",
-    "StorageSlotArray",
-    "TransactionScriptInputPairArray",
-  ];
-  const result = {};
-  for (const name of names) {
-    result[name] = polyfill;
-  }
-  return result;
+  return Object.fromEntries(NODE_ARRAY_TYPES.map((name) => [name, polyfill]));
 }
 
 // ── SDK wrapper ──────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { openDatabase, getDatabase } from "./schema.js";
 import {
   getNoteTags,
   getSyncHeight,
+  getCurrentBlockchainPeaks,
   addNoteTag,
   removeNoteTag,
   applyStateSync,
@@ -69,7 +70,7 @@ function minimalStateUpdate(
   return {
     blockNum: 5,
     flattenedNewBlockHeaders: emptyFlattenedVec(),
-    partialBlockchainPeaks: new Uint8Array(0),
+    newPeaks: new Uint8Array(0),
     newBlockNums: [],
     blockHasRelevantNotes: new Uint8Array(0),
     serializedNodeIds: [],
@@ -115,25 +116,77 @@ describe("sync", () => {
       expect(result).toEqual({ blockNum: 0 });
     });
 
-    it("returns the persisted blockNum after updating stateSync", async () => {
+    it("returns the persisted blockNum after updating blockchainCheckpoint", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
       // Manually bump blockNum to verify getSyncHeight reads it back
-      await db.stateSync.update(1, { blockNum: 42 });
+      await db.blockchainCheckpoint.update(1, { blockNum: 42 });
       const result = await getSyncHeight(dbId);
       expect(result).toEqual({ blockNum: 42 });
     });
 
-    it("returns null when no stateSync record exists (deleted)", async () => {
+    it("returns null when no blockchainCheckpoint record exists (deleted)", async () => {
       const dbId = await openTestDb();
       const db = getDatabase(dbId);
-      await db.stateSync.delete(1);
+      await db.blockchainCheckpoint.delete(1);
       const result = await getSyncHeight(dbId);
       expect(result).toBeNull();
     });
 
     it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
       await expect(getSyncHeight("never-opened-sync")).rejects.toThrow();
+      expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getCurrentBlockchainPeaks
+  // -------------------------------------------------------------------------
+
+  describe("getCurrentBlockchainPeaks", () => {
+    it("returns blockNum 0 and empty peaks on a fresh DB (populate seeds empty peaks)", async () => {
+      const dbId = await openTestDb();
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 0, peaks: "" });
+    });
+
+    it("returns blockNum 0 and empty peaks when no checkpoint record exists", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      await db.blockchainCheckpoint.delete(1);
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 0, peaks: "" });
+    });
+
+    it("reports the on-disk blockNum even when peaks are empty", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      // A checkpoint advanced to height 50 but with no peaks yet must still
+      // report blockNum 50 (not 0) — the on-disk height is real information.
+      await db.blockchainCheckpoint.update(1, {
+        blockNum: 50,
+        partialBlockchainPeaks: new Uint8Array(),
+      });
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 50, peaks: "" });
+    });
+
+    it("round-trips the persisted blockNum and peaks bytes as base64", async () => {
+      const dbId = await openTestDb();
+      const db = getDatabase(dbId);
+      const peaksBytes = new Uint8Array([0x01, 0x02, 0x03]);
+      await db.blockchainCheckpoint.update(1, {
+        blockNum: 42,
+        partialBlockchainPeaks: peaksBytes,
+      });
+      const result = await getCurrentBlockchainPeaks(dbId);
+      expect(result).toEqual({ blockNum: 42, peaks: toBase64(peaksBytes) });
+    });
+
+    it("rejects when db is not opened (logWebStoreError re-throws)", async () => {
+      await expect(
+        getCurrentBlockchainPeaks("never-opened-sync")
+      ).rejects.toThrow();
       expect(errorSpy).toHaveBeenCalled();
     });
   });
@@ -498,7 +551,7 @@ describe("sync", () => {
           newBlockNums: [7],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-          partialBlockchainPeaks: peaksBytes,
+          newPeaks: peaksBytes,
         })
       );
 
@@ -507,6 +560,13 @@ describe("sync", () => {
       expect(header).toBeDefined();
       expect(header!.blockNum).toBe(7);
       expect(header!.hasClientNotes).toBe("false");
+
+      // Peaks travel on the blockchainCheckpoint row, not the block header.
+      // Assert they round-trip — this is what proves the write path actually
+      // persists `newPeaks` (and would catch a fixture/field-name drift).
+      const checkpoint = await db.blockchainCheckpoint.get(1);
+      expect(checkpoint!.blockNum).toBe(7);
+      expect(checkpoint!.partialBlockchainPeaks).toEqual(peaksBytes);
     });
 
     it("marks block header hasClientNotes=true when blockHasRelevantNotes[i] === 1", async () => {
@@ -521,7 +581,7 @@ describe("sync", () => {
           newBlockNums: [15],
           blockHasRelevantNotes: new Uint8Array([1]),
           flattenedNewBlockHeaders: singleFlattenedVec(headerBytes),
-          partialBlockchainPeaks: peaksBytes,
+          newPeaks: peaksBytes,
         })
       );
 
@@ -544,7 +604,7 @@ describe("sync", () => {
           newBlockNums: [5],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(original),
-          partialBlockchainPeaks: peaks,
+          newPeaks: peaks,
         })
       );
 
@@ -556,7 +616,7 @@ describe("sync", () => {
           newBlockNums: [5],
           blockHasRelevantNotes: new Uint8Array([0]),
           flattenedNewBlockHeaders: singleFlattenedVec(replacement),
-          partialBlockchainPeaks: peaks,
+          newPeaks: peaks,
         })
       );
 
@@ -596,7 +656,32 @@ describe("sync", () => {
       expect(node!.node).toBe("node-data-42");
     });
 
-    it("overwrites an existing partial blockchain node (bulkPut)", async () => {
+    it("accepts re-writing an existing node with the same value", async () => {
+      const dbId = await openTestDb();
+
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 2,
+          serializedNodeIds: ["10"],
+          serializedNodes: ["same-data"],
+        })
+      );
+
+      const db = getDatabase(dbId);
+      const node = await db.partialBlockchainNodes.get(10);
+      expect(node!.node).toBe("same-data");
+    });
+
+    it("rejects a conflicting node write and keeps the stored value", async () => {
       const dbId = await openTestDb();
 
       await applyStateSync(
@@ -607,18 +692,53 @@ describe("sync", () => {
           serializedNodes: ["first-data"],
         })
       );
-      await applyStateSync(
-        dbId,
-        minimalStateUpdate({
-          blockNum: 2,
-          serializedNodeIds: ["10"],
-          serializedNodes: ["second-data"],
-        })
-      );
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 2,
+            serializedNodeIds: ["10"],
+            serializedNodes: ["second-data"],
+          })
+        )
+      ).rejects.toThrow("Refusing to overwrite partial blockchain node 10");
 
       const db = getDatabase(dbId);
       const node = await db.partialBlockchainNodes.get(10);
-      expect(node!.node).toBe("second-data");
+      expect(node!.node).toBe("first-data");
+    });
+
+    it("deduplicates identical node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await applyStateSync(
+        dbId,
+        minimalStateUpdate({
+          blockNum: 1,
+          serializedNodeIds: ["10", "10"],
+          serializedNodes: ["node-data", "node-data"],
+        })
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(1);
+      expect((await db.partialBlockchainNodes.get(10))!.node).toBe("node-data");
+    });
+
+    it("rejects conflicting node indexes within a single sync", async () => {
+      const dbId = await openTestDb();
+      await expect(
+        applyStateSync(
+          dbId,
+          minimalStateUpdate({
+            blockNum: 1,
+            serializedNodeIds: ["10", "10"],
+            serializedNodes: ["first-data", "second-data"],
+          })
+        )
+      ).rejects.toThrow(
+        "Conflicting partial blockchain node 10 within the same write"
+      );
+      const db = getDatabase(dbId);
+      expect(await db.partialBlockchainNodes.count()).toBe(0);
     });
 
     it("is a no-op when serializedNodeIds is empty", async () => {

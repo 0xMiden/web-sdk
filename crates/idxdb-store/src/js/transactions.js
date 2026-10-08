@@ -1,12 +1,9 @@
 import { getDatabase, } from "./schema.js";
 import { logWebStoreError, mapOption, uint8ArrayToBase64 } from "./utils.js";
-import { applyFullAccountState, applyTransactionDelta } from "./accounts.js";
+import { applyAccountPatch, applyFullAccountState } from "./accounts.js";
 import { upsertInputNote, upsertOutputNote } from "./notes.js";
 const IDS_FILTER_PREFIX = "Ids:";
-const EXPIRED_BEFORE_FILTER_PREFIX = "ExpiredPending:";
 const STATUS_PENDING_VARIANT = 0;
-const STATUS_COMMITTED_VARIANT = 1;
-const STATUS_DISCARDED_VARIANT = 2;
 export async function getTransactions(dbId, filter) {
     let transactionRecords = [];
     try {
@@ -28,15 +25,6 @@ export async function getTransactions(dbId, filter) {
             else {
                 transactionRecords = [];
             }
-        }
-        else if (filter.startsWith(EXPIRED_BEFORE_FILTER_PREFIX)) {
-            const blockNumString = filter.substring(EXPIRED_BEFORE_FILTER_PREFIX.length);
-            const blockNum = parseInt(blockNumString);
-            transactionRecords = await db.transactions
-                .filter((tx) => tx.blockNum < blockNum &&
-                tx.statusVariant !== STATUS_COMMITTED_VARIANT &&
-                tx.statusVariant !== STATUS_DISCARDED_VARIANT)
-                .toArray();
         }
         else {
             transactionRecords = await db.transactions.toArray();
@@ -138,17 +126,21 @@ export async function applyTransactionBatch(dbId, payloads) {
         db.historicalStorageMapEntries,
         db.latestAccountAssets,
         db.historicalAccountAssets,
-        // Full account updates persist code in a nested transaction, so the
-        // parent batch must include accountCodes in its scope as well.
-        db.accountCodes,
         db.latestAccountHeaders,
         db.historicalAccountHeaders,
+        db.accountCodes,
         db.inputNotes,
         db.outputNotes,
         db.notesScripts,
         db.tags,
     ], async () => {
         for (const payload of payloads) {
+            const acct = payload.accountState;
+            const accountId = acct.kind === "full" ? acct.account.accountId : acct.accountId;
+            const current = await db.latestAccountHeaders.get(accountId);
+            if (current?.accountCommitment !== payload.initialAccountCommitment) {
+                throw new Error(`transaction input account commitment does not match persisted state for ${accountId}`);
+            }
             // 1. Insert the transaction record (script first, then record)
             const rec = payload.transactionRecord;
             if (rec.scriptRoot && rec.txScript) {
@@ -156,19 +148,18 @@ export async function applyTransactionBatch(dbId, payloads) {
             }
             await upsertTransactionRecord(dbId, rec.id, rec.details, rec.blockNum, rec.statusVariant, rec.status, rec.scriptRoot);
             // 2. Apply account state (full or delta)
-            const acct = payload.accountState;
             if (acct.kind === "full") {
                 await applyFullAccountState(dbId, acct.account);
             }
             else {
-                await applyTransactionDelta(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment);
+                await applyAccountPatch(dbId, acct.accountId, acct.nonce, acct.updatedSlots, acct.changedMapEntries, acct.changedAssets, acct.codeRoot, acct.storageRoot, acct.vaultRoot, acct.committed, acct.commitment, acct.code);
             }
             // 3. Upsert input and output notes
             for (const note of payload.inputNotes) {
                 await upsertInputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.serialNumber, note.inputs, note.noteScriptRoot, note.noteScript, note.nullifier, note.createdAt, note.stateDiscriminant, note.state, note.consumedBlockHeight ?? null, note.consumedTxOrder ?? null, note.consumerAccountId ?? null);
             }
             for (const note of payload.outputNotes) {
-                await upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state);
+                await upsertOutputNote(dbId, note.detailsCommitment, note.noteId, note.noteAssets, note.attachments, note.recipientDigest, note.metadata, note.nullifier, note.expectedHeight, note.stateDiscriminant, note.state, note.noteScriptRoot, note.noteScript);
             }
             // 4. Add note tags (deduplicated within the transaction)
             for (const tagEntry of payload.tags) {
