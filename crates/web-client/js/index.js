@@ -308,8 +308,14 @@ function createClientProxy(instance) {
       if (prop in target) {
         return Reflect.get(target, prop, receiver);
       }
-      if (target.wasmWebClient && prop in target.wasmWebClient) {
-        const value = target.wasmWebClient[prop];
+      const live = target.wasmWebClient;
+      // After terminate() only a read nested in an in-flight
+      // `_withInnerWebClient` keeps the live route, as in `_serializeWasmCall`:
+      // it belongs to work that was already queued when terminate() ran.
+      const liveRoute =
+        live && (!target._terminated || target._withInnerLockDepth > 0);
+      if (liveRoute && prop in live) {
+        const value = live[prop];
         if (typeof value === "function") {
           // SYNC_METHODS are safe to bind raw (synchronous in JS, or
           // documented exceptions). Everything else holds the WASM
@@ -318,7 +324,13 @@ function createClientProxy(instance) {
           // any in-flight call panics with "RefCell already borrowed"
           // and poisons the instance for every later call.
           if (typeof prop === "string" && SYNC_METHODS.has(prop)) {
-            return value.bind(target.wasmWebClient);
+            return (...args) => {
+              const result = value.apply(live, args);
+              if (typeof result?.then === "function") {
+                target._trackRawWasmCall(result);
+              }
+              return result;
+            };
           }
           return (...args) =>
             target._serializeWasmCall(
@@ -328,20 +340,22 @@ function createClientProxy(instance) {
         }
         return value;
       }
-      // Once terminate() has freed the wasm client, each of its members fails
-      // in its live call shape instead of vanishing: an accessor throws on
-      // access, a synchronous method throws, every other method rejects.
-      // Never for "then", which would make the proxy itself look like a
-      // promise.
-      const freed = target._freedWasmPrototype;
+      // After terminate(), whether or not the wasm client has been freed yet,
+      // each of its members fails in its live call shape instead of vanishing:
+      // an accessor throws on access, a synchronous method throws, every other
+      // method rejects. Never for "then", which would make the proxy itself
+      // look like a promise.
+      const members = target._terminated
+        ? (target._freedWasmPrototype ?? (live && Object.getPrototypeOf(live)))
+        : null;
       if (
-        freed &&
+        members &&
         typeof prop === "string" &&
         prop !== "then" &&
-        prop in freed
+        prop in members
       ) {
         const terminated = () => new Error("WebClient terminated");
-        if (Object.getOwnPropertyDescriptor(freed, prop)?.get) {
+        if (Object.getOwnPropertyDescriptor(members, prop)?.get) {
           throw terminated();
         }
         if (SYNCHRONOUS_METHODS.has(prop)) {
@@ -1345,10 +1359,10 @@ class WebClient {
    * the same store.
    *
    * Call this method when you're done using a WebClient to free up browser
-   * resources. Serialized calls already queued still run against the
+   * resources. Calls already queued or running still finish against the
    * attached client, and the release waits for them to settle; a call
    * waiting on the stopped worker, and every call made after terminate(),
-   * rejects with "WebClient terminated". Calling it again is harmless.
+   * fails with "WebClient terminated". Calling it again is harmless.
    */
   terminate() {
     this._terminated = true;
@@ -1362,13 +1376,23 @@ class WebClient {
       }
       this.pendingRequests.clear();
     }
-    this._afterQueuedWasmCalls(() => {
+    this._afterQueuedWasmCalls(async () => {
       const client = this.wasmWebClient;
       this.wasmWebClient = null;
       this.wasmWebClientPromise = null;
-      if (client) {
-        this._freedWasmPrototype = Object.getPrototypeOf(client);
+      if (!client) {
+        return;
+      }
+      this._freedWasmPrototype = Object.getPrototypeOf(client);
+      // free() refuses a client that a raw-bound call still borrows.
+      await Promise.allSettled(this._rawWasmCalls ?? []);
+      try {
         client.free();
+      } catch (error) {
+        console.error(
+          "WebClient: failed to free the wasm client on terminate:",
+          error
+        );
       }
     });
   }
@@ -1380,6 +1404,24 @@ class WebClient {
    */
   _afterQueuedWasmCalls(step) {
     this._wasmCallChain = this._wasmCallChain.then(step).catch(() => {});
+  }
+
+  /**
+   * Tracks a raw-bound call that returned a promise until it settles. It
+   * borrows the wasm client off the call chain, so terminate's free waits for
+   * it as well.
+   * @private
+   */
+  _trackRawWasmCall(promise) {
+    if (!this._rawWasmCalls) {
+      this._rawWasmCalls = new Set();
+    }
+    const calls = this._rawWasmCalls;
+    const tracked = Promise.resolve(promise).then(
+      () => calls.delete(tracked),
+      () => calls.delete(tracked)
+    );
+    calls.add(tracked);
   }
 }
 

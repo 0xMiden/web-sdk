@@ -399,10 +399,11 @@ describe("WasmWebClient.terminate", () => {
     );
   });
 
-  it("keeps the call chain usable when freeing the wasm client throws", async () => {
+  it("keeps the call chain usable and reports it when freeing the wasm client throws", async () => {
     const { client, wasmClient } = makeWebClient();
+    const borrowed = new Error("still borrowed");
     wasmClient.free = vi.fn(() => {
-      throw new Error("still borrowed");
+      throw borrowed;
     });
 
     client.terminate();
@@ -411,6 +412,69 @@ describe("WasmWebClient.terminate", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(wasmClient.free).toHaveBeenCalledTimes(1);
     expect(client.wasmWebClient).toBeNull();
+    expect(console.error).toHaveBeenCalledWith(
+      "WebClient: failed to free the wasm client on terminate:",
+      borrowed
+    );
+  });
+
+  it("fails each member in its live call shape as soon as terminate returns", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const proxy = createClientProxy(client);
+
+    client.terminate();
+    expect(() => proxy.buildSwapTag()).toThrow("WebClient terminated");
+    expect(() => proxy.lastAuthError()).toThrow("WebClient terminated");
+    expect(() => proxy.keystore).toThrow("WebClient terminated");
+    expect(proxy.then).toBeUndefined();
+    expect(proxy[wasmSymbol]).toBeUndefined();
+    const proving = proxy.proveBlock();
+    expect(wasmClient.free).not.toHaveBeenCalled();
+    expect(proving).toBeInstanceOf(Promise);
+    await expect(proving).rejects.toThrow("WebClient terminated");
+  });
+
+  it("keeps the live route for a member read inside an in-flight _withInnerWebClient", () => {
+    const { client } = makeWebClient();
+    const proxy = createClientProxy(client);
+    client._withInnerLockDepth = 1;
+
+    client.terminate();
+    expect(proxy.buildSwapTag()).toBe("tag");
+    expect(proxy.keystore).toBe("keystore");
+  });
+
+  it("frees the wasm client only once a raw-bound call started before terminate settles", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const proxy = createClientProxy(client);
+    const proving = deferred();
+    wasmClient.proveBlock = vi.fn(() => proving.promise);
+    const running = proxy.proveBlock();
+
+    client.terminate();
+    expect(await outcomeAfterFlush(client.waitForIdle())).toBe("pending");
+    expect(wasmClient.free).not.toHaveBeenCalled();
+
+    proving.resolve("proved");
+    await expect(running).resolves.toBe("proved");
+    expect(await outcomeAfterFlush(client.waitForIdle())).toBe("resolved");
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    expect(client._rawWasmCalls.size).toBe(0);
+  });
+
+  it("frees the wasm client once a raw-bound call started before terminate rejects", async () => {
+    const { client, wasmClient } = makeWebClient();
+    const proxy = createClientProxy(client);
+    const proving = deferred();
+    wasmClient.proveBlock = vi.fn(() => proving.promise);
+    const running = outcomeAfterFlush(proxy.proveBlock());
+
+    client.terminate();
+    proving.reject(new Error("prove failed"));
+    expect(await running).toBe("prove failed");
+    expect(await outcomeAfterFlush(client.waitForIdle())).toBe("resolved");
+    expect(wasmClient.free).toHaveBeenCalledTimes(1);
+    expect(client._rawWasmCalls.size).toBe(0);
   });
 
   it("can be called twice", async () => {
